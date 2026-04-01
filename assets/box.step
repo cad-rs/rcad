@@ -1,0 +1,18 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('RCAD Box Example - 1x1x1 unit cube'),'2;1');
+FILE_NAME('box.step','2026-01-01T00:00:00',(''),(''),'RCAD Engine','RCAD','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));
+ENDSEC;
+DATA;
+/* 8 corner points of a 1x1x1 box */
+#1 = CARTESIAN_POINT('p0',(0.,0.,0.));
+#2 = CARTESIAN_POINT('p1',(1.,0.,0.));
+#3 = CARTESIAN_POINT('p2',(1.,1.,0.));
+#4 = CARTESIAN_POINT('p3',(0.,1.,0.));
+#5 = CARTESIAN_POINT('p4',(0.,0.,1.));
+#6 = CARTESIAN_POINT('p5',(1.,0.,1.));
+#7 = CARTESIAN_POINT('p6',(1.,1.,1.));
+#8 = CARTESIAN_POINT('p7',(0.,1.,1.));
+ENDSEC;
+END-ISO-10303-21;

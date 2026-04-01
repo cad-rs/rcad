@@ -1,0 +1,10 @@
+[package]
+name = "rcad-render"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu.workspace = true
+rcad-kernel = { path = "../rcad-kernel" }
+glam.workspace = true
+bytemuck = { version = "1.25", features = ["derive"] }
