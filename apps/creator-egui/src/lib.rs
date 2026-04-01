@@ -15,9 +15,13 @@ pub struct RCadApp {
 }
 
 impl RCadApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let brep = rcad_step::StepReader::parse_string(SAMPLE_STEP)
-            .unwrap_or_else(|_| BRep::create_box(1.0, 1.0, 1.0));
+    pub fn new(cc: &eframe::CreationContext<'_>, step_content: Option<String>) -> Self {
+        let brep = if let Some(content) = step_content {
+            rcad_step::StepReader::parse_string(&content)
+        } else {
+            rcad_step::StepReader::parse_string(SAMPLE_STEP)
+        }
+        .unwrap_or_else(|_| BRep::create_box(1.0, 1.0, 1.0));
         let mesh = Tessellator::tessellate(&brep);
 
         // Initialize wgpu renderer
@@ -155,7 +159,7 @@ impl eframe::App for RCadApp {
 // ─── Native entry ────────────────────────────────────────────────────────────
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_native() {
+pub fn run_native(step_content: Option<String>) {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RCAD Creator · egui")
@@ -166,7 +170,7 @@ pub fn run_native() {
     eframe::run_native(
         "RCAD Creator (egui)",
         opts,
-        Box::new(|cc| Ok(Box::new(RCadApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(RCadApp::new(cc, step_content)))),
     )
     .expect("eframe failed");
 }
@@ -196,7 +200,7 @@ pub async fn start() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(RCadApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(RCadApp::new(cc, None)))),
             )
             .await
             .expect("eframe WebRunner failed");

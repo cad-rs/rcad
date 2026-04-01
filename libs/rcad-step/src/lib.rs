@@ -4,10 +4,9 @@ use std::path::Path;
 pub struct StepReader;
 
 impl StepReader {
-    pub fn read_file<P: AsRef<Path>>(_path: P) -> Result<BRep, String> {
-        // Placeholder for actual STEP parsing
-        // For now, return a mock box to unblock UI development
-        Ok(BRep::create_box(10.0, 10.0, 10.0))
+    pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, String> {
+        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        Self::parse_string(&content)
     }
 
     pub fn parse_string(content: &str) -> Result<BRep, String> {

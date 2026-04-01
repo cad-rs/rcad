@@ -19,9 +19,13 @@ pub enum Message {
 }
 
 impl RCadApp {
-    pub fn new() -> (Self, Task<Message>) {
-        let brep = rcad_step::StepReader::parse_string(SAMPLE_STEP)
-            .unwrap_or_else(|_| BRep::create_box(1.0, 1.0, 1.0));
+    pub fn new(step_content: Option<String>) -> (Self, Task<Message>) {
+        let brep = if let Some(content) = step_content {
+            rcad_step::StepReader::parse_string(&content)
+        } else {
+            rcad_step::StepReader::parse_string(SAMPLE_STEP)
+        }
+        .unwrap_or_else(|_| BRep::create_box(1.0, 1.0, 1.0));
         let mesh = Tessellator::tessellate(&brep);
 
         (
@@ -192,14 +196,14 @@ impl iced::widget::shader::Primitive for Primitive {
 
 impl Default for RCadApp {
     fn default() -> Self {
-        Self::new().0
+        RCadApp::new(None).0
     }
 }
 
 // ─── Native entry ────────────────────────────────────────────────────────────
 
-pub fn run_native() -> iced::Result {
-    iced::application(RCadApp::new, RCadApp::update, RCadApp::view)
+pub fn run_native(step_content: Option<String>) -> iced::Result {
+    iced::application(move || RCadApp::new(step_content.clone()), RCadApp::update, RCadApp::view)
         .title("RCAD Creator · iced")
         .run()
 }
@@ -213,5 +217,5 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
-    run_native().expect("iced failed to start");
+    run_native(None).expect("iced failed to start");
 }
