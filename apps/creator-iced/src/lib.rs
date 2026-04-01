@@ -172,8 +172,8 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
                 if cursor.is_over(_bounds) {
                     let y = match delta {
-                        iced::mouse::ScrollDelta::Lines { y, .. } => y * 20.0,
-                        iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                        iced::mouse::ScrollDelta::Lines { y, .. } => *y * 20.0,
+                        iced::mouse::ScrollDelta::Pixels { y, .. } => *y,
                     };
                     return Some(iced::widget::shader::Action::publish(Message::ZoomCamera(y)));
                 }
