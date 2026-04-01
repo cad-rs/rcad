@@ -23,7 +23,8 @@ impl RCadApp {
         // Initialize wgpu renderer
         let mut has_renderer = false;
         if let Some(rs) = &cc.wgpu_render_state {
-            let mut renderer = WgpuRenderer::new(&rs.device, rs.target_format);
+            // In egui 0.33 / wgpu 27, we use the device and queue from the render state
+            let renderer = WgpuRenderer::new(&rs.device, rs.target_format);
             renderer.upload_mesh(&rs.device, &mesh);
             rs.renderer.write().callback_resources.insert(renderer);
             has_renderer = true;
@@ -60,21 +61,25 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         Vec::new()
     }
 
-    fn paint<'a>(
-        &'a self,
+    fn paint(
+        &self,
         _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        callback_resources: &'a egui_wgpu::CallbackResources,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        callback_resources: &egui_wgpu::CallbackResources,
     ) {
         let renderer: &WgpuRenderer = callback_resources.get().unwrap();
 
         render_pass.set_pipeline(&renderer.pipeline);
         render_pass.set_bind_group(0, &renderer.camera_bind_group, &[]);
 
-        if let (Some(vb), Some(ib)) = (&renderer.vertex_buffer, &renderer.index_buffer) {
+        let vb_guard = renderer.vertex_buffer.lock().unwrap();
+        let ib_guard = renderer.index_buffer.lock().unwrap();
+        let index_count = *renderer.index_count.lock().unwrap();
+
+        if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
             render_pass.set_vertex_buffer(0, vb.slice(..));
             render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..renderer.index_count, 0, 0..1);
+            render_pass.draw_indexed(0..index_count, 0, 0..1);
         }
     }
 }
@@ -161,7 +166,7 @@ pub fn run_native() {
     eframe::run_native(
         "RCAD Creator (egui)",
         opts,
-        Box::new(|cc| Box::new(RCadApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(RCadApp::new(cc)))),
     )
     .expect("eframe failed");
 }
@@ -179,10 +184,17 @@ pub async fn start() {
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async move {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let canvas = document
+            .get_element_by_id("main_canvas")
+            .unwrap()
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap();
+
         let runner = eframe::WebRunner::new();
         runner
             .start(
-                "main_canvas",
+                canvas,
                 web_options,
                 Box::new(|cc| Ok(Box::new(RCadApp::new(cc)))),
             )

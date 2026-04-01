@@ -70,7 +70,8 @@ impl RCadApp {
         let viewport: Element<'_, Message> = iced::widget::shader(Scene {
             mesh: &self.mesh,
             camera: &self.camera,
-        }).into();
+        })
+        .into();
 
         row![info, viewport].into()
     }
@@ -86,6 +87,25 @@ struct Scene<'a> {
 #[derive(Default)]
 struct SceneState {}
 
+pub struct RCadPipeline {
+    renderer: WgpuRenderer,
+}
+
+impl iced::widget::shader::Pipeline for RCadPipeline {
+    fn new(
+        device: &iced::wgpu::Device,
+        _queue: &iced::wgpu::Queue,
+        format: iced::wgpu::TextureFormat,
+    ) -> Self {
+        Self {
+            renderer: WgpuRenderer::new(
+                unsafe { std::mem::transmute(device) },
+                unsafe { std::mem::transmute(format) },
+            ),
+        }
+    }
+}
+
 impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
     type State = SceneState;
     type Primitive = Primitive;
@@ -93,12 +113,11 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
     fn update(
         &self,
         _state: &mut Self::State,
-        _event: iced::widget::shader::Event,
+        _event: &iced::Event,
         _bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
-        _shell: &mut iced::advanced::Shell<'_, Message>,
-    ) -> (iced::event::Status, Option<Message>) {
-        (iced::event::Status::Ignored, None)
+    ) -> Option<iced::widget::shader::Action<Message>> {
+        None
     }
 
     fn draw(
@@ -113,6 +132,15 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             aspect: _bounds.width / _bounds.height,
         }
     }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        _bounds: iced::Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> iced::mouse::Interaction {
+        iced::mouse::Interaction::default()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -123,40 +151,42 @@ struct Primitive {
 }
 
 impl iced::widget::shader::Primitive for Primitive {
+    type Pipeline = RCadPipeline;
+
     fn prepare(
         &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        _format: wgpu::TextureFormat,
-        storage: &mut iced::widget::shader::Storage,
+        pipeline: &mut Self::Pipeline,
+        device: &iced::wgpu::Device,
+        queue: &iced::wgpu::Queue,
         _bounds: &iced::Rectangle,
         _viewport: &iced::advanced::graphics::Viewport,
     ) {
-        if !storage.has::<WgpuRenderer>() {
-            let renderer = WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe { std::mem::transmute(_format) });
-            storage.store(renderer);
-        }
-
-        let renderer = storage.get_mut::<WgpuRenderer>().unwrap();
-        renderer.update_camera(unsafe { std::mem::transmute(queue) }, &self.camera, self.aspect);
-        renderer.upload_mesh(unsafe { std::mem::transmute(device) }, &self.mesh);
+        pipeline.renderer.update_camera(
+            unsafe { std::mem::transmute(queue) },
+            &self.camera,
+            self.aspect,
+        );
+        pipeline.renderer.upload_mesh(unsafe { std::mem::transmute(device) }, &self.mesh);
     }
 
     fn render(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        storage: &iced::widget::shader::Storage,
-        target: &wgpu::TextureView,
+        pipeline: &Self::Pipeline,
+        encoder: &mut iced::wgpu::CommandEncoder,
+        target: &iced::wgpu::TextureView,
         _clip_bounds: &iced::Rectangle<u32>,
     ) {
-        if let Some(renderer) = storage.get::<WgpuRenderer>() {
-            let clear_color = iced::Color::from_rgb(0.07, 0.07, 0.11);
-            renderer.render(
-                unsafe { std::mem::transmute(target) },
-                unsafe { std::mem::transmute(encoder) },
-                unsafe { std::mem::transmute([clear_color.r as f64, clear_color.g as f64, clear_color.b as f64, clear_color.a as f64]) }
-            );
-        }
+        let clear_color = iced::Color::from_rgb(0.07, 0.07, 0.11);
+        pipeline.renderer.render(
+            unsafe { std::mem::transmute(target) },
+            unsafe { std::mem::transmute(encoder) },
+            wgpu::Color {
+                r: clear_color.r as f64,
+                g: clear_color.g as f64,
+                b: clear_color.b as f64,
+                a: clear_color.a as f64,
+            },
+        );
     }
 }
 
@@ -169,7 +199,9 @@ impl Default for RCadApp {
 // ─── Native entry ────────────────────────────────────────────────────────────
 
 pub fn run_native() -> iced::Result {
-    iced::application("RCAD Creator · iced", RCadApp::update, RCadApp::view).run_with(RCadApp::new)
+    iced::application(RCadApp::new, RCadApp::update, RCadApp::view)
+        .title("RCAD Creator · iced")
+        .run()
 }
 
 // ─── WASM entry ──────────────────────────────────────────────────────────────

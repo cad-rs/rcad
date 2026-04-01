@@ -86,9 +86,9 @@ pub struct WgpuRenderer {
     pub pipeline: wgpu::RenderPipeline,
     pub camera_buffer: wgpu::Buffer,
     pub camera_bind_group: wgpu::BindGroup,
-    pub vertex_buffer: Option<wgpu::Buffer>,
-    pub index_buffer: Option<wgpu::Buffer>,
-    pub index_count: u32,
+    pub vertex_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
+    pub index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
+    pub index_count: std::sync::Mutex<u32>,
 }
 
 unsafe impl Send for WgpuRenderer {}
@@ -142,9 +142,11 @@ impl WgpuRenderer {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&pipeline_layout),
+            cache: None,
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -153,7 +155,8 @@ impl WgpuRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -182,26 +185,26 @@ impl WgpuRenderer {
             pipeline,
             camera_buffer,
             camera_bind_group,
-            vertex_buffer: None,
-            index_buffer: None,
-            index_count: 0,
+            vertex_buffer: std::sync::Mutex::new(None),
+            index_buffer: std::sync::Mutex::new(None),
+            index_count: std::sync::Mutex::new(0),
         }
     }
 
-    pub fn upload_mesh(&mut self, device: &wgpu::Device, mesh: &Mesh) {
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    pub fn upload_mesh(&self, device: &wgpu::Device, mesh: &Mesh) {
+        *self.vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         }));
 
-        self.index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        *self.index_buffer.lock().unwrap() = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         }));
 
-        self.index_count = mesh.indices.len() as u32;
+        *self.index_count.lock().unwrap() = mesh.indices.len() as u32;
     }
 
     pub fn update_camera(&self, queue: &wgpu::Queue, camera: &Camera, aspect: f32) {
@@ -226,6 +229,7 @@ impl WgpuRenderer {
                     load: wgpu::LoadOp::Clear(clear_color),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -235,10 +239,14 @@ impl WgpuRenderer {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-        if let (Some(vb), Some(ib)) = (&self.vertex_buffer, &self.index_buffer) {
+        let vb_guard = self.vertex_buffer.lock().unwrap();
+        let ib_guard = self.index_buffer.lock().unwrap();
+        let count = *self.index_count.lock().unwrap();
+
+        if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
             render_pass.set_vertex_buffer(0, vb.slice(..));
             render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+            render_pass.draw_indexed(0..count, 0, 0..1);
         }
     }
 }

@@ -27,7 +27,7 @@ iced = { workspace = true }
 # CanvasRenderingContext2d on the SAME canvas → panic.
 # Disabling wgpu means only one context type is ever requested.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-iced = { version = "0.13", default-features = false, features = ["canvas", "wgpu", "advanced"] }
+iced = { workspace = true }
 wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = ["HtmlCanvasElement"] }
