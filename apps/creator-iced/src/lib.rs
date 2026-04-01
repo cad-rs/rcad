@@ -1,5 +1,5 @@
-use iced::widget::{column, row, text};
-use iced::{Element, Length, Task};
+use iced::widget::{button, checkbox, column, container, row, text};
+use iced::{Border, Color, Element, Length, Task};
 use rcad_kernel::BRep;
 use rcad_render::{Camera, Mesh, Tessellator, WgpuRenderer};
 
@@ -11,11 +11,15 @@ pub struct RCadApp {
     brep: BRep,
     mesh: Mesh,
     camera: Camera,
+    auto_rotate: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     RotateCamera(f32, f32),
+    ToggleAutoRotate(bool),
+    ResetCamera,
+    Tick(f32),
 }
 
 impl RCadApp {
@@ -33,6 +37,7 @@ impl RCadApp {
                 brep,
                 mesh,
                 camera: Camera::new(),
+                auto_rotate: true,
             },
             Task::none(),
         )
@@ -43,6 +48,17 @@ impl RCadApp {
             Message::RotateCamera(dx, dy) => {
                 self.camera.rot_y += dx * 0.01;
                 self.camera.rot_x += dy * 0.01;
+            }
+            Message::ToggleAutoRotate(on) => {
+                self.auto_rotate = on;
+            }
+            Message::ResetCamera => {
+                self.camera = Camera::new();
+            }
+            Message::Tick(dt) => {
+                if self.auto_rotate {
+                    self.camera.rot_y += dt * 0.6;
+                }
             }
         }
         Task::none()
@@ -57,7 +73,7 @@ impl RCadApp {
             .map(|sh| sh.faces.len())
             .sum();
 
-        let info = column![
+        let info = container(column![
             text("RCAD · iced").size(20),
             text("─────────────────"),
             text(format!("Vertices : {}", self.brep.vertices.len())),
@@ -65,17 +81,31 @@ impl RCadApp {
             text(format!("Faces    : {}", face_count)),
             text(format!("Triangles: {}", self.mesh.indices.len() / 3)),
             text("─────────────────"),
+            checkbox(self.auto_rotate).label("Auto-rotate").on_toggle(Message::ToggleAutoRotate),
             text("Drag to rotate"),
+            button("Reset Camera").on_press(Message::ResetCamera),
         ]
-        .spacing(4)
+        .spacing(8))
         .padding(12)
-        .width(Length::Fixed(180.0));
+        .width(Length::Fixed(180.0))
+        .height(Length::Fill);
+        // .style(|_| container::Style {
+        //     background: Some(Color::from_rgb(0.1, 0.1, 0.15).into()),
+        //     border: Border {
+        //         width: 0.0,
+        //         color: Color::TRANSPARENT,
+        //         radius: 0.0.into(),
+        //     },
+        //     ..Default::default()
+        // });
 
-        let viewport: Element<'_, Message> = iced::widget::shader(Scene {
+        let viewport = container(iced::widget::shader(Scene {
             mesh: &self.mesh,
             camera: &self.camera,
         })
-        .into();
+        .width(Length::Fill)
+        .height(Length::Fill))
+        .padding(20);
 
         row![info, viewport].into()
     }
@@ -89,7 +119,10 @@ struct Scene<'a> {
 }
 
 #[derive(Default)]
-struct SceneState {}
+struct SceneState {
+    is_dragging: bool,
+    last_cursor_position: Option<iced::Point>,
+}
 
 pub struct RCadPipeline {
     renderer: WgpuRenderer,
@@ -116,11 +149,40 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
 
     fn update(
         &self,
-        _state: &mut Self::State,
-        _event: &iced::Event,
+        state: &mut Self::State,
+        event: &iced::Event,
         _bounds: iced::Rectangle,
-        _cursor: iced::mouse::Cursor,
+        cursor: iced::mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<Message>> {
+        match event {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                if cursor.is_over(_bounds) {
+                    state.is_dragging = true;
+                    state.last_cursor_position = cursor.position_in(_bounds);
+                }
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                state.is_dragging = false;
+            }
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                if state.is_dragging {
+                    if let Some(current_pos) = cursor.position_in(_bounds) {
+                        if let Some(last_pos) = state.last_cursor_position {
+                            let dx = current_pos.x - last_pos.x;
+                            let dy = current_pos.y - last_pos.y;
+
+                            state.last_cursor_position = Some(current_pos);
+
+                            return Some(iced::widget::shader::Action::publish(
+                                Message::RotateCamera(dx * 0.8, dy * 0.8),
+                            ));
+                        }
+                        state.last_cursor_position = Some(current_pos);
+                    }
+                }
+            }
+            _ => {}
+        }
         None
     }
 
@@ -139,11 +201,17 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
 
     fn mouse_interaction(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         _bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
-        iced::mouse::Interaction::default()
+        if state.is_dragging {
+            iced::mouse::Interaction::Grabbing
+        } else if _cursor.is_over(_bounds) {
+            iced::mouse::Interaction::Grab
+        } else {
+            iced::mouse::Interaction::default()
+        }
     }
 }
 
@@ -205,6 +273,14 @@ impl Default for RCadApp {
 pub fn run_native(step_content: Option<String>) -> iced::Result {
     iced::application(move || RCadApp::new(step_content.clone()), RCadApp::update, RCadApp::view)
         .title("RCAD Creator · iced")
+        .window(iced::window::Settings {
+            size: iced::Size::new(900.0, 600.0),
+            ..Default::default()
+        })
+        .subscription(|_| {
+            iced::time::every(std::time::Duration::from_millis(16))
+                .map(|_| Message::Tick(0.016))
+        })
         .run()
 }
 
