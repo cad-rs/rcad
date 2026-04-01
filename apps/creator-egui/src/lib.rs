@@ -95,6 +95,14 @@ use wasm_bindgen::JsCast as _;
 
 impl eframe::App for RCadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle scroll zoom
+        let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            self.camera.distance -= scroll * 0.005 * self.camera.distance;
+            self.camera.distance = self.camera.distance.clamp(1.0, 50.0);
+            ctx.request_repaint();
+        }
+
         if self.auto_rotate {
             self.camera.rot_y += ctx.input(|i| i.unstable_dt) * 0.6;
             ctx.request_repaint();

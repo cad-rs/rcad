@@ -17,6 +17,7 @@ pub struct RCadApp {
 #[derive(Debug, Clone)]
 pub enum Message {
     RotateCamera(f32, f32),
+    ZoomCamera(f32),
     ToggleAutoRotate(bool),
     ResetCamera,
     Tick(f32),
@@ -48,6 +49,10 @@ impl RCadApp {
             Message::RotateCamera(dx, dy) => {
                 self.camera.rot_y += dx * 0.01;
                 self.camera.rot_x += dy * 0.01;
+            }
+            Message::ZoomCamera(delta) => {
+                self.camera.distance -= delta * 0.01 * self.camera.distance;
+                self.camera.distance = self.camera.distance.clamp(1.0, 50.0);
             }
             Message::ToggleAutoRotate(on) => {
                 self.auto_rotate = on;
@@ -163,6 +168,15 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.is_dragging = false;
+            }
+            iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
+                if cursor.is_over(_bounds) {
+                    let y = match delta {
+                        iced::mouse::ScrollDelta::Lines { y, .. } => y * 20.0,
+                        iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                    };
+                    return Some(iced::widget::shader::Action::publish(Message::ZoomCamera(y)));
+                }
             }
             iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging {
