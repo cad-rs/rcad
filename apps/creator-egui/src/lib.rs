@@ -60,8 +60,10 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let renderer: &WgpuRenderer = callback_resources.get().unwrap();
-        renderer.update_camera(queue, &self.camera, self.aspect);
+        let Some(renderer) = callback_resources.get::<WgpuRenderer>() else {
+            return Vec::new();
+        };
+        renderer.update_camera(queue, &self.camera, self.aspect.max(0.001));
         Vec::new()
     }
 
@@ -71,7 +73,9 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        let renderer: &WgpuRenderer = callback_resources.get().unwrap();
+        let Some(renderer) = callback_resources.get::<WgpuRenderer>() else {
+            return;
+        };
 
         render_pass.set_pipeline(&renderer.pipeline);
         render_pass.set_bind_group(0, &renderer.camera_bind_group, &[]);
@@ -148,13 +152,8 @@ impl eframe::App for RCadApp {
                     aspect,
                 };
 
-                ui.painter().add(egui::PaintCallback {
-                    rect,
-                    callback: std::sync::Arc::new(egui_wgpu::Callback::new_paint_callback(
-                        rect,
-                        cb,
-                    )),
-                });
+                ui.painter()
+                    .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("wgpu not available");
@@ -190,7 +189,7 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
-pub async fn start() {
+pub fn start() {
     console_error_panic_hook::set_once();
 
     let web_options = eframe::WebOptions::default();
@@ -203,8 +202,7 @@ pub async fn start() {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .unwrap();
 
-        let runner = eframe::WebRunner::new();
-        runner
+        eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
