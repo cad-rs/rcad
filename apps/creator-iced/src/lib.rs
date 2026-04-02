@@ -5,6 +5,7 @@ use rcad_render::{
     build_edges_highlight_mesh, build_faces_highlight_mesh, Camera, Mesh, SelectionMode,
     SelectionState, Tessellator, WgpuRenderer, DEFAULT_EDGE_PICK_RADIUS_PX,
 };
+use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
 
@@ -15,6 +16,7 @@ pub struct RCadApp {
     mesh: Mesh,
     camera: Camera,
     selection: SelectionState,
+    export_status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,7 @@ pub enum Message {
     ClearHover,
     SetSelectionMode(SelectionMode),
     SetAdditiveSelect(bool),
+    ExportStep,
     ResetCamera,
 }
 
@@ -61,6 +64,7 @@ impl RCadApp {
                 mesh,
                 camera: Camera::new(),
                 selection: SelectionState::default(),
+                export_status: None,
             },
             Task::none(),
         )
@@ -115,6 +119,12 @@ impl RCadApp {
             }
             Message::SetAdditiveSelect(v) => {
                 self.selection.additive_select = v;
+            }
+            Message::ExportStep => {
+                self.export_status = Some(match export_step_file(&self.brep, &self.selection) {
+                    Ok(path) => format!("Exported: {}", path),
+                    Err(err) => format!("Export failed: {}", err),
+                });
             }
             Message::ResetCamera => {
                 self.camera = Camera::new();
@@ -179,6 +189,8 @@ impl RCadApp {
             )),
             text("Click to select, toggle Additive Select for multi-select"),
             text("Left drag: rotate, Middle drag: pan"),
+            button("Export STEP").on_press(Message::ExportStep),
+            text(self.export_status.clone().unwrap_or_default()),
             button("Reset Camera").on_press(Message::ResetCamera),
         ]
         .spacing(8))
@@ -221,6 +233,27 @@ struct Scene<'a> {
     camera: &'a Camera,
     selected_faces: Vec<usize>,
     selected_edges: Vec<usize>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn export_step_file(brep: &BRep, selection: &SelectionState) -> Result<String, String> {
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &selection.selected_faces,
+            selected_edges: &selection.selected_edges,
+        },
+    );
+    let path = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("rcad_export.step");
+    std::fs::write(&path, step).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn export_step_file(_brep: &BRep, _selection: &SelectionState) -> Result<String, String> {
+    Err("STEP export is only available in the native app".to_string())
 }
 
 #[derive(Default)]

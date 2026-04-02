@@ -4,6 +4,7 @@ use rcad_render::{
     build_edges_highlight_mesh, build_faces_highlight_mesh, Camera, Mesh,
     SelectionMode, SelectionState, Tessellator, WgpuRenderer, DEFAULT_EDGE_PICK_RADIUS_PX,
 };
+use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
 
@@ -15,6 +16,7 @@ pub struct RCadApp {
     camera: Camera,
     has_renderer: bool,
     selection: SelectionState,
+    export_status: Option<String>,
 }
 
 impl RCadApp {
@@ -58,6 +60,7 @@ impl RCadApp {
             camera: Camera::new(),
             has_renderer,
             selection: SelectionState::default(),
+            export_status: None,
         }
     }
 }
@@ -185,6 +188,16 @@ impl eframe::App for RCadApp {
             ui.label("Click to select, toggle Additive Select for multi-select");
             ui.label("Left drag: rotate, Middle drag: pan");
 
+            if ui.button("Export STEP").clicked() {
+                self.export_status = Some(match export_step_file(&self.brep, &self.selection) {
+                    Ok(path) => format!("Exported: {}", path),
+                    Err(err) => format!("Export failed: {}", err),
+                });
+            }
+            if let Some(status) = &self.export_status {
+                ui.label(status);
+            }
+
             if ui.button("Reset Camera").clicked() {
                 self.camera = Camera::new();
             }
@@ -283,6 +296,27 @@ pub fn run_native(step_content: Option<String>) {
         Box::new(move |cc| Ok(Box::new(RCadApp::new(cc, step_content)))),
     )
     .expect("eframe failed");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn export_step_file(brep: &BRep, selection: &SelectionState) -> Result<String, String> {
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &selection.selected_faces,
+            selected_edges: &selection.selected_edges,
+        },
+    );
+    let path = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("rcad_export.step");
+    std::fs::write(&path, step).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn export_step_file(_brep: &BRep, _selection: &SelectionState) -> Result<String, String> {
+    Err("STEP export is only available in the native app".to_string())
 }
 
 // ─── WASM entry ──────────────────────────────────────────────────────────────

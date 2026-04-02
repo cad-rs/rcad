@@ -3,6 +3,8 @@ use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+pub mod writer;
+
 #[derive(Debug, Clone)]
 struct AdvancedFaceRecord {
     bounds: Vec<u64>,
