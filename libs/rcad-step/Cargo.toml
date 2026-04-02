@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 rcad-kernel = { path = "../rcad-kernel" }
+glam.workspace = true

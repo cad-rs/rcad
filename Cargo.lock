@@ -2428,6 +2428,7 @@ dependencies = [
 name = "rcad-step"
 version = "0.1.0"
 dependencies = [
+ "glam 0.29.3",
  "rcad-kernel",
 ]
 

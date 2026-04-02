@@ -1,6 +1,9 @@
 use eframe::{egui, egui_wgpu};
 use rcad_kernel::BRep;
-use rcad_render::{Camera, Mesh, Tessellator, WgpuRenderer};
+use rcad_render::{
+    build_edges_highlight_mesh, build_faces_highlight_mesh, Camera, Mesh,
+    SelectionMode, SelectionState, Tessellator, WgpuRenderer, DEFAULT_EDGE_PICK_RADIUS_PX,
+};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
 
@@ -11,17 +14,32 @@ pub struct RCadApp {
     mesh: Mesh,
     camera: Camera,
     has_renderer: bool,
-    auto_rotate: bool,
+    selection: SelectionState,
 }
 
 impl RCadApp {
     pub fn new(cc: &eframe::CreationContext<'_>, step_content: Option<String>) -> Self {
-        let brep = if let Some(content) = step_content {
+        let parse_result = if let Some(content) = step_content {
             rcad_step::StepReader::parse_string(&content)
         } else {
             rcad_step::StepReader::parse_string(SAMPLE_STEP)
-        }
-        .unwrap_or_else(|_| BRep::create_box(1.0, 1.0, 1.0));
+        };
+
+        let brep = match parse_result {
+            Ok(brep) => {
+                eprintln!(
+                    "[rcad-step][egui] parsed STEP: vertices={}, edges={}, solids={}",
+                    brep.vertices.len(),
+                    brep.edges.len(),
+                    brep.solids.len()
+                );
+                brep
+            }
+            Err(err) => {
+                eprintln!("[rcad-step][egui] parse failed, fallback to box: {err}");
+                BRep::create_box(1.0, 1.0, 1.0)
+            }
+        };
         let mesh = Tessellator::tessellate(&brep);
 
         // Initialize wgpu renderer
@@ -39,7 +57,7 @@ impl RCadApp {
             mesh,
             camera: Camera::new(),
             has_renderer,
-            auto_rotate: true,
+            selection: SelectionState::default(),
         }
     }
 }
@@ -47,9 +65,12 @@ impl RCadApp {
 // ─── Wgpu Callback ───────────────────────────────────────────────────────────
 
 struct RenderCallback {
+    brep: BRep,
     camera: Camera,
     aspect: f32,
     mesh: Mesh,
+    selected_faces: Vec<usize>,
+    selected_edges: Vec<usize>,
 }
 
 impl egui_wgpu::CallbackTrait for RenderCallback {
@@ -64,6 +85,9 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         let Some(renderer) = callback_resources.get::<WgpuRenderer>() else {
             return Vec::new();
         };
+        let face_mesh = build_faces_highlight_mesh(&self.brep, &self.selected_faces);
+        let edge_mesh = build_edges_highlight_mesh(&self.brep, &self.selected_edges);
+        renderer.upload_highlights(device, face_mesh.as_ref(), edge_mesh.as_ref());
         renderer.prepare_scene(device, queue, &self.mesh, &self.camera, self.aspect);
         Vec::new()
     }
@@ -96,11 +120,6 @@ impl eframe::App for RCadApp {
             ctx.request_repaint();
         }
 
-        if self.auto_rotate {
-            self.camera.rot_y += ctx.input(|i| i.unstable_dt) * 0.6;
-            ctx.request_repaint();
-        }
-
         egui::SidePanel::left("info").min_width(180.0).show(ctx, |ui| {
             ui.heading("RCAD  ·  egui");
             ui.separator();
@@ -115,9 +134,56 @@ impl eframe::App for RCadApp {
                 .sum();
             ui.label(format!("Faces    : {}", face_count));
             ui.label(format!("Triangles: {}", self.mesh.indices.len() / 3));
+            ui.label(format!("Curves   : {}", self.brep.geom.curves.len()));
+            ui.label(format!("Surfaces : {}", self.brep.geom.surfaces.len()));
             ui.separator();
-            ui.checkbox(&mut self.auto_rotate, "Auto-rotate");
-            ui.label("Drag to rotate");
+            ui.label("Selection Mode");
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Select Face")
+                    .clicked()
+                {
+                    self.selection.set_mode(SelectionMode::Face);
+                }
+                if ui
+                    .button("Select Edge")
+                    .clicked()
+                {
+                    self.selection.set_mode(SelectionMode::Edge);
+                }
+            });
+            ui.checkbox(&mut self.selection.additive_select, "Additive Select");
+            ui.label(format!(
+                "Selected Faces: {}",
+                self.selection.selected_faces.len()
+            ));
+            ui.label(format!(
+                "Selected Edges: {}",
+                self.selection.selected_edges.len()
+            ));
+            ui.label(format!(
+                "Hover Face: {}",
+                self.selection
+                    .hovered_face
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+            ui.label(format!(
+                "Hover Edge: {}",
+                self.selection
+                    .hovered_edge
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+            ui.label(format!(
+                "Hover Pos: {}",
+                self.selection
+                    .last_hover_pos
+                    .map(|(x, y)| format!("{x:.1}, {y:.1}"))
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+            ui.label("Click to select, toggle Additive Select for multi-select");
+            ui.label("Left drag: rotate, Middle drag: pan");
 
             if ui.button("Reset Camera").clicked() {
                 self.camera = Camera::new();
@@ -129,17 +195,64 @@ impl eframe::App for RCadApp {
             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
 
             if response.dragged() {
-                let delta = response.drag_delta();
-                self.camera.rot_y += delta.x * 0.008;
-                self.camera.rot_x += delta.y * 0.008;
+                let delta = ui.input(|i| i.pointer.delta());
+                let pan_with_middle = ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+                if pan_with_middle {
+                    self.camera.pan_pixels(delta.x, delta.y);
+                } else {
+                    self.camera.rot_y += delta.x * 0.008;
+                    self.camera.rot_x += delta.y * 0.008;
+                }
+            }
+
+            if response.clicked()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let local = pointer - rect.min;
+                let viewport = [rect.width(), rect.height()];
+                let cursor = [local.x, local.y];
+                let aspect = rect.width() / rect.height().max(1.0);
+                self.selection
+                    .click_at(
+                        &self.brep,
+                        &self.camera,
+                        aspect,
+                        viewport,
+                        cursor,
+                        DEFAULT_EDGE_PICK_RADIUS_PX,
+                    );
+            }
+
+            if response.hovered()
+                && !response.dragged()
+                && let Some(pointer) = response.interact_pointer_pos()
+            {
+                let local = pointer - rect.min;
+                let viewport = [rect.width(), rect.height()];
+                let cursor = [local.x, local.y];
+                let aspect = rect.width() / rect.height().max(1.0);
+                self.selection
+                    .hover_at(
+                        &self.brep,
+                        &self.camera,
+                        aspect,
+                        viewport,
+                        cursor,
+                        DEFAULT_EDGE_PICK_RADIUS_PX,
+                    );
+            } else if !response.hovered() {
+                self.selection.clear_hover();
             }
 
             if self.has_renderer {
                 let aspect = rect.width() / rect.height();
                 let cb = RenderCallback {
+                    brep: self.brep.clone(),
                     camera: self.camera,
                     aspect,
                     mesh: self.mesh.clone(),
+                    selected_faces: self.selection.highlighted_faces(),
+                    selected_edges: self.selection.highlighted_edges(),
                 };
 
                 ui.painter()
