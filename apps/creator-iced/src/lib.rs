@@ -1,5 +1,5 @@
 use iced::widget::{button, checkbox, column, container, row, text};
-use iced::{Border, Color, Element, Length, Task};
+use iced::{Element, Length, Task};
 use rcad_kernel::BRep;
 use rcad_render::{Camera, Mesh, Tessellator, WgpuRenderer};
 
@@ -79,7 +79,7 @@ impl RCadApp {
             .sum();
 
         let info = container(column![
-            text("RCAD · iced").size(20),
+            text("RCAD  ·  iced").size(20),
             text("─────────────────"),
             text(format!("Vertices : {}", self.brep.vertices.len())),
             text(format!("Edges    : {}", self.brep.edges.len())),
@@ -109,10 +109,13 @@ impl RCadApp {
             camera: &self.camera,
         })
         .width(Length::Fill)
-        .height(Length::Fill))
-        .padding(20);
+        .height(Length::Fill));
 
-        row![info, viewport].into()
+
+        row![info, viewport]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 
@@ -260,7 +263,7 @@ impl iced::widget::shader::Primitive for Primitive {
         pipeline: &Self::Pipeline,
         encoder: &mut iced::wgpu::CommandEncoder,
         target: &iced::wgpu::TextureView,
-        _clip_bounds: &iced::Rectangle<u32>,
+        clip_bounds: &iced::Rectangle<u32>,
     ) {
         let clear_color = iced::Color::from_rgb(0.07, 0.07, 0.11);
         pipeline.renderer.render(
@@ -272,6 +275,12 @@ impl iced::widget::shader::Primitive for Primitive {
                 b: clear_color.b as f64,
                 a: clear_color.a as f64,
             },
+            Some((
+                clip_bounds.x,
+                clip_bounds.y,
+                clip_bounds.width,
+                clip_bounds.height,
+            )),
         );
     }
 }

@@ -219,6 +219,7 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         clear_color: wgpu::Color,
+        clip_bounds: Option<(u32, u32, u32, u32)>,
     ) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -226,7 +227,11 @@ impl WgpuRenderer {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
+                    load: if clip_bounds.is_some() {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(clear_color)
+                    },
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -238,6 +243,12 @@ impl WgpuRenderer {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
+        if let Some((x, y, width, height)) = clip_bounds {
+            if width > 0 && height > 0 {
+                render_pass.set_scissor_rect(x, y, width, height);
+            }
+        }
 
         let vb_guard = self.vertex_buffer.lock().unwrap();
         let ib_guard = self.index_buffer.lock().unwrap();
