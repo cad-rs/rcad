@@ -226,6 +226,7 @@ pub fn pick_edge(
 pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    pub line_indices: Vec<u32>,
 }
 
 #[repr(C)]
@@ -273,7 +274,11 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
         .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
         .collect();
 
-    Some(Mesh { vertices, indices })
+    Some(Mesh {
+        vertices,
+        indices,
+        line_indices: Vec::new(),
+    })
 }
 
 pub fn build_edge_highlight_mesh(brep: &BRep, edge_index: usize) -> Option<Mesh> {
@@ -298,7 +303,11 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
         .collect();
 
-    Some(Mesh { vertices, indices })
+    Some(Mesh {
+        vertices,
+        indices,
+        line_indices: Vec::new(),
+    })
 }
 
 pub struct Tessellator;
@@ -312,6 +321,7 @@ impl Tessellator {
             .collect();
 
         let mut indices: Vec<u32> = Vec::new();
+        let mut line_indices: Vec<u32> = Vec::with_capacity(brep.edges.len() * 2);
 
         for solid in &brep.solids {
             for shell in &solid.shells {
@@ -325,9 +335,15 @@ impl Tessellator {
             }
         }
 
+        for edge in &brep.edges {
+            line_indices.push(edge.start as u32);
+            line_indices.push(edge.end as u32);
+        }
+
         Mesh {
             vertices: flat_verts,
             indices,
+            line_indices,
         }
     }
 }
@@ -506,6 +522,8 @@ pub struct WgpuRenderer {
     vertex_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     index_count: std::sync::Mutex<u32>,
+    line_index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
+    line_index_count: std::sync::Mutex<u32>,
     highlight_face_vertex_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     highlight_face_index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     highlight_face_index_count: std::sync::Mutex<u32>,
@@ -751,6 +769,8 @@ impl WgpuRenderer {
             vertex_buffer: std::sync::Mutex::new(None),
             index_buffer: std::sync::Mutex::new(None),
             index_count: std::sync::Mutex::new(0),
+            line_index_buffer: std::sync::Mutex::new(None),
+            line_index_count: std::sync::Mutex::new(0),
             highlight_face_vertex_buffer: std::sync::Mutex::new(None),
             highlight_face_index_buffer: std::sync::Mutex::new(None),
             highlight_face_index_count: std::sync::Mutex::new(0),
@@ -835,6 +855,20 @@ impl WgpuRenderer {
         }));
 
         *self.index_count.lock().unwrap() = mesh.indices.len() as u32;
+
+        if mesh.line_indices.is_empty() {
+            *self.line_index_buffer.lock().unwrap() = None;
+            *self.line_index_count.lock().unwrap() = 0;
+        } else {
+            *self.line_index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Line Index Buffer"),
+                    contents: bytemuck::cast_slice(&mesh.line_indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ));
+            *self.line_index_count.lock().unwrap() = mesh.line_indices.len() as u32;
+        }
     }
 
     pub fn upload_highlights(
@@ -918,6 +952,31 @@ impl WgpuRenderer {
             render_pass.set_vertex_buffer(0, vb.slice(..));
             render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..count, 0, 0..1);
+        }
+
+        let lib_guard = self.line_index_buffer.lock().unwrap();
+        let lcount = *self.line_index_count.lock().unwrap();
+        if lcount > 0
+            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
+        {
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_line_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline_line);
+            }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..lcount, 0, 0..1);
+
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline);
+            }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
         }
 
         let hvb_guard = self.highlight_face_vertex_buffer.lock().unwrap();
