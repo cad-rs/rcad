@@ -50,3 +50,42 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 - **Phase 1 (MVP)**: Kernel primitives, Basic STEP reader, egui integration.
 - **Phase 2 (Intermediate)**: Topology graph management, Tessellation for wgpu, basic Boolean operations.
 - **Phase 3 (Advanced)**: Full STEP export, iced integration, complex modeling algorithms (fillets/sweeps).
+
+## 9. Rendering Coding Principles (Mandatory)
+
+The following rules are mandatory for all current and future rendering work. They are designed to keep behavior consistent between [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced).
+
+### 9.1 Single Ownership of Rendering Logic
+- All wgpu rendering logic MUST be implemented in [libs/rcad-render](libs/rcad-render).
+- App crates MUST NOT implement or duplicate low-level rendering steps such as:
+	- Pipeline creation
+	- Bind group and uniform layout setup
+	- Vertex/index draw calls
+	- Depth attachment management
+	- Default clear color selection
+
+### 9.2 Allowed Responsibilities in App Layer
+- App crates MAY handle only framework integration concerns:
+	- UI layout and widgets
+	- User input mapping (drag, zoom, toggle states)
+	- Runtime wiring for egui/iced callback or shader program hooks
+- App crates MUST call renderer APIs exposed by [libs/rcad-render/src/lib.rs](libs/rcad-render/src/lib.rs) for scene preparation and drawing.
+
+### 9.3 API-First Evolution Rule
+- When a new rendering feature is required (e.g., shadows, clipping planes, anti-aliasing policy, tone mapping), it MUST be added to [libs/rcad-render](libs/rcad-render) first.
+- App crates MUST consume that feature only through public renderer APIs.
+- Direct access to internal renderer fields from app crates is forbidden; renderer internals should remain encapsulated.
+
+### 9.4 Cross-App Visual Consistency
+- Default render behavior (camera update path, lighting model, depth-test policy, clear color) MUST be defined centrally in [libs/rcad-render](libs/rcad-render).
+- [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced) MUST use the same rcad-render defaults unless there is an explicitly documented exception.
+- Any intentional visual difference between apps MUST be documented in this specification before merge.
+
+### 9.5 Definition of Done for Rendering Changes
+- A rendering-related change is complete only if all conditions are satisfied:
+	- Code changes are centralized in [libs/rcad-render](libs/rcad-render) unless strictly UI integration.
+	- Both app targets compile successfully:
+		- `cargo check -p creator-egui`
+		- `cargo check -p creator-iced`
+	- If web path is affected, web build must pass for relevant app with trunk.
+	- The change does not reintroduce duplicated rendering code in app crates.

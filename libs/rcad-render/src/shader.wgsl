@@ -1,5 +1,6 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    eye_pos: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -23,11 +24,21 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Use a more visible diagnostic color
-    let normal = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
-    let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
-    let diff = max(dot(normal, light_dir), 0.2);
-    let base_color = vec3<f32>(0.0, 0.5, 1.0); // Bright blue
-    return vec4<f32>(base_color * diff, 1.0);
+fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    var normal = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
+    if (!front_facing) {
+        normal = -normal;
+    }
+
+    let light_dir = normalize(vec3<f32>(0.45, 0.85, 0.35));
+    let view_dir = normalize(camera.eye_pos.xyz - in.world_position);
+    let half_dir = normalize(light_dir + view_dir);
+
+    let base_color = vec3<f32>(0.18, 0.64, 0.96);
+    let ambient = 0.18;
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let specular = pow(max(dot(normal, half_dir), 0.0), 24.0) * 0.20;
+
+    let lit = base_color * (ambient + diffuse * 0.82) + vec3<f32>(specular);
+    return vec4<f32>(lit, 1.0);
 }

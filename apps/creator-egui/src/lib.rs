@@ -49,12 +49,13 @@ impl RCadApp {
 struct RenderCallback {
     camera: Camera,
     aspect: f32,
+    mesh: Mesh,
 }
 
 impl egui_wgpu::CallbackTrait for RenderCallback {
     fn prepare(
         &self,
-        _device: &wgpu::Device,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         _screen_descriptor: &egui_wgpu::ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
@@ -63,7 +64,7 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         let Some(renderer) = callback_resources.get::<WgpuRenderer>() else {
             return Vec::new();
         };
-        renderer.update_camera(queue, &self.camera, self.aspect.max(0.001));
+        renderer.prepare_scene(device, queue, &self.mesh, &self.camera, self.aspect);
         Vec::new()
     }
 
@@ -76,19 +77,7 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
         let Some(renderer) = callback_resources.get::<WgpuRenderer>() else {
             return;
         };
-
-        render_pass.set_pipeline(&renderer.pipeline);
-        render_pass.set_bind_group(0, &renderer.camera_bind_group, &[]);
-
-        let vb_guard = renderer.vertex_buffer.lock().unwrap();
-        let ib_guard = renderer.index_buffer.lock().unwrap();
-        let index_count = *renderer.index_count.lock().unwrap();
-
-        if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
-            render_pass.set_vertex_buffer(0, vb.slice(..));
-            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..index_count, 0, 0..1);
-        }
+        renderer.draw_in_render_pass(render_pass, false);
     }
 }
 
@@ -150,6 +139,7 @@ impl eframe::App for RCadApp {
                 let cb = RenderCallback {
                     camera: self.camera,
                     aspect,
+                    mesh: self.mesh.clone(),
                 };
 
                 ui.painter()

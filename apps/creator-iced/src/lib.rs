@@ -248,14 +248,17 @@ impl iced::widget::shader::Primitive for Primitive {
         device: &iced::wgpu::Device,
         queue: &iced::wgpu::Queue,
         _bounds: &iced::Rectangle,
-        _viewport: &iced::advanced::graphics::Viewport,
+        viewport: &iced::advanced::graphics::Viewport,
     ) {
-        pipeline.renderer.update_camera(
+        let physical_size = viewport.physical_size();
+        pipeline.renderer.prepare_scene_with_depth(
+            unsafe { std::mem::transmute(device) },
             unsafe { std::mem::transmute(queue) },
+            &self.mesh,
             &self.camera,
             self.aspect,
+            (physical_size.width, physical_size.height),
         );
-        pipeline.renderer.upload_mesh(unsafe { std::mem::transmute(device) }, &self.mesh);
     }
 
     fn render(
@@ -265,16 +268,9 @@ impl iced::widget::shader::Primitive for Primitive {
         target: &iced::wgpu::TextureView,
         clip_bounds: &iced::Rectangle<u32>,
     ) {
-        let clear_color = iced::Color::from_rgb(0.07, 0.07, 0.11);
-        pipeline.renderer.render(
+        pipeline.renderer.render_with_defaults(
             unsafe { std::mem::transmute(target) },
             unsafe { std::mem::transmute(encoder) },
-            wgpu::Color {
-                r: clear_color.r as f64,
-                g: clear_color.g as f64,
-                b: clear_color.b as f64,
-                a: clear_color.a as f64,
-            },
             Some((
                 clip_bounds.x,
                 clip_bounds.y,
