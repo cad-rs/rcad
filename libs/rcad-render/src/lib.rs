@@ -310,6 +310,38 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
     })
 }
 
+pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
+    if meshes.is_empty() {
+        return None;
+    }
+
+    let total_vertices = meshes.iter().map(|mesh| mesh.vertices.len()).sum();
+    let total_indices = meshes.iter().map(|mesh| mesh.indices.len()).sum();
+    let total_line_indices = meshes.iter().map(|mesh| mesh.line_indices.len()).sum();
+
+    if total_vertices == 0 || (total_indices == 0 && total_line_indices == 0) {
+        return None;
+    }
+
+    let mut vertices = Vec::with_capacity(total_vertices);
+    let mut indices = Vec::with_capacity(total_indices);
+    let mut line_indices = Vec::with_capacity(total_line_indices);
+    let mut vertex_offset = 0u32;
+
+    for mesh in meshes {
+        vertices.extend_from_slice(&mesh.vertices);
+        indices.extend(mesh.indices.iter().map(|index| index + vertex_offset));
+        line_indices.extend(mesh.line_indices.iter().map(|index| index + vertex_offset));
+        vertex_offset += mesh.vertices.len() as u32;
+    }
+
+    Some(Mesh {
+        vertices,
+        indices,
+        line_indices,
+    })
+}
+
 pub struct Tessellator;
 
 impl Tessellator {
@@ -453,6 +485,44 @@ fn screen_ray(
     Some((p0, dir))
 }
 
+pub fn cursor_point_on_plane(
+    camera: &Camera,
+    aspect: f32,
+    viewport_size: [f32; 2],
+    cursor_pos: [f32; 2],
+    plane_origin: glam::DVec3,
+    plane_normal: glam::DVec3,
+) -> Option<glam::DVec3> {
+    let (ray_origin, ray_dir) = screen_ray(camera, aspect, viewport_size, cursor_pos)?;
+    let plane_origin = glam::Vec3::new(
+        plane_origin.x as f32,
+        plane_origin.y as f32,
+        plane_origin.z as f32,
+    );
+    let plane_normal = glam::Vec3::new(
+        plane_normal.x as f32,
+        plane_normal.y as f32,
+        plane_normal.z as f32,
+    )
+    .normalize_or_zero();
+    if plane_normal.length_squared() <= 1e-8 {
+        return None;
+    }
+
+    let denom = plane_normal.dot(ray_dir);
+    if denom.abs() <= 1e-6 {
+        return None;
+    }
+
+    let t = plane_normal.dot(plane_origin - ray_origin) / denom;
+    if !t.is_finite() || t < 0.0 {
+        return None;
+    }
+
+    let point = ray_origin + ray_dir * t;
+    Some(glam::DVec3::new(point.x as f64, point.y as f64, point.z as f64))
+}
+
 fn ray_triangle_intersection(
     ray_origin: glam::Vec3,
     ray_dir: glam::Vec3,
@@ -580,7 +650,7 @@ impl WgpuRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -678,7 +748,7 @@ impl WgpuRenderer {
         let material_face_highlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Face Highlight Material Buffer"),
             contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [1.0, 0.45, 0.05, 1.0],
+                color: [1.0, 0.45, 0.05, 0.45],
                 flags: [1.0, 0.0, 0.0, 0.0],
             }]),
             usage: wgpu::BufferUsages::UNIFORM,

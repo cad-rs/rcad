@@ -910,11 +910,14 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 mod tests {
     use super::*;
     use crate::StepReader;
+    use glam::DVec3;
+    use rcad_modeling::make_box_brep;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
 
     #[test]
     fn exports_full_box_and_reimports() {
-        let brep = rcad_kernel::BRep::create_box(1.0, 2.0, 3.0);
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
+            .expect("test box should be valid");
         let step = StepWriter::write_string(
             &brep,
             ExportSelection {
@@ -933,7 +936,8 @@ mod tests {
 
     #[test]
     fn exports_selected_edges_without_faces() {
-        let brep = rcad_kernel::BRep::create_box(1.0, 1.0, 1.0);
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
         let step = StepWriter::write_string(
             &brep,
             ExportSelection {
@@ -949,7 +953,8 @@ mod tests {
 
     #[test]
     fn exports_selected_faces_via_shell_based_surface_model() {
-        let brep = rcad_kernel::BRep::create_box(1.0, 1.0, 1.0);
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
         let step = StepWriter::write_string(
             &brep,
             ExportSelection {

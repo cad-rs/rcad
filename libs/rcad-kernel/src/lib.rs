@@ -55,7 +55,7 @@ impl BRep {
     /// Vertex layout:
     ///   0:(0,0,0)  1:(w,0,0)  2:(w,h,0)  3:(0,h,0)   <- front face (z=0)
     ///   4:(0,0,d)  5:(w,0,d)  6:(w,h,d)  7:(0,h,d)   <- back face  (z=d)
-    pub fn create_box(width: f64, height: f64, depth: f64) -> Self {
+    fn create_box(width: f64, height: f64, depth: f64) -> Self {
         let (w, h, d) = (width, height, depth);
 
         let vertices = vec![
@@ -109,7 +109,7 @@ impl BRep {
     }
 
     /// Creates a triangulated UV sphere centered at origin.
-    pub fn create_sphere(radius: f64, u_segments: usize, v_segments: usize) -> Self {
+    fn create_sphere(radius: f64, u_segments: usize, v_segments: usize) -> Self {
         let u = u_segments.max(3);
         let v = v_segments.max(2);
 
@@ -151,7 +151,7 @@ impl BRep {
     }
 
     /// Creates a triangulated cylinder along Y axis, centered at origin.
-    pub fn create_cylinder(radius: f64, height: f64, segments: usize) -> Self {
+    fn create_cylinder(radius: f64, height: f64, segments: usize) -> Self {
         let seg = segments.max(3);
         let half_h = height * 0.5;
 
@@ -186,7 +186,7 @@ impl BRep {
     }
 
     /// Creates a triangulated cone along Y axis, apex at +Y.
-    pub fn create_cone(base_radius: f64, height: f64, segments: usize) -> Self {
+    fn create_cone(base_radius: f64, height: f64, segments: usize) -> Self {
         let seg = segments.max(3);
         let half_h = height * 0.5;
 
@@ -211,7 +211,7 @@ impl BRep {
     }
 
     /// Creates a triangulated torus around Y axis, centered at origin.
-    pub fn create_torus(
+    fn create_torus(
         major_radius: f64,
         minor_radius: f64,
         major_segments: usize,
@@ -255,6 +255,9 @@ impl BRep {
         Self::from_triangle_soup(points, triangles)
     }
 
+    /// Materializes a primitive solid descriptor into a triangulated B-Rep.
+    ///
+    /// User-facing code should prefer `rcad-modeling` construction helpers.
     pub fn from_primitive(primitive: PrimitiveSolid) -> Self {
         match primitive {
             PrimitiveSolid::Box {

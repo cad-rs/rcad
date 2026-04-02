@@ -1,9 +1,8 @@
 [package]
-name = "rcad-step"
+name = "rcad-modeling"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 rcad-kernel = { path = "../rcad-kernel" }
-rcad-modeling = { path = "../rcad-modeling" }
 glam.workspace = true

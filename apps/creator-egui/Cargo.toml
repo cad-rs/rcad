@@ -15,7 +15,9 @@ eframe.workspace = true
 egui.workspace = true
 wgpu = { workspace = true }
 rcad-kernel = { path = "../../libs/rcad-kernel" }
+rcad-modeling = { path = "../../libs/rcad-modeling" }
 rcad-render  = { path = "../../libs/rcad-render" }
+rcad-scene   = { path = "../../libs/rcad-scene" }
 rcad-step    = { path = "../../libs/rcad-step" }
 glam.workspace = true
 

@@ -2,9 +2,11 @@
 resolver = "2"
 members = [
     "libs/rcad-kernel",
+    "libs/rcad-modeling",
     "libs/rcad-algorithms",
     "libs/rcad-step",
     "libs/rcad-render",
+    "libs/rcad-scene",
     "apps/creator-egui",
     "apps/creator-iced",
 ]

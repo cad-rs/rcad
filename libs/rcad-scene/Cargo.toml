@@ -1,9 +1,10 @@
 [package]
-name = "rcad-step"
+name = "rcad-scene"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+glam.workspace = true
 rcad-kernel = { path = "../rcad-kernel" }
 rcad-modeling = { path = "../rcad-modeling" }
-glam.workspace = true
+rcad-render = { path = "../rcad-render" }

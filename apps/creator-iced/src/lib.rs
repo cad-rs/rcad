@@ -2,20 +2,20 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length, Task};
 use rcad_kernel::BRep;
 use rcad_render::{
-    build_edges_highlight_mesh, build_faces_highlight_mesh, Camera, Mesh, SelectionMode,
-    SelectionState, Tessellator, WgpuRenderer, DEFAULT_EDGE_PICK_RADIUS_PX,
+    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes, Camera, Mesh,
+    SelectionMode, SelectionState, Tessellator, WgpuRenderer,
 };
+use rcad_scene::{append_brep, CreationController, Tool};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
-
-// ─── App ─────────────────────────────────────────────────────────────────────
 
 pub struct RCadApp {
     brep: BRep,
     mesh: Mesh,
     camera: Camera,
     selection: SelectionState,
+    creation: CreationController,
     export_status: Option<String>,
 }
 
@@ -29,6 +29,15 @@ pub enum Message {
     ClearHover,
     SetSelectionMode(SelectionMode),
     SetAdditiveSelect(bool),
+    SetTool(Tool),
+    CancelCommand,
+    ConfirmCommand,
+    UndoLastStep,
+    GrowSelectedFaces,
+    GrowSelectedEdges,
+    SelectFaceBoundaryEdges,
+    SelectEdgeIncidentFaces,
+    ClearSelection,
     ExportStep,
     ResetCamera,
 }
@@ -53,7 +62,15 @@ impl RCadApp {
             }
             Err(err) => {
                 eprintln!("[rcad-step][iced] parse failed, fallback to box: {err}");
-                BRep::create_box(1.0, 1.0, 1.0)
+                rcad_modeling::make_box_brep(
+                    glam::DVec3::ZERO,
+                    glam::DVec3::X,
+                    glam::DVec3::Y,
+                    1.0,
+                    1.0,
+                    1.0,
+                )
+                .expect("default fallback box should be valid")
             }
         };
         let mesh = Tessellator::tessellate(&brep);
@@ -64,6 +81,7 @@ impl RCadApp {
                 mesh,
                 camera: Camera::new(),
                 selection: SelectionState::default(),
+                creation: CreationController::default(),
                 export_status: None,
             },
             Task::none(),
@@ -84,41 +102,51 @@ impl RCadApp {
                 self.camera.distance = self.camera.distance.clamp(1.0, 50.0);
             }
             Message::SelectAt(x, y, w, h) => {
-                let viewport = [w.max(1.0), h.max(1.0)];
-                let cursor = [x, y];
-                let aspect = viewport[0] / viewport[1];
-                self.selection
-                    .click_at(
-                        &self.brep,
-                        &self.camera,
-                        aspect,
-                        viewport,
-                        cursor,
-                        DEFAULT_EDGE_PICK_RADIUS_PX,
-                    );
+                self.handle_primary_click([x, y], [w.max(1.0), h.max(1.0)]);
             }
             Message::HoverAt(x, y, w, h) => {
-                let viewport = [w.max(1.0), h.max(1.0)];
-                let cursor = [x, y];
-                let aspect = viewport[0] / viewport[1];
-                self.selection
-                    .hover_at(
-                        &self.brep,
-                        &self.camera,
-                        aspect,
-                        viewport,
-                        cursor,
-                        DEFAULT_EDGE_PICK_RADIUS_PX,
-                    );
+                self.handle_pointer_move([x, y], [w.max(1.0), h.max(1.0)]);
             }
             Message::ClearHover => {
-                self.selection.clear_hover();
+                self.creation
+                    .clear_hover_if_selection_tool(&mut self.selection);
             }
             Message::SetSelectionMode(mode) => {
-                self.selection.set_mode(mode);
+                self.creation.set_selection_mode(mode, &mut self.selection);
             }
             Message::SetAdditiveSelect(v) => {
-                self.selection.additive_select = v;
+                self.creation.set_additive_select(&mut self.selection, v);
+            }
+            Message::SetTool(tool) => {
+                self.creation.set_tool(tool, &mut self.selection);
+            }
+            Message::CancelCommand => {
+                self.creation.cancel_active_command();
+            }
+            Message::ConfirmCommand => {
+                self.commit_active_command();
+            }
+            Message::UndoLastStep => {
+                self.creation.undo_last_step();
+            }
+            Message::GrowSelectedFaces => {
+                self.creation
+                    .grow_selected_faces(&self.brep, &mut self.selection);
+            }
+            Message::GrowSelectedEdges => {
+                self.creation
+                    .grow_selected_edges(&self.brep, &mut self.selection);
+            }
+            Message::SelectFaceBoundaryEdges => {
+                self.creation
+                    .select_face_boundary_edges(&self.brep, &mut self.selection);
+            }
+            Message::SelectEdgeIncidentFaces => {
+                self.creation
+                    .select_edge_incident_faces(&self.brep, &mut self.selection);
+            }
+            Message::ClearSelection => {
+                self.creation.clear_selection(&mut self.selection);
             }
             Message::ExportStep => {
                 self.export_status = Some(match export_step_file(&self.brep, &self.selection) {
@@ -142,6 +170,20 @@ impl RCadApp {
             .map(|sh| sh.faces.len())
             .sum();
 
+        let toolbar = container(
+            row![
+                text("Tools"),
+                button("Select Face").on_press(Message::SetTool(Tool::SelectFace)),
+                button("Select Edge").on_press(Message::SetTool(Tool::SelectEdge)),
+                button("Box").on_press(Message::SetTool(Tool::Box)),
+                button("Sphere").on_press(Message::SetTool(Tool::Sphere)),
+                text(self.creation.command_hint()),
+            ]
+            .spacing(8),
+        )
+        .padding(8)
+        .width(Length::Fill);
+
         let info = container(column![
             text("RCAD  ·  iced").size(20),
             text("─────────────────"),
@@ -161,6 +203,18 @@ impl RCadApp {
             checkbox(self.selection.additive_select)
                 .label("Additive Select")
                 .on_toggle(Message::SetAdditiveSelect),
+            text("Topology Nav"),
+            row![
+                button("Grow Faces").on_press(Message::GrowSelectedFaces),
+                button("Grow Edges").on_press(Message::GrowSelectedEdges)
+            ]
+            .spacing(6),
+            row![
+                button("Face -> Edges").on_press(Message::SelectFaceBoundaryEdges),
+                button("Edge -> Faces").on_press(Message::SelectEdgeIncidentFaces)
+            ]
+            .spacing(6),
+            button("Clear Selection").on_press(Message::ClearSelection),
             text(format!(
                 "Selected Faces: {}",
                 self.selection.selected_faces.len()
@@ -171,61 +225,89 @@ impl RCadApp {
             )),
             text(format!(
                 "Hover Face: {}",
-                self.selection.hovered_face
+                self.selection
+                    .hovered_face
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "-".to_string())
             )),
             text(format!(
                 "Hover Edge: {}",
-                self.selection.hovered_edge
+                self.selection
+                    .hovered_edge
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "-".to_string())
             )),
             text(format!(
                 "Hover Pos: {}",
-                self.selection.last_hover_pos
+                self.selection
+                    .last_hover_pos
                     .map(|(x, y)| format!("{x:.1}, {y:.1}"))
                     .unwrap_or_else(|| "-".to_string())
             )),
-            text("Click to select, toggle Additive Select for multi-select"),
-            text("Left drag: rotate, Middle drag: pan"),
+            text(format!("Active Tool: {}", self.creation.tool_name())),
+            text("Left click: select/create, Alt+Left drag: rotate"),
+            text("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish"),
             button("Export STEP").on_press(Message::ExportStep),
             text(self.export_status.clone().unwrap_or_default()),
             button("Reset Camera").on_press(Message::ResetCamera),
         ]
         .spacing(8))
         .padding(12)
-        .width(Length::Fixed(180.0))
+        .width(Length::Fixed(220.0))
         .height(Length::Fill);
-        // .style(|_| container::Style {
-        //     background: Some(Color::from_rgb(0.1, 0.1, 0.15).into()),
-        //     border: Border {
-        //         width: 0.0,
-        //         color: Color::TRANSPARENT,
-        //         radius: 0.0.into(),
-        //     },
-        //     ..Default::default()
-        // });
 
-        let viewport = container(iced::widget::shader(Scene {
-            brep: &self.brep,
-            mesh: &self.mesh,
-            camera: &self.camera,
-            selected_faces: self.selection.highlighted_faces(),
-            selected_edges: self.selection.highlighted_edges(),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill));
+        let viewport = container(
+            iced::widget::shader(Scene {
+                brep: &self.brep,
+                mesh: &self.mesh,
+                camera: &self.camera,
+                selected_faces: self.selection.highlighted_faces(),
+                selected_edges: self.selection.highlighted_edges(),
+                preview_mesh: self
+                    .creation
+                    .preview_brep(self.camera.distance)
+                    .map(|brep| Tessellator::tessellate(&brep)),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill),
+        );
 
-
-        row![info, viewport]
+        column![toolbar, row![info, viewport].width(Length::Fill).height(Length::Fill)]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
-}
 
-// ─── Shader Integration ──────────────────────────────────────────────────────
+    fn handle_primary_click(&mut self, cursor: [f32; 2], viewport: [f32; 2]) {
+        if let Some(new_brep) = self.creation.handle_primary_click(
+            &self.brep,
+            &self.camera,
+            &mut self.selection,
+            cursor,
+            viewport,
+        ) {
+            append_brep(&mut self.brep, new_brep);
+            self.mesh = Tessellator::tessellate(&self.brep);
+        }
+    }
+
+    fn handle_pointer_move(&mut self, cursor: [f32; 2], viewport: [f32; 2]) {
+        self.creation.handle_pointer_move(
+            &self.brep,
+            &self.camera,
+            &mut self.selection,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn commit_active_command(&mut self) {
+        if let Some(new_brep) = self.creation.confirm_active_command(&self.camera) {
+            append_brep(&mut self.brep, new_brep);
+            self.mesh = Tessellator::tessellate(&self.brep);
+        }
+    }
+}
 
 struct Scene<'a> {
     brep: &'a BRep,
@@ -233,6 +315,7 @@ struct Scene<'a> {
     camera: &'a Camera,
     selected_faces: Vec<usize>,
     selected_edges: Vec<usize>,
+    preview_mesh: Option<Mesh>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -258,9 +341,11 @@ fn export_step_file(_brep: &BRep, _selection: &SelectionState) -> Result<String,
 
 #[derive(Default)]
 struct SceneState {
+    primary_pressed: bool,
+    alt_pressed: bool,
     is_rotating: bool,
     is_panning: bool,
-    rotate_drag_distance: f32,
+    primary_drag_distance: f32,
     last_cursor_position: Option<iced::Point>,
 }
 
@@ -291,44 +376,62 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
         &self,
         state: &mut Self::State,
         event: &iced::Event,
-        _bounds: iced::Rectangle,
+        bounds: iced::Rectangle,
         cursor: iced::mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<Message>> {
         match event {
+            iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.alt_pressed = modifiers.alt();
+            }
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => match key {
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    return Some(iced::widget::shader::Action::publish(Message::CancelCommand));
+                }
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                    return Some(iced::widget::shader::Action::publish(Message::ConfirmCommand));
+                }
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                    return Some(iced::widget::shader::Action::publish(Message::UndoLastStep));
+                }
+                _ => {}
+            },
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-                if cursor.is_over(_bounds) {
-                    state.is_rotating = true;
-                    state.rotate_drag_distance = 0.0;
-                    state.last_cursor_position = local_cursor_position(cursor, _bounds);
+                if cursor.is_over(bounds) {
+                    state.primary_pressed = true;
+                    state.is_rotating = state.alt_pressed;
+                    state.primary_drag_distance = 0.0;
+                    state.last_cursor_position = local_cursor_position(cursor, bounds);
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Middle)) => {
-                if cursor.is_over(_bounds) {
+                if cursor.is_over(bounds) {
                     state.is_panning = true;
-                    state.last_cursor_position = local_cursor_position(cursor, _bounds);
+                    state.last_cursor_position = local_cursor_position(cursor, bounds);
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                if state.is_rotating
-                    && state.rotate_drag_distance < 3.0
-                    && let Some(pos) = local_cursor_position(cursor, _bounds)
+                if state.primary_pressed
+                    && state.primary_drag_distance < 3.0
+                    && let Some(pos) = local_cursor_position(cursor, bounds)
                 {
+                    state.primary_pressed = false;
                     state.is_rotating = false;
                     state.last_cursor_position = Some(pos);
                     return Some(iced::widget::shader::Action::publish(Message::SelectAt(
                         pos.x,
                         pos.y,
-                        _bounds.width,
-                        _bounds.height,
+                        bounds.width,
+                        bounds.height,
                     )));
                 }
+                state.primary_pressed = false;
                 state.is_rotating = false;
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Middle)) => {
                 state.is_panning = false;
             }
             iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
-                if cursor.is_over(_bounds) {
+                if cursor.is_over(bounds) {
                     let y = match delta {
                         iced::mouse::ScrollDelta::Lines { y, .. } => *y * 20.0,
                         iced::mouse::ScrollDelta::Pixels { y, .. } => *y,
@@ -338,22 +441,29 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             }
             iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
                 if state.is_rotating {
-                    if let Some(current_pos) = local_cursor_position(cursor, _bounds) {
+                    if let Some(current_pos) = local_cursor_position(cursor, bounds) {
                         if let Some(last_pos) = state.last_cursor_position {
                             let dx = current_pos.x - last_pos.x;
                             let dy = current_pos.y - last_pos.y;
-                            state.rotate_drag_distance += (dx * dx + dy * dy).sqrt();
-
+                            state.primary_drag_distance += (dx * dx + dy * dy).sqrt();
                             state.last_cursor_position = Some(current_pos);
-
                             return Some(iced::widget::shader::Action::publish(
                                 Message::RotateCamera(dx * 0.8, dy * 0.8),
                             ));
                         }
                         state.last_cursor_position = Some(current_pos);
                     }
+                } else if state.primary_pressed {
+                    if let Some(current_pos) = local_cursor_position(cursor, bounds) {
+                        if let Some(last_pos) = state.last_cursor_position {
+                            let dx = current_pos.x - last_pos.x;
+                            let dy = current_pos.y - last_pos.y;
+                            state.primary_drag_distance += (dx * dx + dy * dy).sqrt();
+                        }
+                        state.last_cursor_position = Some(current_pos);
+                    }
                 } else if state.is_panning {
-                    if let Some(current_pos) = local_cursor_position(cursor, _bounds) {
+                    if let Some(current_pos) = local_cursor_position(cursor, bounds) {
                         if let Some(last_pos) = state.last_cursor_position {
                             let dx = current_pos.x - last_pos.x;
                             let dy = current_pos.y - last_pos.y;
@@ -364,12 +474,12 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
                         }
                         state.last_cursor_position = Some(current_pos);
                     }
-                } else if let Some(current_pos) = local_cursor_position(cursor, _bounds) {
+                } else if let Some(current_pos) = local_cursor_position(cursor, bounds) {
                     return Some(iced::widget::shader::Action::publish(Message::HoverAt(
                         current_pos.x,
                         current_pos.y,
-                        _bounds.width,
-                        _bounds.height,
+                        bounds.width,
+                        bounds.height,
                     )));
                 } else {
                     return Some(iced::widget::shader::Action::publish(Message::ClearHover));
@@ -384,28 +494,29 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
         &self,
         _state: &Self::State,
         _cursor: iced::mouse::Cursor,
-        _bounds: iced::Rectangle,
+        bounds: iced::Rectangle,
     ) -> Self::Primitive {
         Primitive {
             brep: self.brep.clone(),
             mesh: self.mesh.clone(),
             camera: *self.camera,
-            aspect: _bounds.width / _bounds.height,
+            aspect: bounds.width / bounds.height,
             selected_faces: self.selected_faces.clone(),
             selected_edges: self.selected_edges.clone(),
+            preview_mesh: self.preview_mesh.clone(),
         }
     }
 
     fn mouse_interaction(
         &self,
         state: &Self::State,
-        _bounds: iced::Rectangle,
-        _cursor: iced::mouse::Cursor,
+        bounds: iced::Rectangle,
+        cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
         if state.is_rotating || state.is_panning {
             iced::mouse::Interaction::Grabbing
-        } else if _cursor.is_over(_bounds) {
-            iced::mouse::Interaction::Grab
+        } else if cursor.is_over(bounds) {
+            iced::mouse::Interaction::Crosshair
         } else {
             iced::mouse::Interaction::default()
         }
@@ -432,6 +543,7 @@ struct Primitive {
     aspect: f32,
     selected_faces: Vec<usize>,
     selected_edges: Vec<usize>,
+    preview_mesh: Option<Mesh>,
 }
 
 impl iced::widget::shader::Primitive for Primitive {
@@ -445,7 +557,15 @@ impl iced::widget::shader::Primitive for Primitive {
         _bounds: &iced::Rectangle,
         viewport: &iced::advanced::graphics::Viewport,
     ) {
-        let face_mesh = build_faces_highlight_mesh(&self.brep, &self.selected_faces);
+        let selected_face_mesh = build_faces_highlight_mesh(&self.brep, &self.selected_faces);
+        let mut face_parts: Vec<&Mesh> = Vec::new();
+        if let Some(mesh) = selected_face_mesh.as_ref() {
+            face_parts.push(mesh);
+        }
+        if let Some(mesh) = self.preview_mesh.as_ref() {
+            face_parts.push(mesh);
+        }
+        let face_mesh = merge_meshes(&face_parts);
         let edge_mesh = build_edges_highlight_mesh(&self.brep, &self.selected_edges);
         pipeline.renderer.upload_highlights(
             unsafe { std::mem::transmute(device) },
@@ -490,8 +610,6 @@ impl Default for RCadApp {
     }
 }
 
-// ─── Native entry ────────────────────────────────────────────────────────────
-
 pub fn run_native(step_content: Option<String>) -> iced::Result {
     iced::application(move || RCadApp::new(step_content.clone()), RCadApp::update, RCadApp::view)
         .title("RCAD Creator · iced")
@@ -501,8 +619,6 @@ pub fn run_native(step_content: Option<String>) -> iced::Result {
         })
         .run()
 }
-
-// ─── WASM entry ──────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;

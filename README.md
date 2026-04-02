@@ -7,6 +7,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 - STEP import can load real sample models (for example `assets/hfss.step`) instead of a fixed placeholder box.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).
 - `rcad-render` centralizes picking, selection state, and highlight rendering.
+- `rcad-scene` centralizes creation command state machines (Box/Sphere flow, preview, confirm/cancel/undo).
 - `creator-egui` and `creator-iced` are interaction-aligned:
     - Left drag: rotate
     - Middle drag: pan
@@ -19,9 +20,11 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 rcad/
 ├── libs/
 │   ├── rcad-kernel/      # B-Rep geometry and topology primitives
+│   ├── rcad-modeling/    # Builder-style analytic geometry and primitive creation
 │   ├── rcad-algorithms/  # Boolean ops, sweeps, fillets
 │   ├── rcad-step/        # STEP (ISO 10303) import / export
-│   └── rcad-render/      # wgpu tessellation and mesh pipeline
+│   ├── rcad-render/      # wgpu tessellation and mesh pipeline
+│   └── rcad-scene/       # scene/command interaction logic shared by apps
 └── apps/
     ├── creator-egui/     # egui-based modelling app
     └── creator-iced/     # iced-based modelling app

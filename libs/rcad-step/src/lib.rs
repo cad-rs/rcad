@@ -1,5 +1,6 @@
 use rcad_kernel::{BRep, Curve3, GeomStore, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire};
+use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
@@ -436,13 +437,15 @@ fn brep_from_points_bbox(parsed: &ParsedStep) -> Option<BRep> {
         depth = 1.0;
     }
 
-    let mut brep = BRep::create_box(width, height, depth);
-    for vertex in &mut brep.vertices {
-        vertex.point.x += min[0];
-        vertex.point.y += min[1];
-        vertex.point.z += min[2];
-    }
-    Some(brep)
+    make_box_brep(
+        glam::DVec3::new(min[0], min[1], min[2]),
+        glam::DVec3::X,
+        glam::DVec3::Y,
+        width,
+        height,
+        depth,
+    )
+    .ok()
 }
 
 fn collect_shell_faces(parsed: &ParsedStep) -> Vec<Vec<u64>> {

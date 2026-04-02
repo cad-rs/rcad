@@ -13,9 +13,11 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 
 ## 3. Workspace Structure
 - `libs/rcad-kernel`: Core geometry and topology engine.
+- `libs/rcad-modeling`: OCCT-aligned modeling entry points for analytic geometry and primitive creation.
 - `libs/rcad-algorithms`: Boolean operations (CSG), Filleting, and Sweeping.
 - `libs/rcad-step`: STEP file parser and generator.
 - `libs/rcad-render`: wgpu-based visualization pipeline.
+- `libs/rcad-scene`: shared scene-level command logic (tool state, creation workflow, command preview).
 - `apps/creator-egui`: Validation app using `egui` and `eframe`.
 - `apps/creator-iced`: Validation app using `iced`.
 
@@ -57,11 +59,36 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 - **Phase 3 (In Progress)**: richer topology/geometry entities, robust STEP coverage, modeling algorithms (booleans/fillets/sweeps).
 - **Phase 4 (Planned)**: full STEP export and advanced CAD command system.
 
-## 9. Rendering Coding Principles (Mandatory)
+## 9. Modeling API Principles (Mandatory)
+
+The following rules are mandatory for current and future modeling APIs. They are intended to keep RCAD close to OCCT-style construction patterns while remaining idiomatic in Rust.
+
+### 9.1 Single Modeling Entry Layer
+- Public geometry and primitive creation helpers MUST live in `libs/rcad-modeling`.
+- `rcad-kernel` remains the storage/model layer for `Curve3`, `Surface3`, `PrimitiveSolid`, and `BRep`, but SHOULD NOT become the main user-facing construction API.
+
+### 9.2 OCCT-Aligned Constructor Style
+- User-facing modeling helpers SHOULD follow OCCT-style direct construction functions rather than fluent builder object chains.
+- For Rust code in RCAD, that means public creation APIs SHOULD be exposed as plain functions in `libs/rcad-modeling/src/builder.rs`.
+- Example direction: `line(origin, direction)`, `plane(origin, normal)`, `cylinder_brep(center, axis, ref_dir, radius, height, segments)`.
+
+### 9.3 Functional API Over Builder Structs
+- Do NOT introduce public fluent `*Builder` structs for standard analytic geometry and primitive creation unless there is a concrete need that cannot be expressed cleanly with functions.
+- Validation SHOULD still happen inside `rcad-modeling`, with errors returned explicitly through `Result<..., BuildError>` or an equivalent typed error.
+
+### 9.4 Separation of Responsibilities
+- `rcad-modeling` defines how users create geometry.
+- `rcad-kernel` defines what geometry and topology are.
+- `rcad-kernel` primitive tessellation helpers such as `BRep::create_*` are implementation details and SHOULD NOT be used directly outside the kernel.
+- `rcad-step` maps STEP entities to and from RCAD types.
+- `rcad-scene` owns shared command state machines and creation workflow logic used by app crates.
+- `rcad-render` and app crates MUST consume modeling results through public APIs rather than reimplementing geometry construction logic.
+
+## 10. Rendering Coding Principles (Mandatory)
 
 The following rules are mandatory for all current and future rendering work. They are designed to keep behavior consistent between [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced).
 
-### 9.1 Single Ownership of Rendering Logic
+### 10.1 Single Ownership of Rendering Logic
 - All wgpu rendering logic MUST be implemented in [libs/rcad-render](libs/rcad-render).
 - App crates MUST NOT implement or duplicate low-level rendering steps such as:
 	- Pipeline creation
@@ -70,24 +97,24 @@ The following rules are mandatory for all current and future rendering work. The
 	- Depth attachment management
 	- Default clear color selection
 
-### 9.2 Allowed Responsibilities in App Layer
+### 10.2 Allowed Responsibilities in App Layer
 - App crates MAY handle only framework integration concerns:
 	- UI layout and widgets
 	- User input mapping (drag, zoom, toggle states)
 	- Runtime wiring for egui/iced callback or shader program hooks
 - App crates MUST call renderer APIs exposed by [libs/rcad-render/src/lib.rs](libs/rcad-render/src/lib.rs) for scene preparation and drawing.
 
-### 9.3 API-First Evolution Rule
+### 10.3 API-First Evolution Rule
 - When a new rendering feature is required (e.g., shadows, clipping planes, anti-aliasing policy, tone mapping), it MUST be added to [libs/rcad-render](libs/rcad-render) first.
 - App crates MUST consume that feature only through public renderer APIs.
 - Direct access to internal renderer fields from app crates is forbidden; renderer internals should remain encapsulated.
 
-### 9.4 Cross-App Visual Consistency
+### 10.4 Cross-App Visual Consistency
 - Default render behavior (camera update path, lighting model, depth-test policy, clear color, picking behavior) MUST be defined centrally in [libs/rcad-render](libs/rcad-render).
 - [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced) MUST use the same rcad-render defaults unless there is an explicitly documented exception.
 - Any intentional visual difference between apps MUST be documented in this specification before merge.
 
-### 9.5 Definition of Done for Rendering Changes
+### 10.5 Definition of Done for Rendering Changes
 - A rendering-related change is complete only if all conditions are satisfied:
 	- Code changes are centralized in [libs/rcad-render](libs/rcad-render) unless strictly UI integration.
 	- Both app targets compile successfully:
