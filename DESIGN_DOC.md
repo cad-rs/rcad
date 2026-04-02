@@ -17,10 +17,15 @@ RCAD uses a layered architecture to separate low-level geometry calculations fro
 ## 2. Core Kernel Design (rcad-kernel)
 
 ### 2.1 Geometry Primitives
-- `Point3D`, `Vector3D`, `Direction3D` based on `glam` or `nalgebra` for performance.
-- `Curve` and `Surface` traits for unified evaluation, derivatives, and point inversion.
+- Implemented in `libs/rcad-kernel/src/geom.rs`.
+- Uses `glam::DVec3` for double-precision geometry coordinates.
+- Current analytic geometry coverage:
+  - Curves: `Line`, `Circle`, `Ellipse`
+  - Surfaces: `Plane`, `Cylinder`, `Sphere`, `Cone`, `Torus`
+  - Primitive solids: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
 
 ### 2.2 Topological Structures
+- Implemented in `libs/rcad-kernel/src/topology.rs`.
 - `Vertex`: Represents a point in 3D space.
 - `Edge`: Bounded portion of a curve (two vertices).
 - `Wire`: Sequential collection of edges.
@@ -29,27 +34,33 @@ RCAD uses a layered architecture to separate low-level geometry calculations fro
 - `Solid`: Bounded volume (one or more shells).
 
 ### 2.3 Topological Data Storage
-- Use `SlotMap` or similar for stable indices in a topological graph.
-- `BRep` structure holds all topological and geometric data.
+- `BRep` stores topology arrays (`vertices`, `edges`, `solids`) plus geometric bindings (`geom: GeomStore`).
+- `GeomStore` keeps curve/surface pools and mapping arrays from edges/faces to analytic geometry.
 
 ## 3. Visualization Pipeline (rcad-render)
-- **Tessellation**: Converts `Face` surfaces to `Mesh` (Triangle soup) using adaptive sampling.
-- **Wgpu Integration**: 
-  - `RenderContext` initializes adapter, device, and queue.
-  - `ShapePipeline` handles drawing solid bodies, wireframes, and isolated vertices.
-  - `Uniforms` for camera/transformation data.
+- **Tessellation**: Converts B-Rep triangles to renderable mesh buffers.
+- **Picking**:
+  - Face picking by screen ray vs triangle intersection.
+  - Edge picking by projected screen-space segment distance.
+- **Selection State**:
+  - `SelectionState` centralizes mode (`Face`/`Edge`), additive select, hover, and highlighted sets.
+- **Wgpu Rendering**:
+  - Main mesh pass + face highlight overlay + edge highlight overlay.
+  - Shared renderer API used by both app frontends.
+- **Camera Interaction**:
+  - Orbit rotation, wheel zoom, and middle-mouse pan (`Camera::pan_pixels`).
 
 ## 4. STEP Importer/Exporter (rcad-step)
-- **Parser**: Hand-written or PEG-based for STEP physical file (Part 21).
-- **Mapping**: Converts STEP entities (`CARTESIAN_POINT`, `B_SPLINE_CURVE_WITH_KNOTS`, `ADVANCED_FACE`) into internal `rcad-kernel` structures.
-- **Accuracy**: Maintains exact numeric precision from the source file.
+- **Parser**: Hand-written STEP Part 21 parser for core entities.
+- **Mapping**: Converts common entities (point/direction/line/circle/surface + topology entities) into internal `BRep`.
+- **Fallback behavior**: When shell/face topology is missing but points exist, importer falls back to a bbox solid for viewability.
 
 ## 5. Development Workflow
-1. **Core First**: Implement `rcad-kernel` primitives (`Point3D`, `Vector3D`, `Curve`, `Surface`).
-2. **STEP Integration**: Basic STEP reader to load static geometries.
-3. **Visualization**: Build `rcad-render` to show primitives using `wgpu`.
-4. **Topology**: Implement `Vertex`, `Edge`, `Wire`, `Face` and their connectivity.
-5. **Validation Apps**: Integrate `egui` and `iced` via `trunk` for web/native targets.
+1. **Kernel updates** in `rcad-kernel` (`geom`/`topology` and primitive constructors).
+2. **STEP mapping updates** in `rcad-step` with tests against sample assets.
+3. **Rendering and interaction updates** in `rcad-render` first (API-first rule).
+4. **Frontend wiring only** in `creator-egui` / `creator-iced`.
+5. **Validation** with `cargo check` for both apps and target libs.
 
 ## 6. Project Directory Structure
 ```

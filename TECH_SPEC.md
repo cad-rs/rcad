@@ -21,11 +21,12 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 
 ## 4. Feature Alignment (Targeting OCCT Parity)
 ### 4.1 Geometry (Geom)
-- Primitive curves (Line, Circle, Ellipse, B-Spline, Bezier).
-- Primitive surfaces (Plane, Cylinder, Sphere, Torus, B-Spline surfaces).
+- Implemented: Line, Circle, Ellipse.
+- Implemented: Plane, Cylinder, Sphere, Cone, Torus.
+- Planned: B-Spline / Bezier curve and surface families.
 ### 4.2 Topology (TopoDS)
-- Vertex, Edge, Wire, Face, Shell, Solid, Compound.
-- Connectivity graph management.
+- Implemented: Vertex, Edge, Wire, Face, Shell, Solid.
+- Planned: Compound and richer topology graph services.
 ### 4.3 Modeling Algorithms
 - Boolean operations (Union, Intersection, Difference).
 - Filleting and Chamfering.
@@ -33,8 +34,12 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 
 ## 5. Rendering Pipeline
 - **Tessellation**: Fast B-Rep to Mesh conversion for visualization.
-- **Shaders**: WGSL for PBR (Physically Based Rendering) and edge highlighting.
-- **Interaction**: Ray-casting based picking and manipulation.
+- **Shaders**: WGSL with base material and explicit face/edge highlight overlays.
+- **Interaction**:
+	- Ray-casting based face picking.
+	- Screen-space edge picking.
+	- Shared `SelectionState` for mode, additive select, and hover state.
+	- Camera orbit + zoom + middle-mouse pan.
 
 ## 6. WASM Integration
 - All libraries must be `no_std` compatible where possible or at least `wasm32-unknown-unknown` compatible.
@@ -47,9 +52,10 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 - **Accuracy**: Double precision (`f64`) for all geometric calculations; configurable tolerances for topological consistency.
 
 ## 8. Development Roadmap
-- **Phase 1 (MVP)**: Kernel primitives, Basic STEP reader, egui integration.
-- **Phase 2 (Intermediate)**: Topology graph management, Tessellation for wgpu, basic Boolean operations.
-- **Phase 3 (Advanced)**: Full STEP export, iced integration, complex modeling algorithms (fillets/sweeps).
+- **Phase 1 (Completed)**: Kernel primitives, basic STEP reader, egui integration.
+- **Phase 2 (Completed)**: iced integration, shared renderer pipeline, picking/highlight, dual-app interaction alignment.
+- **Phase 3 (In Progress)**: richer topology/geometry entities, robust STEP coverage, modeling algorithms (booleans/fillets/sweeps).
+- **Phase 4 (Planned)**: full STEP export and advanced CAD command system.
 
 ## 9. Rendering Coding Principles (Mandatory)
 
@@ -77,7 +83,7 @@ The following rules are mandatory for all current and future rendering work. The
 - Direct access to internal renderer fields from app crates is forbidden; renderer internals should remain encapsulated.
 
 ### 9.4 Cross-App Visual Consistency
-- Default render behavior (camera update path, lighting model, depth-test policy, clear color) MUST be defined centrally in [libs/rcad-render](libs/rcad-render).
+- Default render behavior (camera update path, lighting model, depth-test policy, clear color, picking behavior) MUST be defined centrally in [libs/rcad-render](libs/rcad-render).
 - [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced) MUST use the same rcad-render defaults unless there is an explicitly documented exception.
 - Any intentional visual difference between apps MUST be documented in this specification before merge.
 

@@ -2,6 +2,17 @@
 
 A generic CAD engine written in pure Rust, targeting feature parity with Open CASCADE Technology (OCCT). Compiles to both native and WebAssembly.
 
+## Current Status (April 2026)
+
+- STEP import can load real sample models (for example `assets/hfss.step`) instead of a fixed placeholder box.
+- `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).
+- `rcad-render` centralizes picking, selection state, and highlight rendering.
+- `creator-egui` and `creator-iced` are interaction-aligned:
+    - Left drag: rotate
+    - Middle drag: pan
+    - Mouse wheel: zoom
+    - Click: select face/edge (with additive multi-select)
+
 ## Workspace Layout
 
 ```
@@ -38,9 +49,9 @@ trunk serve --port 8080 --open
 
 Then open <http://localhost:8080>.
 
-- Left panel shows model info (vertices, edges, faces, triangles).
-- Right panel renders a 3-D wireframe of the loaded box.
-- **Drag** the viewport to rotate. Toggle **Auto-rotate** in the side panel.
+- Left panel shows model info and selection state.
+- Right panel renders the loaded model with face/edge highlight overlays.
+- Controls: Left drag rotate, Middle drag pan, Wheel zoom, Click select.
 
 ### creator-iced
 
@@ -51,9 +62,9 @@ trunk serve --port 8081 --open
 
 Then open <http://localhost:8081>.
 
-- Left panel shows model info.
-- Right panel renders a 3-D wireframe canvas.
-- **Drag** the viewport to rotate.
+- Left panel shows model info and selection state.
+- Right panel renders the loaded model with face/edge highlight overlays.
+- Controls: Left drag rotate, Middle drag pan, Wheel zoom, Click select.
 
 > **Note — release builds**: `trunk build --release` runs `wasm-opt` which is downloaded from GitHub. If the network blocks GitHub, build in dev mode (omit `--release`) or install `wasm-opt` manually and add it to `PATH`.
 
@@ -65,6 +76,10 @@ cargo run -p creator-egui
 
 # iced app
 cargo run -p creator-iced
+
+# load a specific STEP file
+cargo run -p creator-egui -- assets/hfss.step
+cargo run -p creator-iced -- assets/hfss.step
 ```
 
 ## Check / test all crates
