@@ -78,3 +78,7 @@ path = "phase_k_demo.rs"
 [[example]]
 name = "phase_l_demo"
 path = "phase_l_demo.rs"
+
+[[example]]
+name = "phase_m_demo"
+path = "phase_m_demo.rs"

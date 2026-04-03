@@ -45,6 +45,8 @@ pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use geom::{BSplineCurve2, Ellipse2d};
+pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
+pub use geom::{OffsetCurve3, OffsetSurface};
 pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
@@ -55,6 +57,7 @@ pub use arc_length::arc_length;
 pub use appearance::{Color, FaceColor, StepColor};
 pub use tolerance::{
     ANGULAR, APPROXIMATION, CONFUSION,
+    edge_same_parameter, edge_same_range,
     edge_tolerance, face_domain, face_tolerance, model_tolerance, vertex_tolerance,
 };
 
@@ -121,6 +124,22 @@ pub struct GeomStore {
     /// Analogous to `edge_curve_range` for 3D curves.
     #[serde(default)]
     pub face_surface_range: Vec<Option<[f64; 4]>>,
+    /// Per-edge SameParameter flag.
+    ///
+    /// `true` if the 3D curve and all PCurves share the same parameterization
+    /// (i.e. the parameter `t` on the 3D curve maps directly to the same `t`
+    /// on every PCurve). Analogous to `BRep_Edge::SameParameter()` in OCCT.
+    /// When absent or empty, assumed `true` for analytic primitives we generate.
+    #[serde(default)]
+    pub edge_same_parameter: Vec<bool>,
+    /// Per-edge SameRange flag.
+    ///
+    /// `true` if all PCurves on this edge share the same `[t1, t2]` parameter
+    /// range as the 3D curve's `edge_curve_range`. Analogous to
+    /// `BRep_Edge::SameRange()` in OCCT.
+    /// When absent or empty, assumed `true` for analytic primitives we generate.
+    #[serde(default)]
+    pub edge_same_range: Vec<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +296,8 @@ impl BRep {
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
             face_surface_range: Vec::new(),
+            edge_same_parameter: Vec::new(),
+            edge_same_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -439,6 +460,8 @@ impl BRep {
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
             face_surface_range: Vec::new(),
+            edge_same_parameter: Vec::new(),
+            edge_same_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -558,6 +581,8 @@ impl BRep {
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
             face_surface_range: Vec::new(),
+            edge_same_parameter: Vec::new(),
+            edge_same_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -671,6 +696,8 @@ impl BRep {
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
             face_surface_range: Vec::new(),
+            edge_same_parameter: Vec::new(),
+            edge_same_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }

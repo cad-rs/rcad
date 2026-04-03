@@ -7,6 +7,7 @@ use rcad_kernel::BRep;
 
 use crate::bopds::ds::*;
 use crate::classify::{classify_point, Classification};
+use crate::history::{BooleanHistory, FaceOrigin};
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 use crate::triangulate::triangulate_polygon;
@@ -65,6 +66,7 @@ struct ResultBuilder {
     vertex_map: HashMap<u64, usize>, // hash of position → index
     edges: Vec<(usize, usize)>,
     faces: Vec<(Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3)>, // (boundary vertex indices, triangles, normal, surface)
+    face_origins: Vec<FaceOrigin>,
 }
 
 impl ResultBuilder {
@@ -74,6 +76,7 @@ impl ResultBuilder {
             vertex_map: HashMap::new(),
             edges: Vec::new(),
             faces: Vec::new(),
+            face_origins: Vec::new(),
         }
     }
 
@@ -110,6 +113,10 @@ impl ResultBuilder {
     }
 
     fn emit_face(&mut self, sub: &SubFace, flip: bool) {
+        self.emit_face_with_origin(sub, flip, FaceOrigin::Generated);
+    }
+
+    fn emit_face_with_origin(&mut self, sub: &SubFace, flip: bool, origin: FaceOrigin) {
         let normal = if flip { -sub.normal } else { sub.normal };
 
         // Add vertices
@@ -138,9 +145,10 @@ impl ResultBuilder {
 
         self.faces
             .push((edge_indices, tris, normal, sub.surface.clone()));
+        self.face_origins.push(origin);
     }
 
-    fn build(self) -> BRep {
+    fn build(self) -> (BRep, BooleanHistory) {
         let vertices = self
             .vertices
             .into_iter()
@@ -172,14 +180,19 @@ impl ResultBuilder {
             geom.face_surface.push(Some(surf_idx));
         }
 
-        BRep {
+        let history = BooleanHistory {
+            face_origins: self.face_origins,
+        };
+
+        let brep = BRep {
             vertices,
             edges,
             solids: vec![Solid {
                 shells: vec![Shell { faces }],
             }],
             geom,
-        }
+        };
+        (brep, history)
     }
 }
 
@@ -210,6 +223,11 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
+        let (brep, _) = self.build_with_history()?;
+        Ok(brep)
+    }
+
+    pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
 
@@ -237,7 +255,7 @@ impl<'a> BooleanBuilder<'a> {
                 };
 
                 if keep {
-                    result.emit_face(sub, false);
+                    result.emit_face_with_origin(sub, false, FaceOrigin::FromA(fi));
                 }
             }
         }
@@ -257,17 +275,17 @@ impl<'a> BooleanBuilder<'a> {
 
                 if keep {
                     let flip = self.op == BooleanOpType::Difference;
-                    result.emit_face(sub, flip);
+                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(fi));
                 }
             }
         }
 
-        let brep = result.build();
+        let (brep, history) = result.build();
         if brep.solids[0].shells[0].faces.is_empty() {
             return Err(BooleanError::DegenerateResult);
         }
 
-        Ok(brep)
+        Ok((brep, history))
     }
 
     /// Split a face by intersection curves. If no intersection curves cross this

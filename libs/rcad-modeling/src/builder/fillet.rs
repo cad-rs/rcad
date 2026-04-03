@@ -471,6 +471,198 @@ fn build_remap(
     remap
 }
 
+// ── Corner blend ─────────────────────────────────────────────────────────────
+
+/// Blend a convex vertex corner by trimming the three incident edges back by
+/// `radius` and inserting a planar triangular closing face.
+///
+/// This is a simplified (G0) corner blend: the three adjacent faces are each
+/// cut back at the corner and a flat triangle fills the gap.  It is intended to
+/// be called *after* `fillet_edges` has been applied to the three edges meeting
+/// at the vertex, to eliminate the gap that would otherwise be left at the
+/// corner.
+///
+/// # Requirements
+/// - `vertex_idx` must be shared by **exactly three** faces in
+///   `solids[0].shells[0]`.
+/// - `radius > 0`.
+///
+/// # Errors
+/// Returns `BuildError::InvalidIndex` if `vertex_idx >= brep.vertices.len()`.
+/// Returns `BuildError::NonPositiveValue` if `radius <= 0`.
+/// Returns `BuildError::DegenerateGeometry` if the vertex is not a 3-edge corner.
+pub fn corner_blend(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep, BuildError> {
+    if radius <= 0.0 {
+        return Err(BuildError::NonPositiveValue("radius"));
+    }
+    if vertex_idx >= brep.vertices.len() {
+        return Err(BuildError::InvalidIndex(vertex_idx));
+    }
+
+    let v = brep.vertices[vertex_idx].point;
+
+    // Collect edges incident to vertex_idx
+    let incident_edges: Vec<(usize, DVec3)> = brep
+        .edges
+        .iter()
+        .enumerate()
+        .filter_map(|(ei, e)| {
+            if e.start == vertex_idx {
+                Some((ei, brep.vertices[e.end].point))
+            } else if e.end == vertex_idx {
+                Some((ei, brep.vertices[e.start].point))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if incident_edges.len() != 3 {
+        return Err(BuildError::DegenerateGeometry(
+            "corner_blend requires exactly 3 incident edges",
+        ));
+    }
+
+    // Compute one setback point per incident edge
+    let setbacks: Vec<(usize, DVec3)> = incident_edges
+        .iter()
+        .map(|&(ei, other)| {
+            let dir = (other - v).normalize_or_zero();
+            (ei, v + dir * radius)
+        })
+        .collect();
+
+    // For each face, rebuild its boundary replacing vertex_idx with the two
+    // setback points on the edges incident to vertex_idx in that face.
+    let shell = &brep.solids[0].shells[0];
+    let mut dst = BRep::new();
+
+    // Copy all original vertices
+    copy_vertices_from(&mut dst, brep);
+
+    // Push the 3 setback vertices
+    let sb_indices: Vec<usize> = setbacks
+        .iter()
+        .map(|&(_, p)| push_vertex(&mut dst, p))
+        .collect();
+
+    // Helper: edge_idx → setback vertex index in dst
+    let sb_vi_for_edge = |ei: usize| -> Option<usize> {
+        setbacks.iter().enumerate().find(|&(_, &(e, _))| e == ei).map(|(i, _)| sb_indices[i])
+    };
+
+    for face in &shell.faces {
+        // Collect ordered boundary as (vertex_index, entering_edge_index) pairs.
+        // For each wire edge we, the "start" vertex of that step is the vertex we
+        // arrive at when entering from the previous wire edge.
+        let boundary_verts: Vec<(usize, usize)> = face
+            .outer_wire
+            .edges
+            .iter()
+            .map(|we| {
+                let e = &brep.edges[we.idx];
+                let vi = if we.forward { e.start } else { e.end };
+                (vi, we.idx)
+            })
+            .collect();
+
+        let has_corner = boundary_verts.iter().any(|&(vi, _)| vi == vertex_idx);
+        if !has_corner {
+            // Face doesn't touch this vertex — copy unchanged
+            let remap: Vec<usize> = (0..brep.vertices.len()).collect();
+            copy_face_remapped(&mut dst, brep, face, &remap)?;
+            continue;
+        }
+
+        // Build new boundary: when we encounter vertex_idx, replace it with two
+        // setback vertices (on the incoming edge and the outgoing edge).
+        let n = boundary_verts.len();
+        let mut new_boundary: Vec<DVec3> = Vec::new();
+
+        for i in 0..n {
+            let (vi, entering_edge) = boundary_verts[i];
+            let next_edge = boundary_verts[(i + 1) % n].1;
+
+            if vi == vertex_idx {
+                // The entering edge leads to vertex_idx.
+                // Insert: setback on entering_edge, then setback on next_edge.
+                if let Some(sb_enter) = sb_vi_for_edge(entering_edge) {
+                    new_boundary.push(dst.vertices[sb_enter].point);
+                } else {
+                    new_boundary.push(v); // fallback
+                }
+                if let Some(sb_exit) = sb_vi_for_edge(next_edge) {
+                    new_boundary.push(dst.vertices[sb_exit].point);
+                } else {
+                    new_boundary.push(v); // fallback
+                }
+            } else {
+                new_boundary.push(brep.vertices[vi].point);
+            }
+        }
+
+        // Deduplicate consecutive equal points
+        let new_boundary = {
+            let mut deduped: Vec<DVec3> = Vec::new();
+            for p in new_boundary {
+                if deduped.is_empty()
+                    || !points_coincide(*deduped.last().unwrap(), p)
+                {
+                    deduped.push(p);
+                }
+            }
+            deduped
+        };
+
+        if new_boundary.len() < 3 {
+            continue;
+        }
+
+        // Create a planar face from the new boundary
+        let n_raw = face.normal;
+        let surf = Surface3::Plane(Plane {
+            origin: new_boundary[0],
+            normal: n_raw,
+        });
+
+        // Add vertices and edges to dst
+        let vi_list: Vec<usize> = new_boundary
+            .iter()
+            .map(|&p| {
+                // Check if already in dst (original or setback vertex)
+                for (i, dv) in dst.vertices.iter().enumerate() {
+                    if points_coincide(dv.point, p) {
+                        return i;
+                    }
+                }
+                let idx = dst.vertices.len();
+                dst.vertices.push(Vertex { point: p });
+                idx
+            })
+            .collect();
+
+        let mut wire_edges = Vec::new();
+        for i in 0..vi_list.len() {
+            let j = (i + 1) % vi_list.len();
+            let ei = add_line_edge(&mut dst, vi_list[i], vi_list[j])?;
+            wire_edges.push(WireEdge::fwd(ei));
+        }
+        let wire = make_wire(wire_edges);
+        make_face(&mut dst, surf, wire, vec![])?;
+    }
+
+    // Add the triangular closing face connecting the 3 setback vertices
+    add_closing_triangle(&mut dst, sb_indices[0], sb_indices[1], sb_indices[2])?;
+
+    Ok(dst)
+}
+
+// ── Module re-export helper used in tolerance check ───────────────────────────
+
+fn points_coincide(a: DVec3, b: DVec3) -> bool {
+    (a - b).length() < 1e-8
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -517,5 +709,29 @@ mod tests {
     fn chamfer_invalid_edge_index() {
         let brep = box_brep_2x2x2();
         assert!(chamfer_edge(&brep, 999, 0.2).is_err());
+    }
+
+    #[test]
+    fn corner_blend_produces_extra_face() {
+        let brep = box_brep_2x2x2();
+        // vertex 0 is the corner at (0,0,0) in the default box BRep
+        // find which vertex that is
+        let vi = brep.vertices.iter().position(|v| v.point.length() < 1e-6).unwrap_or(0);
+        let result = corner_blend(&brep, vi, 0.1).unwrap();
+        let n_faces = result.solids[0].shells[0].faces.len();
+        // 6 original faces (trimmed) + 1 corner triangle = 7
+        assert!(n_faces >= 7, "expected at least 7 faces after corner_blend, got {n_faces}");
+    }
+
+    #[test]
+    fn corner_blend_rejects_zero_radius() {
+        let brep = box_brep_2x2x2();
+        assert!(corner_blend(&brep, 0, 0.0).is_err());
+    }
+
+    #[test]
+    fn corner_blend_rejects_invalid_vertex() {
+        let brep = box_brep_2x2x2();
+        assert!(corner_blend(&brep, 9999, 0.1).is_err());
     }
 }

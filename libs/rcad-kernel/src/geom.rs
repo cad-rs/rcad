@@ -40,12 +40,28 @@ pub struct BSplineCurve3 {
     pub weights: Vec<f64>,
 }
 
+/// A rational or non-rational Bezier curve in 3D.
+///
+/// Evaluated via de Casteljau's algorithm. Domain is always `[0.0, 1.0]`.
+/// Analogous to OCCT `Geom_BezierCurve`.
+///
+/// Note: a Bezier curve of degree n is equivalent to a B-spline of degree n
+/// with knot vector `[0, …, 0, 1, …, 1]` (n+1 times each).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BezierCurve3 {
+    pub control_points: Vec<DVec3>,
+    /// Homogeneous weights; 1.0 for non-rational (polynomial Bezier).
+    pub weights: Vec<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
     Circle(Circle3),
     Ellipse(Ellipse3),
     BSpline(BSplineCurve3),
+    Bezier(BezierCurve3),  // Phase M
+    Offset(OffsetCurve3),  // Phase M
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -99,6 +115,46 @@ pub struct BSplineSurface {
     pub weights: Vec<Vec<f64>>,
 }
 
+/// A rational or non-rational Bezier surface (tensor-product bicubic patch).
+///
+/// Evaluated by applying de Casteljau in u, then in v. Domain is `[0, 1] × [0, 1]`.
+/// Analogous to OCCT `Geom_BezierSurface`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BezierSurface {
+    /// Control point grid [u_count][v_count].
+    pub control_points: Vec<Vec<DVec3>>,
+    /// Weight grid [u_count][v_count]; 1.0 for non-rational.
+    pub weights: Vec<Vec<f64>>,
+}
+
+/// A curve offset from a base curve by a fixed distance in a reference plane.
+///
+/// `S(t) = basis.point_at(t) + offset_distance * (tangent(t) × offset_dir).normalize()`
+///
+/// Analogous to OCCT `Geom_OffsetCurve`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffsetCurve3 {
+    pub basis: Box<Curve3>,
+    /// Offset distance (positive = outward from the curve's "left" side).
+    pub offset_distance: f64,
+    /// Fixed reference direction (normal to the offset plane).
+    /// The offset direction at each point is `(tangent × offset_dir).normalize()`.
+    pub offset_dir: Vec3,
+}
+
+/// A surface offset from a base surface by a fixed distance along the normal.
+///
+/// `S(u,v) = basis.point_at(u,v) + offset_distance * basis.normal_at(u,v)`
+///
+/// The offset normal is the same as the basis normal. Domain equals the basis domain.
+/// Analogous to OCCT `Geom_OffsetSurface`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffsetSurface {
+    pub basis: Box<Surface3>,
+    /// Offset distance along the outward normal (positive = outward).
+    pub offset_distance: f64,
+}
+
 /// Surface formed by translating a 3D profile curve along a direction.
 /// S(u,v) = profile.point_at(u) + v * direction
 /// Analogous to OCCT Geom_SurfaceOfLinearExtrusion.
@@ -130,6 +186,8 @@ pub enum Surface3 {
     BSpline(BSplineSurface),
     LinearExtrusion(LinearExtrusionSurface),  // Phase K
     Revolution(RevolutionSurface),            // Phase K
+    Bezier(BezierSurface),                   // Phase M
+    Offset(OffsetSurface),                   // Phase M
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -202,6 +260,16 @@ pub struct BSplineCurve2 {
     pub weights: Vec<f64>,
 }
 
+/// A rational or non-rational Bezier curve in 2D parameter space.
+///
+/// Analogous to OCCT `Geom2d_BezierCurve`. Domain is `[0, 1]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BezierCurve2 {
+    pub control_points: Vec<DVec2>,
+    /// Homogeneous weights; 1.0 for non-rational.
+    pub weights: Vec<f64>,
+}
+
 /// A curve defined in the 2D parameter space (u, v) of a surface.
 ///
 /// Used for PCurves: the image of a 3D edge on the parameter domain of an
@@ -212,6 +280,7 @@ pub enum Curve2d {
     Circle(Circle2d),
     Ellipse(Ellipse2d),     // Phase J
     BSpline(BSplineCurve2),
+    Bezier(BezierCurve2),   // Phase M
 }
 
 // ── Geometric evaluation traits ──────────────────────────────────────────────
@@ -313,6 +382,8 @@ impl CurveEval for Curve3 {
             Curve3::Circle(c) => c.point_at(t),
             Curve3::Ellipse(c) => c.point_at(t),
             Curve3::BSpline(c) => c.point_at(t),
+            Curve3::Bezier(c) => c.point_at(t),
+            Curve3::Offset(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -321,6 +392,8 @@ impl CurveEval for Curve3 {
             Curve3::Circle(c) => c.tangent_at(t),
             Curve3::Ellipse(c) => c.tangent_at(t),
             Curve3::BSpline(c) => c.tangent_at(t),
+            Curve3::Bezier(c) => c.tangent_at(t),
+            Curve3::Offset(c) => c.tangent_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -329,6 +402,8 @@ impl CurveEval for Curve3 {
             Curve3::Circle(c) => c.default_domain(),
             Curve3::Ellipse(c) => c.default_domain(),
             Curve3::BSpline(c) => c.default_domain(),
+            Curve3::Bezier(c) => c.default_domain(),
+            Curve3::Offset(c) => c.default_domain(),
         }
     }
 }
@@ -480,6 +555,8 @@ impl SurfaceEval for Surface3 {
             Surface3::BSpline(s) => s.point_at(u, v),
             Surface3::LinearExtrusion(s) => s.point_at(u, v),
             Surface3::Revolution(s) => s.point_at(u, v),
+            Surface3::Bezier(s) => s.point_at(u, v),
+            Surface3::Offset(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -492,6 +569,8 @@ impl SurfaceEval for Surface3 {
             Surface3::BSpline(s) => s.normal_at(u, v),
             Surface3::LinearExtrusion(s) => s.normal_at(u, v),
             Surface3::Revolution(s) => s.normal_at(u, v),
+            Surface3::Bezier(s) => s.normal_at(u, v),
+            Surface3::Offset(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -504,6 +583,8 @@ impl SurfaceEval for Surface3 {
             Surface3::BSpline(s) => s.default_domain(),
             Surface3::LinearExtrusion(s) => s.default_domain(),
             Surface3::Revolution(s) => s.default_domain(),
+            Surface3::Bezier(s) => s.default_domain(),
+            Surface3::Offset(s) => s.default_domain(),
         }
     }
 }
@@ -736,7 +817,151 @@ impl Curve2dEval for Curve2d {
             Curve2d::Circle(c) => c.point_at(t),
             Curve2d::Ellipse(c) => c.point_at(t),
             Curve2d::BSpline(c) => c.point_at(t),
+            Curve2d::Bezier(c) => c.point_at(t),
         }
+    }
+}
+
+// ── Bezier (de Casteljau) implementations ─────────────────────────────────────
+
+/// De Casteljau algorithm for rational Bezier curve evaluation in 3D.
+/// `t` ∈ [0, 1].
+fn de_casteljau_3d(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
+    let n = points.len();
+    if n == 0 {
+        return DVec3::ZERO;
+    }
+    // Work in homogeneous coordinates [x*w, y*w, z*w, w]
+    let mut d: Vec<[f64; 4]> = points
+        .iter()
+        .zip(weights)
+        .map(|(p, &w)| [p.x * w, p.y * w, p.z * w, w])
+        .collect();
+    for r in 1..n {
+        for j in 0..n - r {
+            for c in 0..4 {
+                d[j][c] = (1.0 - t) * d[j][c] + t * d[j + 1][c];
+            }
+        }
+    }
+    let w = d[0][3];
+    if w.abs() < 1e-15 { DVec3::ZERO } else { DVec3::new(d[0][0] / w, d[0][1] / w, d[0][2] / w) }
+}
+
+/// De Casteljau algorithm for rational Bezier curve evaluation in 2D.
+fn de_casteljau_2d(points: &[DVec2], weights: &[f64], t: f64) -> DVec2 {
+    let n = points.len();
+    if n == 0 {
+        return DVec2::ZERO;
+    }
+    let mut d: Vec<[f64; 3]> = points
+        .iter()
+        .zip(weights)
+        .map(|(p, &w)| [p.x * w, p.y * w, w])
+        .collect();
+    for r in 1..n {
+        for j in 0..n - r {
+            for c in 0..3 {
+                d[j][c] = (1.0 - t) * d[j][c] + t * d[j + 1][c];
+            }
+        }
+    }
+    let w = d[0][2];
+    if w.abs() < 1e-15 { DVec2::ZERO } else { DVec2::new(d[0][0] / w, d[0][1] / w) }
+}
+
+impl CurveEval for BezierCurve3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        de_casteljau_3d(&self.control_points, &self.weights, t)
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let eps = 1e-6;
+        let t_lo = (t - eps).max(0.0);
+        let t_hi = (t + eps).min(1.0);
+        let dp = self.point_at(t_hi) - self.point_at(t_lo);
+        let len = dp.length();
+        if len < 1e-15 { DVec3::X } else { dp / len }
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, 1.0]
+    }
+}
+
+impl SurfaceEval for BezierSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let n_u = self.control_points.len();
+        if n_u == 0 { return DVec3::ZERO; }
+        let n_v = self.control_points[0].len();
+        if n_v == 0 { return DVec3::ZERO; }
+        // Apply de Casteljau in u for each v-column, producing n_v intermediate points
+        let row_points: Vec<DVec3> = (0..n_v)
+            .map(|j| {
+                let col_pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
+                let col_wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
+                de_casteljau_3d(&col_pts, &col_wts, u)
+            })
+            .collect();
+        let unit_wts = vec![1.0; n_v];
+        de_casteljau_3d(&row_points, &unit_wts, v)
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = (self.point_at(u + eps, v) - self.point_at(u - eps, v)) / (2.0 * eps);
+        let dv = (self.point_at(u, v + eps) - self.point_at(u, v - eps)) / (2.0 * eps);
+        let n = du.cross(dv);
+        let len = n.length();
+        if len < 1e-15 { DVec3::Z } else { n / len }
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        [0.0, 1.0, 0.0, 1.0]
+    }
+}
+
+impl Curve2dEval for BezierCurve2 {
+    fn point_at(&self, t: f64) -> DVec2 {
+        de_casteljau_2d(&self.control_points, &self.weights, t)
+    }
+}
+
+// ── Offset Curve / Surface implementations ────────────────────────────────────
+
+impl CurveEval for OffsetCurve3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        let base_pt = self.basis.point_at(t);
+        let tangent = self.basis.tangent_at(t);
+        let perp = tangent.cross(self.offset_dir);
+        let perp_len = perp.length();
+        if perp_len < 1e-15 {
+            return base_pt;
+        }
+        base_pt + self.offset_distance * (perp / perp_len)
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let eps = 1e-6;
+        let [t0, t1] = self.basis.default_domain();
+        let t_lo = (t - eps).max(t0);
+        let t_hi = (t + eps).min(t1);
+        let dp = self.point_at(t_hi) - self.point_at(t_lo);
+        let len = dp.length();
+        if len < 1e-15 { DVec3::X } else { dp / len }
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        self.basis.default_domain()
+    }
+}
+
+impl SurfaceEval for OffsetSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let base_pt = self.basis.point_at(u, v);
+        let n = self.basis.normal_at(u, v);
+        base_pt + self.offset_distance * n
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        // Offset preserves the normal direction (first-order approximation)
+        self.basis.normal_at(u, v)
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        self.basis.default_domain()
     }
 }
 

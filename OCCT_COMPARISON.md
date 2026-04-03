@@ -332,8 +332,8 @@ GeomStore {
 | **Edge 参数范围 `[t1, t2]`** | `edge_curve_range` | ✅ Phase A |
 | `Degenerated` | `edge_degenerated` | ✅ Phase A |
 | **`Tolerance` (per edge/vertex/face)** | `vertex_tolerance / edge_tolerance / face_tolerance` + 查询函数 | ✅ Phase I |
-| `SameParameter` | ❌ | P2 |
-| `SameRange` | ❌ | P2 |
+| `SameParameter` | `GeomStore.edge_same_parameter` + `edge_same_parameter()` | ✅ Phase M |
+| `SameRange` | `GeomStore.edge_same_range` + `edge_same_range()` | ✅ Phase M |
 
 ---
 
@@ -555,8 +555,8 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 | **几何** | `Curve2d::BSpline` (2D B-Spline PCurve) | ✅ 已完成 | Phase I（`BSplineCurve2`，de Boor 2D）|
 | **几何** | 线性扫掠面 / 旋转面 | ✅ 已完成 | Phase K（`LinearExtrusionSurface` / `RevolutionSurface`）|
 | **几何** | 面参数域覆盖 | ✅ 已完成 | Phase K（`face_surface_range` + `face_domain()`）|
-| **几何** | Bezier 曲线 / 曲面 | 🟡 P2 | |
-| **几何** | 偏移曲线 / 偏移面 | 🟡 P2 | 倒角需要 |
+| **几何** | Bezier 曲线 / 曲面 | ✅ 已完成 | Phase M（`BezierCurve3 / BezierSurface / BezierCurve2`，de Casteljau）|
+| **几何** | 偏移曲线 / 偏移面 | ✅ 已完成 | Phase M（`OffsetCurve3 / OffsetSurface`）|
 | **拓扑** | `WireEdge.forward` 方向标志 | ✅ 已完成 | Phase A |
 | **拓扑** | `Degenerated` edge 标记 | ✅ 已完成 | Phase A |
 | **拓扑** | per-vertex / per-edge / per-face 容差 | ✅ 已完成 | Phase I（`vertex/edge/face_tolerance`，回退 CONFUSION）|
@@ -567,13 +567,14 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 | **建模** | 旋转体 `revolve` | ✅ 已完成 | Phase B |
 | **建模** | 圆角 `MakeFillet` | ✅ 已完成 | Phase F（`fillet_edge`，凸平面边）|
 | **建模** | 多边圆角 `MakeFillet::Build` | ✅ 已完成 | Phase L（`fillet_edges`，批量 API）|
+| **建模** | 多边角点混接 `corner_blend` | ✅ 已完成 | Phase M（`corner_blend(brep, vertex_idx, radius)`，平面三角补片）|
 | **建模** | 管道扫掠 `MakePipe` | ✅ 已完成 | Phase E（`sweep_pipe`）|
 | **建模** | 变截面扫掠 `MakePipeShell` | ✅ 已完成 | Phase L（`sweep_pipe_variable`）|
 | **建模** | 倒角 `MakeChamfer` | ✅ 已完成 | Phase F（`chamfer_edge`，凸平面边）|
 | **建模** | Loft 放样 | ✅ 已完成 | Phase E（`loft`）|
 | **建模** | 加厚 / 抽壳 | 🟢 P3 | |
 | **布尔** | 截面线 `Section` | ✅ 已完成 | Phase C（`section_polylines`）|
-| **布尔** | 形状历史映射 | 🟡 P2 | 特征树需要 |
+| **布尔** | 形状历史映射 | ✅ 已完成 | Phase M（`BooleanHistory / FaceOrigin`，`union/intersection/difference_with_history`）|
 | **数据交换** | B-Spline STEP 读写 | ✅ 已完成 | Phase D |
 | **数据交换** | 颜色 / 材质 STEP | ✅ 已完成 | Phase D |
 | **数据交换** | 装配体 STEP (NAUO) | ✅ 已完成 | Phase D |
@@ -597,7 +598,7 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 
 ## 10. 开发路线建议
 
-基于上述差距分析，十二个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，十三个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -687,6 +688,14 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 1. `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — 变截面管道扫掠；每个脊线站点使用不同 2D 截面；Frenet 系相同（与 `sweep_pipe` 一致），委托 `loft()`；类比 OCCT `BRepOffsetAPI_MakePipeShell`
 2. `fillet_edges(brep, edges: &[(usize, f64)])` — 批量圆角 API；按下标降序排序后依次调用 `fillet_edge`；对非相邻边（不共顶点）安全；类比 `BRepFilletAPI_MakeFillet` 多边 `Add()` + `Build()`
 
+### Phase M — 所有剩余 P2 项 ✅ 已完成
+
+1. **SameParameter / SameRange 边标志**：`GeomStore.edge_same_parameter: Vec<bool>` + `edge_same_range: Vec<bool>`；STEP reader 从 `SURFACE_CURVE` 第 4 字段提取 same_parameter；默认 `true`（RCAD 生成图元的解析参数化保证同参数性）
+2. **Bezier 曲线 / 曲面**：`BezierCurve3 / BezierSurface / BezierCurve2`；de Casteljau 齐次坐标递推（支持有理权重）；加入 `Curve3::Bezier` / `Surface3::Bezier` / `Curve2d::Bezier` 变体；类比 OCCT `Geom_BezierCurve` / `Geom_BezierSurface`
+3. **偏移曲线 / 偏移面**：`OffsetCurve3 { basis, offset_distance, offset_dir }` — 法向偏移 `P + d·(tangent×dir).normalize()`；`OffsetSurface { basis, offset_distance }` — 法向偏移 `P + d·normal`；加入 `Curve3::Offset` / `Surface3::Offset`；类比 OCCT `Geom_OffsetCurve` / `Geom_OffsetSurface`
+4. **布尔操作历史 / 形状映射**：`FaceOrigin { FromA(usize), FromB(usize), Generated }` + `BooleanHistory { face_origins: Vec<FaceOrigin> }`；`union/intersection/difference_with_history()` 返回 `(BRep, BooleanHistory)`；每个结果面追踪到输入固体 A 或 B 的 DS 面索引；类比 OCCT `BRepAlgoAPI_BuilderShape::Modified/Generated/Deleted`
+5. **多边角点混接**：`corner_blend(brep, vertex_idx, radius)` — 三边凸顶点混接；沿三条入射边退刀 `radius`，插入平面三角补片；防止批量圆角后角点处出现间隙；类比 OCCT `BRepFilletAPI_MakeFillet` 角点处理
+
 ---
 
 ### 阶段时序（实际完成）
@@ -704,8 +713,9 @@ Phase I（PCurve/容差）░░░░░░░░░░░░░░░░░░
 Phase J（Ellipse2d/STEP容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase K（扫掠面/面域/BSpline导出）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase L（变截面扫掠/批量圆角）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase M（全部 P2：Bezier/Offset/SameParam/历史/角点）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase L 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase M 完成。*

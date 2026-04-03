@@ -64,7 +64,7 @@ pub fn principal_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
         }
 
         Surface3::BSpline(_) => numerical_curvatures(surface, u, v),
-        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => numerical_curvatures(surface, u, v),
+        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Bezier(_) | Surface3::Offset(_) => numerical_curvatures(surface, u, v),
     }
 }
 

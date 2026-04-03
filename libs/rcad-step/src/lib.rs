@@ -47,8 +47,8 @@ struct ParsedStep {
     shell_based_surface_models: Vec<Vec<u64>>,
     trimmed_curves: HashMap<u64, (u64, f64, f64)>,
     geometric_curve_sets: Vec<Vec<u64>>,
-    /// SURFACE_CURVE: maps step id → (3d_curve_ref, pcurve_ref_list)
-    surface_curves: HashMap<u64, (u64, Vec<u64>)>,
+    /// SURFACE_CURVE: maps step id → (3d_curve_ref, pcurve_ref_list, same_parameter)
+    surface_curves: HashMap<u64, (u64, Vec<u64>, bool)>,
     /// PCURVE: maps step id → (surface_ref, definitional_rep_ref)
     pcurves: HashMap<u64, (u64, u64)>,
     /// DEFINITIONAL_REPRESENTATION: maps step id → curve2d_ref
@@ -215,8 +215,8 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 }
                 "SURFACE_CURVE" => {
                     // SURFACE_CURVE('', #3d_curve, (#pcurve1, ...), .PCURVE_S1.)
-                    if let Some((curve3d_ref, pcurve_refs)) = parse_surface_curve(args) {
-                        parsed.surface_curves.insert(id, (curve3d_ref, pcurve_refs));
+                    if let Some((curve3d_ref, pcurve_refs, same_param)) = parse_surface_curve(args) {
+                        parsed.surface_curves.insert(id, (curve3d_ref, pcurve_refs, same_param));
                     }
                 }
                 "PCURVE" => {
@@ -478,7 +478,7 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
     }
 
     // Populate edge_pcurves from SURFACE_CURVE → PCURVE → DEFINITIONAL_REPRESENTATION chains
-    for (step_curve_id, (inner_3d_ref, pcurve_ids)) in &parsed.surface_curves {
+    for (step_curve_id, (inner_3d_ref, pcurve_ids, same_param)) in &parsed.surface_curves {
         // Find which BRep edge this SURFACE_CURVE belongs to
         // (edge_curves maps step EDGE_CURVE id → edge; the EDGE_CURVE's curve_ref points here)
         let edge_idx = edge_index_by_curve.get(step_curve_id).copied();
@@ -527,6 +527,13 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
                 geom.edge_pcurves.resize(edge_idx + 1, Vec::new());
             }
             geom.edge_pcurves[edge_idx] = pcs;
+        }
+        // Propagate same_parameter flag from SURFACE_CURVE entity
+        if !same_param {
+            if geom.edge_same_parameter.len() <= edge_idx {
+                geom.edge_same_parameter.resize(edge_idx + 1, true);
+            }
+            geom.edge_same_parameter[edge_idx] = false;
         }
         let _ = inner_3d_ref; // already resolved via resolve_curve's SURFACE_CURVE dereference
     }
@@ -1814,7 +1821,7 @@ fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
 
 fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
     // Dereference SURFACE_CURVE — extract the wrapped 3D curve
-    let actual_ref = if let Some(&(inner_ref, _)) = parsed.surface_curves.get(&curve_ref) {
+    let actual_ref = if let Some(&(inner_ref, _, _)) = parsed.surface_curves.get(&curve_ref) {
         inner_ref
     } else {
         curve_ref
@@ -2322,14 +2329,18 @@ fn parse_axis2_placement_2d(args: &str) -> Option<(u64, u64)> {
     Some((parse_ref(parts[1])?, parse_ref(parts[2])?))
 }
 
-fn parse_surface_curve(args: &str) -> Option<(u64, Vec<u64>)> {
+fn parse_surface_curve(args: &str) -> Option<(u64, Vec<u64>, bool)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 3 {
         return None;
     }
     let curve3d_ref = parse_ref(parts[1])?;
     let pcurve_refs = parse_ref_list(parts[2]);
-    Some((curve3d_ref, pcurve_refs))
+    // 4th field is the master_representation flag (optional, default .T.)
+    // In STEP AP214 this is ".PCURVE_S1." / ".PCURVE_S2." / ".CURVE_3D." / "$"
+    // We treat it as same_parameter=true unless explicitly set to .F.
+    let same_param = parts.get(3).map(|s| !s.trim().eq_ignore_ascii_case(".F.")).unwrap_or(true);
+    Some((curve3d_ref, pcurve_refs, same_param))
 }
 
 /// PCURVE('', #surface, #definitional_rep)

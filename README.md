@@ -70,6 +70,13 @@ Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 - `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — variable-section pipe sweep: a different 2D profile at each spine station, transformed via the same Frenet-like frame as `sweep_pipe`; delegates to `loft`. Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
 - `fillet_edges(brep, edges: &[(usize, f64)])` — fillet multiple edges in a single call; sorts by index descending before applying so earlier fillets don't shift later indices (safe for non-adjacent edges). Analogous to adding multiple edges to `BRepFilletAPI_MakeFillet` before `Build()`.
 
+**Phase M — All remaining P2 items**
+- **SameParameter / SameRange edge flags**: `GeomStore.edge_same_parameter: Vec<bool>` + `edge_same_range: Vec<bool>`; STEP reader extracts the `same_parameter` field from `SURFACE_CURVE`; helper functions `edge_same_parameter(brep, idx)` / `edge_same_range(brep, idx)` default to `true` for RCAD-generated primitives.
+- **Bezier curves and surfaces**: `BezierCurve3 / BezierSurface / BezierCurve2` added to `Curve3` / `Surface3` / `Curve2d` enums; evaluation via de Casteljau algorithm in homogeneous coordinates (supports rational weights). Analogous to OCCT `Geom_BezierCurve` / `Geom_BezierSurface`.
+- **Offset curve and surface**: `OffsetCurve3 { basis, offset_distance, offset_dir }` — lateral offset `P + d·(tangent × dir).normalize()`; `OffsetSurface { basis, offset_distance }` — normal offset `P + d·normal`. Added as `Curve3::Offset` / `Surface3::Offset`. Analogous to OCCT `Geom_OffsetCurve` / `Geom_OffsetSurface`.
+- **Boolean operation history**: `BooleanHistory { face_origins: Vec<FaceOrigin> }` maps each result face to `FaceOrigin::FromA(idx)`, `FromB(idx)`, or `Generated`. Convenience functions `union_with_history / intersection_with_history / difference_with_history` return `(BRep, BooleanHistory)`. Analogous to OCCT `BRepAlgoAPI_BuilderShape::Modified/Generated/Deleted`.
+- **Corner blending**: `corner_blend(brep, vertex_idx, radius)` — blends a 3-valence convex corner by setting back each incident edge by `radius` and inserting a planar triangular closing patch. Eliminates gaps left at corners after `fillet_edges`. Analogous to OCCT `BRepFilletAPI_MakeFillet` corner resolution.
+
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).

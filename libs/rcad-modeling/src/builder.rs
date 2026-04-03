@@ -15,7 +15,7 @@ pub use curve::*;
 pub use solid::*;
 pub use surface::*;
 pub use brep_builder::*;
-pub use fillet::{chamfer_edge, fillet_edge, fillet_edges};
+pub use fillet::{chamfer_edge, corner_blend, fillet_edge, fillet_edges};
 pub use ops::*;
 
 use glam::DVec3;

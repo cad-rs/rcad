@@ -472,8 +472,8 @@ impl Part21Writer {
             }
             None => self.plane("face_plane", fallback_placement),
             Some(Surface3::BSpline(bs)) => self.write_bspline_surface(&bs.clone()),
-            Some(Surface3::LinearExtrusion(_)) | Some(Surface3::Revolution(_)) => {
-                // Swept surfaces: fall back to plane (no direct STEP swept-surface writer)
+            Some(Surface3::LinearExtrusion(_)) | Some(Surface3::Revolution(_)) | Some(Surface3::Bezier(_)) | Some(Surface3::Offset(_)) => {
+                // Swept/Bezier/Offset surfaces: fall back to plane (no direct STEP writer yet)
                 self.plane("face_plane", fallback_placement)
             }
         }
@@ -659,6 +659,13 @@ impl Part21Writer {
             Some(Curve2d::BSpline(bs)) => {
                 self.write_bspline_curve2d(&bs.clone())
             }
+            Some(Curve2d::Bezier(_)) => {
+                // Bezier PCurve: fall back to degenerate line (no Bezier 2D STEP writer yet)
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
             None => {
                 // No 2D curve available: fall back to a degenerate line at origin
                 // (valid STEP, carries no geometric info).
@@ -720,7 +727,8 @@ impl Part21Writer {
             Some(Curve3::BSpline(bs)) => {
                 self.write_bspline_curve(&bs.clone(), start_point, end_point)
             }
-            None => {
+            Some(Curve3::Bezier(_)) | Some(Curve3::Offset(_)) | None => {
+                // Bezier/Offset or missing curve: write as a straight line between endpoints
                 let p0 = self.cartesian_point("edge_origin", start_point);
                 let delta = [
                     end_point[0] - start_point[0],
@@ -1609,7 +1617,7 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Cone(c) => Some(c.axis),
         Surface3::Torus(t) => Some(t.axis),
         Surface3::BSpline(_) => None,
-        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => None,
+        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Bezier(_) | Surface3::Offset(_) => None,
     }
 }
 

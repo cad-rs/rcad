@@ -38,9 +38,9 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
 - Implemented in `libs/rcad-kernel/src/geom.rs`.
 - Uses `glam::DVec3` for double-precision geometry coordinates.
 - Analytic geometry coverage (Phase A + B):
-  - **Curves (`Curve3`)**: `Line3`, `Circle3`, `Ellipse3`, `BSplineCurve3` (de Boor evaluation)
-  - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor), `LinearExtrusionSurface` (Phase K), `RevolutionSurface` (Phase K)
-  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces), `Ellipse2d` (Phase J — 2D ellipse in parameter space)
+  - **Curves (`Curve3`)**: `Line3`, `Circle3`, `Ellipse3`, `BSplineCurve3` (de Boor evaluation), `BezierCurve3` (Phase M — de Casteljau), `OffsetCurve3` (Phase M — lateral offset)
+  - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor), `LinearExtrusionSurface` (Phase K), `RevolutionSurface` (Phase K), `BezierSurface` (Phase M — de Casteljau), `OffsetSurface` (Phase M — normal offset)
+  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces), `Ellipse2d` (Phase J — 2D ellipse in parameter space), `BezierCurve2` (Phase M — de Casteljau 2D)
   - **Evaluation traits**: `CurveEval` (`point_at`, `tangent_at`, `default_domain`) and `SurfaceEval` (`point_at`, `normal_at`, `default_domain`) — implemented for all analytic types; `Curve2dEval` (`point_at`) for all 2D variants
   - Primitive solids: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
 
@@ -70,6 +70,8 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
   - `vertex_tolerance: Vec<f64>` — per-vertex tolerance (Phase I); falls back to `CONFUSION = 1e-7`
   - `edge_tolerance: Vec<f64>` — per-edge tolerance (Phase I); populated from STEP `UNCERTAINTY_MEASURE_WITH_UNIT` (Phase J)
   - `face_tolerance: Vec<f64>` — per-face tolerance (Phase I); populated from STEP `UNCERTAINTY_MEASURE_WITH_UNIT` (Phase J)
+  - `edge_same_parameter: Vec<bool>` — per-edge SameParameter flag (Phase M); default `true` for RCAD-generated primitives; STEP reader populates from `SURFACE_CURVE` 4th field
+  - `edge_same_range: Vec<bool>` — per-edge SameRange flag (Phase M); default `true`
 - **`GeomStore` is the source of truth for shape.** A `BRep` without populated `GeomStore` entries is incomplete and must not leave `rcad-modeling` in that state.
 
 ### 2.4 PCurve (Parameter-Space Curve)
@@ -124,6 +126,7 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
   - `chamfer_edge(brep, edge_idx, dist)` — flat bevel; replaces edge with planar quad + 2 closing triangles; returns new BRep
   - `fillet_edge(brep, edge_idx, radius)` — cylindrical blend; setback = `radius / tan(β/2)` from exterior dihedral angle; returns new BRep
   - `fillet_edges(brep, edges: &[(usize, f64)])` — batch fillet API: applies `fillet_edge` for each entry, sorted by index descending (Phase L); safe for non-adjacent edges
+  - `corner_blend(brep, vertex_idx, radius)` — blend a 3-valence convex corner (Phase M): sets back each incident edge by `radius` and inserts a planar triangular closing patch; eliminates gaps at corners after `fillet_edges`
 
 ## 2.7 Topology Query Layer (rcad-kernel / topo_query.rs)
 - Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
@@ -150,6 +153,7 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 
 ## 2.9 Analysis and Algorithms (rcad-algorithms)
 - **Boolean operations** (`builder`): union, intersection, difference on convex BReps
+- **Boolean history** (`history`): `BooleanHistory { face_origins: Vec<FaceOrigin> }` — maps each result face to `FaceOrigin::FromA(idx)`, `FromB(idx)`, or `Generated`; returned by `union/intersection/difference_with_history()` (Phase M); analogous to OCCT `BRepAlgoAPI_BuilderShape`
 - **Shape validity** (`brep_check`): `check(brep) -> CheckResult` — reports degenerate/invalid topology
 - **Global properties** (`rcad-kernel/properties`): `surface_area`, `volume`, `centroid`, `inertia_tensor`
 - **Section** (`section`): `section_polylines(brep, plane)` — cross-section line set
@@ -160,7 +164,7 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - `arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64` — signed arc length over `[t1, t2]`
   - `Line3`: exact — `t2 − t1` (direction is always unit)
   - `Circle3`: exact — `r · (t2 − t1)`
-  - `Ellipse3`, `BSplineCurve3`: 16-point Gauss-Legendre quadrature of `|dP/dt|` (finite-difference speed)
+  - `Ellipse3`, `BSplineCurve3`, `BezierCurve3`, `OffsetCurve3`: 16-point Gauss-Legendre quadrature of `|dP/dt|` (finite-difference speed)
 - Returns signed value; caller takes `.abs()` for unsigned length.
 
 ## 2.11 Moment of Inertia Tensor (rcad-kernel / properties.rs)

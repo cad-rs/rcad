@@ -3,6 +3,7 @@ pub mod brep_check;
 pub mod builder;
 pub mod classify;
 pub mod geom_populate;
+pub mod history;
 pub mod hlr;
 pub mod inttools;
 pub mod pave_filler;
@@ -14,6 +15,7 @@ use rcad_kernel::BRep;
 
 pub use brep_check::{check, CheckIssue, CheckResult};
 pub use builder::{BooleanError, BooleanOpType};
+pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
 pub use section::{section, section_polylines};
 
@@ -32,6 +34,44 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     // 3. Run Builder — classify and assemble result
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build()
+}
+
+/// Like [`boolean_op`] but also returns a [`BooleanHistory`] mapping each result
+/// face back to its source in solid A or B.
+pub fn boolean_op_with_history(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+) -> Result<(BRep, BooleanHistory), BooleanError> {
+    let mut ds = bopds::ds::DS::new(a, b);
+    let mut filler = pave_filler::PaveFiller::new(&mut ds);
+    filler.perform();
+    let builder = builder::BooleanBuilder::new(&ds, op);
+    builder.build_with_history()
+}
+
+/// Union two BReps and return both the result and face origin history.
+pub fn union_with_history(
+    a: &BRep,
+    b: &BRep,
+) -> Result<(BRep, BooleanHistory), BooleanError> {
+    boolean_op_with_history(BooleanOpType::Union, a, b)
+}
+
+/// Intersect two BReps and return both the result and face origin history.
+pub fn intersection_with_history(
+    a: &BRep,
+    b: &BRep,
+) -> Result<(BRep, BooleanHistory), BooleanError> {
+    boolean_op_with_history(BooleanOpType::Intersection, a, b)
+}
+
+/// Subtract solid B from solid A and return both the result and face origin history.
+pub fn difference_with_history(
+    a: &BRep,
+    b: &BRep,
+) -> Result<(BRep, BooleanHistory), BooleanError> {
+    boolean_op_with_history(BooleanOpType::Difference, a, b)
 }
 
 #[cfg(test)]
