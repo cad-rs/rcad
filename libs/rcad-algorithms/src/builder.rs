@@ -158,7 +158,7 @@ impl ResultBuilder {
 
         for (edge_indices, triangles, normal, surface) in self.faces {
             let wire = Wire {
-                edges: edge_indices,
+                edges: edge_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
             };
             faces.push(Face {
                 outer_wire: wire,

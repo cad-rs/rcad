@@ -1,5 +1,5 @@
 use glam::DVec3;
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire};
+use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use rcad_render::{
     cursor_point_on_plane, Camera, SelectionMode, SelectionState, DEFAULT_EDGE_PICK_RADIUS_PX,
@@ -100,12 +100,12 @@ impl CreationController {
         let mut edge_set: HashSet<usize> = HashSet::new();
         for face_idx in &selection.selected_faces {
             if let Some(face) = face_by_index(brep, *face_idx) {
-                for &edge in &face.outer_wire.edges {
-                    edge_set.insert(edge);
+                for edge in &face.outer_wire.edges {
+                    edge_set.insert(edge.idx);
                 }
                 for wire in &face.inner_wires {
-                    for &edge in &wire.edges {
-                        edge_set.insert(edge);
+                    for edge in &wire.edges {
+                        edge_set.insert(edge.idx);
                     }
                 }
             }
@@ -124,11 +124,11 @@ impl CreationController {
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
-                    let hit_outer = face.outer_wire.edges.iter().any(|e| selected_edges.contains(e));
+                    let hit_outer = face.outer_wire.edges.iter().any(|e| selected_edges.contains(&e.idx));
                     let hit_inner = face
                         .inner_wires
                         .iter()
-                        .any(|w| w.edges.iter().any(|e| selected_edges.contains(e)));
+                        .any(|w| w.edges.iter().any(|e| selected_edges.contains(&e.idx)));
                     if hit_outer || hit_inner {
                         faces.push(face_idx);
                     }
@@ -148,15 +148,15 @@ impl CreationController {
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
-                    for &edge in &face.outer_wire.edges {
-                        if edge < edge_to_faces.len() {
-                            edge_to_faces[edge].push(face_idx);
+                    for edge in &face.outer_wire.edges {
+                        if edge.idx < edge_to_faces.len() {
+                            edge_to_faces[edge.idx].push(face_idx);
                         }
                     }
                     for wire in &face.inner_wires {
-                        for &edge in &wire.edges {
-                            if edge < edge_to_faces.len() {
-                                edge_to_faces[edge].push(face_idx);
+                        for edge in &wire.edges {
+                            if edge.idx < edge_to_faces.len() {
+                                edge_to_faces[edge.idx].push(face_idx);
                             }
                         }
                     }
@@ -168,16 +168,16 @@ impl CreationController {
         let mut grown: HashSet<usize> = selection.selected_faces.iter().copied().collect();
         for &f in &selection.selected_faces {
             if let Some(face) = face_by_index(brep, f) {
-                for &edge in &face.outer_wire.edges {
-                    if let Some(adj) = edge_to_faces.get(edge) {
+                for edge in &face.outer_wire.edges {
+                    if let Some(adj) = edge_to_faces.get(edge.idx) {
                         for &af in adj {
                             grown.insert(af);
                         }
                     }
                 }
                 for wire in &face.inner_wires {
-                    for &edge in &wire.edges {
-                        if let Some(adj) = edge_to_faces.get(edge) {
+                    for edge in &wire.edges {
+                        if let Some(adj) = edge_to_faces.get(edge.idx) {
                             for &af in adj {
                                 grown.insert(af);
                             }
@@ -509,6 +509,9 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
             .iter()
             .map(|curve| curve.map(|idx| idx + curve_offset)),
     );
+    // edge_curve_range has no index offset — parameters are curve-local values
+    dst.geom.edge_curve_range.extend(src.geom.edge_curve_range.iter().cloned());
+    dst.geom.edge_degenerated.extend(src.geom.edge_degenerated.iter().cloned());
 
     let mut face_counter = 0usize;
     for solid in src.solids {
@@ -526,13 +529,13 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
 
                 new_faces.push(Face {
                     outer_wire: Wire {
-                        edges: face.outer_wire.edges.into_iter().map(|idx| idx + edge_offset).collect(),
+                        edges: face.outer_wire.edges.into_iter().map(|we| WireEdge { idx: we.idx + edge_offset, forward: we.forward }).collect(),
                     },
                     inner_wires: face
                         .inner_wires
                         .into_iter()
                         .map(|wire| Wire {
-                            edges: wire.edges.into_iter().map(|idx| idx + edge_offset).collect(),
+                            edges: wire.edges.into_iter().map(|we| WireEdge { idx: we.idx + edge_offset, forward: we.forward }).collect(),
                         })
                         .collect(),
                     normal: face.normal,

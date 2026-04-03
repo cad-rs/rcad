@@ -10,6 +10,8 @@ pub fn populate_box_geom(brep: &mut BRep) {
     let geom = &mut brep.geom;
     geom.curves.clear();
     geom.edge_curve.clear();
+    geom.edge_curve_range.clear();
+    geom.edge_degenerated.clear();
     geom.surfaces.clear();
     geom.face_surface.clear();
 
@@ -17,13 +19,20 @@ pub fn populate_box_geom(brep: &mut BRep) {
     for edge in &brep.edges {
         let p0 = brep.vertices[edge.start].point;
         let p1 = brep.vertices[edge.end].point;
-        let dir = (p1 - p0).normalize();
+        let delta = p1 - p0;
+        let len = delta.length();
+        let dir = if len > 1e-12 { delta / len } else { DVec3::X };
         let curve_idx = geom.curves.len();
         geom.curves.push(Curve3::Line(Line3 {
             origin: p0,
             direction: dir,
         }));
         geom.edge_curve.push(Some(curve_idx));
+        // t_range: project endpoints onto the line
+        let t0 = (p0 - p0).dot(dir); // = 0.0
+        let t1 = (p1 - p0).dot(dir); // = len
+        geom.edge_curve_range.push(Some([t0, t1]));
+        geom.edge_degenerated.push(len <= 1e-12);
     }
 
     // Faces → Plane
@@ -33,7 +42,7 @@ pub fn populate_box_geom(brep: &mut BRep) {
                 // Use the first wire vertex rather than face.triangles (triangles
                 // are rendering metadata and must not be used in modeling code).
                 let origin = face.outer_wire.edges.first()
-                    .and_then(|&ei| brep.edges.get(ei))
+                    .and_then(|we| brep.edges.get(we.idx))
                     .map(|e| brep.vertices[e.start].point)
                     .unwrap_or(DVec3::ZERO);
                 let surf_idx = geom.surfaces.len();

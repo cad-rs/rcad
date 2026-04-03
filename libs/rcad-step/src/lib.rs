@@ -1,5 +1,5 @@
-use rcad_kernel::{BRep, Curve2d, Curve3, GeomStore, PCurve, Surface3};
-use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire};
+use rcad_kernel::{BRep, Curve2d, Curve3, CurveEval, GeomStore, PCurve, Surface3};
+use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -644,7 +644,7 @@ fn build_face(
     let oriented_ids = parsed.edge_loops.get(&loop_id)?;
 
     let mut polygon: Vec<usize> = Vec::new();
-    let mut wire_edge_indices: Vec<usize> = Vec::new();
+    let mut wire_edge_indices: Vec<WireEdge> = Vec::new();
     let mut face_vertex_indices: Vec<usize> = Vec::new();
     let mut sampled_loop_points: Vec<glam::DVec3> = Vec::new();
 
@@ -713,9 +713,40 @@ fn build_face(
                 curve_store_index_by_step.insert(step_curve, cidx);
                 Some(cidx)
             });
+
+            // Populate edge_curve_range from vertex positions
+            if geom.edge_curve_range.len() <= idx {
+                geom.edge_curve_range.resize(idx + 1, None);
+            }
+            if geom.edge_degenerated.len() <= idx {
+                geom.edge_degenerated.resize(idx + 1, false);
+            }
+            if let Some(Some(cidx)) = geom.edge_curve.get(idx) {
+                if let Some(curve) = geom.curves.get(*cidx) {
+                    let p0 = vertices
+                        .get(*vertex_index_by_id.get(&start_id)?)
+                        .map(|v| v.point);
+                    let p1 = vertices
+                        .get(*vertex_index_by_id.get(&end_id)?)
+                        .map(|v| v.point);
+                    if let (Some(p0), Some(p1)) = (p0, p1) {
+                        let t_range = match curve {
+                            Curve3::Line(line) => {
+                                let t0 = (p0 - line.origin).dot(line.direction);
+                                let t1 = (p1 - line.origin).dot(line.direction);
+                                [t0, t1]
+                            }
+                            _ => curve.default_domain(),
+                        };
+                        geom.edge_curve_range[idx] = Some(t_range);
+                        let len = (p1 - p0).length();
+                        geom.edge_degenerated[idx] = len <= 1e-12;
+                    }
+                }
+            }
             idx
         };
-        wire_edge_indices.push(edge_index);
+        wire_edge_indices.push(WireEdge { idx: edge_index, forward: orientation });
     }
 
     while polygon.len() > 1 && polygon.first() == polygon.last() {

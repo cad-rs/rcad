@@ -348,11 +348,11 @@ impl eframe::App for RCadApp {
                                                                     .small()
                                                                     .italics(),
                                                             );
-                                                            for &ei in &face.outer_wire.edges {
+                                                            for ei in &face.outer_wire.edges {
                                                                 show_edge_item(
                                                                     ui,
                                                                     brep,
-                                                                    ei,
+                                                                    ei.idx,
                                                                     sel_edges,
                                                                     &mut edge_toggle,
                                                                 );
@@ -367,11 +367,11 @@ impl eframe::App for RCadApp {
                                                                     .small()
                                                                     .italics(),
                                                                 );
-                                                                for &ei in &iw.edges {
+                                                                for ei in &iw.edges {
                                                                     show_edge_item(
                                                                         ui,
                                                                         brep,
-                                                                        ei,
+                                                                        ei.idx,
                                                                         sel_edges,
                                                                         &mut edge_toggle,
                                                                     );

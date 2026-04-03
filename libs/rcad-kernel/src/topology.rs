@@ -12,9 +12,37 @@ pub struct Edge {
     pub end: usize,
 }
 
+/// An edge reference with explicit traversal direction inside a Wire.
+///
+/// `forward = true`  → traverse edge from `edge.start` to `edge.end`.
+/// `forward = false` → traverse edge from `edge.end`   to `edge.start`.
+///
+/// Analogous to OCCT `TopoDS_Edge` with `FORWARD` / `REVERSED` orientation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct WireEdge {
+    /// Index into `BRep.edges`.
+    pub idx: usize,
+    /// Traversal direction: `true` = forward (start→end), `false` = reversed.
+    pub forward: bool,
+}
+
+impl WireEdge {
+    pub const fn new(idx: usize, forward: bool) -> Self {
+        Self { idx, forward }
+    }
+    /// Shorthand: forward reference.
+    pub const fn fwd(idx: usize) -> Self {
+        Self { idx, forward: true }
+    }
+    /// Shorthand: reversed reference.
+    pub const fn rev(idx: usize) -> Self {
+        Self { idx, forward: false }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wire {
-    pub edges: Vec<usize>,
+    pub edges: Vec<WireEdge>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

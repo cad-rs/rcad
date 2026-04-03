@@ -1,6 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::*;
-use rcad_kernel::BRep;
+use rcad_kernel::{BRep, CurveEval};
 
 use super::face_info::FaceInfo;
 use super::pave::{Pave, PaveBlock};
@@ -173,7 +173,12 @@ impl DS {
                     let t1 = (p1 - line.origin).dot(line.direction);
                     [t0, t1]
                 }
-                _ => [0.0, 1.0],
+                _ => brep
+                    .geom
+                    .edge_curve_range
+                    .get(i)
+                    .and_then(|r| *r)
+                    .unwrap_or_else(|| curve.default_domain()),
             };
 
             self.edges.push(DSEdge {
@@ -212,7 +217,7 @@ impl DS {
                         .outer_wire
                         .edges
                         .iter()
-                        .map(|&ei| ei + edge_offset)
+                        .map(|we| we.idx + edge_offset)
                         .collect();
 
                     // Trace the wire edges to get ordered boundary vertices.
@@ -223,7 +228,7 @@ impl DS {
                         if edges_in_wire.is_empty() {
                             Vec::new()
                         } else if edges_in_wire.len() == 1 {
-                            let e = &brep.edges[edges_in_wire[0]];
+                            let e = &brep.edges[edges_in_wire[0].idx];
                             vec![e.start + vert_offset, e.end + vert_offset]
                         } else {
                             // For each consecutive pair of wire edges, find the
@@ -232,8 +237,8 @@ impl DS {
                             let mut verts = Vec::with_capacity(edges_in_wire.len());
                             for i in 0..edges_in_wire.len() {
                                 let next_i = (i + 1) % edges_in_wire.len();
-                                let e = &brep.edges[edges_in_wire[i]];
-                                let en = &brep.edges[edges_in_wire[next_i]];
+                                let e = &brep.edges[edges_in_wire[i].idx];
+                                let en = &brep.edges[edges_in_wire[next_i].idx];
 
                                 // The shared vertex between e and en
                                 let shared = if e.start == en.start || e.start == en.end {

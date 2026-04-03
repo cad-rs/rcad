@@ -118,9 +118,9 @@ impl Part21Writer {
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
-                    face_edge_set.extend(face.outer_wire.edges.iter().copied());
+                    face_edge_set.extend(face.outer_wire.edges.iter().map(|we| we.idx));
                     for inner in &face.inner_wires {
-                        face_edge_set.extend(inner.edges.iter().copied());
+                        face_edge_set.extend(inner.edges.iter().map(|we| we.idx));
                     }
                 }
             }
@@ -1035,46 +1035,24 @@ struct OrientedEdgeExport {
 }
 
 fn oriented_face_edges(brep: &BRep, face: &Face) -> Vec<OrientedEdgeExport> {
-    let mut pending: Vec<(usize, usize, usize)> = face
-        .outer_wire
+    face.outer_wire
         .edges
         .iter()
-        .filter_map(|&edge_idx| brep.edges.get(edge_idx).map(|edge| (edge_idx, edge.start, edge.end)))
-        .collect();
-    if pending.is_empty() {
-        return Vec::new();
-    }
-
-    let (first_idx, first_start, first_end) = pending.remove(0);
-    let mut result = vec![OrientedEdgeExport {
-        edge_idx: first_idx,
-        start: first_start,
-        end: first_end,
-        forward: true,
-    }];
-    let mut current = first_end;
-
-    while !pending.is_empty() {
-        if let Some((idx, oriented)) = pending.iter().enumerate().find_map(|(idx, &(edge_idx, a, b))| {
-            if a == current {
-                Some((idx, OrientedEdgeExport { edge_idx, start: a, end: b, forward: true }))
-            } else if b == current {
-                Some((idx, OrientedEdgeExport { edge_idx, start: b, end: a, forward: false }))
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let (start, end) = if we.forward {
+                (edge.start, edge.end)
             } else {
-                None
-            }
-        }) {
-            pending.remove(idx);
-            current = oriented.end;
-            result.push(oriented);
-        } else {
-            let (edge_idx, a, b) = pending.remove(0);
-            current = b;
-            result.push(OrientedEdgeExport { edge_idx, start: a, end: b, forward: true });
-        }
-    }
-
-    result
+                (edge.end, edge.start)
+            };
+            Some(OrientedEdgeExport {
+                edge_idx: we.idx,
+                start,
+                end,
+                forward: we.forward,
+            })
+        })
+        .collect()
 }
 
 fn compute_face_normal(points: &[glam::DVec3]) -> Option<glam::DVec3> {
@@ -1325,8 +1303,8 @@ mod tests {
 /// These are seam edges on periodic surfaces.
 fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
     let mut counts: HashMap<usize, usize> = HashMap::new();
-    for &idx in &face.outer_wire.edges {
-        *counts.entry(idx).or_insert(0) += 1;
+    for we in &face.outer_wire.edges {
+        *counts.entry(we.idx).or_insert(0) += 1;
     }
     counts
         .into_iter()
@@ -1352,14 +1330,14 @@ fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
         return true;
     }
 
-    let unique_edges: BTreeSet<usize> = face.outer_wire.edges.iter().copied().collect();
+    let unique_edges: BTreeSet<usize> = face.outer_wire.edges.iter().map(|we| we.idx).collect();
     if unique_edges.len() < 3 {
         return true;
     }
 
     let mut verts = BTreeSet::new();
-    for &edge_idx in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(edge_idx) {
+    for we in &face.outer_wire.edges {
+        if let Some(edge) = brep.edges.get(we.idx) {
             verts.insert(edge.start);
             verts.insert(edge.end);
         }

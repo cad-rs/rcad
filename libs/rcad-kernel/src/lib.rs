@@ -13,7 +13,8 @@ pub mod topology;
 
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
-pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire};
+pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
+pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
@@ -41,6 +42,15 @@ pub struct GeomStore {
     /// Indexed by `BRep.edges` index; each entry is the list of PCurves for
     /// that edge on its adjacent faces (usually 1, seam edges have 2).
     pub edge_pcurves: Vec<Vec<PCurve>>,
+    /// Parallel to `edge_curve`: the parameter range [t1, t2] of the edge on its
+    /// 3D curve. `None` = unknown (algorithms fall back to `CurveEval::default_domain`).
+    /// Analogous to `BRep_Edge::Range()` in OCCT.
+    #[serde(default)]
+    pub edge_curve_range: Vec<Option<[f64; 2]>>,
+    /// Parallel to `BRep.edges`: `true` if this is a degenerate edge (zero-length,
+    /// e.g. a polar singularity). Analogous to `BRep_Edge::Degenerated()` in OCCT.
+    #[serde(default)]
+    pub edge_degenerated: Vec<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,17 +115,17 @@ impl BRep {
 
         let faces = vec![
             // Front  (z=0, normal -Z)
-            Face { outer_wire: Wire { edges: vec![0,1,2,3] }, inner_wires: vec![], normal: DVec3::new(0.0, 0.0, -1.0), triangles: vec![[0,1,2],[0,2,3]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::fwd(0),WireEdge::fwd(1),WireEdge::fwd(2),WireEdge::fwd(3)] }, inner_wires: vec![], normal: DVec3::new(0.0, 0.0, -1.0), triangles: vec![[0,1,2],[0,2,3]] },
             // Back   (z=d, normal +Z)
-            Face { outer_wire: Wire { edges: vec![4,5,6,7] }, inner_wires: vec![], normal: DVec3::new(0.0, 0.0,  1.0), triangles: vec![[5,4,7],[5,7,6]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::fwd(4),WireEdge::fwd(5),WireEdge::fwd(6),WireEdge::fwd(7)] }, inner_wires: vec![], normal: DVec3::new(0.0, 0.0,  1.0), triangles: vec![[5,4,7],[5,7,6]] },
             // Bottom (y=0, normal -Y)
-            Face { outer_wire: Wire { edges: vec![0,9,4,8] }, inner_wires: vec![], normal: DVec3::new(0.0,-1.0, 0.0), triangles: vec![[0,1,5],[0,5,4]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::fwd(0),WireEdge::fwd(9),WireEdge::rev(4),WireEdge::rev(8)] }, inner_wires: vec![], normal: DVec3::new(0.0,-1.0, 0.0), triangles: vec![[0,1,5],[0,5,4]] },
             // Top    (y=h, normal +Y)
-            Face { outer_wire: Wire { edges: vec![2,10,6,11] }, inner_wires: vec![], normal: DVec3::new(0.0, 1.0, 0.0), triangles: vec![[3,2,6],[3,6,7]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::rev(2),WireEdge::fwd(10),WireEdge::fwd(6),WireEdge::rev(11)] }, inner_wires: vec![], normal: DVec3::new(0.0, 1.0, 0.0), triangles: vec![[3,2,6],[3,6,7]] },
             // Left   (x=0, normal -X)
-            Face { outer_wire: Wire { edges: vec![3,11,7,8] }, inner_wires: vec![], normal: DVec3::new(-1.0,0.0, 0.0), triangles: vec![[0,3,7],[0,7,4]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::rev(3),WireEdge::fwd(11),WireEdge::rev(7),WireEdge::rev(8)] }, inner_wires: vec![], normal: DVec3::new(-1.0,0.0, 0.0), triangles: vec![[0,3,7],[0,7,4]] },
             // Right  (x=w, normal +X)
-            Face { outer_wire: Wire { edges: vec![1,10,5,9] }, inner_wires: vec![], normal: DVec3::new( 1.0,0.0, 0.0), triangles: vec![[1,2,6],[1,6,5]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::fwd(1),WireEdge::fwd(10),WireEdge::rev(5),WireEdge::rev(9)] }, inner_wires: vec![], normal: DVec3::new( 1.0,0.0, 0.0), triangles: vec![[1,2,6],[1,6,5]] },
         ];
 
         BRep {
@@ -125,8 +135,6 @@ impl BRep {
             geom: GeomStore::default(),
         }
     }
-
-    /// Creates an analytic sphere BRep centered at origin with radius `r`, axis = +Y.
     ///
     /// Topology (OCCT-compatible single-seam representation):
     ///   Vertices: north (0, r, 0), south (0, -r, 0)
@@ -150,7 +158,7 @@ impl BRep {
 
         // Face F0: outer_wire uses E0 twice (forward then reversed = seam)
         let face = Face {
-            outer_wire: Wire { edges: vec![0, 0] },
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0), WireEdge::rev(0)] },
             inner_wires: vec![],
             normal: DVec3::X, // outward, approximate
             triangles: vec![],
@@ -191,6 +199,9 @@ impl BRep {
                 PCurve { surface_idx: 0, curve2d_idx: 0 },
                 PCurve { surface_idx: 0, curve2d_idx: 1 },
             ]],
+            // E0 is the half-meridian: t ∈ [0, π] on Circle3 (north→south)
+            edge_curve_range: vec![Some([0.0, PI])],
+            edge_degenerated: vec![false],
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -233,28 +244,24 @@ impl BRep {
 
         // Faces
         // F0 lateral: outer_wire = [E2_fwd, E1_rev, E2_rev, E0_fwd]
-        //   Note: seam edges appear twice; the writer handles them via detect_seam_edge_indices.
-        //   We model it as: go down seam (E2), go around bottom (E1 reversed in param space),
-        //   go up seam (E2 reversed), go around top (E0). Wire just lists edge indices;
-        //   orientation is handled by the writer's oriented_face_edges traversal.
-        //   For simplicity, store [2, 1, 2, 0] — the writer uses vertex connectivity to
-        //   determine forward/reverse orientation.
+        //   Cylinder lateral face: E2 fwd (top→bot seam down), E1 rev (bot circle CCW),
+        //   E2 rev (bot→top seam up), E0 fwd (top circle CW seam).
         let f0 = Face {
-            outer_wire: Wire { edges: vec![2, 1, 2, 0] },
+            outer_wire: Wire { edges: vec![WireEdge::fwd(2), WireEdge::rev(1), WireEdge::rev(2), WireEdge::fwd(0)] },
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
         };
-        // F1 top cap: wire = [E0]
+        // F1 top cap: wire = [E0] forward
         let f1 = Face {
-            outer_wire: Wire { edges: vec![0] },
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
             inner_wires: vec![],
             normal: DVec3::Y,
             triangles: vec![],
         };
-        // F2 bottom cap: wire = [E1]
+        // F2 bottom cap: wire = [E1] reversed (bottom circle traversed CW from -Y view)
         let f2 = Face {
-            outer_wire: Wire { edges: vec![1] },
+            outer_wire: Wire { edges: vec![WireEdge::rev(1)] },
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
@@ -345,6 +352,13 @@ impl BRep {
                     PCurve { surface_idx: 0, curve2d_idx: 4 }, // E2 on cyl
                 ],
             ],
+            // E0/E1: full circles [0, 2π]; E2: seam line [0, h]
+            edge_curve_range: vec![
+                Some([0.0, 2.0 * PI]),  // E0 top circle
+                Some([0.0, 2.0 * PI]),  // E1 bot circle
+                Some([0.0, h]),         // E2 seam line
+            ],
+            edge_degenerated: vec![false, false, false],
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -362,6 +376,7 @@ impl BRep {
     ///     F1: Plane -Y cap,  wire=[E0]
     fn create_cone(base_radius: f64, height: f64) -> Self {
         use geom::*;
+        use std::f64::consts::PI;
         let r = base_radius;
         let h = height;
         let half_h = h * 0.5;
@@ -375,16 +390,16 @@ impl BRep {
             Edge { start: 0, end: 1 }, // E1 slant line apex→base_p
         ];
 
-        // F0 conical lateral: wire = [E1, E0, E1_rev]  (seam duplicates E1)
+        // F0 conical lateral: E1 fwd (apex→base seam), E0 fwd (base circle), E1 rev (base→apex seam)
         let f0 = Face {
-            outer_wire: Wire { edges: vec![1, 0, 1] },
+            outer_wire: Wire { edges: vec![WireEdge::fwd(1), WireEdge::fwd(0), WireEdge::rev(1)] },
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
         };
-        // F1 base cap
+        // F1 base cap: E0 reversed (base circle CW from -Y view)
         let f1 = Face {
-            outer_wire: Wire { edges: vec![0] },
+            outer_wire: Wire { edges: vec![WireEdge::rev(0)] },
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
@@ -452,6 +467,12 @@ impl BRep {
                     PCurve { surface_idx: 0, curve2d_idx: 2 },
                 ],
             ],
+            // E0: full base circle [0, 2π]; E1: slant from apex to base [0, slant_len]
+            edge_curve_range: vec![
+                Some([0.0, 2.0 * PI]),    // E0 base circle
+                Some([0.0, slant_len]),   // E1 slant line
+            ],
+            edge_degenerated: vec![false, false],
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -487,9 +508,10 @@ impl BRep {
             Edge { start: 0, end: 0 }, // E1 minor circle seam
         ];
 
-        // F0: outer_wire lists all 4 oriented seam traversals
+        // F0: outer_wire — E0 fwd (major seam), E1 fwd (minor seam),
+        //     E0 rev (major seam reversed), E1 rev (minor seam reversed)
         let face = Face {
-            outer_wire: Wire { edges: vec![0, 1, 0, 1] },
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::rev(0), WireEdge::rev(1)] },
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
@@ -553,6 +575,12 @@ impl BRep {
                     PCurve { surface_idx: 0, curve2d_idx: 3 },
                 ],
             ],
+            // Both seams are full circles [0, 2π]
+            edge_curve_range: vec![
+                Some([0.0, 2.0 * PI]),  // E0 major seam circle
+                Some([0.0, 2.0 * PI]),  // E1 minor seam circle
+            ],
+            edge_degenerated: vec![false, false],
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -586,6 +614,21 @@ impl BRep {
             sum += v.point;
         }
         sum / self.vertices.len() as f64
+    }
+
+    /// Returns the axis-aligned bounding box of all vertices as `[min, max]`,
+    /// or `None` if the BRep has no vertices.
+    pub fn bounding_box(&self) -> Option<[DVec3; 2]> {
+        if self.vertices.is_empty() {
+            return None;
+        }
+        let mut mn = DVec3::splat(f64::INFINITY);
+        let mut mx = DVec3::splat(f64::NEG_INFINITY);
+        for v in &self.vertices {
+            mn = mn.min(v.point);
+            mx = mx.max(v.point);
+        }
+        Some([mn, mx])
     }
 
 }
