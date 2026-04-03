@@ -29,11 +29,23 @@ pub struct Ellipse3 {
     pub minor_radius: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// A non-uniform rational B-spline curve in 3D.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BSplineCurve3 {
+    pub degree: usize,
+    /// Full knot vector (with multiplicities expanded).
+    pub knots: Vec<f64>,
+    pub control_points: Vec<DVec3>,
+    /// Homogeneous weights; 1.0 for non-rational.
+    pub weights: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
     Circle(Circle3),
     Ellipse(Ellipse3),
+    BSpline(BSplineCurve3),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -72,13 +84,29 @@ pub struct ToroidalSurface {
     pub minor_radius: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// A non-uniform rational B-spline surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BSplineSurface {
+    pub degree_u: usize,
+    pub degree_v: usize,
+    /// Full knot vector for u (with multiplicities expanded).
+    pub knots_u: Vec<f64>,
+    /// Full knot vector for v (with multiplicities expanded).
+    pub knots_v: Vec<f64>,
+    /// Control point grid [u_index][v_index].
+    pub control_points: Vec<Vec<DVec3>>,
+    /// Weight grid [u_index][v_index]; 1.0 for non-rational.
+    pub weights: Vec<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Surface3 {
     Plane(Plane),
     Cylinder(CylindricalSurface),
     Sphere(SphericalSurface),
     Cone(ConicalSurface),
     Torus(ToroidalSurface),
+    BSpline(BSplineSurface),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -229,6 +257,7 @@ impl CurveEval for Curve3 {
             Curve3::Line(c) => c.point_at(t),
             Curve3::Circle(c) => c.point_at(t),
             Curve3::Ellipse(c) => c.point_at(t),
+            Curve3::BSpline(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -236,6 +265,7 @@ impl CurveEval for Curve3 {
             Curve3::Line(c) => c.tangent_at(t),
             Curve3::Circle(c) => c.tangent_at(t),
             Curve3::Ellipse(c) => c.tangent_at(t),
+            Curve3::BSpline(c) => c.tangent_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -243,6 +273,7 @@ impl CurveEval for Curve3 {
             Curve3::Line(c) => c.default_domain(),
             Curve3::Circle(c) => c.default_domain(),
             Curve3::Ellipse(c) => c.default_domain(),
+            Curve3::BSpline(c) => c.default_domain(),
         }
     }
 }
@@ -347,6 +378,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.point_at(u, v),
             Surface3::Cone(s) => s.point_at(u, v),
             Surface3::Torus(s) => s.point_at(u, v),
+            Surface3::BSpline(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -356,6 +388,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.normal_at(u, v),
             Surface3::Cone(s) => s.normal_at(u, v),
             Surface3::Torus(s) => s.normal_at(u, v),
+            Surface3::BSpline(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -365,7 +398,144 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.default_domain(),
             Surface3::Cone(s) => s.default_domain(),
             Surface3::Torus(s) => s.default_domain(),
+            Surface3::BSpline(s) => s.default_domain(),
         }
+    }
+}
+
+// ── BSpline evaluation ────────────────────────────────────────────────────────
+
+/// De Boor's algorithm for rational B-spline evaluation.
+/// Returns the 3D point at parameter `t`.
+fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
+    let n = points.len();
+    if n == 0 {
+        return DVec3::ZERO;
+    }
+
+    // Find knot span index k such that knots[k] <= t < knots[k+1]
+    let k = {
+        let t_min = knots[degree];
+        let t_max = knots[knots.len() - degree - 1];
+        let t_clamped = t.clamp(t_min, t_max);
+        let mut span = degree;
+        for i in degree..knots.len() - degree - 1 {
+            if knots[i] <= t_clamped {
+                span = i;
+            } else {
+                break;
+            }
+        }
+        span
+    };
+
+    // Initialize homogeneous control points for the span
+    let mut d: Vec<[f64; 4]> = (0..=degree)
+        .map(|j| {
+            let idx = k - degree + j;
+            let idx = idx.min(n - 1);
+            let w = weights[idx];
+            [points[idx].x * w, points[idx].y * w, points[idx].z * w, w]
+        })
+        .collect();
+
+    for r in 1..=degree {
+        for j in (r..=degree).rev() {
+            let i = k - degree + j;
+            let denom = knots[i + degree - r + 1] - knots[i];
+            let alpha = if denom.abs() < 1e-15 {
+                0.0
+            } else {
+                (t - knots[i]) / denom
+            };
+            for c in 0..4 {
+                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            }
+        }
+    }
+
+    let w = d[degree][3];
+    if w.abs() < 1e-15 {
+        DVec3::ZERO
+    } else {
+        DVec3::new(d[degree][0] / w, d[degree][1] / w, d[degree][2] / w)
+    }
+}
+
+impl CurveEval for BSplineCurve3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        de_boor(self.degree, &self.knots, &self.control_points, &self.weights, t)
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        // Central difference approximation
+        let eps = (self.default_domain()[1] - self.default_domain()[0]) * 1e-6;
+        let t0 = self.default_domain()[0];
+        let t1 = self.default_domain()[1];
+        let t_lo = (t - eps).max(t0);
+        let t_hi = (t + eps).min(t1);
+        let dp = self.point_at(t_hi) - self.point_at(t_lo);
+        let len = dp.length();
+        if len < 1e-15 { DVec3::X } else { dp / len }
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        let d = self.degree;
+        let n = self.knots.len();
+        if n < 2 * d + 2 {
+            return [0.0, 1.0];
+        }
+        [self.knots[d], self.knots[n - d - 1]]
+    }
+}
+
+impl SurfaceEval for BSplineSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        // Tensor product: evaluate in u for each v row, then interpolate in v
+        let n_u = self.control_points.len();
+        if n_u == 0 {
+            return DVec3::ZERO;
+        }
+        let n_v = self.control_points[0].len();
+        if n_v == 0 {
+            return DVec3::ZERO;
+        }
+        // Evaluate each v-row of control points along u
+        let row_points: Vec<DVec3> = (0..n_v)
+            .map(|j| {
+                let pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
+                let wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
+                de_boor(self.degree_u, &self.knots_u, &pts, &wts, u)
+            })
+            .collect();
+        let unit_weights = vec![1.0; n_v];
+        de_boor(self.degree_v, &self.knots_v, &row_points, &unit_weights, v)
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let [u0, u1, v0, v1] = self.default_domain();
+        let du = if u + eps <= u1 {
+            self.point_at(u + eps, v) - self.point_at(u, v)
+        } else {
+            self.point_at(u, v) - self.point_at(u - eps, v)
+        };
+        let dv = if v + eps <= v1 {
+            self.point_at(u, v + eps) - self.point_at(u, v)
+        } else {
+            self.point_at(u, v) - self.point_at(u, v - eps)
+        };
+        let n = du.cross(dv);
+        let len = n.length();
+        if len < 1e-15 { DVec3::Z } else { n / len }
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        let du = self.degree_u;
+        let dv = self.degree_v;
+        let nu = self.knots_u.len();
+        let nv = self.knots_v.len();
+        let u0 = if nu > du { self.knots_u[du] } else { 0.0 };
+        let u1 = if nu > du + 1 { self.knots_u[nu - du - 1] } else { 1.0 };
+        let v0 = if nv > dv { self.knots_v[dv] } else { 0.0 };
+        let v1 = if nv > dv + 1 { self.knots_v[nv - dv - 1] } else { 1.0 };
+        [u0, u1, v0, v1]
     }
 }
 
@@ -457,6 +627,38 @@ mod eval_tests {
             let radial = DVec3::new(p.x, 0.0, p.z).length();
             assert!((radial - 3.0).abs() < 1e-9, "u={u} radial={radial}");
         }
+    }
+
+    #[test]
+    fn bspline_degree1_linear_interpolation() {
+        // Degree-1 BSpline with 2 control points = straight line
+        let c = BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::X],
+            weights: vec![1.0, 1.0],
+        };
+        let p0 = c.point_at(0.0);
+        let p1 = c.point_at(1.0);
+        let pmid = c.point_at(0.5);
+        assert!((p0 - DVec3::ZERO).length() < 1e-10);
+        assert!((p1 - DVec3::X).length() < 1e-10);
+        assert!((pmid - DVec3::new(0.5, 0.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn bspline_degree2_quadratic() {
+        // Degree-2 quadratic arc through 3 control points
+        let c = BSplineCurve3 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::X],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let p0 = c.point_at(0.0);
+        let p1 = c.point_at(1.0);
+        assert!((p0 - DVec3::ZERO).length() < 1e-10);
+        assert!((p1 - DVec3::X).length() < 1e-10);
     }
 
     #[test]

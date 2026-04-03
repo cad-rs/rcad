@@ -78,7 +78,7 @@ impl Part21Writer {
                             .get(face_index)
                             .and_then(|v| *v)
                             .and_then(|sid| brep.geom.surfaces.get(sid))
-                            .copied();
+                            .cloned();
                         let export = self.write_face(brep, face, face_surface);
                         if export.used_triangle_fallback {
                             has_triangle_fallback = true;
@@ -237,7 +237,7 @@ impl Part21Writer {
         // For seam faces on closed surfaces, the loop points may be collinear,
         // so compute_face_normal can fail. Use the surface's own axis instead.
         let normal = compute_face_normal(&loop_points)
-            .or_else(|| surface_normal(face_surface))
+            .or_else(|| surface_normal(face_surface.clone()))
             .map(dvec3_to_array)
             .unwrap_or([0.0, 0.0, 1.0]);
 
@@ -245,7 +245,7 @@ impl Part21Writer {
         let axis = self.direction("face_normal", normal);
         let ref_dir = self.direction("face_ref", orthogonal_dir(normal));
         let fallback_placement = self.axis2_placement_3d("face_axis", origin, axis, ref_dir);
-        let surface = self.write_surface(face_surface, fallback_placement);
+        let surface = self.write_surface(face_surface.clone(), fallback_placement);
 
         // Detect seam edges: same edge_idx appearing multiple times
         let seam_edge_indices = detect_seam_edge_indices(face);
@@ -257,7 +257,7 @@ impl Part21Writer {
                 // Don't cache — the same topological edge gets two distinct STEP
                 // EDGE_CURVE entities (one per orientation) so OCCT can build the
                 // seam correctly.
-                self.write_seam_edge_curve(brep, edge.edge_idx, face_surface)
+                self.write_seam_edge_curve(brep, edge.edge_idx, face_surface.clone())
             } else {
                 self.write_edge_curve_by_index(brep, edge.edge_idx)
             };
@@ -446,6 +446,10 @@ impl Part21Writer {
                 )
             }
             None => self.plane("face_plane", fallback_placement),
+            Some(Surface3::BSpline(_)) => {
+                // BSpline surface: fall back to plane for now
+                self.plane("face_plane", fallback_placement)
+            }
         }
     }
 
@@ -532,7 +536,7 @@ impl Part21Writer {
 
     /// Returns the STEP id for a surface from GeomStore, writing it if not yet done.
     fn get_or_write_surface_id(&mut self, brep: &BRep, surface_idx: usize) -> u64 {
-        let surface = brep.geom.surfaces.get(surface_idx).copied();
+        let surface = brep.geom.surfaces.get(surface_idx).cloned();
         // Build a placeholder placement and write the surface entity directly.
         // We don't cache surface IDs here since the same surface may be needed
         // in multiple contexts; duplication in STEP is acceptable.
@@ -582,7 +586,7 @@ impl Part21Writer {
             .get(edge_idx)
             .and_then(|v| *v)
             .and_then(|curve_idx| brep.geom.curves.get(curve_idx))
-            .copied();
+            .cloned();
 
         match curve {
             Some(Curve3::Line(line)) => {
@@ -616,7 +620,7 @@ impl Part21Writer {
                     ellipse.minor_radius.max(1e-9),
                 )
             }
-            None => {
+            Some(Curve3::BSpline(_)) | None => {
                 let p0 = self.cartesian_point("edge_origin", start_point);
                 let delta = [
                     end_point[0] - start_point[0],
@@ -1322,6 +1326,7 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Sphere(s) => Some(s.axis),
         Surface3::Cone(c) => Some(c.axis),
         Surface3::Torus(t) => Some(t.axis),
+        Surface3::BSpline(_) => None,
     }
 }
 

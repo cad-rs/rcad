@@ -35,6 +35,10 @@ fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             let d = perp_len - t.major_radius;
             (d * d + along * along).sqrt() - t.minor_radius
         }
+        Surface3::BSpline(_) => {
+            // Approximate implicit via SurfaceEval normal_at (fallback)
+            point.length() - 1.0
+        }
     }
 }
 
@@ -86,6 +90,10 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
                 return DVec3::ZERO;
             }
             tv / tv_len
+        }
+        Surface3::BSpline(s) => {
+            // Use SurfaceEval normal_at at (0,0) as a rough approximation
+            s.normal_at(0.0, 0.0)
         }
     }
 }

@@ -249,9 +249,9 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_edge_face(&mut self, edge_idx: usize, face_idx: usize) {
-        let edge_curve = self.ds.edges[edge_idx].curve;
+        let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
-        let face_surface = self.ds.faces[face_idx].surface;
+        let face_surface = self.ds.faces[face_idx].surface.clone();
 
         // Dispatch based on curve type × surface type
         let hits: Vec<(DVec3, f64)> = match (&edge_curve, &face_surface) {
@@ -341,8 +341,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-        let s1 = self.ds.faces[f1].surface;
-        let s2 = self.ds.faces[f2].surface;
+        let s1 = self.ds.faces[f1].surface.clone();
+        let s2 = self.ds.faces[f2].surface.clone();
 
         match (&s1, &s2) {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
@@ -438,8 +438,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
-        let s1 = self.ds.faces[f1].surface;
-        let s2 = self.ds.faces[f2].surface;
+        let s1 = self.ds.faces[f1].surface.clone();
+        let s2 = self.ds.faces[f2].surface.clone();
 
         // Generate sample points on the first surface for seed finding
         let samples = self.generate_surface_samples(&s1, 16, 8);
@@ -525,14 +525,14 @@ impl<'a> PaveFiller<'a> {
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) => 1.0,
+            Surface3::Plane(_) | Surface3::BSpline(_) => 1.0,
         };
         let size2 = match s2 {
             Surface3::Sphere(s) => s.radius,
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) => 1.0,
+            Surface3::Plane(_) | Surface3::BSpline(_) => 1.0,
         };
         size1.min(size2) * 0.1
     }

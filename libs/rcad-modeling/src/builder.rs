@@ -7,10 +7,14 @@
 mod curve;
 mod solid;
 mod surface;
+pub mod brep_builder;
+pub mod ops;
 
 pub use curve::*;
 pub use solid::*;
 pub use surface::*;
+pub use brep_builder::*;
+pub use ops::*;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
@@ -25,6 +29,8 @@ pub enum BuildError {
     NonPositiveValue(&'static str),
     ZeroVector(&'static str),
     ParallelVectors(&'static str, &'static str),
+    DegenerateGeometry(&'static str),
+    InvalidIndex(usize),
 }
 
 impl fmt::Display for BuildError {
@@ -34,6 +40,8 @@ impl fmt::Display for BuildError {
             Self::NonPositiveValue(name) => write!(f, "{name} must be > 0"),
             Self::ZeroVector(name) => write!(f, "{name} must be non-zero"),
             Self::ParallelVectors(a, b) => write!(f, "{a} must not be parallel to {b}"),
+            Self::DegenerateGeometry(msg) => write!(f, "degenerate geometry: {msg}"),
+            Self::InvalidIndex(idx) => write!(f, "invalid index: {idx}"),
         }
     }
 }

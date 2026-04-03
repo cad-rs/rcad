@@ -152,7 +152,7 @@ impl DS {
                 .edge_curve
                 .get(i)
                 .and_then(|c| *c)
-                .map(|ci| brep.geom.curves[ci])
+                .map(|ci| brep.geom.curves[ci].clone())
                 .unwrap_or_else(|| {
                     // Fallback: synthesize line from vertices
                     let p0 = brep.vertices[edge.start].point;
@@ -202,7 +202,7 @@ impl DS {
                         .face_surface
                         .get(face_idx)
                         .and_then(|s| *s)
-                        .map(|si| brep.geom.surfaces[si])
+                        .map(|si| brep.geom.surfaces[si].clone())
                         .unwrap_or_else(|| {
                             // Fallback: synthesize plane from face normal and first triangle
                             let origin = brep.vertices[face.triangles[0][0]].point;

@@ -137,7 +137,7 @@ impl ResultBuilder {
         }
 
         self.faces
-            .push((edge_indices, tris, normal, sub.surface));
+            .push((edge_indices, tris, normal, sub.surface.clone()));
     }
 
     fn build(self) -> BRep {
@@ -285,7 +285,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             return vec![SubFace {
                 boundary,
-                surface: face.surface,
+                surface: face.surface.clone(),
                 normal: face.normal,
             }];
         }
@@ -302,7 +302,7 @@ impl<'a> BooleanBuilder<'a> {
                     .collect();
                 vec![SubFace {
                     boundary,
-                    surface: face.surface,
+                    surface: face.surface.clone(),
                     normal: face.normal,
                 }]
             }
@@ -338,7 +338,7 @@ impl<'a> BooleanBuilder<'a> {
         if segments.is_empty() {
             return vec![SubFace {
                 boundary: boundary_3d,
-                surface: face.surface,
+                surface: face.surface.clone(),
                 normal: face.normal,
             }];
         }
@@ -364,7 +364,7 @@ impl<'a> BooleanBuilder<'a> {
             .filter(|p| p.len() >= 3)
             .map(|boundary| SubFace {
                 boundary,
-                surface: face.surface,
+                surface: face.surface.clone(),
                 normal: face.normal,
             })
             .collect()

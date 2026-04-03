@@ -1,5 +1,6 @@
 use rcad_kernel::{BRep, Curve2d, Curve3, CurveEval, GeomStore, PCurve, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::geom::{BSplineCurve3, BSplineSurface};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -22,6 +23,8 @@ struct ParsedStep {
     circles: HashMap<u64, (u64, f64)>,
     ellipses: HashMap<u64, (u64, f64, f64)>,
     b_spline_curves: HashMap<u64, Vec<u64>>,
+    /// Full B-spline curve data: degree, control_point_refs, knot_mults, knot_vals
+    b_spline_curves_full: HashMap<u64, (usize, Vec<u64>, Vec<usize>, Vec<f64>)>,
     planes: HashMap<u64, u64>,
     cylindrical_surfaces: HashMap<u64, (u64, f64)>,
     spherical_surfaces: HashMap<u64, (u64, f64)>,
@@ -64,6 +67,7 @@ impl ParsedStep {
             circles: HashMap::new(),
             ellipses: HashMap::new(),
             b_spline_curves: HashMap::new(),
+            b_spline_curves_full: HashMap::new(),
             planes: HashMap::new(),
             cylindrical_surfaces: HashMap::new(),
             spherical_surfaces: HashMap::new(),
@@ -168,7 +172,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                     if let Some(points) = parse_bspline_control_points(args)
                         && !points.is_empty()
                     {
-                        parsed.b_spline_curves.insert(id, points);
+                        parsed.b_spline_curves.insert(id, points.clone());
+                        // Also try to parse full data (degree + knots)
+                        if let Some(full) = parse_bspline_curve_full(args) {
+                            parsed.b_spline_curves_full.insert(id, full);
+                        }
                     }
                 }
                 "TRIMMED_CURVE" => {
@@ -1604,6 +1612,29 @@ fn parse_bspline_control_points(args: &str) -> Option<Vec<u64>> {
     Some(refs)
 }
 
+/// Parse full B_SPLINE_CURVE_WITH_KNOTS args:
+/// ('name', degree, (ctrl_pts...), .FORM., .bool., .bool., (mults...), (knots...), .UNSPECIFIED.)
+fn parse_bspline_curve_full(args: &str) -> Option<(usize, Vec<u64>, Vec<usize>, Vec<f64>)> {
+    let parts = split_top_level(args, ',');
+    // parts[0] = name, [1] = degree, [2] = ctrl pts list, [3] = form,
+    // [4] = closed, [5] = self_intersect, [6] = knot_mults, [7] = knots, [8] = type
+    if parts.len() < 8 {
+        return None;
+    }
+    let degree = parts[1].trim().parse::<usize>().ok()?;
+    let ctrl_refs = parse_ref_list(parts[2]);
+    let mults: Vec<usize> = parse_float_list(parts[6])
+        .into_iter()
+        .map(|v| v as usize)
+        .collect();
+    let knot_vals: Vec<f64> = parse_float_list(parts[7]);
+
+    if ctrl_refs.is_empty() || mults.is_empty() || knot_vals.is_empty() {
+        return None;
+    }
+    Some((degree, ctrl_refs, mults, knot_vals))
+}
+
 fn parse_conical_surface(args: &str) -> Option<(u64, f64, f64)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 4 {
@@ -1674,6 +1705,29 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
             major_radius: *major_radius,
             minor_radius: *minor_radius,
         }));
+    }
+
+    // BSpline: use full data if available, otherwise fall through to None
+    if let Some((degree, ctrl_refs, mults, knot_vals)) = parsed.b_spline_curves_full.get(&actual_ref) {
+        let control_points: Vec<glam::DVec3> = ctrl_refs.iter()
+            .filter_map(|&r| point_from_ref(parsed, r))
+            .collect();
+        if control_points.len() >= 2 {
+            // Expand knot vector from multiplicities
+            let mut knots = Vec::new();
+            for (&mult, &val) in mults.iter().zip(knot_vals.iter()) {
+                for _ in 0..mult {
+                    knots.push(val);
+                }
+            }
+            let weights = vec![1.0; control_points.len()];
+            return Some(Curve3::BSpline(BSplineCurve3 {
+                degree: *degree,
+                knots,
+                control_points,
+                weights,
+            }));
+        }
     }
 
     None
@@ -1958,6 +2012,14 @@ fn parse_ref_list(input: &str) -> Vec<u64> {
     }
 
     refs
+}
+
+/// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` → `[1.0, 2.0, 3.0]`.
+fn parse_float_list(input: &str) -> Vec<f64> {
+    let inner = input.trim().trim_start_matches('(').trim_end_matches(')');
+    inner.split(',')
+        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .collect()
 }
 
 fn parse_ref(input: &str) -> Option<u64> {
