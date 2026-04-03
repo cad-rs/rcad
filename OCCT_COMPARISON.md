@@ -4,7 +4,7 @@
 > 帮助团队明确差距、规划后续开发方向。
 >
 > **文档状态：** 基于 RCAD 当前代码（2026-04）生成，随代码演进应同步更新。
-> **Phase A–G 全部完成（2026-04-03）。**
+> **Phase A–I 全部完成（2026-04-03）。**
 
 ---
 
@@ -206,6 +206,7 @@ Geom2d_Curve
 pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
+    BSpline(BSplineCurve2),  // Phase I 新增
 }
 ```
 
@@ -213,8 +214,8 @@ pub enum Curve2d {
 |------|------|------|------|
 | 2D 直线 | `Geom2d_Line` | `Line2d` | ✅ |
 | 2D 圆 | `Geom2d_Circle` | `Circle2d` | ✅ |
+| **2D B-Spline** | `Geom2d_BSplineCurve` | `BSplineCurve2`（de Boor 2D）| ✅ Phase I |
 | **2D 椭圆** | `Geom2d_Ellipse` | ❌ | 中优先（椭圆边在椭球面的 PCurve）|
-| 2D B-Spline | `Geom2d_BSplineCurve` | ❌ | 中优先（B-Spline 面上的边）|
 | 2D 裁剪曲线 | `Geom2d_TrimmedCurve` | ❌ | 中优先（PCurve 的参数域）|
 
 ---
@@ -315,7 +316,10 @@ GeomStore {
     edge_curve_range: Vec<Option<[f64; 2]>>,   // [t1, t2] — Phase A 新增
     edge_degenerated: Vec<bool>,               // Phase A 新增
     edge_pcurves:     Vec<Vec<PCurve>>,        // PCurve { surface_idx, curve2d_idx }
-    // 仍缺: tolerance, same_parameter, same_range
+    vertex_tolerance: Vec<f64>,               // Phase I 新增 — per-vertex 容差
+    edge_tolerance:   Vec<f64>,               // Phase I 新增 — per-edge 容差
+    face_tolerance:   Vec<f64>,               // Phase I 新增 — per-face 容差
+    // 仍缺: same_parameter, same_range
 }
 ```
 
@@ -325,7 +329,7 @@ GeomStore {
 |-----------|------|------|
 | **Edge 参数范围 `[t1, t2]`** | `edge_curve_range` | ✅ Phase A |
 | `Degenerated` | `edge_degenerated` | ✅ Phase A |
-| `Tolerance` (per edge/vertex/face) | ❌ | P2 — 精度体系 |
+| **`Tolerance` (per edge/vertex/face)** | `vertex_tolerance / edge_tolerance / face_tolerance` + 查询函数 | ✅ Phase I |
 | `SameParameter` | ❌ | P2 |
 | `SameRange` | ❌ | P2 |
 
@@ -487,15 +491,26 @@ BRep_Face::Tolerance         ← 每个面独立容差
 ### RCAD 现状
 
 ```rust
-// rcad-kernel/src/lib.rs
-// 仅有一个全局常量（在 BRep::is_analytic_valid 等检查中隐式用到）
-// 无 per-vertex / per-edge / per-face 容差字段
-// 无全局精度配置 API
+// rcad-kernel/src/tolerance.rs — Phase I 新增
+pub const CONFUSION: f64 = 1e-7;       // 点重合容差（对应 Precision::Confusion）
+pub const ANGULAR: f64 = 1e-12;        // 角度容差
+pub const APPROXIMATION: f64 = 1e-4;   // 离散化近似容差
+
+// GeomStore 中的 per-entity 容差字段（Phase I 新增）
+pub vertex_tolerance: Vec<f64>,        // 无存储值时回退至 CONFUSION
+pub edge_tolerance: Vec<f64>,
+pub face_tolerance: Vec<f64>,
+
+// 查询函数：有值→返回存储值；值为 0 或越界→返回 CONFUSION
+pub fn vertex_tolerance(brep: &BRep, vertex_idx: usize) -> f64 { ... }
+pub fn edge_tolerance(brep: &BRep, edge_idx: usize) -> f64 { ... }
+pub fn face_tolerance(brep: &BRep, face_flat_idx: usize) -> f64 { ... }
+pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差的最大值
 ```
 
 **差距影响：**
-- 布尔运算中的退化情形（共面、共边、接触）判断不稳定
-- STEP 导入后容差信息丢失，无法做 ShapeFix
+- 布尔运算中的退化情形（共面、共边、接触）判断不稳定（`SameParameter`/`SameRange` 仍缺失）
+- STEP 导入后容差信息尚未写入 GeomStore（Phase J 候选）
 - 圆角算法对近零边无保护
 
 ---
@@ -535,12 +550,12 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | **几何** | 曲线求值 `C(t)` / 曲面求值 `S(u,v)` | ✅ 已完成 | Phase A |
 | **几何** | `BSplineCurve3` / `BSplineSurface` | ✅ 已完成 | Phase B |
 | **几何** | `Curve2d::Ellipse` + `TrimmedCurve2d` | 🟡 P2 | 椭圆体 PCurve |
-| **几何** | `SurfaceOfRevolution` / `LinearExtrusion` | 🟡 P2 | 扫掠算法的输出曲面类型 |
+| **几何** | `Curve2d::BSpline` (2D B-Spline PCurve) | ✅ 已完成 | Phase I（`BSplineCurve2`，de Boor 2D）|
 | **几何** | Bezier 曲线 / 曲面 | 🟡 P2 | |
 | **几何** | 偏移曲线 / 偏移面 | 🟡 P2 | 倒角需要 |
 | **拓扑** | `WireEdge.forward` 方向标志 | ✅ 已完成 | Phase A |
 | **拓扑** | `Degenerated` edge 标记 | ✅ 已完成 | Phase A |
-| **拓扑** | per-vertex / per-edge 容差 | 🟡 P2 | 精度体系完整性 |
+| **拓扑** | per-vertex / per-edge / per-face 容差 | ✅ 已完成 | Phase I（`vertex/edge/face_tolerance`，回退 CONFUSION）|
 | **拓扑** | 相邻面查询 API | ✅ 已完成 | Phase G（`edge_adjacent_faces`）|
 | **拓扑** | `Compound` / `CompSolid` | 🟢 P3 | 装配体 |
 | **建模** | `make_edge/wire/face/solid` | ✅ 已完成 | Phase B |
@@ -564,7 +579,7 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | **分析** | 曲率分析 | ✅ 已完成 | Phase G（`principal_curvatures`，解析+数值）|
 | **分析** | 曲线弧长 | ✅ 已完成 | Phase H（`arc_length`，Line/Circle 解析，Ellipse/BSpline GL16）|
 | **分析** | 惯性矩张量 | ✅ 已完成 | Phase H（`inertia_tensor`，散度定理三角积分）|
-| **精度** | 全局 `Precision` 配置 | 🟡 P2 | |
+| **精度** | 全局 `Precision` 配置 + per-entity 容差 | ✅ 已完成 | Phase I（`CONFUSION/ANGULAR/APPROXIMATION` + `vertex/edge/face_tolerance` 查询）|
 | **渲染** | 隐线消除 HLR | ✅ 已完成 | Phase D |
 | **渲染** | 截面视图 | ✅ 已完成 | Phase C（section_polylines + SVG）|
 | **渲染** | 多视口 | 🟢 P3 | |
@@ -574,7 +589,7 @@ BRep_Face::Tolerance         ← 每个面独立容差
 
 ## 10. 开发路线建议
 
-基于上述差距分析，八个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，九个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -631,13 +646,21 @@ BRep_Face::Tolerance         ← 每个面独立容差
 2. `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` — 对称 3×3 惯性张量；`to_matrix()` 返回行主矩阵
 3. `inertia_tensor(brep)` — 散度定理四面体积分（与 `volume` / `centroid` 同模式）；单位密度，结果乘密度即得物理惯性矩
 
-### 下一阶段候选（Phase I）
+### Phase I — 2D B-Spline PCurve + 容差体系 ✅ 已完成
+
+1. `BSplineCurve2` — 2D 参数空间非均匀有理 B-spline；de Boor 2D 算法（3 分量齐次坐标）；加入 `Curve2d::BSpline` 变体；类比 OCCT `Geom2d_BSplineCurve`
+2. `Curve2dEval` dispatch 更新覆盖三个变体（`Line2d`、`Circle2d`、`BSplineCurve2`）
+3. Per-entity 容差字段 `GeomStore.vertex_tolerance / edge_tolerance / face_tolerance` — 与拓扑数组平行的 `Vec<f64>`；缺失/零值回退至 `CONFUSION = 1e-7`
+4. 精度常量 `CONFUSION = 1e-7` / `ANGULAR = 1e-12` / `APPROXIMATION = 1e-4`（类比 OCCT `Precision` 类）
+5. 查询函数 `vertex_tolerance / edge_tolerance / face_tolerance / model_tolerance`（返回所有实体容差的最大值）
+
+### 下一阶段候选（Phase J）
 
 优先级较高的剩余工作：
-- **per-edge 容差体系** — P2
-- **2D B-Spline / TrimmedCurve2d PCurve** — P2
 - **变截面扫掠** `MakePipeShell` — P2
 - **多边同时圆角（corner blending）** — P2
+- **STEP 导入写入 tolerance 字段** — P2
+- **2D 椭圆 / TrimmedCurve2d PCurve** — P2
 
 ---
 
@@ -652,8 +675,9 @@ Phase E（扫掠/B面）  ░░░░░░░░░░░░░░░░░░
 Phase F（倒角/圆角） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase G（拓扑/曲率） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase H（弧长/惯性） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase I（PCurve/容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-03，基于 RCAD Phase H 完成。*
+*文档更新于 2026-04-03，基于 RCAD Phase I 完成。*

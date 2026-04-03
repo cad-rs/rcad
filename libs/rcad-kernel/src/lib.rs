@@ -36,9 +36,15 @@ pub mod arc_length;
 /// Analogous to OCCT `XCAFDoc_ColorTool`.
 pub mod appearance;
 
+/// Precision constants and per-entity tolerance query helpers.
+///
+/// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
+pub mod tolerance;
+
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
+pub use geom::BSplineCurve2;
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
 pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
@@ -46,6 +52,10 @@ pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use arc_length::arc_length;
 pub use appearance::{Color, FaceColor, StepColor};
+pub use tolerance::{
+    ANGULAR, APPROXIMATION, CONFUSION,
+    edge_tolerance, face_tolerance, model_tolerance, vertex_tolerance,
+};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
@@ -82,6 +92,19 @@ pub struct GeomStore {
     /// e.g. a polar singularity). Analogous to `BRep_Edge::Degenerated()` in OCCT.
     #[serde(default)]
     pub edge_degenerated: Vec<bool>,
+    /// Per-vertex tolerance (falls back to `tolerance::CONFUSION` when absent or zero).
+    /// Parallel to `BRep.vertices`. Analogous to `BRep_Tool::Tolerance(vertex)` in OCCT.
+    #[serde(default)]
+    pub vertex_tolerance: Vec<f64>,
+    /// Per-edge tolerance (falls back to `tolerance::CONFUSION` when absent or zero).
+    /// Parallel to `BRep.edges`. Analogous to `BRep_Tool::Tolerance(edge)` in OCCT.
+    #[serde(default)]
+    pub edge_tolerance: Vec<f64>,
+    /// Per-face tolerance (falls back to `tolerance::CONFUSION` when absent or zero).
+    /// Parallel to the flattened face order (same indexing as `face_surface`).
+    /// Analogous to `BRep_Tool::Tolerance(face)` in OCCT.
+    #[serde(default)]
+    pub face_tolerance: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +256,9 @@ impl BRep {
             // E0 is the half-meridian: t ∈ [0, π] on Circle3 (north→south)
             edge_curve_range: vec![Some([0.0, PI])],
             edge_degenerated: vec![false],
+            vertex_tolerance: Vec::new(),
+            edge_tolerance: Vec::new(),
+            face_tolerance: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -390,6 +416,9 @@ impl BRep {
                 Some([0.0, h]),         // E2 seam line
             ],
             edge_degenerated: vec![false, false, false],
+            vertex_tolerance: Vec::new(),
+            edge_tolerance: Vec::new(),
+            face_tolerance: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -504,6 +533,9 @@ impl BRep {
                 Some([0.0, slant_len]),   // E1 slant line
             ],
             edge_degenerated: vec![false, false],
+            vertex_tolerance: Vec::new(),
+            edge_tolerance: Vec::new(),
+            face_tolerance: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -612,6 +644,9 @@ impl BRep {
                 Some([0.0, 2.0 * PI]),  // E1 minor seam circle
             ],
             edge_degenerated: vec![false, false],
+            vertex_tolerance: Vec::new(),
+            edge_tolerance: Vec::new(),
+            face_tolerance: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }

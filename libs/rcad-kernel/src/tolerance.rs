@@ -1,0 +1,138 @@
+//! Precision constants and per-entity tolerance query helpers.
+//!
+//! Analogous to OCCT's `Precision` class and `BRep_Builder::UpdateVertex` /
+//! `BRep_Builder::UpdateEdge` tolerance API.
+//!
+//! # Design
+//!
+//! OCCT stores a per-entity tolerance on each `BRep_Vertex`, `BRep_Edge`, and
+//! `BRep_Face`.  These tolerances represent the maximum deviation between the
+//! ideal (analytic) geometry and the actual model, arising from tessellation,
+//! import rounding, or algorithm approximations.
+//!
+//! RCAD stores the same data in `GeomStore` as parallel `Vec<f64>` arrays
+//! (`vertex_tolerance`, `edge_tolerance`, `face_tolerance`), indexed the same
+//! way as the corresponding topology arrays.  When a tolerance is absent or
+//! zero the query functions fall back to the `CONFUSION` constant.
+//!
+//! # Usage
+//!
+//! ```rust
+//! use rcad_kernel::{vertex_tolerance, edge_tolerance, CONFUSION};
+//!
+//! // brep with no stored tolerances → default confusion value
+//! let brep = rcad_kernel::BRep::new();
+//! assert_eq!(vertex_tolerance(&brep, 0), CONFUSION);
+//! ```
+
+use crate::BRep;
+
+// ── Precision constants ───────────────────────────────────────────────────────
+
+/// Point-coincidence tolerance.
+/// Analogous to `Precision::Confusion()` = 1e-7 in OCCT.
+pub const CONFUSION: f64 = 1e-7;
+
+/// Angular tolerance (radians).
+/// Analogous to `Precision::Angular()` = 1e-12 in OCCT.
+pub const ANGULAR: f64 = 1e-12;
+
+/// Tessellation / approximation tolerance.
+/// Analogous to `Precision::Approximation()` = 1e-4 in OCCT.
+pub const APPROXIMATION: f64 = 1e-4;
+
+// ── Per-entity tolerance queries ──────────────────────────────────────────────
+
+/// Tolerance of vertex `vertex_idx`.
+///
+/// Returns the stored value when positive, otherwise `CONFUSION`.
+/// Analogous to `BRep_Tool::Tolerance(vertex)` in OCCT.
+pub fn vertex_tolerance(brep: &BRep, vertex_idx: usize) -> f64 {
+    brep.geom
+        .vertex_tolerance
+        .get(vertex_idx)
+        .copied()
+        .filter(|&t| t > 0.0)
+        .unwrap_or(CONFUSION)
+}
+
+/// Tolerance of edge `edge_idx`.
+///
+/// Returns the stored value when positive, otherwise `CONFUSION`.
+/// Analogous to `BRep_Tool::Tolerance(edge)` in OCCT.
+pub fn edge_tolerance(brep: &BRep, edge_idx: usize) -> f64 {
+    brep.geom
+        .edge_tolerance
+        .get(edge_idx)
+        .copied()
+        .filter(|&t| t > 0.0)
+        .unwrap_or(CONFUSION)
+}
+
+/// Tolerance of face `face_flat_idx` (flattened index across all solids/shells,
+/// same ordering as `GeomStore.face_surface`).
+///
+/// Returns the stored value when positive, otherwise `CONFUSION`.
+/// Analogous to `BRep_Tool::Tolerance(face)` in OCCT.
+pub fn face_tolerance(brep: &BRep, face_flat_idx: usize) -> f64 {
+    brep.geom
+        .face_tolerance
+        .get(face_flat_idx)
+        .copied()
+        .filter(|&t| t > 0.0)
+        .unwrap_or(CONFUSION)
+}
+
+/// Maximum tolerance over all entities with explicitly stored values.
+///
+/// Returns `CONFUSION` when no tolerances are stored.
+/// Analogous to `BRep_Builder::UpdateVertex` accumulated maximum in OCCT.
+pub fn model_tolerance(brep: &BRep) -> f64 {
+    brep.geom
+        .vertex_tolerance
+        .iter()
+        .chain(brep.geom.edge_tolerance.iter())
+        .chain(brep.geom.face_tolerance.iter())
+        .copied()
+        .fold(CONFUSION, f64::max)
+}
+
+// ── Tests ────────────────────────────────────────��────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BRep, PrimitiveSolid};
+
+    #[test]
+    fn default_tolerance_is_confusion() {
+        let brep = BRep::new();
+        assert_eq!(vertex_tolerance(&brep, 0), CONFUSION);
+        assert_eq!(edge_tolerance(&brep, 0), CONFUSION);
+        assert_eq!(face_tolerance(&brep, 0), CONFUSION);
+        assert_eq!(model_tolerance(&brep), CONFUSION);
+    }
+
+    #[test]
+    fn stored_tolerance_returned() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        brep.geom.edge_tolerance = vec![1e-5; brep.edges.len()];
+        assert!((edge_tolerance(&brep, 0) - 1e-5).abs() < 1e-20);
+    }
+
+    #[test]
+    fn model_tolerance_returns_max() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        brep.geom.vertex_tolerance = vec![1e-6; brep.vertices.len()];
+        brep.geom.edge_tolerance = vec![1e-5; brep.edges.len()];
+        // max is 1e-5
+        assert!((model_tolerance(&brep) - 1e-5).abs() < 1e-20);
+    }
+
+    #[test]
+    fn zero_tolerance_falls_back_to_confusion() {
+        let mut brep = BRep::new();
+        brep.geom.vertex_tolerance = vec![0.0];
+        assert_eq!(vertex_tolerance(&brep, 0), CONFUSION);
+    }
+}

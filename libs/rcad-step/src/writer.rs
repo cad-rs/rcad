@@ -420,7 +420,7 @@ impl Part21Writer {
             let mut pcurve_ids = Vec::new();
             for pc in &pcurves {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
-                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).copied();
+                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
                 let param_curve_id = self.write_curve2d(curve2d);
                 let def_rep = self.definitional_representation(param_curve_id);
                 let pcurve_id = self.pcurve(surface_id, def_rep);
@@ -543,7 +543,7 @@ impl Part21Writer {
             let mut pcurve_ids = Vec::new();
             for pc in &pcurves {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
-                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).copied();
+                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
                 let param_curve_id = self.write_curve2d(curve2d);
                 let def_rep = self.definitional_representation(param_curve_id);
                 let pcurve_id = self.pcurve(surface_id, def_rep);
@@ -588,8 +588,9 @@ impl Part21Writer {
                 let placement = self.axis2_placement_2d("pc_placement", p, axis);
                 self.circle("pcurve_circle", placement, c.radius.max(1e-9))
             }
-            None => {
-                // Degenerate: write a point-to-point line at origin
+            Some(Curve2d::BSpline(_)) | None => {
+                // BSplineCurve2 STEP export not yet implemented; fall back to
+                // a degenerate line at origin (valid STEP, no geometric info).
                 let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
                 let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
                 let vec = self.vector("pc_vec", dir, 1e-9);

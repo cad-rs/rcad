@@ -149,14 +149,29 @@ pub struct Circle2d {
     pub radius: f64,
 }
 
+/// A non-uniform rational B-spline curve in 2D parameter space.
+///
+/// Analogous to OCCT `Geom2d_BSplineCurve`. Used for PCurves: the image of
+/// a 3D edge in the (u, v) domain of an adjacent surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BSplineCurve2 {
+    pub degree: usize,
+    /// Full knot vector (with multiplicities expanded).
+    pub knots: Vec<f64>,
+    pub control_points: Vec<DVec2>,
+    /// Homogeneous weights; 1.0 for non-rational.
+    pub weights: Vec<f64>,
+}
+
 /// A curve defined in the 2D parameter space (u, v) of a surface.
 ///
 /// Used for PCurves: the image of a 3D edge on the parameter domain of an
 /// adjacent face surface. Analogous to OCCT `Geom2d_Curve`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
+    BSpline(BSplineCurve2),
 }
 
 // ── Geometric evaluation traits ──────────────────────────────────────────────
@@ -462,6 +477,61 @@ fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f
     }
 }
 
+/// De Boor's algorithm for rational B-spline evaluation in 2D parameter space.
+/// Returns the 2D point at parameter `t`. Identical logic to `de_boor` with DVec2.
+fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t: f64) -> DVec2 {
+    let n = points.len();
+    if n == 0 {
+        return DVec2::ZERO;
+    }
+
+    let k = {
+        let t_min = knots[degree];
+        let t_max = knots[knots.len() - degree - 1];
+        let t_clamped = t.clamp(t_min, t_max);
+        let mut span = degree;
+        for i in degree..knots.len() - degree - 1 {
+            if knots[i] <= t_clamped {
+                span = i;
+            } else {
+                break;
+            }
+        }
+        span
+    };
+
+    // Homogeneous control points [x*w, y*w, w]
+    let mut d: Vec<[f64; 3]> = (0..=degree)
+        .map(|j| {
+            let idx = (k - degree + j).min(n - 1);
+            let w = weights[idx];
+            [points[idx].x * w, points[idx].y * w, w]
+        })
+        .collect();
+
+    for r in 1..=degree {
+        for j in (r..=degree).rev() {
+            let i = k - degree + j;
+            let denom = knots[i + degree - r + 1] - knots[i];
+            let alpha = if denom.abs() < 1e-15 {
+                0.0
+            } else {
+                (t - knots[i]) / denom
+            };
+            for c in 0..3 {
+                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            }
+        }
+    }
+
+    let w = d[degree][2];
+    if w.abs() < 1e-15 {
+        DVec2::ZERO
+    } else {
+        DVec2::new(d[degree][0] / w, d[degree][1] / w)
+    }
+}
+
 impl CurveEval for BSplineCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         de_boor(self.degree, &self.knots, &self.control_points, &self.weights, t)
@@ -553,11 +623,18 @@ impl Curve2dEval for Circle2d {
     }
 }
 
+impl Curve2dEval for BSplineCurve2 {
+    fn point_at(&self, t: f64) -> DVec2 {
+        de_boor_2d(self.degree, &self.knots, &self.control_points, &self.weights, t)
+    }
+}
+
 impl Curve2dEval for Curve2d {
     fn point_at(&self, t: f64) -> DVec2 {
         match self {
             Curve2d::Line(c) => c.point_at(t),
             Curve2d::Circle(c) => c.point_at(t),
+            Curve2d::BSpline(c) => c.point_at(t),
         }
     }
 }

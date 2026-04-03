@@ -40,8 +40,8 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
 - Analytic geometry coverage (Phase A + B):
   - **Curves (`Curve3`)**: `Line3`, `Circle3`, `Ellipse3`, `BSplineCurve3` (de Boor evaluation)
   - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor)
-  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`
-  - **Evaluation traits**: `CurveEval` (`point_at`, `tangent_at`, `default_domain`) and `SurfaceEval` (`point_at`, `normal_at`, `default_domain`) — implemented for all analytic types
+  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces)
+  - **Evaluation traits**: `CurveEval` (`point_at`, `tangent_at`, `default_domain`) and `SurfaceEval` (`point_at`, `normal_at`, `default_domain`) — implemented for all analytic types; `Curve2dEval` (`point_at`) for all 2D variants
   - Primitive solids: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
 
 ### 2.2 Topological Structures
@@ -63,8 +63,11 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
   - `edge_degenerated: Vec<bool>` — degenerate edge flag (e.g., sphere pole)
   - `surfaces: Vec<Surface3>` — analytic 3D surfaces
   - `face_surface: Vec<Option<usize>>` — surface index per face
-  - `curve2ds: Vec<Curve2d>` — 2D curves in parameter space
+  - `curve2ds: Vec<Curve2d>` — 2D curves in parameter space (`Line2d`, `Circle2d`, `BSplineCurve2`)
   - `edge_pcurves: Vec<Vec<PCurve>>` — per-edge PCurve bindings
+  - `vertex_tolerance: Vec<f64>` — per-vertex tolerance (Phase I); falls back to `CONFUSION = 1e-7`
+  - `edge_tolerance: Vec<f64>` — per-edge tolerance (Phase I)
+  - `face_tolerance: Vec<f64>` — per-face tolerance (Phase I)
 - **`GeomStore` is the source of truth for shape.** A `BRep` without populated `GeomStore` entries is incomplete and must not leave `rcad-modeling` in that state.
 
 ### 2.4 PCurve (Parameter-Space Curve)

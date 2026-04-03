@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Eight development phases (A–H) of the OCCT parity roadmap are complete.
+Nine development phases (A–I) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -48,6 +48,11 @@ Eight development phases (A–H) of the OCCT parity roadmap are complete.
 **Phase H — Arc length and moment of inertia tensor**
 - `arc_length(curve, t1, t2)` — exact for `Line3` (`|t2−t1|`) and `Circle3` (`r·|t2−t1|`); 16-point Gauss-Legendre quadrature for `Ellipse3` and `BSplineCurve3`. Returns signed value; `.abs()` for unsigned length. Analogous to OCCT `GCPnts_AbscissaPoint`.
 - `inertia_tensor(brep)` → `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` — symmetric 3×3 moment of inertia about the world origin, computed via divergence-theorem tetrahedral integration over BRep triangles. Analogous to OCCT `BRepGProp_VolumeProperties`.
+
+**Phase I — 2D B-Spline PCurve and per-entity tolerance system**
+- `BSplineCurve2` — non-uniform rational B-spline in 2D parameter space; added as `Curve2d::BSpline` variant. Evaluated via de Boor's algorithm (2D analog of `de_boor`). Analogous to OCCT `Geom2d_BSplineCurve`.
+- `Curve2dEval` dispatch updated for all three variants (`Line2d`, `Circle2d`, `BSplineCurve2`).
+- Per-entity tolerance: `GeomStore.vertex_tolerance` / `edge_tolerance` / `face_tolerance` — parallel `Vec<f64>` arrays. Query helpers: `vertex_tolerance(brep, idx)`, `edge_tolerance`, `face_tolerance`, `model_tolerance`. Global constants: `CONFUSION = 1e-7`, `ANGULAR = 1e-12`, `APPROXIMATION = 1e-4`. Analogous to OCCT `Precision` class + `BRep_Tool::Tolerance`.
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
