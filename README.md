@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Eleven development phases (A–K) of the OCCT parity roadmap are complete.
+Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -65,6 +65,10 @@ Eleven development phases (A–K) of the OCCT parity roadmap are complete.
 - `RevolutionSurface` — `S(u,v) = rotate(profile.point_at(v), axis_origin, axis_dir, angle=u)`; u ∈ [0, 2π], v from profile. Normal via finite-difference. Analogous to OCCT `Geom_SurfaceOfRevolution`.
 - `GeomStore.face_surface_range: Vec<Option<[f64; 4]>>` — per-face surface parameter domain override `[u1, u2, v1, v2]`, parallel to `face_surface`. `face_domain(brep, idx)` returns the override when set, else `SurfaceEval::default_domain()`. Analogous to OCCT `BRep_Face::UVBounds()`.
 - `BSplineSurface` STEP export: `write_surface` now emits `B_SPLINE_SURFACE_WITH_KNOTS` with full control-point grid and knot vectors (was falling back to PLANE). Control points transposed from kernel [u][v] to STEP [v][u] order.
+
+**Phase L — Variable-section sweep and multi-edge fillet API**
+- `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — variable-section pipe sweep: a different 2D profile at each spine station, transformed via the same Frenet-like frame as `sweep_pipe`; delegates to `loft`. Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
+- `fillet_edges(brep, edges: &[(usize, f64)])` — fillet multiple edges in a single call; sorts by index descending before applying so earlier fillets don't shift later indices (safe for non-adjacent edges). Analogous to adding multiple edges to `BRepFilletAPI_MakeFillet` before `Build()`.
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.

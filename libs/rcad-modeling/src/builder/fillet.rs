@@ -285,6 +285,30 @@ pub fn fillet_edge(brep: &BRep, edge_idx: usize, radius: f64) -> Result<BRep, Bu
     rebuild_with_fillet_verts(brep, edge_idx, f0, f1, nv0a, nv1a, nv0b, nv1b, radius)
 }
 
+/// Fillet multiple edges in a single call.
+///
+/// `edges` is a list of `(edge_idx, radius)` pairs. Edges are sorted by
+/// index descending before applying, so earlier fillets do not shift the
+/// indices of later ones. This is correct when the selected edges are
+/// **non-adjacent** (do not share vertices). For adjacent edges, apply
+/// [`fillet_edge`] manually in the desired order.
+///
+/// Analogous to adding multiple edges to `BRepFilletAPI_MakeFillet`
+/// before calling `Build()`.
+pub fn fillet_edges(brep: &BRep, edges: &[(usize, f64)]) -> Result<BRep, BuildError> {
+    if edges.is_empty() {
+        return Ok(brep.clone());
+    }
+    let mut sorted = edges.to_vec();
+    sorted.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut current = brep.clone();
+    for (edge_idx, radius) in sorted {
+        current = fillet_edge(&current, edge_idx, radius)?;
+    }
+    Ok(current)
+}
+
 // ── Shared rebuild core ───────────────────────────────────────────────────────
 
 /// Rebuild the BRep replacing `edge_idx` with a chamfer quad face.

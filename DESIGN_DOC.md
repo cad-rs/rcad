@@ -119,9 +119,11 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - Multi-profile operations (Phase E):
   - `loft(profiles: &[Vec<DVec3>])` — connect N cross-section polygons with ruled lateral faces and planar caps
   - `sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3])` — sweep 2D profile along a 3D polyline spine using Frenet-like frames; delegates to `loft`
+  - `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — variable-section sweep: a different 2D profile at each spine station (Phase L); analogous to OCCT `BRepOffsetAPI_MakePipeShell`
 - Edge modification operations (Phase F):
   - `chamfer_edge(brep, edge_idx, dist)` — flat bevel; replaces edge with planar quad + 2 closing triangles; returns new BRep
   - `fillet_edge(brep, edge_idx, radius)` — cylindrical blend; setback = `radius / tan(β/2)` from exterior dihedral angle; returns new BRep
+  - `fillet_edges(brep, edges: &[(usize, f64)])` — batch fillet API: applies `fillet_edge` for each entry, sorted by index descending (Phase L); safe for non-adjacent edges
 
 ## 2.7 Topology Query Layer (rcad-kernel / topo_query.rs)
 - Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.

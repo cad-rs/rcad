@@ -579,6 +579,73 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildEr
     loft(&cross_sections)
 }
 
+/// Variable-section pipe sweep: a different 2D profile at each spine station.
+///
+/// `profiles[i]` is placed at `spine[i]` using the same Frenet-like frame
+/// as [`sweep_pipe`]. All profiles must have the same vertex count (≥ 3)
+/// and `profiles.len()` must equal `spine.len()` (≥ 2).
+///
+/// Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
+pub fn sweep_pipe_variable(
+    profiles: &[Vec<DVec2>],
+    spine: &[DVec3],
+) -> Result<BRep, BuildError> {
+    if profiles.len() != spine.len() {
+        return Err(BuildError::DegenerateGeometry(
+            "sweep_pipe_variable: profiles.len() must equal spine.len()",
+        ));
+    }
+    if spine.len() < 2 {
+        return Err(BuildError::DegenerateGeometry(
+            "sweep_pipe_variable spine must have at least 2 points",
+        ));
+    }
+    let n_verts = profiles.first().map(|p| p.len()).unwrap_or(0);
+    if n_verts < 3 {
+        return Err(BuildError::DegenerateGeometry(
+            "sweep_pipe_variable profile must have at least 3 vertices",
+        ));
+    }
+    for p in profiles {
+        if p.len() != n_verts {
+            return Err(BuildError::DegenerateGeometry(
+                "sweep_pipe_variable: all profiles must have the same vertex count",
+            ));
+        }
+    }
+
+    let ns = spine.len();
+    let world_up_primary  = DVec3::Y;
+    let world_up_fallback = DVec3::Z;
+
+    let cross_sections: Vec<Vec<DVec3>> = (0..ns)
+        .map(|i| {
+            let tan = if i == 0 {
+                (spine[1] - spine[0]).normalize_or_zero()
+            } else if i == ns - 1 {
+                (spine[ns - 1] - spine[ns - 2]).normalize_or_zero()
+            } else {
+                (spine[i + 1] - spine[i - 1]).normalize_or_zero()
+            };
+
+            let right_raw = tan.cross(world_up_primary);
+            let right = if right_raw.length_squared() > 1e-8 {
+                right_raw.normalize()
+            } else {
+                tan.cross(world_up_fallback).normalize_or_zero()
+            };
+            let up = right.cross(tan).normalize_or_zero();
+
+            profiles[i]
+                .iter()
+                .map(|p2| spine[i] + p2.x * right + p2.y * up)
+                .collect()
+        })
+        .collect();
+
+    loft(&cross_sections)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

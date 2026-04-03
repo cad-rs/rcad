@@ -566,7 +566,9 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 | **建模** | 线性拉伸 `extrude` | ✅ 已完成 | Phase B |
 | **建模** | 旋转体 `revolve` | ✅ 已完成 | Phase B |
 | **建模** | 圆角 `MakeFillet` | ✅ 已完成 | Phase F（`fillet_edge`，凸平面边）|
+| **建模** | 多边圆角 `MakeFillet::Build` | ✅ 已完成 | Phase L（`fillet_edges`，批量 API）|
 | **建模** | 管道扫掠 `MakePipe` | ✅ 已完成 | Phase E（`sweep_pipe`）|
+| **建模** | 变截面扫掠 `MakePipeShell` | ✅ 已完成 | Phase L（`sweep_pipe_variable`）|
 | **建模** | 倒角 `MakeChamfer` | ✅ 已完成 | Phase F（`chamfer_edge`，凸平面边）|
 | **建模** | Loft 放样 | ✅ 已完成 | Phase E（`loft`）|
 | **建模** | 加厚 / 抽壳 | 🟢 P3 | |
@@ -595,7 +597,7 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 
 ## 10. 开发路线建议
 
-基于上述差距分析，十一个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，十二个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -667,18 +669,23 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 3. STEP Curve2d 导出：`Curve2d::Ellipse` → `ELLIPSE` + `AXIS2_PLACEMENT_2D`；`Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS`（2D 控制点）
 4. STEP tolerance 导入：`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → 填充 `GeomStore.{vertex,edge,face}_tolerance`；缺失时回退 `CONFUSION`
 
-### 下一阶段候选（Phase K）
-
-优先级较高的剩余工作：
-- **变截面扫掠** `MakePipeShell` — P2
-- **多边同时圆角（corner blending）** — P2
-
 ### Phase K — 扫掠面 + 面参数域 + BSplineSurface STEP 导出 ✅ 已完成
 
 1. `LinearExtrusionSurface` — `S(u,v) = profile.point_at(u) + v·direction`；法向 = `tangent(u) × direction`；类比 OCCT `Geom_SurfaceOfLinearExtrusion`；STEP 导入：`SURFACE_OF_LINEAR_EXTRUSION` → `Surface3::LinearExtrusion`
 2. `RevolutionSurface` — `S(u,v) = rotate(profile.point_at(v), axis_origin, axis_dir, angle=u)`；u ∈ [0, 2π]，v 来自 profile；法向数值差分；类比 OCCT `Geom_SurfaceOfRevolution`
 3. `GeomStore.face_surface_range: Vec<Option<[f64; 4]>>` — 逐面曲面参数域覆盖 `[u1,u2,v1,v2]`；`face_domain()` 优先返回覆盖值，回退 `SurfaceEval::default_domain()`；类比 OCCT `BRep_Face::UVBounds()`
 4. `BSplineSurface` STEP 导出：`write_surface` 现在输出 `B_SPLINE_SURFACE_WITH_KNOTS`（含完整控制点格和节点向量）；内核 [u][v] 网格转置为 STEP [v][u] 顺序（原先回退为 PLANE）
+
+### 下一阶段候选（Phase L）
+
+优先级较高的剩余工作：
+- **变截面扫掠** `MakePipeShell` — P2
+- **多边同时圆角（corner blending）** — P2
+
+### Phase L — 变截面扫掠 + 批量圆角 API ✅ 已完成
+
+1. `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — 变截面管道扫掠；每个脊线站点使用不同 2D 截面；Frenet 系相同（与 `sweep_pipe` 一致），委托 `loft()`；类比 OCCT `BRepOffsetAPI_MakePipeShell`
+2. `fillet_edges(brep, edges: &[(usize, f64)])` — 批量圆角 API；按下标降序排序后依次调用 `fillet_edge`；对非相邻边（不共顶点）安全；类比 `BRepFilletAPI_MakeFillet` 多边 `Add()` + `Build()`
 
 ---
 
@@ -696,8 +703,9 @@ Phase H（弧长/惯性） ░░░░░░░░░░░░░░░░░�
 Phase I（PCurve/容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase J（Ellipse2d/STEP容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase K（扫掠面/面域/BSpline导出）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase L（变截面扫掠/批量圆角）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase K 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase L 完成。*
