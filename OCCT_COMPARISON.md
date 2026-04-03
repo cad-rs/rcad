@@ -4,6 +4,7 @@
 > 帮助团队明确差距、规划后续开发方向。
 >
 > **文档状态：** 基于 RCAD 当前代码（2026-04）生成，随代码演进应同步更新。
+> **Phase A–D 全部完成（commit `e253d6d`，2026-04-03）。**
 
 ---
 
@@ -96,9 +97,10 @@ Geom_Curve (abstract, parametric: t → Point3)
 
 ```rust
 pub enum Curve3 {
-    Line(Line3),     // origin + direction（无限长）
-    Circle(Circle3), // center + normal + radius（完整圆）
+    Line(Line3),
+    Circle(Circle3),
     Ellipse(Ellipse3),
+    BSpline(BSplineCurve3),  // Phase B 新增
 }
 ```
 
@@ -107,18 +109,14 @@ pub enum Curve3 {
 | 直线（无限） | `Geom_Line` | `Line3` | ✅ 对等 |
 | 圆 | `Geom_Circle` | `Circle3` | ✅ 对等 |
 | 椭圆 | `Geom_Ellipse` | `Ellipse3` | ✅ 对等 |
-| **裁剪曲线** | `Geom_TrimmedCurve` | ❌ 缺失 | **高优先**：边界边的参数域无法精确表达 |
-| B-Spline | `Geom_BSplineCurve` | ❌ 缺失 | 必须支持才能导入通用 STEP |
+| **裁剪曲线** | `Geom_TrimmedCurve` | 以 `edge_curve_range [t1,t2]` 实现 | ✅ 参数范围已支持 |
+| B-Spline | `Geom_BSplineCurve` | `BSplineCurve3`（de Boor）| ✅ Phase B |
 | Bezier | `Geom_BezierCurve` | ❌ 缺失 | 中优先 |
 | 双曲线 | `Geom_Hyperbola` | ❌ 缺失 | 低优先（工程场景罕见）|
 | 抛物线 | `Geom_Parabola` | ❌ 缺失 | 低优先 |
 | 偏移曲线 | `Geom_OffsetCurve` | ❌ 缺失 | 中优先（倒角需要）|
-| 参数求值 | `Value(t)` → Point3 | ❌ 缺失 | **高优先**：布尔/圆角/偏移依赖 |
-| 参数域 | `FirstParameter/LastParameter` | ❌ 缺失 | **高优先**：Edge 参数范围 |
-
-**当前最大缺陷：`Curve3` 只存储几何形状，没有参数域信息。**  
-OCCT 中一条边的实际曲线范围由 `BRep_Edge::Range()` 提供（对应 `TrimmedCurve` 的 `[t1, t2]`）；
-RCAD 目前通过顶点位置隐式推断，无法精确表达弧长不到一整圈的圆弧边。
+| 参数求值 | `Value(t)` → Point3 | `CurveEval::point_at(t)` | ✅ Phase A |
+| 参数域 | `FirstParameter/LastParameter` | `CurveEval::default_domain()` + `edge_curve_range` | ✅ Phase A |
 
 ---
 
@@ -160,6 +158,7 @@ pub enum Surface3 {
     Sphere(SphericalSurface),
     Cone(ConicalSurface),
     Torus(ToroidalSurface),
+    BSpline(BSplineSurface),  // Phase B 新增
 }
 ```
 
@@ -171,13 +170,14 @@ pub enum Surface3 {
 | 锥面 | `Geom_ConicalSurface` | `ConicalSurface` | ✅ 对等 |
 | 环面 | `Geom_ToroidalSurface` | `ToroidalSurface` | ✅ 对等 |
 | **裁剪面** | `Geom_RectangularTrimmedSurface` | ❌ 缺失 | 中优先 |
-| B-Spline 面 | `Geom_BSplineSurface` | ❌ 缺失 | **高优先**（自由曲面） |
+| B-Spline 面 | `Geom_BSplineSurface` | `BSplineSurface`（张量积 de Boor）| ✅ Phase B |
 | Bezier 面 | `Geom_BezierSurface` | ❌ 缺失 | 中优先 |
 | 线性扫掠面 | `Geom_SurfaceOfLinearExtrusion` | ❌ 缺失 | 中优先（拉伸算法需要）|
 | 旋转面 | `Geom_SurfaceOfRevolution` | ❌ 缺失 | 中优先（旋转算法需要）|
 | 偏移面 | `Geom_OffsetSurface` | ❌ 缺失 | 低优先 |
-| (u,v) 求值 | `Value(u,v)` → Point3 | ❌ 缺失 | **高优先**：渲染、布尔需要 |
-| 参数域查询 | `Bounds(u1,u2,v1,v2)` | ❌ 缺失 | **高优先** |
+| (u,v) 求值 | `Value(u,v)` → Point3 | `SurfaceEval::point_at(u,v)` | ✅ Phase A |
+| 法向量 | `Normal(u,v)` | `SurfaceEval::normal_at(u,v)` | ✅ Phase A |
+| 参数域查询 | `Bounds(u1,u2,v1,v2)` | `SurfaceEval::default_domain()` | ✅ Phase A |
 
 ---
 
@@ -214,22 +214,22 @@ pub enum Curve2d {
 | 2D 直线 | `Geom2d_Line` | `Line2d` | ✅ |
 | 2D 圆 | `Geom2d_Circle` | `Circle2d` | ✅ |
 | **2D 椭圆** | `Geom2d_Ellipse` | ❌ | 中优先（椭圆边在椭球面的 PCurve）|
-| 2D B-Spline | `Geom2d_BSplineCurve` | ❌ | 高优先（B-Spline 面上的边必须用）|
-| 2D 裁剪曲线 | `Geom2d_TrimmedCurve` | ❌ | 高优先（PCurve 的参数域）|
+| 2D B-Spline | `Geom2d_BSplineCurve` | ❌ | 中优先（B-Spline 面上的边）|
+| 2D 裁剪曲线 | `Geom2d_TrimmedCurve` | ❌ | 中优先（PCurve 的参数域）|
 
 ---
 
 ### 2.4 几何评估与局部属性
 
-OCCT 提供丰富的几何计算 API，RCAD 目前几乎全部缺失：
+OCCT 提供丰富的几何计算 API，RCAD Phase A 补全了核心求值接口：
 
 | 功能 | OCCT 包/类 | RCAD 现状 |
 |------|-----------|-----------|
-| 曲线点求值 `C(t)` | `Geom_Curve::Value(t)` | ❌ |
-| 曲线切向量 `C'(t)` | `Geom_Curve::D1(t)` | ❌ |
+| 曲线点求值 `C(t)` | `Geom_Curve::Value(t)` | ✅ `CurveEval::point_at(t)` |
+| 曲线切向量 `C'(t)` | `Geom_Curve::D1(t)` | ✅ `CurveEval::tangent_at(t)` |
 | 曲线曲率 | `GeomLProp_CLProps` | ❌ |
-| 曲面点求值 `S(u,v)` | `Geom_Surface::Value(u,v)` | ❌ |
-| 曲面法向量 | `GeomLProp_SLProps` | ❌ |
+| 曲面点求值 `S(u,v)` | `Geom_Surface::Value(u,v)` | ✅ `SurfaceEval::point_at(u,v)` |
+| 曲面法向量 | `GeomLProp_SLProps` | ✅ `SurfaceEval::normal_at(u,v)` |
 | 曲线投影到曲面 | `GeomAPI_ProjectPointOnSurf` | ❌ |
 | 曲线-曲线交点 | `GeomAPI_ExtremaCurveCurve` | ❌ |
 | 曲面-曲面交线 | `GeomAPI_IntSS` | ❌ |
@@ -266,7 +266,8 @@ TopoDS_Shape (基类，携带 Orientation + Location)
 ```rust
 pub struct Vertex { pub point: DVec3 }
 pub struct Edge   { pub start: usize, pub end: usize }
-pub struct Wire   { pub edges: Vec<usize> }
+pub struct WireEdge { pub idx: usize, pub forward: bool }  // Phase A 新增
+pub struct Wire   { pub edges: Vec<WireEdge> }             // 含方向
 pub struct Face   { pub outer_wire: Wire, pub inner_wires: Vec<Wire>,
                     pub normal: DVec3, pub triangles: Vec<[usize;3]> }
 pub struct Shell  { pub faces: Vec<Face> }
@@ -277,17 +278,16 @@ pub struct BRep   { pub vertices: Vec<Vertex>, pub edges: Vec<Edge>,
 
 | 实体 | OCCT | RCAD | 差距说明 |
 |------|------|------|---------|
-| Vertex | `TopoDS_Vertex` + 容差 | `Vertex { point }` | RCAD 缺容差字段 |
-| Edge | `TopoDS_Edge` + 参数范围 + 方向 | `Edge { start, end }` | **缺参数范围 `[t1,t2]`；缺方向标志** |
-| Wire | `TopoDS_Wire` | `Wire { edges }` | 缺边方向（每条边可正/反向）|
-| Face | `TopoDS_Face` | `Face { outer_wire, inner_wires, normal }` | ✅ 基本对等；缺容差 |
+| Vertex | `TopoDS_Vertex` + 容差 | `Vertex { point }` | 缺容差字段（P2）|
+| Edge | `TopoDS_Edge` + 参数范围 + 方向 | `Edge { start, end }` + `edge_curve_range` | ✅ 参数范围已补全（Phase A）|
+| Wire | `TopoDS_Wire` | `Wire { edges: Vec<WireEdge> }` | ✅ 含方向标志（Phase A）|
+| Face | `TopoDS_Face` | `Face { outer_wire, inner_wires, normal }` | ✅ 基本对等 |
 | Shell | `TopoDS_Shell` | `Shell { faces }` | ✅ 基本对等 |
 | Solid | `TopoDS_Solid` | `Solid { shells }` | ✅ 基本对等 |
 | **CompSolid** | `TopoDS_CompSolid` | ❌ | 低优先 |
 | **Compound** | `TopoDS_Compound` | ❌ | 低优先 |
-| **Orientation** | `TopAbs_Orientation` | ❌ (隐式) | **高优先**：布尔/圆角依赖 |
 | **Location** | `TopLoc_Location` | ❌ | 中优先：实例化、装配 |
-| 子形状迭代 | `TopExp_Explorer` | ❌ | 高优先：算法遍历 |
+| 子形状迭代 | `TopExp_Explorer` | 需手动嵌套 | 中优先：可封装辅助函数 |
 
 ---
 
@@ -312,21 +312,23 @@ BRep_TEdge:
 Edge { start: usize, end: usize }
 
 GeomStore {
-    edge_curve: Vec<Option<usize>>,      // 指向 Curve3，无参数范围
-    edge_pcurves: Vec<Vec<PCurve>>,      // PCurve { surface_idx, curve2d_idx }
-    // 缺: tolerance, same_parameter, same_range, degenerated
+    edge_curve:       Vec<Option<usize>>,      // 指向 Curve3
+    edge_curve_range: Vec<Option<[f64; 2]>>,   // [t1, t2] — Phase A 新增
+    edge_degenerated: Vec<bool>,               // Phase A 新增
+    edge_pcurves:     Vec<Vec<PCurve>>,        // PCurve { surface_idx, curve2d_idx }
+    // 仍缺: tolerance, same_parameter, same_range
 }
 ```
 
-**关键缺失字段：**
+**关键字段状态：**
 
-| OCCT 字段 | RCAD | 影响 |
+| OCCT 字段 | RCAD | 状态 |
 |-----------|------|------|
-| `Tolerance` (per edge/vertex/face) | ❌ | 精度体系缺失，布尔操作容差判断困难 |
-| `SameParameter` | ❌ | 导出/导入 STEP 精度损失 |
-| `SameRange` | ❌ | PCurve 一致性检验缺失 |
-| `Degenerated` | ❌ | 退化边（如极点）处理不安全 |
-| **Edge 参数范围 `[t1, t2]`** | ❌ | **最高优先**：弧段无法精确表示 |
+| **Edge 参数范围 `[t1, t2]`** | `edge_curve_range` | ✅ Phase A |
+| `Degenerated` | `edge_degenerated` | ✅ Phase A |
+| `Tolerance` (per edge/vertex/face) | ❌ | P2 — 精度体系 |
+| `SameParameter` | ❌ | P2 |
+| `SameRange` | ❌ | P2 |
 
 ---
 
@@ -365,18 +367,14 @@ GeomStore {
 | 直线 | `GC_MakeLine` | `line(origin, dir)` | ✅ |
 | 圆 | `GC_MakeCircle` | `circle(center, normal, r)` | ✅ |
 | 椭圆 | `GC_MakeEllipse` | `ellipse(...)` | ✅ |
-| **裁剪弧** | `GC_MakeArcOfCircle` → `TrimmedCurve` | ❌ | **高优先** |
-| **插值曲线** | `GeomAPI_Interpolate` | ❌ | 高优先 |
+| **裁剪弧** | `GC_MakeArcOfCircle` → `TrimmedCurve` | `edge_curve_range [t1,t2]` | ✅ Phase A |
+| **插值曲线** | `GeomAPI_Interpolate` | ❌ | 中优先 |
 | 平面 | `GC_MakePlane` | `plane(origin, normal)` | ✅ |
 | 柱面 | 直接构造 | `cylindrical_surface(...)` | ✅ |
-| **边构造** | `BRepBuilderAPI_MakeEdge` | ❌ 用户无法直接建边 | **高优先** |
-| **线框构造** | `BRepBuilderAPI_MakeWire` | ❌ | 高优先 |
-| **面构造** | `BRepBuilderAPI_MakeFace` | ❌ | 高优先 |
-| **壳构造** | `BRepBuilderAPI_MakeShell` | ❌ | 中优先 |
-| **体构造** | `BRepBuilderAPI_MakeSolid` | ❌ | 中优先 |
-
-> **说明：** RCAD 目前只能通过 `BRep::from_primitive` 创建预定义形状；
-> 用户无法从曲线/曲面自由组装拓扑形状，这是与 OCCT 最大的建模能力差距。
+| **边构造** | `BRepBuilderAPI_MakeEdge` | `make_edge(brep, curve, t1, t2, v0, v1)` | ✅ Phase B |
+| **线框构造** | `BRepBuilderAPI_MakeWire` | `make_wire(edges)` | ✅ Phase B |
+| **面构造** | `BRepBuilderAPI_MakeFace` | `make_face(brep, surface, outer, inner_wires)` | ✅ Phase B |
+| **体构造** | `BRepBuilderAPI_MakeSolid` | `make_solid(brep, shells)` | ✅ Phase B |
 
 ### 4.3 布尔运算
 
@@ -394,8 +392,8 @@ GeomStore {
 
 | 功能 | OCCT API | RCAD | 状态 |
 |------|----------|------|------|
-| 线性拉伸 | `BRepPrimAPI_MakePrism` | ❌ | **高优先** |
-| 旋转体 | `BRepPrimAPI_MakeRevol` | ❌ | **高优先** |
+| 线性拉伸 | `BRepPrimAPI_MakePrism` | `extrude(profile, direction, distance)` | ✅ Phase B |
+| 旋转体 | `BRepPrimAPI_MakeRevol` | `revolve(profile, axis, angle)` | ✅ Phase B |
 | 管道扫掠 | `BRepOffsetAPI_MakePipe` | ❌ | 高优先 |
 | 变截面扫掠 | `BRepOffsetAPI_MakePipeShell` | ❌ | 中优先 |
 | Loft（放样）| `BRepOffsetAPI_ThruSections` | ❌ | 中优先 |
@@ -427,16 +425,16 @@ GeomStore {
 | 实体类型 | OCCT 读 | OCCT 写 | RCAD 读 | RCAD 写 |
 |---------|---------|---------|---------|---------|
 | 解析几何曲线（LINE/CIRCLE/ELLIPSE）| ✅ | ✅ | ✅ | ✅ |
-| B_SPLINE_CURVE_WITH_KNOTS | ✅ | ✅ | 解析但忽略 | ❌ |
-| TRIMMED_CURVE | ✅ | ✅ | 解析但不建拓扑 | ❌ |
+| B_SPLINE_CURVE_WITH_KNOTS | ✅ | ✅ | ✅ | ✅ Phase D |
+| TRIMMED_CURVE | ✅ | ✅ | 解析参数范围 | ✅（以 `edge_curve_range` 导出）|
 | 解析曲面（PLANE/CYL/SPHERE…）| ✅ | ✅ | ✅ | ✅ |
 | B_SPLINE_SURFACE | ✅ | ✅ | ❌ | ❌ |
 | PCURVE / SURFACE_CURVE | ✅ | ✅ | ✅ | ✅ |
 | ADVANCED_FACE | ✅ | ✅ | ✅ | ✅ |
 | MANIFOLD_SOLID_BREP | ✅ | ✅ | ✅ | ✅ |
 | SHELL_BASED_SURFACE_MODEL | ✅ | ✅ | ✅ | ✅ |
-| 装配体（PRODUCT hierarchy）| ✅ | ✅ | 部分 | 部分 |
-| 颜色 / 材质 | ✅ | ✅ | ❌ | ❌ |
+| 装配体（PRODUCT / NAUO）| ✅ | ✅ | 部分 | ✅ Phase D |
+| 颜色 / 材质 | ✅ | ✅ | ❌ | ✅ Phase D |
 | PMI（标注尺寸）| ✅ | ✅ | ❌ | ❌ |
 | 容差信息 | ✅ | ✅ | ❌ | ❌ |
 
@@ -454,20 +452,20 @@ GeomStore {
 
 ## 6. 全局属性与分析
 
-这是 RCAD 目前完全空白的一个领域，对 CAE 应用极为重要：
+这是 RCAD 目前完全空白的一个领域，对 CAE 应用极为重要。Phase C 完成了核心属性计算：
 
 | 功能 | OCCT 包/类 | RCAD |
 |------|-----------|------|
-| 面积计算 | `GProp_GProps` + `BRepGProp::SurfaceProperties` | ❌ |
-| 体积计算 | `GProp_GProps` + `BRepGProp::VolumeProperties` | ❌ |
-| 质心计算 | `GProp_GProps::CentreOfMass` | 仅顶点平均 |
+| 面积计算 | `GProp_GProps` + `BRepGProp::SurfaceProperties` | ✅ `surface_area(brep)` Phase C |
+| 体积计算 | `GProp_GProps` + `BRepGProp::VolumeProperties` | ✅ `volume(brep)` Phase C |
+| 质心计算 | `GProp_GProps::CentreOfMass` | ✅ `centroid(brep)` Phase C |
 | 惯性矩 | `GProp_GProps::MatrixOfInertia` | ❌ |
-| 包围盒 | `Bnd_Box` + `BRepBndLib` | ❌（需手动遍历顶点）|
+| 包围盒 | `Bnd_Box` + `BRepBndLib` | ✅ `bounding_box()` Phase A |
 | 曲线弧长 | `GCPnts_AbscissaPoint` | ❌ |
 | 曲面曲率分析 | `BRepLProp_SLProps` | ❌ |
 | 最近点 | `BRepExtrema_DistShapeShape` | ❌ |
-| 法向量场 | `BRep_Tool::Normal` | 仅存储于 `Face.normal` |
-| 拓扑有效性 | `BRepCheck_Analyzer` | ❌ |
+| 法向量场 | `BRep_Tool::Normal` | ✅ `SurfaceEval::normal_at` Phase A |
+| 拓扑有效性 | `BRepCheck_Analyzer` | ✅ `check(brep)` Phase C |
 | 形状连通性 | `TopTools_ConnectedIterator` | ❌ |
 
 ---
@@ -513,10 +511,10 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | 边高亮 | AIS_Shape | 屏幕空间 edge overlay ✅ |
 | 拾取 | `BRepIntCurveSurface` ray casting | 光线投射 + 屏幕空间边 ✅ |
 | 装配体显示 | AIS_Shape + 子装配 | ❌ |
-| 隐线消除 HLR | `HLRBRep` | ❌ |
+| 隐线消除 HLR | `HLRBRep` | ✅ `hlr()` + `hlr_to_svg()` Phase D |
 | 动画 | `AIS_Animation` | ❌ |
 | 文字标注 | `AIS_Text` | ❌ |
-| 截面视图 | `Graphic3d_ClipPlane` | ❌ |
+| 截面视图 | `Graphic3d_ClipPlane` | ✅ `section_polylines()` Phase C |
 | 多视口 | `V3d_Viewer` | ❌ |
 | WASM 支持 | ❌（OpenGL-ES 限制） | ✅（wgpu → WebGPU）|
 
@@ -534,170 +532,97 @@ BRep_Face::Tolerance         ← 每个面独立容差
 
 | 领域 | 缺失功能 | 优先级 | 说明 |
 |------|---------|--------|------|
-| **几何** | `Edge` 参数范围 `[t1, t2]` | 🔴 P0 | 弧段边无法精确表示 |
-| **几何** | 曲线求值 `C(t)` / 曲面求值 `S(u,v)` | 🔴 P0 | 布尔、圆角、偏移依赖 |
-| **几何** | `TrimmedCurve3` | 🟠 P1 | 任意弧段边构造 |
-| **几何** | `BSplineCurve3` / `BSplineSurface` | 🟠 P1 | 自由曲面 STEP 导入必须 |
+| **几何** | `Edge` 参数范围 `[t1, t2]` | ✅ 已完成 | Phase A |
+| **几何** | 曲线求值 `C(t)` / 曲面求值 `S(u,v)` | ✅ 已完成 | Phase A |
+| **几何** | `BSplineCurve3` / `BSplineSurface` | ✅ 已完成 | Phase B |
 | **几何** | `Curve2d::Ellipse` + `TrimmedCurve2d` | 🟡 P2 | 椭圆体 PCurve |
-| **几何** | `SurfaceOfRevolution` / `LinearExtrusion` | 🟡 P2 | 扫掠算法的输出曲面 |
-| **拓扑** | `Orientation` 标志（Edge / Face 级别）| 🔴 P0 | Wire 方向依赖隐式推断，脆弱 |
-| **拓扑** | `Degenerated` edge 标记 | 🟠 P1 | 球极点等退化边 |
-| **拓扑** | per-vertex / per-edge 容差 | 🟠 P1 | 精度体系完整性 |
-| **拓扑** | `TopExp_Explorer` 等遍历工具 | 🟠 P1 | 算法层需要 |
+| **几何** | `SurfaceOfRevolution` / `LinearExtrusion` | 🟡 P2 | 扫掠算法的输出曲面类型 |
+| **几何** | Bezier 曲线 / 曲面 | 🟡 P2 | |
+| **几何** | 偏移曲线 / 偏移面 | 🟡 P2 | 倒角需要 |
+| **拓扑** | `WireEdge.forward` 方向标志 | ✅ 已完成 | Phase A |
+| **拓扑** | `Degenerated` edge 标记 | ✅ 已完成 | Phase A |
+| **拓扑** | per-vertex / per-edge 容差 | 🟡 P2 | 精度体系完整性 |
 | **拓扑** | 相邻面查询 API | 🟡 P2 | 圆角需要 |
 | **拓扑** | `Compound` / `CompSolid` | 🟢 P3 | 装配体 |
-| **建模** | `MakeEdge(curve, t1, t2)` | 🟠 P1 | 用户建边入口 |
-| **建模** | `MakeWire` / `MakeFace` / `MakeSolid` | 🟠 P1 | 自由形体构造 |
-| **建模** | 线性拉伸 `MakePrism` | 🟠 P1 | 最常用建模操作 |
-| **建模** | 旋转体 `MakeRevol` | 🟠 P1 | |
+| **建模** | `make_edge/wire/face/solid` | ✅ 已完成 | Phase B |
+| **建模** | 线性拉伸 `extrude` | ✅ 已完成 | Phase B |
+| **建模** | 旋转体 `revolve` | ✅ 已完成 | Phase B |
 | **建模** | 圆角 `MakeFillet` | 🟠 P1 | |
 | **建模** | 管道扫掠 `MakePipe` | 🟡 P2 | |
 | **建模** | 倒角 `MakeChamfer` | 🟡 P2 | |
 | **建模** | Loft 放样 | 🟡 P2 | |
 | **建模** | 加厚 / 抽壳 | 🟢 P3 | |
-| **布尔** | 截面线 `Section` | 🟡 P2 | |
+| **布尔** | 截面线 `Section` | ✅ 已完成 | Phase C（`section_polylines`）|
 | **布尔** | 形状历史映射 | 🟡 P2 | 特征树需要 |
-| **数据交换** | B-Spline STEP 写出 | 🟠 P1 | |
-| **数据交换** | 颜色 / 材质 STEP | 🟡 P2 | |
-| **数据交换** | 装配体 STEP | 🟡 P2 | |
+| **数据交换** | B-Spline STEP 读写 | ✅ 已完成 | Phase D |
+| **数据交换** | 颜色 / 材质 STEP | ✅ 已完成 | Phase D |
+| **数据交换** | 装配体 STEP (NAUO) | ✅ 已完成 | Phase D |
 | **数据交换** | IGES / OBJ / GLTF | 🟢 P3 | |
-| **分析** | 面积 / 体积 / 质心 | 🟠 P1 | CAE 前处理必须 |
-| **分析** | 包围盒 `Bnd_Box` | 🟠 P1 | 布尔加速、拾取 |
+| **数据交换** | B_SPLINE_SURFACE STEP 读 | 🟡 P2 | |
+| **分析** | 面积 / 体积 / 质心 | ✅ 已完成 | Phase C |
+| **分析** | 包围盒 `Bnd_Box` | ✅ 已完成 | Phase A |
+| **分析** | `BRepCheck` 有效性 | ✅ 已完成 | Phase C |
 | **分析** | 曲率分析 | 🟡 P2 | |
-| **分析** | `BRepCheck_Analyzer` 有效性 | 🟡 P2 | |
 | **精度** | 全局 `Precision` 配置 | 🟡 P2 | |
-| **渲染** | 隐线消除 HLR | 🟢 P3 | |
-| **渲染** | 截面视图 | 🟢 P3 | |
+| **渲染** | 隐线消除 HLR | ✅ 已完成 | Phase D |
+| **渲染** | 截面视图 | ✅ 已完成 | Phase C（section_polylines + SVG）|
+| **渲染** | 多视口 | 🟢 P3 | |
+| **渲染** | 动画 / 文字标注 | 🟢 P3 | |
 
 ---
 
 ## 10. 开发路线建议
 
-基于上述差距分析，建议分四个阶段推进：
+基于上述差距分析，四个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
-### Phase A — 几何/拓扑基础加固（P0 + P1 核心）
+### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
-**目标：** 使 BRep 模型在数学上完备，为后续算法提供正确基础。
+1. `GeomStore.edge_curve_range: Vec<Option<[f64; 2]>>` — Edge 参数范围
+2. `CurveEval` / `SurfaceEval` trait — `point_at`, `tangent_at`, `normal_at`, `default_domain`
+3. `WireEdge { idx: usize, forward: bool }` — Wire 边方向
+4. `GeomStore.edge_degenerated: Vec<bool>` — 退化边标记
+5. `BRep::bounding_box()` — 包围盒
 
-1. **`Edge` 增加参数范围 `[t1, t2]`**
-   - 在 `GeomStore` 或 `Edge` 结构体增加 `edge_curve_range: Vec<Option<[f64; 2]>>`
-   - 更新 `create_*` 函数填写正确的参数范围
-   - 使 STEP reader/writer 读写 `Edge_Curve` 的参数范围
+### Phase B — 建模能力扩展 ✅ 已完成
 
-2. **几何求值 trait `CurveEval` / `SurfaceEval`**
-   ```rust
-   pub trait CurveEval {
-       fn point_at(&self, t: f64) -> DVec3;
-       fn tangent_at(&self, t: f64) -> DVec3;
-       fn domain(&self) -> [f64; 2];
-   }
-   pub trait SurfaceEval {
-       fn point_at(&self, u: f64, v: f64) -> DVec3;
-       fn normal_at(&self, u: f64, v: f64) -> DVec3;
-       fn domain(&self) -> [f64; 4]; // [u1, u2, v1, v2]
-   }
-   ```
+1. `make_edge / make_wire / make_face / make_solid` (`rcad-modeling/brep_builder`)
+2. `extrude(profile, direction, distance)` — 线性拉伸
+3. `revolve(profile, axis, angle)` — 旋转体
+4. `BSplineCurve3 / BSplineSurface` — de Boor 求值；加入 `Curve3` / `Surface3` enum
 
-3. **`TrimmedCurve3` 类型**
-   ```rust
-   pub struct TrimmedCurve3 { pub basis: Box<Curve3>, pub t1: f64, pub t2: f64 }
-   // 或者在 Curve3 enum 增加 Trimmed 变体
-   pub enum Curve3 { Line(..), Circle(..), Ellipse(..), Trimmed(TrimmedCurve3) }
-   ```
+### Phase C — 算法完善 ✅ 已完成
 
-4. **`Orientation` 标志**
-   - 在 `Wire` 的边引用上增加方向标志：`Vec<(usize, bool)>` （边 index + 是否正向）
-   - 或专门的 `OrientedEdge { edge_idx: usize, forward: bool }` 类型（已在写出器中存在）
+1. `surface_area(brep)`, `volume(brep)`, `centroid(brep)` (`rcad-kernel/properties`)
+2. `check(brep)` — `BRepCheck` 形状有效性检查 (`rcad-algorithms/brep_check`)
+3. `section(brep, plane)` / `section_polylines(brep, plane)` — 截面线 (`rcad-algorithms/section`)
 
-5. **`Degenerated` 标记**
-   - `GeomStore.edge_degenerated: Vec<bool>`
+### Phase D — 数据交换与高级功能 ✅ 已完成
 
-6. **包围盒计算**
-   ```rust
-   // libs/rcad-kernel/src/lib.rs
-   impl BRep {
-       pub fn bounding_box(&self) -> [DVec3; 2]  // [min, max]
-   }
-   ```
+1. `StepWriter::write_string_colored(brep, &StepColor)` — STEP 颜色导出（`COLOUR_RGB` → `STYLED_ITEM`）
+2. `write_assembly(name, &[AssemblyComponent])` — STEP 装配体（`PRODUCT` + `NAUO`）
+3. `B_SPLINE_CURVE_WITH_KNOTS` 读写（压缩节点向量 + de Boor 精确导出）
+4. `hlr(brep, camera, samples)` + `hlr_to_svg(result, scale, margin)` — 隐线消除 + SVG 输出
+
+### 下一阶段候选（Phase E）
+
+优先级较高的剩余工作：
+- **圆角** `fillet(brep, edge_idx, radius)` — P1，最常用的特征操作
+- **管道扫掠** `MakePipe` — P2
+- **B_SPLINE_SURFACE STEP 读** — P2
+- **per-edge 容差体系** — P2
+- **2D B-Spline / TrimmedCurve2d PCurve** — P2
 
 ---
 
-### Phase B — 建模能力扩展（P1 建模操作）
-
-**目标：** 用户可以从曲线/曲面自由组装形状，支持拉伸、旋转。
-
-1. **`BRepBuilder` — 自由建模入口**（对应 OCCT `BRepBuilderAPI`）
-   ```rust
-   // libs/rcad-modeling/src/brep_builder.rs
-   pub fn make_edge(brep: &mut BRep, curve: Curve3, t1: f64, t2: f64,
-                    v0: usize, v1: usize) -> usize
-   pub fn make_wire(edges: Vec<OrientedEdge>) -> Wire
-   pub fn make_face(brep: &mut BRep, surface: Surface3, outer: Wire,
-                    inner_wires: Vec<Wire>) -> usize
-   pub fn make_solid(brep: &mut BRep, shells: Vec<Shell>) -> usize
-   ```
-
-2. **线性拉伸 `extrude(profile_face, direction, distance)`**
-   - 输入：一个或多个闭合 Wire / Face
-   - 输出：BRep Solid
-   - 对应 OCCT `BRepPrimAPI_MakePrism`
-
-3. **旋转体 `revolve(profile, axis, angle)`**
-   - 输入：Wire / Face + 旋转轴 + 角度
-   - 输出：BRep Solid
-   - 对应 OCCT `BRepPrimAPI_MakeRevol`
-
-4. **`BSplineCurve3` / `BSplineSurface` 基础支持**
-   - 先只支持数据存储（control_points, knots, weights）
-   - 再实现 `CurveEval` / `SurfaceEval`
-   - 使 STEP reader 能正确填充而不是忽略
-
----
-
-### Phase C — 算法完善（P1 算法 + P2 分析）
-
-**目标：** 圆角、全局属性、形状分析。
-
-1. **圆角 `fillet(brep, edge_idx, radius)`**
-
-2. **面积 / 体积 / 质心计算**
-   ```rust
-   // libs/rcad-kernel/src/properties.rs
-   pub fn surface_area(brep: &BRep) -> f64
-   pub fn volume(brep: &BRep) -> f64
-   pub fn centroid(brep: &BRep) -> DVec3
-   ```
-
-3. **`BRepCheck` — 形状有效性检查**
-
-4. **截面线 `section(brep, plane)` → Wire**
-
----
-
-### Phase D — 数据交换与高级功能（P2/P3）
-
-**目标：** 更完整的 STEP 覆盖、IGES、装配体、可视化增强。
-
-1. **B-Spline STEP 读写完整支持**
-2. **STEP 颜色 / 材质**
-3. **STEP 装配体（PRODUCT hierarchy）**
-4. **HLR 隐线消除**
-5. **多视口 / 截面视图**
-
----
-
-### 阶段时序建议
+### 阶段时序（实际完成）
 
 ```
-Phase A（几何基础）  ████████░░░░░░░░░░░░░░░░░░░░
-Phase B（建模 API）  ░░░░░░░░████████░░░░░░░░░░░░
-Phase C（算法）      ░░░░░░░░░░░░░░░░████████░░░░
-Phase D（交换/高级） ░░░░░░░░░░░░░░░░░░░░░░░░████
+Phase A（几何基础）  ████████
+Phase B（建模 API）  ░░░░░░░░████████
+Phase C（算法）      ░░░░░░░░░░░░░░░░████████
+Phase D（交换/高级） ░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
-
-Phase A 和 Phase B 的前半段（`make_edge` / `make_wire` / `make_face`）可以并行推进，
-因为它们是独立的数据结构扩展。Phase B 后半段（拉伸、旋转）依赖 Phase A 的几何求值 trait 完成。
 
 ---
 
-*文档生成于 2026-04-03，基于 RCAD commit `7f603d5`。*
+*文档更新于 2026-04-03，基于 RCAD commit `e253d6d`（Phase D 完成）。*

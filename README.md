@@ -4,7 +4,33 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-- STEP import can load real sample models (for example `assets/hfss.step`) instead of a fixed placeholder box.
+Four development phases (A–D) of the OCCT parity roadmap are complete.
+
+**Phase A — Geometry/topology foundations**
+- `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
+- Edge parameter ranges `[t1, t2]` in `GeomStore.edge_curve_range`.
+- `WireEdge { idx, forward }` orientation flags on every Wire edge.
+- `BSplineCurve3` / `BSplineSurface` data types with de Boor evaluation.
+- `BRep::bounding_box()` for axis-aligned bounds.
+
+**Phase B — Modeling API**
+- `make_edge` / `make_wire` / `make_face` / `make_solid` (analogous to `BRepBuilderAPI_Make*`).
+- `extrude(profile, direction, distance)` — linear prism.
+- `revolve(profile, axis, angle)` — solid of revolution.
+
+**Phase C — Algorithms and analysis**
+- `surface_area`, `volume`, `centroid` global properties.
+- `BRepCheck` shape validity checker.
+- `section(brep, plane)` → cross-section polylines.
+
+**Phase D — Data exchange and visualization**
+- STEP colored export: per-face and solid-level (`COLOUR_RGB` → `STYLED_ITEM` chain).
+- STEP assembly: multi-BRep with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy.
+- `B_SPLINE_CURVE_WITH_KNOTS` read/write in STEP.
+- HLR (Hidden-Line Removal): ray-triangle occlusion testing, SVG output via `hlr_to_svg`.
+
+**Core infrastructure (ongoing)**
+- STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).
 - `rcad-render` centralizes picking, selection state, and highlight rendering.
 - `rcad-scene` centralizes creation command state machines (Box/Sphere flow, preview, confirm/cancel/undo).
