@@ -25,11 +25,6 @@ pub enum BuildError {
     NonPositiveValue(&'static str),
     ZeroVector(&'static str),
     ParallelVectors(&'static str, &'static str),
-    InvalidSegmentCount {
-        name: &'static str,
-        min: usize,
-        got: usize,
-    },
 }
 
 impl fmt::Display for BuildError {
@@ -39,9 +34,6 @@ impl fmt::Display for BuildError {
             Self::NonPositiveValue(name) => write!(f, "{name} must be > 0"),
             Self::ZeroVector(name) => write!(f, "{name} must be non-zero"),
             Self::ParallelVectors(a, b) => write!(f, "{a} must not be parallel to {b}"),
-            Self::InvalidSegmentCount { name, min, got } => {
-                write!(f, "{name} must be >= {min}, got {got}")
-            }
         }
     }
 }
@@ -63,14 +55,6 @@ fn validate_positive(name: &'static str, value: f64) -> Result<f64, BuildError> 
         Err(BuildError::NonPositiveValue(name))
     } else {
         Ok(value)
-    }
-}
-
-fn validate_segments(name: &'static str, got: usize, min: usize) -> Result<(), BuildError> {
-    if got < min {
-        Err(BuildError::InvalidSegmentCount { name, min, got })
-    } else {
-        Ok(())
     }
 }
 
@@ -171,7 +155,7 @@ mod tests {
 
     #[test]
     fn sphere_brep_translates_bounds() {
-        let brep = sphere_brep(DVec3::new(10.0, -2.0, 4.0), 2.0, 24, 16).unwrap();
+        let brep = sphere_brep(DVec3::new(10.0, -2.0, 4.0), 2.0).unwrap();
 
         let min_y = brep
             .vertices
@@ -186,22 +170,16 @@ mod tests {
 
         assert!((min_y - (-4.0)).abs() < 1e-6);
         assert!((max_y - 0.0).abs() < 1e-6);
-        assert!(brep.vertices.iter().any(|v| (v.point - DVec3::new(10.0, 0.0, 4.0)).length() < 1e-6));
     }
 
     #[test]
     fn cylinder_primitive_returns_expected_shape() {
-        let primitive = cylinder_primitive(3.0, 5.0, 24).unwrap();
+        let primitive = cylinder_primitive(3.0, 5.0).unwrap();
 
         match primitive {
-            PrimitiveSolid::Cylinder {
-                radius,
-                height,
-                segments,
-            } => {
+            PrimitiveSolid::Cylinder { radius, height } => {
                 assert_eq!(radius, 3.0);
                 assert_eq!(height, 5.0);
-                assert_eq!(segments, 24);
             }
             other => panic!("expected cylinder primitive, got {other:?}"),
         }

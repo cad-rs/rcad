@@ -14,28 +14,28 @@ fn main() {
     write_step(&box_brep, "output_box.step");
 
     // ── Sphere ─────────────────────────────────────────────────────────
-    let sphere = make_sphere_brep(DVec3::new(0.0, 0.0, 0.0), 2.0, 32, 24)
+    let sphere = make_sphere_brep(DVec3::new(0.0, 0.0, 0.0), 2.0)
         .expect("sphere");
     write_step(&sphere, "output_sphere.step");
 
     // ── Cylinder ───────────────────────────────────────────────────────
     let cylinder = make_cylinder_brep(
         DVec3::ZERO, DVec3::Y, DVec3::X,
-        1.5, 4.0, 36,
+        1.5, 4.0,
     ).expect("cylinder");
     write_step(&cylinder, "output_cylinder.step");
 
     // ── Cone ───────────────────────────────────────────────────────────
     let cone = make_cone_brep(
         DVec3::ZERO, DVec3::Y, DVec3::X,
-        2.0, 5.0, 36,
+        2.0, 5.0,
     ).expect("cone");
     write_step(&cone, "output_cone.step");
 
     // ── Torus ──────────────────────────────────────────────────────────
     let torus = make_torus_brep(
         DVec3::ZERO, DVec3::Y, DVec3::X,
-        3.0, 1.0, 48, 24,
+        3.0, 1.0,
     ).expect("torus");
     write_step(&torus, "output_torus.step");
 
@@ -45,25 +45,25 @@ fn main() {
         2.0, 3.0, 4.0,
     ).expect("box");
 
-    let sphere2 = make_sphere_brep(DVec3::new(0.0, 1.5, 0.0), 2.0, 32, 24)
+    let sphere2 = make_sphere_brep(DVec3::new(0.0, 1.5, 0.0), 2.0)
         .expect("sphere");
     append_brep(&mut all, sphere2);
 
     let cyl2 = make_cylinder_brep(
         DVec3::new(6.0, 0.0, 0.0), DVec3::Y, DVec3::X,
-        1.5, 4.0, 36,
+        1.5, 4.0,
     ).expect("cylinder");
     append_brep(&mut all, cyl2);
 
     let cone2 = make_cone_brep(
         DVec3::new(12.0, 0.0, 0.0), DVec3::Y, DVec3::X,
-        2.0, 5.0, 36,
+        2.0, 5.0,
     ).expect("cone");
     append_brep(&mut all, cone2);
 
     let torus2 = make_torus_brep(
         DVec3::new(18.0, 2.0, 0.0), DVec3::Y, DVec3::X,
-        3.0, 1.0, 48, 24,
+        3.0, 1.0,
     ).expect("torus");
     append_brep(&mut all, torus2);
 

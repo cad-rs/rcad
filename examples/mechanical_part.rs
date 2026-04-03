@@ -47,21 +47,21 @@ fn main() {
     let mut assembly = bracket;
 
     // Decorative sphere at the bracket corner
-    let sphere = make_sphere_brep(DVec3::new(1.0, 9.0, 3.0), 0.8, 24, 16)
+    let sphere = make_sphere_brep(DVec3::new(1.0, 9.0, 3.0), 0.8)
         .expect("sphere");
     append_brep(&mut assembly, sphere);
 
     // Cylinder pin in slot 1 location
     let pin1 = make_cylinder_brep(
         DVec3::new(5.75, -0.5, 3.0), DVec3::Y, DVec3::X,
-        0.5, 3.0, 24,
+        0.5, 3.0,
     ).expect("pin1");
     append_brep(&mut assembly, pin1);
 
     // Cylinder pin in slot 2 location
     let pin2 = make_cylinder_brep(
         DVec3::new(8.75, -0.5, 3.0), DVec3::Y, DVec3::X,
-        0.5, 3.0, 24,
+        0.5, 3.0,
     ).expect("pin2");
     append_brep(&mut assembly, pin2);
 
@@ -85,7 +85,7 @@ fn main() {
     // Add a torus crown on top
     let crown = make_torus_brep(
         DVec3::new(4.0, 7.0, 4.0), DVec3::Y, DVec3::X,
-        1.5, 0.3, 36, 12,
+        1.5, 0.3,
     ).expect("crown");
     append_brep(&mut pyramid, crown);
 

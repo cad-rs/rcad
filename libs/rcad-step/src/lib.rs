@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, Curve3, GeomStore, Surface3};
+use rcad_kernel::{BRep, Curve2d, Curve3, GeomStore, PCurve, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
@@ -39,6 +39,18 @@ struct ParsedStep {
     shell_based_surface_models: Vec<Vec<u64>>,
     trimmed_curves: HashMap<u64, (u64, f64, f64)>,
     geometric_curve_sets: Vec<Vec<u64>>,
+    /// SURFACE_CURVE: maps step id → (3d_curve_ref, pcurve_ref_list)
+    surface_curves: HashMap<u64, (u64, Vec<u64>)>,
+    /// PCURVE: maps step id → (surface_ref, definitional_rep_ref)
+    pcurves: HashMap<u64, (u64, u64)>,
+    /// DEFINITIONAL_REPRESENTATION: maps step id → curve2d_ref
+    definitional_reps: HashMap<u64, u64>,
+    /// 2D cartesian points
+    cartesian_points_2d: HashMap<u64, [f64; 2]>,
+    /// 2D directions
+    directions_2d: HashMap<u64, [f64; 2]>,
+    /// 2D axis2 placements: id → (location, ref_dir)
+    axis2_placements_2d: HashMap<u64, (u64, u64)>,
 }
 
 impl ParsedStep {
@@ -69,6 +81,12 @@ impl ParsedStep {
             shell_based_surface_models: Vec::new(),
             trimmed_curves: HashMap::new(),
             geometric_curve_sets: Vec::new(),
+            surface_curves: HashMap::new(),
+            pcurves: HashMap::new(),
+            definitional_reps: HashMap::new(),
+            cartesian_points_2d: HashMap::new(),
+            directions_2d: HashMap::new(),
+            axis2_placements_2d: HashMap::new(),
         }
     }
 }
@@ -105,11 +123,15 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 "CARTESIAN_POINT" => {
                     if let Some(coords) = parse_cartesian_point(args) {
                         parsed.cartesian_points.insert(id, coords);
+                    } else if let Some(coords2d) = parse_cartesian_point_2d(args) {
+                        parsed.cartesian_points_2d.insert(id, coords2d);
                     }
                 }
                 "DIRECTION" => {
                     if let Some(coords) = parse_cartesian_point(args) {
                         parsed.directions.insert(id, coords);
+                    } else if let Some(coords2d) = parse_cartesian_point_2d(args) {
+                        parsed.directions_2d.insert(id, coords2d);
                     }
                 }
                 "VECTOR" => {
@@ -120,6 +142,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 "AXIS2_PLACEMENT_3D" => {
                     if let Some((origin, axis, ref_dir)) = parse_axis2_placement(args) {
                         parsed.axis2_placements.insert(id, (origin, axis, ref_dir));
+                    }
+                }
+                "AXIS2_PLACEMENT_2D" => {
+                    if let Some((loc, ref_dir)) = parse_axis2_placement_2d(args) {
+                        parsed.axis2_placements_2d.insert(id, (loc, ref_dir));
                     }
                 }
                 "LINE" => {
@@ -154,6 +181,24 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                         && !curve_refs.is_empty()
                     {
                         parsed.geometric_curve_sets.push(curve_refs);
+                    }
+                }
+                "SURFACE_CURVE" => {
+                    // SURFACE_CURVE('', #3d_curve, (#pcurve1, ...), .PCURVE_S1.)
+                    if let Some((curve3d_ref, pcurve_refs)) = parse_surface_curve(args) {
+                        parsed.surface_curves.insert(id, (curve3d_ref, pcurve_refs));
+                    }
+                }
+                "PCURVE" => {
+                    // PCURVE('', #surface, #definitional_rep)
+                    if let Some((surface_ref, def_ref)) = parse_pcurve_args(args) {
+                        parsed.pcurves.insert(id, (surface_ref, def_ref));
+                    }
+                }
+                "DEFINITIONAL_REPRESENTATION" => {
+                    // DEFINITIONAL_REPRESENTATION('', (#curve2d), #context)
+                    if let Some(curve2d_ref) = parse_definitional_rep(args) {
+                        parsed.definitional_reps.insert(id, curve2d_ref);
                     }
                 }
                 "PLANE" => {
@@ -375,6 +420,60 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
                 // No curve binding needed — already tessellated into polyline
             }
         }
+    }
+
+    // Populate edge_pcurves from SURFACE_CURVE → PCURVE → DEFINITIONAL_REPRESENTATION chains
+    for (step_curve_id, (inner_3d_ref, pcurve_ids)) in &parsed.surface_curves {
+        // Find which BRep edge this SURFACE_CURVE belongs to
+        // (edge_curves maps step EDGE_CURVE id → edge; the EDGE_CURVE's curve_ref points here)
+        let edge_idx = edge_index_by_curve.get(step_curve_id).copied();
+        // Also check if any edge_curve entry references this surface_curve indirectly
+        let edge_idx = edge_idx.or_else(|| {
+            parsed.edge_curves.iter().find_map(|(ec_id, (_, _, curve_ref))| {
+                if curve_ref.as_ref() == Some(step_curve_id) {
+                    edge_index_by_curve.get(ec_id).copied()
+                } else {
+                    None
+                }
+            })
+        });
+        let Some(edge_idx) = edge_idx else { continue };
+
+        let mut pcs: Vec<PCurve> = Vec::new();
+        for &pc_step_id in pcurve_ids {
+            let Some(&(surface_step_id, def_rep_id)) = parsed.pcurves.get(&pc_step_id) else {
+                continue;
+            };
+            let Some(&curve2d_step_id) = parsed.definitional_reps.get(&def_rep_id) else {
+                continue;
+            };
+            // Resolve the surface into GeomStore
+            let surface_idx = if let Some(existing) = surface_store_index_by_step.get(&surface_step_id) {
+                *existing
+            } else if let Some(surf) = resolve_surface(parsed, surface_step_id) {
+                let sidx = geom.surfaces.len();
+                geom.surfaces.push(surf);
+                surface_store_index_by_step.insert(surface_step_id, sidx);
+                // Also update face_surface entries pointing to this surface
+                sidx
+            } else {
+                continue;
+            };
+            // Resolve the 2D curve
+            let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else {
+                continue;
+            };
+            let c2didx = geom.curve2ds.len();
+            geom.curve2ds.push(curve2d);
+            pcs.push(PCurve { surface_idx, curve2d_idx: c2didx });
+        }
+        if !pcs.is_empty() {
+            if geom.edge_pcurves.len() <= edge_idx {
+                geom.edge_pcurves.resize(edge_idx + 1, Vec::new());
+            }
+            geom.edge_pcurves[edge_idx] = pcs;
+        }
+        let _ = inner_3d_ref; // already resolved via resolve_curve's SURFACE_CURVE dereference
     }
 
     if solids.is_empty() && edges.is_empty() {
@@ -1512,14 +1611,21 @@ fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
 }
 
 fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
-    if let Some((origin_point, vector_ref)) = parsed.lines.get(&curve_ref) {
+    // Dereference SURFACE_CURVE — extract the wrapped 3D curve
+    let actual_ref = if let Some(&(inner_ref, _)) = parsed.surface_curves.get(&curve_ref) {
+        inner_ref
+    } else {
+        curve_ref
+    };
+
+    if let Some((origin_point, vector_ref)) = parsed.lines.get(&actual_ref) {
         let origin = point_from_ref(parsed, *origin_point)?;
         let (direction_ref, _magnitude) = *parsed.vectors.get(vector_ref)?;
         let direction = direction_from_ref(parsed, direction_ref)?;
         return Some(Curve3::Line(rcad_kernel::geom::Line3 { origin, direction }));
     }
 
-    if let Some((placement_ref, radius)) = parsed.circles.get(&curve_ref) {
+    if let Some((placement_ref, radius)) = parsed.circles.get(&actual_ref) {
         let (center, normal) = placement_from_ref(parsed, *placement_ref)?;
         return Some(Curve3::Circle(rcad_kernel::geom::Circle3 {
             center,
@@ -1528,7 +1634,7 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
         }));
     }
 
-    if let Some((placement_ref, major_radius, minor_radius)) = parsed.ellipses.get(&curve_ref) {
+    if let Some((placement_ref, major_radius, minor_radius)) = parsed.ellipses.get(&actual_ref) {
         let (center, normal, major_dir) = placement_frame_from_ref(parsed, *placement_ref)?;
         return Some(Curve3::Ellipse(rcad_kernel::geom::Ellipse3 {
             center,
@@ -1866,6 +1972,113 @@ fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
     }
 
     result
+}
+
+fn parse_cartesian_point_2d(args: &str) -> Option<[f64; 2]> {
+    // CARTESIAN_POINT('name', (x, y)) — only 2 coordinates
+    let inner = args.trim().trim_start_matches('(').trim_end_matches(')');
+    let parts = split_top_level(inner, ',');
+    if parts.len() != 3 {
+        return None; // 3 parts means 3D, not 2D
+    }
+    // parts[0] = name (quoted string), parts[1] = tuple like (x,y)
+    let coords_str = parts[1].trim();
+    let coords_inner = coords_str.trim_start_matches('(').trim_end_matches(')');
+    let nums: Vec<f64> = coords_inner
+        .split(',')
+        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .collect();
+    if nums.len() == 2 {
+        Some([nums[0], nums[1]])
+    } else {
+        None
+    }
+}
+
+fn parse_axis2_placement_2d(args: &str) -> Option<(u64, u64)> {
+    // AXIS2_PLACEMENT_2D('', #location, #ref_dir)
+    let parts = split_top_level(args, ',');
+    if parts.len() < 3 {
+        return None;
+    }
+    Some((parse_ref(parts[1])?, parse_ref(parts[2])?))
+}
+
+fn parse_surface_curve(args: &str) -> Option<(u64, Vec<u64>)> {
+    let parts = split_top_level(args, ',');
+    if parts.len() < 3 {
+        return None;
+    }
+    let curve3d_ref = parse_ref(parts[1])?;
+    let pcurve_refs = parse_ref_list(parts[2]);
+    Some((curve3d_ref, pcurve_refs))
+}
+
+/// PCURVE('', #surface, #definitional_rep)
+fn parse_pcurve_args(args: &str) -> Option<(u64, u64)> {
+    let parts = split_top_level(args, ',');
+    if parts.len() < 3 {
+        return None;
+    }
+    Some((parse_ref(parts[1])?, parse_ref(parts[2])?))
+}
+
+/// DEFINITIONAL_REPRESENTATION('', (#curve2d_ref), #context)
+fn parse_definitional_rep(args: &str) -> Option<u64> {
+    let parts = split_top_level(args, ',');
+    if parts.len() < 2 {
+        return None;
+    }
+    // The second part is a list like (#14) — take the first element
+    let refs = parse_ref_list(parts[1]);
+    refs.into_iter().next()
+}
+
+/// Resolve a 2D curve from the parsed step data.
+///
+/// 2D curves live inside DEFINITIONAL_REPRESENTATION bodies. In the STEP file
+/// they use the same entity names (LINE, CIRCLE) but with 2-component coords.
+/// The reader stores them in the 3D maps (cartesian_points, circles, lines) —
+/// STEP parsers accept them there. We just need to down-convert to Curve2d.
+fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
+    if let Some((origin_ref, vector_ref)) = parsed.lines.get(&curve_ref) {
+        // Try 2D cartesian point first, fall back to 3D
+        let origin = parsed.cartesian_points_2d.get(origin_ref)
+            .map(|&p| glam::DVec2::new(p[0], p[1]))
+            .or_else(|| {
+                parsed.cartesian_points.get(origin_ref)
+                    .map(|&p| glam::DVec2::new(p[0], p[1]))
+            })?;
+        let (dir_ref, _mag) = *parsed.vectors.get(vector_ref)?;
+        let dir2d = parsed.directions_2d.get(&dir_ref)
+            .map(|&d| glam::DVec2::new(d[0], d[1]))
+            .or_else(|| {
+                parsed.directions.get(&dir_ref)
+                    .map(|&d| glam::DVec2::new(d[0], d[1]))
+            })?;
+        return Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+            origin,
+            direction: dir2d.normalize_or_zero(),
+        }));
+    }
+
+    if let Some((placement_ref, radius)) = parsed.circles.get(&curve_ref) {
+        // 2D circle: extract center from the 2D placement
+        let center = parsed.axis2_placements_2d.get(placement_ref)
+            .and_then(|(loc_ref, _)| parsed.cartesian_points_2d.get(loc_ref))
+            .map(|&p| glam::DVec2::new(p[0], p[1]))
+            .or_else(|| {
+                parsed.axis2_placements.get(placement_ref)
+                    .and_then(|(loc_ref, _, _)| parsed.cartesian_points.get(loc_ref))
+                    .map(|&p| glam::DVec2::new(p[0], p[1]))
+            })?;
+        return Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
+            center,
+            radius: *radius,
+        }));
+    }
+
+    None
 }
 
 #[cfg(test)]

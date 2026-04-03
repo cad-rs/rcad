@@ -2411,6 +2411,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcad-examples"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "rcad-algorithms",
+ "rcad-kernel",
+ "rcad-modeling",
+ "rcad-scene",
+ "rcad-step",
+]
+
+[[package]]
 name = "rcad-kernel"
 version = "0.1.0"
 dependencies = [

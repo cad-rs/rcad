@@ -23,11 +23,13 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 
 ## 4. Feature Alignment (Targeting OCCT Parity)
 ### 4.1 Geometry (Geom)
-- Implemented: Line, Circle, Ellipse.
+- Implemented: Line, Circle, Ellipse (3D).
 - Implemented: Plane, Cylinder, Sphere, Cone, Torus.
-- Planned: B-Spline / Bezier curve and surface families.
+- Implemented: Line2d, Circle2d (2D parameter-space curves for PCurves).
+- Planned: B-Spline / Bezier curve and surface families (Curve3 and Curve2d variants).
 ### 4.2 Topology (TopoDS)
 - Implemented: Vertex, Edge, Wire, Face, Shell, Solid.
+- Implemented: PCurve (`GeomStore.edge_pcurves`) — parameter-space curve binding per edge per adjacent face surface. Analogous to OCCT `BRep_CurveOnSurface`.
 - Planned: Compound and richer topology graph services.
 ### 4.3 Modeling Algorithms
 - Boolean operations (Union, Intersection, Difference).
@@ -63,7 +65,28 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 
 The following rules are mandatory for current and future modeling APIs. They are intended to keep RCAD close to OCCT-style construction patterns while remaining idiomatic in Rust.
 
-### 9.1 Single Modeling Entry Layer
+### 9.0 Analytic-First Invariant (HIGHEST PRIORITY)
+
+RCAD is a CAD/CAE engine. The internal geometric model must be **exact and analytic** at every layer. The following invariants are non-negotiable:
+
+**Invariant A — Triangles are rendering metadata, not geometry.**
+`Face.triangles` is an optional rendering cache. It carries no geometric meaning. Modeling, Boolean, STEP, and algorithm code MUST treat it as absent/irrelevant. A `Face` with empty `triangles` is a fully valid face.
+
+**Invariant B — Every analytic face must be backed by a `GeomStore` surface.**
+After any modeling operation that produces or modifies a `BRep`, every face that has an analytic surface (Plane, Cylinder, Sphere, Cone, Torus, or future B-Spline) MUST have a corresponding entry in `GeomStore.face_surface` pointing to the correct `Surface3` value. A face with `geom.face_surface[face_idx] == None` is incomplete.
+
+**Invariant C — Every analytic edge must be backed by a `GeomStore` curve.**
+Likewise every edge with a known analytic curve (Line, Circle, Ellipse, or future B-Spline) MUST have a corresponding entry in `GeomStore.edge_curve`. An edge with no curve entry may be tolerated only for degenerate or seam edges that genuinely have no analytic form.
+
+**Invariant D — Primitives are never triangle soups.**
+`BRep::create_sphere`, `create_cylinder`, `create_cone`, and `create_torus` MUST build proper analytic BRep topology: named vertices at feature points, edges with analytic curves, faces with edge loops and `GeomStore` surface bindings. Using `from_triangle_soup` for these shapes is a bug and must be fixed before any shape reaches the export or algorithm layers.
+
+**Invariant E — Triangulation lives exclusively in `rcad-render`.**
+The render pipeline is the only place allowed to produce triangle meshes from analytic surfaces. The `rcad-algorithms`, `rcad-modeling`, `rcad-step`, and `rcad-scene` crates MUST NOT call tessellation routines.
+
+**Correctness test:** If a primitive solid exports from `rcad-step::StepWriter` as `ADVANCED_FACE` with the correct analytic surface type (SPHERICAL_SURFACE, CYLINDRICAL_SURFACE, CONICAL_SURFACE, TOROIDAL_SURFACE, PLANE), the modeling layer is correct for that shape. Triangle-face fallback in STEP output is a red flag that Invariant B or D is violated.
+
+
 - Public geometry and primitive creation helpers MUST live in `libs/rcad-modeling`.
 - `rcad-kernel` remains the storage/model layer for `Curve3`, `Surface3`, `PrimitiveSolid`, and `BRep`, but SHOULD NOT become the main user-facing construction API.
 

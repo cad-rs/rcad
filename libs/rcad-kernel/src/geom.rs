@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 pub type Point3 = DVec3;
 pub type Vec3 = DVec3;
+pub type Point2 = glam::DVec2;
+pub type Vec2 = glam::DVec2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Line3 {
@@ -87,23 +89,43 @@ pub enum PrimitiveSolid {
     },
     Sphere {
         radius: f64,
-        u_segments: usize,
-        v_segments: usize,
     },
     Cylinder {
         radius: f64,
         height: f64,
-        segments: usize,
     },
     Cone {
         base_radius: f64,
         height: f64,
-        segments: usize,
     },
     Torus {
         major_radius: f64,
         minor_radius: f64,
-        major_segments: usize,
-        minor_segments: usize,
     },
+}
+
+// ── 2D Geometry (parameter-space / PCurve types) ─────────────────────────────
+
+/// A line in 2D parameter space: point + direction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Line2d {
+    pub origin: Point2,
+    pub direction: Vec2,
+}
+
+/// A circle in 2D parameter space.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Circle2d {
+    pub center: Point2,
+    pub radius: f64,
+}
+
+/// A curve defined in the 2D parameter space (u, v) of a surface.
+///
+/// Used for PCurves: the image of a 3D edge on the parameter domain of an
+/// adjacent face surface. Analogous to OCCT `Geom2d_Curve`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum Curve2d {
+    Line(Line2d),
+    Circle(Circle2d),
 }

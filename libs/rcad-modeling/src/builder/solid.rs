@@ -1,6 +1,6 @@
 use super::{
     basis_from_axis_ref, basis_from_x_y, transform_brep, translate_brep, validate_point,
-    validate_positive, validate_segments, BuildError,
+    validate_positive, BuildError,
 };
 use glam::DVec3;
 use rcad_kernel::{BRep, PrimitiveSolid};
@@ -51,72 +51,35 @@ pub fn make_box_brep(
     box_brep(origin, x_dir, y_dir, width, height, depth)
 }
 
-pub fn sphere_primitive(
-    radius: f64,
-    u_segments: usize,
-    v_segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
+pub fn sphere_primitive(radius: f64) -> Result<PrimitiveSolid, BuildError> {
     let radius = validate_positive("radius", radius)?;
-    validate_segments("u_segments", u_segments, 3)?;
-    validate_segments("v_segments", v_segments, 2)?;
-    Ok(PrimitiveSolid::Sphere {
-        radius,
-        u_segments,
-        v_segments,
-    })
+    Ok(PrimitiveSolid::Sphere { radius })
 }
 
-pub fn make_sphere_primitive(
-    radius: f64,
-    u_segments: usize,
-    v_segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
-    sphere_primitive(radius, u_segments, v_segments)
+pub fn make_sphere_primitive(radius: f64) -> Result<PrimitiveSolid, BuildError> {
+    sphere_primitive(radius)
 }
 
-pub fn sphere_brep(
-    center: DVec3,
-    radius: f64,
-    u_segments: usize,
-    v_segments: usize,
-) -> Result<BRep, BuildError> {
+pub fn sphere_brep(center: DVec3, radius: f64) -> Result<BRep, BuildError> {
     let center = validate_point("center", center)?;
-    let primitive = sphere_primitive(radius, u_segments, v_segments)?;
+    let primitive = sphere_primitive(radius)?;
     let mut brep = BRep::from_primitive(primitive);
     translate_brep(&mut brep, center);
     Ok(brep)
 }
 
-pub fn make_sphere_brep(
-    center: DVec3,
-    radius: f64,
-    u_segments: usize,
-    v_segments: usize,
-) -> Result<BRep, BuildError> {
-    sphere_brep(center, radius, u_segments, v_segments)
+pub fn make_sphere_brep(center: DVec3, radius: f64) -> Result<BRep, BuildError> {
+    sphere_brep(center, radius)
 }
 
-pub fn cylinder_primitive(
-    radius: f64,
-    height: f64,
-    segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
+pub fn cylinder_primitive(radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
     let radius = validate_positive("radius", radius)?;
     let height = validate_positive("height", height)?;
-    validate_segments("segments", segments, 3)?;
-    Ok(PrimitiveSolid::Cylinder {
-        radius,
-        height,
-        segments,
-    })
+    Ok(PrimitiveSolid::Cylinder { radius, height })
 }
 
-pub fn make_cylinder_primitive(
-    radius: f64,
-    height: f64,
-    segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
-    cylinder_primitive(radius, height, segments)
+pub fn make_cylinder_primitive(radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
+    cylinder_primitive(radius, height)
 }
 
 pub fn cylinder_brep(
@@ -125,10 +88,9 @@ pub fn cylinder_brep(
     ref_dir: DVec3,
     radius: f64,
     height: f64,
-    segments: usize,
 ) -> Result<BRep, BuildError> {
     let center = validate_point("center", center)?;
-    let primitive = cylinder_primitive(radius, height, segments)?;
+    let primitive = cylinder_primitive(radius, height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     let mut brep = BRep::from_primitive(primitive);
     transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
@@ -141,32 +103,18 @@ pub fn make_cylinder_brep(
     ref_dir: DVec3,
     radius: f64,
     height: f64,
-    segments: usize,
 ) -> Result<BRep, BuildError> {
-    cylinder_brep(center, axis, ref_dir, radius, height, segments)
+    cylinder_brep(center, axis, ref_dir, radius, height)
 }
 
-pub fn cone_primitive(
-    base_radius: f64,
-    height: f64,
-    segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
+pub fn cone_primitive(base_radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
     let base_radius = validate_positive("base_radius", base_radius)?;
     let height = validate_positive("height", height)?;
-    validate_segments("segments", segments, 3)?;
-    Ok(PrimitiveSolid::Cone {
-        base_radius,
-        height,
-        segments,
-    })
+    Ok(PrimitiveSolid::Cone { base_radius, height })
 }
 
-pub fn make_cone_primitive(
-    base_radius: f64,
-    height: f64,
-    segments: usize,
-) -> Result<PrimitiveSolid, BuildError> {
-    cone_primitive(base_radius, height, segments)
+pub fn make_cone_primitive(base_radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
+    cone_primitive(base_radius, height)
 }
 
 pub fn cone_brep(
@@ -175,10 +123,9 @@ pub fn cone_brep(
     ref_dir: DVec3,
     base_radius: f64,
     height: f64,
-    segments: usize,
 ) -> Result<BRep, BuildError> {
     let center = validate_point("center", center)?;
-    let primitive = cone_primitive(base_radius, height, segments)?;
+    let primitive = cone_primitive(base_radius, height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     let mut brep = BRep::from_primitive(primitive);
     transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
@@ -191,36 +138,24 @@ pub fn make_cone_brep(
     ref_dir: DVec3,
     base_radius: f64,
     height: f64,
-    segments: usize,
 ) -> Result<BRep, BuildError> {
-    cone_brep(center, axis, ref_dir, base_radius, height, segments)
+    cone_brep(center, axis, ref_dir, base_radius, height)
 }
 
 pub fn torus_primitive(
     major_radius: f64,
     minor_radius: f64,
-    major_segments: usize,
-    minor_segments: usize,
 ) -> Result<PrimitiveSolid, BuildError> {
     let major_radius = validate_positive("major_radius", major_radius)?;
     let minor_radius = validate_positive("minor_radius", minor_radius)?;
-    validate_segments("major_segments", major_segments, 3)?;
-    validate_segments("minor_segments", minor_segments, 3)?;
-    Ok(PrimitiveSolid::Torus {
-        major_radius,
-        minor_radius,
-        major_segments,
-        minor_segments,
-    })
+    Ok(PrimitiveSolid::Torus { major_radius, minor_radius })
 }
 
 pub fn make_torus_primitive(
     major_radius: f64,
     minor_radius: f64,
-    major_segments: usize,
-    minor_segments: usize,
 ) -> Result<PrimitiveSolid, BuildError> {
-    torus_primitive(major_radius, minor_radius, major_segments, minor_segments)
+    torus_primitive(major_radius, minor_radius)
 }
 
 pub fn torus_brep(
@@ -229,11 +164,9 @@ pub fn torus_brep(
     ref_dir: DVec3,
     major_radius: f64,
     minor_radius: f64,
-    major_segments: usize,
-    minor_segments: usize,
 ) -> Result<BRep, BuildError> {
     let center = validate_point("center", center)?;
-    let primitive = torus_primitive(major_radius, minor_radius, major_segments, minor_segments)?;
+    let primitive = torus_primitive(major_radius, minor_radius)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
     let mut brep = BRep::from_primitive(primitive);
     transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
@@ -246,16 +179,6 @@ pub fn make_torus_brep(
     ref_dir: DVec3,
     major_radius: f64,
     minor_radius: f64,
-    major_segments: usize,
-    minor_segments: usize,
 ) -> Result<BRep, BuildError> {
-    torus_brep(
-        center,
-        axis,
-        ref_dir,
-        major_radius,
-        minor_radius,
-        major_segments,
-        minor_segments,
-    )
+    torus_brep(center, axis, ref_dir, major_radius, minor_radius)
 }

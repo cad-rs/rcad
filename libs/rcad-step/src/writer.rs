@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, Curve3, Face, Surface3};
+use rcad_kernel::{BRep, Curve2d, Curve3, Face, Surface3};
 use std::collections::{BTreeSet, HashMap};
 
 pub struct ExportSelection<'a> {
@@ -389,7 +389,24 @@ impl Part21Writer {
             }
         };
 
-        self.edge_curve("seam_edge", v0, v1, basis_curve, true)
+        // Wrap in SURFACE_CURVE if PCurves are available for this seam edge.
+        let pcurves = brep.geom.edge_pcurves.get(edge_idx).cloned().unwrap_or_default();
+        let final_curve = if !pcurves.is_empty() {
+            let mut pcurve_ids = Vec::new();
+            for pc in &pcurves {
+                let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
+                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).copied();
+                let param_curve_id = self.write_curve2d(curve2d);
+                let def_rep = self.definitional_representation(param_curve_id);
+                let pcurve_id = self.pcurve(surface_id, def_rep);
+                pcurve_ids.push(pcurve_id);
+            }
+            self.surface_curve(basis_curve, &pcurve_ids)
+        } else {
+            basis_curve
+        };
+
+        self.edge_curve("seam_edge", v0, v1, final_curve, true)
     }
 
     fn write_surface(&mut self, face_surface: Option<Surface3>, fallback_placement: u64) -> u64 {
@@ -489,10 +506,67 @@ impl Part21Writer {
             .unwrap_or([0.0, 0.0, 0.0]);
         let v0 = self.vertex_point_by_index(brep, edge.start);
         let v1 = self.vertex_point_by_index(brep, edge.end);
-        let basis_curve = self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
+        let basis_curve_3d = self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
+
+        // Wrap in SURFACE_CURVE if PCurves are available
+        let pcurves = brep.geom.edge_pcurves.get(edge_idx).cloned().unwrap_or_default();
+        let basis_curve = if !pcurves.is_empty() {
+            let mut pcurve_ids = Vec::new();
+            for pc in &pcurves {
+                let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
+                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).copied();
+                let param_curve_id = self.write_curve2d(curve2d);
+                let def_rep = self.definitional_representation(param_curve_id);
+                let pcurve_id = self.pcurve(surface_id, def_rep);
+                pcurve_ids.push(pcurve_id);
+            }
+            self.surface_curve(basis_curve_3d, &pcurve_ids)
+        } else {
+            basis_curve_3d
+        };
+
         let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, true);
         self.edge_curve_ids.insert(edge_idx, edge_curve);
         edge_curve
+    }
+
+    /// Returns the STEP id for a surface from GeomStore, writing it if not yet done.
+    fn get_or_write_surface_id(&mut self, brep: &BRep, surface_idx: usize) -> u64 {
+        let surface = brep.geom.surfaces.get(surface_idx).copied();
+        // Build a placeholder placement and write the surface entity directly.
+        // We don't cache surface IDs here since the same surface may be needed
+        // in multiple contexts; duplication in STEP is acceptable.
+        let origin = self.cartesian_point("surf_origin", [0.0, 0.0, 0.0]);
+        let axis = self.direction("surf_axis", [0.0, 0.0, 1.0]);
+        let ref_d = self.direction("surf_ref", [1.0, 0.0, 0.0]);
+        let placement = self.axis2_placement_3d("surf_axis", origin, axis, ref_d);
+        self.write_surface(surface, placement)
+    }
+
+    /// Writes a 2D curve entity (for use inside DEFINITIONAL_REPRESENTATION).
+    fn write_curve2d(&mut self, curve2d: Option<Curve2d>) -> u64 {
+        match curve2d {
+            Some(Curve2d::Line(l)) => {
+                let p = self.cartesian_point_2d("pc_origin", [l.origin.x, l.origin.y]);
+                let dir = self.direction_2d("pc_dir", normalize2([l.direction.x, l.direction.y]));
+                let mag = (l.direction.length()).max(1e-9);
+                let vec = self.vector("pc_vec", dir, mag);
+                self.line("pcurve_line", p, vec)
+            }
+            Some(Curve2d::Circle(c)) => {
+                let p = self.cartesian_point_2d("pc_center", [c.center.x, c.center.y]);
+                let axis = self.direction_2d("pc_axis", [0.0, 1.0]);
+                let placement = self.axis2_placement_2d("pc_placement", p, axis);
+                self.circle("pcurve_circle", placement, c.radius.max(1e-9))
+            }
+            None => {
+                // Degenerate: write a point-to-point line at origin
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
+        }
     }
 
     fn write_basis_curve_for_edge(
@@ -703,10 +777,56 @@ impl Part21Writer {
         ))
     }
 
+    fn cartesian_point_2d(&mut self, name: &str, coords: [f64; 2]) -> u64 {
+        self.push(format!(
+            "CARTESIAN_POINT('{}',({:.9},{:.9}))",
+            name, coords[0], coords[1]
+        ))
+    }
+
     fn direction(&mut self, name: &str, coords: [f64; 3]) -> u64 {
         self.push(format!(
             "DIRECTION('{}',({:.9},{:.9},{:.9}))",
             name, coords[0], coords[1], coords[2]
+        ))
+    }
+
+    fn direction_2d(&mut self, name: &str, coords: [f64; 2]) -> u64 {
+        self.push(format!(
+            "DIRECTION('{}',({:.9},{:.9}))",
+            name, coords[0], coords[1]
+        ))
+    }
+
+    fn axis2_placement_2d(&mut self, name: &str, location: u64, ref_dir: u64) -> u64 {
+        self.push(format!(
+            "AXIS2_PLACEMENT_2D('{}',#{},#{})",
+            name, location, ref_dir
+        ))
+    }
+
+    fn definitional_representation(&mut self, curve2d_id: u64) -> u64 {
+        // A DEFINITIONAL_REPRESENTATION wraps a 2D curve in a 2D context
+        // for use in PCURVE entities.
+        let ctx = self.push("( GEOMETRIC_REPRESENTATION_CONTEXT(2) PARAMETRIC_REPRESENTATION_CONTEXT() REPRESENTATION_CONTEXT('2D SPACE','') )".to_string());
+        self.push(format!(
+            "DEFINITIONAL_REPRESENTATION('',(#{}),#{})",
+            curve2d_id, ctx
+        ))
+    }
+
+    fn pcurve(&mut self, surface: u64, def_rep: u64) -> u64 {
+        self.push(format!("PCURVE('',#{},#{})", surface, def_rep))
+    }
+
+    fn surface_curve(&mut self, curve3d: u64, pcurves: &[u64]) -> u64 {
+        // SURFACE_CURVE references the 3D curve and a list of associated pcurves.
+        // The preference flag .PCURVE_S1. means the first pcurve is preferred for
+        // intersection calculations.
+        self.push(format!(
+            "SURFACE_CURVE('',#{},({}),.PCURVE_S1.)",
+            curve3d,
+            refs(pcurves)
         ))
     }
 
@@ -1003,6 +1123,15 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
         [1.0, 0.0, 0.0]
     } else {
         [v[0] / len, v[1] / len, v[2] / len]
+    }
+}
+
+fn normalize2(v: [f64; 2]) -> [f64; 2] {
+    let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
+    if len <= 1e-12 {
+        [1.0, 0.0]
+    } else {
+        [v[0] / len, v[1] / len]
     }
 }
 

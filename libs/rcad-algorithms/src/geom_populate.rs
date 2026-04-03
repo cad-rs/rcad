@@ -1,3 +1,4 @@
+use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::BRep;
 
@@ -29,7 +30,12 @@ pub fn populate_box_geom(brep: &mut BRep) {
     for solid in &brep.solids {
         for shell in &solid.shells {
             for face in &shell.faces {
-                let origin = brep.vertices[face.triangles[0][0]].point;
+                // Use the first wire vertex rather than face.triangles (triangles
+                // are rendering metadata and must not be used in modeling code).
+                let origin = face.outer_wire.edges.first()
+                    .and_then(|&ei| brep.edges.get(ei))
+                    .map(|e| brep.vertices[e.start].point)
+                    .unwrap_or(DVec3::ZERO);
                 let surf_idx = geom.surfaces.len();
                 geom.surfaces.push(Surface3::Plane(Plane {
                     origin,

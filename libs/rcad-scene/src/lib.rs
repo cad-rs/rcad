@@ -485,7 +485,7 @@ fn build_sphere_from_points(center: DVec3, current: DVec3) -> Option<BRep> {
     if radius < 1e-6 {
         return None;
     }
-    make_sphere_brep(center, radius, 24, 16).ok()
+    make_sphere_brep(center, radius).ok()
 }
 
 pub fn append_brep(dst: &mut BRep, src: BRep) {
