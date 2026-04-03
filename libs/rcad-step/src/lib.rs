@@ -1,6 +1,7 @@
-use rcad_kernel::{BRep, Curve2d, Curve3, CurveEval, GeomStore, PCurve, Surface3};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_kernel::geom::BSplineCurve3;
+use rcad_kernel::tolerance::CONFUSION;
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -60,6 +61,8 @@ struct ParsedStep {
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
     b_spline_surfaces: HashMap<u64, (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)>,
+    /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
+    uncertainty_value: Option<f64>,
 }
 
 impl ParsedStep {
@@ -98,6 +101,7 @@ impl ParsedStep {
             directions_2d: HashMap::new(),
             axis2_placements_2d: HashMap::new(),
             b_spline_surfaces: HashMap::new(),
+            uncertainty_value: None,
         }
     }
 }
@@ -298,6 +302,17 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                         && !shell_refs.is_empty()
                     {
                         parsed.shell_based_surface_models.push(shell_refs);
+                    }
+                }
+                "UNCERTAINTY_MEASURE_WITH_UNIT" => {
+                    // UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(value),...)
+                    // Extract the length measure value for global tolerance
+                    if let Some(tol) = parse_uncertainty_measure(args) {
+                        // Keep the largest uncertainty value if multiple appear
+                        parsed.uncertainty_value = Some(match parsed.uncertainty_value {
+                            Some(existing) => existing.max(tol),
+                            None => tol,
+                        });
                     }
                 }
                 _ => {}
@@ -503,12 +518,31 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
         return Err("STEP parse produced no triangulated faces or edges".to_string());
     }
 
-    Ok(BRep {
+    let mut brep = BRep {
         vertices,
         edges,
         solids,
         geom,
-    })
+    };
+
+    // Populate per-entity tolerance vectors from UNCERTAINTY_MEASURE_WITH_UNIT.
+    // Only write when the file specifies a value different from the CONFUSION default,
+    // to avoid polluting the GeomStore with trivial entries.
+    if let Some(tol) = parsed.uncertainty_value {
+        if tol > 0.0 && (tol - CONFUSION).abs() > CONFUSION * 0.5 {
+            let n_verts = brep.vertices.len();
+            let n_edges = brep.edges.len();
+            let n_faces: usize = brep.solids.iter()
+                .flat_map(|s| s.shells.iter())
+                .map(|sh| sh.faces.len())
+                .sum();
+            brep.geom.vertex_tolerance = vec![tol; n_verts];
+            brep.geom.edge_tolerance   = vec![tol; n_edges];
+            brep.geom.face_tolerance   = vec![tol; n_faces];
+        }
+    }
+
+    Ok(brep)
 }
 
 fn collect_edge_vertices(parsed: &ParsedStep) -> BTreeSet<u64> {
@@ -1908,6 +1942,16 @@ fn expand_knots(mults: &[usize], vals: &[f64]) -> Vec<f64> {
     out
 }
 
+/// Parse UNCERTAINTY_MEASURE_WITH_UNIT args to extract the LENGTH_MEASURE value.
+/// Format: `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), unit_ref, 'name', 'desc')`
+fn parse_uncertainty_measure(args: &str) -> Option<f64> {
+    // Find LENGTH_MEASURE(value) in the args string
+    let start = args.find("LENGTH_MEASURE(")?;
+    let rest = &args[start + "LENGTH_MEASURE(".len()..];
+    let end = rest.find(')')?;
+    rest[..end].trim().parse::<f64>().ok()
+}
+
 fn point_from_ref(parsed: &ParsedStep, point_ref: u64) -> Option<glam::DVec3> {
     let p = parsed.cartesian_points.get(&point_ref)?;
     Some(glam::DVec3::new(p[0], p[1], p[2]))
@@ -2297,6 +2341,54 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
             center,
             radius: *radius,
         }));
+    }
+
+    // 2D Ellipse: ELLIPSE referencing an AXIS2_PLACEMENT_2D
+    if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_ref) {
+        if let Some((loc_ref, dir_ref)) = parsed.axis2_placements_2d.get(placement_ref) {
+            let center = parsed.cartesian_points_2d.get(loc_ref)
+                .map(|&p| glam::DVec2::new(p[0], p[1]))
+                .or_else(|| {
+                    parsed.cartesian_points.get(loc_ref)
+                        .map(|&p| glam::DVec2::new(p[0], p[1]))
+                })?;
+            let major_dir = parsed.directions_2d.get(dir_ref)
+                .map(|&d| glam::DVec2::new(d[0], d[1]))
+                .or_else(|| {
+                    parsed.directions.get(dir_ref)
+                        .map(|&d| glam::DVec2::new(d[0], d[1]))
+                })
+                .unwrap_or(glam::DVec2::X)
+                .normalize_or(glam::DVec2::X);
+            return Some(Curve2d::Ellipse(Ellipse2d {
+                center,
+                major_dir,
+                major_radius: *major,
+                minor_radius: *minor,
+            }));
+        }
+    }
+
+    // 2D B-Spline curve: B_SPLINE_CURVE_WITH_KNOTS with 2D control points
+    if let Some((degree, cp_refs, mults, knot_vals)) = parsed.b_spline_curves_full.get(&curve_ref) {
+        // Check if ALL control points are 2D (present in cartesian_points_2d)
+        let all_2d = cp_refs.iter().all(|id| parsed.cartesian_points_2d.contains_key(id));
+        if all_2d {
+            let control_points: Vec<glam::DVec2> = cp_refs.iter()
+                .filter_map(|id| parsed.cartesian_points_2d.get(id))
+                .map(|&p| glam::DVec2::new(p[0], p[1]))
+                .collect();
+            if control_points.len() == cp_refs.len() {
+                let knots = expand_knots(mults, knot_vals);
+                let weights = vec![1.0_f64; control_points.len()];
+                return Some(Curve2d::BSpline(BSplineCurve2 {
+                    degree: *degree,
+                    knots,
+                    control_points,
+                    weights,
+                }));
+            }
+        }
     }
 
     None

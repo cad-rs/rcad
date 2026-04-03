@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, Curve2d, Curve3, Face, Surface3};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
 use rcad_kernel::appearance::{Color, StepColor};
 use std::collections::{BTreeSet, HashMap};
 
@@ -588,9 +588,18 @@ impl Part21Writer {
                 let placement = self.axis2_placement_2d("pc_placement", p, axis);
                 self.circle("pcurve_circle", placement, c.radius.max(1e-9))
             }
-            Some(Curve2d::BSpline(_)) | None => {
-                // BSplineCurve2 STEP export not yet implemented; fall back to
-                // a degenerate line at origin (valid STEP, no geometric info).
+            Some(Curve2d::Ellipse(e)) => {
+                let p = self.cartesian_point_2d("pc_center", [e.center.x, e.center.y]);
+                let ref_dir = self.direction_2d("pc_major_dir", normalize2([e.major_dir.x, e.major_dir.y]));
+                let placement = self.axis2_placement_2d("pc_placement", p, ref_dir);
+                self.ellipse("pcurve_ellipse", placement, e.major_radius.max(1e-9), e.minor_radius.max(1e-9))
+            }
+            Some(Curve2d::BSpline(bs)) => {
+                self.write_bspline_curve2d(&bs.clone())
+            }
+            None => {
+                // No 2D curve available: fall back to a degenerate line at origin
+                // (valid STEP, carries no geometric info).
                 let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
                 let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
                 let vec = self.vector("pc_vec", dir, 1e-9);
@@ -709,6 +718,34 @@ impl Part21Writer {
             bs.degree,
             &cp_ids,
             knot_type,
+            &mults,
+            &knots,
+            rational,
+            &bs.weights,
+        )
+    }
+
+    /// Write a B_SPLINE_CURVE_WITH_KNOTS entity for a 2D BSpline PCurve.
+    fn write_bspline_curve2d(&mut self, bs: &BSplineCurve2) -> u64 {
+        if bs.control_points.is_empty() {
+            let p = self.cartesian_point_2d("bs2_origin", [0.0, 0.0]);
+            let dir = self.direction_2d("bs2_dir", [1.0, 0.0]);
+            let vec = self.vector("bs2_vec", dir, 1e-9);
+            return self.line("bs2_fallback_line", p, vec);
+        }
+
+        let cp_ids: Vec<u64> = bs.control_points.iter().map(|p| {
+            self.cartesian_point_2d("bs2_cp", [p.x, p.y])
+        }).collect();
+
+        let (mults, knots) = compress_knot_vector(&bs.knots);
+        let rational = bs.weights.iter().any(|&w| (w - 1.0).abs() > 1e-8);
+
+        self.b_spline_curve_with_knots(
+            "bspline_curve2d",
+            bs.degree,
+            &cp_ids,
+            ".UNSPECIFIED.",
             &mults,
             &knots,
             rational,

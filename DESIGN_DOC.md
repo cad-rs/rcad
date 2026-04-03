@@ -40,7 +40,7 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
 - Analytic geometry coverage (Phase A + B):
   - **Curves (`Curve3`)**: `Line3`, `Circle3`, `Ellipse3`, `BSplineCurve3` (de Boor evaluation)
   - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor)
-  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces)
+  - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces), `Ellipse2d` (Phase J — 2D ellipse in parameter space)
   - **Evaluation traits**: `CurveEval` (`point_at`, `tangent_at`, `default_domain`) and `SurfaceEval` (`point_at`, `normal_at`, `default_domain`) — implemented for all analytic types; `Curve2dEval` (`point_at`) for all 2D variants
   - Primitive solids: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
 
@@ -63,11 +63,12 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
   - `edge_degenerated: Vec<bool>` — degenerate edge flag (e.g., sphere pole)
   - `surfaces: Vec<Surface3>` — analytic 3D surfaces
   - `face_surface: Vec<Option<usize>>` — surface index per face
-  - `curve2ds: Vec<Curve2d>` — 2D curves in parameter space (`Line2d`, `Circle2d`, `BSplineCurve2`)
+  - `curve2ds: Vec<Curve2d>` — 2D curves in parameter space (`Line2d`, `Circle2d`, `BSplineCurve2`, `Ellipse2d`)
+  - `curve2d_range: Vec<Option<[f64; 2]>>` — parameter trim range per PCurve (Phase J); `None` = natural domain; parallel to `curve2ds`
   - `edge_pcurves: Vec<Vec<PCurve>>` — per-edge PCurve bindings
   - `vertex_tolerance: Vec<f64>` — per-vertex tolerance (Phase I); falls back to `CONFUSION = 1e-7`
-  - `edge_tolerance: Vec<f64>` — per-edge tolerance (Phase I)
-  - `face_tolerance: Vec<f64>` — per-face tolerance (Phase I)
+  - `edge_tolerance: Vec<f64>` — per-edge tolerance (Phase I); populated from STEP `UNCERTAINTY_MEASURE_WITH_UNIT` (Phase J)
+  - `face_tolerance: Vec<f64>` — per-face tolerance (Phase I); populated from STEP `UNCERTAINTY_MEASURE_WITH_UNIT` (Phase J)
 - **`GeomStore` is the source of truth for shape.** A `BRep` without populated `GeomStore` entries is incomplete and must not leave `rcad-modeling` in that state.
 
 ### 2.4 PCurve (Parameter-Space Curve)
@@ -82,7 +83,8 @@ Edge
 ```
 
 **Storage:**
-- `GeomStore.curve2ds: Vec<Curve2d>` — pool of 2D analytic curves (`Line2d`, `Circle2d`)
+- `GeomStore.curve2ds: Vec<Curve2d>` — pool of 2D analytic curves (`Line2d`, `Circle2d`, `BSplineCurve2`, `Ellipse2d`)
+- `GeomStore.curve2d_range: Vec<Option<[f64; 2]>>` — per-PCurve parameter trim range (Phase J); parallel to `curve2ds`; `None` = natural domain; `Some([t1, t2])` when originating from a STEP `TRIMMED_CURVE`
 - `GeomStore.edge_pcurves: Vec<Vec<PCurve>>` — per-edge list of `PCurve { surface_idx, curve2d_idx }`
 - Seam edges on closed surfaces (sphere, cylinder, torus) have **two** PCurves — one for each boundary side
 
@@ -91,6 +93,10 @@ Edge
 EDGE_CURVE → SURFACE_CURVE(#3d_curve, (#pcurve1, #pcurve2)) → EDGE_CURVE
 PCURVE('', #surface, DEFINITIONAL_REPRESENTATION(...#2d_curve...))
 ```
+- `Curve2d::Line` → `LINE` (2D) entity in STEP
+- `Curve2d::Circle` → `CIRCLE` with `AXIS2_PLACEMENT_2D` entity
+- `Curve2d::Ellipse` → `ELLIPSE` with `AXIS2_PLACEMENT_2D` entity (Phase J)
+- `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points (Phase J)
 
 PCurves are required for full OCCT/CAE interoperability. Edges without PCurves fall back to 3D-curve-only STEP export, which is valid but loses parametric surface information.
 
@@ -191,6 +197,8 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - **B-Spline surface support** (Phase E): `B_SPLINE_SURFACE_WITH_KNOTS` parsed into `Surface3::BSpline`; the STEP `[v][u]` control grid is transposed to `BSplineSurface.control_points[u][v]`; UV-grid triangulation via `SurfaceEval::point_at` for rendering.
 - **Color export** (Phase D): `StepWriter::write_string_colored(brep, &StepColor)` emits the full `COLOUR_RGB → STYLED_ITEM` chain per STEP AP214.
 - **Assembly export** (Phase D): `write_assembly(name, &[AssemblyComponent])` produces a multi-BRep STEP file with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy; each component can carry a translation and color.
+- **Curve2d export** (Phase J): `Curve2d::Ellipse` → `ELLIPSE` + `AXIS2_PLACEMENT_2D`; `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points.
+- **Tolerance import** (Phase J): `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → `GeomStore.{vertex,edge,face}_tolerance` filled with `val`; falls back to `CONFUSION = 1e-7` when absent.
 - **Fallback behavior**: When shell/face topology is missing but points exist, importer falls back to a bbox solid for viewability.
 
 ## 5. Development Workflow

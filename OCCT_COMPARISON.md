@@ -206,6 +206,7 @@ Geom2d_Curve
 pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
+    Ellipse(Ellipse2d), // Phase J 新增
     BSpline(BSplineCurve2),  // Phase I 新增
 }
 ```
@@ -215,8 +216,8 @@ pub enum Curve2d {
 | 2D 直线 | `Geom2d_Line` | `Line2d` | ✅ |
 | 2D 圆 | `Geom2d_Circle` | `Circle2d` | ✅ |
 | **2D B-Spline** | `Geom2d_BSplineCurve` | `BSplineCurve2`（de Boor 2D）| ✅ Phase I |
-| **2D 椭圆** | `Geom2d_Ellipse` | ❌ | 中优先（椭圆边在椭球面的 PCurve）|
-| 2D 裁剪曲线 | `Geom2d_TrimmedCurve` | ❌ | 中优先（PCurve 的参数域）|
+| **2D 椭圆** | `Geom2d_Ellipse` | `Ellipse2d`（Phase J）| ✅ Phase J |
+| **2D 裁剪曲线** | `Geom2d_TrimmedCurve` | `curve2d_range: Vec<Option<[f64;2]>>`（Phase J）| ✅ Phase J（参数范围记录）|
 
 ---
 
@@ -510,7 +511,7 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 
 **差距影响：**
 - 布尔运算中的退化情形（共面、共边、接触）判断不稳定（`SameParameter`/`SameRange` 仍缺失）
-- STEP 导入后容差信息尚未写入 GeomStore（Phase J 候选）
+- STEP 导入后容差信息已从 `UNCERTAINTY_MEASURE_WITH_UNIT` 写入 GeomStore（Phase J 完成）
 - 圆角算法对近零边无保护
 
 ---
@@ -549,7 +550,7 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 | **几何** | `Edge` 参数范围 `[t1, t2]` | ✅ 已完成 | Phase A |
 | **几何** | 曲线求值 `C(t)` / 曲面求值 `S(u,v)` | ✅ 已完成 | Phase A |
 | **几何** | `BSplineCurve3` / `BSplineSurface` | ✅ 已完成 | Phase B |
-| **几何** | `Curve2d::Ellipse` + `TrimmedCurve2d` | 🟡 P2 | 椭圆体 PCurve |
+| **几何** | `Curve2d::Ellipse` + `TrimmedCurve2d` | ✅ 已完成 | Phase J（`Ellipse2d` + `curve2d_range`）|
 | **几何** | `Curve2d::BSpline` (2D B-Spline PCurve) | ✅ 已完成 | Phase I（`BSplineCurve2`，de Boor 2D）|
 | **几何** | Bezier 曲线 / 曲面 | 🟡 P2 | |
 | **几何** | 偏移曲线 / 偏移面 | 🟡 P2 | 倒角需要 |
@@ -589,7 +590,7 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 
 ## 10. 开发路线建议
 
-基于上述差距分析，九个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，十个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -654,13 +655,18 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 4. 精度常量 `CONFUSION = 1e-7` / `ANGULAR = 1e-12` / `APPROXIMATION = 1e-4`（类比 OCCT `Precision` 类）
 5. 查询函数 `vertex_tolerance / edge_tolerance / face_tolerance / model_tolerance`（返回所有实体容差的最大值）
 
-### 下一阶段候选（Phase J）
+### Phase J — Ellipse2d PCurve + curve2d_range + STEP Curve2d I/O + STEP tolerance import ✅ 已完成
+
+1. `Ellipse2d` — 2D 参数空间椭圆；加入 `Curve2d::Ellipse` 变体；参数化 `center + major_dir·a·cos(t) + minor_dir·b·sin(t)`，域 `[0, 2π]`；类比 OCCT `Geom2d_Ellipse`
+2. `GeomStore.curve2d_range: Vec<Option<[f64; 2]>>` — per-PCurve 参数范围；`None` = 自然域；`Some([t1, t2])` 来自 STEP `TRIMMED_CURVE`；类比 `edge_curve_range` 用于 3D
+3. STEP Curve2d 导出：`Curve2d::Ellipse` → `ELLIPSE` + `AXIS2_PLACEMENT_2D`；`Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS`（2D 控制点）
+4. STEP tolerance 导入：`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → 填充 `GeomStore.{vertex,edge,face}_tolerance`；缺失时回退 `CONFUSION`
+
+### 下一阶段候选（Phase K）
 
 优先级较高的剩余工作：
 - **变截面扫掠** `MakePipeShell` — P2
 - **多边同时圆角（corner blending）** — P2
-- **STEP 导入写入 tolerance 字段** — P2
-- **2D 椭圆 / TrimmedCurve2d PCurve** — P2
 
 ---
 
@@ -676,6 +682,7 @@ Phase F（倒角/圆角） ░░░░░░░░░░░░░░░░░�
 Phase G（拓扑/曲率） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase H（弧长/惯性） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase I（PCurve/容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase J（Ellipse2d/STEP容差）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---

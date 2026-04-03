@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Nine development phases (A–I) of the OCCT parity roadmap are complete.
+Ten development phases (A–J) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -53,6 +53,12 @@ Nine development phases (A–I) of the OCCT parity roadmap are complete.
 - `BSplineCurve2` — non-uniform rational B-spline in 2D parameter space; added as `Curve2d::BSpline` variant. Evaluated via de Boor's algorithm (2D analog of `de_boor`). Analogous to OCCT `Geom2d_BSplineCurve`.
 - `Curve2dEval` dispatch updated for all three variants (`Line2d`, `Circle2d`, `BSplineCurve2`).
 - Per-entity tolerance: `GeomStore.vertex_tolerance` / `edge_tolerance` / `face_tolerance` — parallel `Vec<f64>` arrays. Query helpers: `vertex_tolerance(brep, idx)`, `edge_tolerance`, `face_tolerance`, `model_tolerance`. Global constants: `CONFUSION = 1e-7`, `ANGULAR = 1e-12`, `APPROXIMATION = 1e-4`. Analogous to OCCT `Precision` class + `BRep_Tool::Tolerance`.
+
+**Phase J — Ellipse2d PCurve, curve2d_range, STEP Curve2d I/O, STEP tolerance import**
+- `Ellipse2d` — 2D ellipse parametric curve in parameter space; added as `Curve2d::Ellipse` variant. Parametric form `center + major_dir·a·cos(t) + minor_dir·b·sin(t)`, domain `[0, 2π]`. Analogous to OCCT `Geom2d_Ellipse`.
+- `GeomStore.curve2d_range: Vec<Option<[f64; 2]>>` — per-PCurve parameter trim range, parallel to `curve2ds`. Stores `[t1, t2]` from STEP `TRIMMED_CURVE`; `None` = use natural domain. Analogous to `edge_curve_range` for 3D curves.
+- STEP Curve2d export: `Curve2d::Ellipse` → `ELLIPSE` entity; `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points. Both use existing writer helpers.
+- STEP tolerance import: `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → fills `GeomStore.vertex_tolerance`, `edge_tolerance`, `face_tolerance` with the file-specified value; falls back to `CONFUSION` when absent.
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.

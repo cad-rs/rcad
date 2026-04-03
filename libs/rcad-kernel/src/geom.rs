@@ -149,6 +149,22 @@ pub struct Circle2d {
     pub radius: f64,
 }
 
+/// An ellipse in 2D parameter space.
+///
+/// Analogous to OCCT `Geom2d_Ellipse`. Used as a PCurve when an edge traces
+/// an elliptical path on the parameter domain of an adjacent surface.
+///
+/// Parametric form: `center + major_dir * a*cos(t) + minor_dir * b*sin(t)`
+/// where `minor_dir = rotate_ccw_90(major_dir)`.  Default domain: `[0, 2π]`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Ellipse2d {
+    pub center: Point2,
+    /// Normalized major-axis direction in (u, v) space.
+    pub major_dir: Vec2,
+    pub major_radius: f64,
+    pub minor_radius: f64,
+}
+
 /// A non-uniform rational B-spline curve in 2D parameter space.
 ///
 /// Analogous to OCCT `Geom2d_BSplineCurve`. Used for PCurves: the image of
@@ -171,6 +187,7 @@ pub struct BSplineCurve2 {
 pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
+    Ellipse(Ellipse2d),     // Phase J
     BSpline(BSplineCurve2),
 }
 
@@ -623,6 +640,16 @@ impl Curve2dEval for Circle2d {
     }
 }
 
+impl Curve2dEval for Ellipse2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        // minor_dir = rotate major_dir by 90° counter-clockwise
+        let minor_dir = DVec2::new(-self.major_dir.y, self.major_dir.x);
+        self.center
+            + self.major_dir * (self.major_radius * t.cos())
+            + minor_dir * (self.minor_radius * t.sin())
+    }
+}
+
 impl Curve2dEval for BSplineCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
         de_boor_2d(self.degree, &self.knots, &self.control_points, &self.weights, t)
@@ -634,6 +661,7 @@ impl Curve2dEval for Curve2d {
         match self {
             Curve2d::Line(c) => c.point_at(t),
             Curve2d::Circle(c) => c.point_at(t),
+            Curve2d::Ellipse(c) => c.point_at(t),
             Curve2d::BSpline(c) => c.point_at(t),
         }
     }

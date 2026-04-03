@@ -44,7 +44,7 @@ pub mod tolerance;
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
-pub use geom::BSplineCurve2;
+pub use geom::{BSplineCurve2, Ellipse2d};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
 pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
@@ -105,6 +105,13 @@ pub struct GeomStore {
     /// Analogous to `BRep_Tool::Tolerance(face)` in OCCT.
     #[serde(default)]
     pub face_tolerance: Vec<f64>,
+    /// Per-curve2d parameter range [t1, t2].
+    ///
+    /// Used when the PCurve originates from a STEP `TRIMMED_CURVE` entity in
+    /// 2D parameter space. `None` means the natural domain of the curve is used.
+    /// Parallel to `GeomStore.curve2ds`. Analogous to `edge_curve_range` for 3D.
+    #[serde(default)]
+    pub curve2d_range: Vec<Option<[f64; 2]>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +266,7 @@ impl BRep {
             vertex_tolerance: Vec::new(),
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
+            curve2d_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -419,6 +427,7 @@ impl BRep {
             vertex_tolerance: Vec::new(),
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
+            curve2d_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -536,6 +545,7 @@ impl BRep {
             vertex_tolerance: Vec::new(),
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
+            curve2d_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -647,6 +657,7 @@ impl BRep {
             vertex_tolerance: Vec::new(),
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
+            curve2d_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
