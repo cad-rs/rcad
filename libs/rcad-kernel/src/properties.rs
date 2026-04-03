@@ -135,6 +135,103 @@ pub fn centroid(brep: &BRep) -> DVec3 {
     weighted_sum / (4.0 * vol_sum)
 }
 
+// ── Inertia tensor ────────────────────────────────────────────────────────────
+
+/// Symmetric 3×3 moment of inertia tensor (assuming uniform density = 1).
+///
+/// The components are defined as:
+/// ```text
+/// Ixx = ∫(y²+z²) dV,  Iyy = ∫(x²+z²) dV,  Izz = ∫(x²+y²) dV
+/// Ixy = -∫xy dV,       Ixz = -∫xz dV,       Iyz = -∫yz dV
+/// ```
+///
+/// Computed about the world origin. To get the tensor about the centroid,
+/// use the parallel-axis theorem.
+#[derive(Debug, Clone, Copy)]
+pub struct InertiaTensor {
+    pub ixx: f64,
+    pub iyy: f64,
+    pub izz: f64,
+    pub ixy: f64,
+    pub ixz: f64,
+    pub iyz: f64,
+}
+
+impl InertiaTensor {
+    /// Returns the 3×3 inertia matrix as row-major `[[f64;3];3]`.
+    pub fn to_matrix(&self) -> [[f64; 3]; 3] {
+        [
+            [ self.ixx, -self.ixy, -self.ixz],
+            [-self.ixy,  self.iyy, -self.iyz],
+            [-self.ixz, -self.iyz,  self.izz],
+        ]
+    }
+}
+
+/// Computes the moment of inertia tensor of a closed BRep solid about the
+/// world origin.
+///
+/// Uses the divergence theorem (polyhedral formula from Mirtich 1996) applied
+/// to the BRep's triangulated faces, consistent with the existing `volume` and
+/// `centroid` implementations.
+///
+/// Assumes uniform density = 1 (unit density).  Multiply each component by
+/// the actual density to get physical inertia.
+pub fn inertia_tensor(brep: &BRep) -> InertiaTensor {
+    let mut ixx = 0.0_f64;
+    let mut iyy = 0.0_f64;
+    let mut izz = 0.0_f64;
+    let mut ixy = 0.0_f64;
+    let mut ixz = 0.0_f64;
+    let mut iyz = 0.0_f64;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for [a, b, c] in face_triangles(brep, face) {
+                    // Signed volume of tet (origin, a, b, c)
+                    // sv = a·(b×c)/6 — same as tet_signed_volume
+                    let sv = a.dot(b.cross(c)) / 6.0;
+
+                    // Symmetric quadratic sums for each coordinate pair.
+                    // For ∫_tet x² dV = sv/10 * x2_sym (from simplex integration).
+                    let x2 = a.x*a.x + b.x*b.x + c.x*c.x + a.x*b.x + a.x*c.x + b.x*c.x;
+                    let y2 = a.y*a.y + b.y*b.y + c.y*c.y + a.y*b.y + a.y*c.y + b.y*c.y;
+                    let z2 = a.z*a.z + b.z*b.z + c.z*c.z + a.z*b.z + a.z*c.z + b.z*c.z;
+
+                    ixx += sv / 10.0 * (y2 + z2);
+                    iyy += sv / 10.0 * (x2 + z2);
+                    izz += sv / 10.0 * (x2 + y2);
+
+                    // For ∫_tet xy dV = sv/20 * xy_mixed (from simplex integration).
+                    // Product-moment: Ixy = -∫xy dV, etc.
+                    let xy = 2.0*(a.x*a.y+b.x*b.y+c.x*c.y)
+                           + a.x*b.y + b.x*a.y + a.x*c.y + c.x*a.y + b.x*c.y + c.x*b.y;
+                    let xz = 2.0*(a.x*a.z+b.x*b.z+c.x*c.z)
+                           + a.x*b.z + b.x*a.z + a.x*c.z + c.x*a.z + b.x*c.z + c.x*b.z;
+                    let yz = 2.0*(a.y*a.z+b.y*b.z+c.y*c.z)
+                           + a.y*b.z + b.y*a.z + a.y*c.z + c.y*a.z + b.y*c.z + c.y*b.z;
+
+                    ixy += sv / 20.0 * xy;
+                    ixz += sv / 20.0 * xz;
+                    iyz += sv / 20.0 * yz;
+                }
+            }
+        }
+    }
+
+    // Diagonal terms must be positive for a physical solid.
+    // Off-diagonal sign: Ixy = -∫xy dV so negate the accumulated sums.
+    InertiaTensor {
+        ixx: ixx.abs(),
+        iyy: iyy.abs(),
+        izz: izz.abs(),
+        ixy: -ixy,
+        ixz: -ixz,
+        iyz: -iyz,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -179,5 +276,39 @@ mod tests {
         let c = centroid(&brep);
         // unit box: centroid at (0.5, 0.5, 0.5)
         assert!((c - DVec3::splat(0.5)).length() < 1e-4, "centroid should be (0.5,0.5,0.5), got {c}");
+    }
+
+    #[test]
+    fn unit_box_inertia_tensor_diagonal_equal() {
+        // Unit box [0,1]^3 about the world origin:
+        // Ixx = ∫(y²+z²)dV = (1/3 + 1/3) = 2/3
+        // By symmetry, Iyy = Izz = 2/3
+        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let it = inertia_tensor(&brep);
+        let expected = 2.0 / 3.0;
+        let tol = 1e-4;
+        assert!((it.ixx - expected).abs() < tol, "Ixx = {} expected {}", it.ixx, expected);
+        assert!((it.iyy - expected).abs() < tol, "Iyy = {} expected {}", it.iyy, expected);
+        assert!((it.izz - expected).abs() < tol, "Izz = {} expected {}", it.izz, expected);
+    }
+
+    #[test]
+    fn box_2x1x1_inertia_tensor() {
+        // Box [0,2]×[0,1]×[0,1] about origin:
+        // Ixx = ∫(y²+z²)dV = V*(1/3+1/3) = 2*(2/3) = 4/3
+        // Iyy = ∫(x²+z²)dV = V*(4/3÷2 + 1/3) = 2*(2/3+1/3) = 2*(1) = wait:
+        //   ∫₀²∫₀¹∫₀¹ (x²+z²) dx dy dz  but order matters since box is [0,2]x[0,1]x[0,1]
+        //   = 1*1*(∫₀² x² dx) + 1*2*(∫₀¹ z² dz) = (8/3) + 2*(1/3) = 8/3+2/3 = 10/3
+        // Izz = ∫(x²+y²)dV = (8/3) + 2*(1/3) = 10/3
+        // Ixx = 2*(1/3) + 2*(1/3) = 4/3
+        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 1.0, depth: 1.0 });
+        let it = inertia_tensor(&brep);
+        let tol = 1e-3;
+        let expected_ixx = 4.0 / 3.0;
+        let expected_iyy = 10.0 / 3.0;
+        let expected_izz = 10.0 / 3.0;
+        assert!((it.ixx - expected_ixx).abs() < tol, "Ixx = {} expected {}", it.ixx, expected_ixx);
+        assert!((it.iyy - expected_iyy).abs() < tol, "Iyy = {} expected {}", it.iyy, expected_iyy);
+        assert!((it.izz - expected_izz).abs() < tol, "Izz = {} expected {}", it.izz, expected_izz);
     }
 }

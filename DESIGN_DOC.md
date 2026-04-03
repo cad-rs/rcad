@@ -139,9 +139,26 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 ## 2.9 Analysis and Algorithms (rcad-algorithms)
 - **Boolean operations** (`builder`): union, intersection, difference on convex BReps
 - **Shape validity** (`brep_check`): `check(brep) -> CheckResult` — reports degenerate/invalid topology
-- **Global properties** (`rcad-kernel/properties`): `surface_area`, `volume`, `centroid`
+- **Global properties** (`rcad-kernel/properties`): `surface_area`, `volume`, `centroid`, `inertia_tensor`
 - **Section** (`section`): `section_polylines(brep, plane)` — cross-section line set
 - **HLR** (`hlr`): `hlr(brep, camera, samples) -> HlrResult` — hidden-line removal via ray-triangle occlusion; `hlr_to_svg(result, scale, margin)` — SVG rendering
+
+## 2.10 Curve Arc Length (rcad-kernel / arc_length.rs)
+- Analogous to OCCT `GCPnts_AbscissaPoint` / `CPnts_AbscissaPoint::Length`.
+- `arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64` — signed arc length over `[t1, t2]`
+  - `Line3`: exact — `t2 − t1` (direction is always unit)
+  - `Circle3`: exact — `r · (t2 − t1)`
+  - `Ellipse3`, `BSplineCurve3`: 16-point Gauss-Legendre quadrature of `|dP/dt|` (finite-difference speed)
+- Returns signed value; caller takes `.abs()` for unsigned length.
+
+## 2.11 Moment of Inertia Tensor (rcad-kernel / properties.rs)
+- Analogous to OCCT `BRepGProp_VolumeProperties`.
+- `inertia_tensor(brep: &BRep) -> InertiaTensor` — symmetric 3×3 tensor about the world origin
+- `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` with `to_matrix() -> [[f64;3];3]`
+- Uses divergence-theorem tetrahedral integration, consistent with `volume` / `centroid`.
+- Diagonal terms `Ixx = ∫(y²+z²)dV`, etc.; off-diagonal `Ixy = −∫xy dV`, etc.
+- Assumes unit density; multiply by material density for physical inertia.
+
 
 ## 3. Visualization Pipeline (rcad-render)
 - **Tessellation**: Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.

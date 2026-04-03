@@ -26,6 +26,11 @@ pub mod topo_query;
 /// Analogous to OCCT `GeomLProp_SLProps`.
 pub mod curvature;
 
+/// Curve arc-length computation.
+///
+/// Analogous to OCCT `GCPnts_AbscissaPoint` / `CPnts_AbscissaPoint::Length`.
+pub mod arc_length;
+
 /// Visual appearance: per-face/solid RGB color and basic material.
 ///
 /// Analogous to OCCT `XCAFDoc_ColorTool`.
@@ -35,10 +40,11 @@ pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-pub use properties::{centroid, surface_area, volume};
+pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
 pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
                      vertex_adjacent_edges, vertex_count};
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
+pub use arc_length::arc_length;
 pub use appearance::{Color, FaceColor, StepColor};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's

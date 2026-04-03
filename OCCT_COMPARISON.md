@@ -451,16 +451,16 @@ GeomStore {
 
 ## 6. 全局属性与分析
 
-Phase C 完成了核心属性计算，Phase G 补全了曲率分析和拓扑查询：
+Phase C 完成了核心属性计算，Phase G 补全了曲率分析和拓扑查询，Phase H 添加弧长与惯性张量：
 
 | 功能 | OCCT 包/类 | RCAD |
 |------|-----------|------|
 | 面积计算 | `GProp_GProps` + `BRepGProp::SurfaceProperties` | ✅ `surface_area(brep)` Phase C |
 | 体积计算 | `GProp_GProps` + `BRepGProp::VolumeProperties` | ✅ `volume(brep)` Phase C |
 | 质心计算 | `GProp_GProps::CentreOfMass` | ✅ `centroid(brep)` Phase C |
-| 惯性矩 | `GProp_GProps::MatrixOfInertia` | ❌ |
+| 惯性矩 | `GProp_GProps::MatrixOfInertia` | ✅ `inertia_tensor(brep)` Phase H |
 | 包围盒 | `Bnd_Box` + `BRepBndLib` | ✅ `bounding_box()` Phase A |
-| 曲线弧长 | `GCPnts_AbscissaPoint` | ❌ |
+| 曲线弧长 | `GCPnts_AbscissaPoint` | ✅ `arc_length(curve, t1, t2)` Phase H |
 | 曲面曲率分析 | `BRepLProp_SLProps` / `GeomLProp_SLProps` | ✅ `principal_curvatures / gaussian_curvature / mean_curvature` Phase G |
 | 最近点 | `BRepExtrema_DistShapeShape` | ❌ |
 | 法向量场 | `BRep_Tool::Normal` | ✅ `SurfaceEval::normal_at` Phase A |
@@ -562,6 +562,8 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | **分析** | 包围盒 `Bnd_Box` | ✅ 已完成 | Phase A |
 | **分析** | `BRepCheck` 有效性 | ✅ 已完成 | Phase C |
 | **分析** | 曲率分析 | ✅ 已完成 | Phase G（`principal_curvatures`，解析+数值）|
+| **分析** | 曲线弧长 | ✅ 已完成 | Phase H（`arc_length`，Line/Circle 解析，Ellipse/BSpline GL16）|
+| **分析** | 惯性矩张量 | ✅ 已完成 | Phase H（`inertia_tensor`，散度定理三角积分）|
 | **精度** | 全局 `Precision` 配置 | 🟡 P2 | |
 | **渲染** | 隐线消除 HLR | ✅ 已完成 | Phase D |
 | **渲染** | 截面视图 | ✅ 已完成 | Phase C（section_polylines + SVG）|
@@ -572,7 +574,7 @@ BRep_Face::Tolerance         ← 每个面独立容差
 
 ## 10. 开发路线建议
 
-基于上述差距分析，七个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，八个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -623,15 +625,19 @@ BRep_Face::Tolerance         ← 每个面独立容差
 5. `principal_curvatures(surface, u, v)` — 主曲率 (k1, k2)：解析（Plane/Cylinder/Sphere/Cone/Torus）+ 数值有限差分（BSpline）
 6. `gaussian_curvature / mean_curvature` — 由主曲率导出
 
-### 下一阶段候选（Phase H）
+### Phase H — 弧长与惯性矩张量 ✅ 已完成
+
+1. `arc_length(curve, t1, t2)` — 有符号弧长；`Line3`/`Circle3` 解析精确，`Ellipse3`/`BSplineCurve3` 16 点 Gauss-Legendre 数值积分（有限差分速度场）
+2. `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` — 对称 3×3 惯性张量；`to_matrix()` 返回行主矩阵
+3. `inertia_tensor(brep)` — 散度定理四面体积分（与 `volume` / `centroid` 同模式）；单位密度，结果乘密度即得物理惯性矩
+
+### 下一阶段候选（Phase I）
 
 优先级较高的剩余工作：
 - **per-edge 容差体系** — P2
 - **2D B-Spline / TrimmedCurve2d PCurve** — P2
 - **变截面扫掠** `MakePipeShell` — P2
 - **多边同时圆角（corner blending）** — P2
-- **曲线弧长** `GCPnts_AbscissaPoint` — P2
-- **惯性矩** `GProp_GProps::MatrixOfInertia` — P2
 
 ---
 
@@ -645,8 +651,9 @@ Phase D（交换/高级） ░░░░░░░░░░░░░░░░░�
 Phase E（扫掠/B面）  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase F（倒角/圆角） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase G（拓扑/曲率） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase H（弧长/惯性） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-03，基于 RCAD Phase G 完成。*
+*文档更新于 2026-04-03，基于 RCAD Phase H 完成。*

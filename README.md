@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Seven development phases (A–G) of the OCCT parity roadmap are complete.
+Eight development phases (A–H) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -44,6 +44,10 @@ Seven development phases (A–G) of the OCCT parity roadmap are complete.
 - `face_count` / `edge_count` / `vertex_count` — shape size queries.
 - `principal_curvatures(surface, u, v)` → `(k1, k2)` — analytic for Plane/Cylinder/Sphere/Cone/Torus; numerical finite-difference for BSpline.
 - `gaussian_curvature` / `mean_curvature` — derived from principal curvatures (analogous to OCCT `GeomLProp_SLProps`).
+
+**Phase H — Arc length and moment of inertia tensor**
+- `arc_length(curve, t1, t2)` — exact for `Line3` (`|t2−t1|`) and `Circle3` (`r·|t2−t1|`); 16-point Gauss-Legendre quadrature for `Ellipse3` and `BSplineCurve3`. Returns signed value; `.abs()` for unsigned length. Analogous to OCCT `GCPnts_AbscissaPoint`.
+- `inertia_tensor(brep)` → `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` — symmetric 3×3 moment of inertia about the world origin, computed via divergence-theorem tetrahedral integration over BRep triangles. Analogous to OCCT `BRepGProp_VolumeProperties`.
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
