@@ -7,7 +7,7 @@ use rcad_kernel::geom::{Line3, Plane, Surface3};
 use rcad_kernel::topology::{Vertex, WireEdge};
 use rcad_kernel::BRep;
 
-use crate::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
+use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 use crate::builder::{normalize_vector, BuildError};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ pub fn extrude(
     }).collect();
 
     // Build bottom cap (inward normal = -dir)
-    let bot_face = {
+    let _bot_face = {
         let mut wire_edges = Vec::new();
         for i in 0..n {
             let j = (i + 1) % n;
@@ -130,7 +130,7 @@ pub fn extrude(
     };
 
     // Build top cap (outward normal = +dir)
-    let top_face = {
+    let _top_face = {
         let mut wire_edges = Vec::new();
         for i in 0..n {
             let j = (i + 1) % n;

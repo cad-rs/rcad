@@ -1,6 +1,6 @@
 use rcad_kernel::{BRep, Curve2d, Curve3, CurveEval, GeomStore, PCurve, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::geom::{BSplineCurve3, BSplineSurface};
+use rcad_kernel::geom::BSplineCurve3;
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;

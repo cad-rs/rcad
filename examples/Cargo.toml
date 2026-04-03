@@ -22,3 +22,11 @@ path = "boolean_ops.rs"
 [[example]]
 name = "mechanical_part"
 path = "mechanical_part.rs"
+
+[[example]]
+name = "sweep_ops"
+path = "sweep_ops.rs"
+
+[[example]]
+name = "brep_builder_demo"
+path = "brep_builder_demo.rs"
