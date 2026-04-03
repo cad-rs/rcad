@@ -77,6 +77,11 @@ Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 - **Boolean operation history**: `BooleanHistory { face_origins: Vec<FaceOrigin> }` maps each result face to `FaceOrigin::FromA(idx)`, `FromB(idx)`, or `Generated`. Convenience functions `union_with_history / intersection_with_history / difference_with_history` return `(BRep, BooleanHistory)`. Analogous to OCCT `BRepAlgoAPI_BuilderShape::Modified/Generated/Deleted`.
 - **Corner blending**: `corner_blend(brep, vertex_idx, radius)` — blends a 3-valence convex corner by setting back each incident edge by `radius` and inserting a planar triangular closing patch. Eliminates gaps left at corners after `fillet_edges`. Analogous to OCCT `BRepFilletAPI_MakeFillet` corner resolution.
 
+**Phase N — Curve fitting, point projection, analytic boolean intersections**
+- **B-spline curve fitting** (`rcad_kernel::interpolate_points / approximate_points`): exact interpolation via collocation matrix + Gaussian elimination with partial pivoting; least-squares approximation via normal equations `(AᵀA)x = Aᵀb` with pinned endpoints. Chord-length parameterization; clamped cubic knot vectors. Analogous to OCCT `GeomAPI_Interpolate` / `GeomAPI_PointsToBSpline`.
+- **Closest-point projection** (`rcad_kernel::closest_point_on_curve / closest_point_on_surface`): analytic closed-form projection for Plane, Sphere, Cylinder, Cone, Torus; Newton-Raphson refinement for all curves and parametric surfaces. Handles infinite-domain curves (Line). Analogous to OCCT `GeomAPI_ProjectPointOnCurve` / `GeomAPI_ProjectPointOnSurf`.
+- **Analytic Plane×Sphere and Plane×Cylinder intersections** in the boolean PaveFiller: FF pass now dispatches these surface-type pairs to `inttools::plane_sphere` / `inttools::plane_cylinder` before falling back to marching; improved surface sampling for Plane and Cone geometries.
+
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).

@@ -41,6 +41,21 @@ pub mod appearance;
 /// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
 pub mod tolerance;
 
+/// Curve fitting: B-spline interpolation and approximation through point sets.
+///
+/// Analogous to OCCT `GeomAPI_Interpolate` and `GeomAPI_PointsToBSpline`.
+pub mod fit;
+
+/// Closest-point projection from a 3D point onto a curve or surface.
+///
+/// Analogous to OCCT `GeomAPI_ProjectPointOnCurve` and
+/// `GeomAPI_ProjectPointOnSurf`.
+pub mod projection;
+
+pub use fit::{approximate_points, interpolate_points, FitError};
+pub use projection::{closest_point_on_curve, closest_point_on_surface,
+                     CurveProjection, SurfaceProjection};
+
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};

@@ -175,6 +175,28 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - Diagonal terms `Ixx = ∫(y²+z²)dV`, etc.; off-diagonal `Ixy = −∫xy dV`, etc.
 - Assumes unit density; multiply by material density for physical inertia.
 
+## 2.12 Curve Fitting (rcad-kernel / fit.rs)
+- Analogous to OCCT `GeomAPI_Interpolate` and `GeomAPI_PointsToBSpline`.
+- `interpolate_points(pts: &[DVec3]) -> Result<BSplineCurve3, FitError>` — exact interpolation through all points
+  - Chord-length parameterization: `t[i] = Σ|chord_i| / total`, normalized to [0, 1]
+  - Clamped cubic knot vector: interior knots via Piegl & Tiller §9.3 averaging formula
+  - Collocation matrix solved by Gaussian elimination with partial pivoting
+  - Degree: `min(3, n-1)` so 2 points → linear, 3 → quadratic, ≥4 → cubic
+- `approximate_points(pts: &[DVec3], n_ctrl: usize) -> Result<BSplineCurve3, FitError>` — least-squares B-spline with `n_ctrl` control points
+  - Normal equations `(AᵀA)x = Aᵀb` solved per coordinate component
+  - Endpoints pinned to first/last data points
+  - Falls back to `interpolate_points` when `n_ctrl >= pts.len()`
+- `FitError::TooFewPoints` / `FitError::DegeneratePoints`
+
+## 2.13 Closest-Point Projection (rcad-kernel / projection.rs)
+- Analogous to OCCT `GeomAPI_ProjectPointOnCurve` and `GeomAPI_ProjectPointOnSurf`.
+- `closest_point_on_curve(curve, query, n_samples) -> CurveProjection { point, param, distance }`
+  - Analytic for Line (infinite domain: centers sampling around closest point analytically)
+  - Newton-Raphson with finite-difference tangent + second-order curvature correction
+- `closest_point_on_surface(surface, query, n_samples) -> SurfaceProjection { point, params, distance }`
+  - **Analytic**: Plane (dot product), Sphere (radial normalize), Cylinder (collapse axis + normalize), Cone (minimize 1D along generator), Torus (major-ring then tube projection)
+  - **Numerical fallback**: uniform grid sampling + Gauss-Newton Newton refinement (2×2 system) for BSpline, Bezier, Offset, LinearExtrusion, Revolution surfaces
+
 
 ## 3. Visualization Pipeline (rcad-render)
 - **Tessellation**: Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.

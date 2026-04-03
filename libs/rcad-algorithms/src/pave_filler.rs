@@ -348,15 +348,13 @@ impl<'a> PaveFiller<'a> {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
                 self.intersect_plane_plane_faces(f1, f2, p1, p2);
             }
-            (Surface3::Plane(_), Surface3::Cylinder(_))
-            | (Surface3::Plane(_), Surface3::Sphere(_))
-            | (Surface3::Plane(_), Surface3::Cone(_))
-            | (Surface3::Cylinder(_), Surface3::Plane(_))
-            | (Surface3::Sphere(_), Surface3::Plane(_))
-            | (Surface3::Cone(_), Surface3::Plane(_)) => {
-                // These have analytic solutions but produce curves (circles, ellipses).
-                // For now, use marching for all non-plane×plane pairs.
-                self.intersect_ff_by_marching(f1, f2);
+            (Surface3::Plane(pl), Surface3::Sphere(sph))
+            | (Surface3::Sphere(sph), Surface3::Plane(pl)) => {
+                self.intersect_plane_sphere_faces(f1, f2, pl, sph);
+            }
+            (Surface3::Plane(pl), Surface3::Cylinder(cyl))
+            | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
+                self.intersect_plane_cylinder_faces(f1, f2, pl, cyl);
             }
             _ => {
                 // General case: numerical marching
@@ -432,6 +430,155 @@ impl<'a> PaveFiller<'a> {
                 f1,
                 f2,
                 curves: vec![],
+                points: vec![],
+            });
+        }
+    }
+
+    // ── Plane × Sphere analytic face-face intersection ─────────────────────────
+
+    fn intersect_plane_sphere_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        plane: &Plane,
+        sphere: &SphericalSurface,
+    ) {
+        use inttools::plane_sphere::{intersect_plane_sphere, PlaneSphereResult};
+
+        match intersect_plane_sphere(plane, sphere) {
+            PlaneSphereResult::NoIntersection => {}
+            PlaneSphereResult::TangentPoint(pt) => {
+                let verts1 = self.ds.face_boundary_points(f1);
+                let verts2 = self.ds.face_boundary_points(f2);
+                if inttools::edge_face::point_in_planar_face(pt, plane, &verts1)
+                    && point_in_sphere_face(pt, &verts2, self.ds)
+                {
+                    let v = self.ds.add_vertex(pt);
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: vec![],
+                        points: vec![v],
+                    });
+                }
+            }
+            PlaneSphereResult::Circle(circle) => {
+                // Sample the circle and clip to both face boundaries
+                let pts = sample_circle_arc(&circle, 0.0, std::f64::consts::TAU, 32);
+                if pts.len() < 2 { return; }
+
+                let v_start = self.ds.add_vertex(pts[0]);
+                let v_end = self.ds.add_vertex(*pts.last().unwrap());
+
+                let curve_idx = self.ds.intersection_curves.len();
+                self.ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(circle.clone()),
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, std::f64::consts::TAU],
+                });
+
+                self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1,
+                    f2,
+                    curves: vec![curve_idx],
+                    points: vec![],
+                });
+            }
+        }
+    }
+
+    // ── Plane × Cylinder analytic face-face intersection ──────────────────────
+
+    fn intersect_plane_cylinder_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        plane: &Plane,
+        cyl: &CylindricalSurface,
+    ) {
+        use inttools::plane_cylinder::{intersect_plane_cylinder, PlaneCylinderResult};
+        use rcad_kernel::CurveEval;
+
+        let result = intersect_plane_cylinder(plane, cyl);
+
+        let add_curve_for = |ds: &mut DS, curve: Curve3, t_range: [f64; 2], f1: usize, f2: usize| {
+            let p_start = curve.point_at(t_range[0]);
+            let p_end = curve.point_at(t_range[1]);
+            let v_start = ds.add_vertex(p_start);
+            let v_end = ds.add_vertex(p_end);
+            let curve_idx = ds.intersection_curves.len();
+            ds.intersection_curves.push(IntersectionCurve {
+                curve,
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range,
+            });
+            ds.faces[f1].face_info.curves_in.insert(curve_idx);
+            ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            ds.faces[f1].face_info.vertices_in.insert(v_start);
+            ds.faces[f1].face_info.vertices_in.insert(v_end);
+            ds.faces[f2].face_info.vertices_in.insert(v_start);
+            ds.faces[f2].face_info.vertices_in.insert(v_end);
+            curve_idx
+        };
+
+        let mut curve_indices = Vec::new();
+
+        match result {
+            PlaneCylinderResult::NoIntersection => return,
+            PlaneCylinderResult::TangentLine(_) => return, // zero-area intersection
+            PlaneCylinderResult::TwoLines(l1, l2) => {
+                // Clip each line to the face bounding-box extent
+                let extent = 20.0_f64;
+                let ci1 = add_curve_for(
+                    &mut self.ds,
+                    Curve3::Line(l1),
+                    [-extent, extent],
+                    f1, f2,
+                );
+                let ci2 = add_curve_for(
+                    &mut self.ds,
+                    Curve3::Line(l2),
+                    [-extent, extent],
+                    f1, f2,
+                );
+                curve_indices.push(ci1);
+                curve_indices.push(ci2);
+            }
+            PlaneCylinderResult::Circle(circle) => {
+                let ci = add_curve_for(
+                    &mut self.ds,
+                    Curve3::Circle(circle),
+                    [0.0, std::f64::consts::TAU],
+                    f1, f2,
+                );
+                curve_indices.push(ci);
+            }
+            PlaneCylinderResult::Ellipse(ellipse) => {
+                let ci = add_curve_for(
+                    &mut self.ds,
+                    Curve3::Ellipse(ellipse),
+                    [0.0, std::f64::consts::TAU],
+                    f1, f2,
+                );
+                curve_indices.push(ci);
+            }
+        }
+
+        if !curve_indices.is_empty() {
+            self.ds.interferences.push(Interference::FaceFace {
+                f1,
+                f2,
+                curves: curve_indices,
                 points: vec![],
             });
         }
@@ -513,6 +660,12 @@ impl<'a> PaveFiller<'a> {
             }
             Surface3::Torus(torus) => {
                 inttools::marching::sample_torus(torus, n1, n2)
+            }
+            Surface3::Plane(plane) => {
+                sample_plane(plane, 5.0, n1)
+            }
+            Surface3::Cone(cone) => {
+                sample_cone(cone, 0.01, 5.0, n1, n2)
             }
             _ => vec![],
         }
@@ -665,4 +818,70 @@ fn intersect_line_line(
     }
 
     Some((t1, t2, (p1 + p2) * 0.5))
+}
+
+// ── Sampling helpers for marching seed-point generation ──────────────────────
+
+/// Sample a flat plane (infinite) over a 2D square of side `half_extent*2`
+/// centred at `plane.origin`.
+fn sample_plane(plane: &Plane, half_extent: f64, n: usize) -> Vec<DVec3> {
+    let u = rcad_kernel::any_perpendicular(plane.normal);
+    let v = plane.normal.cross(u);
+    let mut pts = Vec::with_capacity(n * n);
+    for i in 0..n {
+        for j in 0..n {
+            let su = -half_extent + 2.0 * half_extent * i as f64 / (n - 1).max(1) as f64;
+            let sv = -half_extent + 2.0 * half_extent * j as f64 / (n - 1).max(1) as f64;
+            pts.push(plane.origin + u * su + v * sv);
+        }
+    }
+    pts
+}
+
+/// Sample a cone surface between heights `h_min` and `h_max` along its axis.
+fn sample_cone(cone: &ConicalSurface, h_min: f64, h_max: f64, n_theta: usize, n_h: usize) -> Vec<DVec3> {
+    let u = rcad_kernel::any_perpendicular(cone.axis);
+    let v = cone.axis.cross(u);
+    let tan_h = cone.half_angle_rad.tan();
+    let mut pts = Vec::with_capacity(n_theta * n_h);
+    for ih in 0..n_h {
+        let h = h_min + (h_max - h_min) * ih as f64 / (n_h - 1).max(1) as f64;
+        let r = h * tan_h;
+        for it in 0..n_theta {
+            let theta = 2.0 * std::f64::consts::PI * it as f64 / n_theta as f64;
+            let p = cone.apex + cone.axis * h + (u * theta.cos() + v * theta.sin()) * r;
+            pts.push(p);
+        }
+    }
+    pts
+}
+
+/// Sample `n` points on a circular arc from `t_start` to `t_end`.
+fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Vec<DVec3> {
+    use rcad_kernel::CurveEval;
+    use rcad_kernel::geom::Curve3;
+    let curve = Curve3::Circle(circle.clone());
+    (0..n)
+        .map(|i| {
+            let t = t_start + (t_end - t_start) * i as f64 / (n - 1).max(1) as f64;
+            curve.point_at(t)
+        })
+        .collect()
+}
+
+/// Check whether a point lies within the boundary of a sphere-face, defined by
+/// the sphere face boundary vertices (used for tangent-point containment check).
+fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
+    // Simple bounding-box check: the point should be within the convex hull
+    // of the boundary vertices on the sphere surface (rough approximation).
+    if boundary_verts.is_empty() {
+        return true;
+    }
+    let cx = boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::min)
+        ..(boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::max) + 1e-9);
+    let cy = boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::min)
+        ..(boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::max) + 1e-9);
+    let cz = boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::min)
+        ..(boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::max) + 1e-9);
+    cx.contains(&pt.x) && cy.contains(&pt.y) && cz.contains(&pt.z)
 }

@@ -233,11 +233,11 @@ OCCT 提供丰富的几何计算 API，RCAD Phase A 补全了核心求值接口�
 | 曲线曲率 | `GeomLProp_CLProps` | ❌ |
 | 曲面点求值 `S(u,v)` | `Geom_Surface::Value(u,v)` | ✅ `SurfaceEval::point_at(u,v)` |
 | 曲面法向量 | `GeomLProp_SLProps` | ✅ `SurfaceEval::normal_at(u,v)` |
-| 曲线投影到曲面 | `GeomAPI_ProjectPointOnSurf` | ❌ |
+| 曲线投影到曲面 | `GeomAPI_ProjectPointOnSurf` | ✅ Phase N `closest_point_on_surface` |
 | 曲线-曲线交点 | `GeomAPI_ExtremaCurveCurve` | ❌ |
 | 曲面-曲面交线 | `GeomAPI_IntSS` | ❌ |
-| 曲线插值 | `GeomAPI_Interpolate` | ❌ |
-| 曲线近似（最小二乘）| `GeomAPI_PointsToBSpline` | ❌ |
+| 曲线插值 | `GeomAPI_Interpolate` | ✅ Phase N `interpolate_points` |
+| 曲线近似（最小二乘）| `GeomAPI_PointsToBSpline` | ✅ Phase N `approximate_points` |
 ---
 
 ## 3. 拓扑层对比
@@ -373,7 +373,7 @@ GeomStore {
 | 圆 | `GC_MakeCircle` | `circle(center, normal, r)` | ✅ |
 | 椭圆 | `GC_MakeEllipse` | `ellipse(...)` | ✅ |
 | **裁剪弧** | `GC_MakeArcOfCircle` → `TrimmedCurve` | `edge_curve_range [t1,t2]` | ✅ Phase A |
-| **插值曲线** | `GeomAPI_Interpolate` | ❌ | 中优先 |
+| **插值曲线** | `GeomAPI_Interpolate` | ✅ Phase N `interpolate_points` |
 | 平面 | `GC_MakePlane` | `plane(origin, normal)` | ✅ |
 | 柱面 | 直接构造 | `cylindrical_surface(...)` | ✅ |
 | **边构造** | `BRepBuilderAPI_MakeEdge` | `make_edge(brep, curve, t1, t2, v0, v1)` | ✅ Phase B |
@@ -696,6 +696,14 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 4. **布尔操作历史 / 形状映射**：`FaceOrigin { FromA(usize), FromB(usize), Generated }` + `BooleanHistory { face_origins: Vec<FaceOrigin> }`；`union/intersection/difference_with_history()` 返回 `(BRep, BooleanHistory)`；每个结果面追踪到输入固体 A 或 B 的 DS 面索引；类比 OCCT `BRepAlgoAPI_BuilderShape::Modified/Generated/Deleted`
 5. **多边角点混接**：`corner_blend(brep, vertex_idx, radius)` — 三边凸顶点混接；沿三条入射边退刀 `radius`，插入平面三角补片；防止批量圆角后角点处出现间隙；类比 OCCT `BRepFilletAPI_MakeFillet` 角点处理
 
+### Phase N — 曲线拟合、点投影、解析布尔交线 ✅ 已完成
+
+1. **B样条曲线插值**：`interpolate_points(pts: &[DVec3]) -> Result<BSplineCurve3, FitError>` — 弦长参数化 + 平均公式内节点 + 高斯消元（部分主元）；degree = min(3, n-1)；类比 OCCT `GeomAPI_Interpolate`
+2. **B样条曲线近似**：`approximate_points(pts: &[DVec3], n_ctrl: usize) -> Result<BSplineCurve3, FitError>` — 最小二乘法向方程 `(AᵀA)x=Aᵀb`；端点固定；类比 OCCT `GeomAPI_PointsToBSpline`
+3. **曲线最近点投影**：`closest_point_on_curve(curve, query, n_samples) -> CurveProjection` — 粗采样 + Newton-Raphson 精化；Line 无穷域特殊处理；类比 OCCT `GeomAPI_ProjectPointOnCurve`
+4. **曲面最近点投影**：`closest_point_on_surface(surface, query, n_samples) -> SurfaceProjection` — Plane/Sphere/Cylinder/Cone/Torus 解析闭合式；BSpline/Bezier/Offset 数值网格采样 + Gauss-Newton 精化；类比 OCCT `GeomAPI_ProjectPointOnSurf`
+5. **解析布尔交线**：PaveFiller FF pass 对 Plane×Sphere 和 Plane×Cylinder 直接调用 `inttools::plane_sphere` / `inttools::plane_cylinder` 得到精确圆/椭圆/直线交线；Plane 和 Cone 面增加均匀网格采样
+
 ---
 
 ### 阶段时序（实际完成）
@@ -714,8 +722,9 @@ Phase J（Ellipse2d/STEP容差）░░░░░░░░░░░░░░░�
 Phase K（扫掠面/面域/BSpline导出）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase L（变截面扫掠/批量圆角）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase M（全部 P2：Bezier/Offset/SameParam/历史/角点）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase N（曲线拟合/点投影/解析交线）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase M 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase N 完成。*
