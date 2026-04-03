@@ -106,13 +106,37 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - Sweep operations (Phase B):
   - `extrude(profile, direction, distance)` — linear prism
   - `revolve(profile, axis_origin, axis_dir, angle)` — solid of revolution
+- Multi-profile operations (Phase E):
+  - `loft(profiles: &[Vec<DVec3>])` — connect N cross-section polygons with ruled lateral faces and planar caps
+  - `sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3])` — sweep 2D profile along a 3D polyline spine using Frenet-like frames; delegates to `loft`
+- Edge modification operations (Phase F):
+  - `chamfer_edge(brep, edge_idx, dist)` — flat bevel; replaces edge with planar quad + 2 closing triangles; returns new BRep
+  - `fillet_edge(brep, edge_idx, radius)` — cylindrical blend; setback = `radius / tan(β/2)` from exterior dihedral angle; returns new BRep
 
-## 2.6 Appearance Layer (rcad-kernel / appearance.rs)
+## 2.7 Topology Query Layer (rcad-kernel / topo_query.rs)
+- Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
+- All functions operate on `solids[0].shells[0]`; safe on empty BRep.
+- `edge_adjacent_faces(brep, edge_idx) -> Vec<usize>` — faces sharing an edge
+- `face_edges(brep, face_idx) -> Vec<usize>` — edges of a face's outer wire
+- `vertex_adjacent_edges(brep, vertex_idx) -> Vec<usize>` — edges incident on a vertex
+- `face_count / edge_count / vertex_count` — shape size queries
+
+## 2.8 Curvature Analysis (rcad-kernel / curvature.rs)
+- Analogous to OCCT `GeomLProp_SLProps`.
+- `principal_curvatures(surface, u, v) -> (k1, k2)`:
+  - **Plane**: (0, 0)
+  - **Cylinder(r)**: (1/r, 0)
+  - **Sphere(r)**: (1/r, 1/r)
+  - **Cone(α, v)**: (sin(α)/r_at, 0) where r_at = v·sin(α)
+  - **Torus(R, r, v)**: (1/r, cos(v)/(R+r·cos(v)))
+  - **BSpline**: numerical finite-difference via fundamental forms (I and II)
+- `gaussian_curvature(surface, u, v) -> f64` — K = k1·k2
+- `mean_curvature(surface, u, v) -> f64` — H = (k1+k2)/2
 - `Color { r, g, b }` — sRGB color with preset constants (RED, GREEN, BLUE, …)
 - `FaceColor { face_index, color }` — per-face color override
 - `StepColor { solid_color, face_colors }` — color assignments for a BRep; used by `StepWriter::write_string_colored`
 
-## 2.7 Analysis and Algorithms (rcad-algorithms)
+## 2.9 Analysis and Algorithms (rcad-algorithms)
 - **Boolean operations** (`builder`): union, intersection, difference on convex BReps
 - **Shape validity** (`brep_check`): `check(brep) -> CheckResult` — reports degenerate/invalid topology
 - **Global properties** (`rcad-kernel/properties`): `surface_area`, `volume`, `centroid`
@@ -143,7 +167,8 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 ## 4. STEP Importer/Exporter (rcad-step)
 - **Parser**: Hand-written STEP Part 21 parser for core entities.
 - **Mapping**: Converts common entities (point/direction/line/circle/ellipse/B-spline/surface + topology entities) into internal `BRep`.
-- **B-Spline support** (Phase D): `B_SPLINE_CURVE_WITH_KNOTS` parsed into `Curve3::BSpline`; written with compressed knot vector (`multiplicities + values`).
+- **B-Spline curve support** (Phase D): `B_SPLINE_CURVE_WITH_KNOTS` parsed into `Curve3::BSpline`; written with compressed knot vector (`multiplicities + values`).
+- **B-Spline surface support** (Phase E): `B_SPLINE_SURFACE_WITH_KNOTS` parsed into `Surface3::BSpline`; the STEP `[v][u]` control grid is transposed to `BSplineSurface.control_points[u][v]`; UV-grid triangulation via `SurfaceEval::point_at` for rendering.
 - **Color export** (Phase D): `StepWriter::write_string_colored(brep, &StepColor)` emits the full `COLOUR_RGB → STYLED_ITEM` chain per STEP AP214.
 - **Assembly export** (Phase D): `write_assembly(name, &[AssemblyComponent])` produces a multi-BRep STEP file with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy; each component can carry a translation and color.
 - **Fallback behavior**: When shell/face topology is missing but points exist, importer falls back to a bbox solid for viewability.

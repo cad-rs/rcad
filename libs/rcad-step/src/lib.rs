@@ -58,6 +58,8 @@ struct ParsedStep {
     directions_2d: HashMap<u64, [f64; 2]>,
     /// 2D axis2 placements: id → (location, ref_dir)
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
+    /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
+    b_spline_surfaces: HashMap<u64, (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)>,
 }
 
 impl ParsedStep {
@@ -95,6 +97,7 @@ impl ParsedStep {
             cartesian_points_2d: HashMap::new(),
             directions_2d: HashMap::new(),
             axis2_placements_2d: HashMap::new(),
+            b_spline_surfaces: HashMap::new(),
         }
     }
 }
@@ -181,6 +184,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                         if let Some(full) = parse_bspline_curve_full(args) {
                             parsed.b_spline_curves_full.insert(id, full);
                         }
+                    }
+                }
+                "B_SPLINE_SURFACE_WITH_KNOTS" => {
+                    if let Some(data) = parse_bspline_surface_with_knots(args) {
+                        parsed.b_spline_surfaces.insert(id, data);
                     }
                 }
                 "TRIMMED_CURVE" => {
@@ -1061,6 +1069,9 @@ fn triangulate_surface_fallback(
     face_vertex_indices: &[usize],
     has_seam: bool,
 ) -> Vec<[usize; 3]> {
+    if parsed.b_spline_surfaces.contains_key(&surface_ref) {
+        return triangulate_bspline_surface(parsed, surface_ref, vertices);
+    }
     if parsed.spherical_surfaces.contains_key(&surface_ref) {
         return triangulate_spherical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
     }
@@ -1404,6 +1415,33 @@ fn triangulate_grid(
     triangles
 }
 
+/// Triangulate a B-Spline surface by uniform (u,v) grid sampling.
+fn triangulate_bspline_surface(
+    parsed: &ParsedStep,
+    surface_ref: u64,
+    vertices: &mut Vec<Vertex>,
+) -> Vec<[usize; 3]> {
+    use rcad_kernel::geom::SurfaceEval;
+    let Some(surface) = resolve_surface(parsed, surface_ref) else {
+        return Vec::new();
+    };
+    let [u0, u1, v0, v1] = surface.default_domain();
+    if !u0.is_finite() || !u1.is_finite() || !v0.is_finite() || !v1.is_finite() {
+        return Vec::new();
+    }
+    let nu = 20usize;
+    let nv = 20usize;
+    let base = vertices.len();
+    for j in 0..=nv {
+        let v = v0 + (v1 - v0) * (j as f64 / nv as f64);
+        for i in 0..=nu {
+            let u = u0 + (u1 - u0) * (i as f64 / nu as f64);
+            vertices.push(Vertex { point: surface.point_at(u, v) });
+        }
+    }
+    triangulate_grid(base, nv, nu, nu + 1)
+}
+
 fn infer_axis_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -1639,6 +1677,50 @@ fn parse_bspline_curve_full(args: &str) -> Option<(usize, Vec<u64>, Vec<usize>, 
     Some((degree, ctrl_refs, mults, knot_vals))
 }
 
+/// Parse B_SPLINE_SURFACE_WITH_KNOTS args.
+/// Returns (degree_u, degree_v, ctrl_grid[v_row][u_col], mults_u, knots_u, mults_v, knots_v)
+fn parse_bspline_surface_with_knots(
+    args: &str,
+) -> Option<(usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)> {
+    // STEP format:
+    // ('name', degree_u, degree_v, ((#p00,#p01,...),(#p10,...)),
+    //   .UNSPECIFIED., .F., .F., .F.,
+    //   (mults_u...), (mults_v...), (knots_u...), (knots_v...), .UNSPECIFIED.)
+    // parts[0]=name, [1]=deg_u, [2]=deg_v, [3]=ctrl grid (nested list),
+    // [4..7]=flags, [8]=mults_u, [9]=mults_v, [10]=knots_u, [11]=knots_v
+    let parts = split_top_level(args, ',');
+    if parts.len() < 12 {
+        return None;
+    }
+    let degree_u = parts[1].trim().parse::<usize>().ok()?;
+    let degree_v = parts[2].trim().parse::<usize>().ok()?;
+
+    // Strip outer parens to get the row-list string, then split rows by top-level comma
+    let grid_outer = parts[3].trim();
+    let grid_inner = grid_outer
+        .strip_prefix('(').unwrap_or(grid_outer)
+        .trim_end_matches(')');
+    let rows_raw = split_top_level(grid_inner, ',');
+    let ctrl_grid: Vec<Vec<u64>> = rows_raw
+        .iter()
+        .map(|row| parse_ref_list(row))
+        .filter(|row| !row.is_empty())
+        .collect();
+    if ctrl_grid.is_empty() {
+        return None;
+    }
+
+    let mults_u: Vec<usize> = parse_float_list(parts[8]).into_iter().map(|v| v as usize).collect();
+    let mults_v: Vec<usize> = parse_float_list(parts[9]).into_iter().map(|v| v as usize).collect();
+    let knots_u: Vec<f64> = parse_float_list(parts[10]);
+    let knots_v: Vec<f64> = parse_float_list(parts[11]);
+
+    if mults_u.is_empty() || knots_u.is_empty() || mults_v.is_empty() || knots_v.is_empty() {
+        return None;
+    }
+    Some((degree_u, degree_v, ctrl_grid, mults_u, knots_u, mults_v, knots_v))
+}
+
 fn parse_conical_surface(args: &str) -> Option<(u64, f64, f64)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 4 {
@@ -1781,7 +1863,49 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         }));
     }
 
+    if let Some((degree_u, degree_v, ctrl_grid_raw, mults_u, knots_u, mults_v, knots_v)) =
+        parsed.b_spline_surfaces.get(&surface_ref)
+    {
+        let expanded_u = expand_knots(mults_u, knots_u);
+        let expanded_v = expand_knots(mults_v, knots_v);
+
+        // ctrl_grid_raw is indexed [v][u] in STEP; BSplineSurface.control_points is [u][v] — transpose
+        let n_v = ctrl_grid_raw.len();
+        let n_u = ctrl_grid_raw.first().map(|r| r.len()).unwrap_or(0);
+        if n_u == 0 || n_v == 0 {
+            return None;
+        }
+        let mut control_points = vec![vec![glam::DVec3::ZERO; n_v]; n_u];
+        let weights = vec![vec![1.0f64; n_v]; n_u];
+        for (vi, row) in ctrl_grid_raw.iter().enumerate() {
+            for (ui, &ref_id) in row.iter().enumerate() {
+                if let Some(pt) = point_from_ref(parsed, ref_id) {
+                    control_points[ui][vi] = pt;
+                }
+            }
+        }
+        return Some(Surface3::BSpline(rcad_kernel::geom::BSplineSurface {
+            degree_u: *degree_u,
+            degree_v: *degree_v,
+            knots_u: expanded_u,
+            knots_v: expanded_v,
+            control_points,
+            weights,
+        }));
+    }
+
     None
+}
+
+/// Expand a compressed knot vector (multiplicities + values) into a full knot vector.
+fn expand_knots(mults: &[usize], vals: &[f64]) -> Vec<f64> {
+    let mut out = Vec::new();
+    for (&m, &v) in mults.iter().zip(vals.iter()) {
+        for _ in 0..m {
+            out.push(v);
+        }
+    }
+    out
 }
 
 fn point_from_ref(parsed: &ParsedStep, point_ref: u64) -> Option<glam::DVec3> {

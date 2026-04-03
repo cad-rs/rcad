@@ -4,7 +4,7 @@
 > 帮助团队明确差距、规划后续开发方向。
 >
 > **文档状态：** 基于 RCAD 当前代码（2026-04）生成，随代码演进应同步更新。
-> **Phase A–D 全部完成（commit `e253d6d`，2026-04-03）。**
+> **Phase A–G 全部完成（2026-04-03）。**
 
 ---
 
@@ -235,7 +235,6 @@ OCCT 提供丰富的几何计算 API，RCAD Phase A 补全了核心求值接口�
 | 曲面-曲面交线 | `GeomAPI_IntSS` | ❌ |
 | 曲线插值 | `GeomAPI_Interpolate` | ❌ |
 | 曲线近似（最小二乘）| `GeomAPI_PointsToBSpline` | ❌ |
-
 ---
 
 ## 3. 拓扑层对比
@@ -336,12 +335,12 @@ GeomStore {
 
 | 功能 | OCCT | RCAD |
 |------|------|------|
-| 遍历所有边 | `TopExp_Explorer(shape, EDGE)` | 需手动嵌套遍历 `solid→shell→face→wire` |
-| 查找边的相邻面 | `TopTools_IndexedDataMapOfShapeListOfShape` | ❌ 无内建 API |
-| 查找顶点共享的边 | `TopExp::MapShapesAndAncestors` | ❌ |
-| 形状比较 | `TopoDS_Shape::IsEqual/IsSame` | ❌ |
-| 子形状计数 | `BRepTools::NbFaces` 等 | ❌ |
-| 形状有效性检查 | `BRepCheck_Analyzer` | ❌ |
+| 遍历所有边 | `TopExp_Explorer(shape, EDGE)` | `face_edges(brep, face_idx)` + 手动迭代 | ✅ Phase G |
+| 查找边的相邻面 | `TopTools_IndexedDataMapOfShapeListOfShape` | `edge_adjacent_faces(brep, edge_idx)` | ✅ Phase G |
+| 查找顶点共享的边 | `TopExp::MapShapesAndAncestors` | `vertex_adjacent_edges(brep, vertex_idx)` | ✅ Phase G |
+| 形状比较 | `TopoDS_Shape::IsEqual/IsSame` | ❌ | 低优先 |
+| 子形状计数 | `BRepTools::NbFaces` 等 | `face_count / edge_count / vertex_count` | ✅ Phase G |
+| 形状有效性检查 | `BRepCheck_Analyzer` | ✅ `check(brep)` Phase C | ✅ |
 
 ---
 
@@ -394,18 +393,18 @@ GeomStore {
 |------|----------|------|------|
 | 线性拉伸 | `BRepPrimAPI_MakePrism` | `extrude(profile, direction, distance)` | ✅ Phase B |
 | 旋转体 | `BRepPrimAPI_MakeRevol` | `revolve(profile, axis, angle)` | ✅ Phase B |
-| 管道扫掠 | `BRepOffsetAPI_MakePipe` | ❌ | 高优先 |
+| 管道扫掠 | `BRepOffsetAPI_MakePipe` | `sweep_pipe(profile_2d, spine)` | ✅ Phase E |
 | 变截面扫掠 | `BRepOffsetAPI_MakePipeShell` | ❌ | 中优先 |
-| Loft（放样）| `BRepOffsetAPI_ThruSections` | ❌ | 中优先 |
+| Loft（放样）| `BRepOffsetAPI_ThruSections` | `loft(profiles)` | ✅ Phase E |
 | 加厚 | `BRepOffsetAPI_MakeThickSolid` | ❌ | 低优先 |
 
 ### 4.5 倒角 / 圆角
 
 | 功能 | OCCT API | RCAD | 状态 |
 |------|----------|------|------|
-| 等半径圆角 | `BRepFilletAPI_MakeFillet` | ❌ | 高优先 |
+| 等半径圆角 | `BRepFilletAPI_MakeFillet` | `fillet_edge(brep, edge_idx, radius)` | ✅ Phase F（凸边，平面面）|
 | 变半径圆角 | `BRepFilletAPI_MakeFillet` (变量版) | ❌ | 低优先 |
-| 直倒角 | `BRepFilletAPI_MakeChamfer` | ❌ | 中优先 |
+| 直倒角 | `BRepFilletAPI_MakeChamfer` | `chamfer_edge(brep, edge_idx, dist)` | ✅ Phase F（凸边，平面面）|
 
 ### 4.6 薄壁 / 偏移 / 缝合
 
@@ -428,7 +427,7 @@ GeomStore {
 | B_SPLINE_CURVE_WITH_KNOTS | ✅ | ✅ | ✅ | ✅ Phase D |
 | TRIMMED_CURVE | ✅ | ✅ | 解析参数范围 | ✅（以 `edge_curve_range` 导出）|
 | 解析曲面（PLANE/CYL/SPHERE…）| ✅ | ✅ | ✅ | ✅ |
-| B_SPLINE_SURFACE | ✅ | ✅ | ❌ | ❌ |
+| B_SPLINE_SURFACE | ✅ | ✅ | ✅ Phase E | ❌ |
 | PCURVE / SURFACE_CURVE | ✅ | ✅ | ✅ | ✅ |
 | ADVANCED_FACE | ✅ | ✅ | ✅ | ✅ |
 | MANIFOLD_SOLID_BREP | ✅ | ✅ | ✅ | ✅ |
@@ -452,7 +451,7 @@ GeomStore {
 
 ## 6. 全局属性与分析
 
-这是 RCAD 目前完全空白的一个领域，对 CAE 应用极为重要。Phase C 完成了核心属性计算：
+Phase C 完成了核心属性计算，Phase G 补全了曲率分析和拓扑查询：
 
 | 功能 | OCCT 包/类 | RCAD |
 |------|-----------|------|
@@ -462,11 +461,11 @@ GeomStore {
 | 惯性矩 | `GProp_GProps::MatrixOfInertia` | ❌ |
 | 包围盒 | `Bnd_Box` + `BRepBndLib` | ✅ `bounding_box()` Phase A |
 | 曲线弧长 | `GCPnts_AbscissaPoint` | ❌ |
-| 曲面曲率分析 | `BRepLProp_SLProps` | ❌ |
+| 曲面曲率分析 | `BRepLProp_SLProps` / `GeomLProp_SLProps` | ✅ `principal_curvatures / gaussian_curvature / mean_curvature` Phase G |
 | 最近点 | `BRepExtrema_DistShapeShape` | ❌ |
 | 法向量场 | `BRep_Tool::Normal` | ✅ `SurfaceEval::normal_at` Phase A |
 | 拓扑有效性 | `BRepCheck_Analyzer` | ✅ `check(brep)` Phase C |
-| 形状连通性 | `TopTools_ConnectedIterator` | ❌ |
+| 形状连通性 | `TopTools_ConnectedIterator` | ✅ `edge_adjacent_faces / vertex_adjacent_edges` Phase G |
 
 ---
 
@@ -542,15 +541,15 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | **拓扑** | `WireEdge.forward` 方向标志 | ✅ 已完成 | Phase A |
 | **拓扑** | `Degenerated` edge 标记 | ✅ 已完成 | Phase A |
 | **拓扑** | per-vertex / per-edge 容差 | 🟡 P2 | 精度体系完整性 |
-| **拓扑** | 相邻面查询 API | 🟡 P2 | 圆角需要 |
+| **拓扑** | 相邻面查询 API | ✅ 已完成 | Phase G（`edge_adjacent_faces`）|
 | **拓扑** | `Compound` / `CompSolid` | 🟢 P3 | 装配体 |
 | **建模** | `make_edge/wire/face/solid` | ✅ 已完成 | Phase B |
 | **建模** | 线性拉伸 `extrude` | ✅ 已完成 | Phase B |
 | **建模** | 旋转体 `revolve` | ✅ 已完成 | Phase B |
-| **建模** | 圆角 `MakeFillet` | 🟠 P1 | |
-| **建模** | 管道扫掠 `MakePipe` | 🟡 P2 | |
-| **建模** | 倒角 `MakeChamfer` | 🟡 P2 | |
-| **建模** | Loft 放样 | 🟡 P2 | |
+| **建模** | 圆角 `MakeFillet` | ✅ 已完成 | Phase F（`fillet_edge`，凸平面边）|
+| **建模** | 管道扫掠 `MakePipe` | ✅ 已完成 | Phase E（`sweep_pipe`）|
+| **建模** | 倒角 `MakeChamfer` | ✅ 已完成 | Phase F（`chamfer_edge`，凸平面边）|
+| **建模** | Loft 放样 | ✅ 已完成 | Phase E（`loft`）|
 | **建模** | 加厚 / 抽壳 | 🟢 P3 | |
 | **布尔** | 截面线 `Section` | ✅ 已完成 | Phase C（`section_polylines`）|
 | **布尔** | 形状历史映射 | 🟡 P2 | 特征树需要 |
@@ -558,11 +557,11 @@ BRep_Face::Tolerance         ← 每个面独立容差
 | **数据交换** | 颜色 / 材质 STEP | ✅ 已完成 | Phase D |
 | **数据交换** | 装配体 STEP (NAUO) | ✅ 已完成 | Phase D |
 | **数据交换** | IGES / OBJ / GLTF | 🟢 P3 | |
-| **数据交换** | B_SPLINE_SURFACE STEP 读 | 🟡 P2 | |
+| **数据交换** | B_SPLINE_SURFACE STEP 读 | ✅ 已完成 | Phase E |
 | **分析** | 面积 / 体积 / 质心 | ✅ 已完成 | Phase C |
 | **分析** | 包围盒 `Bnd_Box` | ✅ 已完成 | Phase A |
 | **分析** | `BRepCheck` 有效性 | ✅ 已完成 | Phase C |
-| **分析** | 曲率分析 | 🟡 P2 | |
+| **分析** | 曲率分析 | ✅ 已完成 | Phase G（`principal_curvatures`，解析+数值）|
 | **精度** | 全局 `Precision` 配置 | 🟡 P2 | |
 | **渲染** | 隐线消除 HLR | ✅ 已完成 | Phase D |
 | **渲染** | 截面视图 | ✅ 已完成 | Phase C（section_polylines + SVG）|
@@ -573,7 +572,7 @@ BRep_Face::Tolerance         ← 每个面独立容差
 
 ## 10. 开发路线建议
 
-基于上述差距分析，四个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
+基于上述差距分析，七个阶段已全部完成。以下记录各阶段的实际产出，供后续规划参考。
 
 ### Phase A — 几何/拓扑基础加固 ✅ 已完成
 
@@ -603,14 +602,36 @@ BRep_Face::Tolerance         ← 每个面独立容差
 3. `B_SPLINE_CURVE_WITH_KNOTS` 读写（压缩节点向量 + de Boor 精确导出）
 4. `hlr(brep, camera, samples)` + `hlr_to_svg(result, scale, margin)` — 隐线消除 + SVG 输出
 
-### 下一阶段候选（Phase E）
+### Phase E — 扫掠/放样与 B-Spline 面 STEP 读 ✅ 已完成
+
+1. `B_SPLINE_SURFACE_WITH_KNOTS` STEP 读取 — 解析 2D 控制点网格 + 展开节点向量 → `Surface3::BSpline`；UV 网格三角化用于渲染
+2. `loft(profiles: &[Vec<DVec3>])` — 多截面放样；所有截面顶点数须相等；生成封闭 BRep 实体
+3. `sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3])` — 管道扫掠；基于 Frenet-like 帧变换 2D 截面到 3D，委托给 `loft`
+
+### Phase F — 倒角与圆角 ✅ 已完成
+
+1. `chamfer_edge(brep, edge_idx, dist)` — 平面凸边倒角；`dist` 为每侧切入距离；返回新 BRep（6→9 面：6 原始 + 1 倒角四边形 + 2 封口三角形）
+2. `fillet_edge(brep, edge_idx, radius)` — 圆角；退刀距离 `setback = radius / tan(β/2)`（β 为外侧二面角）；圆角面为 `CylindricalSurface`；返回新 BRep
+3. 内部辅助：`find_adjacent_faces`（O(F) wire 扫描）、`setback_direction`（向内方向计算）、`copy_face_remapped`（顶点重映射重建）
+
+### Phase G — 拓扑查询与曲率分析 ✅ 已完成
+
+1. `edge_adjacent_faces(brep, edge_idx)` — 查找共享某条边的所有面（O(F) 扫描）
+2. `face_edges(brep, face_idx)` — 获取面外边框的所有边索引
+3. `vertex_adjacent_edges(brep, vertex_idx)` — 获取某顶点关联的所有边
+4. `face_count / edge_count / vertex_count` — 形状尺寸查询
+5. `principal_curvatures(surface, u, v)` — 主曲率 (k1, k2)：解析（Plane/Cylinder/Sphere/Cone/Torus）+ 数值有限差分（BSpline）
+6. `gaussian_curvature / mean_curvature` — 由主曲率导出
+
+### 下一阶段候选（Phase H）
 
 优先级较高的剩余工作：
-- **圆角** `fillet(brep, edge_idx, radius)` — P1，最常用的特征操作
-- **管道扫掠** `MakePipe` — P2
-- **B_SPLINE_SURFACE STEP 读** — P2
 - **per-edge 容差体系** — P2
 - **2D B-Spline / TrimmedCurve2d PCurve** — P2
+- **变截面扫掠** `MakePipeShell` — P2
+- **多边同时圆角（corner blending）** — P2
+- **曲线弧长** `GCPnts_AbscissaPoint` — P2
+- **惯性矩** `GProp_GProps::MatrixOfInertia` — P2
 
 ---
 
@@ -621,8 +642,11 @@ Phase A（几何基础）  ████████
 Phase B（建模 API）  ░░░░░░░░████████
 Phase C（算法）      ░░░░░░░░░░░░░░░░████████
 Phase D（交换/高级） ░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase E（扫掠/B面）  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase F（倒角/圆角） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase G（拓扑/曲率） ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-03，基于 RCAD commit `e253d6d`（Phase D 完成）。*
+*文档更新于 2026-04-03，基于 RCAD Phase G 完成。*

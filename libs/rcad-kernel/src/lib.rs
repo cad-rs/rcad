@@ -16,6 +16,16 @@ pub mod topology;
 /// Analogous to OCCT `GProp_GProps` + `BRepGProp`.
 pub mod properties;
 
+/// Topology query helpers: edge adjacency, vertex adjacency, shape counts.
+///
+/// Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
+pub mod topo_query;
+
+/// Differential geometry: principal curvatures, Gaussian curvature, mean curvature.
+///
+/// Analogous to OCCT `GeomLProp_SLProps`.
+pub mod curvature;
+
 /// Visual appearance: per-face/solid RGB color and basic material.
 ///
 /// Analogous to OCCT `XCAFDoc_ColorTool`.
@@ -26,6 +36,9 @@ pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, surface_area, volume};
+pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
+                     vertex_adjacent_edges, vertex_count};
+pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use appearance::{Color, FaceColor, StepColor};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's

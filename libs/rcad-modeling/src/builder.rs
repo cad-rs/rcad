@@ -8,12 +8,14 @@ mod curve;
 mod solid;
 mod surface;
 pub mod brep_builder;
+pub mod fillet;
 pub mod ops;
 
 pub use curve::*;
 pub use solid::*;
 pub use surface::*;
 pub use brep_builder::*;
+pub use fillet::{chamfer_edge, fillet_edge};
 pub use ops::*;
 
 use glam::DVec3;

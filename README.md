@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Four development phases (A–D) of the OCCT parity roadmap are complete.
+Seven development phases (A–G) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -28,6 +28,22 @@ Four development phases (A–D) of the OCCT parity roadmap are complete.
 - STEP assembly: multi-BRep with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy.
 - `B_SPLINE_CURVE_WITH_KNOTS` read/write in STEP.
 - HLR (Hidden-Line Removal): ray-triangle occlusion testing, SVG output via `hlr_to_svg`.
+
+**Phase E — Loft, pipe sweep, B-Spline surface STEP read**
+- `loft(profiles: &[Vec<DVec3>])` — connect N cross-section polygons into a closed solid.
+- `sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3])` — sweep 2D profile along 3D polyline via Frenet-like frames; delegates to `loft`.
+- `B_SPLINE_SURFACE_WITH_KNOTS` STEP read: parses 2D control-point grid + knot vectors into `Surface3::BSpline`; UV-grid triangulation for rendering.
+
+**Phase F — Chamfer and fillet**
+- `chamfer_edge(brep, edge_idx, dist)` — flat bevel on a convex BRep edge; replaces the edge with a planar quad face and two triangular closing faces.
+- `fillet_edge(brep, edge_idx, radius)` — cylindrical blend on a convex BRep edge; setback computed from the exterior dihedral angle (`radius / tan(β/2)`).
+- Both operations rebuild the full BRep (non-destructive), limited to manifold edges shared by exactly two planar faces.
+
+**Phase G — Topology query API and curvature analysis**
+- `edge_adjacent_faces(brep, edge_idx)` / `face_edges(brep, face_idx)` / `vertex_adjacent_edges(brep, vertex_idx)` — public topology traversal (analogous to OCCT `TopExp_Explorer`).
+- `face_count` / `edge_count` / `vertex_count` — shape size queries.
+- `principal_curvatures(surface, u, v)` → `(k1, k2)` — analytic for Plane/Cylinder/Sphere/Cone/Torus; numerical finite-difference for BSpline.
+- `gaussian_curvature` / `mean_curvature` — derived from principal curvatures (analogous to OCCT `GeomLProp_SLProps`).
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.

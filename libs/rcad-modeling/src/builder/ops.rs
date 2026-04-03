@@ -2,7 +2,7 @@
 //!
 //! Corresponds to OCCT `BRepPrimAPI_MakePrism` and `BRepPrimAPI_MakeRevol`.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Line3, Plane, Surface3};
 use rcad_kernel::topology::{Vertex, WireEdge};
 use rcad_kernel::BRep;
@@ -363,6 +363,220 @@ pub fn revolve(
     }
 
     Ok(result)
+}
+
+// ── Loft (multi-profile) ──────────────────────────────────────────────────────
+
+/// Connect N cross-section profiles with ruled lateral faces plus planar caps.
+///
+/// All profiles must have the **same** vertex count (≥ 3).
+/// Each profile is a list of 3D positions in order (the polygon vertices).
+///
+/// Returns a closed BRep Solid.
+///
+/// # Errors
+/// - `BuildError::DegenerateGeometry` if fewer than 2 profiles, or vertex counts differ, or fewer than 3 vertices per profile.
+pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
+    if profiles.len() < 2 {
+        return Err(BuildError::DegenerateGeometry("loft requires at least 2 profiles"));
+    }
+    let n = profiles[0].len();
+    if n < 3 {
+        return Err(BuildError::DegenerateGeometry("loft profiles must have at least 3 vertices"));
+    }
+    for (i, p) in profiles.iter().enumerate() {
+        if p.len() != n {
+            return Err(BuildError::DegenerateGeometry(
+                "all loft profiles must have the same vertex count",
+            ));
+        }
+        if p.len() < 3 {
+            return Err(BuildError::DegenerateGeometry("loft profile has fewer than 3 vertices"));
+        }
+        let _ = i;
+    }
+
+    let s = profiles.len(); // number of sections
+
+    let mut result = BRep {
+        vertices: Vec::new(),
+        edges: Vec::new(),
+        solids: Vec::new(),
+        geom: rcad_kernel::GeomStore::default(),
+    };
+
+    // Add all vertices; vi[section][vertex]
+    let vi: Vec<Vec<usize>> = profiles
+        .iter()
+        .map(|prof| {
+            prof.iter()
+                .map(|&p| {
+                    let idx = result.vertices.len();
+                    result.vertices.push(Vertex { point: p });
+                    idx
+                })
+                .collect()
+        })
+        .collect();
+
+    // Bottom cap (profile[0]) — normal pointing away from profile[1]
+    {
+        let mut wire_edges = Vec::new();
+        let pts = &profiles[0];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = pts[i];
+            let b = pts[j];
+            let d = (b - a).normalize_or_zero();
+            let len = (b - a).length();
+            let eidx = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: a, direction: d }),
+                0.0, len, vi[0][i], vi[0][j],
+            )?;
+            wire_edges.push(WireEdge { idx: eidx, forward: true });
+        }
+        // Normal pointing away from next section
+        let centroid_0: DVec3 = pts.iter().sum::<DVec3>() / n as f64;
+        let centroid_1: DVec3 = profiles[1].iter().sum::<DVec3>() / n as f64;
+        let bot_normal = (centroid_0 - centroid_1).normalize_or_zero();
+        let surface = Surface3::Plane(Plane { origin: pts[0], normal: bot_normal });
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?;
+    }
+
+    // Top cap (profile[last]) — normal pointing away from profile[last-1]
+    {
+        let mut wire_edges = Vec::new();
+        let pts = &profiles[s - 1];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = pts[i];
+            let b = pts[j];
+            let d = (b - a).normalize_or_zero();
+            let len = (b - a).length();
+            let eidx = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: a, direction: d }),
+                0.0, len, vi[s - 1][i], vi[s - 1][j],
+            )?;
+            wire_edges.push(WireEdge { idx: eidx, forward: true });
+        }
+        let centroid_prev: DVec3 = profiles[s - 2].iter().sum::<DVec3>() / n as f64;
+        let centroid_top: DVec3 = pts.iter().sum::<DVec3>() / n as f64;
+        let top_normal = (centroid_top - centroid_prev).normalize_or_zero();
+        let surface = Surface3::Plane(Plane { origin: pts[0], normal: top_normal });
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?;
+    }
+
+    // Lateral quad faces between consecutive sections
+    for sec in 0..s - 1 {
+        let pts_bot = &profiles[sec];
+        let pts_top = &profiles[sec + 1];
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            // Quad: bot[i] → bot[j] → top[j] → top[i]
+            let a = pts_bot[i];
+            let b = pts_bot[j];
+            let c = pts_top[j];
+            let d = pts_top[i];
+            let lat_normal = quad_normal(a, b, c);
+
+            let e_bot = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: a, direction: (b - a).normalize_or_zero() }),
+                0.0, (b - a).length(), vi[sec][i], vi[sec][j],
+            )?;
+            let e_right = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: b, direction: (c - b).normalize_or_zero() }),
+                0.0, (c - b).length(), vi[sec][j], vi[sec + 1][j],
+            )?;
+            let e_top = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: c, direction: (d - c).normalize_or_zero() }),
+                0.0, (d - c).length(), vi[sec + 1][j], vi[sec + 1][i],
+            )?;
+            let e_left = make_edge(
+                &mut result,
+                rcad_kernel::geom::Curve3::Line(Line3 { origin: d, direction: (a - d).normalize_or_zero() }),
+                0.0, (a - d).length(), vi[sec + 1][i], vi[sec][i],
+            )?;
+            let wire = make_wire(vec![
+                WireEdge { idx: e_bot,   forward: true },
+                WireEdge { idx: e_right, forward: true },
+                WireEdge { idx: e_top,   forward: true },
+                WireEdge { idx: e_left,  forward: true },
+            ]);
+            make_face(&mut result, Surface3::Plane(Plane { origin: a, normal: lat_normal }), wire, vec![])?;
+        }
+    }
+
+    Ok(result)
+}
+
+// ── Pipe Sweep ────────────────────────────────────────────────────────────────
+
+/// Sweep a 2D profile polygon along a 3D spine polyline.
+///
+/// `profile_2d` is a polygon in the XY plane (local cross-section).
+/// `spine` is the path (≥ 2 points) in 3D world space.
+///
+/// At each spine station a Frenet-like frame (tangent/right/up) is computed and
+/// the 2D profile is transformed into the corresponding 3D cross-section.
+/// The resulting cross-section polygons are connected via `loft`.
+///
+/// # Errors
+/// - `BuildError::DegenerateGeometry` if fewer than 2 spine points or fewer than 3 profile points.
+/// - `BuildError::ZeroVector` if a spine segment has zero length.
+pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildError> {
+    if profile_2d.len() < 3 {
+        return Err(BuildError::DegenerateGeometry("sweep_pipe profile must have at least 3 vertices"));
+    }
+    if spine.len() < 2 {
+        return Err(BuildError::DegenerateGeometry("sweep_pipe spine must have at least 2 points"));
+    }
+
+    let ns = spine.len();
+
+    // Compute tangent at each spine station (forward / central / backward difference)
+    let tangents: Vec<DVec3> = (0..ns)
+        .map(|i| {
+            if i == 0 {
+                (spine[1] - spine[0]).normalize_or_zero()
+            } else if i == ns - 1 {
+                (spine[ns - 1] - spine[ns - 2]).normalize_or_zero()
+            } else {
+                (spine[i + 1] - spine[i - 1]).normalize_or_zero()
+            }
+        })
+        .collect();
+
+    // Build 3D cross-sections
+    let world_up_primary = DVec3::Y;
+    let world_up_fallback = DVec3::Z;
+
+    let cross_sections: Vec<Vec<DVec3>> = tangents
+        .iter()
+        .enumerate()
+        .map(|(i, &tan)| {
+            // Right = tangent × world_up; fall back if nearly parallel
+            let right_raw = tan.cross(world_up_primary);
+            let right = if right_raw.length_squared() > 1e-8 {
+                right_raw.normalize()
+            } else {
+                tan.cross(world_up_fallback).normalize_or_zero()
+            };
+            let up = right.cross(tan).normalize_or_zero();
+
+            profile_2d
+                .iter()
+                .map(|p2| spine[i] + p2.x * right + p2.y * up)
+                .collect()
+        })
+        .collect();
+
+    loft(&cross_sections)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

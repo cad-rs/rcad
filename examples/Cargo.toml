@@ -46,3 +46,15 @@ path = "section_gallery.rs"
 [[example]]
 name = "phase_d_demo"
 path = "phase_d_demo.rs"
+
+[[example]]
+name = "phase_e_demo"
+path = "phase_e_demo.rs"
+
+[[example]]
+name = "phase_f_demo"
+path = "phase_f_demo.rs"
+
+[[example]]
+name = "phase_g_demo"
+path = "phase_g_demo.rs"
