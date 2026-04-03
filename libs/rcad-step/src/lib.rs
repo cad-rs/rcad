@@ -549,6 +549,14 @@ fn build_face(
     let mut face_vertex_indices: Vec<usize> = Vec::new();
     let mut sampled_loop_points: Vec<glam::DVec3> = Vec::new();
 
+    // Detect seam edges: an edge_curve that appears twice in the same face boundary
+    let mut edge_curve_count: HashMap<u64, usize> = HashMap::new();
+    for oriented_id in oriented_ids {
+        let (edge_curve_id, _) = *parsed.oriented_edges.get(oriented_id)?;
+        *edge_curve_count.entry(edge_curve_id).or_insert(0) += 1;
+    }
+    let has_seam = edge_curve_count.values().any(|&c| c >= 2);
+
     for oriented_id in oriented_ids {
         let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
         let (start_id, end_id, curve_ref) = *parsed.edge_curves.get(&edge_curve_id)?;
@@ -626,7 +634,7 @@ fn build_face(
     {
         triangulate_point_loop(vertices, &sampled_loop_points)
     } else if let Some(surface_ref) = bound_ids.surface {
-        triangulate_surface_fallback(parsed, surface_ref, vertices, &face_vertex_indices)
+        triangulate_surface_fallback(parsed, surface_ref, vertices, &face_vertex_indices, has_seam)
     } else {
         Vec::new()
     };
@@ -840,50 +848,62 @@ fn triangulate_spherical_surface(
     parsed: &ParsedStep,
     surface_ref: u64,
     vertices: &mut Vec<Vertex>,
+    face_vertex_indices: &[usize],
+    has_seam: bool,
 ) -> Vec<[usize; 3]> {
     let Some((placement_ref, radius)) = parsed.spherical_surfaces.get(&surface_ref) else {
         return Vec::new();
     };
-    let Some((center, _axis)) = placement_from_ref(parsed, *placement_ref) else {
+    let Some((center, axis, ref_dir)) = placement_frame_from_ref(parsed, *placement_ref) else {
         return Vec::new();
     };
     if !radius.is_finite() || *radius <= 0.0 {
         return Vec::new();
     }
 
+    let u = ref_dir;
+    let v = axis.cross(u).normalize_or_zero();
+    let w = axis.normalize_or_zero();
+
+    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, center, w, u, v, has_seam);
+    let (phi_min, phi_max) = infer_polar_range(vertices, face_vertex_indices, center, w, *radius, has_seam);
+
     let u_segments = 32usize;
     let v_segments = 16usize;
     let stride = u_segments + 1;
     let base = vertices.len();
 
-    for v in 0..=v_segments {
-        let phi = std::f64::consts::PI * v as f64 / v_segments as f64;
+    let at_north_pole = phi_min.abs() < 1e-6;
+    let at_south_pole = (phi_max - std::f64::consts::PI).abs() < 1e-6;
+
+    for vi in 0..=v_segments {
+        let phi = phi_min + (phi_max - phi_min) * vi as f64 / v_segments as f64;
         let sin_phi = phi.sin();
         let cos_phi = phi.cos();
 
-        for u in 0..=u_segments {
-            let theta = 2.0 * std::f64::consts::PI * u as f64 / u_segments as f64;
-            let point = glam::DVec3::new(
-                center.x + radius * theta.cos() * sin_phi,
-                center.y + radius * theta.sin() * sin_phi,
-                center.z + radius * cos_phi,
-            );
+        for ui in 0..=u_segments {
+            let theta = theta_min + (theta_max - theta_min) * ui as f64 / u_segments as f64;
+            let point = center
+                + w * (radius * cos_phi)
+                + u * (radius * theta.cos() * sin_phi)
+                + v * (radius * theta.sin() * sin_phi);
             vertices.push(Vertex { point });
         }
     }
 
     let mut triangles = Vec::with_capacity(u_segments * v_segments * 2);
-    for v in 0..v_segments {
-        for u in 0..u_segments {
-            let i0 = base + v * stride + u;
+    for vi in 0..v_segments {
+        for ui in 0..u_segments {
+            let i0 = base + vi * stride + ui;
             let i1 = i0 + 1;
             let i2 = i0 + stride;
             let i3 = i2 + 1;
 
-            if v != 0 {
+            // Skip degenerate triangles at poles
+            if !(at_north_pole && vi == 0) {
                 triangles.push([i0, i2, i1]);
             }
-            if v != v_segments - 1 {
+            if !(at_south_pole && vi == v_segments - 1) {
                 triangles.push([i1, i2, i3]);
             }
         }
@@ -897,18 +917,19 @@ fn triangulate_surface_fallback(
     surface_ref: u64,
     vertices: &mut Vec<Vertex>,
     face_vertex_indices: &[usize],
+    has_seam: bool,
 ) -> Vec<[usize; 3]> {
     if parsed.spherical_surfaces.contains_key(&surface_ref) {
-        return triangulate_spherical_surface(parsed, surface_ref, vertices);
+        return triangulate_spherical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
     }
     if parsed.cylindrical_surfaces.contains_key(&surface_ref) {
-        return triangulate_cylindrical_surface(parsed, surface_ref, vertices, face_vertex_indices);
+        return triangulate_cylindrical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
     }
     if parsed.conical_surfaces.contains_key(&surface_ref) {
-        return triangulate_conical_surface(parsed, surface_ref, vertices, face_vertex_indices);
+        return triangulate_conical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
     }
     if parsed.toroidal_surfaces.contains_key(&surface_ref) {
-        return triangulate_toroidal_surface(parsed, surface_ref, vertices);
+        return triangulate_toroidal_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
     }
     Vec::new()
 }
@@ -918,19 +939,23 @@ fn triangulate_cylindrical_surface(
     surface_ref: u64,
     vertices: &mut Vec<Vertex>,
     face_vertex_indices: &[usize],
+    has_seam: bool,
 ) -> Vec<[usize; 3]> {
     let Some((placement_ref, radius)) = parsed.cylindrical_surfaces.get(&surface_ref) else {
         return Vec::new();
     };
-    let Some((origin, axis)) = placement_from_ref(parsed, *placement_ref) else {
+    let Some((origin, axis, ref_dir)) = placement_frame_from_ref(parsed, *placement_ref) else {
         return Vec::new();
     };
     if !radius.is_finite() || *radius <= 0.0 {
         return Vec::new();
     }
 
-    let (u, v, w) = basis_from_axis(axis);
+    let u = ref_dir;
+    let v = axis.cross(u).normalize_or_zero();
+    let w = axis.normalize_or_zero();
     let (t_min, t_max) = infer_axis_range(vertices, face_vertex_indices, origin, w, -*radius, *radius);
+    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
 
     let radial_segments = 40usize;
     let height_segments = 12usize;
@@ -941,7 +966,7 @@ fn triangulate_cylindrical_surface(
         let tj = t_min + (t_max - t_min) * (j as f64 / height_segments as f64);
         let center = origin + w * tj;
         for i in 0..=radial_segments {
-            let theta = 2.0 * std::f64::consts::PI * i as f64 / radial_segments as f64;
+            let theta = theta_min + (theta_max - theta_min) * (i as f64 / radial_segments as f64);
             let ring_dir = u * theta.cos() + v * theta.sin();
             vertices.push(Vertex {
                 point: center + ring_dir * *radius,
@@ -957,12 +982,13 @@ fn triangulate_conical_surface(
     surface_ref: u64,
     vertices: &mut Vec<Vertex>,
     face_vertex_indices: &[usize],
+    has_seam: bool,
 ) -> Vec<[usize; 3]> {
     let Some((placement_ref, ref_radius, half_angle_rad)) = parsed.conical_surfaces.get(&surface_ref)
     else {
         return Vec::new();
     };
-    let Some((origin, axis)) = placement_from_ref(parsed, *placement_ref) else {
+    let Some((origin, axis, ref_dir)) = placement_frame_from_ref(parsed, *placement_ref) else {
         return Vec::new();
     };
     if !ref_radius.is_finite() || !half_angle_rad.is_finite() {
@@ -974,9 +1000,12 @@ fn triangulate_conical_surface(
         return Vec::new();
     }
 
-    let (u, v, w) = basis_from_axis(axis);
+    let u = ref_dir;
+    let v = axis.cross(u).normalize_or_zero();
+    let w = axis.normalize_or_zero();
     let default_h = ref_radius.abs().max(0.1) / tan_a.abs();
     let (t_min, t_max) = infer_axis_range(vertices, face_vertex_indices, origin, w, 0.0, default_h);
+    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
 
     let radial_segments = 40usize;
     let height_segments = 12usize;
@@ -988,7 +1017,7 @@ fn triangulate_conical_surface(
         let center = origin + w * tj;
         let rj = (ref_radius + tj * tan_a).abs().max(1e-5);
         for i in 0..=radial_segments {
-            let theta = 2.0 * std::f64::consts::PI * i as f64 / radial_segments as f64;
+            let theta = theta_min + (theta_max - theta_min) * (i as f64 / radial_segments as f64);
             let ring_dir = u * theta.cos() + v * theta.sin();
             vertices.push(Vertex {
                 point: center + ring_dir * rj,
@@ -1003,12 +1032,14 @@ fn triangulate_toroidal_surface(
     parsed: &ParsedStep,
     surface_ref: u64,
     vertices: &mut Vec<Vertex>,
+    face_vertex_indices: &[usize],
+    has_seam: bool,
 ) -> Vec<[usize; 3]> {
     let Some((placement_ref, major_radius, minor_radius)) = parsed.toroidal_surfaces.get(&surface_ref)
     else {
         return Vec::new();
     };
-    let Some((center, axis)) = placement_from_ref(parsed, *placement_ref) else {
+    let Some((center, axis, ref_dir)) = placement_frame_from_ref(parsed, *placement_ref) else {
         return Vec::new();
     };
     if !major_radius.is_finite()
@@ -1019,18 +1050,30 @@ fn triangulate_toroidal_surface(
         return Vec::new();
     }
 
-    let (u, v, w) = basis_from_axis(axis);
+    let u_dir = ref_dir;
+    let v_dir = axis.cross(u_dir).normalize_or_zero();
+    let w = axis.normalize_or_zero();
+
+    // Infer major angle (theta) range from boundary vertices
+    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, center, w, u_dir, v_dir, has_seam);
+
+    // Infer minor angle (phi) range: project boundary vertices into the minor circle plane
+    let (phi_min, phi_max) = infer_torus_minor_range(
+        vertices, face_vertex_indices, center, w, u_dir, v_dir,
+        *major_radius, has_seam,
+    );
+
     let major_segments = 48usize;
     let minor_segments = 24usize;
     let stride = minor_segments + 1;
     let base = vertices.len();
 
     for i in 0..=major_segments {
-        let theta = 2.0 * std::f64::consts::PI * i as f64 / major_segments as f64;
-        let ring_dir = u * theta.cos() + v * theta.sin();
+        let theta = theta_min + (theta_max - theta_min) * i as f64 / major_segments as f64;
+        let ring_dir = u_dir * theta.cos() + v_dir * theta.sin();
         let ring_center = center + ring_dir * *major_radius;
         for j in 0..=minor_segments {
-            let phi = 2.0 * std::f64::consts::PI * j as f64 / minor_segments as f64;
+            let phi = phi_min + (phi_max - phi_min) * j as f64 / minor_segments as f64;
             let minor_dir = ring_dir * phi.cos() + w * phi.sin();
             vertices.push(Vertex {
                 point: ring_center + minor_dir * *minor_radius,
@@ -1039,6 +1082,164 @@ fn triangulate_toroidal_surface(
     }
 
     triangulate_grid(base, major_segments, minor_segments, stride)
+}
+
+/// Infer the angular (theta) range of boundary vertices projected onto a
+/// surface local frame (origin, u_dir, v_dir, axis).
+/// Returns (theta_min, theta_max) in radians.
+/// If `has_seam` is true, the face wraps the full period → returns (0, 2π).
+fn infer_angular_range(
+    vertices: &[Vertex],
+    face_vertex_indices: &[usize],
+    origin: glam::DVec3,
+    axis: glam::DVec3,
+    u_dir: glam::DVec3,
+    v_dir: glam::DVec3,
+    has_seam: bool,
+) -> (f64, f64) {
+    use std::f64::consts::TAU;
+    if has_seam {
+        return (0.0, TAU);
+    }
+
+    let mut angles: Vec<f64> = Vec::new();
+    for &vidx in face_vertex_indices {
+        if let Some(v) = vertices.get(vidx) {
+            let d = v.point - origin;
+            let proj = d - axis * d.dot(axis);
+            let a = proj.dot(v_dir).atan2(proj.dot(u_dir));
+            angles.push(a);
+        }
+    }
+
+    if angles.is_empty() {
+        return (0.0, TAU);
+    }
+
+    // Sort angles and find the largest gap; the face covers the complement.
+    angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    angles.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+
+    if angles.len() < 2 {
+        return (0.0, TAU);
+    }
+
+    let mut max_gap = 0.0f64;
+    let mut gap_end = 0usize;
+    for i in 1..angles.len() {
+        let gap = angles[i] - angles[i - 1];
+        if gap > max_gap {
+            max_gap = gap;
+            gap_end = i;
+        }
+    }
+    // Wrap-around gap
+    let wrap_gap = (angles[0] + TAU) - angles[angles.len() - 1];
+    if wrap_gap > max_gap {
+        // Face goes from angles[0] to angles[last]
+        return (angles[0], angles[angles.len() - 1]);
+    }
+
+    // Face goes from angles[gap_end] around to angles[gap_end-1]
+    let theta_min = angles[gap_end];
+    let theta_max = angles[gap_end - 1] + TAU;
+    (theta_min, theta_max)
+}
+
+/// Infer polar (phi) range for spherical surfaces from boundary vertices.
+/// Returns (phi_min, phi_max) in [0, π] (north-pole to south-pole).
+fn infer_polar_range(
+    vertices: &[Vertex],
+    face_vertex_indices: &[usize],
+    center: glam::DVec3,
+    axis: glam::DVec3,
+    radius: f64,
+    has_seam: bool,
+) -> (f64, f64) {
+    let _ = has_seam;
+    let mut phi_min = std::f64::consts::PI;
+    let mut phi_max = 0.0f64;
+
+    for &vidx in face_vertex_indices {
+        if let Some(v) = vertices.get(vidx) {
+            let d = (v.point - center).normalize_or_zero();
+            let cos_phi = d.dot(axis).clamp(-1.0, 1.0);
+            let phi = cos_phi.acos();
+            phi_min = phi_min.min(phi);
+            phi_max = phi_max.max(phi);
+        }
+    }
+
+    let _ = radius;
+    if !phi_min.is_finite() || !phi_max.is_finite() || (phi_max - phi_min).abs() < 1e-8 {
+        (0.0, std::f64::consts::PI)
+    } else {
+        (phi_min, phi_max)
+    }
+}
+
+/// Infer the minor (phi) angular range for a torus face.
+/// Projects each boundary vertex into the local minor circle plane at the
+/// closest major angle, then computes the minor angle.
+fn infer_torus_minor_range(
+    vertices: &[Vertex],
+    face_vertex_indices: &[usize],
+    center: glam::DVec3,
+    axis: glam::DVec3,
+    u_dir: glam::DVec3,
+    v_dir: glam::DVec3,
+    major_radius: f64,
+    has_seam: bool,
+) -> (f64, f64) {
+    use std::f64::consts::TAU;
+    if has_seam {
+        return (0.0, TAU);
+    }
+
+    let mut angles: Vec<f64> = Vec::new();
+    for &vidx in face_vertex_indices {
+        if let Some(v) = vertices.get(vidx) {
+            let d = v.point - center;
+            // Project onto the equatorial plane to find the major angle
+            let proj_equat = d - axis * d.dot(axis);
+            let theta = proj_equat.dot(v_dir).atan2(proj_equat.dot(u_dir));
+            // Reconstruct ring_dir and ring_center for this major angle
+            let ring_dir = u_dir * theta.cos() + v_dir * theta.sin();
+            let ring_center = center + ring_dir * major_radius;
+            // Vector from ring center to the vertex, projected onto the minor circle plane
+            let to_v = v.point - ring_center;
+            let phi = to_v.dot(axis).atan2(to_v.dot(ring_dir));
+            angles.push(phi);
+        }
+    }
+
+    if angles.len() < 2 {
+        return (0.0, TAU);
+    }
+
+    angles.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    angles.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+
+    if angles.len() < 2 {
+        return (0.0, TAU);
+    }
+
+    let mut max_gap = 0.0f64;
+    let mut gap_end = 0usize;
+    for i in 1..angles.len() {
+        let gap = angles[i] - angles[i - 1];
+        if gap > max_gap {
+            max_gap = gap;
+            gap_end = i;
+        }
+    }
+    let wrap_gap = (angles[0] + TAU) - angles[angles.len() - 1];
+    if wrap_gap > max_gap {
+        return (angles[0], angles[angles.len() - 1]);
+    }
+    let phi_min = angles[gap_end];
+    let phi_max = angles[gap_end - 1] + TAU;
+    (phi_min, phi_max)
 }
 
 fn triangulate_grid(
@@ -1059,18 +1260,6 @@ fn triangulate_grid(
         }
     }
     triangles
-}
-
-fn basis_from_axis(axis: glam::DVec3) -> (glam::DVec3, glam::DVec3, glam::DVec3) {
-    let w = axis.normalize_or_zero();
-    let helper = if w.dot(glam::DVec3::Y).abs() < 0.9 {
-        glam::DVec3::Y
-    } else {
-        glam::DVec3::X
-    };
-    let u = w.cross(helper).normalize_or_zero();
-    let v = u.cross(w).normalize_or_zero();
-    (u, v, w)
 }
 
 fn infer_axis_range(
@@ -1369,18 +1558,20 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
     }
 
     if let Some((placement_ref, radius)) = parsed.spherical_surfaces.get(&surface_ref) {
-        let (center, _) = placement_from_ref(parsed, *placement_ref)?;
+        let (center, axis) = placement_from_ref(parsed, *placement_ref)?;
         return Some(Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
             center,
+            axis,
             radius: *radius,
         }));
     }
 
-    if let Some((placement_ref, _radius, half_angle_rad)) = parsed.conical_surfaces.get(&surface_ref) {
+    if let Some((placement_ref, ref_radius, half_angle_rad)) = parsed.conical_surfaces.get(&surface_ref) {
         let (apex, axis) = placement_from_ref(parsed, *placement_ref)?;
         return Some(Surface3::Cone(rcad_kernel::geom::ConicalSurface {
             apex,
             axis,
+            radius: *ref_radius,
             half_angle_rad: *half_angle_rad,
         }));
     }

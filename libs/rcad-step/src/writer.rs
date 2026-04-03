@@ -111,8 +111,29 @@ impl Part21Writer {
             solid_items.clear();
         }
 
+        // Collect edge indices that belong to face boundaries — these are
+        // already part of the solid/shell representation and must NOT be
+        // duplicated into the wireframe.
+        let mut face_edge_set: BTreeSet<usize> = BTreeSet::new();
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    face_edge_set.extend(face.outer_wire.edges.iter().copied());
+                    for inner in &face.inner_wires {
+                        face_edge_set.extend(inner.edges.iter().copied());
+                    }
+                }
+            }
+        }
+
+        // Only export standalone edges (1D geometry not belonging to any face)
+        // into the wireframe. When the user explicitly selected edges, include
+        // those regardless.
         let mut edge_items = Vec::new();
         for (edge_index, _edge) in brep.edges.iter().enumerate() {
+            if export_all && face_edge_set.contains(&edge_index) {
+                continue;
+            }
             if export_all || selected_edge_set.contains(&edge_index) {
                 edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
             }
@@ -134,7 +155,7 @@ impl Part21Writer {
         let product_shape = self.product_definition_shape("", "", definition);
 
         let length_unit = self.length_unit_meter();
-        let angle_unit = self.plane_angle_unit_radian();
+        let angle_unit = self.plane_angle_unit_degree();
         let solid_angle_unit = self.solid_angle_unit_steradian();
         let uncertainty = self.uncertainty_measure_with_unit(length_unit);
         let context = self.geometric_representation_context(
@@ -174,7 +195,7 @@ impl Part21Writer {
             }
         }
 
-        if !edge_items.is_empty() && (!export_all || solid_items.is_empty()) {
+        if !edge_items.is_empty() {
             let curve_set = self.geometric_curve_set("wireframe", &edge_items);
             let wire_rep = self.geometrically_bounded_wireframe_shape_representation(
                 "rcad_export",
@@ -189,9 +210,9 @@ impl Part21Writer {
     }
 
     fn write_face(&mut self, brep: &BRep, face: &Face, face_surface: Option<Surface3>) -> FaceExportResult {
-        if matches!(face_surface, Some(Surface3::Sphere(_)) | Some(Surface3::Cone(_)))
-            && is_degenerate_face_wire(brep, face)
-        {
+        // Only fall back to triangles when there is no analytic surface AND the
+        // wire is degenerate (cannot form a valid edge loop).
+        if face_surface.is_none() && is_degenerate_face_wire(brep, face) {
             return FaceExportResult {
                 face_ids: self.write_triangle_faces(brep, face),
                 used_triangle_fallback: true,
@@ -199,12 +220,24 @@ impl Part21Writer {
         }
 
         let oriented_edges = oriented_face_edges(brep, face);
+        if oriented_edges.is_empty() && face_surface.is_some() {
+            // Seam face with no usable edge loop — fall back to triangles.
+            return FaceExportResult {
+                face_ids: self.write_triangle_faces(brep, face),
+                used_triangle_fallback: true,
+            };
+        }
+
         let loop_points: Vec<glam::DVec3> = oriented_edges
             .iter()
             .filter_map(|edge| brep.vertices.get(edge.start).map(|v| v.point))
             .collect();
         let origin_point = loop_points.first().copied().unwrap_or(glam::DVec3::ZERO);
+
+        // For seam faces on closed surfaces, the loop points may be collinear,
+        // so compute_face_normal can fail. Use the surface's own axis instead.
         let normal = compute_face_normal(&loop_points)
+            .or_else(|| surface_normal(face_surface))
             .map(dvec3_to_array)
             .unwrap_or([0.0, 0.0, 1.0]);
 
@@ -214,9 +247,20 @@ impl Part21Writer {
         let fallback_placement = self.axis2_placement_3d("face_axis", origin, axis, ref_dir);
         let surface = self.write_surface(face_surface, fallback_placement);
 
+        // Detect seam edges: same edge_idx appearing multiple times
+        let seam_edge_indices = detect_seam_edge_indices(face);
+
         let mut oriented_ids = Vec::new();
-        for edge in oriented_edges {
-            let edge_curve = self.write_edge_curve_by_index(brep, edge.edge_idx);
+        for edge in &oriented_edges {
+            let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
+                // Seam edge: write with a reconstructed curve lying on the surface.
+                // Don't cache — the same topological edge gets two distinct STEP
+                // EDGE_CURVE entities (one per orientation) so OCCT can build the
+                // seam correctly.
+                self.write_seam_edge_curve(brep, edge.edge_idx, face_surface)
+            } else {
+                self.write_edge_curve_by_index(brep, edge.edge_idx)
+            };
             oriented_ids.push(self.oriented_edge("face_edge", edge_curve, edge.forward));
         }
 
@@ -277,6 +321,77 @@ impl Part21Writer {
         self.edge_curve("tri_edge", v0, v1, line, true)
     }
 
+    /// Write an EDGE_CURVE for a seam edge, synthesizing a proper 3D curve
+    /// that lies on the analytic surface.  This is needed because our BRep
+    /// may have lost the original curve (e.g. B-spline) during import.
+    ///
+    /// OCCT / FreeCAD refuse to import a face whose edge curve does not lie
+    /// on the face surface, so we reconstruct a geometrically valid curve:
+    ///   - Sphere: the seam is a great circle (meridian)
+    ///   - Cylinder / Cone: the seam is a line along the slant/axis
+    fn write_seam_edge_curve(
+        &mut self,
+        brep: &BRep,
+        edge_idx: usize,
+        face_surface: Option<Surface3>,
+    ) -> u64 {
+        let Some(edge) = brep.edges.get(edge_idx) else {
+            return self.write_edge_curve_by_index(brep, edge_idx);
+        };
+        let start_pt = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or(glam::DVec3::ZERO);
+        let end_pt = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or(glam::DVec3::ZERO);
+
+        let v0 = self.vertex_point_by_index(brep, edge.start);
+        let v1 = self.vertex_point_by_index(brep, edge.end);
+
+        let basis_curve = match face_surface {
+            Some(Surface3::Sphere(sphere)) => {
+                // The seam of a sphere is a great circle (meridian).
+                // Its centre is the sphere centre, radius = sphere.radius,
+                // and its normal is perpendicular to the plane containing
+                // the two endpoints and the sphere centre.
+                let a = (start_pt - sphere.center).normalize_or_zero();
+                let b = (end_pt - sphere.center).normalize_or_zero();
+                let mut circle_normal = a.cross(b);
+                if circle_normal.length_squared() < 1e-12 {
+                    // start and end are antipodal — pick a perpendicular to the axis
+                    circle_normal = any_perpendicular_dvec3(sphere.axis);
+                }
+                let circle_normal = circle_normal.normalize_or_zero();
+                let placement = self.axis2_from_origin_axis("seam_axis", sphere.center, circle_normal);
+                self.circle("seam_circle", placement, sphere.radius.max(1e-9))
+            }
+            Some(Surface3::Cone(_cone)) => {
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                let delta = dvec3_to_array(end_pt - start_pt);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+            Some(Surface3::Cylinder(_)) => {
+                // Cylinder seam is a line along the axis.
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                let delta = dvec3_to_array(end_pt - start_pt);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+            _ => {
+                // Fallback: straight line.
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                let delta = dvec3_to_array(end_pt - start_pt);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+        };
+
+        self.edge_curve("seam_edge", v0, v1, basis_curve, true)
+    }
+
     fn write_surface(&mut self, face_surface: Option<Surface3>, fallback_placement: u64) -> u64 {
         match face_surface {
             Some(Surface3::Plane(plane)) => {
@@ -291,7 +406,7 @@ impl Part21Writer {
                 let placement = self.axis2_from_origin_axis(
                     "sphere_axis",
                     sphere.center,
-                    glam::DVec3::new(0.0, 0.0, 1.0),
+                    sphere.axis,
                 );
                 self.spherical_surface("face_sphere", placement, sphere.radius.max(1e-9))
             }
@@ -300,7 +415,7 @@ impl Part21Writer {
                 self.conical_surface(
                     "face_cone",
                     placement,
-                    0.0,
+                    cone.radius,
                     cone.half_angle_rad.to_degrees(),
                 )
             }
@@ -537,8 +652,19 @@ impl Part21Writer {
         self.push("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )".to_string())
     }
 
-    fn plane_angle_unit_radian(&mut self) -> u64 {
-        self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string())
+    fn plane_angle_unit_degree(&mut self) -> u64 {
+        let radian_unit =
+            self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string());
+        let measure = self.push(format!(
+            "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})",
+            radian_unit
+        ));
+        let dim_exp =
+            self.push("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
+        self.push(format!(
+            "( CONVERSION_BASED_UNIT('DEGREE',#{}) NAMED_UNIT(#{}) PLANE_ANGLE_UNIT() )",
+            measure, dim_exp
+        ))
     }
 
     fn solid_angle_unit_steradian(&mut self) -> u64 {
@@ -906,6 +1032,15 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 
+fn any_perpendicular_dvec3(v: glam::DVec3) -> glam::DVec3 {
+    let helper = if v.dot(glam::DVec3::Y).abs() < 0.9 {
+        glam::DVec3::Y
+    } else {
+        glam::DVec3::X
+    };
+    v.cross(helper).normalize_or_zero()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -981,15 +1116,105 @@ mod tests {
             },
         );
 
-        // Degenerate sphere/cone loops are exported via triangulated face fallback.
-        // So SPHERICAL_SURFACE / CONICAL_SURFACE may be absent in this specific asset,
-        // but the geometry is still preserved through tri faces.
-        assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
-        assert!(step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
-        assert!(step.contains("SPHERICAL_SURFACE") || step.contains("ADVANCED_FACE('tri_face'"));
+        // All analytic surfaces should now be exported properly as ADVANCED_FACE
+        // with their respective surface types, including seam faces on
+        // spheres and cones.
+        assert!(step.contains("SPHERICAL_SURFACE"));
         assert!(step.contains("CYLINDRICAL_SURFACE"));
         assert!(step.contains("TOROIDAL_SURFACE"));
-        assert!(step.contains("CONICAL_SURFACE") || step.contains("ADVANCED_FACE('tri_face'"));
+        assert!(step.contains("CONICAL_SURFACE"));
+
+        // Standalone 1D curves (GEOMETRIC_CURVE_SET) must also be exported
+        // alongside the solid geometry.
+        assert!(
+            step.contains("GEOMETRIC_CURVE_SET"),
+            "standalone wireframe edges should be exported"
+        );
+        assert!(
+            step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"),
+            "wireframe shape representation should be present"
+        );
+    }
+
+    #[test]
+    fn round_trips_sphere_and_cone_surfaces() {
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+
+        // Find the original cone half-angle and radius for comparison
+        let mut orig_cone_angle = 0.0f64;
+        let mut orig_cone_radius = 0.0f64;
+        for surface in &brep.geom.surfaces {
+            if let Surface3::Cone(c) = surface {
+                orig_cone_angle = c.half_angle_rad;
+                orig_cone_radius = c.radius;
+            }
+        }
+        assert!(orig_cone_angle > 0.0, "should find a cone in hfss.step");
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse");
+
+        // Count faces with each surface type and verify cone parameters survive round-trip
+        let mut sphere_count = 0usize;
+        let mut cone_count = 0usize;
+        for surface_binding in &reparsed.geom.face_surface {
+            if let Some(sid) = surface_binding {
+                match reparsed.geom.surfaces.get(*sid) {
+                    Some(Surface3::Sphere(_)) => sphere_count += 1,
+                    Some(Surface3::Cone(c)) => {
+                        cone_count += 1;
+                        assert!(
+                            (c.half_angle_rad - orig_cone_angle).abs() < 1e-6,
+                            "cone half-angle drifted: original={} reparsed={}",
+                            orig_cone_angle,
+                            c.half_angle_rad,
+                        );
+                        assert!(
+                            (c.radius - orig_cone_radius).abs() < 1e-6,
+                            "cone radius drifted: original={} reparsed={}",
+                            orig_cone_radius,
+                            c.radius,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(sphere_count >= 1, "expected at least 1 sphere face after round-trip, got {}", sphere_count);
+        assert!(cone_count >= 1, "expected at least 1 cone face after round-trip, got {}", cone_count);
+    }
+}
+
+/// Detect which edge indices appear more than once in the face's outer wire.
+/// These are seam edges on periodic surfaces.
+fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for &idx in &face.outer_wire.edges {
+        *counts.entry(idx).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|&(_, c)| c >= 2)
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+/// Extract a representative normal/axis from an analytic surface, used as a
+/// fallback when boundary loop points are collinear (e.g. seam faces).
+fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
+    match face_surface? {
+        Surface3::Plane(p) => Some(p.normal),
+        Surface3::Cylinder(c) => Some(c.axis),
+        Surface3::Sphere(s) => Some(s.axis),
+        Surface3::Cone(c) => Some(c.axis),
+        Surface3::Torus(t) => Some(t.axis),
     }
 }
 

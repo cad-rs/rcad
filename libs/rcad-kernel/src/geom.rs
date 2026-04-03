@@ -49,6 +49,7 @@ pub struct CylindricalSurface {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SphericalSurface {
     pub center: Point3,
+    pub axis: Vec3,
     pub radius: f64,
 }
 
@@ -56,6 +57,7 @@ pub struct SphericalSurface {
 pub struct ConicalSurface {
     pub apex: Point3,
     pub axis: Vec3,
+    pub radius: f64,
     pub half_angle_rad: f64,
 }
 
