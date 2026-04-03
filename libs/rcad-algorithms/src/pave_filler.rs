@@ -525,14 +525,16 @@ impl<'a> PaveFiller<'a> {
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) | Surface3::BSpline(_) => 1.0,
+            Surface3::Plane(_) | Surface3::BSpline(_)
+            | Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => 1.0,
         };
         let size2 = match s2 {
             Surface3::Sphere(s) => s.radius,
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) | Surface3::BSpline(_) => 1.0,
+            Surface3::Plane(_) | Surface3::BSpline(_)
+            | Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => 1.0,
         };
         size1.min(size2) * 0.1
     }

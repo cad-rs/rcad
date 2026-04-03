@@ -99,6 +99,27 @@ pub struct BSplineSurface {
     pub weights: Vec<Vec<f64>>,
 }
 
+/// Surface formed by translating a 3D profile curve along a direction.
+/// S(u,v) = profile.point_at(u) + v * direction
+/// Analogous to OCCT Geom_SurfaceOfLinearExtrusion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinearExtrusionSurface {
+    pub profile: Box<Curve3>,
+    /// Normalized extrusion direction.
+    pub direction: Vec3,
+}
+
+/// Surface formed by rotating a 3D profile curve around an axis.
+/// S(u,v) = rotate(profile.point_at(v), axis_origin, axis_dir, angle=u)
+/// Analogous to OCCT Geom_SurfaceOfRevolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevolutionSurface {
+    pub profile: Box<Curve3>,
+    pub axis_origin: Point3,
+    /// Normalized rotation axis direction.
+    pub axis_dir: Vec3,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Surface3 {
     Plane(Plane),
@@ -107,6 +128,8 @@ pub enum Surface3 {
     Cone(ConicalSurface),
     Torus(ToroidalSurface),
     BSpline(BSplineSurface),
+    LinearExtrusion(LinearExtrusionSurface),  // Phase K
+    Revolution(RevolutionSurface),            // Phase K
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -402,6 +425,50 @@ impl SurfaceEval for ToroidalSurface {
     }
 }
 
+impl SurfaceEval for LinearExtrusionSurface {
+    /// u = profile parameter, v = extrusion distance along direction.
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        self.profile.point_at(u) + v * self.direction
+    }
+    fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
+        let tangent = self.profile.tangent_at(u);
+        let n = tangent.cross(self.direction);
+        if n.length_squared() < 1e-20 {
+            return DVec3::Z;
+        }
+        n.normalize()
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        let [t1, t2] = self.profile.default_domain();
+        [t1, t2, f64::NEG_INFINITY, f64::INFINITY]
+    }
+}
+
+impl SurfaceEval for RevolutionSurface {
+    /// u = azimuth angle [0, 2π], v = profile parameter.
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let p = self.profile.point_at(v);
+        let d = p - self.axis_origin;
+        let d_par = self.axis_dir * d.dot(self.axis_dir);
+        let d_perp = d - d_par;
+        self.axis_origin + d_par + d_perp * u.cos() + self.axis_dir.cross(d_perp) * u.sin()
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-6;
+        let du = (self.point_at(u + eps, v) - self.point_at(u - eps, v)) / (2.0 * eps);
+        let dv = (self.point_at(u, v + eps) - self.point_at(u, v - eps)) / (2.0 * eps);
+        let n = du.cross(dv);
+        if n.length_squared() < 1e-20 {
+            return DVec3::Z;
+        }
+        n.normalize()
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        let [t1, t2] = self.profile.default_domain();
+        [0.0, 2.0 * PI, t1, t2]
+    }
+}
+
 impl SurfaceEval for Surface3 {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         match self {
@@ -411,6 +478,8 @@ impl SurfaceEval for Surface3 {
             Surface3::Cone(s) => s.point_at(u, v),
             Surface3::Torus(s) => s.point_at(u, v),
             Surface3::BSpline(s) => s.point_at(u, v),
+            Surface3::LinearExtrusion(s) => s.point_at(u, v),
+            Surface3::Revolution(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -421,6 +490,8 @@ impl SurfaceEval for Surface3 {
             Surface3::Cone(s) => s.normal_at(u, v),
             Surface3::Torus(s) => s.normal_at(u, v),
             Surface3::BSpline(s) => s.normal_at(u, v),
+            Surface3::LinearExtrusion(s) => s.normal_at(u, v),
+            Surface3::Revolution(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -431,6 +502,8 @@ impl SurfaceEval for Surface3 {
             Surface3::Cone(s) => s.default_domain(),
             Surface3::Torus(s) => s.default_domain(),
             Surface3::BSpline(s) => s.default_domain(),
+            Surface3::LinearExtrusion(s) => s.default_domain(),
+            Surface3::Revolution(s) => s.default_domain(),
         }
     }
 }

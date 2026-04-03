@@ -4,7 +4,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Ten development phases (A–J) of the OCCT parity roadmap are complete.
+Eleven development phases (A–K) of the OCCT parity roadmap are complete.
 
 **Phase A — Geometry/topology foundations**
 - `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
@@ -59,6 +59,12 @@ Ten development phases (A–J) of the OCCT parity roadmap are complete.
 - `GeomStore.curve2d_range: Vec<Option<[f64; 2]>>` — per-PCurve parameter trim range, parallel to `curve2ds`. Stores `[t1, t2]` from STEP `TRIMMED_CURVE`; `None` = use natural domain. Analogous to `edge_curve_range` for 3D curves.
 - STEP Curve2d export: `Curve2d::Ellipse` → `ELLIPSE` entity; `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points. Both use existing writer helpers.
 - STEP tolerance import: `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → fills `GeomStore.vertex_tolerance`, `edge_tolerance`, `face_tolerance` with the file-specified value; falls back to `CONFUSION` when absent.
+
+**Phase K — Swept surfaces, face domain, BSpline surface STEP export**
+- `LinearExtrusionSurface` — `S(u,v) = profile.point_at(u) + v·direction`; normal = `tangent(u) × direction`. Analogous to OCCT `Geom_SurfaceOfLinearExtrusion`. STEP import: `SURFACE_OF_LINEAR_EXTRUSION` → `Surface3::LinearExtrusion`.
+- `RevolutionSurface` — `S(u,v) = rotate(profile.point_at(v), axis_origin, axis_dir, angle=u)`; u ∈ [0, 2π], v from profile. Normal via finite-difference. Analogous to OCCT `Geom_SurfaceOfRevolution`.
+- `GeomStore.face_surface_range: Vec<Option<[f64; 4]>>` — per-face surface parameter domain override `[u1, u2, v1, v2]`, parallel to `face_surface`. `face_domain(brep, idx)` returns the override when set, else `SurfaceEval::default_domain()`. Analogous to OCCT `BRep_Face::UVBounds()`.
+- `BSplineSurface` STEP export: `write_surface` now emits `B_SPLINE_SURFACE_WITH_KNOTS` with full control-point grid and knot vectors (was falling back to PLANE). Control points transposed from kernel [u][v] to STEP [v][u] order.
 
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.

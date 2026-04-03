@@ -45,6 +45,7 @@ pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use geom::{BSplineCurve2, Ellipse2d};
+pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
 pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
@@ -54,7 +55,7 @@ pub use arc_length::arc_length;
 pub use appearance::{Color, FaceColor, StepColor};
 pub use tolerance::{
     ANGULAR, APPROXIMATION, CONFUSION,
-    edge_tolerance, face_tolerance, model_tolerance, vertex_tolerance,
+    edge_tolerance, face_domain, face_tolerance, model_tolerance, vertex_tolerance,
 };
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
@@ -112,6 +113,14 @@ pub struct GeomStore {
     /// Parallel to `GeomStore.curve2ds`. Analogous to `edge_curve_range` for 3D.
     #[serde(default)]
     pub curve2d_range: Vec<Option<[f64; 2]>>,
+    /// Per-face surface parameter domain override [u1, u2, v1, v2].
+    ///
+    /// When populated (e.g. from a STEP `RECTANGULAR_TRIMMED_SURFACE`), the face
+    /// is restricted to this subdomain of its underlying surface. `None` means
+    /// `SurfaceEval::default_domain()` is used. Parallel to `face_surface`.
+    /// Analogous to `edge_curve_range` for 3D curves.
+    #[serde(default)]
+    pub face_surface_range: Vec<Option<[f64; 4]>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +276,7 @@ impl BRep {
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
+            face_surface_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -428,6 +438,7 @@ impl BRep {
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
+            face_surface_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -546,6 +557,7 @@ impl BRep {
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
+            face_surface_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }
@@ -658,6 +670,7 @@ impl BRep {
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
             curve2d_range: Vec::new(),
+            face_surface_range: Vec::new(),
         };
 
         Self { vertices, edges, solids: vec![solid], geom }

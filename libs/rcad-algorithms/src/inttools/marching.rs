@@ -39,6 +39,7 @@ fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             // Approximate implicit via SurfaceEval normal_at (fallback)
             point.length() - 1.0
         }
+        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => point.length() - 1.0,
     }
 }
 
@@ -95,6 +96,8 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             // Use SurfaceEval normal_at at (0,0) as a rough approximation
             s.normal_at(0.0, 0.0)
         }
+        Surface3::LinearExtrusion(s) => s.normal_at(0.0, 0.0),
+        Surface3::Revolution(s) => s.normal_at(0.0, 0.0),
     }
 }
 

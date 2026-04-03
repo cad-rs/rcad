@@ -26,6 +26,7 @@
 //! ```
 
 use crate::BRep;
+use crate::geom::SurfaceEval;
 
 // ── Precision constants ───────────────────────────────────────────────────────
 
@@ -95,6 +96,23 @@ pub fn model_tolerance(brep: &BRep) -> f64 {
         .chain(brep.geom.face_tolerance.iter())
         .copied()
         .fold(CONFUSION, f64::max)
+}
+
+/// Effective surface parameter domain [u1, u2, v1, v2] for a face.
+///
+/// Uses `GeomStore.face_surface_range` if set; otherwise falls back to
+/// `SurfaceEval::default_domain()` of the underlying surface.
+/// Analogous to `BRep_Face::UVBounds()` in OCCT.
+pub fn face_domain(brep: &BRep, face_flat_idx: usize) -> [f64; 4] {
+    if let Some(Some(range)) = brep.geom.face_surface_range.get(face_flat_idx) {
+        return *range;
+    }
+    if let Some(Some(surf_idx)) = brep.geom.face_surface.get(face_flat_idx) {
+        if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
+            return surf.default_domain();
+        }
+    }
+    [0.0, 1.0, 0.0, 1.0]
 }
 
 // ── Tests ────────────────────────────────────────��────────────────────────────

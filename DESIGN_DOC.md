@@ -39,7 +39,7 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
 - Uses `glam::DVec3` for double-precision geometry coordinates.
 - Analytic geometry coverage (Phase A + B):
   - **Curves (`Curve3`)**: `Line3`, `Circle3`, `Ellipse3`, `BSplineCurve3` (de Boor evaluation)
-  - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor)
+  - **Surfaces (`Surface3`)**: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface` (tensor-product de Boor), `LinearExtrusionSurface` (Phase K), `RevolutionSurface` (Phase K)
   - **2D Curves (`Curve2d`)**: `Line2d`, `Circle2d`, `BSplineCurve2` (Phase I — de Boor in 2D, for PCurves on B-spline surfaces), `Ellipse2d` (Phase J — 2D ellipse in parameter space)
   - **Evaluation traits**: `CurveEval` (`point_at`, `tangent_at`, `default_domain`) and `SurfaceEval` (`point_at`, `normal_at`, `default_domain`) — implemented for all analytic types; `Curve2dEval` (`point_at`) for all 2D variants
   - Primitive solids: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
@@ -65,6 +65,7 @@ RCAD is a CAD/CAE engine. Its internal model of geometry must be **exact and ana
   - `face_surface: Vec<Option<usize>>` — surface index per face
   - `curve2ds: Vec<Curve2d>` — 2D curves in parameter space (`Line2d`, `Circle2d`, `BSplineCurve2`, `Ellipse2d`)
   - `curve2d_range: Vec<Option<[f64; 2]>>` — parameter trim range per PCurve (Phase J); `None` = natural domain; parallel to `curve2ds`
+  - `face_surface_range: Vec<Option<[f64; 4]>>` — per-face surface domain override `[u1, u2, v1, v2]` (Phase K); `None` = use `SurfaceEval::default_domain()`; parallel to `face_surface`
   - `edge_pcurves: Vec<Vec<PCurve>>` — per-edge PCurve bindings
   - `vertex_tolerance: Vec<f64>` — per-vertex tolerance (Phase I); falls back to `CONFUSION = 1e-7`
   - `edge_tolerance: Vec<f64>` — per-edge tolerance (Phase I); populated from STEP `UNCERTAINTY_MEASURE_WITH_UNIT` (Phase J)
@@ -199,6 +200,8 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - **Assembly export** (Phase D): `write_assembly(name, &[AssemblyComponent])` produces a multi-BRep STEP file with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy; each component can carry a translation and color.
 - **Curve2d export** (Phase J): `Curve2d::Ellipse` → `ELLIPSE` + `AXIS2_PLACEMENT_2D`; `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points.
 - **Tolerance import** (Phase J): `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → `GeomStore.{vertex,edge,face}_tolerance` filled with `val`; falls back to `CONFUSION = 1e-7` when absent.
+- **BSpline surface export** (Phase K): `Surface3::BSpline` → `B_SPLINE_SURFACE_WITH_KNOTS` with full control-point grid and knot vectors; kernel [u][v] grid transposed to STEP [v][u] order (was falling back to PLANE).
+- **Swept surface import** (Phase K): `SURFACE_OF_LINEAR_EXTRUSION` → `Surface3::LinearExtrusion`; `SURFACE_OF_REVOLUTION` → `Surface3::Revolution`. Profile curve resolved via existing `resolve_curve`; direction/axis resolved via `direction_from_ref` / `placement_from_ref`.
 - **Fallback behavior**: When shell/face topology is missing but points exist, importer falls back to a bbox solid for viewability.
 
 ## 5. Development Workflow

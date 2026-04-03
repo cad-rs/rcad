@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve, Surface3};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, LinearExtrusionSurface, PCurve, RevolutionSurface, Surface3};
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
@@ -61,6 +61,10 @@ struct ParsedStep {
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
     b_spline_surfaces: HashMap<u64, (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)>,
+    /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id → (profile_curve_ref, direction_ref)
+    linear_extrusions: HashMap<u64, (u64, u64)>,
+    /// SURFACE_OF_REVOLUTION: maps entity id → (profile_curve_ref, axis_placement_ref)
+    revolutions: HashMap<u64, (u64, u64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 }
@@ -101,6 +105,8 @@ impl ParsedStep {
             directions_2d: HashMap::new(),
             axis2_placements_2d: HashMap::new(),
             b_spline_surfaces: HashMap::new(),
+            linear_extrusions: HashMap::new(),
+            revolutions: HashMap::new(),
             uncertainty_value: None,
         }
     }
@@ -250,6 +256,20 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 "TOROIDAL_SURFACE" => {
                     if let Some((placement, major, minor)) = parse_toroidal_surface(args) {
                         parsed.toroidal_surfaces.insert(id, (placement, major, minor));
+                    }
+                }
+                "SURFACE_OF_LINEAR_EXTRUSION" => {
+                    // 'name', #profile_curve, #direction
+                    let refs = parse_ref_list(args);
+                    if refs.len() >= 2 {
+                        parsed.linear_extrusions.insert(id, (refs[0], refs[1]));
+                    }
+                }
+                "SURFACE_OF_REVOLUTION" => {
+                    // 'name', #profile_curve, #axis1_placement
+                    let refs = parse_ref_list(args);
+                    if refs.len() >= 2 {
+                        parsed.revolutions.insert(id, (refs[0], refs[1]));
                     }
                 }
                 "VERTEX_POINT" => {
@@ -1926,6 +1946,39 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
             control_points,
             weights,
         }));
+    }
+
+    // SURFACE_OF_LINEAR_EXTRUSION
+    if let Some((profile_ref, dir_ref)) = parsed.linear_extrusions.get(&surface_ref).copied() {
+        if let (Some(profile), Some(dir)) = (
+            resolve_curve(parsed, profile_ref),
+            direction_from_ref(parsed, dir_ref),
+        ) {
+            return Some(Surface3::LinearExtrusion(rcad_kernel::geom::LinearExtrusionSurface {
+                profile: Box::new(profile),
+                direction: dir.normalize_or_zero(),
+            }));
+        }
+    }
+
+    // SURFACE_OF_REVOLUTION
+    if let Some((profile_ref, axis_ref)) = parsed.revolutions.get(&surface_ref).copied() {
+        if let Some(profile) = resolve_curve(parsed, profile_ref) {
+            // Try AXIS2_PLACEMENT_3D first (common in practice), then fall back to a direction ref
+            let axis_result = placement_from_ref(parsed, axis_ref)
+                .or_else(|| {
+                    // Treat as bare direction ref at origin
+                    direction_from_ref(parsed, axis_ref)
+                        .map(|d| (glam::DVec3::ZERO, d))
+                });
+            if let Some((axis_origin, axis_dir)) = axis_result {
+                return Some(Surface3::Revolution(rcad_kernel::geom::RevolutionSurface {
+                    profile: Box::new(profile),
+                    axis_origin,
+                    axis_dir: axis_dir.normalize_or_zero(),
+                }));
+            }
+        }
     }
 
     None

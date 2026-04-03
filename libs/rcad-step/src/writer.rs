@@ -471,11 +471,73 @@ impl Part21Writer {
                 )
             }
             None => self.plane("face_plane", fallback_placement),
-            Some(Surface3::BSpline(_)) => {
-                // BSpline surface: fall back to plane for now
+            Some(Surface3::BSpline(bs)) => self.write_bspline_surface(&bs.clone()),
+            Some(Surface3::LinearExtrusion(_)) | Some(Surface3::Revolution(_)) => {
+                // Swept surfaces: fall back to plane (no direct STEP swept-surface writer)
                 self.plane("face_plane", fallback_placement)
             }
         }
+    }
+
+    fn write_bspline_surface(&mut self, bs: &rcad_kernel::geom::BSplineSurface) -> u64 {
+        let n_u = bs.control_points.len();
+        let n_v = bs.control_points.first().map(|r| r.len()).unwrap_or(0);
+        if n_u == 0 || n_v == 0 {
+            let origin = self.cartesian_point("bs_origin", [0.0, 0.0, 0.0]);
+            let ax = self.direction("bs_norm", [0.0, 0.0, 1.0]);
+            let rd = self.direction("bs_ref", [1.0, 0.0, 0.0]);
+            let pl = self.axis2_placement_3d("bs_pl", origin, ax, rd);
+            return self.plane("bs_fallback", pl);
+        }
+        // Build cp_grid[v][u] for STEP (STEP stores [v][u], we store [u][v])
+        let cp_grid: Vec<Vec<u64>> = (0..n_v)
+            .map(|vi| {
+                (0..n_u)
+                    .map(|ui| self.cartesian_point("bs_cp", dvec3_to_array(bs.control_points[ui][vi])))
+                    .collect()
+            })
+            .collect();
+        let (mults_u, knots_u) = compress_knot_vector(&bs.knots_u);
+        let (mults_v, knots_v) = compress_knot_vector(&bs.knots_v);
+        self.b_spline_surface_with_knots(
+            "bspline_surf",
+            bs.degree_u,
+            bs.degree_v,
+            &cp_grid,
+            &mults_u,
+            &knots_u,
+            &mults_v,
+            &knots_v,
+        )
+    }
+
+    fn b_spline_surface_with_knots(
+        &mut self,
+        name: &str,
+        degree_u: usize,
+        degree_v: usize,
+        cp_grid: &[Vec<u64>],
+        mults_u: &[usize],
+        knots_u: &[f64],
+        mults_v: &[usize],
+        knots_v: &[f64],
+    ) -> u64 {
+        let rows: Vec<String> = cp_grid
+            .iter()
+            .map(|row| {
+                let refs = row.iter().map(|&r| format!("#{}", r)).collect::<Vec<_>>().join(",");
+                format!("({})", refs)
+            })
+            .collect();
+        let cp_str = format!("({})", rows.join(","));
+        let mu_str: String = format!("({})", mults_u.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(","));
+        let mv_str: String = format!("({})", mults_v.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(","));
+        let ku_str: String = format!("({})", knots_u.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(","));
+        let kv_str: String = format!("({})", knots_v.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(","));
+        self.push(format!(
+            "B_SPLINE_SURFACE_WITH_KNOTS('{}',{},{},{},.UNSPECIFIED.,.F.,.F.,.F.,{},{},{},{},.UNSPECIFIED.)",
+            name, degree_u, degree_v, cp_str, mu_str, mv_str, ku_str, kv_str
+        ))
     }
 
     fn axis2_from_origin_axis(
@@ -1547,6 +1609,7 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Cone(c) => Some(c.axis),
         Surface3::Torus(t) => Some(t.axis),
         Surface3::BSpline(_) => None,
+        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => None,
     }
 }
 
