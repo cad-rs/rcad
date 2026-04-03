@@ -1,0 +1,24 @@
+[package]
+name = "rcad-examples"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rcad-kernel = { path = "../libs/rcad-kernel" }
+rcad-modeling = { path = "../libs/rcad-modeling" }
+rcad-algorithms = { path = "../libs/rcad-algorithms" }
+rcad-step = { path = "../libs/rcad-step" }
+rcad-scene = { path = "../libs/rcad-scene" }
+glam = { workspace = true }
+
+[[example]]
+name = "primitives"
+path = "primitives.rs"
+
+[[example]]
+name = "boolean_ops"
+path = "boolean_ops.rs"
+
+[[example]]
+name = "mechanical_part"
+path = "mechanical_part.rs"

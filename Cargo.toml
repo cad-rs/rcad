@@ -9,6 +9,7 @@ members = [
     "libs/rcad-scene",
     "apps/creator-egui",
     "apps/creator-iced",
+    "examples",
 ]
 
 [workspace.dependencies]
