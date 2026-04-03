@@ -11,10 +11,16 @@ pub mod geom;
 /// This module describes *how things are connected*.
 pub mod topology;
 
+/// Shape properties: surface area, volume, centroid.
+///
+/// Analogous to OCCT `GProp_GProps` + `BRepGProp`.
+pub mod properties;
+
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+pub use properties::{centroid, surface_area, volume};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
@@ -123,7 +129,7 @@ impl BRep {
             // Top    (y=h, normal +Y)
             Face { outer_wire: Wire { edges: vec![WireEdge::rev(2),WireEdge::fwd(10),WireEdge::fwd(6),WireEdge::rev(11)] }, inner_wires: vec![], normal: DVec3::new(0.0, 1.0, 0.0), triangles: vec![[3,2,6],[3,6,7]] },
             // Left   (x=0, normal -X)
-            Face { outer_wire: Wire { edges: vec![WireEdge::rev(3),WireEdge::fwd(11),WireEdge::rev(7),WireEdge::rev(8)] }, inner_wires: vec![], normal: DVec3::new(-1.0,0.0, 0.0), triangles: vec![[0,3,7],[0,7,4]] },
+            Face { outer_wire: Wire { edges: vec![WireEdge::rev(3),WireEdge::fwd(11),WireEdge::fwd(7),WireEdge::rev(8)] }, inner_wires: vec![], normal: DVec3::new(-1.0,0.0, 0.0), triangles: vec![[0,3,7],[0,7,4]] },
             // Right  (x=w, normal +X)
             Face { outer_wire: Wire { edges: vec![WireEdge::fwd(1),WireEdge::fwd(10),WireEdge::rev(5),WireEdge::rev(9)] }, inner_wires: vec![], normal: DVec3::new( 1.0,0.0, 0.0), triangles: vec![[1,2,6],[1,6,5]] },
         ];

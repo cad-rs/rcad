@@ -30,3 +30,15 @@ path = "sweep_ops.rs"
 [[example]]
 name = "brep_builder_demo"
 path = "brep_builder_demo.rs"
+
+[[example]]
+name = "phase_c_demo"
+path = "phase_c_demo.rs"
+
+[[example]]
+name = "properties_gallery"
+path = "properties_gallery.rs"
+
+[[example]]
+name = "section_gallery"
+path = "section_gallery.rs"

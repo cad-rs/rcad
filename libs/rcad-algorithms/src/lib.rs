@@ -1,15 +1,19 @@
 pub mod bopds;
+pub mod brep_check;
 pub mod builder;
 pub mod classify;
 pub mod geom_populate;
 pub mod inttools;
 pub mod pave_filler;
+pub mod section;
 pub mod tolerance;
 pub mod triangulate;
 
 use rcad_kernel::BRep;
 
+pub use brep_check::{check, CheckIssue, CheckResult};
 pub use builder::{BooleanError, BooleanOpType};
+pub use section::{section, section_polylines};
 
 /// Perform a boolean operation on two BReps.
 ///
