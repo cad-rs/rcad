@@ -6,6 +6,10 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 pub mod writer;
+pub mod assembly;
+
+pub use assembly::{write_assembly, AssemblyComponent};
+pub use writer::{ExportSelection, StepWriter};
 
 #[derive(Debug, Clone)]
 struct AdvancedFaceRecord {

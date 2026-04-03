@@ -1,4 +1,5 @@
 use rcad_kernel::{BRep, Curve2d, Curve3, Face, Surface3};
+use rcad_kernel::appearance::{Color, StepColor};
 use std::collections::{BTreeSet, HashMap};
 
 pub struct ExportSelection<'a> {
@@ -16,7 +17,17 @@ struct FaceExportResult {
 impl StepWriter {
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
         let mut writer = Part21Writer::new();
-        writer.write_brep(brep, selection);
+        writer.write_brep(brep, selection, None);
+        writer.finish()
+    }
+
+    /// Export with per-face / per-solid color information.
+    ///
+    /// Colors are written as `STYLED_ITEM` + `PRESENTATION_STYLE_ASSIGNMENT`
+    /// + `SURFACE_STYLE_USAGE` + `FILL_AREA_STYLE_COLOUR` + `COLOUR_RGB`.
+    pub fn write_string_colored(brep: &BRep, colors: &StepColor) -> String {
+        let mut writer = Part21Writer::new();
+        writer.write_brep(brep, ExportSelection { selected_faces: &[], selected_edges: &[] }, Some(colors));
         writer.finish()
     }
 }
@@ -56,7 +67,7 @@ impl Part21Writer {
         out
     }
 
-    fn write_brep(&mut self, brep: &BRep, selection: ExportSelection<'_>) {
+    fn write_brep(&mut self, brep: &BRep, selection: ExportSelection<'_>, colors: Option<&StepColor>) {
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
@@ -65,6 +76,8 @@ impl Part21Writer {
         let mut solid_items = Vec::new();
         let mut shell_face_groups: Vec<Vec<u64>> = Vec::new();
         let mut has_triangle_fallback = false;
+        // Map from face_index → list of STEP ADVANCED_FACE ids (for color assignment)
+        let mut face_step_ids: Vec<(usize, Vec<u64>)> = Vec::new();
 
         let mut face_index = 0usize;
         for (solid_index, solid) in brep.solids.iter().enumerate() {
@@ -83,6 +96,7 @@ impl Part21Writer {
                         if export.used_triangle_fallback {
                             has_triangle_fallback = true;
                         }
+                        face_step_ids.push((face_index, export.face_ids.clone()));
                         face_items.extend(export.face_ids.iter().copied());
                         shell_faces.extend(export.face_ids);
                     }
@@ -205,6 +219,17 @@ impl Part21Writer {
             self.shape_representation_relationship("", "", base_rep, wire_rep);
             if let Some(surface_rep) = primary_rep {
                 self.shape_representation_relationship("", "", surface_rep, wire_rep);
+            }
+        }
+
+        // ── Color / presentation styling ──────────────────────────────
+        if let Some(step_colors) = colors {
+            for (fi, step_ids) in &face_step_ids {
+                if let Some(color) = step_colors.color_for_face(*fi) {
+                    for &face_id in step_ids {
+                        self.write_face_color(face_id, color);
+                    }
+                }
             }
         }
     }
@@ -620,7 +645,10 @@ impl Part21Writer {
                     ellipse.minor_radius.max(1e-9),
                 )
             }
-            Some(Curve3::BSpline(_)) | None => {
+            Some(Curve3::BSpline(bs)) => {
+                self.write_bspline_curve(&bs.clone(), start_point, end_point)
+            }
+            None => {
                 let p0 = self.cartesian_point("edge_origin", start_point);
                 let delta = [
                     end_point[0] - start_point[0],
@@ -632,6 +660,91 @@ impl Part21Writer {
                 let vector = self.vector("edge_vec", direction, magnitude);
                 self.line("edge_line", p0, vector)
             }
+        }
+    }
+
+    /// Write a B_SPLINE_CURVE_WITH_KNOTS entity for a BSpline curve.
+    /// Falls back to a straight line if the curve has no control points.
+    fn write_bspline_curve(
+        &mut self,
+        bs: &rcad_kernel::geom::BSplineCurve3,
+        start_point: [f64; 3],
+        end_point: [f64; 3],
+    ) -> u64 {
+        use rcad_kernel::geom::BSplineCurve3;
+        if bs.control_points.is_empty() {
+            let p0 = self.cartesian_point("bs_origin", start_point);
+            let delta = [
+                end_point[0] - start_point[0],
+                end_point[1] - start_point[1],
+                end_point[2] - start_point[2],
+            ];
+            let magnitude = vector_length(delta).max(1e-9);
+            let direction = self.direction("bs_dir", normalize(delta));
+            let vector = self.vector("bs_vec", direction, magnitude);
+            return self.line("bs_fallback_line", p0, vector);
+        }
+
+        // Write control points
+        let cp_ids: Vec<u64> = bs.control_points.iter().map(|&p| {
+            self.cartesian_point("bs_cp", dvec3_to_array(p))
+        }).collect();
+
+        // Compress knot vector into (multiplicities, knot_values)
+        let (mults, knots) = compress_knot_vector(&bs.knots);
+
+        // Determine knot type
+        let knot_type = if bs.knots.windows(2).all(|w| w[0] <= w[1] + 1e-10) {
+            ".UNSPECIFIED."
+        } else {
+            ".UNSPECIFIED."
+        };
+
+        // All weights 1.0 → non-rational (UNIFORM_RATIONAL if not)
+        let rational = bs.weights.iter().any(|&w| (w - 1.0).abs() > 1e-8);
+
+        self.b_spline_curve_with_knots(
+            "bspline_curve",
+            bs.degree,
+            &cp_ids,
+            knot_type,
+            &mults,
+            &knots,
+            rational,
+            &bs.weights,
+        )
+    }
+
+    fn b_spline_curve_with_knots(
+        &mut self,
+        name: &str,
+        degree: usize,
+        control_points: &[u64],
+        knot_type: &str,
+        multiplicities: &[usize],
+        knots: &[f64],
+        rational: bool,
+        weights: &[f64],
+    ) -> u64 {
+        let cp_list = control_points.iter().map(|id| format!("#{}", id)).collect::<Vec<_>>().join(",");
+        let mult_list = multiplicities.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",");
+        let knot_list = knots.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(",");
+
+        if rational {
+            // B_SPLINE_CURVE_WITH_KNOTS + RATIONAL_B_SPLINE_CURVE complex entity
+            let weight_list = weights.iter().map(|w| format!("{:.6}", w)).collect::<Vec<_>>().join(",");
+            self.push(format!(
+                "( B_SPLINE_CURVE('{}',{},({}),{},.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({}),({}),{}) RATIONAL_B_SPLINE_CURVE(({}) )",
+                name, degree, cp_list, knot_type,
+                mult_list, knot_list, knot_type,
+                weight_list
+            ))
+        } else {
+            self.push(format!(
+                "B_SPLINE_CURVE_WITH_KNOTS('{}',{},({}),{},.F.,.F.,({}),({}),{})",
+                name, degree, cp_list, knot_type,
+                mult_list, knot_list, knot_type
+            ))
         }
     }
 
@@ -1022,6 +1135,58 @@ impl Part21Writer {
         ))
     }
 
+    // ── Color / presentation entities ─────────────────────────────────
+
+    /// Emit STYLED_ITEM + full presentation chain for a single ADVANCED_FACE.
+    ///
+    /// STEP presentation chain:
+    ///   COLOUR_RGB → FILL_AREA_STYLE_COLOUR → FILL_AREA_STYLE
+    ///   → SURFACE_STYLE_FILL_AREA → SURFACE_STYLE_USAGE
+    ///   → SURFACE_SIDE_STYLE → PRESENTATION_STYLE_ASSIGNMENT
+    ///   → STYLED_ITEM (references the face)
+    fn write_face_color(&mut self, face_id: u64, color: Color) {
+        let rgb = self.colour_rgb("face_color", color.r, color.g, color.b);
+        let fill_color = self.fill_area_style_colour("", rgb);
+        let fill_style = self.fill_area_style("", &[fill_color]);
+        let fill_area = self.surface_style_fill_area(fill_style);
+        let side_style = self.surface_side_style("", &[fill_area]);
+        let style_usage = self.surface_style_usage(".BOTH.", side_style);
+        let psa = self.presentation_style_assignment(&[style_usage]);
+        self.styled_item("color", &[psa], face_id);
+    }
+
+    fn colour_rgb(&mut self, name: &str, r: f64, g: f64, b: f64) -> u64 {
+        self.push(format!("COLOUR_RGB('{}',{:.6},{:.6},{:.6})", name, r, g, b))
+    }
+
+    fn fill_area_style_colour(&mut self, name: &str, colour: u64) -> u64 {
+        self.push(format!("FILL_AREA_STYLE_COLOUR('{}',#{})", name, colour))
+    }
+
+    fn fill_area_style(&mut self, name: &str, styles: &[u64]) -> u64 {
+        self.push(format!("FILL_AREA_STYLE('{}',({}))", name, refs(styles)))
+    }
+
+    fn surface_style_fill_area(&mut self, style: u64) -> u64 {
+        self.push(format!("SURFACE_STYLE_FILL_AREA(#{})", style))
+    }
+
+    fn surface_side_style(&mut self, name: &str, styles: &[u64]) -> u64 {
+        self.push(format!("SURFACE_SIDE_STYLE('{}',({}))", name, refs(styles)))
+    }
+
+    fn surface_style_usage(&mut self, side: &str, style: u64) -> u64 {
+        self.push(format!("SURFACE_STYLE_USAGE({},#{})", side, style))
+    }
+
+    fn presentation_style_assignment(&mut self, styles: &[u64]) -> u64 {
+        self.push(format!("PRESENTATION_STYLE_ASSIGNMENT(({}))", refs(styles)))
+    }
+
+    fn styled_item(&mut self, name: &str, styles: &[u64], item: u64) -> u64 {
+        self.push(format!("STYLED_ITEM('{}',({},),#{})", name, refs(styles), item))
+    }
+
     fn push(&mut self, body: String) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -1150,6 +1315,23 @@ fn any_perpendicular_dvec3(v: glam::DVec3) -> glam::DVec3 {
         glam::DVec3::X
     };
     v.cross(helper).normalize_or_zero()
+}
+
+/// Compress an expanded knot vector into (multiplicities, distinct_knot_values).
+fn compress_knot_vector(knots: &[f64]) -> (Vec<usize>, Vec<f64>) {
+    let mut mults: Vec<usize> = Vec::new();
+    let mut vals: Vec<f64> = Vec::new();
+    for &k in knots {
+        if let Some(last) = vals.last() {
+            if (k - last).abs() < 1e-12 {
+                *mults.last_mut().unwrap() += 1;
+                continue;
+            }
+        }
+        vals.push(k);
+        mults.push(1);
+    }
+    (mults, vals)
 }
 
 #[cfg(test)]

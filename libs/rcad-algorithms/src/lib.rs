@@ -3,6 +3,7 @@ pub mod brep_check;
 pub mod builder;
 pub mod classify;
 pub mod geom_populate;
+pub mod hlr;
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -13,6 +14,7 @@ use rcad_kernel::BRep;
 
 pub use brep_check::{check, CheckIssue, CheckResult};
 pub use builder::{BooleanError, BooleanOpType};
+pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
 pub use section::{section, section_polylines};
 
 /// Perform a boolean operation on two BReps.

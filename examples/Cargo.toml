@@ -42,3 +42,7 @@ path = "properties_gallery.rs"
 [[example]]
 name = "section_gallery"
 path = "section_gallery.rs"
+
+[[example]]
+name = "phase_d_demo"
+path = "phase_d_demo.rs"

@@ -16,11 +16,17 @@ pub mod topology;
 /// Analogous to OCCT `GProp_GProps` + `BRepGProp`.
 pub mod properties;
 
+/// Visual appearance: per-face/solid RGB color and basic material.
+///
+/// Analogous to OCCT `XCAFDoc_ColorTool`.
+pub mod appearance;
+
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, surface_area, volume};
+pub use appearance::{Color, FaceColor, StepColor};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
