@@ -62,11 +62,34 @@ pub mod distance;
 /// Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
 pub mod extrema;
 
+/// NURBS interoperability: convert analytic curves/surfaces to BSpline.
+///
+/// Analogous to OCCT `GeomConvert::CurveToBSplineCurve` /
+/// `GeomConvert::SurfaceToBSplineSurface`.
+pub mod nurbs_convert;
+
+/// Curve and surface trimming and extension.
+///
+/// Analogous to OCCT `Geom_TrimmedCurve` construction helpers,
+/// `GeomAPI_ExtendCurveToPoint`, and `Geom_RectangularTrimmedSurface`.
+pub mod extend;
+
 pub use fit::{approximate_points, interpolate_points, FitError};
 pub use projection::{closest_point_on_curve, closest_point_on_surface,
                      CurveProjection, SurfaceProjection};
 pub use distance::{min_distance, point_to_shape_distance, ShapeDistance};
 pub use extrema::{extrema_curve_curve, CurveCurveExtrema, ExtremaPair};
+pub use nurbs_convert::{
+    bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline,
+    cylinder_to_bspline, curve_to_bspline, ellipse_to_bspline,
+    line_to_bspline, line_to_bspline_range, plane_to_bspline, sphere_to_bspline,
+    surface_to_bspline,
+};
+pub use extend::{
+    trim_curve, trim_surface,
+    extend_curve_to_point, extend_curve_by_length, extend_bspline_surface,
+    insert_knot_to_multiplicity, CurveEnd, SurfaceBoundary,
+};
 
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};

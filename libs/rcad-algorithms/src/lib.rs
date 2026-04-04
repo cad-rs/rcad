@@ -1,5 +1,6 @@
 pub mod bopds;
 pub mod brep_check;
+pub mod brep_repair;
 pub mod builder;
 pub mod classify;
 pub mod geom_populate;
@@ -15,6 +16,10 @@ pub mod triangulate;
 use rcad_kernel::BRep;
 
 pub use brep_check::{check, CheckIssue, CheckResult};
+pub use brep_repair::{
+    fix_wire_orientation, merge_close_vertices, remove_degenerate_faces,
+    recompute_face_normals, repair, RepairReport,
+};
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};

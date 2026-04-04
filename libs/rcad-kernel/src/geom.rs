@@ -703,6 +703,43 @@ impl SurfaceEval for Surface3 {
 
 // ── BSpline evaluation ────────────────────────────────────────────────────────
 
+/// De Boor's algorithm in homogeneous 4D space.
+/// Returns `[wx, wy, wz, w]` (not divided by w yet).
+fn de_boor_homo(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f64) -> [f64; 4] {
+    let n = points.len();
+    if n == 0 {
+        return [0.0; 4];
+    }
+    let k = {
+        let t_min = knots[degree];
+        let t_max = knots[knots.len() - degree - 1];
+        let t_clamped = t.clamp(t_min, t_max);
+        let mut span = degree;
+        for i in degree..knots.len() - degree - 1 {
+            if knots[i] <= t_clamped { span = i; } else { break; }
+        }
+        span
+    };
+    let mut d: Vec<[f64; 4]> = (0..=degree)
+        .map(|j| {
+            let idx = (k - degree + j).min(n - 1);
+            let w = weights[idx];
+            [points[idx].x * w, points[idx].y * w, points[idx].z * w, w]
+        })
+        .collect();
+    for r in 1..=degree {
+        for j in (r..=degree).rev() {
+            let i = k - degree + j;
+            let denom = knots[i + degree - r + 1] - knots[i];
+            let alpha = if denom.abs() < 1e-15 { 0.0 } else { (t - knots[i]) / denom };
+            for c in 0..4 {
+                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            }
+        }
+    }
+    d[degree]
+}
+
 /// De Boor's algorithm for rational B-spline evaluation.
 /// Returns the 3D point at parameter `t`.
 fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
@@ -842,7 +879,11 @@ impl CurveEval for BSplineCurve3 {
 
 impl SurfaceEval for BSplineSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        // Tensor product: evaluate in u for each v row, then interpolate in v
+        // Tensor product rational evaluation (NURBS):
+        // 1. For each v-column, evaluate the u-direction NURBS in homogeneous coords
+        //    → get (wx, wy, wz, w) for each column index.
+        // 2. Collect column weights and weighted positions.
+        // 3. Run de Boor in v on the homogeneous results, then divide by weight.
         let n_u = self.control_points.len();
         if n_u == 0 {
             return DVec3::ZERO;
@@ -851,16 +892,24 @@ impl SurfaceEval for BSplineSurface {
         if n_v == 0 {
             return DVec3::ZERO;
         }
-        // Evaluate each v-row of control points along u
-        let row_points: Vec<DVec3> = (0..n_v)
+        // Step 1: evaluate each v-column in the u direction → homogeneous 4-vector
+        let col_homo: Vec<[f64; 4]> = (0..n_v)
             .map(|j| {
                 let pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
-                let wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
-                de_boor(self.degree_u, &self.knots_u, &pts, &wts, u)
+                let wts: Vec<f64>   = (0..n_u).map(|i| self.weights[i][j]).collect();
+                de_boor_homo(self.degree_u, &self.knots_u, &pts, &wts, u)
             })
             .collect();
-        let unit_weights = vec![1.0; n_v];
-        de_boor(self.degree_v, &self.knots_v, &row_points, &unit_weights, v)
+        // Step 2: build the v-direction "control points" and "weights" from col_homo
+        let v_pts: Vec<DVec3> = col_homo.iter()
+            .map(|h| {
+                let w = h[3];
+                if w.abs() < 1e-15 { DVec3::ZERO } else { DVec3::new(h[0]/w, h[1]/w, h[2]/w) }
+            })
+            .collect();
+        let v_wts: Vec<f64> = col_homo.iter().map(|h| h[3]).collect();
+        // Step 3: rational de Boor in v
+        de_boor(self.degree_v, &self.knots_v, &v_pts, &v_wts, v)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let eps = 1e-5;
