@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase R 完成
+> 版本：2026-04 · Phase T 完成
 
 ---
 
@@ -157,9 +157,37 @@ intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection
 
 其余组合退化为 48×48 网格 + marching 数值折线。
 
+### 2.7 NURBS 互操作（`nurbs_convert`）
+
+| 功能 | API | 说明 |
+|------|-----|------|
+| 任意曲线 → BSpline | `curve_to_bspline(curve, n_samples)` | 解析精确或采样插值 |
+| 任意曲面 → BSpline | `surface_to_bspline(surface, n_u, n_v)` | 解析精确或双线性采样 |
+| Line3 → BSpline | `line_to_bspline(line)` | 度-1，2 控制点 |
+| Circle3 → BSpline | `circle_to_bspline(circle)` | 度-2，9 控制点，精确 |
+| Ellipse3 → BSpline | `ellipse_to_bspline(ellipse)` | 同上，按半轴缩放 |
+| Plane → BSpline | `plane_to_bspline(plane)` | 度-(1,1)，4 控制点 |
+| Cylinder → BSpline | `cylinder_to_bspline(cyl)` | 度-(2,1)，精确 |
+| Sphere → BSpline | `sphere_to_bspline(sphere)` | 度-(2,2)，5×9 控制网格，精确 |
+| Bezier → BSpline | `bezier_curve_to_bspline` / `bezier_surface_to_bspline` | 插入端点节点 |
+
+`BSplineSurface::point_at` 使用全有理张量积求值（`de_boor_homo` + 有理 de Boor），正确传递权重。
+
 ---
 
-## 3. 拓扑结构
+### 2.8 曲线/曲面裁剪与延伸（`extend`）
+
+| 操作 | API | 类比 |
+|------|-----|------|
+| 曲线裁剪 | `trim_curve(curve, t0, t1)` | `Geom_TrimmedCurve` |
+| 曲线延伸到点 | `extend_curve_to_point(curve, end, target)` | `GeomAPI_ExtendCurveToPoint` |
+| 曲线延伸指定长度 | `extend_curve_by_length(curve, end, length)` | — |
+| 曲面裁剪 | `trim_surface(surface, u0, u1, v0, v1)` | `Geom_RectangularTrimmedSurface` |
+| BSpline 曲面延伸 | `extend_bspline_surface(surface, boundary, dist)` | `GeomAPI_ExtendSurfaceToShape` |
+
+`trim_curve` 通过 Boehm 节点插入（重数 = degree+1）精确裁剪，结果参数域归一化到 `[0, 1]`。
+
+---
 
 ### BRep 数据模型
 
@@ -264,7 +292,23 @@ let (result, history) = boolean_op_with_history(op, &a, &b)?;
 
 ## 5. 算法层
 
-### 5.1 布尔运算
+### 5.1 B-Rep 修复（`repair`）
+
+```rust
+repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport)
+```
+
+| 操作 | API | 说明 | OCCT 等价 |
+|------|-----|------|-----------|
+| 合并近邻顶点 | `merge_close_vertices(brep, tol)` | 并查集合并，重映射边/线框索引 | `BRepOffsetAPI_Sewing` / `ShapeFix_Wire` |
+| 删除退化面 | `remove_degenerate_faces(brep)` | <3 边或 Newell 面积≈0 | `ShapeFix_Shape` |
+| 重算面法向 | `recompute_face_normals(brep)` | Newell 方法，返回修改计数 | `BRepLib` 法向修复 |
+| 修复线框方向 | `fix_wire_orientation(brep, tol)` | 翻转断链处的边方向 | `ShapeFix_Wire::FixClosed` |
+| 全部修复 | `repair(brep, tol)` | 四步合一，返回 `RepairReport` | `ShapeFix_Shape::Perform` |
+
+---
+
+### 5.2 布尔运算
 
 ```rust
 boolean_op(BooleanOpType::{Union|Intersection|Difference}, &a, &b) -> Result<BRep>
@@ -287,7 +331,7 @@ BooleanBuilder::build() 光线法分类 → 子面分割 → 组装结果 BRep
 
 ---
 
-### 5.2 面印记（`imprint_brep`）
+### 5.3 面印记（`imprint_brep`）
 
 ```rust
 imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
@@ -300,7 +344,7 @@ imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
 
 ---
 
-### 5.3 间隙/重叠检测（`detect_gaps_overlaps`）
+### 5.4 间隙/重叠检测（`detect_gaps_overlaps`）
 
 ```rust
 detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapReport {
@@ -314,7 +358,7 @@ detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapReport {
 
 ---
 
-### 5.4 截面
+### 5.5 截面
 
 ```rust
 section_polylines(brep, plane) -> Vec<Vec<DVec3>>   // 折线截面（始终可用）
@@ -325,7 +369,7 @@ section_curves(brep, plane) -> Vec<SectionCurve>    // 解析截面
 
 ---
 
-### 5.5 形状距离
+### 5.6 形状距离
 
 ```rust
 min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
@@ -339,7 +383,7 @@ min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
 
 ---
 
-### 5.6 壳缝合（`sew_shells`）
+### 5.7 壳缝合（`sew_shells`）
 
 ```rust
 sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
@@ -353,7 +397,7 @@ sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
 
 ---
 
-### 5.7 曲线拟合与插值
+### 5.8 曲线拟合与插值
 
 | 操作 | API |
 |------|-----|
@@ -362,7 +406,7 @@ sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
 
 ---
 
-### 5.8 消隐线渲染（HLR）
+### 5.9 消隐线渲染（HLR）
 
 ```rust
 hlr(brep: &BRep, camera: &HlrCamera) -> HlrResult
@@ -373,7 +417,7 @@ hlr_to_svg(result: &HlrResult, width, height) -> String
 
 ---
 
-### 5.9 曲面-曲面交线（IntSS）
+### 5.10 曲面-曲面交线（IntSS）
 
 见 [2.6 节](#26-曲面-曲面交线intersect_surfaces)。
 
@@ -532,16 +576,17 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 ### 目前不支持的 OCCT 功能（低优先或尚未规划）
 
-| 功能 | OCCT 类 | 备注 |
-|------|---------|------|
-| B-Rep 修复/清理 | `ShapeFix_*` | 部分间隙检测已有 |
-| 装配体/实例化 | `XCAFDoc_ShapeTool` | 无场景图 |
-| 参数化约束求解 | `GCS`, Sketcher | 独立模块 |
-| FEM 网格生成 | `BRepMesh_IncrementalMesh` | 仅渲染用三角化 |
-| 体网格 (TetGen) | — | 独立集成 |
-| NURBS 互操作 | `GeomConvert` | 部分已有 |
-| 曲面延伸/裁剪 | `GeomAPI_ExtendCurveToPoint` | 未实现 |
+| 功能 | OCCT 类 | 备注 | 状态 |
+|------|---------|------|------|
+| B-Rep 修复/清理 | `ShapeFix_*` | `merge_close_vertices` / `repair` 已实现 | ✅ |
+| NURBS 互操作 | `GeomConvert` | `curve_to_bspline` / `surface_to_bspline` 已实现 | ✅ |
+| 曲线裁剪/延伸 | `GeomAPI_ExtendCurveToPoint` | `trim_curve` / `extend_curve_*` 已实现 | ✅ |
+| 曲面裁剪/延伸 | `Geom_RectangularTrimmedSurface` | `trim_surface` / `extend_bspline_surface` 已实现 | ✅ |
+| 装配体/实例化 | `XCAFDoc_ShapeTool` | 无场景图 | ❌ |
+| 参数化约束求解 | `GCS`, Sketcher | 独立模块 | ❌ |
+| FEM 网格生成 | `BRepMesh_IncrementalMesh` | 仅渲染用三角化 | ❌ |
+| 体网格 (TetGen) | — | 独立集成 | ❌ |
 
 ---
 
-*文档更新于 2026-04-04*
+*文档更新于 2026-04-04（Phase T 完成）*
