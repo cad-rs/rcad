@@ -18,6 +18,20 @@ pub struct SelectionState {
     pub last_hover_pos: Option<(f32, f32)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayMode {
+    SolidWithEdges,
+    Solid,
+    Wireframe,
+    Transparent,
+}
+
+impl Default for DisplayMode {
+    fn default() -> Self {
+        Self::SolidWithEdges
+    }
+}
+
 pub const DEFAULT_EDGE_PICK_RADIUS_PX: f32 = 8.0;
 
 impl Default for SelectionState {
@@ -385,6 +399,7 @@ impl Tessellator {
 pub struct CameraUniform {
     view_proj: [[f32; 4]; 4],
     eye_pos: [f32; 4],
+    light_dir: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -579,6 +594,153 @@ fn point_segment_distance_2d(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
     ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt()
 }
 
+struct AxisBuffers {
+    vertex_buffer: wgpu::Buffer,
+    tri_index_buffer: wgpu::Buffer,
+    tri_index_count: u32,
+    line_index_buffer: wgpu::Buffer,
+    line_index_count: u32,
+}
+
+fn build_axis_arrow_mesh(
+    direction: glam::Vec3,
+    shaft_length: f32,
+    cone_radius: f32,
+    cone_height: f32,
+    segments: u32,
+) -> (Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
+    let dir = direction.normalize();
+
+    // Build a local frame: dir is the axis, u and v are perpendicular
+    let arbitrary = if dir.y.abs() < 0.9 {
+        glam::Vec3::Y
+    } else {
+        glam::Vec3::X
+    };
+    let u = dir.cross(arbitrary).normalize();
+    let v = dir.cross(u);
+
+    // Shaft: two vertices (origin → shaft_length along dir)
+    let shaft_end = dir * shaft_length;
+    let mut vertices = vec![[0.0, 0.0, 0.0], shaft_end.to_array()];
+
+    // Line indices for the shaft
+    let line_indices = vec![0, 1];
+
+    // Cone: base ring at shaft_end, tip at shaft_end + cone_height * dir
+    let tip = shaft_end + dir * cone_height;
+    let tip_idx = vertices.len() as u32;
+    vertices.push(tip.to_array());
+
+    let base_start = vertices.len() as u32;
+    for i in 0..segments {
+        let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
+        let point = shaft_end + u * (angle.cos() * cone_radius) + v * (angle.sin() * cone_radius);
+        vertices.push(point.to_array());
+    }
+
+    // Triangle fan for cone
+    let mut tri_indices = Vec::new();
+    for i in 0..segments {
+        let curr = base_start + i;
+        let next = base_start + (i + 1) % segments;
+        // Side face
+        tri_indices.push(tip_idx);
+        tri_indices.push(curr);
+        tri_indices.push(next);
+    }
+
+    // Base cap center
+    let base_center_idx = vertices.len() as u32;
+    vertices.push(shaft_end.to_array());
+    for i in 0..segments {
+        let curr = base_start + i;
+        let next = base_start + (i + 1) % segments;
+        tri_indices.push(base_center_idx);
+        tri_indices.push(next);
+        tri_indices.push(curr);
+    }
+
+    (vertices, tri_indices, line_indices)
+}
+
+struct GridBuffers {
+    vertex_buffer: wgpu::Buffer,
+    major_index_buffer: wgpu::Buffer,
+    major_index_count: u32,
+    minor_index_buffer: wgpu::Buffer,
+    minor_index_count: u32,
+}
+
+/// Build a grid on the XZ plane (Y=0). Returns (vertices, major_line_indices, minor_line_indices).
+fn build_grid_mesh(
+    extent: f32,
+    major_spacing: f32,
+    minor_spacing: f32,
+) -> (Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
+    let mut vertices = Vec::new();
+    let mut major_indices = Vec::new();
+    let mut minor_indices = Vec::new();
+
+    // Generate lines along X (varying Z)
+    let steps = ((extent * 2.0 / minor_spacing).round() as i32).max(1);
+    for i in 0..=steps {
+        let z = -extent + i as f32 * minor_spacing;
+        // Snap to avoid floating point drift
+        let z = (z / minor_spacing).round() * minor_spacing;
+        if z.abs() > extent + 0.001 {
+            continue;
+        }
+
+        let idx = vertices.len() as u32;
+        vertices.push([-extent, 0.0, z]);
+        vertices.push([extent, 0.0, z]);
+
+        let is_major = (z / major_spacing).round() * major_spacing - z < minor_spacing * 0.1
+            && z.abs() > 0.001; // skip origin (drawn by axes)
+        let is_origin_line = z.abs() < 0.001;
+
+        if is_origin_line {
+            // Skip — the axis handles this
+        } else if is_major {
+            major_indices.push(idx);
+            major_indices.push(idx + 1);
+        } else {
+            minor_indices.push(idx);
+            minor_indices.push(idx + 1);
+        }
+    }
+
+    // Generate lines along Z (varying X)
+    for i in 0..=steps {
+        let x = -extent + i as f32 * minor_spacing;
+        let x = (x / minor_spacing).round() * minor_spacing;
+        if x.abs() > extent + 0.001 {
+            continue;
+        }
+
+        let idx = vertices.len() as u32;
+        vertices.push([x, 0.0, -extent]);
+        vertices.push([x, 0.0, extent]);
+
+        let is_major = (x / major_spacing).round() * major_spacing - x < minor_spacing * 0.1
+            && x.abs() > 0.001;
+        let is_origin_line = x.abs() < 0.001;
+
+        if is_origin_line {
+            // Skip
+        } else if is_major {
+            major_indices.push(idx);
+            major_indices.push(idx + 1);
+        } else {
+            minor_indices.push(idx);
+            minor_indices.push(idx + 1);
+        }
+    }
+
+    (vertices, major_indices, minor_indices)
+}
+
 pub struct WgpuRenderer {
     pipeline: wgpu::RenderPipeline,
     pipeline_depth: wgpu::RenderPipeline,
@@ -603,6 +765,17 @@ pub struct WgpuRenderer {
     depth_texture: std::sync::Mutex<Option<wgpu::Texture>>,
     depth_view: std::sync::Mutex<Option<wgpu::TextureView>>,
     depth_size: std::sync::Mutex<(u32, u32)>,
+    axes_buffers: [AxisBuffers; 3],
+    axes_material_bind_groups: [wgpu::BindGroup; 3],
+    show_axes: std::sync::Mutex<bool>,
+    display_mode: std::sync::Mutex<DisplayMode>,
+    material_transparent_bind_group: wgpu::BindGroup,
+    material_buffer: wgpu::Buffer,
+    grid: GridBuffers,
+    grid_major_material_bind_group: wgpu::BindGroup,
+    grid_minor_material_bind_group: wgpu::BindGroup,
+    show_grid: std::sync::Mutex<bool>,
+    light_dir: std::sync::Mutex<glam::Vec3>,
 }
 
 unsafe impl Send for WgpuRenderer {}
@@ -694,6 +867,7 @@ impl WgpuRenderer {
             contents: bytemuck::cast_slice(&[CameraUniform {
                 view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
                 eye_pos: [0.0, 0.0, 3.0, 1.0],
+                light_dir: [0.45, 0.85, 0.35, 0.0],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -743,6 +917,14 @@ impl WgpuRenderer {
                 color: [0.18, 0.64, 0.96, 1.0],
                 flags: [0.0, 0.0, 0.0, 0.0],
             }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let material_transparent_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Transparent Material Buffer"),
+            contents: bytemuck::cast_slice(&[MaterialUniform {
+                color: [0.18, 0.64, 0.96, 0.3],
+                flags: [0.0, 0.0, 0.0, 0.0],
+            }]),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let material_face_highlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -786,6 +968,14 @@ impl WgpuRenderer {
                 resource: material_edge_highlight_buffer.as_entire_binding(),
             }],
         });
+        let material_transparent_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Transparent Material Bind Group"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: material_transparent_buffer.as_entire_binding(),
+            }],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
@@ -826,6 +1016,138 @@ impl WgpuRenderer {
             true,
         );
 
+        // Build background grid
+        let grid_major_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grid Major Material Buffer"),
+            contents: bytemuck::cast_slice(&[MaterialUniform {
+                color: [0.35, 0.35, 0.35, 0.5],
+                flags: [1.0, 0.0, 0.0, 0.0], // unlit
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let grid_minor_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grid Minor Material Buffer"),
+            contents: bytemuck::cast_slice(&[MaterialUniform {
+                color: [0.25, 0.25, 0.25, 0.3],
+                flags: [1.0, 0.0, 0.0, 0.0], // unlit
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let grid_major_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Grid Major Material Bind Group"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_major_material_buffer.as_entire_binding(),
+            }],
+        });
+        let grid_minor_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Grid Minor Material Bind Group"),
+            layout: &material_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_minor_material_buffer.as_entire_binding(),
+            }],
+        });
+
+        let (grid_verts, grid_major_idx, grid_minor_idx) = build_grid_mesh(5.0, 1.0, 0.2);
+        let grid = GridBuffers {
+            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Vertex Buffer"),
+                contents: bytemuck::cast_slice(&grid_verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            major_index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Major Index Buffer"),
+                contents: bytemuck::cast_slice(&grid_major_idx),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            major_index_count: grid_major_idx.len() as u32,
+            minor_index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Minor Index Buffer"),
+                contents: bytemuck::cast_slice(&grid_minor_idx),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            minor_index_count: grid_minor_idx.len() as u32,
+        };
+
+        // Build axis arrows (X=red, Y=green, Z=blue)
+        let axis_colors: [[f32; 4]; 3] = [
+            [1.0, 0.2, 0.2, 1.0],  // X — red
+            [0.2, 1.0, 0.2, 1.0],  // Y — green
+            [0.3, 0.5, 1.0, 1.0],  // Z — blue
+        ];
+        let axis_dirs = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
+        let axis_names = ["X", "Y", "Z"];
+
+        let mut axes_material_bind_groups_vec = Vec::with_capacity(3);
+        let mut axes_buffers_vec = Vec::with_capacity(3);
+
+        for i in 0..3 {
+            let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Axis {} Material Buffer", axis_names[i])),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: axis_colors[i],
+                    flags: [1.0, 0.0, 0.0, 0.0], // unlit
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Axis {} Material Bind Group", axis_names[i])),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mat_buf.as_entire_binding(),
+                }],
+            });
+            axes_material_bind_groups_vec.push(bg);
+
+            let (verts, tri_idx, line_idx) =
+                build_axis_arrow_mesh(axis_dirs[i], 1.0, 0.03, 0.1, 8);
+
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Axis {} Vertex Buffer", axis_names[i])),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let tri_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Axis {} Tri Index Buffer", axis_names[i])),
+                contents: bytemuck::cast_slice(&tri_idx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            let line_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Axis {} Line Index Buffer", axis_names[i])),
+                contents: bytemuck::cast_slice(&line_idx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+            axes_buffers_vec.push(AxisBuffers {
+                vertex_buffer,
+                tri_index_buffer,
+                tri_index_count: tri_idx.len() as u32,
+                line_index_buffer,
+                line_index_count: line_idx.len() as u32,
+            });
+        }
+
+        // Convert Vecs to fixed-size arrays
+        let axes_material_bind_groups = {
+            let mut iter = axes_material_bind_groups_vec.into_iter();
+            [
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+            ]
+        };
+        let axes_buffers = {
+            let mut iter = axes_buffers_vec.into_iter();
+            [
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+            ]
+        };
+
         Self {
             pipeline,
             pipeline_depth,
@@ -850,6 +1172,17 @@ impl WgpuRenderer {
             depth_texture: std::sync::Mutex::new(None),
             depth_view: std::sync::Mutex::new(None),
             depth_size: std::sync::Mutex::new((0, 0)),
+            axes_buffers,
+            axes_material_bind_groups,
+            show_axes: std::sync::Mutex::new(true),
+            display_mode: std::sync::Mutex::new(DisplayMode::default()),
+            material_transparent_bind_group,
+            material_buffer,
+            grid,
+            grid_major_material_bind_group,
+            grid_minor_material_bind_group,
+            show_grid: std::sync::Mutex::new(true),
+            light_dir: std::sync::Mutex::new(glam::Vec3::new(0.45, 0.85, 0.35)),
         }
     }
 
@@ -994,9 +1327,11 @@ impl WgpuRenderer {
 
     pub fn update_camera(&self, queue: &wgpu::Queue, camera: &Camera, aspect: f32) {
         let eye = camera.eye_position();
+        let ld = *self.light_dir.lock().unwrap();
         let uniform = CameraUniform {
             view_proj: camera.build_view_projection_matrix(aspect),
             eye_pos: [eye.x, eye.y, eye.z, 1.0],
+            light_dir: [ld.x, ld.y, ld.z, 0.0],
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
     }
@@ -1006,49 +1341,77 @@ impl WgpuRenderer {
         render_pass: &mut wgpu::RenderPass<'_>,
         use_depth_pipeline: bool,
     ) {
-        if use_depth_pipeline {
-            render_pass.set_pipeline(&self.pipeline_depth);
-        } else {
-            render_pass.set_pipeline(&self.pipeline);
+        let mode = *self.display_mode.lock().unwrap();
+
+        // Draw grid first (behind everything)
+        if *self.show_grid.lock().unwrap() {
+            self.draw_grid_in_render_pass(render_pass, use_depth_pipeline);
         }
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.material_bind_group, &[]);
 
         let vb_guard = self.vertex_buffer.lock().unwrap();
         let ib_guard = self.index_buffer.lock().unwrap();
         let count = *self.index_count.lock().unwrap();
-
-        if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
-            render_pass.set_vertex_buffer(0, vb.slice(..));
-            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..count, 0, 0..1);
-        }
-
         let lib_guard = self.line_index_buffer.lock().unwrap();
         let lcount = *self.line_index_count.lock().unwrap();
-        if lcount > 0
-            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
-        {
-            if use_depth_pipeline {
-                render_pass.set_pipeline(&self.pipeline_line_depth);
-            } else {
-                render_pass.set_pipeline(&self.pipeline_line);
-            }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, vb.slice(..));
-            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..lcount, 0, 0..1);
 
-            if use_depth_pipeline {
-                render_pass.set_pipeline(&self.pipeline_depth);
-            } else {
-                render_pass.set_pipeline(&self.pipeline);
+        // Draw model based on display mode
+        let draw_triangles = matches!(mode, DisplayMode::Solid | DisplayMode::SolidWithEdges | DisplayMode::Transparent);
+        let draw_wireframe = matches!(mode, DisplayMode::Wireframe | DisplayMode::SolidWithEdges | DisplayMode::Transparent);
+
+        // In transparent mode, draw wireframe first so it's behind the translucent surface
+        if mode == DisplayMode::Transparent && draw_wireframe && lcount > 0 {
+            if let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref()) {
+                if use_depth_pipeline {
+                    render_pass.set_pipeline(&self.pipeline_line_depth);
+                } else {
+                    render_pass.set_pipeline(&self.pipeline_line);
+                }
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vb.slice(..));
+                render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..lcount, 0, 0..1);
             }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
         }
 
+        // Draw triangles
+        if draw_triangles {
+            if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
+                if use_depth_pipeline {
+                    render_pass.set_pipeline(&self.pipeline_depth);
+                } else {
+                    render_pass.set_pipeline(&self.pipeline);
+                }
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                let mat = if mode == DisplayMode::Transparent {
+                    &self.material_transparent_bind_group
+                } else {
+                    &self.material_bind_group
+                };
+                render_pass.set_bind_group(1, mat, &[]);
+                render_pass.set_vertex_buffer(0, vb.slice(..));
+                render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..count, 0, 0..1);
+            }
+        }
+
+        // Draw wireframe (non-transparent modes)
+        if draw_wireframe && mode != DisplayMode::Transparent && lcount > 0 {
+            if let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref()) {
+                if use_depth_pipeline {
+                    render_pass.set_pipeline(&self.pipeline_line_depth);
+                } else {
+                    render_pass.set_pipeline(&self.pipeline_line);
+                }
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vb.slice(..));
+                render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..lcount, 0, 0..1);
+            }
+        }
+
+        // Draw face highlights
         let hvb_guard = self.highlight_face_vertex_buffer.lock().unwrap();
         let hib_guard = self.highlight_face_index_buffer.lock().unwrap();
         let hcount = *self.highlight_face_index_count.lock().unwrap();
@@ -1067,6 +1430,7 @@ impl WgpuRenderer {
             render_pass.draw_indexed(0..hcount, 0, 0..1);
         }
 
+        // Draw edge highlights
         let evb_guard = self.highlight_edge_vertex_buffer.lock().unwrap();
         let eib_guard = self.highlight_edge_index_buffer.lock().unwrap();
         let ecount = *self.highlight_edge_index_count.lock().unwrap();
@@ -1083,6 +1447,130 @@ impl WgpuRenderer {
             render_pass.set_vertex_buffer(0, vb.slice(..));
             render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..ecount, 0, 0..1);
+        }
+
+        // Draw coordinate axes
+        if *self.show_axes.lock().unwrap() {
+            self.draw_axes_in_render_pass(render_pass, use_depth_pipeline);
+        }
+    }
+
+    fn draw_axes_in_render_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        use_depth_pipeline: bool,
+    ) {
+        for i in 0..3 {
+            let axis = &self.axes_buffers[i];
+
+            // Draw cone (triangles)
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline);
+            }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
+            render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(axis.tri_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..axis.tri_index_count, 0, 0..1);
+
+            // Draw shaft (line)
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_line_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline_line);
+            }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
+            render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(axis.line_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..axis.line_index_count, 0, 0..1);
+        }
+    }
+
+    fn draw_grid_in_render_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        use_depth_pipeline: bool,
+    ) {
+        if use_depth_pipeline {
+            render_pass.set_pipeline(&self.pipeline_line_depth);
+        } else {
+            render_pass.set_pipeline(&self.pipeline_line);
+        }
+        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.grid.vertex_buffer.slice(..));
+
+        // Draw minor lines first (thinner/dimmer)
+        if self.grid.minor_index_count > 0 {
+            render_pass.set_bind_group(1, &self.grid_minor_material_bind_group, &[]);
+            render_pass.set_index_buffer(self.grid.minor_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.grid.minor_index_count, 0, 0..1);
+        }
+
+        // Draw major lines on top
+        if self.grid.major_index_count > 0 {
+            render_pass.set_bind_group(1, &self.grid_major_material_bind_group, &[]);
+            render_pass.set_index_buffer(self.grid.major_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.grid.major_index_count, 0, 0..1);
+        }
+    }
+
+    pub fn set_show_axes(&self, show: bool) {
+        *self.show_axes.lock().unwrap() = show;
+    }
+
+    pub fn show_axes(&self) -> bool {
+        *self.show_axes.lock().unwrap()
+    }
+
+    pub fn set_display_mode(&self, mode: DisplayMode) {
+        *self.display_mode.lock().unwrap() = mode;
+    }
+
+    pub fn display_mode(&self) -> DisplayMode {
+        *self.display_mode.lock().unwrap()
+    }
+
+    pub fn set_show_grid(&self, show: bool) {
+        *self.show_grid.lock().unwrap() = show;
+    }
+
+    pub fn show_grid(&self) -> bool {
+        *self.show_grid.lock().unwrap()
+    }
+
+    pub fn set_model_color(&self, queue: &wgpu::Queue, color: [f32; 4]) {
+        let uniform = MaterialUniform {
+            color,
+            flags: [0.0, 0.0, 0.0, 0.0],
+        };
+        queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    pub fn set_model_unlit(&self, queue: &wgpu::Queue, color: [f32; 4], unlit: bool) {
+        let uniform = MaterialUniform {
+            color,
+            flags: [if unlit { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+        };
+        queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    pub fn set_light_direction(&self, dir: glam::Vec3) {
+        *self.light_dir.lock().unwrap() = dir;
+    }
+
+    pub fn light_direction(&self) -> glam::Vec3 {
+        *self.light_dir.lock().unwrap()
+    }
+
+    /// Set light direction to match the camera eye direction (headlight mode).
+    pub fn set_headlight(&self, camera: &Camera) {
+        let eye = camera.eye_position();
+        let dir = (eye - camera.target).normalize_or_zero();
+        if dir.length_squared() > 1e-6 {
+            *self.light_dir.lock().unwrap() = dir;
         }
     }
 
@@ -1148,5 +1636,165 @@ impl WgpuRenderer {
         clip_bounds: Option<(u32, u32, u32, u32)>,
     ) {
         self.render(view, encoder, Self::default_clear_color(), clip_bounds);
+    }
+
+    /// Render the current scene to an offscreen texture and return it as an RGBA image.
+    pub fn screenshot(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        mesh: &Mesh,
+        width: u32,
+        height: u32,
+    ) -> image::RgbaImage {
+        let width = width.max(1);
+        let height = height.max(1);
+        let aspect = width as f32 / height as f32;
+
+        // Prepare scene data
+        self.upload_mesh(device, mesh);
+        self.update_camera(queue, camera, aspect);
+
+        // Create offscreen color texture
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Screenshot Color Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create offscreen depth texture
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Screenshot Depth Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Render
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Screenshot Encoder"),
+        });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Screenshot Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Self::default_clear_color()),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.draw_in_render_pass(&mut render_pass, true);
+        }
+
+        // Copy texture to staging buffer
+        let bytes_per_pixel = 4u32;
+        // wgpu requires rows to be aligned to 256 bytes
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let padded_bytes_per_row =
+            (unpadded_bytes_per_row + 255) & !255;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Screenshot Staging Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &color_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        queue.submit(std::iter::once(encoder.finish()));
+
+        // Map and read back
+        let buffer_slice = staging_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).unwrap();
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        receiver.recv().unwrap().unwrap();
+
+        let data = buffer_slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + (width * bytes_per_pixel) as usize;
+            pixels.extend_from_slice(&data[start..end]);
+        }
+        drop(data);
+        staging_buffer.unmap();
+
+        image::RgbaImage::from_raw(width, height, pixels)
+            .expect("pixel buffer size matches image dimensions")
+    }
+
+    /// Render the scene and save to a PNG file.
+    pub fn screenshot_to_file(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        mesh: &Mesh,
+        width: u32,
+        height: u32,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let img = self.screenshot(device, queue, camera, mesh, width, height);
+        img.save(path).map_err(|e| e.to_string())
     }
 }

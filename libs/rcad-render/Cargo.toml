@@ -8,3 +8,4 @@ wgpu.workspace = true
 rcad-kernel = { path = "../rcad-kernel" }
 glam.workspace = true
 bytemuck = { version = "1.25", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }

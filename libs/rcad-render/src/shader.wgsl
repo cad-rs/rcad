@@ -1,6 +1,7 @@
 struct CameraUniform {
     view_proj: mat4x4<f32>,
     eye_pos: vec4<f32>,
+    light_dir: vec4<f32>,
 };
 
 struct MaterialUniform {
@@ -43,7 +44,7 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
         normal = -normal;
     }
 
-    let light_dir = normalize(vec3<f32>(0.45, 0.85, 0.35));
+    let light_dir = normalize(camera.light_dir.xyz);
     let view_dir = normalize(camera.eye_pos.xyz - in.world_position);
     let half_dir = normalize(light_dir + view_dir);
 
