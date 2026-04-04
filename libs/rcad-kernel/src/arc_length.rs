@@ -104,7 +104,8 @@ pub fn arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
         Curve3::Circle(c) => {
             c.radius * (t2 - t1)
         }
-        Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_) | Curve3::Offset(_) => {
+        Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_) | Curve3::Offset(_)
+        | Curve3::Hyperbola(_) | Curve3::Parabola(_) => {
             gl16_arc_length(curve, t1, t2)
         }
     }

@@ -68,6 +68,12 @@ struct ParsedStep {
     revolutions: HashMap<u64, (u64, u64)>,
     /// RECTANGULAR_TRIMMED_SURFACE: maps entity id → (basis_surface_ref, [u1,u2,v1,v2])
     rectangular_trimmed_surfaces: HashMap<u64, (u64, [f64; 4])>,
+    /// HYPERBOLA: maps entity id → (axis2_placement_3d_ref, semi_major, semi_minor)
+    hyperbolas: HashMap<u64, (u64, f64, f64)>,
+    /// PARABOLA: maps entity id → (axis2_placement_3d_ref, focal_param)
+    parabolas: HashMap<u64, (u64, f64)>,
+    /// OFFSET_CURVE_3D: maps entity id → (basis_curve_ref, offset_distance, ref_dir_ref)
+    offset_curves_3d: HashMap<u64, (u64, f64, u64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 
@@ -129,6 +135,9 @@ impl ParsedStep {
             linear_extrusions: HashMap::new(),
             revolutions: HashMap::new(),
             rectangular_trimmed_surfaces: HashMap::new(),
+            hyperbolas: HashMap::new(),
+            parabolas: HashMap::new(),
+            offset_curves_3d: HashMap::new(),
             uncertainty_value: None,
             colour_rgbs: HashMap::new(),
             fill_area_style_colours: HashMap::new(),
@@ -232,6 +241,24 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 "ELLIPSE" => {
                     if let Some((placement, major, minor)) = parse_placement_two_radii(args) {
                         parsed.ellipses.insert(id, (placement, major, minor));
+                    }
+                }
+                "HYPERBOLA" => {
+                    // HYPERBOLA('name', #placement, semi_major, semi_minor)
+                    if let Some((placement, major, minor)) = parse_placement_two_radii(args) {
+                        parsed.hyperbolas.insert(id, (placement, major, minor));
+                    }
+                }
+                "PARABOLA" => {
+                    // PARABOLA('name', #placement, focal_param)
+                    if let Some((placement, radius)) = parse_placement_radius(args) {
+                        parsed.parabolas.insert(id, (placement, radius));
+                    }
+                }
+                "OFFSET_CURVE_3D" => {
+                    // OFFSET_CURVE_3D('', #basis_curve, offset_dist, #ref_dir)
+                    if let Some((basis, dist, dir)) = parse_offset_curve_3d(args) {
+                        parsed.offset_curves_3d.insert(id, (basis, dist, dir));
                     }
                 }
                 "B_SPLINE_CURVE_WITH_KNOTS" => {
@@ -1965,6 +1992,20 @@ fn parse_toroidal_surface(args: &str) -> Option<(u64, f64, f64)> {
     ))
 }
 
+/// Parse OFFSET_CURVE_3D args:
+/// ('name', #basis_curve, offset_distance, #ref_direction)
+fn parse_offset_curve_3d(args: &str) -> Option<(u64, f64, u64)> {
+    let parts = split_top_level(args, ',');
+    if parts.len() < 4 {
+        return None;
+    }
+    Some((
+        parse_ref(parts[1])?,
+        parts[2].trim().parse::<f64>().ok()?,
+        parse_ref(parts[3])?,
+    ))
+}
+
 fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 3 {
@@ -2034,6 +2075,37 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
                 weights,
             }));
         }
+    }
+
+    if let Some((placement_ref, semi_major, semi_minor)) = parsed.hyperbolas.get(&actual_ref) {
+        let (center, normal, major_dir) = placement_frame_from_ref(parsed, *placement_ref)?;
+        return Some(Curve3::Hyperbola(rcad_kernel::geom::Hyperbola3 {
+            center,
+            normal,
+            major_dir,
+            semi_major: *semi_major,
+            semi_minor: *semi_minor,
+        }));
+    }
+
+    if let Some((placement_ref, focal_param)) = parsed.parabolas.get(&actual_ref) {
+        let (vertex, normal, axis_dir) = placement_frame_from_ref(parsed, *placement_ref)?;
+        return Some(Curve3::Parabola(rcad_kernel::geom::Parabola3 {
+            vertex,
+            normal,
+            axis_dir,
+            focal_param: *focal_param,
+        }));
+    }
+
+    if let Some((basis_ref, offset_dist, dir_ref)) = parsed.offset_curves_3d.get(&actual_ref) {
+        let basis = resolve_curve(parsed, *basis_ref)?;
+        let offset_dir = direction_from_ref(parsed, *dir_ref)?;
+        return Some(Curve3::Offset(rcad_kernel::geom::OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: *offset_dist,
+            offset_dir,
+        }));
     }
 
     None

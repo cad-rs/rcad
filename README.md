@@ -87,6 +87,12 @@ Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 - **Shell sewing** (`rcad_modeling::sew_shells`): merges multiple BReps into one by union-find vertex merging (within configurable tolerance) + edge deduplication + connectivity assembly. Returns `SewingResult { brep, stitched_pairs, free_edges }`. Analogous to OCCT `BRepOffsetAPI_Sewing`.
 - **Analytic section curves** (`rcad_algorithms::section_curves`): for faces with Plane/Sphere/Cylinder/Cone surfaces, dispatches to exact `inttools::plane_*` intersection tools and returns `SectionCurve::Analytic(Curve3::Circle/Ellipse/Line)`; falls back to `SectionCurve::Polyline` for Torus/BSpline/Bezier/Offset. Existing `section_polylines` unchanged. Analogous to OCCT `BRepAlgoAPI_Section` producing proper edge geometry.
 
+**Phase S — Hyperbola, Parabola, OffsetCurve STEP I/O**
+- **`Hyperbola3`** (`rcad_kernel::geom::Hyperbola3`): parametric form `P(t) = center + a·cosh(t)·major_dir + b·sinh(t)·minor_dir`. STEP: `HYPERBOLA` read + write. Analogous to OCCT `Geom_Hyperbola`.
+- **`Parabola3`** (`rcad_kernel::geom::Parabola3`): parametric form `P(t) = vertex + (t²/2p)·axis_dir + t·dir_perp`. STEP: `PARABOLA` read + write. Analogous to OCCT `Geom_Parabola`.
+- **`OffsetCurve3` STEP I/O**: `Curve3::Offset` (added Phase M) now reads from `OFFSET_CURVE_3D` entities and writes as `OFFSET_CURVE_3D` (previously fell back to a straight-line approximation). Analogous to OCCT `Geom_OffsetCurve` STEP exchange.
+- All three types participate in `arc_length` (Gauss-Legendre), `extrema_curve_curve`, `apply_transform`, and `closest_point_on_curve` automatically through the shared `CurveEval` dispatch.
+
 **Phase R — 曲面布尔运算改进 + 面印记 + 间隙/重叠检测**
 - **曲面布尔运算改进** (`R.A`): `IntersectionCurve` 现在存储真实 marching 折线点序列（而非直线近似）；marching 边界检查改为面 AABB union；`split_face` 对 Cylinder/Sphere/Cone/Torus 曲面新增 `split_curved_face`，按折线将边界点分割为两个 SubFace；`classify_point` 和 `ray_cast_classify` 新增 Cylinder/Sphere/Cone 的 On 检测和光线-曲面解析交点计算。
 - **面印记** (`rcad_algorithms::imprint_brep(target, tool) -> ImprintResult`): 运行 PaveFiller 后将 tool 边界印记到 target 各面上，返回分割后的新 BRep 及 `seam_edges`（共享边界 face pair）。面印记是 EM 共形网格生成的前提。

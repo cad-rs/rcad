@@ -54,14 +54,48 @@ pub struct BezierCurve3 {
     pub weights: Vec<f64>,
 }
 
+/// A 3D hyperbola defined by center, normal, semi-transverse axis `a`, and
+/// semi-conjugate axis `b`.  Parametric form:
+///
+///   P(t) = center + a·cosh(t)·major_dir + b·sinh(t)·minor_dir
+///
+/// where `minor_dir = normal × major_dir`.  Domain is `(−∞, +∞)`;
+/// the principal branch (t ≥ 0) is on the `+major_dir` side.
+/// Analogous to OCCT `Geom_Hyperbola`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Hyperbola3 {
+    pub center: Point3,
+    pub normal: Vec3,
+    pub major_dir: Vec3,
+    pub semi_major: f64,   // a  (transverse semi-axis)
+    pub semi_minor: f64,   // b  (conjugate semi-axis)
+}
+
+/// A 3D parabola defined by its vertex, axis, and focal parameter `p`
+/// (where the focus is at distance `p/2` from the vertex along the axis).
+///
+///   P(t) = vertex + (t²/(2p))·axis_dir + t·dir_perp
+///
+/// where `dir_perp = normal × axis_dir` is the cross-axis direction.
+/// Domain is `(−∞, +∞)`.  Analogous to OCCT `Geom_Parabola`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Parabola3 {
+    pub vertex: Point3,
+    pub normal: Vec3,
+    pub axis_dir: Vec3,    // direction from vertex toward focus
+    pub focal_param: f64,  // p  (= 2 × focal_length)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
     Circle(Circle3),
     Ellipse(Ellipse3),
     BSpline(BSplineCurve3),
-    Bezier(BezierCurve3),  // Phase M
-    Offset(OffsetCurve3),  // Phase M
+    Bezier(BezierCurve3),    // Phase M
+    Offset(OffsetCurve3),    // Phase M
+    Hyperbola(Hyperbola3),   // Phase S
+    Parabola(Parabola3),     // Phase S
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -397,6 +431,41 @@ impl CurveEval for Ellipse3 {
     }
 }
 
+impl CurveEval for Hyperbola3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        let minor_dir = self.normal.cross(self.major_dir).normalize();
+        self.center
+            + self.semi_major * t.cosh() * self.major_dir
+            + self.semi_minor * t.sinh() * minor_dir
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let minor_dir = self.normal.cross(self.major_dir).normalize();
+        let v = self.semi_major * t.sinh() * self.major_dir
+              + self.semi_minor * t.cosh() * minor_dir;
+        v.normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [-1e4, 1e4]  // unbounded; caller trims as needed
+    }
+}
+
+impl CurveEval for Parabola3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        let dir_perp = self.normal.cross(self.axis_dir).normalize();
+        self.vertex
+            + (t * t / (2.0 * self.focal_param)) * self.axis_dir
+            + t * dir_perp
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let dir_perp = self.normal.cross(self.axis_dir).normalize();
+        let v = (t / self.focal_param) * self.axis_dir + dir_perp;
+        v.normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [-1e4, 1e4]  // unbounded
+    }
+}
+
 impl CurveEval for Curve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         match self {
@@ -406,6 +475,8 @@ impl CurveEval for Curve3 {
             Curve3::BSpline(c) => c.point_at(t),
             Curve3::Bezier(c) => c.point_at(t),
             Curve3::Offset(c) => c.point_at(t),
+            Curve3::Hyperbola(c) => c.point_at(t),
+            Curve3::Parabola(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -416,6 +487,8 @@ impl CurveEval for Curve3 {
             Curve3::BSpline(c) => c.tangent_at(t),
             Curve3::Bezier(c) => c.tangent_at(t),
             Curve3::Offset(c) => c.tangent_at(t),
+            Curve3::Hyperbola(c) => c.tangent_at(t),
+            Curve3::Parabola(c) => c.tangent_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -426,6 +499,8 @@ impl CurveEval for Curve3 {
             Curve3::BSpline(c) => c.default_domain(),
             Curve3::Bezier(c) => c.default_domain(),
             Curve3::Offset(c) => c.default_domain(),
+            Curve3::Hyperbola(c) => c.default_domain(),
+            Curve3::Parabola(c) => c.default_domain(),
         }
     }
 }

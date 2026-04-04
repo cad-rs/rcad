@@ -53,8 +53,11 @@ rcad-scene         创建命令状态机（Box/Sphere 流程）
 Line3        — 无限直线（origin + direction）
 Circle3      — 圆（center + normal + radius）
 Ellipse3     — 椭圆（center + normal + major_dir + semi_a + semi_b）
+Hyperbola3   — 双曲线（center + normal + major_dir + semi_major + semi_minor）
+Parabola3    — 抛物线（vertex + normal + axis_dir + focal_param）
 BSplineCurve3— 非均匀有理 B-Spline（de Boor 算法，任意阶、任意节点向量）
 BezierCurve3 — Bezier 曲线（de Casteljau）
+OffsetCurve3 — 偏移曲线（基曲线 + 偏移距离 + 偏移平面法向）
 ```
 
 所有曲线实现 `CurveEval` trait：
@@ -387,10 +390,13 @@ hlr_to_svg(result: &HlrResult, width, height) -> String
 | `LINE` → `Line3` | `ADVANCED_FACE` |
 | `CIRCLE` → `Circle3` | `FACE_OUTER_BOUND` / `FACE_BOUND` |
 | `ELLIPSE` → `Ellipse3` | `EDGE_CURVE` / `ORIENTED_EDGE` |
-| `B_SPLINE_CURVE_WITH_KNOTS` → `BSplineCurve3` | `VERTEX_POINT` |
-| `PLANE` → `Plane` | `SHELL_BASED_SURFACE_MODEL` |
-| `CYLINDRICAL_SURFACE` → `CylindricalSurface` | `CLOSED_SHELL` |
-| `SPHERICAL_SURFACE` → `SphericalSurface` | `MANIFOLD_SOLID_BREP` |
+| `HYPERBOLA` → `Hyperbola3` | `VERTEX_POINT` |
+| `PARABOLA` → `Parabola3` | `SHELL_BASED_SURFACE_MODEL` |
+| `OFFSET_CURVE_3D` → `OffsetCurve3` | `CLOSED_SHELL` |
+| `B_SPLINE_CURVE_WITH_KNOTS` → `BSplineCurve3` | `MANIFOLD_SOLID_BREP` |
+| `PLANE` → `Plane` | |
+| `CYLINDRICAL_SURFACE` → `CylindricalSurface` | |
+| `SPHERICAL_SURFACE` → `SphericalSurface` | |
 | `CONICAL_SURFACE` → `ConicalSurface` | |
 | `TOROIDAL_SURFACE` → `ToroidalSurface` | |
 | `B_SPLINE_SURFACE_WITH_KNOTS` → `BSplineSurface` | |
@@ -464,8 +470,9 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 | B-Spline 曲线 | `Geom_BSplineCurve` | `BSplineCurve3` | ✅ |
 | Bezier 曲线 | `Geom_BezierCurve` | `BezierCurve3` | ✅ |
 | 裁剪曲线 | `Geom_TrimmedCurve` | `edge_curve_range` | ✅ 参数域截断 |
-| 偏移曲线 | `Geom_OffsetCurve` | — | ❌ |
-| 双曲线/抛物线 | `Geom_Hyperbola/Parabola` | — | ❌ 低优先 |
+| 偏移曲线 | `Geom_OffsetCurve` | `OffsetCurve3` | ✅ |
+| 双曲线 | `Geom_Hyperbola` | `Hyperbola3` | ✅ |
+| 抛物线 | `Geom_Parabola` | `Parabola3` | ✅ |
 | 平面 | `Geom_Plane` | `Plane` | ✅ |
 | 圆柱面 | `Geom_CylindricalSurface` | `CylindricalSurface` | ✅ |
 | 球面 | `Geom_SphericalSurface` | `SphericalSurface` | ✅ |
@@ -527,8 +534,6 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 | 功能 | OCCT 类 | 备注 |
 |------|---------|------|
-| 偏移曲线 | `Geom_OffsetCurve` | 需圆弧近似 |
-| 双曲线/抛物线 | `Geom_Hyperbola/Parabola` | 工程场景极少 |
 | B-Rep 修复/清理 | `ShapeFix_*` | 部分间隙检测已有 |
 | 装配体/实例化 | `XCAFDoc_ShapeTool` | 无场景图 |
 | 参数化约束求解 | `GCS`, Sketcher | 独立模块 |

@@ -1,4 +1,5 @@
 use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
+use rcad_kernel::{Hyperbola3, Parabola3};
 use rcad_kernel::appearance::{Color, StepColor};
 use std::collections::{BTreeSet, HashMap};
 
@@ -698,7 +699,33 @@ impl Part21Writer {
             .cloned();
 
         match curve {
-            Some(Curve3::Line(line)) => {
+            Some(c) => self.write_curve3_entity(&c, start_point, end_point),
+            None => {
+                // No curve geometry: approximate as straight line between endpoints
+                let p0 = self.cartesian_point("edge_origin", start_point);
+                let delta = [
+                    end_point[0] - start_point[0],
+                    end_point[1] - start_point[1],
+                    end_point[2] - start_point[2],
+                ];
+                let magnitude = vector_length(delta).max(1e-9);
+                let direction = self.direction("edge_dir", normalize(delta));
+                let vector = self.vector("edge_vec", direction, magnitude);
+                self.line("edge_line", p0, vector)
+            }
+        }
+    }
+
+    /// Write a `Curve3` value as a STEP curve entity.  Shared helper used by
+    /// `write_basis_curve_for_edge` and the `Offset` case.
+    fn write_curve3_entity(
+        &mut self,
+        curve: &Curve3,
+        start_point: [f64; 3],
+        end_point: [f64; 3],
+    ) -> u64 {
+        match curve {
+            Curve3::Line(line) => {
                 let origin = self.cartesian_point("line_origin", dvec3_to_array(line.origin));
                 let dir = normalize(dvec3_to_array(line.direction));
                 let dir_id = self.direction("line_dir", dir);
@@ -706,34 +733,38 @@ impl Part21Writer {
                     end_point[0] - start_point[0],
                     end_point[1] - start_point[1],
                     end_point[2] - start_point[2],
-                ])
-                .max(1e-9);
+                ]).max(1e-9);
                 let vec_id = self.vector("line_vec", dir_id, len);
                 self.line("edge_line", origin, vec_id)
             }
-            Some(Curve3::Circle(circle)) => {
+            Curve3::Circle(circle) => {
                 let placement = self.axis2_from_origin_axis("circle_axis", circle.center, circle.normal);
                 self.circle("edge_circle", placement, circle.radius.max(1e-9))
             }
-            Some(Curve3::Ellipse(ellipse)) => {
+            Curve3::Ellipse(ellipse) => {
                 let placement = self.axis2_from_origin_axis_ref(
-                    "ellipse_axis",
-                    ellipse.center,
-                    ellipse.normal,
-                    ellipse.major_dir,
+                    "ellipse_axis", ellipse.center, ellipse.normal, ellipse.major_dir,
                 );
-                self.ellipse(
-                    "edge_ellipse",
-                    placement,
-                    ellipse.major_radius.max(1e-9),
-                    ellipse.minor_radius.max(1e-9),
-                )
+                self.ellipse("edge_ellipse", placement, ellipse.major_radius.max(1e-9), ellipse.minor_radius.max(1e-9))
             }
-            Some(Curve3::BSpline(bs)) => {
+            Curve3::BSpline(bs) => {
                 self.write_bspline_curve(&bs.clone(), start_point, end_point)
             }
-            Some(Curve3::Bezier(_)) | Some(Curve3::Offset(_)) | None => {
-                // Bezier/Offset or missing curve: write as a straight line between endpoints
+            Curve3::Hyperbola(h) => {
+                let placement = self.axis2_from_origin_axis_ref("hyp_axis", h.center, h.normal, h.major_dir);
+                self.hyperbola("edge_hyperbola", placement, h.semi_major.max(1e-9), h.semi_minor.max(1e-9))
+            }
+            Curve3::Parabola(p) => {
+                let placement = self.axis2_from_origin_axis_ref("par_axis", p.vertex, p.normal, p.axis_dir);
+                self.parabola("edge_parabola", placement, p.focal_param.max(1e-9))
+            }
+            Curve3::Offset(o) => {
+                let basis_id = self.write_curve3_entity(&o.basis, start_point, end_point);
+                let dir_id = self.direction("offset_dir", dvec3_to_array(o.offset_dir));
+                self.offset_curve_3d(basis_id, o.offset_distance, dir_id)
+            }
+            Curve3::Bezier(_) => {
+                // Approximate as straight line
                 let p0 = self.cartesian_point("edge_origin", start_point);
                 let delta = [
                     end_point[0] - start_point[0],
@@ -1083,6 +1114,27 @@ impl Part21Writer {
         self.push(format!(
             "ELLIPSE('{}',#{},{:.9},{:.9})",
             name, placement, major, minor
+        ))
+    }
+
+    fn hyperbola(&mut self, name: &str, placement: u64, semi_major: f64, semi_minor: f64) -> u64 {
+        self.push(format!(
+            "HYPERBOLA('{}',#{},{:.9},{:.9})",
+            name, placement, semi_major, semi_minor
+        ))
+    }
+
+    fn parabola(&mut self, name: &str, placement: u64, focal_param: f64) -> u64 {
+        self.push(format!(
+            "PARABOLA('{}',#{},{:.9})",
+            name, placement, focal_param
+        ))
+    }
+
+    fn offset_curve_3d(&mut self, basis: u64, dist: f64, dir: u64) -> u64 {
+        self.push(format!(
+            "OFFSET_CURVE_3D('',#{},{:.9},#{})",
+            basis, dist, dir
         ))
     }
 

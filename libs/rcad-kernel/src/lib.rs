@@ -74,6 +74,7 @@ pub use geom::{any_perpendicular, Curve2dEval, CurveEval, SurfaceEval};
 pub use geom::{BSplineCurve2, Ellipse2d};
 pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
 pub use geom::{OffsetCurve3, OffsetSurface};
+pub use geom::{Hyperbola3, Parabola3};
 pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use geom::TrimmedSurface;
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
@@ -827,6 +828,16 @@ impl BRep {
                     xf_curve(&mut o.basis, mat);
                     o.offset_dir = mat.transform_vector3(o.offset_dir).normalize_or_zero();
                 }
+                Curve3::Hyperbola(h) => {
+                    h.center = mat.transform_point3(h.center);
+                    h.normal = mat.transform_vector3(h.normal).normalize_or_zero();
+                    h.major_dir = mat.transform_vector3(h.major_dir).normalize_or_zero();
+                }
+                Curve3::Parabola(p) => {
+                    p.vertex = mat.transform_point3(p.vertex);
+                    p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                    p.axis_dir = mat.transform_vector3(p.axis_dir).normalize_or_zero();
+                }
             }
         }
         for c in &mut self.geom.curves {
@@ -908,6 +919,16 @@ impl BRep {
                 }
                 geom::Curve3::Offset(o) => {
                     o.offset_dir = mat.transform_vector3(o.offset_dir).normalize_or_zero();
+                }
+                geom::Curve3::Hyperbola(h) => {
+                    h.center = mat.transform_point3(h.center);
+                    h.normal = mat.transform_vector3(h.normal).normalize_or_zero();
+                    h.major_dir = mat.transform_vector3(h.major_dir).normalize_or_zero();
+                }
+                geom::Curve3::Parabola(p) => {
+                    p.vertex = mat.transform_point3(p.vertex);
+                    p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                    p.axis_dir = mat.transform_vector3(p.axis_dir).normalize_or_zero();
                 }
             }
         }
