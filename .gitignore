@@ -3,3 +3,4 @@ dist/
 *.step
 *.stp
 /*.svg
+.claude/
