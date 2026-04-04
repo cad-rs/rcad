@@ -32,8 +32,8 @@ name = "brep_builder_demo"
 path = "brep_builder_demo.rs"
 
 [[example]]
-name = "phase_c_demo"
-path = "phase_c_demo.rs"
+name = "shape_properties"
+path = "shape_properties.rs"
 
 [[example]]
 name = "properties_gallery"
@@ -44,61 +44,61 @@ name = "section_gallery"
 path = "section_gallery.rs"
 
 [[example]]
-name = "phase_d_demo"
-path = "phase_d_demo.rs"
+name = "step_color_hlr"
+path = "step_color_hlr.rs"
 
 [[example]]
-name = "phase_e_demo"
-path = "phase_e_demo.rs"
+name = "loft_and_sweep"
+path = "loft_and_sweep.rs"
 
 [[example]]
-name = "phase_f_demo"
-path = "phase_f_demo.rs"
+name = "chamfer_fillet"
+path = "chamfer_fillet.rs"
 
 [[example]]
-name = "phase_g_demo"
-path = "phase_g_demo.rs"
+name = "topology_curvature"
+path = "topology_curvature.rs"
 
 [[example]]
-name = "phase_h_demo"
-path = "phase_h_demo.rs"
+name = "arc_length_inertia"
+path = "arc_length_inertia.rs"
 
 [[example]]
-name = "phase_i_demo"
-path = "phase_i_demo.rs"
+name = "pcurve_tolerance"
+path = "pcurve_tolerance.rs"
 
 [[example]]
-name = "phase_j_demo"
-path = "phase_j_demo.rs"
+name = "step_curve2d"
+path = "step_curve2d.rs"
 
 [[example]]
-name = "phase_k_demo"
-path = "phase_k_demo.rs"
+name = "swept_surfaces"
+path = "swept_surfaces.rs"
 
 [[example]]
-name = "phase_l_demo"
-path = "phase_l_demo.rs"
+name = "variable_sweep_fillet"
+path = "variable_sweep_fillet.rs"
 
 [[example]]
-name = "phase_m_demo"
-path = "phase_m_demo.rs"
+name = "bezier_offset_history"
+path = "bezier_offset_history.rs"
 
 [[example]]
-name = "phase_n_demo"
-path = "phase_n_demo.rs"
+name = "curve_fitting_projection"
+path = "curve_fitting_projection.rs"
 
 [[example]]
-name = "phase_o_demo"
-path = "phase_o_demo.rs"
+name = "shape_distance_sewing"
+path = "shape_distance_sewing.rs"
 
 [[example]]
-name = "phase_p_demo"
-path = "phase_p_demo.rs"
+name = "transform_extrema"
+path = "transform_extrema.rs"
 
 [[example]]
-name = "phase_q_demo"
-path = "phase_q_demo.rs"
+name = "surface_intersection"
+path = "surface_intersection.rs"
 
 [[example]]
-name = "phase_r_demo"
-path = "phase_r_demo.rs"
+name = "boolean_imprint"
+path = "boolean_imprint.rs"
