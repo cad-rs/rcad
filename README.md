@@ -87,6 +87,11 @@ Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 - **Shell sewing** (`rcad_modeling::sew_shells`): merges multiple BReps into one by union-find vertex merging (within configurable tolerance) + edge deduplication + connectivity assembly. Returns `SewingResult { brep, stitched_pairs, free_edges }`. Analogous to OCCT `BRepOffsetAPI_Sewing`.
 - **Analytic section curves** (`rcad_algorithms::section_curves`): for faces with Plane/Sphere/Cylinder/Cone surfaces, dispatches to exact `inttools::plane_*` intersection tools and returns `SectionCurve::Analytic(Curve3::Circle/Ellipse/Line)`; falls back to `SectionCurve::Polyline` for Torus/BSpline/Bezier/Offset. Existing `section_polylines` unchanged. Analogous to OCCT `BRepAlgoAPI_Section` producing proper edge geometry.
 
+**Phase P — BRep transform, curve-curve extrema, STEP color import**
+- **BRep transform** (`BRep::apply_transform(mat: DAffine3)` / `BRep::transformed(mat) -> BRep`): in-place or copy rigid-body / affine transform of all vertex positions and analytic geometry (Curve3 origins/axes/control-points, Surface3 origins/axes/control-grids, face normals). `transformed()` leaves original unchanged. Analogous to OCCT `BRepBuilderAPI_Transform` / `TopLoc_Location`.
+- **Curve-curve extrema** (`rcad_kernel::extrema_curve_curve(c1, c2, n_samples) -> CurveCurveExtrema`): find all local minima of `|C1(s)−C2(t)|` via n×n coarse grid sampling + Newton-Raphson refinement. Returns `CurveCurveExtrema { pairs: Vec<ExtremaPair> }` sorted by distance. Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
+- **STEP color import** (`StepReader::parse_string_with_color / read_file_with_color`): walks the `STYLED_ITEM → PRESENTATION_STYLE_ASSIGNMENT → SURFACE_STYLE_USAGE → SURFACE_SIDE_STYLE → SURFACE_STYLE_FILL_AREA → FILL_AREA_STYLE → FILL_AREA_STYLE_COLOUR → COLOUR_RGB` chain and returns `(BRep, Option<StepColor>)`. Backward-compatible — existing `parse_string` / `read_file` unchanged. Analogous to OCCT `XCAFDoc_ColorTool` read path.
+
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).

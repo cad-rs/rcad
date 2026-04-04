@@ -2,6 +2,7 @@ use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, Ge
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
+use rcad_kernel::appearance::{Color, StepColor};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -67,6 +68,24 @@ struct ParsedStep {
     revolutions: HashMap<u64, (u64, u64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
+
+    // ── Color / presentation chain ─────────────────────────────────────────
+    /// COLOUR_RGB: id → [r, g, b]
+    colour_rgbs: HashMap<u64, [f64; 3]>,
+    /// FILL_AREA_STYLE_COLOUR: id → colour_rgb_id
+    fill_area_style_colours: HashMap<u64, u64>,
+    /// FILL_AREA_STYLE: id → [fasc_id, ...]
+    fill_area_styles: HashMap<u64, Vec<u64>>,
+    /// SURFACE_STYLE_FILL_AREA: id → fill_area_style_id
+    surface_style_fill_areas: HashMap<u64, u64>,
+    /// SURFACE_SIDE_STYLE: id → [ssfa_id, ...]
+    surface_side_styles: HashMap<u64, Vec<u64>>,
+    /// SURFACE_STYLE_USAGE: id → surface_side_style_id
+    surface_style_usages: HashMap<u64, u64>,
+    /// PRESENTATION_STYLE_ASSIGNMENT: id → [ssu_id, ...]
+    presentation_style_assignments: HashMap<u64, Vec<u64>>,
+    /// STYLED_ITEM: id → (shape_step_id, [psa_id, ...])
+    styled_items: HashMap<u64, (u64, Vec<u64>)>,
 }
 
 impl ParsedStep {
@@ -108,6 +127,14 @@ impl ParsedStep {
             linear_extrusions: HashMap::new(),
             revolutions: HashMap::new(),
             uncertainty_value: None,
+            colour_rgbs: HashMap::new(),
+            fill_area_style_colours: HashMap::new(),
+            fill_area_styles: HashMap::new(),
+            surface_style_fill_areas: HashMap::new(),
+            surface_side_styles: HashMap::new(),
+            surface_style_usages: HashMap::new(),
+            presentation_style_assignments: HashMap::new(),
+            styled_items: HashMap::new(),
         }
     }
 }
@@ -124,9 +151,28 @@ impl StepReader {
         if !content.contains("ISO-10303-21") {
             return Err("Invalid STEP file format".to_string());
         }
-
         let entities = parse_entities(content)?;
         build_brep_from_parsed(&entities)
+    }
+
+    /// Parse a STEP file, returning both the BRep and an optional color map.
+    ///
+    /// Colors are extracted from the `STYLED_ITEM → COLOUR_RGB` chain.
+    /// Returns `None` for color when the file has no color entities.
+    pub fn read_file_with_color<P: AsRef<Path>>(path: P) -> Result<(BRep, Option<StepColor>), String> {
+        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        Self::parse_string_with_color(&content)
+    }
+
+    /// Parse a STEP string, returning both the BRep and an optional color map.
+    pub fn parse_string_with_color(content: &str) -> Result<(BRep, Option<StepColor>), String> {
+        if !content.contains("ISO-10303-21") {
+            return Err("Invalid STEP file format".to_string());
+        }
+        let entities = parse_entities(content)?;
+        let (brep, face_id_map) = build_brep_with_face_map(&entities)?;
+        let color = resolve_step_color(&entities, &face_id_map);
+        Ok((brep, color))
     }
 }
 
@@ -335,6 +381,56 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                         });
                     }
                 }
+                // ── Color / presentation chain ─────────────────────────────────
+                "COLOUR_RGB" => {
+                    // COLOUR_RGB('name', r, g, b)
+                    if let Some(rgb) = parse_colour_rgb(args) {
+                        parsed.colour_rgbs.insert(id, rgb);
+                    }
+                }
+                "FILL_AREA_STYLE_COLOUR" => {
+                    // FILL_AREA_STYLE_COLOUR('name', #colour_rgb)
+                    if let Some(colour_ref) = parse_single_ref_after_name(args) {
+                        parsed.fill_area_style_colours.insert(id, colour_ref);
+                    }
+                }
+                "FILL_AREA_STYLE" => {
+                    // FILL_AREA_STYLE('name', (#fasc, ...))
+                    if let Some(refs) = parse_ref_list_after_name(args) {
+                        parsed.fill_area_styles.insert(id, refs);
+                    }
+                }
+                "SURFACE_STYLE_FILL_AREA" => {
+                    // SURFACE_STYLE_FILL_AREA(#fill_area_style)
+                    if let Some(fas_ref) = parse_single_ref(args) {
+                        parsed.surface_style_fill_areas.insert(id, fas_ref);
+                    }
+                }
+                "SURFACE_SIDE_STYLE" => {
+                    // SURFACE_SIDE_STYLE('name', (#ssfa, ...))
+                    if let Some(refs) = parse_ref_list_after_name(args) {
+                        parsed.surface_side_styles.insert(id, refs);
+                    }
+                }
+                "SURFACE_STYLE_USAGE" => {
+                    // SURFACE_STYLE_USAGE(.BOTH., #surface_side_style)
+                    if let Some(sss_ref) = parse_last_ref(args) {
+                        parsed.surface_style_usages.insert(id, sss_ref);
+                    }
+                }
+                "PRESENTATION_STYLE_ASSIGNMENT" => {
+                    // PRESENTATION_STYLE_ASSIGNMENT((#ssu, ...))
+                    let refs = parse_ref_list(args);
+                    if !refs.is_empty() {
+                        parsed.presentation_style_assignments.insert(id, refs);
+                    }
+                }
+                "STYLED_ITEM" => {
+                    // STYLED_ITEM('name', (#psa,...), #shape)
+                    if let Some((shape_ref, psa_refs)) = parse_styled_item(args) {
+                        parsed.styled_items.insert(id, (shape_ref, psa_refs));
+                    }
+                }
                 _ => {}
             }
         }
@@ -344,6 +440,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
 }
 
 fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
+    build_brep_with_face_map(parsed).map(|(brep, _)| brep)
+}
+
+/// Build BRep and return the STEP face-id → flat-face-index mapping used for color resolution.
+fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, usize>), String> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
         collect_edge_vertices(parsed)
@@ -354,7 +455,7 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
     };
     if used_vertex_ids.is_empty() && parsed.geometric_curve_sets.is_empty() {
         if let Some(brep) = brep_from_points_bbox(parsed) {
-            return Ok(brep);
+            return Ok((brep, HashMap::new()));
         }
         return Err("STEP parse produced no vertices".to_string());
     }
@@ -385,6 +486,9 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
     let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
     let mut solids: Vec<Solid> = Vec::new();
     let mut geom = GeomStore::default();
+    // STEP face id → flat face index across all shells (for color resolution)
+    let mut face_id_map: HashMap<u64, usize> = HashMap::new();
+    let mut flat_face_idx: usize = 0;
 
     for shell_faces in shell_face_sets {
         let mut faces: Vec<Face> = Vec::new();
@@ -410,6 +514,8 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
                     Some(idx)
                 });
                 geom.face_surface.push(surface_binding);
+                face_id_map.insert(face_id, flat_face_idx);
+                flat_face_idx += 1;
                 faces.push(face);
             }
         }
@@ -540,7 +646,7 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
 
     if solids.is_empty() && edges.is_empty() {
         if let Some(brep) = brep_from_points_bbox(parsed) {
-            return Ok(brep);
+            return Ok((brep, HashMap::new()));
         }
         return Err("STEP parse produced no triangulated faces or edges".to_string());
     }
@@ -569,7 +675,51 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
         }
     }
 
-    Ok(brep)
+    Ok((brep, face_id_map))
+}
+
+/// Resolve STYLED_ITEM → COLOUR_RGB chains into a StepColor.
+/// Returns None if no color entities were found.
+fn resolve_step_color(parsed: &ParsedStep, face_id_map: &HashMap<u64, usize>) -> Option<StepColor> {
+    if parsed.styled_items.is_empty() {
+        return None;
+    }
+
+    let mut step_color = StepColor::new();
+    let mut found_any = false;
+
+    for (_styled_id, (shape_ref, psa_refs)) in &parsed.styled_items {
+        // Resolve color through the chain
+        let rgb = psa_refs.iter().find_map(|psa_id| {
+            let ssu_ids = parsed.presentation_style_assignments.get(psa_id)?;
+            ssu_ids.iter().find_map(|ssu_id| {
+                let sss_id = parsed.surface_style_usages.get(ssu_id)?;
+                let ssfa_ids = parsed.surface_side_styles.get(sss_id)?;
+                ssfa_ids.iter().find_map(|ssfa_id| {
+                    let fas_id = parsed.surface_style_fill_areas.get(ssfa_id)?;
+                    let fasc_ids = parsed.fill_area_styles.get(fas_id)?;
+                    fasc_ids.iter().find_map(|fasc_id| {
+                        let colour_id = parsed.fill_area_style_colours.get(fasc_id)?;
+                        parsed.colour_rgbs.get(colour_id).copied()
+                    })
+                })
+            })
+        });
+
+        let Some([r, g, b]) = rgb else { continue };
+        let color = Color::new(r, g, b);
+        found_any = true;
+
+        // Map shape_ref to a face index
+        if let Some(&face_idx) = face_id_map.get(shape_ref) {
+            step_color = step_color.with_face_color(face_idx, color);
+        } else {
+            // Could be a solid-level styled item; use as default
+            step_color.solid_color = Some(color);
+        }
+    }
+
+    if found_any { Some(step_color) } else { None }
 }
 
 fn collect_edge_vertices(parsed: &ParsedStep) -> BTreeSet<u64> {
@@ -2010,6 +2160,52 @@ fn parse_uncertainty_measure(args: &str) -> Option<f64> {
     let rest = &args[start + "LENGTH_MEASURE(".len()..];
     let end = rest.find(')')?;
     rest[..end].trim().parse::<f64>().ok()
+}
+
+/// Parse COLOUR_RGB args: `'name', r, g, b` → `[r, g, b]`.
+fn parse_colour_rgb(args: &str) -> Option<[f64; 3]> {
+    // Skip the optional name string, then parse three floats.
+    let rest = if args.trim_start().starts_with('\'') {
+        // Skip quoted name
+        let after = args.trim_start().trim_start_matches('\'');
+        let end_quote = after.find('\'')?;
+        &after[end_quote + 1..]
+    } else {
+        args
+    };
+    let floats: Vec<f64> = rest.split(',')
+        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .collect();
+    if floats.len() >= 3 {
+        Some([floats[0], floats[1], floats[2]])
+    } else {
+        None
+    }
+}
+
+/// Parse a single `#N` reference from args (no name prefix).
+fn parse_single_ref(args: &str) -> Option<u64> {
+    let refs = parse_ref_list(args);
+    refs.into_iter().next()
+}
+
+/// Parse the last `#N` reference in args (for SURFACE_STYLE_USAGE where shape ref is last).
+fn parse_last_ref(args: &str) -> Option<u64> {
+    parse_ref_list(args).into_iter().last()
+}
+
+/// Parse STYLED_ITEM args: `'name', (#psa,...), #shape` → `(shape_ref, [psa_refs])`.
+///
+/// The writer emits: `STYLED_ITEM('color',(#psa,),#face_id)`
+fn parse_styled_item(args: &str) -> Option<(u64, Vec<u64>)> {
+    let refs = parse_ref_list(args);
+    if refs.len() < 2 {
+        return None;
+    }
+    // Last ref is the shape; all but last are style assignments
+    let shape_ref = *refs.last()?;
+    let psa_refs = refs[..refs.len() - 1].to_vec();
+    Some((shape_ref, psa_refs))
 }
 
 fn point_from_ref(parsed: &ParsedStep, point_ref: u64) -> Option<glam::DVec3> {

@@ -227,8 +227,26 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
   - `SectionCurve::Polyline(Vec<DVec3>)` — triangle-mesh fallback for Torus, BSpline, Bezier, Offset
 - Existing `section()` and `section_polylines()` unchanged (backward compatible).
 
+## 2.17 BRep Transform (rcad-kernel / lib.rs)
+- Analogous to OCCT `BRepBuilderAPI_Transform` / `TopLoc_Location`.
+- `BRep::apply_transform(mat: DAffine3)` — modifies in place:
+  - All `vertices[i].point` via `mat.transform_point3`
+  - All `Curve3` variants: Line origin/direction, Circle/Ellipse center/normal/major_dir, BSpline/Bezier control points, Offset basis curve (recursive)
+  - All `Surface3` variants: Plane/Cylinder/Sphere/Cone/Torus origins and axes, BSpline/Bezier control-point grids, LinearExtrusion direction, Revolution axis; directions normalized after transform
+  - Face normals (stored as `Plane.normal` in surfaces)
+- `BRep::transformed(mat: DAffine3) -> BRep` — clone + apply (non-destructive).
 
-## 3. Visualization Pipeline (rcad-render)
+## 2.18 Curve-Curve Extrema (rcad-kernel / extrema.rs)
+- Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
+- `extrema_curve_curve(c1: &Curve3, c2: &Curve3, n_samples: usize) -> CurveCurveExtrema`
+  - **Coarse grid**: n×n grid over both curve domains; local minima are collected as seeds.
+  - **Boundary seeds**: all four corner (s,t) combinations included to catch boundary minima.
+  - **Newton-Raphson refinement**: finite-difference gradient `[2(C1-C2)·C1', -2(C1-C2)·C2']`; Gauss-Newton diagonal Hessian; backtracking line search (≤8 halvings).
+  - **Deduplication**: pairs within `DEDUP_TOL = 1e-4` in parameter space are merged.
+  - **Output**: `CurveCurveExtrema { pairs: Vec<ExtremaPair> }` sorted distance ascending; `ExtremaPair { param1, param2, point1, point2, distance }`. `min_distance()` convenience method.
+  - Line domain clamped to `[-1e6, 1e6]` for infinite-line sampling.
+
+
 - **Tessellation**: Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.
 - **Picking**:
   - Face picking by screen ray vs triangle intersection.
@@ -260,6 +278,7 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - **Tolerance import** (Phase J): `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → `GeomStore.{vertex,edge,face}_tolerance` filled with `val`; falls back to `CONFUSION = 1e-7` when absent.
 - **BSpline surface export** (Phase K): `Surface3::BSpline` → `B_SPLINE_SURFACE_WITH_KNOTS` with full control-point grid and knot vectors; kernel [u][v] grid transposed to STEP [v][u] order (was falling back to PLANE).
 - **Swept surface import** (Phase K): `SURFACE_OF_LINEAR_EXTRUSION` → `Surface3::LinearExtrusion`; `SURFACE_OF_REVOLUTION` → `Surface3::Revolution`. Profile curve resolved via existing `resolve_curve`; direction/axis resolved via `direction_from_ref` / `placement_from_ref`.
+- **Color import** (Phase P): `StepReader::parse_string_with_color / read_file_with_color` → `(BRep, Option<StepColor>)`. Parses the full `STYLED_ITEM → PRESENTATION_STYLE_ASSIGNMENT → SURFACE_STYLE_USAGE → SURFACE_SIDE_STYLE → SURFACE_STYLE_FILL_AREA → FILL_AREA_STYLE → FILL_AREA_STYLE_COLOUR → COLOUR_RGB` chain. Maps STEP `ADVANCED_FACE` entity id → flat face index via `face_id_map` built during BRep assembly. Backward-compatible: existing `parse_string` / `read_file` unchanged.
 - **Fallback behavior**: When shell/face topology is missing but points exist, importer falls back to a bbox solid for viewability.
 
 ## 5. Development Workflow

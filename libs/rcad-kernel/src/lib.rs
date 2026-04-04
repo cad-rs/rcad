@@ -57,10 +57,16 @@ pub mod projection;
 /// Analogous to OCCT `BRepExtrema_DistShapeShape`.
 pub mod distance;
 
+/// Curve-curve extrema: find (s,t) minimising |C1(s) − C2(t)|.
+///
+/// Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
+pub mod extrema;
+
 pub use fit::{approximate_points, interpolate_points, FitError};
 pub use projection::{closest_point_on_curve, closest_point_on_surface,
                      CurveProjection, SurfaceProjection};
 pub use distance::{min_distance, point_to_shape_distance, ShapeDistance};
+pub use extrema::{extrema_curve_curve, CurveCurveExtrema, ExtremaPair};
 
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
@@ -767,6 +773,160 @@ impl BRep {
             mx = mx.max(v.point);
         }
         Some([mn, mx])
+    }
+
+    /// Apply a rigid-body (or general affine) transform to this BRep **in-place**.
+    ///
+    /// Transforms:
+    /// - All vertex positions via `mat.transform_point3(p)`.
+    /// - All analytic curve origins/directions and surface origins/axes.
+    /// - B-spline / Bezier control points.
+    /// - Recursive offset curve bases.
+    ///
+    /// # Notes
+    /// - Direction vectors (normals, axes) are transformed with the matrix's
+    ///   linear part and then renormalized — this handles rotations correctly.
+    /// - Radii and offset distances are **not** scaled; callers must ensure the
+    ///   transform is isometric (rotation + translation) for analytic shapes to
+    ///   remain exact. Uniform scaling is supported for BSpline/Bezier (control
+    ///   points are scale-transformed directly).
+    /// - `glam::DAffine3` covers any combination of rotation, translation, and
+    ///   uniform/non-uniform scale.
+    pub fn apply_transform(&mut self, mat: glam::DAffine3) {
+        use geom::{Curve3, Surface3};
+
+        // ── Vertices ─────────────────────────────────────────────────────
+        for v in &mut self.vertices {
+            v.point = mat.transform_point3(v.point);
+        }
+
+        // ── Analytic curves ───────────────────────────────────────────────
+        fn xf_curve(c: &mut Curve3, mat: glam::DAffine3) {
+            match c {
+                Curve3::Line(l) => {
+                    l.origin = mat.transform_point3(l.origin);
+                    l.direction = mat.transform_vector3(l.direction).normalize_or_zero();
+                }
+                Curve3::Circle(c3) => {
+                    c3.center = mat.transform_point3(c3.center);
+                    c3.normal = mat.transform_vector3(c3.normal).normalize_or_zero();
+                }
+                Curve3::Ellipse(e) => {
+                    e.center = mat.transform_point3(e.center);
+                    e.normal = mat.transform_vector3(e.normal).normalize_or_zero();
+                    e.major_dir = mat.transform_vector3(e.major_dir).normalize_or_zero();
+                }
+                Curve3::BSpline(b) => {
+                    for p in &mut b.control_points { *p = mat.transform_point3(*p); }
+                }
+                Curve3::Bezier(b) => {
+                    for p in &mut b.control_points { *p = mat.transform_point3(*p); }
+                }
+                Curve3::Offset(o) => {
+                    xf_curve(&mut o.basis, mat);
+                    o.offset_dir = mat.transform_vector3(o.offset_dir).normalize_or_zero();
+                }
+            }
+        }
+        for c in &mut self.geom.curves {
+            xf_curve(c, mat);
+        }
+
+        // ── Analytic surfaces ─────────────────────────────────────────────
+        fn xf_surface(s: &mut Surface3, mat: glam::DAffine3) {
+            match s {
+                Surface3::Plane(p) => {
+                    p.origin = mat.transform_point3(p.origin);
+                    p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                }
+                Surface3::Cylinder(c) => {
+                    c.origin = mat.transform_point3(c.origin);
+                    c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
+                }
+                Surface3::Sphere(s) => {
+                    s.center = mat.transform_point3(s.center);
+                    s.axis = mat.transform_vector3(s.axis).normalize_or_zero();
+                }
+                Surface3::Cone(c) => {
+                    c.apex = mat.transform_point3(c.apex);
+                    c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
+                }
+                Surface3::Torus(t) => {
+                    t.center = mat.transform_point3(t.center);
+                    t.axis = mat.transform_vector3(t.axis).normalize_or_zero();
+                }
+                Surface3::BSpline(b) => {
+                    for row in &mut b.control_points {
+                        for p in row.iter_mut() { *p = mat.transform_point3(*p); }
+                    }
+                }
+                Surface3::Bezier(b) => {
+                    for row in &mut b.control_points {
+                        for p in row.iter_mut() { *p = mat.transform_point3(*p); }
+                    }
+                }
+                Surface3::LinearExtrusion(le) => {
+                    le.direction = mat.transform_vector3(le.direction).normalize_or_zero();
+                    xf_surface_curve(&mut le.profile, mat);
+                }
+                Surface3::Revolution(r) => {
+                    r.axis_origin = mat.transform_point3(r.axis_origin);
+                    r.axis_dir = mat.transform_vector3(r.axis_dir).normalize_or_zero();
+                    xf_surface_curve(&mut r.profile, mat);
+                }
+                Surface3::Offset(o) => {
+                    xf_surface(&mut o.basis, mat);
+                }
+            }
+        }
+        fn xf_surface_curve(c: &mut Box<geom::Curve3>, mat: glam::DAffine3) {
+            // reuse the standalone curve transformer
+            match c.as_mut() {
+                geom::Curve3::Line(l) => {
+                    l.origin = mat.transform_point3(l.origin);
+                    l.direction = mat.transform_vector3(l.direction).normalize_or_zero();
+                }
+                geom::Curve3::Circle(c3) => {
+                    c3.center = mat.transform_point3(c3.center);
+                    c3.normal = mat.transform_vector3(c3.normal).normalize_or_zero();
+                }
+                geom::Curve3::Ellipse(e) => {
+                    e.center = mat.transform_point3(e.center);
+                    e.normal = mat.transform_vector3(e.normal).normalize_or_zero();
+                    e.major_dir = mat.transform_vector3(e.major_dir).normalize_or_zero();
+                }
+                geom::Curve3::BSpline(b) => {
+                    for p in &mut b.control_points { *p = mat.transform_point3(*p); }
+                }
+                geom::Curve3::Bezier(b) => {
+                    for p in &mut b.control_points { *p = mat.transform_point3(*p); }
+                }
+                geom::Curve3::Offset(o) => {
+                    o.offset_dir = mat.transform_vector3(o.offset_dir).normalize_or_zero();
+                }
+            }
+        }
+        for s in &mut self.geom.surfaces {
+            xf_surface(s, mat);
+        }
+
+        // ── Face normals ──────────────────────────────────────────────────
+        for solid in &mut self.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.normal = mat.transform_vector3(face.normal).normalize_or_zero();
+                }
+            }
+        }
+    }
+
+    /// Return a new BRep with all geometry transformed by `mat`.
+    ///
+    /// The original BRep is unchanged.
+    pub fn transformed(&self, mat: glam::DAffine3) -> BRep {
+        let mut result = self.clone();
+        result.apply_transform(mat);
+        result
     }
 
 }

@@ -234,7 +234,7 @@ OCCT 提供丰富的几何计算 API，RCAD Phase A 补全了核心求值接口�
 | 曲面点求值 `S(u,v)` | `Geom_Surface::Value(u,v)` | ✅ `SurfaceEval::point_at(u,v)` |
 | 曲面法向量 | `GeomLProp_SLProps` | ✅ `SurfaceEval::normal_at(u,v)` |
 | 曲线投影到曲面 | `GeomAPI_ProjectPointOnSurf` | ✅ Phase N `closest_point_on_surface` |
-| 曲线-曲线交点 | `GeomAPI_ExtremaCurveCurve` | ❌ |
+| 曲线-曲线交点 | `GeomAPI_ExtremaCurveCurve` | ✅ Phase P `extrema_curve_curve` |
 | 曲面-曲面交线 | `GeomAPI_IntSS` | ❌ |
 | 曲线插值 | `GeomAPI_Interpolate` | ✅ Phase N `interpolate_points` |
 | 曲线近似（最小二乘）| `GeomAPI_PointsToBSpline` | ✅ Phase N `approximate_points` |
@@ -288,7 +288,7 @@ pub struct BRep   { pub vertices: Vec<Vertex>, pub edges: Vec<Edge>,
 | Solid | `TopoDS_Solid` | `Solid { shells }` | ✅ 基本对等 |
 | **CompSolid** | `TopoDS_CompSolid` | ❌ | 低优先 |
 | **Compound** | `TopoDS_Compound` | ❌ | 低优先 |
-| **Location** | `TopLoc_Location` | ❌ | 中优先：实例化、装配 |
+| **Location** | `TopLoc_Location` | ✅ Phase P `BRep::apply_transform / transformed` | 中优先：实例化、装配 |
 | 子形状迭代 | `TopExp_Explorer` | 需手动嵌套 | 中优先：可封装辅助函数 |
 
 ---
@@ -710,6 +710,12 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 2. **开放壳缝合**：`sew_shells(breps: &[BRep], tolerance) -> SewingResult { brep, stitched_pairs, free_edges }` — 并查集顶点合并 + 边去重 + 单壳组装；报告缝合对数和自由边；类比 OCCT `BRepOffsetAPI_Sewing`
 3. **解析截面曲线**：`section_curves(brep, plane) -> Vec<SectionCurve>` — Plane/Sphere/Cylinder/Cone 面调 `inttools::plane_*` 返回精确 `Curve3::Circle/Ellipse/Line`；其余面退化为折线；`SectionCurve::Analytic(Curve3)` / `SectionCurve::Polyline(Vec<DVec3>)`；向后兼容 `section_polylines`；类比 OCCT `BRepAlgoAPI_Section`
 
+### Phase P — BRep 变换、曲线-曲线极值距离、STEP 颜色导入 ✅ 已完成
+
+1. **BRep 变换**：`BRep::apply_transform(mat: DAffine3)` — 原地变换所有顶点坐标及解析几何（Curve3 原点/方向、Surface3 原点/轴、控制点网格、面法向量）；`BRep::transformed(mat) -> BRep` — 克隆后变换（非破坏性）；类比 OCCT `BRepBuilderAPI_Transform` / `TopLoc_Location`
+2. **曲线-曲线极值距离**：`extrema_curve_curve(c1, c2, n_samples) -> CurveCurveExtrema` — n×n 粗网格采样找局部最小值种子 → Newton-Raphson 精化（有限差分梯度 + Gauss-Newton 对角 Hessian + 回溯线搜索）→ 参数空间去重 → 按距离升序排列；返回 `CurveCurveExtrema { pairs: Vec<ExtremaPair> }`；类比 OCCT `GeomAPI_ExtremaCurveCurve`
+3. **STEP 颜色导入**：`StepReader::parse_string_with_color / read_file_with_color` — 解析 `STYLED_ITEM → PRESENTATION_STYLE_ASSIGNMENT → SURFACE_STYLE_USAGE → SURFACE_SIDE_STYLE → SURFACE_STYLE_FILL_AREA → FILL_AREA_STYLE → FILL_AREA_STYLE_COLOUR → COLOUR_RGB` 链；通过 BRep 组装时记录的 `face_id_map`（STEP face id → 平铺面索引）映射颜色；返回 `(BRep, Option<StepColor>)`；向后兼容；类比 OCCT `XCAFDoc_ColorTool` 读取路径
+
 ---
 
 ### 阶段时序（实际完成）
@@ -730,8 +736,10 @@ Phase L（变截面扫掠/批量圆角）░░░░░░░░░░░░░
 Phase M（全部 P2：Bezier/Offset/SameParam/历史/角点）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase N（曲线拟合/点投影/解析交线）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase O（形状距离/壳缝合/解析截面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase P（BRep变换/曲线极值/STEP颜色导入）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase O 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase P 完成。*
+
