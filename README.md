@@ -36,6 +36,14 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 - STEP AP203/AP214 read/write for all geometry and topology types above
 - Color import (`parse_string_with_color`) and export (`write_string_colored`)
 
+**Rendering (`rcad-render`)**
+- wgpu-based renderer with Blinn-Phong lighting (configurable light direction, headlight mode)
+- Display modes: SolidWithEdges, Solid, Wireframe, Transparent
+- Coordinate axes visualization (RGB arrows with cone heads)
+- Background grid (XZ plane, major/minor lines)
+- Face/edge picking (ray-cast) and selection highlighting
+- Per-object color (`set_model_color`), screenshot export (`screenshot_to_file`)
+
 ## Workspace Layout
 
 ```

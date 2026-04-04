@@ -479,11 +479,17 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 | 功能 | 说明 |
 |------|-----|
-| 实体着色 | 三角面片渲染，Phong 光照 |
+| 实体着色 | 三角面片渲染，Blinn-Phong 光照（可配置光照方向） |
 | 线框 | 边的可见性着色（选中/悬停/普通）|
-| 拾取 | 鼠标点击 → face/edge 索引（GPU 拾取缓冲）|
-| 多选 | Shift 单击累积，Ctrl 框选 |
-| 相机 | 透视 / 正交，左键旋转，中键平移，滚轮缩放 |
+| 显示模式 | SolidWithEdges / Solid / Wireframe / Transparent 四种模式 |
+| 坐标系可视化 | XYZ 轴箭头（红/绿/蓝），带锥形箭头和线段轴杆 |
+| 背景网格 | XZ 平面网格，主线/次线区分，可开关 |
+| 拾取 | 鼠标点击 → face/edge 索引（光线投射拾取）|
+| 多选 | 累积选择模式（additive_select）|
+| 相机 | 透视投影，左键旋转，中键平移，滚轮缩放 |
+| 可配置光照 | 光照方向通过 uniform 传入，支持 headlight 模式（光跟随相机）|
+| Per-object 颜色 | 动态设置模型颜色（set_model_color）|
+| 截图导出 | 离屏渲染到 RGBA 纹理 → PNG 文件（screenshot_to_file）|
 | HLR 描边 | `hlr_to_svg` 生成工程图风格 SVG |
 
 ---
