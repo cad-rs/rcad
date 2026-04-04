@@ -4,124 +4,37 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
-Twelve development phases (A–L) of the OCCT parity roadmap are complete.
+**Geometry kernel (`rcad-kernel`)**
+- 3D curves: `Line3`, `Circle3`, `Ellipse3`, `Hyperbola3`, `Parabola3`, `BSplineCurve3`, `BezierCurve3`, `OffsetCurve3`
+- 3D surfaces: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface`, `BezierSurface`, `LinearExtrusionSurface`, `RevolutionSurface`, `OffsetSurface`, `TrimmedSurface`
+- 2D PCurves: `Line2d`, `Circle2d`, `Ellipse2d`, `BSplineCurve2`, `BezierCurve2`
+- `CurveEval` / `SurfaceEval` traits; `BRep::bounding_box`; `BRep::apply_transform` / `transformed`
+- Per-entity tolerance (`vertex/edge/face_tolerance`); `edge_same_parameter` / `edge_same_range` flags; `edge_curve_range`; `face_surface_range`; `curve2d_range`
+- Curvature: `principal_curvatures`, `gaussian_curvature`, `mean_curvature`; arc length (Gauss-Legendre); inertia tensor
+- Point projection: `closest_point_on_curve` / `closest_point_on_surface` (analytic + Newton-Raphson)
+- Curve-curve extrema: `extrema_curve_curve`
+- B-spline fitting: `interpolate_points`, `approximate_points`
+- NURBS interop: `curve_to_bspline` / `surface_to_bspline` (exact for Line/Circle/Ellipse/Plane/Cylinder/Sphere/Bezier; sampling fallback for others); rational tensor-product `BSplineSurface::point_at`
+- Curve/surface trim & extend: `trim_curve` (Boehm insertion), `extend_curve_to_point`, `extend_curve_by_length`, `trim_surface`, `extend_bspline_surface`
 
-**Phase A — Geometry/topology foundations**
-- `CurveEval` / `SurfaceEval` traits with `point_at`, `tangent_at`, `normal_at` for all analytic types.
-- Edge parameter ranges `[t1, t2]` in `GeomStore.edge_curve_range`.
-- `WireEdge { idx, forward }` orientation flags on every Wire edge.
-- `BSplineCurve3` / `BSplineSurface` data types with de Boor evaluation.
-- `BRep::bounding_box()` for axis-aligned bounds.
+**Modeling API (`rcad-modeling`)**
+- Primitives: `Box`, `Sphere`, `Cylinder`, `Cone`, `Torus`
+- Sweeps: `extrude`, `revolve`, `sweep_pipe`, `sweep_pipe_variable`, `loft`
+- Blending: `fillet_edge`, `chamfer_edge`, `fillet_edges`, `corner_blend`
+- Shell sewing: `sew_shells`
 
-**Phase B — Modeling API**
-- `make_edge` / `make_wire` / `make_face` / `make_solid` (analogous to `BRepBuilderAPI_Make*`).
-- `extrude(profile, direction, distance)` — linear prism.
-- `revolve(profile, axis, angle)` — solid of revolution.
+**Algorithms (`rcad-algorithms`)**
+- Boolean ops: `boolean_op(Union|Intersection|Difference)` + `*_with_history`; full support for planar solids; curved solids (Cylinder/Sphere) partially supported
+- B-Rep repair: `merge_close_vertices`, `remove_degenerate_faces`, `recompute_face_normals`, `fix_wire_orientation`, `repair`
+- Face imprinting: `imprint_brep`; gap/overlap detection: `detect_gaps_overlaps`
+- Section: `section_polylines`, `section_curves` (analytic Circle/Ellipse/Line for Plane/Sphere/Cylinder/Cone faces)
+- Shape distance: `min_distance`; topology query: `edge_adjacent_faces`, `face_edges`, `vertex_adjacent_edges`
+- Surface-surface intersection: `intersect_surfaces` (analytic pairs + marching fallback)
+- HLR: `hlr`, `hlr_to_svg`
 
-**Phase C — Algorithms and analysis**
-- `surface_area`, `volume`, `centroid` global properties.
-- `BRepCheck` shape validity checker.
-- `section(brep, plane)` → cross-section polylines.
-
-**Phase D — Data exchange and visualization**
-- STEP colored export: per-face and solid-level (`COLOUR_RGB` → `STYLED_ITEM` chain).
-- STEP assembly: multi-BRep with `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy.
-- `B_SPLINE_CURVE_WITH_KNOTS` read/write in STEP.
-- HLR (Hidden-Line Removal): ray-triangle occlusion testing, SVG output via `hlr_to_svg`.
-
-**Phase E — Loft, pipe sweep, B-Spline surface STEP read**
-- `loft(profiles: &[Vec<DVec3>])` — connect N cross-section polygons into a closed solid.
-- `sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3])` — sweep 2D profile along 3D polyline via Frenet-like frames; delegates to `loft`.
-- `B_SPLINE_SURFACE_WITH_KNOTS` STEP read: parses 2D control-point grid + knot vectors into `Surface3::BSpline`; UV-grid triangulation for rendering.
-
-**Phase F — Chamfer and fillet**
-- `chamfer_edge(brep, edge_idx, dist)` — flat bevel on a convex BRep edge; replaces the edge with a planar quad face and two triangular closing faces.
-- `fillet_edge(brep, edge_idx, radius)` — cylindrical blend on a convex BRep edge; setback computed from the exterior dihedral angle (`radius / tan(β/2)`).
-- Both operations rebuild the full BRep (non-destructive), limited to manifold edges shared by exactly two planar faces.
-
-**Phase G — Topology query API and curvature analysis**
-- `edge_adjacent_faces(brep, edge_idx)` / `face_edges(brep, face_idx)` / `vertex_adjacent_edges(brep, vertex_idx)` — public topology traversal (analogous to OCCT `TopExp_Explorer`).
-- `face_count` / `edge_count` / `vertex_count` — shape size queries.
-- `principal_curvatures(surface, u, v)` → `(k1, k2)` — analytic for Plane/Cylinder/Sphere/Cone/Torus; numerical finite-difference for BSpline.
-- `gaussian_curvature` / `mean_curvature` — derived from principal curvatures (analogous to OCCT `GeomLProp_SLProps`).
-
-**Phase H — Arc length and moment of inertia tensor**
-- `arc_length(curve, t1, t2)` — exact for `Line3` (`|t2−t1|`) and `Circle3` (`r·|t2−t1|`); 16-point Gauss-Legendre quadrature for `Ellipse3` and `BSplineCurve3`. Returns signed value; `.abs()` for unsigned length. Analogous to OCCT `GCPnts_AbscissaPoint`.
-- `inertia_tensor(brep)` → `InertiaTensor { ixx, iyy, izz, ixy, ixz, iyz }` — symmetric 3×3 moment of inertia about the world origin, computed via divergence-theorem tetrahedral integration over BRep triangles. Analogous to OCCT `BRepGProp_VolumeProperties`.
-
-**Phase I — 2D B-Spline PCurve and per-entity tolerance system**
-- `BSplineCurve2` — non-uniform rational B-spline in 2D parameter space; added as `Curve2d::BSpline` variant. Evaluated via de Boor's algorithm (2D analog of `de_boor`). Analogous to OCCT `Geom2d_BSplineCurve`.
-- `Curve2dEval` dispatch updated for all three variants (`Line2d`, `Circle2d`, `BSplineCurve2`).
-- Per-entity tolerance: `GeomStore.vertex_tolerance` / `edge_tolerance` / `face_tolerance` — parallel `Vec<f64>` arrays. Query helpers: `vertex_tolerance(brep, idx)`, `edge_tolerance`, `face_tolerance`, `model_tolerance`. Global constants: `CONFUSION = 1e-7`, `ANGULAR = 1e-12`, `APPROXIMATION = 1e-4`. Analogous to OCCT `Precision` class + `BRep_Tool::Tolerance`.
-
-**Phase J — Ellipse2d PCurve, curve2d_range, STEP Curve2d I/O, STEP tolerance import**
-- `Ellipse2d` — 2D ellipse parametric curve in parameter space; added as `Curve2d::Ellipse` variant. Parametric form `center + major_dir·a·cos(t) + minor_dir·b·sin(t)`, domain `[0, 2π]`. Analogous to OCCT `Geom2d_Ellipse`.
-- `GeomStore.curve2d_range: Vec<Option<[f64; 2]>>` — per-PCurve parameter trim range, parallel to `curve2ds`. Stores `[t1, t2]` from STEP `TRIMMED_CURVE`; `None` = use natural domain. Analogous to `edge_curve_range` for 3D curves.
-- STEP Curve2d export: `Curve2d::Ellipse` → `ELLIPSE` entity; `Curve2d::BSpline` → `B_SPLINE_CURVE_WITH_KNOTS` with 2D control points. Both use existing writer helpers.
-- STEP tolerance import: `UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(val), ...)` → fills `GeomStore.vertex_tolerance`, `edge_tolerance`, `face_tolerance` with the file-specified value; falls back to `CONFUSION` when absent.
-
-**Phase K — Swept surfaces, face domain, BSpline surface STEP export**
-- `LinearExtrusionSurface` — `S(u,v) = profile.point_at(u) + v·direction`; normal = `tangent(u) × direction`. Analogous to OCCT `Geom_SurfaceOfLinearExtrusion`. STEP import: `SURFACE_OF_LINEAR_EXTRUSION` → `Surface3::LinearExtrusion`.
-- `RevolutionSurface` — `S(u,v) = rotate(profile.point_at(v), axis_origin, axis_dir, angle=u)`; u ∈ [0, 2π], v from profile. Normal via finite-difference. Analogous to OCCT `Geom_SurfaceOfRevolution`.
-- `GeomStore.face_surface_range: Vec<Option<[f64; 4]>>` — per-face surface parameter domain override `[u1, u2, v1, v2]`, parallel to `face_surface`. `face_domain(brep, idx)` returns the override when set, else `SurfaceEval::default_domain()`. Analogous to OCCT `BRep_Face::UVBounds()`.
-- `BSplineSurface` STEP export: `write_surface` now emits `B_SPLINE_SURFACE_WITH_KNOTS` with full control-point grid and knot vectors (was falling back to PLANE). Control points transposed from kernel [u][v] to STEP [v][u] order.
-
-**Phase L — Variable-section sweep and multi-edge fillet API**
-- `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — variable-section pipe sweep: a different 2D profile at each spine station, transformed via the same Frenet-like frame as `sweep_pipe`; delegates to `loft`. Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
-- `fillet_edges(brep, edges: &[(usize, f64)])` — fillet multiple edges in a single call; sorts by index descending before applying so earlier fillets don't shift later indices (safe for non-adjacent edges). Analogous to adding multiple edges to `BRepFilletAPI_MakeFillet` before `Build()`.
-
-**Phase M — All remaining P2 items**
-- **SameParameter / SameRange edge flags**: `GeomStore.edge_same_parameter: Vec<bool>` + `edge_same_range: Vec<bool>`; STEP reader extracts the `same_parameter` field from `SURFACE_CURVE`; helper functions `edge_same_parameter(brep, idx)` / `edge_same_range(brep, idx)` default to `true` for RCAD-generated primitives.
-- **Bezier curves and surfaces**: `BezierCurve3 / BezierSurface / BezierCurve2` added to `Curve3` / `Surface3` / `Curve2d` enums; evaluation via de Casteljau algorithm in homogeneous coordinates (supports rational weights). Analogous to OCCT `Geom_BezierCurve` / `Geom_BezierSurface`.
-- **Offset curve and surface**: `OffsetCurve3 { basis, offset_distance, offset_dir }` — lateral offset `P + d·(tangent × dir).normalize()`; `OffsetSurface { basis, offset_distance }` — normal offset `P + d·normal`. Added as `Curve3::Offset` / `Surface3::Offset`. Analogous to OCCT `Geom_OffsetCurve` / `Geom_OffsetSurface`.
-- **Boolean operation history**: `BooleanHistory { face_origins: Vec<FaceOrigin> }` maps each result face to `FaceOrigin::FromA(idx)`, `FromB(idx)`, or `Generated`. Convenience functions `union_with_history / intersection_with_history / difference_with_history` return `(BRep, BooleanHistory)`. Analogous to OCCT `BRepAlgoAPI_BuilderShape::Modified/Generated/Deleted`.
-- **Corner blending**: `corner_blend(brep, vertex_idx, radius)` — blends a 3-valence convex corner by setting back each incident edge by `radius` and inserting a planar triangular closing patch. Eliminates gaps left at corners after `fillet_edges`. Analogous to OCCT `BRepFilletAPI_MakeFillet` corner resolution.
-
-**Phase N — Curve fitting, point projection, analytic boolean intersections**
-- **B-spline curve fitting** (`rcad_kernel::interpolate_points / approximate_points`): exact interpolation via collocation matrix + Gaussian elimination with partial pivoting; least-squares approximation via normal equations `(AᵀA)x = Aᵀb` with pinned endpoints. Chord-length parameterization; clamped cubic knot vectors. Analogous to OCCT `GeomAPI_Interpolate` / `GeomAPI_PointsToBSpline`.
-- **Closest-point projection** (`rcad_kernel::closest_point_on_curve / closest_point_on_surface`): analytic closed-form projection for Plane, Sphere, Cylinder, Cone, Torus; Newton-Raphson refinement for all curves and parametric surfaces. Handles infinite-domain curves (Line). Analogous to OCCT `GeomAPI_ProjectPointOnCurve` / `GeomAPI_ProjectPointOnSurf`.
-- **Analytic Plane×Sphere and Plane×Cylinder intersections** in the boolean PaveFiller: FF pass now dispatches these surface-type pairs to `inttools::plane_sphere` / `inttools::plane_cylinder` before falling back to marching; improved surface sampling for Plane and Cone geometries.
-
-**Phase O — Shape distance, shell sewing, analytic section curves**
-- **Shape minimum distance** (`rcad_kernel::min_distance / point_to_shape_distance`): brute-force face-pair loop using `closest_point_on_surface`; sample 4×4 grid per face + wire vertices; symmetric A→B and B→A passes. Returns `ShapeDistance { distance, point_on_a, point_on_b }`. Analogous to OCCT `BRepExtrema_DistShapeShape`.
-- **Shell sewing** (`rcad_modeling::sew_shells`): merges multiple BReps into one by union-find vertex merging (within configurable tolerance) + edge deduplication + connectivity assembly. Returns `SewingResult { brep, stitched_pairs, free_edges }`. Analogous to OCCT `BRepOffsetAPI_Sewing`.
-- **Analytic section curves** (`rcad_algorithms::section_curves`): for faces with Plane/Sphere/Cylinder/Cone surfaces, dispatches to exact `inttools::plane_*` intersection tools and returns `SectionCurve::Analytic(Curve3::Circle/Ellipse/Line)`; falls back to `SectionCurve::Polyline` for Torus/BSpline/Bezier/Offset. Existing `section_polylines` unchanged. Analogous to OCCT `BRepAlgoAPI_Section` producing proper edge geometry.
-
-**Phase S — Hyperbola, Parabola, OffsetCurve STEP I/O**
-- **`Hyperbola3`** (`rcad_kernel::geom::Hyperbola3`): parametric form `P(t) = center + a·cosh(t)·major_dir + b·sinh(t)·minor_dir`. STEP: `HYPERBOLA` read + write. Analogous to OCCT `Geom_Hyperbola`.
-- **`Parabola3`** (`rcad_kernel::geom::Parabola3`): parametric form `P(t) = vertex + (t²/2p)·axis_dir + t·dir_perp`. STEP: `PARABOLA` read + write. Analogous to OCCT `Geom_Parabola`.
-- **`OffsetCurve3` STEP I/O**: `Curve3::Offset` (added Phase M) now reads from `OFFSET_CURVE_3D` entities and writes as `OFFSET_CURVE_3D` (previously fell back to a straight-line approximation). Analogous to OCCT `Geom_OffsetCurve` STEP exchange.
-- All three types participate in `arc_length` (Gauss-Legendre), `extrema_curve_curve`, `apply_transform`, and `closest_point_on_curve` automatically through the shared `CurveEval` dispatch.
-
-**Phase T — B-Rep repair, NURBS interoperability, curve/surface extension**
-- **B-Rep repair** (`rcad_algorithms::repair / merge_close_vertices / remove_degenerate_faces / recompute_face_normals / fix_wire_orientation`): `merge_close_vertices` uses union-find to merge vertices within tolerance and remap all edge/wire indices; `remove_degenerate_faces` drops faces with <3 edges or near-zero Newell area; `recompute_face_normals` recomputes per-face normals via Newell's method; `fix_wire_orientation` reconnects open wire chains by flipping edge orientations; `repair()` applies all four in a single pass and returns a `RepairReport`. Analogous to OCCT `ShapeFix_Shape::Perform`.
-- **NURBS interoperability** (`rcad_kernel::nurbs_convert::curve_to_bspline / surface_to_bspline`): exact conversions for `Line3` (degree-1), `Circle3` / `Ellipse3` (9-point NURBS, degree-2), `BezierCurve3` (clamped knot insertion), `Plane` (degree-1,1), `CylindricalSurface` (degree-2,1), `SphericalSurface` (degree-2,2, transposed control grid); sampling + interpolation fallback for `Hyperbola3`, `Parabola3`, `OffsetCurve3`, and other surfaces. `BSplineSurface::point_at` upgraded to full rational tensor-product evaluation via `de_boor_homo` (4D homogeneous de Boor). Analogous to OCCT `GeomConvert::CurveToBSplineCurve / SurfaceToBSplineSurface`.
-- **Curve/surface extension and trimming** (`rcad_kernel::extend`): `trim_curve` restricts a `BSplineCurve3` to `[t0,t1]` via Boehm knot insertion with multiplicity `degree+1` for exact clamping; `extend_curve_to_point` / `extend_curve_by_length` append a new knot span to reach a target point or arc-length distance; `trim_surface` wraps any `Surface3` in a `TrimmedSurface`; `extend_bspline_surface` extrapolates an extra row/column at any boundary. Analogous to OCCT `Geom_TrimmedCurve`, `GeomAPI_ExtendCurveToPoint`, `Geom_RectangularTrimmedSurface`, `GeomAPI_ExtendSurfaceToShape`.
-
-**Phase R — 曲面布尔运算改进 + 面印记 + 间隙/重叠检测**
-- **曲面布尔运算改进** (`R.A`): `IntersectionCurve` 现在存储真实 marching 折线点序列（而非直线近似）；marching 边界检查改为面 AABB union；`split_face` 对 Cylinder/Sphere/Cone/Torus 曲面新增 `split_curved_face`，按折线将边界点分割为两个 SubFace；`classify_point` 和 `ray_cast_classify` 新增 Cylinder/Sphere/Cone 的 On 检测和光线-曲面解析交点计算。
-- **面印记** (`rcad_algorithms::imprint_brep(target, tool) -> ImprintResult`): 运行 PaveFiller 后将 tool 边界印记到 target 各面上，返回分割后的新 BRep 及 `seam_edges`（共享边界 face pair）。面印记是 EM 共形网格生成的前提。
-- **间隙/重叠检测** (`rcad_algorithms::detect_gaps_overlaps(a, b, tolerance) -> GapOverlapReport`): 面 AABB 预筛选后，对每对 face 采样并用 `closest_point_on_surface` 测距，分类为 `Gap`（0 < d ≤ tol）、`Overlap`（d < 0）或 `SharedFace`（d≈0 且法向反向）。
-
-**Phase Q — Surface-surface intersection (IntSS) + rectangular trimmed surface**
-- **Surface-surface intersection** (`rcad_algorithms::intersect_surfaces(s1, s2) -> SurfaceSurfaceIntersection`): analytic pairs (Plane×Plane→Line, Plane×Sphere→Circle/Point, Plane×Cylinder→Circle, Sphere×Sphere→Circle, Cylinder×Cylinder parallel→1-2 Lines) plus marching-cube numeric fallback. Returns `SurfaceSurfaceIntersection { curves: Vec<SurfaceCurve> }`. Analogous to OCCT `GeomAPI_IntSS`.
-- **Rectangular trimmed surface** (`rcad_kernel::TrimmedSurface`, `Surface3::Trimmed`): wraps any `Surface3` with a `[u1,u2,v1,v2]` trim box. `default_domain()` reports the trim box; `point_at`/`normal_at` delegate to the basis surface. `apply_transform` transforms basis geometry, leaving the parameter-space trim domain unchanged. STEP import parses `RECTANGULAR_TRIMMED_SURFACE` entities. Analogous to OCCT `Geom_RectangularTrimmedSurface`.
-
-**Phase P — BRep transform, curve-curve extrema, STEP color import**
-- **BRep transform** (`BRep::apply_transform(mat: DAffine3)` / `BRep::transformed(mat) -> BRep`): in-place or copy rigid-body / affine transform of all vertex positions and analytic geometry (Curve3 origins/axes/control-points, Surface3 origins/axes/control-grids, face normals). `transformed()` leaves original unchanged. Analogous to OCCT `BRepBuilderAPI_Transform` / `TopLoc_Location`.
-- **Curve-curve extrema** (`rcad_kernel::extrema_curve_curve(c1, c2, n_samples) -> CurveCurveExtrema`): find all local minima of `|C1(s)−C2(t)|` via n×n coarse grid sampling + Newton-Raphson refinement. Returns `CurveCurveExtrema { pairs: Vec<ExtremaPair> }` sorted by distance. Analogous to OCCT `GeomAPI_ExtremaCurveCurve`.
-- **STEP color import** (`StepReader::parse_string_with_color / read_file_with_color`): walks the `STYLED_ITEM → PRESENTATION_STYLE_ASSIGNMENT → SURFACE_STYLE_USAGE → SURFACE_SIDE_STYLE → SURFACE_STYLE_FILL_AREA → FILL_AREA_STYLE → FILL_AREA_STYLE_COLOUR → COLOUR_RGB` chain and returns `(BRep, Option<StepColor>)`. Backward-compatible — existing `parse_string` / `read_file` unchanged. Analogous to OCCT `XCAFDoc_ColorTool` read path.
-
-**Core infrastructure (ongoing)**
-- STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
-- `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).
-- `rcad-render` centralizes picking, selection state, and highlight rendering.
-- `rcad-scene` centralizes creation command state machines (Box/Sphere flow, preview, confirm/cancel/undo).
-- `creator-egui` and `creator-iced` are interaction-aligned:
-    - Left drag: rotate
-    - Middle drag: pan
-    - Mouse wheel: zoom
-    - Click: select face/edge (with additive multi-select)
+**Data exchange (`rcad-step`)**
+- STEP AP203/AP214 read/write for all geometry and topology types above
+- Color import (`parse_string_with_color`) and export (`write_string_colored`)
 
 ## Workspace Layout
 
