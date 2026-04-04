@@ -268,6 +268,33 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
 - STEP import: `RECTANGULAR_TRIMMED_SURFACE(name, #basis, u1, u2, v1, v2, .T., .T.)` → `Surface3::Trimmed(...)`.
 - STEP export: writer strips to basis surface (trim bounds are encoded in face wire topology).
 
+## 2.21 布尔运算曲面改进 (rcad-algorithms / R.A)
+
+**改进 `IntersectionCurve`** (`bopds/ds.rs`):
+- 新增 `polyline: Vec<DVec3>` 字段，存储 marching 点序列；非空时 face splitting 优先使用折线而非 `curve` 近似
+- `inttools/marching.rs`: `project_onto_surface` 改为 `pub fn`
+- `pave_filler.rs`: `intersect_ff_by_marching` 存真实折线；bounds check 改为两面 AABB union（+ 0.1 slack）
+
+**曲面 face splitting** (`builder.rs`):
+- `split_face` 对 `Cylinder/Sphere/Cone/Torus` 分派到新的 `split_curved_face`
+- `split_curved_face`: 遍历 `curves_in` 折线，找边界最近点后做插入分割，生成两个 `SubFace`
+
+**曲面点分类** (`classify.rs`):
+- `classify_point`: 新增 Cylinder/Sphere/Cone 的 On 检测（距曲面 < 100×ε）
+- `ray_cast_classify`: 新增光线-圆柱、光线-球体、光线-锥体解析交点，以面 AABB 做后置 containment 过滤
+
+## 2.22 面印记 + 间隙/重叠检测 (rcad-algorithms / imprint.rs)
+
+**面印记** (`imprint_brep(target, tool) -> ImprintResult`):
+- 类比 OCCT `BRepAlgoAPI_Splitter`（轻量版，保留所有 target 面）
+- 流程：`PaveFiller` → target `DSFace` `split_face` → 组装新 `BRep` + `seam_edges`
+- `ImprintResult { brep: BRep, seam_edges: Vec<(usize, usize)> }`（target face idx, tool face idx）
+
+**间隙/重叠检测** (`detect_gaps_overlaps(a, b, tolerance) -> GapOverlapReport`):
+- 面 AABB 预筛选；对每对 face 采样 ≤5 点，用 `closest_point_on_surface` 测量距离
+- `GapOverlapReport { gaps, overlaps, shared_faces }`
+- `Gap { face_a, face_b, max_gap, sample_point }`；`Overlap { face_a, face_b, penetration_depth }`
+
  Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.
 - **Picking**:
   - Face picking by screen ray vs triangle intersection.

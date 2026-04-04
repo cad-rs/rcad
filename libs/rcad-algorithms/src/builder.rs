@@ -40,13 +40,13 @@ impl std::error::Error for BooleanError {}
 
 /// A sub-region of an original face after splitting by intersection curves.
 #[derive(Debug, Clone)]
-struct SubFace {
+pub struct SubFace {
     /// Boundary vertex positions in 3D (ordered polygon).
-    boundary: Vec<DVec3>,
+    pub boundary: Vec<DVec3>,
     /// The surface this lies on.
-    surface: Surface3,
+    pub surface: Surface3,
     /// Normal direction.
-    normal: DVec3,
+    pub normal: DVec3,
 }
 
 impl SubFace {
@@ -309,10 +309,14 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // For planar faces: project to 2D, split by intersection segments
-        match &face.surface {
+        match &face.surface.clone() {
             Surface3::Plane(plane) => self.split_planar_face(face_idx, plane),
+            Surface3::Cylinder(_)
+            | Surface3::Sphere(_)
+            | Surface3::Cone(_)
+            | Surface3::Torus(_) => self.split_curved_face(face_idx),
             _ => {
-                // Curved surfaces — return whole face for now
+                // Other curved surfaces — return whole face for now
                 let boundary = face
                     .boundary_verts
                     .iter()
@@ -395,6 +399,143 @@ impl<'a> BooleanBuilder<'a> {
             .enumerate()
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Split a curved face (Cylinder, Sphere, Cone, Torus) by intersection polylines.
+    ///
+    /// Strategy: for each intersection polyline that crosses the face, we split the
+    /// boundary point list into two halves at the points closest to the polyline endpoints.
+    /// This is an approximation sufficient for classification and boolean result assembly.
+    fn split_curved_face(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let surface = face.surface.clone();
+        let normal = face.normal;
+
+        // Collect all intersection polylines for this face
+        let mut all_polylines: Vec<Vec<DVec3>> = Vec::new();
+        for &ci in &face.face_info.curves_in {
+            let ic = &self.ds.intersection_curves[ci];
+            if ic.polyline.len() >= 2 {
+                all_polylines.push(ic.polyline.clone());
+            } else {
+                // Analytic curve — sample it into a polyline (e.g. circle)
+                let pts: Vec<DVec3> = (0..=16)
+                    .map(|i| {
+                        let t = ic.t_range[0]
+                            + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 16.0;
+                        use rcad_kernel::CurveEval;
+                        ic.curve.point_at(t)
+                    })
+                    .collect();
+                all_polylines.push(pts);
+            }
+        }
+
+        if all_polylines.is_empty() {
+            let boundary = face
+                .boundary_verts
+                .iter()
+                .map(|&vi| self.ds.vertices[vi].point)
+                .collect();
+            return vec![SubFace { boundary, surface, normal }];
+        }
+
+        // Collect boundary vertices
+        let boundary_pts: Vec<DVec3> = face
+            .boundary_verts
+            .iter()
+            .map(|&vi| self.ds.vertices[vi].point)
+            .collect();
+
+        if boundary_pts.len() < 3 {
+            return vec![SubFace { boundary: boundary_pts, surface, normal }];
+        }
+
+        // For each intersection polyline, split the boundary into two sub-faces
+        // by finding the boundary points closest to each polyline endpoint.
+        let mut result_boundaries: Vec<Vec<DVec3>> = vec![boundary_pts];
+
+        for polyline in &all_polylines {
+            let seg_start = *polyline.first().unwrap();
+            let seg_end = *polyline.last().unwrap();
+
+            let mut next_result: Vec<Vec<DVec3>> = Vec::new();
+            for bnd in result_boundaries.drain(..) {
+                let n = bnd.len();
+                if n < 3 {
+                    next_result.push(bnd);
+                    continue;
+                }
+
+                // Find indices of boundary points closest to the two polyline endpoints
+                let (i_start, _) = bnd
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        a.distance_squared(seg_start)
+                            .partial_cmp(&b.distance_squared(seg_start))
+                            .unwrap()
+                    })
+                    .unwrap();
+                let (i_end, _) = bnd
+                    .iter()
+                    .enumerate()
+                    .min_by(|(_, a), (_, b)| {
+                        a.distance_squared(seg_end)
+                            .partial_cmp(&b.distance_squared(seg_end))
+                            .unwrap()
+                    })
+                    .unwrap();
+
+                // Ensure i_start < i_end for consistent splitting
+                let (ia, ib, p_a, p_b) = if i_start <= i_end {
+                    (i_start, i_end, seg_start, seg_end)
+                } else {
+                    (i_end, i_start, seg_end, seg_start)
+                };
+
+                if ia == ib {
+                    // Degenerate: can't split, keep as is
+                    next_result.push(bnd);
+                    continue;
+                }
+
+                // Sub-face A: bnd[0..=ia] + polyline + bnd[ib..=n-1]
+                let mut sub_a: Vec<DVec3> = bnd[..=ia].to_vec();
+                sub_a.push(p_a);
+                for &p in polyline.iter().skip(1).rev().skip(1) {
+                    sub_a.push(p);
+                }
+                sub_a.push(p_b);
+                sub_a.extend_from_slice(&bnd[ib..]);
+
+                // Sub-face B: bnd[ia..=ib] + reverse polyline
+                let mut sub_b: Vec<DVec3> = bnd[ia..=ib].to_vec();
+                sub_b.push(p_b);
+                for &p in polyline.iter().skip(1).rev().skip(1) {
+                    sub_b.push(p);
+                }
+                sub_b.push(p_a);
+
+                if sub_a.len() >= 3 {
+                    next_result.push(sub_a);
+                }
+                if sub_b.len() >= 3 {
+                    next_result.push(sub_b);
+                }
+            }
+            result_boundaries = next_result;
+        }
+
+        result_boundaries
+            .into_iter()
+            .filter(|b| b.len() >= 3)
+            .map(|boundary| SubFace {
+                boundary,
+                surface: surface.clone(),
+                normal,
+            })
             .collect()
     }
 }

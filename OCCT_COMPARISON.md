@@ -677,12 +677,6 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 3. `GeomStore.face_surface_range: Vec<Option<[f64; 4]>>` — 逐面曲面参数域覆盖 `[u1,u2,v1,v2]`；`face_domain()` 优先返回覆盖值，回退 `SurfaceEval::default_domain()`；类比 OCCT `BRep_Face::UVBounds()`
 4. `BSplineSurface` STEP 导出：`write_surface` 现在输出 `B_SPLINE_SURFACE_WITH_KNOTS`（含完整控制点格和节点向量）；内核 [u][v] 网格转置为 STEP [v][u] 顺序（原先回退为 PLANE）
 
-### 下一阶段候选（Phase L）
-
-优先级较高的剩余工作：
-- **变截面扫掠** `MakePipeShell` — P2
-- **多边同时圆角（corner blending）** — P2
-
 ### Phase L — 变截面扫掠 + 批量圆角 API ✅ 已完成
 
 1. `sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3])` — 变截面管道扫掠；每个脊线站点使用不同 2D 截面；Frenet 系相同（与 `sweep_pipe` 一致），委托 `loft()`；类比 OCCT `BRepOffsetAPI_MakePipeShell`
@@ -721,6 +715,12 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 1. **曲面-曲面交线**：`intersect_surfaces(s1, s2) -> SurfaceSurfaceIntersection` — 解析对分发（Plane×Plane→Line，Plane×Sphere→Circle/Point，Plane×Cylinder→Circle，Sphere×Sphere 通过激进平面公式→Circle/Point，Cylinder×Cylinder 平行轴→1-2条生成线），其余退化为 48×48 网格数值折线；返回 `SurfaceSurfaceIntersection { curves: Vec<SurfaceCurve> }`；类比 OCCT `GeomAPI_IntSS`
 2. **矩形裁剪面**：`TrimmedSurface { basis: Box<Surface3>, trim: [f64;4] }` / `Surface3::Trimmed` — `default_domain()` 返回裁剪框，`point_at`/`normal_at` 代理给基面；`apply_transform` 只变换基面世界空间几何（参数域不变）；STEP 导入解析 `RECTANGULAR_TRIMMED_SURFACE` → `Surface3::Trimmed`；导出时写基面（裁剪由线拓扑隐含）；类比 OCCT `Geom_RectangularTrimmedSurface`
 
+### Phase R — 曲面布尔运算改进 + 面印记 + 间隙/重叠检测 ✅ 已完成
+
+1. **曲面布尔运算改进**：`IntersectionCurve.polyline` 存储真实 marching 折线；marching bounds check 改为面 AABB union；`split_face` 新增 `split_curved_face` 对 Cylinder/Sphere/Cone/Torus 做边界点插入分割；`classify_point`/`ray_cast_classify` 新增 Cylinder/Sphere/Cone 的 On 检测及光线-曲面解析交点
+2. **面印记**：`imprint_brep(target, tool) -> ImprintResult { brep, seam_edges }` — PaveFiller + split_face + BRep 组装；`seam_edges` 列出 (target face idx, tool face idx) 对；类比 OCCT `BRepAlgoAPI_Splitter`
+3. **间隙/重叠检测**：`detect_gaps_overlaps(a, b, tolerance) -> GapOverlapReport { gaps, overlaps, shared_faces }` — 面 AABB 预筛选 + `closest_point_on_surface` 距离分类
+
 ---
 
 ### 阶段时序（实际完成）
@@ -743,9 +743,10 @@ Phase N（曲线拟合/点投影/解析交线）░░░░░░░░░░�
 Phase O（形状距离/壳缝合/解析截面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase P（BRep变换/曲线极值/STEP颜色导入）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase Q（IntSS/矩形裁剪面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase R（曲面布尔/面印记/间隙检测）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase Q 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase R 完成。*
 

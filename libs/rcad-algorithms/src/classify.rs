@@ -33,6 +33,27 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
                     }
                 }
             }
+            Surface3::Cylinder(c) => {
+                let v = point - c.origin;
+                let along = v.dot(c.axis);
+                let perp = (v - c.axis * along).length();
+                if (perp - c.radius).abs() < TOLERANCE_ABS * 100.0 {
+                    return Classification::On;
+                }
+            }
+            Surface3::Sphere(s) => {
+                if ((point - s.center).length() - s.radius).abs() < TOLERANCE_ABS * 100.0 {
+                    return Classification::On;
+                }
+            }
+            Surface3::Cone(c) => {
+                let v = point - c.apex;
+                let along = v.dot(c.axis);
+                let perp = (v - c.axis * along).length();
+                if (perp - along * c.half_angle_rad.tan()).abs() < TOLERANCE_ABS * 100.0 {
+                    return Classification::On;
+                }
+            }
             _ => {}
         }
     }
@@ -91,6 +112,83 @@ fn ray_cast_classify(
                     crossings += 1;
                 }
             }
+            Surface3::Cylinder(c) => {
+                // Ray-cylinder intersection: |perp(ray_origin + t*ray_dir - origin)|² = r²
+                let oc = point - c.origin;
+                let d = ray_dir - c.axis * ray_dir.dot(c.axis);
+                let f = oc - c.axis * oc.dot(c.axis);
+                let a = d.length_squared();
+                if a < TOLERANCE_ABS * TOLERANCE_ABS {
+                    continue; // ray parallel to cylinder axis
+                }
+                let b = 2.0 * d.dot(f);
+                let cc = f.length_squared() - c.radius * c.radius;
+                let disc = b * b - 4.0 * a * cc;
+                if disc < 0.0 {
+                    continue;
+                }
+                let sq = disc.sqrt();
+                for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
+                    if t > TOLERANCE_ABS {
+                        // Check hit is within bounding box of face
+                        let hit = point + ray_dir * t;
+                        let face_verts = ds.face_boundary_points(fi);
+                        if point_in_face_aabb(hit, &face_verts) {
+                            crossings += 1;
+                        }
+                    }
+                }
+            }
+            Surface3::Sphere(s) => {
+                // Ray-sphere intersection
+                let oc = point - s.center;
+                let a = ray_dir.length_squared();
+                let b = 2.0 * oc.dot(ray_dir);
+                let cc = oc.length_squared() - s.radius * s.radius;
+                let disc = b * b - 4.0 * a * cc;
+                if disc < 0.0 {
+                    continue;
+                }
+                let sq = disc.sqrt();
+                for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
+                    if t > TOLERANCE_ABS {
+                        let hit = point + ray_dir * t;
+                        let face_verts = ds.face_boundary_points(fi);
+                        if point_in_face_aabb(hit, &face_verts) {
+                            crossings += 1;
+                        }
+                    }
+                }
+            }
+            Surface3::Cone(c) => {
+                // Ray-cone intersection (finite cone approximated by AABB test)
+                let tan_a = c.half_angle_rad.tan();
+                let co = point - c.apex;
+                let d_along = ray_dir.dot(c.axis);
+                let co_along = co.dot(c.axis);
+                let d_perp = ray_dir - c.axis * d_along;
+                let co_perp = co - c.axis * co_along;
+                let a = d_perp.length_squared() - tan_a * tan_a * d_along * d_along;
+                let b = 2.0 * (d_perp.dot(co_perp) - tan_a * tan_a * d_along * co_along);
+                let cc = co_perp.length_squared() - tan_a * tan_a * co_along * co_along;
+                let disc = b * b - 4.0 * a * cc;
+                if a.abs() < TOLERANCE_ABS * TOLERANCE_ABS || disc < 0.0 {
+                    continue;
+                }
+                let sq = disc.sqrt();
+                for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
+                    if t > TOLERANCE_ABS {
+                        let hit = point + ray_dir * t;
+                        let along = (hit - c.apex).dot(c.axis);
+                        if along >= 0.0 {
+                            let face_verts = ds.face_boundary_points(fi);
+                            if point_in_face_aabb(hit, &face_verts) {
+                                crossings += 1;
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -100,6 +198,21 @@ fn ray_cast_classify(
     } else {
         Classification::Out
     })
+}
+
+/// Conservative face containment check using AABB of the face boundary vertices.
+fn point_in_face_aabb(point: DVec3, face_verts: &[DVec3]) -> bool {
+    if face_verts.is_empty() {
+        return false;
+    }
+    let mut mn = face_verts[0];
+    let mut mx = face_verts[0];
+    for &v in face_verts.iter().skip(1) {
+        mn = mn.min(v);
+        mx = mx.max(v);
+    }
+    let slack = TOLERANCE_ABS * 10.0;
+    point.cmpge(mn - DVec3::splat(slack)).all() && point.cmple(mx + DVec3::splat(slack)).all()
 }
 
 /// Check if a point is close to any edge of a polygon (within tolerance).

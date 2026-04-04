@@ -106,7 +106,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
 }
 
 /// Project a point onto a surface using Newton iteration.
-fn project_onto_surface(surface: &Surface3, point: DVec3, max_iter: usize) -> DVec3 {
+pub fn project_onto_surface(surface: &Surface3, point: DVec3, max_iter: usize) -> DVec3 {
     let mut p = point;
     for _ in 0..max_iter {
         let f = surface_implicit(surface, p);

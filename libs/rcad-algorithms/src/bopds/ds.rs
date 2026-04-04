@@ -98,6 +98,9 @@ pub enum Interference {
 #[derive(Debug, Clone)]
 pub struct IntersectionCurve {
     pub curve: Curve3,
+    /// Sampled points from numerical marching (non-empty for marched curves).
+    /// When non-empty this takes priority over `curve` for face splitting.
+    pub polyline: Vec<DVec3>,
     pub start_vertex: usize,
     pub end_vertex: usize,
     pub t_range: [f64; 2],

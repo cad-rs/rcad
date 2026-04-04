@@ -5,6 +5,7 @@ pub mod classify;
 pub mod geom_populate;
 pub mod history;
 pub mod hlr;
+pub mod imprint;
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -17,6 +18,7 @@ pub use brep_check::{check, CheckIssue, CheckResult};
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
+pub use imprint::{detect_gaps_overlaps, imprint_brep, Gap, GapOverlapReport, ImprintResult, Overlap};
 pub use section::{section, section_curves, section_polylines, SectionCurve};
 pub use inttools::{intersect_surfaces, SurfaceCurve, SurfaceSurfaceIntersection};
 

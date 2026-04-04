@@ -395,6 +395,7 @@ impl<'a> PaveFiller<'a> {
                     let curve_idx = self.ds.intersection_curves.len();
                     self.ds.intersection_curves.push(IntersectionCurve {
                         curve: Curve3::Line(line),
+                        polyline: vec![],
                         start_vertex: v_start,
                         end_vertex: v_end,
                         t_range: [t_min, t_max],
@@ -474,6 +475,7 @@ impl<'a> PaveFiller<'a> {
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
                     curve: Curve3::Circle(circle.clone()),
+                    polyline: vec![],
                     start_vertex: v_start,
                     end_vertex: v_end,
                     t_range: [0.0, std::f64::consts::TAU],
@@ -518,6 +520,7 @@ impl<'a> PaveFiller<'a> {
             let curve_idx = ds.intersection_curves.len();
             ds.intersection_curves.push(IntersectionCurve {
                 curve,
+                polyline: vec![],
                 start_vertex: v_start,
                 end_vertex: v_end,
                 t_range,
@@ -596,6 +599,28 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
+        // Compute bounding box from both faces' boundary vertices for marching bound check
+        let aabb_min = {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            for &vi in &self.ds.faces[f1].boundary_verts {
+                mn = mn.min(self.ds.vertices[vi].point);
+            }
+            for &vi in &self.ds.faces[f2].boundary_verts {
+                mn = mn.min(self.ds.vertices[vi].point);
+            }
+            mn - DVec3::splat(0.1)
+        };
+        let aabb_max = {
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for &vi in &self.ds.faces[f1].boundary_verts {
+                mx = mx.max(self.ds.vertices[vi].point);
+            }
+            for &vi in &self.ds.faces[f2].boundary_verts {
+                mx = mx.max(self.ds.vertices[vi].point);
+            }
+            mx + DVec3::splat(0.1)
+        };
+
         // March each seed
         let step_size = self.estimate_step_size(&s1, &s2);
         let mut curve_indices = Vec::new();
@@ -607,7 +632,7 @@ impl<'a> PaveFiller<'a> {
                 seed,
                 step_size,
                 500,
-                |_| true, // no bounds check for now
+                |p: DVec3| p.cmpge(aabb_min).all() && p.cmple(aabb_max).all(),
             );
 
             if curve.points.len() < 2 {
@@ -618,16 +643,20 @@ impl<'a> PaveFiller<'a> {
             let v_end = self.ds.add_vertex(*curve.points.last().unwrap());
 
             let curve_idx = self.ds.intersection_curves.len();
-            // Store as a line approximation between start and end
+            // Compute arc-length for t_range
+            let arc_len: f64 = curve.points.windows(2)
+                .map(|w| (w[1] - w[0]).length())
+                .sum();
             let dir = (curve.points.last().unwrap() - curve.points[0]).normalize_or_zero();
             self.ds.intersection_curves.push(IntersectionCurve {
                 curve: Curve3::Line(Line3 {
                     origin: curve.points[0],
                     direction: if dir.length_squared() > 0.5 { dir } else { DVec3::X },
                 }),
+                polyline: curve.points.clone(),
                 start_vertex: v_start,
                 end_vertex: v_end,
-                t_range: [0.0, (curve.points.last().unwrap() - curve.points[0]).length()],
+                t_range: [0.0, arc_len.max(1e-10)],
             });
 
             self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
