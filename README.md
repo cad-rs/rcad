@@ -82,6 +82,11 @@ Twelve development phases (A–L) of the OCCT parity roadmap are complete.
 - **Closest-point projection** (`rcad_kernel::closest_point_on_curve / closest_point_on_surface`): analytic closed-form projection for Plane, Sphere, Cylinder, Cone, Torus; Newton-Raphson refinement for all curves and parametric surfaces. Handles infinite-domain curves (Line). Analogous to OCCT `GeomAPI_ProjectPointOnCurve` / `GeomAPI_ProjectPointOnSurf`.
 - **Analytic Plane×Sphere and Plane×Cylinder intersections** in the boolean PaveFiller: FF pass now dispatches these surface-type pairs to `inttools::plane_sphere` / `inttools::plane_cylinder` before falling back to marching; improved surface sampling for Plane and Cone geometries.
 
+**Phase O — Shape distance, shell sewing, analytic section curves**
+- **Shape minimum distance** (`rcad_kernel::min_distance / point_to_shape_distance`): brute-force face-pair loop using `closest_point_on_surface`; sample 4×4 grid per face + wire vertices; symmetric A→B and B→A passes. Returns `ShapeDistance { distance, point_on_a, point_on_b }`. Analogous to OCCT `BRepExtrema_DistShapeShape`.
+- **Shell sewing** (`rcad_modeling::sew_shells`): merges multiple BReps into one by union-find vertex merging (within configurable tolerance) + edge deduplication + connectivity assembly. Returns `SewingResult { brep, stitched_pairs, free_edges }`. Analogous to OCCT `BRepOffsetAPI_Sewing`.
+- **Analytic section curves** (`rcad_algorithms::section_curves`): for faces with Plane/Sphere/Cylinder/Cone surfaces, dispatches to exact `inttools::plane_*` intersection tools and returns `SectionCurve::Analytic(Curve3::Circle/Ellipse/Line)`; falls back to `SectionCurve::Polyline` for Torus/BSpline/Bezier/Offset. Existing `section_polylines` unchanged. Analogous to OCCT `BRepAlgoAPI_Section` producing proper edge geometry.
+
 **Core infrastructure (ongoing)**
 - STEP import: LINE / CIRCLE / ELLIPSE / B-SPLINE curves; PLANE / CYL / SPHERE / CONE / TORUS surfaces; PCurve / SURFACE_CURVE chains; GEOMETRIC_CURVE_SET.
 - `rcad-kernel` separates analytic geometry (`geom`) and connectivity topology (`topology`).

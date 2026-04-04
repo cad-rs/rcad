@@ -17,7 +17,7 @@ pub use brep_check::{check, CheckIssue, CheckResult};
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
-pub use section::{section, section_polylines};
+pub use section::{section, section_curves, section_polylines, SectionCurve};
 
 /// Perform a boolean operation on two BReps.
 ///

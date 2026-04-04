@@ -197,6 +197,36 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
   - **Analytic**: Plane (dot product), Sphere (radial normalize), Cylinder (collapse axis + normalize), Cone (minimize 1D along generator), Torus (major-ring then tube projection)
   - **Numerical fallback**: uniform grid sampling + Gauss-Newton Newton refinement (2×2 system) for BSpline, Bezier, Offset, LinearExtrusion, Revolution surfaces
 
+## 2.14 Shape Distance (rcad-kernel / distance.rs)
+- Analogous to OCCT `BRepExtrema_DistShapeShape`.
+- `min_distance(a: &BRep, b: &BRep) -> ShapeDistance { distance, point_on_a, point_on_b }`
+  - Samples each face: 4×4 (u,v) grid + wire vertex positions
+  - Projects each sample onto all analytic surfaces of the other BRep via `closest_point_on_surface`
+  - Symmetric A→B and B→A passes; returns global minimum
+- `point_to_shape_distance(query: DVec3, brep: &BRep) -> ShapeDistance`
+  - Projects query onto every analytic face surface; returns closest result
+
+## 2.15 Shell Sewing (rcad-modeling / sewing.rs)
+- Analogous to OCCT `BRepOffsetAPI_Sewing`.
+- `sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult { brep, stitched_pairs, free_edges }`
+  - **Step 1**: Concatenates all vertices/edges/faces from every input BRep, reindexing.
+  - **Step 2**: Union-find vertex merge: pairs within `tolerance` are merged to one representative.
+  - **Step 3**: Edge deduplication: edges sharing both (merged) endpoint vertices are stitched.
+  - **Step 4**: Compacts vertex/edge arrays; assembles single shell with all faces.
+  - **Step 5**: Reports free edges (only 1 incident face) for open-boundary diagnosis.
+  - GeomStore surfaces and face_surface mappings are concatenated (not de-duplicated).
+
+## 2.16 Analytic Section Curves (rcad-algorithms / section.rs)
+- Analogous to OCCT `BRepAlgoAPI_Section` returning proper edge geometry.
+- `section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve>`
+  - `SectionCurve::Analytic(Curve3)` — exact result for analytic surfaces:
+    - `Surface3::Plane` → `inttools::plane_plane` → `Curve3::Line`
+    - `Surface3::Sphere` → `inttools::plane_sphere` → `Curve3::Circle`
+    - `Surface3::Cylinder` → `inttools::plane_cylinder` → `Curve3::Circle / Ellipse / Line`
+    - `Surface3::Cone` → `inttools::plane_cone` → `Curve3::Circle / Ellipse / Line`
+  - `SectionCurve::Polyline(Vec<DVec3>)` — triangle-mesh fallback for Torus, BSpline, Bezier, Offset
+- Existing `section()` and `section_polylines()` unchanged (backward compatible).
+
 
 ## 3. Visualization Pipeline (rcad-render)
 - **Tessellation**: Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.

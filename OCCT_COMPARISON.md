@@ -388,7 +388,7 @@ GeomStore {
 | 并集 | `BRepAlgoAPI_Fuse` | `boolean_op(Union, a, b)` | ✅ 基本实现 |
 | 交集 | `BRepAlgoAPI_Common` | `boolean_op(Intersection, a, b)` | ✅ 基本实现 |
 | 差集 | `BRepAlgoAPI_Cut` | `boolean_op(Difference, a, b)` | ✅ 基本实现 |
-| 截面线 | `BRepAlgoAPI_Section` | ❌ | 中优先 |
+| 截面线 | `BRepAlgoAPI_Section` | ✅ Phase O `section_curves` (解析曲线) | 中优先 |
 | 多体布尔 | `BRepAlgoAPI_BooleanOperation` (n 个输入) | 仅支持 2 个输入 | 中优先 |
 | 非流形结果 | 自动处理 | ❌ | 中优先 |
 | 历史（面/边映射）| `BRepAlgoAPI::Modified/Generated` | ❌ | 中优先 |
@@ -418,7 +418,7 @@ GeomStore {
 |------|----------|------|------|
 | 偏移面 | `BRepOffset_MakeOffset` | ❌ | 低优先 |
 | 抽壳 | `BRepOffsetAPI_MakeThickSolid` | ❌ | 低优先 |
-| 开放壳缝合 | `BRepOffsetAPI_Sewing` | ❌ | 中优先 |
+| 开放壳缝合 | `BRepOffsetAPI_Sewing` | ✅ Phase O `sew_shells` | 中优先 |
 | 形状修复 | `ShapeFix_Shape` | ❌ | 中优先 |
 
 ---
@@ -468,7 +468,7 @@ Phase C 完成了核心属性计算，Phase G 补全了曲率分析和拓扑查�
 | 包围盒 | `Bnd_Box` + `BRepBndLib` | ✅ `bounding_box()` Phase A |
 | 曲线弧长 | `GCPnts_AbscissaPoint` | ✅ `arc_length(curve, t1, t2)` Phase H |
 | 曲面曲率分析 | `BRepLProp_SLProps` / `GeomLProp_SLProps` | ✅ `principal_curvatures / gaussian_curvature / mean_curvature` Phase G |
-| 最近点 | `BRepExtrema_DistShapeShape` | ❌ |
+| 最近点 | `BRepExtrema_DistShapeShape` | ✅ Phase O `min_distance / point_to_shape_distance` |
 | 法向量场 | `BRep_Tool::Normal` | ✅ `SurfaceEval::normal_at` Phase A |
 | 拓扑有效性 | `BRepCheck_Analyzer` | ✅ `check(brep)` Phase C |
 | 形状连通性 | `TopTools_ConnectedIterator` | ✅ `edge_adjacent_faces / vertex_adjacent_edges` Phase G |
@@ -704,6 +704,12 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 4. **曲面最近点投影**：`closest_point_on_surface(surface, query, n_samples) -> SurfaceProjection` — Plane/Sphere/Cylinder/Cone/Torus 解析闭合式；BSpline/Bezier/Offset 数值网格采样 + Gauss-Newton 精化；类比 OCCT `GeomAPI_ProjectPointOnSurf`
 5. **解析布尔交线**：PaveFiller FF pass 对 Plane×Sphere 和 Plane×Cylinder 直接调用 `inttools::plane_sphere` / `inttools::plane_cylinder` 得到精确圆/椭圆/直线交线；Plane 和 Cone 面增加均匀网格采样
 
+### Phase O — 形状距离、壳缝合、解析截面曲线 ✅ 已完成
+
+1. **形状最近距离**：`min_distance(a: &BRep, b: &BRep) -> ShapeDistance { distance, point_on_a, point_on_b }` — 每面 4×4 网格 + 线框顶点采样，对所有解析面调 `closest_point_on_surface`，A→B 和 B→A 双向；`point_to_shape_distance(query, brep)` 类似；类比 OCCT `BRepExtrema_DistShapeShape`
+2. **开放壳缝合**：`sew_shells(breps: &[BRep], tolerance) -> SewingResult { brep, stitched_pairs, free_edges }` — 并查集顶点合并 + 边去重 + 单壳组装；报告缝合对数和自由边；类比 OCCT `BRepOffsetAPI_Sewing`
+3. **解析截面曲线**：`section_curves(brep, plane) -> Vec<SectionCurve>` — Plane/Sphere/Cylinder/Cone 面调 `inttools::plane_*` 返回精确 `Curve3::Circle/Ellipse/Line`；其余面退化为折线；`SectionCurve::Analytic(Curve3)` / `SectionCurve::Polyline(Vec<DVec3>)`；向后兼容 `section_polylines`；类比 OCCT `BRepAlgoAPI_Section`
+
 ---
 
 ### 阶段时序（实际完成）
@@ -723,8 +729,9 @@ Phase K（扫掠面/面域/BSpline导出）░░░░░░░░░░░░�
 Phase L（变截面扫掠/批量圆角）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase M（全部 P2：Bezier/Offset/SameParam/历史/角点）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase N（曲线拟合/点投影/解析交线）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase O（形状距离/壳缝合/解析截面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase N 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase O 完成。*

@@ -4,6 +4,9 @@
 //! cutting plane with the faces of a BRep, returning a list of closed `Wire`s
 //! (polyline approximations of the section curves).
 //!
+//! Also provides [`section_curves`] which returns exact analytic curves
+//! (`Circle`, `Ellipse`, `Line`) when the face has an analytic surface.
+//!
 //! # Algorithm
 //!
 //! For each triangulated face in the BRep:
@@ -294,6 +297,147 @@ pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
     }
 
     chain_segments(segments)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+// ── Analytic section curves ───────────────────────────────────────────────────
+
+/// One result curve from [`section_curves`].
+#[derive(Debug, Clone)]
+pub enum SectionCurve {
+    /// Exact analytic curve returned when the face has a recognized analytic surface.
+    Analytic(Curve3),
+    /// Polyline fallback for parametric surfaces (BSpline, Bezier, Offset, Torus, …).
+    Polyline(Vec<DVec3>),
+}
+
+/// Section a BRep with a plane, returning analytic curves where possible.
+///
+/// For faces backed by `Plane`, `Sphere`, `Cylinder`, or `Cone` surfaces the
+/// function dispatches to the exact analytical intersection tools and returns
+/// `SectionCurve::Analytic`. For all other surfaces it falls back to the
+/// triangle-mesh polyline method and returns `SectionCurve::Polyline`.
+///
+/// Curves that do not intersect the given plane are silently omitted.
+///
+/// Analogous to OCCT `BRepAlgoAPI_Section` returning proper edge geometry.
+///
+/// # Examples
+/// ```rust
+/// use glam::DVec3;
+/// use rcad_kernel::{BRep, geom::{Plane, PrimitiveSolid}};
+/// use rcad_algorithms::section_curves;
+///
+/// let sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 2.0 });
+/// let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+/// let curves = section_curves(&sphere, &plane);
+/// // Equatorial section of a sphere → one Circle
+/// assert!(!curves.is_empty());
+/// ```
+pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
+    use rcad_kernel::geom::Surface3;
+    use crate::inttools::{
+        plane_cone::{intersect_plane_cone, PlaneConicalResult},
+        plane_cylinder::{intersect_plane_cylinder, PlaneCylinderResult},
+        plane_plane::{intersect_plane_plane, PlanePlaneResult},
+        plane_sphere::{intersect_plane_sphere, PlaneSphereResult},
+    };
+
+    let mut results: Vec<SectionCurve> = Vec::new();
+
+    if brep.solids.is_empty() {
+        return results;
+    }
+
+    let mut face_global_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                // Look up the analytic surface for this face
+                let surf_opt = brep.geom.face_surface
+                    .get(face_global_idx)
+                    .and_then(|o| *o)
+                    .and_then(|si| brep.geom.surfaces.get(si));
+
+                if let Some(surface) = surf_opt {
+                    let analytic = match surface {
+                        Surface3::Plane(face_plane) => {
+                            match intersect_plane_plane(plane, face_plane) {
+                                PlanePlaneResult::Line(line) => Some(Curve3::Line(line)),
+                                _ => None,
+                            }
+                        }
+                        Surface3::Sphere(sph) => {
+                            match intersect_plane_sphere(plane, sph) {
+                                PlaneSphereResult::Circle(c) => Some(Curve3::Circle(c)),
+                                PlaneSphereResult::TangentPoint(_) => None,
+                                PlaneSphereResult::NoIntersection => None,
+                            }
+                        }
+                        Surface3::Cylinder(cyl) => {
+                            match intersect_plane_cylinder(plane, cyl) {
+                                PlaneCylinderResult::Circle(c) => Some(Curve3::Circle(c)),
+                                PlaneCylinderResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                                PlaneCylinderResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
+                                PlaneCylinderResult::TangentLine(_) => None,
+                                PlaneCylinderResult::NoIntersection => None,
+                            }
+                        }
+                        Surface3::Cone(cone) => {
+                            match intersect_plane_cone(plane, cone) {
+                                PlaneConicalResult::Circle(c) => Some(Curve3::Circle(c)),
+                                PlaneConicalResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                                PlaneConicalResult::SingleLine(l) => Some(Curve3::Line(l)),
+                                PlaneConicalResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
+                                PlaneConicalResult::Point(_) => None,
+                                PlaneConicalResult::NoIntersection => None,
+                            }
+                        }
+                        // All other surfaces: use polyline fallback
+                        _ => {
+                            let segs: Vec<[DVec3; 2]> = face_triangles(brep, face)
+                                .into_iter()
+                                .filter_map(|tri| triangle_section(plane, tri))
+                                .collect();
+                            if !segs.is_empty() {
+                                let chains = chain_segments(segs);
+                                for chain in chains {
+                                    if chain.len() >= 2 {
+                                        results.push(SectionCurve::Polyline(chain));
+                                    }
+                                }
+                            }
+                            face_global_idx += 1;
+                            continue;
+                        }
+                    };
+
+                    if let Some(curve) = analytic {
+                        results.push(SectionCurve::Analytic(curve));
+                    }
+                } else {
+                    // No analytic surface: triangle fallback
+                    let segs: Vec<[DVec3; 2]> = face_triangles(brep, face)
+                        .into_iter()
+                        .filter_map(|tri| triangle_section(plane, tri))
+                        .collect();
+                    if !segs.is_empty() {
+                        let chains = chain_segments(segs);
+                        for chain in chains {
+                            if chain.len() >= 2 {
+                                results.push(SectionCurve::Polyline(chain));
+                            }
+                        }
+                    }
+                }
+
+                face_global_idx += 1;
+            }
+        }
+    }
+
+    results
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

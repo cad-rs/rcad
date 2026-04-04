@@ -52,9 +52,15 @@ pub mod fit;
 /// `GeomAPI_ProjectPointOnSurf`.
 pub mod projection;
 
+/// Shape-to-shape and point-to-shape minimum distance.
+///
+/// Analogous to OCCT `BRepExtrema_DistShapeShape`.
+pub mod distance;
+
 pub use fit::{approximate_points, interpolate_points, FitError};
 pub use projection::{closest_point_on_curve, closest_point_on_surface,
                      CurveProjection, SurfaceProjection};
+pub use distance::{min_distance, point_to_shape_distance, ShapeDistance};
 
 pub use geom::PrimitiveSolid;
 pub use geom::{Curve2d, Curve3, Surface3};
