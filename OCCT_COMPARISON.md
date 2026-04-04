@@ -169,7 +169,7 @@ pub enum Surface3 {
 | 球面 | `Geom_SphericalSurface` | `SphericalSurface` | ✅ 对等 |
 | 锥面 | `Geom_ConicalSurface` | `ConicalSurface` | ✅ 对等 |
 | 环面 | `Geom_ToroidalSurface` | `ToroidalSurface` | ✅ 对等 |
-| **裁剪面** | `Geom_RectangularTrimmedSurface` | ❌ 缺失 | 中优先 |
+| **裁剪面** | `Geom_RectangularTrimmedSurface` | ✅ Phase Q `TrimmedSurface` | 中优先 |
 | B-Spline 面 | `Geom_BSplineSurface` | `BSplineSurface`（张量积 de Boor）| ✅ Phase B |
 | Bezier 面 | `Geom_BezierSurface` | ❌ 缺失 | 中优先 |
 | 线性扫掠面 | `Geom_SurfaceOfLinearExtrusion` | `LinearExtrusionSurface`（Phase K）| ✅ Phase K |
@@ -235,7 +235,7 @@ OCCT 提供丰富的几何计算 API，RCAD Phase A 补全了核心求值接口�
 | 曲面法向量 | `GeomLProp_SLProps` | ✅ `SurfaceEval::normal_at(u,v)` |
 | 曲线投影到曲面 | `GeomAPI_ProjectPointOnSurf` | ✅ Phase N `closest_point_on_surface` |
 | 曲线-曲线交点 | `GeomAPI_ExtremaCurveCurve` | ✅ Phase P `extrema_curve_curve` |
-| 曲面-曲面交线 | `GeomAPI_IntSS` | ❌ |
+| 曲面-曲面交线 | `GeomAPI_IntSS` | ✅ Phase Q `intersect_surfaces` |
 | 曲线插值 | `GeomAPI_Interpolate` | ✅ Phase N `interpolate_points` |
 | 曲线近似（最小二乘）| `GeomAPI_PointsToBSpline` | ✅ Phase N `approximate_points` |
 ---
@@ -716,6 +716,11 @@ pub fn model_tolerance(brep: &BRep) -> f64 { ... }  // 返回所有实体容差�
 2. **曲线-曲线极值距离**：`extrema_curve_curve(c1, c2, n_samples) -> CurveCurveExtrema` — n×n 粗网格采样找局部最小值种子 → Newton-Raphson 精化（有限差分梯度 + Gauss-Newton 对角 Hessian + 回溯线搜索）→ 参数空间去重 → 按距离升序排列；返回 `CurveCurveExtrema { pairs: Vec<ExtremaPair> }`；类比 OCCT `GeomAPI_ExtremaCurveCurve`
 3. **STEP 颜色导入**：`StepReader::parse_string_with_color / read_file_with_color` — 解析 `STYLED_ITEM → PRESENTATION_STYLE_ASSIGNMENT → SURFACE_STYLE_USAGE → SURFACE_SIDE_STYLE → SURFACE_STYLE_FILL_AREA → FILL_AREA_STYLE → FILL_AREA_STYLE_COLOUR → COLOUR_RGB` 链；通过 BRep 组装时记录的 `face_id_map`（STEP face id → 平铺面索引）映射颜色；返回 `(BRep, Option<StepColor>)`；向后兼容；类比 OCCT `XCAFDoc_ColorTool` 读取路径
 
+### Phase Q — 曲面-曲面交线 (IntSS) + 矩形裁剪面 ✅ 已完成
+
+1. **曲面-曲面交线**：`intersect_surfaces(s1, s2) -> SurfaceSurfaceIntersection` — 解析对分发（Plane×Plane→Line，Plane×Sphere→Circle/Point，Plane×Cylinder→Circle，Sphere×Sphere 通过激进平面公式→Circle/Point，Cylinder×Cylinder 平行轴→1-2条生成线），其余退化为 48×48 网格数值折线；返回 `SurfaceSurfaceIntersection { curves: Vec<SurfaceCurve> }`；类比 OCCT `GeomAPI_IntSS`
+2. **矩形裁剪面**：`TrimmedSurface { basis: Box<Surface3>, trim: [f64;4] }` / `Surface3::Trimmed` — `default_domain()` 返回裁剪框，`point_at`/`normal_at` 代理给基面；`apply_transform` 只变换基面世界空间几何（参数域不变）；STEP 导入解析 `RECTANGULAR_TRIMMED_SURFACE` → `Surface3::Trimmed`；导出时写基面（裁剪由线拓扑隐含）；类比 OCCT `Geom_RectangularTrimmedSurface`
+
 ---
 
 ### 阶段时序（实际完成）
@@ -737,9 +742,10 @@ Phase M（全部 P2：Bezier/Offset/SameParam/历史/角点）░░░░░░
 Phase N（曲线拟合/点投影/解析交线）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase O（形状距离/壳缝合/解析截面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 Phase P（BRep变换/曲线极值/STEP颜色导入）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
+Phase Q（IntSS/矩形裁剪面）░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████
 ```
 
 ---
 
-*文档更新于 2026-04-04，基于 RCAD Phase P 完成。*
+*文档更新于 2026-04-04，基于 RCAD Phase Q 完成。*
 

@@ -75,6 +75,7 @@ pub use geom::{BSplineCurve2, Ellipse2d};
 pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
 pub use geom::{OffsetCurve3, OffsetSurface};
 pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
+pub use geom::TrimmedSurface;
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 pub use properties::{centroid, inertia_tensor, surface_area, volume, InertiaTensor};
 pub use topo_query::{edge_adjacent_faces, edge_count, face_count, face_edges,
@@ -876,6 +877,10 @@ impl BRep {
                 }
                 Surface3::Offset(o) => {
                     xf_surface(&mut o.basis, mat);
+                }
+                Surface3::Trimmed(t) => {
+                    xf_surface(&mut t.basis, mat);
+                    // trim domain is in parameter space — unchanged by transform
                 }
             }
         }

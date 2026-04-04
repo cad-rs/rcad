@@ -66,6 +66,8 @@ struct ParsedStep {
     linear_extrusions: HashMap<u64, (u64, u64)>,
     /// SURFACE_OF_REVOLUTION: maps entity id → (profile_curve_ref, axis_placement_ref)
     revolutions: HashMap<u64, (u64, u64)>,
+    /// RECTANGULAR_TRIMMED_SURFACE: maps entity id → (basis_surface_ref, [u1,u2,v1,v2])
+    rectangular_trimmed_surfaces: HashMap<u64, (u64, [f64; 4])>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 
@@ -126,6 +128,7 @@ impl ParsedStep {
             b_spline_surfaces: HashMap::new(),
             linear_extrusions: HashMap::new(),
             revolutions: HashMap::new(),
+            rectangular_trimmed_surfaces: HashMap::new(),
             uncertainty_value: None,
             colour_rgbs: HashMap::new(),
             fill_area_style_colours: HashMap::new(),
@@ -316,6 +319,12 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                     let refs = parse_ref_list(args);
                     if refs.len() >= 2 {
                         parsed.revolutions.insert(id, (refs[0], refs[1]));
+                    }
+                }
+                "RECTANGULAR_TRIMMED_SURFACE" => {
+                    // RECTANGULAR_TRIMMED_SURFACE('name', #basis, u1, u2, v1, v2, .T., .T.)
+                    if let Some((basis_ref, trim)) = parse_rectangular_trimmed_surface(args) {
+                        parsed.rectangular_trimmed_surfaces.insert(id, (basis_ref, trim));
                     }
                 }
                 "VERTEX_POINT" => {
@@ -2138,6 +2147,16 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         }
     }
 
+    // RECTANGULAR_TRIMMED_SURFACE
+    if let Some((basis_ref, trim)) = parsed.rectangular_trimmed_surfaces.get(&surface_ref).copied() {
+        if let Some(basis) = resolve_surface(parsed, basis_ref) {
+            return Some(Surface3::Trimmed(rcad_kernel::TrimmedSurface {
+                basis: Box::new(basis),
+                trim,
+            }));
+        }
+    }
+
     None
 }
 
@@ -2160,6 +2179,26 @@ fn parse_uncertainty_measure(args: &str) -> Option<f64> {
     let rest = &args[start + "LENGTH_MEASURE(".len()..];
     let end = rest.find(')')?;
     rest[..end].trim().parse::<f64>().ok()
+}
+
+/// Parse RECTANGULAR_TRIMMED_SURFACE args:
+/// `'name', #basis, u1, u2, v1, v2, .T., .T.` → `(basis_ref, [u1,u2,v1,v2])`.
+fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
+    // Extract the single # reference (basis surface)
+    let refs = parse_ref_list(args);
+    let basis_ref = *refs.first()?;
+    // Extract all floats (the 4 trim parameters)
+    let floats: Vec<f64> = args.split(',')
+        .filter_map(|tok| {
+            let t = tok.trim().trim_matches(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != 'E' && c != 'e');
+            t.parse::<f64>().ok()
+        })
+        .collect();
+    if floats.len() >= 4 {
+        Some((basis_ref, [floats[0], floats[1], floats[2], floats[3]]))
+    } else {
+        None
+    }
 }
 
 /// Parse COLOUR_RGB args: `'name', r, g, b` → `[r, g, b]`.

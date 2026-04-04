@@ -246,8 +246,29 @@ PCurves are required for full OCCT/CAE interoperability. Edges without PCurves f
   - **Output**: `CurveCurveExtrema { pairs: Vec<ExtremaPair> }` sorted distance ascending; `ExtremaPair { param1, param2, point1, point2, distance }`. `min_distance()` convenience method.
   - Line domain clamped to `[-1e6, 1e6]` for infinite-line sampling.
 
+## 2.19 Surface-Surface Intersection (rcad-algorithms / inttools/intss.rs)
+- Analogous to OCCT `GeomAPI_IntSS`.
+- `intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection`
+- `SurfaceSurfaceIntersection { curves: Vec<SurfaceCurve> }` with `is_empty()` convenience.
+- `SurfaceCurve` enum: `Circle(Circle3)`, `Ellipse(Ellipse3)`, `Line(Line3)`, `Point(DVec3)`, `Polyline(Vec<DVec3>)`.
+- **Analytic dispatch**:
+  - Plane × Plane: reuses `plane_plane_intersection` → Line or None.
+  - Plane × Sphere: `plane_sphere_intersection` → Circle, Point, or None.
+  - Plane × Cylinder: `plane_cylinder_intersection` → Circle, Ellipse, or None (perpendicular or oblique cut).
+  - Sphere × Sphere: radical plane formula — `a = (d²+r1²-r2²)/(2d)` gives axial distance from s1 center to intersection circle; reports Circle or Point.
+  - Cylinder × Cylinder (parallel axes): law-of-cosines angle → two generator lines (intersecting) or one tangent line.
+- **Numeric fallback** (`numeric_intss`): 48×48 grid on s1 surface, 32×32 implicit-value cache on s2; sign-change detection → `SurfaceCurve::Polyline`.
 
-- **Tessellation**: Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.
+## 2.20 Rectangular Trimmed Surface (rcad-kernel / geom.rs)
+- Analogous to OCCT `Geom_RectangularTrimmedSurface`.
+- `TrimmedSurface { basis: Box<Surface3>, trim: [f64; 4] }` with `TrimmedSurface::new(basis, u1, u2, v1, v2)`.
+- Added as `Surface3::Trimmed(TrimmedSurface)` variant.
+- `SurfaceEval` impl: `point_at`/`normal_at` delegate to basis; `default_domain()` returns `self.trim`.
+- `apply_transform`: transforms basis geometry only — trim domain is in parameter space, not world space.
+- STEP import: `RECTANGULAR_TRIMMED_SURFACE(name, #basis, u1, u2, v1, v2, .T., .T.)` → `Surface3::Trimmed(...)`.
+- STEP export: writer strips to basis surface (trim bounds are encoded in face wire topology).
+
+ Converts analytic B-Rep surfaces to renderable mesh buffers on demand. When `Face.triangles` is pre-populated it is used as a cache; when absent the render pipeline tessellates from the analytic surface. Tessellation MUST NOT be triggered by modeling or export code.
 - **Picking**:
   - Face picking by screen ray vs triangle intersection.
   - Edge picking by projected screen-space segment distance.

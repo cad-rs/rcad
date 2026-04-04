@@ -155,6 +155,27 @@ pub struct OffsetSurface {
     pub offset_distance: f64,
 }
 
+/// A rectangular trimmed surface — a base surface restricted to the UV box
+/// `[u1, u2] × [v1, v2]`.
+///
+/// Evaluation delegates fully to the basis surface; only the reported domain
+/// changes. Analogous to OCCT `Geom_RectangularTrimmedSurface`.
+///
+/// Appears in STEP as `RECTANGULAR_TRIMMED_SURFACE`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrimmedSurface {
+    /// The underlying surface being trimmed.
+    pub basis: Box<Surface3>,
+    /// Trim bounds `[u1, u2, v1, v2]`.
+    pub trim: [f64; 4],
+}
+
+impl TrimmedSurface {
+    pub fn new(basis: Surface3, u1: f64, u2: f64, v1: f64, v2: f64) -> Self {
+        Self { basis: Box::new(basis), trim: [u1, u2, v1, v2] }
+    }
+}
+
 /// Surface formed by translating a 3D profile curve along a direction.
 /// S(u,v) = profile.point_at(u) + v * direction
 /// Analogous to OCCT Geom_SurfaceOfLinearExtrusion.
@@ -188,6 +209,7 @@ pub enum Surface3 {
     Revolution(RevolutionSurface),            // Phase K
     Bezier(BezierSurface),                   // Phase M
     Offset(OffsetSurface),                   // Phase M
+    Trimmed(TrimmedSurface),                 // Phase Q
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -544,6 +566,18 @@ impl SurfaceEval for RevolutionSurface {
     }
 }
 
+impl SurfaceEval for TrimmedSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        self.basis.point_at(u, v)
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        self.basis.normal_at(u, v)
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        self.trim
+    }
+}
+
 impl SurfaceEval for Surface3 {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         match self {
@@ -557,6 +591,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Revolution(s) => s.point_at(u, v),
             Surface3::Bezier(s) => s.point_at(u, v),
             Surface3::Offset(s) => s.point_at(u, v),
+            Surface3::Trimmed(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -571,6 +606,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Revolution(s) => s.normal_at(u, v),
             Surface3::Bezier(s) => s.normal_at(u, v),
             Surface3::Offset(s) => s.normal_at(u, v),
+            Surface3::Trimmed(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -585,6 +621,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Revolution(s) => s.default_domain(),
             Surface3::Bezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
+            Surface3::Trimmed(s) => s.default_domain(),
         }
     }
 }

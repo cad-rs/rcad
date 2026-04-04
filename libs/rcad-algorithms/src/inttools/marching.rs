@@ -40,7 +40,7 @@ fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             point.length() - 1.0
         }
         Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => point.length() - 1.0,
-        Surface3::Bezier(_) | Surface3::Offset(_) => point.length() - 1.0,
+        Surface3::Bezier(_) | Surface3::Offset(_) | Surface3::Trimmed(_) => point.length() - 1.0,
     }
 }
 
@@ -101,6 +101,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
         Surface3::Revolution(s) => s.normal_at(0.0, 0.0),
         Surface3::Bezier(s) => s.normal_at(0.0, 0.0),
         Surface3::Offset(s) => s.normal_at(0.0, 0.0),
+        Surface3::Trimmed(s) => s.normal_at(0.0, 0.0),
     }
 }
 

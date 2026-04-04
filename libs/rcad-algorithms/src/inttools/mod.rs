@@ -7,3 +7,6 @@ pub mod plane_sphere;
 pub mod plane_cone;
 pub mod curve_surface;
 pub mod marching;
+pub mod intss;
+
+pub use intss::{intersect_surfaces, SurfaceCurve, SurfaceSurfaceIntersection};

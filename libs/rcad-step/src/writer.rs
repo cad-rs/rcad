@@ -476,6 +476,11 @@ impl Part21Writer {
                 // Swept/Bezier/Offset surfaces: fall back to plane (no direct STEP writer yet)
                 self.plane("face_plane", fallback_placement)
             }
+            Some(Surface3::Trimmed(ts)) => {
+                // Write the underlying basis surface — trim bounds are implied by the
+                // face topology, so we don't need a separate RECTANGULAR_TRIMMED_SURFACE entity.
+                self.write_surface(Some(*ts.basis), fallback_placement)
+            }
         }
     }
 
@@ -1618,6 +1623,7 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Torus(t) => Some(t.axis),
         Surface3::BSpline(_) => None,
         Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Bezier(_) | Surface3::Offset(_) => None,
+        Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
     }
 }
 

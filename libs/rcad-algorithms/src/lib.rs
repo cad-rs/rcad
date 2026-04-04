@@ -18,6 +18,7 @@ pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
 pub use section::{section, section_curves, section_polylines, SectionCurve};
+pub use inttools::{intersect_surfaces, SurfaceCurve, SurfaceSurfaceIntersection};
 
 /// Perform a boolean operation on two BReps.
 ///
