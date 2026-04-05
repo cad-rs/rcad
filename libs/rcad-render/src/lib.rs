@@ -1375,7 +1375,7 @@ impl WgpuRenderer {
         }
 
         // Draw triangles
-        if draw_triangles {
+        if draw_triangles && count > 0 {
             if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
                 if use_depth_pipeline {
                     render_pass.set_pipeline(&self.pipeline_depth);
