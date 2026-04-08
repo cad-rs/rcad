@@ -16,8 +16,8 @@
 //! original unchanged.
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::{BRep};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -221,12 +221,10 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
                                 .edges
                                 .iter()
                                 .filter_map(|we| {
-                                    brep.edges
-                                        .get(we.idx)
-                                        .and_then(|e| {
-                                            let vidx = if we.forward { e.start } else { e.end };
-                                            brep.vertices.get(vidx).map(|v| v.point)
-                                        })
+                                    brep.edges.get(we.idx).and_then(|e| {
+                                        let vidx = if we.forward { e.start } else { e.end };
+                                        brep.vertices.get(vidx).map(|v| v.point)
+                                    })
                                 })
                                 .collect();
 
@@ -283,12 +281,10 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
                                 .edges
                                 .iter()
                                 .filter_map(|we| {
-                                    brep.edges
-                                        .get(we.idx)
-                                        .and_then(|e| {
-                                            let vidx = if we.forward { e.start } else { e.end };
-                                            brep.vertices.get(vidx).map(|v| v.point)
-                                        })
+                                    brep.edges.get(we.idx).and_then(|e| {
+                                        let vidx = if we.forward { e.start } else { e.end };
+                                        brep.vertices.get(vidx).map(|v| v.point)
+                                    })
                                 })
                                 .collect();
 

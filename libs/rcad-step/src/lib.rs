@@ -2,8 +2,7 @@ use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore,
-    PCurve, Surface3,
+    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve, Surface3,
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
@@ -25,7 +24,15 @@ struct AdvancedFaceRecord {
 /// B-spline curve: (degree, control_point_refs, knot_mults, knot_vals)
 type BSplineCurveData = (usize, Vec<u64>, Vec<usize>, Vec<f64>);
 /// B-spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
-type BSplineSurfaceData = (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>);
+type BSplineSurfaceData = (
+    usize,
+    usize,
+    Vec<Vec<u64>>,
+    Vec<usize>,
+    Vec<f64>,
+    Vec<usize>,
+    Vec<f64>,
+);
 
 #[derive(Debug, Clone)]
 struct ParsedStep {

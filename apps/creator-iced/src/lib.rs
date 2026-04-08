@@ -368,10 +368,9 @@ impl iced::widget::shader::Pipeline for RCadPipeline {
         format: iced::wgpu::TextureFormat,
     ) -> Self {
         Self {
-            renderer: WgpuRenderer::new(
-                unsafe { std::mem::transmute(device) },
-                unsafe { std::mem::transmute(format) },
-            ),
+            renderer: WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe {
+                std::mem::transmute(format)
+            }),
         }
     }
 }

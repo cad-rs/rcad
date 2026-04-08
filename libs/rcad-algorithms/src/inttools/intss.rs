@@ -19,8 +19,8 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{
-    Circle3, ConicalSurface, CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval, any_perpendicular,
+    Circle3, ConicalSurface, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface,
+    Surface3, SurfaceEval, any_perpendicular,
 };
 
 use crate::inttools::{

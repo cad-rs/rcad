@@ -10,10 +10,10 @@
 //! using face bounding-box pre-filtering and `closest_point_on_surface`.
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 use rcad_kernel::topology::*;
-use rcad_kernel::{BRep};
 
 use crate::bopds::ds::{DS, ShapeOrigin};
 use crate::builder::SubFace;

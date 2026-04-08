@@ -153,8 +153,7 @@ impl<'a> PaveFiller<'a> {
         let edge2 = &self.ds.edges[e2];
 
         if let (Curve3::Line(l1), Curve3::Line(l2)) = (&edge1.curve, &edge2.curve)
-            && let Some((t1, t2, point)) =
-                intersect_line_line(l1, edge1.t_range, l2, edge2.t_range)
+            && let Some((t1, t2, point)) = intersect_line_line(l1, edge1.t_range, l2, edge2.t_range)
         {
             let new_v = self.ds.add_vertex(point);
             self.ds.interferences.push(Interference::EdgeEdge {

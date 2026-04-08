@@ -39,8 +39,7 @@ use std::f64::consts::PI;
 use crate::fit::interpolate_points;
 use crate::geom::{
     BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, Curve3, CurveEval,
-    CylindricalSurface, Ellipse3, Line3, Plane,
-    SphericalSurface, Surface3, SurfaceEval,
+    CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1374,7 +1374,9 @@ impl WgpuRenderer {
         );
 
         // In transparent mode, draw wireframe first so it's behind the translucent surface
-        if mode == DisplayMode::Transparent && draw_wireframe && lcount > 0
+        if mode == DisplayMode::Transparent
+            && draw_wireframe
+            && lcount > 0
             && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
         {
             if use_depth_pipeline {
@@ -1390,7 +1392,8 @@ impl WgpuRenderer {
         }
 
         // Draw triangles
-        if draw_triangles && count > 0
+        if draw_triangles
+            && count > 0
             && let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref())
         {
             if use_depth_pipeline {
@@ -1411,7 +1414,9 @@ impl WgpuRenderer {
         }
 
         // Draw wireframe (non-transparent modes)
-        if draw_wireframe && mode != DisplayMode::Transparent && lcount > 0
+        if draw_wireframe
+            && mode != DisplayMode::Transparent
+            && lcount > 0
             && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
         {
             if use_depth_pipeline {
