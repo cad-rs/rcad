@@ -726,8 +726,13 @@ fn de_boor_homo(
         let t_max = knots[knots.len() - degree - 1];
         let t_clamped = t.clamp(t_min, t_max);
         let mut span = degree;
-        for i in degree..knots.len() - degree - 1 {
-            if knots[i] <= t_clamped {
+        for (i, &knot) in knots
+            .iter()
+            .enumerate()
+            .take(knots.len() - degree - 1)
+            .skip(degree)
+        {
+            if knot <= t_clamped {
                 span = i;
             } else {
                 break;
@@ -751,8 +756,10 @@ fn de_boor_homo(
             } else {
                 (t - knots[i]) / denom
             };
-            for c in 0..4 {
-                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            let prev = d[j - 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(prev.iter()) {
+                *elem = (1.0 - alpha) * p + alpha * *elem;
             }
         }
     }
@@ -773,8 +780,13 @@ fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f
         let t_max = knots[knots.len() - degree - 1];
         let t_clamped = t.clamp(t_min, t_max);
         let mut span = degree;
-        for i in degree..knots.len() - degree - 1 {
-            if knots[i] <= t_clamped {
+        for (i, &knot) in knots
+            .iter()
+            .enumerate()
+            .take(knots.len() - degree - 1)
+            .skip(degree)
+        {
+            if knot <= t_clamped {
                 span = i;
             } else {
                 break;
@@ -802,8 +814,10 @@ fn de_boor(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f
             } else {
                 (t - knots[i]) / denom
             };
-            for c in 0..4 {
-                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            let prev = d[j - 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(prev.iter()) {
+                *elem = (1.0 - alpha) * p + alpha * *elem;
             }
         }
     }
@@ -829,8 +843,13 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
         let t_max = knots[knots.len() - degree - 1];
         let t_clamped = t.clamp(t_min, t_max);
         let mut span = degree;
-        for i in degree..knots.len() - degree - 1 {
-            if knots[i] <= t_clamped {
+        for (i, &knot) in knots
+            .iter()
+            .enumerate()
+            .take(knots.len() - degree - 1)
+            .skip(degree)
+        {
+            if knot <= t_clamped {
                 span = i;
             } else {
                 break;
@@ -857,8 +876,10 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
             } else {
                 (t - knots[i]) / denom
             };
-            for c in 0..3 {
-                d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+            let prev = d[j - 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(prev.iter()) {
+                *elem = (1.0 - alpha) * p + alpha * *elem;
             }
         }
     }
@@ -1044,8 +1065,10 @@ fn de_casteljau_3d(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
         .collect();
     for r in 1..n {
         for j in 0..n - r {
-            for c in 0..4 {
-                d[j][c] = (1.0 - t) * d[j][c] + t * d[j + 1][c];
+            let next = d[j + 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(next.iter()) {
+                *elem = (1.0 - t) * *elem + t * p;
             }
         }
     }
@@ -1070,8 +1093,10 @@ fn de_casteljau_2d(points: &[DVec2], weights: &[f64], t: f64) -> DVec2 {
         .collect();
     for r in 1..n {
         for j in 0..n - r {
-            for c in 0..3 {
-                d[j][c] = (1.0 - t) * d[j][c] + t * d[j + 1][c];
+            let next = d[j + 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(next.iter()) {
+                *elem = (1.0 - t) * *elem + t * p;
             }
         }
     }

@@ -17,11 +17,9 @@
 //!
 //! Analogous to OCCT `GeomAPI_IntSS`.
 
-use std::f64::consts::PI;
-
 use glam::DVec3;
 use rcad_kernel::geom::{
-    Circle3, ConicalSurface, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
+    Circle3, ConicalSurface, CylindricalSurface, Ellipse3, Line3, Plane,
     SphericalSurface, Surface3, SurfaceEval, any_perpendicular,
 };
 
@@ -31,7 +29,7 @@ use crate::inttools::{
     plane_plane::{PlanePlaneResult, intersect_plane_plane},
     plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
 };
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
+use crate::tolerance::{TOLERANCE_ABS, vectors_parallel};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public result types

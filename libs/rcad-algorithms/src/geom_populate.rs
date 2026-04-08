@@ -29,7 +29,7 @@ pub fn populate_box_geom(brep: &mut BRep) {
         }));
         geom.edge_curve.push(Some(curve_idx));
         // t_range: project endpoints onto the line
-        let t0 = (p0 - p0).dot(dir); // = 0.0
+        let t0 = 0.0_f64;
         let t1 = (p1 - p0).dot(dir); // = len
         geom.edge_curve_range.push(Some([t0, t1]));
         geom.edge_degenerated.push(len <= 1e-12);

@@ -13,7 +13,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 use rcad_kernel::topology::*;
-use rcad_kernel::{BRep, SurfaceEval};
+use rcad_kernel::{BRep};
 
 use crate::bopds::ds::{DS, ShapeOrigin};
 use crate::builder::SubFace;
@@ -353,7 +353,7 @@ pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapRep
     let faces_a = collect_faces_with_surfaces(a);
     let faces_b = collect_faces_with_surfaces(b);
 
-    for (fa_idx, fa_pts, fa_surf, fa_normal) in &faces_a {
+    for (fa_idx, fa_pts, _fa_surf, fa_normal) in &faces_a {
         // Bounding box of face A
         let (a_min, a_max) = aabb(fa_pts);
 

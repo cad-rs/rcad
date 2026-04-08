@@ -183,19 +183,19 @@ fn clamped_knots_from_params(params: &[f64], degree: usize) -> Vec<f64> {
     let mut knots = vec![0.0_f64; m];
 
     // First degree+1 knots = 0
-    for i in 0..=degree {
-        knots[i] = 0.0;
+    for knot in knots.iter_mut().take(degree + 1) {
+        *knot = 0.0;
     }
     // Last degree+1 knots = 1
-    for i in (m - degree - 1)..m {
-        knots[i] = 1.0;
+    for knot in knots.iter_mut().skip(m - degree - 1) {
+        *knot = 1.0;
     }
     // Interior knots: average of degree consecutive params
     if degree < n {
         for j in 1..(n - degree) {
             let mut avg = 0.0;
-            for k in j..(j + degree) {
-                avg += params[k];
+            for param in params.iter().skip(j).take(degree) {
+                avg += param;
             }
             knots[j + degree] = avg / degree as f64;
         }
@@ -208,11 +208,11 @@ fn uniform_clamped_knots(n_ctrl: usize, degree: usize) -> Vec<f64> {
     let m = n_ctrl + degree + 1;
     let mut knots = vec![0.0_f64; m];
     let n_interior = n_ctrl - degree - 1;
-    for i in 0..=degree {
-        knots[i] = 0.0;
+    for knot in knots.iter_mut().take(degree + 1) {
+        *knot = 0.0;
     }
-    for i in (m - degree - 1)..m {
-        knots[i] = 1.0;
+    for knot in knots.iter_mut().skip(m - degree - 1) {
+        *knot = 1.0;
     }
     if n_interior > 0 {
         for j in 1..=n_interior {
@@ -277,10 +277,10 @@ fn all_basis_fns(t: f64, knots: &[f64], degree: usize, n_ctrl: usize) -> Vec<f64
     let span = find_span(n_ctrl, degree, t, knots);
     let local = basis_fns(span, t, degree, knots);
     let mut result = vec![0.0_f64; n_ctrl];
-    for k in 0..=degree {
+    for (k, &val) in local.iter().enumerate().take(degree + 1) {
         let idx = span - degree + k;
         if idx < n_ctrl {
-            result[idx] = local[k];
+            result[idx] = val;
         }
     }
     result
@@ -345,9 +345,9 @@ fn gauss_solve(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
         // Partial pivot
         let mut max_row = col;
         let mut max_val = mat[col][col].abs();
-        for row in (col + 1)..n {
-            if mat[row][col].abs() > max_val {
-                max_val = mat[row][col].abs();
+        for (row, row_data) in mat.iter().enumerate().skip(col + 1) {
+            if row_data[col].abs() > max_val {
+                max_val = row_data[col].abs();
                 max_row = row;
             }
         }
@@ -360,9 +360,13 @@ fn gauss_solve(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
 
         for row in (col + 1)..n {
             let factor = mat[row][col] / pivot;
-            for j in col..=n {
-                let val = mat[col][j] * factor;
-                mat[row][j] -= val;
+            let (lower, upper) = mat.split_at_mut(row);
+            let pivot_row = &lower[col];
+            let elim_row = &mut upper[0];
+            for (elim_val, &pivot_val) in
+                elim_row[col..=n].iter_mut().zip(pivot_row[col..=n].iter())
+            {
+                *elim_val -= pivot_val * factor;
             }
         }
     }
@@ -430,9 +434,7 @@ fn solve_least_squares(
     // Reconstruct full ctrl vector
     let mut ctrl = vec![0.0_f64; n_ctrl];
     ctrl[0] = p0;
-    for i in 0..m {
-        ctrl[i + 1] = inner[i];
-    }
+    ctrl[1..(m + 1)].copy_from_slice(&inner[..m]);
     ctrl[n_ctrl - 1] = p1;
     ctrl
 }

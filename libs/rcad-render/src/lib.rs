@@ -18,18 +18,13 @@ pub struct SelectionState {
     pub last_hover_pos: Option<(f32, f32)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayMode {
+    #[default]
     SolidWithEdges,
     Solid,
     Wireframe,
     Transparent,
-}
-
-impl Default for DisplayMode {
-    fn default() -> Self {
-        Self::SolidWithEdges
-    }
 }
 
 pub const DEFAULT_EDGE_PICK_RADIUS_PX: f32 = 8.0;
@@ -1379,56 +1374,56 @@ impl WgpuRenderer {
         );
 
         // In transparent mode, draw wireframe first so it's behind the translucent surface
-        if mode == DisplayMode::Transparent && draw_wireframe && lcount > 0 {
-            if let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref()) {
-                if use_depth_pipeline {
-                    render_pass.set_pipeline(&self.pipeline_line_depth);
-                } else {
-                    render_pass.set_pipeline(&self.pipeline_line);
-                }
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vb.slice(..));
-                render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..lcount, 0, 0..1);
+        if mode == DisplayMode::Transparent && draw_wireframe && lcount > 0
+            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
+        {
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_line_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline_line);
             }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..lcount, 0, 0..1);
         }
 
         // Draw triangles
-        if draw_triangles && count > 0 {
-            if let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref()) {
-                if use_depth_pipeline {
-                    render_pass.set_pipeline(&self.pipeline_depth);
-                } else {
-                    render_pass.set_pipeline(&self.pipeline);
-                }
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                let mat = if mode == DisplayMode::Transparent {
-                    &self.material_transparent_bind_group
-                } else {
-                    &self.material_bind_group
-                };
-                render_pass.set_bind_group(1, mat, &[]);
-                render_pass.set_vertex_buffer(0, vb.slice(..));
-                render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..count, 0, 0..1);
+        if draw_triangles && count > 0
+            && let (Some(vb), Some(ib)) = (vb_guard.as_ref(), ib_guard.as_ref())
+        {
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline);
             }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            let mat = if mode == DisplayMode::Transparent {
+                &self.material_transparent_bind_group
+            } else {
+                &self.material_bind_group
+            };
+            render_pass.set_bind_group(1, mat, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..count, 0, 0..1);
         }
 
         // Draw wireframe (non-transparent modes)
-        if draw_wireframe && mode != DisplayMode::Transparent && lcount > 0 {
-            if let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref()) {
-                if use_depth_pipeline {
-                    render_pass.set_pipeline(&self.pipeline_line_depth);
-                } else {
-                    render_pass.set_pipeline(&self.pipeline_line);
-                }
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, vb.slice(..));
-                render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..lcount, 0, 0..1);
+        if draw_wireframe && mode != DisplayMode::Transparent && lcount > 0
+            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
+        {
+            if use_depth_pipeline {
+                render_pass.set_pipeline(&self.pipeline_line_depth);
+            } else {
+                render_pass.set_pipeline(&self.pipeline_line);
             }
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..lcount, 0, 0..1);
         }
 
         // Draw face highlights
@@ -1648,10 +1643,11 @@ impl WgpuRenderer {
 
         let use_depth_pipeline = use_depth && depth_view_guard.is_some();
 
-        if let Some((x, y, width, height)) = clip_bounds {
-            if width > 0 && height > 0 {
-                render_pass.set_scissor_rect(x, y, width.max(1), height.max(1));
-            }
+        if let Some((x, y, width, height)) = clip_bounds
+            && width > 0
+            && height > 0
+        {
+            render_pass.set_scissor_rect(x, y, width.max(1), height.max(1));
         }
 
         self.draw_in_render_pass(&mut render_pass, use_depth_pipeline);
@@ -1811,6 +1807,7 @@ impl WgpuRenderer {
     }
 
     /// Render the scene and save to a PNG file.
+    #[allow(clippy::too_many_arguments)]
     pub fn screenshot_to_file(
         &self,
         device: &wgpu::Device,

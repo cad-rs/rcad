@@ -1,6 +1,5 @@
 use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
-use rcad_kernel::{Hyperbola3, Parabola3};
 use std::collections::{BTreeSet, HashMap};
 
 pub struct ExportSelection<'a> {
@@ -555,6 +554,7 @@ impl Part21Writer {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn b_spline_surface_with_knots(
         &mut self,
         name: &str,
@@ -882,7 +882,6 @@ impl Part21Writer {
         start_point: [f64; 3],
         end_point: [f64; 3],
     ) -> u64 {
-        use rcad_kernel::geom::BSplineCurve3;
         if bs.control_points.is_empty() {
             let p0 = self.cartesian_point("bs_origin", start_point);
             let delta = [
@@ -907,11 +906,7 @@ impl Part21Writer {
         let (mults, knots) = compress_knot_vector(&bs.knots);
 
         // Determine knot type
-        let knot_type = if bs.knots.windows(2).all(|w| w[0] <= w[1] + 1e-10) {
-            ".UNSPECIFIED."
-        } else {
-            ".UNSPECIFIED."
-        };
+        let knot_type = ".UNSPECIFIED.";
 
         // All weights 1.0 → non-rational (UNIFORM_RATIONAL if not)
         let rational = bs.weights.iter().any(|&w| (w - 1.0).abs() > 1e-8);
@@ -958,6 +953,7 @@ impl Part21Writer {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn b_spline_curve_with_knots(
         &mut self,
         name: &str,
@@ -1519,6 +1515,7 @@ impl Part21Writer {
 struct OrientedEdgeExport {
     edge_idx: usize,
     start: usize,
+    #[allow(dead_code)]
     end: usize,
     forward: bool,
 }
@@ -1638,16 +1635,68 @@ fn compress_knot_vector(knots: &[f64]) -> (Vec<usize>, Vec<f64>) {
     let mut mults: Vec<usize> = Vec::new();
     let mut vals: Vec<f64> = Vec::new();
     for &k in knots {
-        if let Some(last) = vals.last() {
-            if (k - last).abs() < 1e-12 {
-                *mults.last_mut().unwrap() += 1;
-                continue;
-            }
+        if let Some(last) = vals.last()
+            && (k - last).abs() < 1e-12
+        {
+            *mults.last_mut().unwrap() += 1;
+            continue;
         }
         vals.push(k);
         mults.push(1);
     }
     (mults, vals)
+}
+
+/// Detect which edge indices appear more than once in the face's outer wire.
+/// These are seam edges on periodic surfaces.
+fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for we in &face.outer_wire.edges {
+        *counts.entry(we.idx).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|&(_, c)| c >= 2)
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+/// Extract a representative normal/axis from an analytic surface, used as a
+/// fallback when boundary loop points are collinear (e.g. seam faces).
+fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
+    match face_surface? {
+        Surface3::Plane(p) => Some(p.normal),
+        Surface3::Cylinder(c) => Some(c.axis),
+        Surface3::Sphere(s) => Some(s.axis),
+        Surface3::Cone(c) => Some(c.axis),
+        Surface3::Torus(t) => Some(t.axis),
+        Surface3::BSpline(_) => None,
+        Surface3::LinearExtrusion(_)
+        | Surface3::Revolution(_)
+        | Surface3::Bezier(_)
+        | Surface3::Offset(_) => None,
+        Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
+    }
+}
+
+fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
+    if face.outer_wire.edges.len() < 3 {
+        return true;
+    }
+
+    let unique_edges: BTreeSet<usize> = face.outer_wire.edges.iter().map(|we| we.idx).collect();
+    if unique_edges.len() < 3 {
+        return true;
+    }
+
+    let mut verts = BTreeSet::new();
+    for we in &face.outer_wire.edges {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            verts.insert(edge.start);
+            verts.insert(edge.end);
+        }
+    }
+    verts.len() < 3
 }
 
 #[cfg(test)]
@@ -1773,27 +1822,25 @@ mod tests {
         // Count faces with each surface type and verify cone parameters survive round-trip
         let mut sphere_count = 0usize;
         let mut cone_count = 0usize;
-        for surface_binding in &reparsed.geom.face_surface {
-            if let Some(sid) = surface_binding {
-                match reparsed.geom.surfaces.get(*sid) {
-                    Some(Surface3::Sphere(_)) => sphere_count += 1,
-                    Some(Surface3::Cone(c)) => {
-                        cone_count += 1;
-                        assert!(
-                            (c.half_angle_rad - orig_cone_angle).abs() < 1e-6,
-                            "cone half-angle drifted: original={} reparsed={}",
-                            orig_cone_angle,
-                            c.half_angle_rad,
-                        );
-                        assert!(
-                            (c.radius - orig_cone_radius).abs() < 1e-6,
-                            "cone radius drifted: original={} reparsed={}",
-                            orig_cone_radius,
-                            c.radius,
-                        );
-                    }
-                    _ => {}
+        for sid in reparsed.geom.face_surface.iter().flatten() {
+            match reparsed.geom.surfaces.get(*sid) {
+                Some(Surface3::Sphere(_)) => sphere_count += 1,
+                Some(Surface3::Cone(c)) => {
+                    cone_count += 1;
+                    assert!(
+                        (c.half_angle_rad - orig_cone_angle).abs() < 1e-6,
+                        "cone half-angle drifted: original={} reparsed={}",
+                        orig_cone_angle,
+                        c.half_angle_rad,
+                    );
+                    assert!(
+                        (c.radius - orig_cone_radius).abs() < 1e-6,
+                        "cone radius drifted: original={} reparsed={}",
+                        orig_cone_radius,
+                        c.radius,
+                    );
                 }
+                _ => {}
             }
         }
         assert!(
@@ -1807,56 +1854,4 @@ mod tests {
             cone_count
         );
     }
-}
-
-/// Detect which edge indices appear more than once in the face's outer wire.
-/// These are seam edges on periodic surfaces.
-fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
-    let mut counts: HashMap<usize, usize> = HashMap::new();
-    for we in &face.outer_wire.edges {
-        *counts.entry(we.idx).or_insert(0) += 1;
-    }
-    counts
-        .into_iter()
-        .filter(|&(_, c)| c >= 2)
-        .map(|(idx, _)| idx)
-        .collect()
-}
-
-/// Extract a representative normal/axis from an analytic surface, used as a
-/// fallback when boundary loop points are collinear (e.g. seam faces).
-fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
-    match face_surface? {
-        Surface3::Plane(p) => Some(p.normal),
-        Surface3::Cylinder(c) => Some(c.axis),
-        Surface3::Sphere(s) => Some(s.axis),
-        Surface3::Cone(c) => Some(c.axis),
-        Surface3::Torus(t) => Some(t.axis),
-        Surface3::BSpline(_) => None,
-        Surface3::LinearExtrusion(_)
-        | Surface3::Revolution(_)
-        | Surface3::Bezier(_)
-        | Surface3::Offset(_) => None,
-        Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
-    }
-}
-
-fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
-    if face.outer_wire.edges.len() < 3 {
-        return true;
-    }
-
-    let unique_edges: BTreeSet<usize> = face.outer_wire.edges.iter().map(|we| we.idx).collect();
-    if unique_edges.len() < 3 {
-        return true;
-    }
-
-    let mut verts = BTreeSet::new();
-    for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            verts.insert(edge.start);
-            verts.insert(edge.end);
-        }
-    }
-    verts.len() < 3
 }

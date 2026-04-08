@@ -62,28 +62,28 @@ pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
     // Sample points on A, project onto B
     let samples_a = sample_brep_points(a);
     for &pa in &samples_a {
-        if let Some(r) = closest_on_brep(pa, b) {
-            if r.distance < best.distance {
-                best = ShapeDistance {
-                    distance: r.distance,
-                    point_on_a: pa,
-                    point_on_b: r.point,
-                };
-            }
+        if let Some(r) = closest_on_brep(pa, b)
+            && r.distance < best.distance
+        {
+            best = ShapeDistance {
+                distance: r.distance,
+                point_on_a: pa,
+                point_on_b: r.point,
+            };
         }
     }
 
     // Sample points on B, project onto A (symmetric)
     let samples_b = sample_brep_points(b);
     for &pb in &samples_b {
-        if let Some(r) = closest_on_brep(pb, a) {
-            if r.distance < best.distance {
-                best = ShapeDistance {
-                    distance: r.distance,
-                    point_on_a: r.point,
-                    point_on_b: pb,
-                };
-            }
+        if let Some(r) = closest_on_brep(pb, a)
+            && r.distance < best.distance
+        {
+            best = ShapeDistance {
+                distance: r.distance,
+                point_on_a: r.point,
+                point_on_b: pb,
+            };
         }
     }
 
@@ -149,7 +149,7 @@ fn closest_on_brep(query: DVec3, brep: &BRep) -> Option<ClosestResult> {
             let surface = &brep.geom.surfaces[surf_idx];
 
             let proj = closest_point_on_surface(surface, query, 8);
-            if best.as_ref().map_or(true, |b| proj.distance < b.distance) {
+            if best.as_ref().is_none_or(|b| proj.distance < b.distance) {
                 best = Some(ClosestResult {
                     point: proj.point,
                     distance: proj.distance,

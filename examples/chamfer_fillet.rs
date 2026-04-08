@@ -99,9 +99,8 @@ fn demo_all_edges_chamfer() {
     // Chamfer each of the 12 box edges independently and collect results.
     let mut results = Vec::new();
     for ei in 0..original_edge_count {
-        match chamfer_edge(&base, ei, 0.15) {
-            Ok(result) => results.push((ei, result)),
-            Err(_) => {}
+        if let Ok(result) = chamfer_edge(&base, ei, 0.15) {
+            results.push((ei, result));
         }
     }
     println!(

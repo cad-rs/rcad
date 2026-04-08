@@ -85,17 +85,18 @@ fn sutherland_hodgman_clip(subject: &[[f64; 2]], clip: &[[f64; 2]]) -> Vec<[f64;
             let prev_inside = is_inside(previous, edge_start, edge_end);
 
             if curr_inside {
-                if !prev_inside {
-                    if let Some(inter) = line_intersect_2d(previous, current, edge_start, edge_end)
-                    {
-                        output.push(inter);
-                    }
-                }
-                output.push(current);
-            } else if prev_inside {
-                if let Some(inter) = line_intersect_2d(previous, current, edge_start, edge_end) {
+                if !prev_inside
+                    && let Some(inter) =
+                        line_intersect_2d(previous, current, edge_start, edge_end)
+                {
                     output.push(inter);
                 }
+                output.push(current);
+            } else if prev_inside
+                && let Some(inter) =
+                    line_intersect_2d(previous, current, edge_start, edge_end)
+            {
+                output.push(inter);
             }
         }
     }

@@ -59,12 +59,14 @@ impl SubFace {
     }
 }
 
+type FaceEntry = (Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3);
+
 /// Builds result BRep, deduplicating vertices and edges.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
     vertex_map: HashMap<u64, usize>, // hash of position → index
     edges: Vec<(usize, usize)>,
-    faces: Vec<(Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3)>, // (boundary vertex indices, triangles, normal, surface)
+    faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface)
     face_origins: Vec<FaceOrigin>,
 }
 
@@ -109,10 +111,6 @@ impl ResultBuilder {
         let idx = self.edges.len();
         self.edges.push((v1, v2));
         idx
-    }
-
-    fn emit_face(&mut self, sub: &SubFace, flip: bool) {
-        self.emit_face_with_origin(sub, flip, FaceOrigin::Generated);
     }
 
     fn emit_face_with_origin(&mut self, sub: &SubFace, flip: bool, origin: FaceOrigin) {
@@ -605,27 +603,27 @@ fn split_polygon_by_segment(
     crossings.sort_by_key(|(idx, _)| *idx);
 
     // Take the first two crossings to split the polygon
-    let (idx1, pt1) = crossings[0].clone();
-    let (idx2, pt2) = crossings[1].clone();
+    let (idx1, pt1) = crossings[0];
+    let (idx2, pt2) = crossings[1];
 
     // Build two sub-polygons by walking the boundary
     let mut poly_a = Vec::new();
     let mut poly_b = Vec::new();
 
     // Walk from start to first crossing
-    for i in 0..=idx1 {
-        poly_a.push(poly[i]);
+    for &p in poly.iter().take(idx1 + 1) {
+        poly_a.push(p);
     }
     poly_a.push(pt1);
     poly_a.push(pt2);
-    for i in (idx2 + 1)..n {
-        poly_a.push(poly[i]);
+    for &p in poly.iter().skip(idx2 + 1) {
+        poly_a.push(p);
     }
 
     // Walk from first crossing to second crossing
     poly_b.push(pt1);
-    for i in (idx1 + 1)..=idx2 {
-        poly_b.push(poly[i]);
+    for &p in poly.iter().skip(idx1 + 1).take(idx2 - idx1) {
+        poly_b.push(p);
     }
     poly_b.push(pt2);
 

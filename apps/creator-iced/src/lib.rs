@@ -1,3 +1,4 @@
+#![allow(clippy::missing_transmute_annotations, clippy::useless_transmute)]
 use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length, Task};
 use rcad_kernel::BRep;
@@ -367,9 +368,10 @@ impl iced::widget::shader::Pipeline for RCadPipeline {
         format: iced::wgpu::TextureFormat,
     ) -> Self {
         Self {
-            renderer: WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe {
-                std::mem::transmute(format)
-            }),
+            renderer: WgpuRenderer::new(
+                unsafe { std::mem::transmute(device) },
+                unsafe { std::mem::transmute(format) },
+            ),
         }
     }
 }

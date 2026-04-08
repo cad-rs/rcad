@@ -107,10 +107,10 @@ pub fn face_domain(brep: &BRep, face_flat_idx: usize) -> [f64; 4] {
     if let Some(Some(range)) = brep.geom.face_surface_range.get(face_flat_idx) {
         return *range;
     }
-    if let Some(Some(surf_idx)) = brep.geom.face_surface.get(face_flat_idx) {
-        if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
-            return surf.default_domain();
-        }
+    if let Some(Some(surf_idx)) = brep.geom.face_surface.get(face_flat_idx)
+        && let Some(surf) = brep.geom.surfaces.get(*surf_idx)
+    {
+        return surf.default_domain();
     }
     [0.0, 1.0, 0.0, 1.0]
 }

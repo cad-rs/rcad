@@ -17,7 +17,7 @@
 
 use glam::DVec3;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::{BRep, CurveEval};
+use rcad_kernel::{BRep};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -82,7 +82,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     // Union-find: parent[i] = canonical representative of vertex i
     let mut parent: Vec<usize> = (0..n).collect();
 
-    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
         while parent[x] != x {
             parent[x] = parent[parent[x]]; // path compression
             x = parent[x];
@@ -90,7 +90,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
         x
     }
 
-    fn union(parent: &mut Vec<usize>, a: usize, b: usize) {
+    fn union(parent: &mut [usize], a: usize, b: usize) {
         let ra = find(parent, a);
         let rb = find(parent, b);
         if ra != rb {
@@ -135,7 +135,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
         } else {
             let new_idx = new_vertices.len();
             // Use the average position of all merged vertices for robustness
-            new_vertices.push(brep.vertices[rep].clone());
+            new_vertices.push(brep.vertices[rep]);
             seen.insert(rep, new_idx);
             remap[i] = new_idx;
         }
@@ -223,11 +223,10 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
                                 .filter_map(|we| {
                                     brep.edges
                                         .get(we.idx)
-                                        .map(|e| {
+                                        .and_then(|e| {
                                             let vidx = if we.forward { e.start } else { e.end };
                                             brep.vertices.get(vidx).map(|v| v.point)
                                         })
-                                        .flatten()
                                 })
                                 .collect();
 
@@ -286,11 +285,10 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
                                 .filter_map(|we| {
                                     brep.edges
                                         .get(we.idx)
-                                        .map(|e| {
+                                        .and_then(|e| {
                                             let vidx = if we.forward { e.start } else { e.end };
                                             brep.vertices.get(vidx).map(|v| v.point)
                                         })
-                                        .flatten()
                                 })
                                 .collect();
 
@@ -428,10 +426,9 @@ fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
         if let (Some(ep), Some(sp)) = (
             brep.vertices.get(end_v).map(|v| v.point),
             brep.vertices.get(start_v).map(|v| v.point),
-        ) {
-            if (ep - sp).length_squared() <= tol2 {
-                continue; // close enough — OK
-            }
+        ) && (ep - sp).length_squared() <= tol2
+        {
+            continue; // close enough — OK
         }
 
         // Try flipping the *next* edge to see if that connects the chain

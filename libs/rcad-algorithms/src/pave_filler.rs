@@ -152,31 +152,27 @@ impl<'a> PaveFiller<'a> {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
 
-        match (&edge1.curve, &edge2.curve) {
-            (Curve3::Line(l1), Curve3::Line(l2)) => {
-                if let Some((t1, t2, point)) =
-                    intersect_line_line(l1, edge1.t_range, l2, edge2.t_range)
-                {
-                    let new_v = self.ds.add_vertex(point);
-                    self.ds.interferences.push(Interference::EdgeEdge {
-                        e1,
-                        e2,
-                        point,
-                        param1: t1,
-                        param2: t2,
-                        new_vertex: new_v,
-                    });
-                    self.ds.edges[e1].paves.push(Pave {
-                        vertex_idx: new_v,
-                        param: t1,
-                    });
-                    self.ds.edges[e2].paves.push(Pave {
-                        vertex_idx: new_v,
-                        param: t2,
-                    });
-                }
-            }
-            _ => {}
+        if let (Curve3::Line(l1), Curve3::Line(l2)) = (&edge1.curve, &edge2.curve)
+            && let Some((t1, t2, point)) =
+                intersect_line_line(l1, edge1.t_range, l2, edge2.t_range)
+        {
+            let new_v = self.ds.add_vertex(point);
+            self.ds.interferences.push(Interference::EdgeEdge {
+                e1,
+                e2,
+                point,
+                param1: t1,
+                param2: t2,
+                new_vertex: new_v,
+            });
+            self.ds.edges[e1].paves.push(Pave {
+                vertex_idx: new_v,
+                param: t1,
+            });
+            self.ds.edges[e2].paves.push(Pave {
+                vertex_idx: new_v,
+                param: t2,
+            });
         }
     }
 
@@ -206,20 +202,17 @@ impl<'a> PaveFiller<'a> {
         let point = self.ds.vertices[vi].point;
         let face = &self.ds.faces[fi];
 
-        match &face.surface {
-            Surface3::Plane(plane) => {
-                if inttools::vertex_ops::vertex_on_plane(point, plane) {
-                    let face_verts = self.ds.face_boundary_points(fi);
-                    if inttools::edge_face::point_in_planar_face(point, plane, &face_verts) {
-                        self.ds.interferences.push(Interference::VertexFace {
-                            vertex: vi,
-                            face: fi,
-                        });
-                        self.ds.faces[fi].face_info.vertices_on.insert(vi);
-                    }
-                }
+        if let Surface3::Plane(plane) = &face.surface
+            && inttools::vertex_ops::vertex_on_plane(point, plane)
+        {
+            let face_verts = self.ds.face_boundary_points(fi);
+            if inttools::edge_face::point_in_planar_face(point, plane, &face_verts) {
+                self.ds.interferences.push(Interference::VertexFace {
+                    vertex: vi,
+                    face: fi,
+                });
+                self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
-            _ => {}
         }
     }
 
@@ -471,7 +464,7 @@ impl<'a> PaveFiller<'a> {
 
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
-                    curve: Curve3::Circle(circle.clone()),
+                    curve: Curve3::Circle(circle),
                     polyline: vec![],
                     start_vertex: v_start,
                     end_vertex: v_end,
@@ -540,14 +533,14 @@ impl<'a> PaveFiller<'a> {
             PlaneCylinderResult::TwoLines(l1, l2) => {
                 // Clip each line to the face bounding-box extent
                 let extent = 20.0_f64;
-                let ci1 = add_curve_for(&mut self.ds, Curve3::Line(l1), [-extent, extent], f1, f2);
-                let ci2 = add_curve_for(&mut self.ds, Curve3::Line(l2), [-extent, extent], f1, f2);
+                let ci1 = add_curve_for(self.ds, Curve3::Line(l1), [-extent, extent], f1, f2);
+                let ci2 = add_curve_for(self.ds, Curve3::Line(l2), [-extent, extent], f1, f2);
                 curve_indices.push(ci1);
                 curve_indices.push(ci2);
             }
             PlaneCylinderResult::Circle(circle) => {
                 let ci = add_curve_for(
-                    &mut self.ds,
+                    self.ds,
                     Curve3::Circle(circle),
                     [0.0, std::f64::consts::TAU],
                     f1,
@@ -557,7 +550,7 @@ impl<'a> PaveFiller<'a> {
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
                 let ci = add_curve_for(
-                    &mut self.ds,
+                    self.ds,
                     Curve3::Ellipse(ellipse),
                     [0.0, std::f64::consts::TAU],
                     f1,
@@ -891,7 +884,7 @@ fn sample_cone(
 fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Vec<DVec3> {
     use rcad_kernel::CurveEval;
     use rcad_kernel::geom::Curve3;
-    let curve = Curve3::Circle(circle.clone());
+    let curve = Curve3::Circle(*circle);
     (0..n)
         .map(|i| {
             let t = t_start + (t_end - t_start) * i as f64 / (n - 1).max(1) as f64;

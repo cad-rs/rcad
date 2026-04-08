@@ -195,10 +195,10 @@ fn is_occluded(point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: 
     let dir = (eye - point).normalize_or_zero();
     let origin = point + dir * 1e-5; // push off surface
     for tri in triangles {
-        if let Some(t) = ray_triangle_intersect(origin, dir, tri) {
-            if t < dist_to_eye - 1e-4 {
-                return true;
-            }
+        if let Some(t) = ray_triangle_intersect(origin, dir, tri)
+            && t < dist_to_eye - 1e-4
+        {
+            return true;
         }
     }
     false

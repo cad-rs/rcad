@@ -11,7 +11,7 @@ use rcad_kernel::{
     BRep, approximate_points, closest_point_on_curve, closest_point_on_surface,
     geom::{
         BSplineSurface, Circle3, Curve3, CurveEval, CylindricalSurface, Line3, PrimitiveSolid,
-        SphericalSurface, Surface3, SurfaceEval, ToroidalSurface,
+        SphericalSurface, Surface3, ToroidalSurface,
     },
     interpolate_points,
 };

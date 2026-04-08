@@ -185,10 +185,10 @@ fn copy_face_remapped(
             .edges
             .iter()
             .take(3)
-            .filter_map(|we| {
+            .map(|we| {
                 let src_e = &src.edges[we.idx];
                 let old_v = if we.forward { src_e.start } else { src_e.end };
-                Some(dst.vertices[vi_remap[old_v]].point)
+                dst.vertices[vi_remap[old_v]].point
             })
             .collect();
         if pts.len() >= 3 {
@@ -340,6 +340,7 @@ pub fn fillet_edges(brep: &BRep, edges: &[(usize, f64)]) -> Result<BRep, BuildEr
 // ── Shared rebuild core ───────────────────────────────────────────────────────
 
 /// Rebuild the BRep replacing `edge_idx` with a chamfer quad face.
+#[allow(clippy::too_many_arguments)]
 fn rebuild_with_chamfer_verts(
     brep: &BRep,
     edge_idx: usize,
@@ -414,6 +415,7 @@ fn rebuild_with_chamfer_verts(
 }
 
 /// Rebuild the BRep replacing `edge_idx` with a cylindrical fillet face.
+#[allow(clippy::too_many_arguments)]
 fn rebuild_with_fillet_verts(
     brep: &BRep,
     edge_idx: usize,

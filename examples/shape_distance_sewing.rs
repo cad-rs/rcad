@@ -107,7 +107,7 @@ fn demo_sewing() {
         height: 1.0,
         depth: 1.0,
     });
-    let r1 = sew_shells(&[box1.clone()], 1e-6);
+    let r1 = sew_shells(std::slice::from_ref(&box1), 1e-6);
     println!("Single unit box sewing:");
     println!("  stitched pairs: {}", r1.stitched_pairs);
     println!("  free edges: {}", r1.free_edges.len());

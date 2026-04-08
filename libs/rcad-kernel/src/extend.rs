@@ -142,7 +142,7 @@ fn insert_knot_once(curve: &BSplineCurve3, t: f64) -> BSplineCurve3 {
         if i <= k - p {
             new_ctrl.push(curve.control_points[i]);
             new_w.push(curve.weights[i]);
-        } else if i >= k + 1 {
+        } else if i > k {
             new_ctrl.push(curve.control_points[i - 1]);
             new_w.push(curve.weights[i - 1]);
         } else {

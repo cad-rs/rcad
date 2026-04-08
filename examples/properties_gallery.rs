@@ -199,8 +199,8 @@ fn main() {
     // ── Print table ────────────────────────────────────────────────────
     let w = 92;
     println!(
-        "{:<28}  {:>10}  {:>10}  {:>26}  {:<16}  {}",
-        "Shape", "Area", "Volume", "Centroid (x,y,z)", "Expected", "Valid?"
+        "{:<28}  {:>10}  {:>10}  {:>26}  {:<16}  Valid?",
+        "Shape", "Area", "Volume", "Centroid (x,y,z)", "Expected"
     );
     println!("{}", "─".repeat(w));
     for r in &rows {

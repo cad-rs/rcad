@@ -113,7 +113,6 @@ fn demo_assembly() {
 fn demo_bspline_step() {
     println!("\n=== 3. BSpline STEP Export ===");
     use rcad_kernel::geom::{BSplineCurve3, Curve3};
-    use rcad_kernel::topology::{Wire, WireEdge};
 
     // Quadratic (degree 2) Bezier arc approximating a quarter circle in XY plane:
     // Control points for a quarter-circle arc via rational B-spline

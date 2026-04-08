@@ -2,8 +2,8 @@ use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, LinearExtrusionSurface,
-    PCurve, RevolutionSurface, Surface3,
+    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore,
+    PCurve, Surface3,
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
@@ -22,6 +22,11 @@ struct AdvancedFaceRecord {
     surface: Option<u64>,
 }
 
+/// B-spline curve: (degree, control_point_refs, knot_mults, knot_vals)
+type BSplineCurveData = (usize, Vec<u64>, Vec<usize>, Vec<f64>);
+/// B-spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
+type BSplineSurfaceData = (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>);
+
 #[derive(Debug, Clone)]
 struct ParsedStep {
     cartesian_points: HashMap<u64, [f64; 3]>,
@@ -33,7 +38,7 @@ struct ParsedStep {
     ellipses: HashMap<u64, (u64, f64, f64)>,
     b_spline_curves: HashMap<u64, Vec<u64>>,
     /// Full B-spline curve data: degree, control_point_refs, knot_mults, knot_vals
-    b_spline_curves_full: HashMap<u64, (usize, Vec<u64>, Vec<usize>, Vec<f64>)>,
+    b_spline_curves_full: HashMap<u64, BSplineCurveData>,
     planes: HashMap<u64, u64>,
     cylindrical_surfaces: HashMap<u64, (u64, f64)>,
     spherical_surfaces: HashMap<u64, (u64, f64)>,
@@ -64,18 +69,7 @@ struct ParsedStep {
     /// 2D axis2 placements: id → (location, ref_dir)
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
-    b_spline_surfaces: HashMap<
-        u64,
-        (
-            usize,
-            usize,
-            Vec<Vec<u64>>,
-            Vec<usize>,
-            Vec<f64>,
-            Vec<usize>,
-            Vec<f64>,
-        ),
-    >,
+    b_spline_surfaces: HashMap<u64, BSplineSurfaceData>,
     /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id → (profile_curve_ref, direction_ref)
     linear_extrusions: HashMap<u64, (u64, u64)>,
     /// SURFACE_OF_REVOLUTION: maps entity id → (profile_curve_ref, axis_placement_ref)
@@ -729,20 +723,21 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     // Populate per-entity tolerance vectors from UNCERTAINTY_MEASURE_WITH_UNIT.
     // Only write when the file specifies a value different from the CONFUSION default,
     // to avoid polluting the GeomStore with trivial entries.
-    if let Some(tol) = parsed.uncertainty_value {
-        if tol > 0.0 && (tol - CONFUSION).abs() > CONFUSION * 0.5 {
-            let n_verts = brep.vertices.len();
-            let n_edges = brep.edges.len();
-            let n_faces: usize = brep
-                .solids
-                .iter()
-                .flat_map(|s| s.shells.iter())
-                .map(|sh| sh.faces.len())
-                .sum();
-            brep.geom.vertex_tolerance = vec![tol; n_verts];
-            brep.geom.edge_tolerance = vec![tol; n_edges];
-            brep.geom.face_tolerance = vec![tol; n_faces];
-        }
+    if let Some(tol) = parsed.uncertainty_value
+        && tol > 0.0
+        && (tol - CONFUSION).abs() > CONFUSION * 0.5
+    {
+        let n_verts = brep.vertices.len();
+        let n_edges = brep.edges.len();
+        let n_faces: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        brep.geom.vertex_tolerance = vec![tol; n_verts];
+        brep.geom.edge_tolerance = vec![tol; n_edges];
+        brep.geom.face_tolerance = vec![tol; n_faces];
     }
 
     Ok((brep, face_id_map))
@@ -758,7 +753,7 @@ fn resolve_step_color(parsed: &ParsedStep, face_id_map: &HashMap<u64, usize>) ->
     let mut step_color = StepColor::new();
     let mut found_any = false;
 
-    for (_styled_id, (shape_ref, psa_refs)) in &parsed.styled_items {
+    for (shape_ref, psa_refs) in parsed.styled_items.values() {
         // Resolve color through the chain
         let rgb = psa_refs.iter().find_map(|psa_id| {
             let ssu_ids = parsed.presentation_style_assignments.get(psa_id)?;
@@ -932,6 +927,7 @@ fn collect_used_vertices(
     Ok(used)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_face(
     parsed: &ParsedStep,
     face_id: u64,
@@ -1025,27 +1021,27 @@ fn build_face(
             if geom.edge_degenerated.len() <= idx {
                 geom.edge_degenerated.resize(idx + 1, false);
             }
-            if let Some(Some(cidx)) = geom.edge_curve.get(idx) {
-                if let Some(curve) = geom.curves.get(*cidx) {
-                    let p0 = vertices
-                        .get(*vertex_index_by_id.get(&start_id)?)
-                        .map(|v| v.point);
-                    let p1 = vertices
-                        .get(*vertex_index_by_id.get(&end_id)?)
-                        .map(|v| v.point);
-                    if let (Some(p0), Some(p1)) = (p0, p1) {
-                        let t_range = match curve {
-                            Curve3::Line(line) => {
-                                let t0 = (p0 - line.origin).dot(line.direction);
-                                let t1 = (p1 - line.origin).dot(line.direction);
-                                [t0, t1]
-                            }
-                            _ => curve.default_domain(),
-                        };
-                        geom.edge_curve_range[idx] = Some(t_range);
-                        let len = (p1 - p0).length();
-                        geom.edge_degenerated[idx] = len <= 1e-12;
-                    }
+            if let Some(Some(cidx)) = geom.edge_curve.get(idx)
+                && let Some(curve) = geom.curves.get(*cidx)
+            {
+                let p0 = vertices
+                    .get(*vertex_index_by_id.get(&start_id)?)
+                    .map(|v| v.point);
+                let p1 = vertices
+                    .get(*vertex_index_by_id.get(&end_id)?)
+                    .map(|v| v.point);
+                if let (Some(p0), Some(p1)) = (p0, p1) {
+                    let t_range = match curve {
+                        Curve3::Line(line) => {
+                            let t0 = (p0 - line.origin).dot(line.direction);
+                            let t1 = (p1 - line.origin).dot(line.direction);
+                            [t0, t1]
+                        }
+                        _ => curve.default_domain(),
+                    };
+                    geom.edge_curve_range[idx] = Some(t_range);
+                    let len = (p1 - p0).length();
+                    geom.edge_degenerated[idx] = len <= 1e-12;
                 }
             }
             idx
@@ -1679,6 +1675,7 @@ fn infer_polar_range(
 /// Infer the minor (phi) angular range for a torus face.
 /// Projects each boundary vertex into the local minor circle plane at the
 /// closest major angle, then computes the minor angle.
+#[allow(clippy::too_many_arguments)]
 fn infer_torus_minor_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -1998,7 +1995,7 @@ fn parse_bspline_control_points(args: &str) -> Option<Vec<u64>> {
 
 /// Parse full B_SPLINE_CURVE_WITH_KNOTS args:
 /// ('name', degree, (ctrl_pts...), .FORM., .bool., .bool., (mults...), (knots...), .UNSPECIFIED.)
-fn parse_bspline_curve_full(args: &str) -> Option<(usize, Vec<u64>, Vec<usize>, Vec<f64>)> {
+fn parse_bspline_curve_full(args: &str) -> Option<BSplineCurveData> {
     let parts = split_top_level(args, ',');
     // parts[0] = name, [1] = degree, [2] = ctrl pts list, [3] = form,
     // [4] = closed, [5] = self_intersect, [6] = knot_mults, [7] = knots, [8] = type
@@ -2021,17 +2018,7 @@ fn parse_bspline_curve_full(args: &str) -> Option<(usize, Vec<u64>, Vec<usize>, 
 
 /// Parse B_SPLINE_SURFACE_WITH_KNOTS args.
 /// Returns (degree_u, degree_v, ctrl_grid[v_row][u_col], mults_u, knots_u, mults_v, knots_v)
-fn parse_bspline_surface_with_knots(
-    args: &str,
-) -> Option<(
-    usize,
-    usize,
-    Vec<Vec<u64>>,
-    Vec<usize>,
-    Vec<f64>,
-    Vec<usize>,
-    Vec<f64>,
-)> {
+fn parse_bspline_surface_with_knots(args: &str) -> Option<BSplineSurfaceData> {
     // STEP format:
     // ('name', degree_u, degree_v, ((#p00,#p01,...),(#p10,...)),
     //   .UNSPECIFIED., .F., .F., .F.,
@@ -2306,35 +2293,35 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
     }
 
     // SURFACE_OF_LINEAR_EXTRUSION
-    if let Some((profile_ref, dir_ref)) = parsed.linear_extrusions.get(&surface_ref).copied() {
-        if let (Some(profile), Some(dir)) = (
+    if let Some((profile_ref, dir_ref)) = parsed.linear_extrusions.get(&surface_ref).copied()
+        && let (Some(profile), Some(dir)) = (
             resolve_curve(parsed, profile_ref),
             direction_from_ref(parsed, dir_ref),
-        ) {
-            return Some(Surface3::LinearExtrusion(
-                rcad_kernel::geom::LinearExtrusionSurface {
-                    profile: Box::new(profile),
-                    direction: dir.normalize_or_zero(),
-                },
-            ));
-        }
+        )
+    {
+        return Some(Surface3::LinearExtrusion(
+            rcad_kernel::geom::LinearExtrusionSurface {
+                profile: Box::new(profile),
+                direction: dir.normalize_or_zero(),
+            },
+        ));
     }
 
     // SURFACE_OF_REVOLUTION
-    if let Some((profile_ref, axis_ref)) = parsed.revolutions.get(&surface_ref).copied() {
-        if let Some(profile) = resolve_curve(parsed, profile_ref) {
-            // Try AXIS2_PLACEMENT_3D first (common in practice), then fall back to a direction ref
-            let axis_result = placement_from_ref(parsed, axis_ref).or_else(|| {
-                // Treat as bare direction ref at origin
-                direction_from_ref(parsed, axis_ref).map(|d| (glam::DVec3::ZERO, d))
-            });
-            if let Some((axis_origin, axis_dir)) = axis_result {
-                return Some(Surface3::Revolution(rcad_kernel::geom::RevolutionSurface {
-                    profile: Box::new(profile),
-                    axis_origin,
-                    axis_dir: axis_dir.normalize_or_zero(),
-                }));
-            }
+    if let Some((profile_ref, axis_ref)) = parsed.revolutions.get(&surface_ref).copied()
+        && let Some(profile) = resolve_curve(parsed, profile_ref)
+    {
+        // Try AXIS2_PLACEMENT_3D first (common in practice), then fall back to a direction ref
+        let axis_result = placement_from_ref(parsed, axis_ref).or_else(|| {
+            // Treat as bare direction ref at origin
+            direction_from_ref(parsed, axis_ref).map(|d| (glam::DVec3::ZERO, d))
+        });
+        if let Some((axis_origin, axis_dir)) = axis_result {
+            return Some(Surface3::Revolution(rcad_kernel::geom::RevolutionSurface {
+                profile: Box::new(profile),
+                axis_origin,
+                axis_dir: axis_dir.normalize_or_zero(),
+            }));
         }
     }
 
@@ -2343,13 +2330,12 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         .rectangular_trimmed_surfaces
         .get(&surface_ref)
         .copied()
+        && let Some(basis) = resolve_surface(parsed, basis_ref)
     {
-        if let Some(basis) = resolve_surface(parsed, basis_ref) {
-            return Some(Surface3::Trimmed(rcad_kernel::TrimmedSurface {
-                basis: Box::new(basis),
-                trim,
-            }));
-        }
+        return Some(Surface3::Trimmed(rcad_kernel::TrimmedSurface {
+            basis: Box::new(basis),
+            trim,
+        }));
     }
 
     None
@@ -2868,37 +2854,37 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     }
 
     // 2D Ellipse: ELLIPSE referencing an AXIS2_PLACEMENT_2D
-    if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_ref) {
-        if let Some((loc_ref, dir_ref)) = parsed.axis2_placements_2d.get(placement_ref) {
-            let center = parsed
-                .cartesian_points_2d
-                .get(loc_ref)
-                .map(|&p| glam::DVec2::new(p[0], p[1]))
-                .or_else(|| {
-                    parsed
-                        .cartesian_points
-                        .get(loc_ref)
-                        .map(|&p| glam::DVec2::new(p[0], p[1]))
-                })?;
-            let major_dir = parsed
-                .directions_2d
-                .get(dir_ref)
-                .map(|&d| glam::DVec2::new(d[0], d[1]))
-                .or_else(|| {
-                    parsed
-                        .directions
-                        .get(dir_ref)
-                        .map(|&d| glam::DVec2::new(d[0], d[1]))
-                })
-                .unwrap_or(glam::DVec2::X)
-                .normalize_or(glam::DVec2::X);
-            return Some(Curve2d::Ellipse(Ellipse2d {
-                center,
-                major_dir,
-                major_radius: *major,
-                minor_radius: *minor,
-            }));
-        }
+    if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_ref)
+        && let Some((loc_ref, dir_ref)) = parsed.axis2_placements_2d.get(placement_ref)
+    {
+        let center = parsed
+            .cartesian_points_2d
+            .get(loc_ref)
+            .map(|&p| glam::DVec2::new(p[0], p[1]))
+            .or_else(|| {
+                parsed
+                    .cartesian_points
+                    .get(loc_ref)
+                    .map(|&p| glam::DVec2::new(p[0], p[1]))
+            })?;
+        let major_dir = parsed
+            .directions_2d
+            .get(dir_ref)
+            .map(|&d| glam::DVec2::new(d[0], d[1]))
+            .or_else(|| {
+                parsed
+                    .directions
+                    .get(dir_ref)
+                    .map(|&d| glam::DVec2::new(d[0], d[1]))
+            })
+            .unwrap_or(glam::DVec2::X)
+            .normalize_or(glam::DVec2::X);
+        return Some(Curve2d::Ellipse(Ellipse2d {
+            center,
+            major_dir,
+            major_radius: *major,
+            minor_radius: *minor,
+        }));
     }
 
     // 2D B-Spline curve: B_SPLINE_CURVE_WITH_KNOTS with 2D control points

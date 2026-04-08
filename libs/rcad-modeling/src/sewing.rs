@@ -23,7 +23,6 @@
 
 use rcad_kernel::{
     BRep,
-    geom::SurfaceEval,
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 
@@ -119,7 +118,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
                     };
                     all_faces.push(Face {
                         outer_wire: reindex_wire(&face.outer_wire),
-                        inner_wires: face.inner_wires.iter().map(|w| reindex_wire(w)).collect(),
+                        inner_wires: face.inner_wires.iter().map(reindex_wire).collect(),
                         normal: face.normal,
                         triangles: face
                             .triangles
@@ -363,7 +362,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let result = sew_shells(&[brep.clone()], 1e-6);
+        let result = sew_shells(std::slice::from_ref(&brep), 1e-6);
         assert_eq!(result.stitched_pairs, 0);
         // All edges of a closed box should be non-free (each edge borders 2 faces)
         assert_eq!(

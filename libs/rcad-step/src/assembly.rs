@@ -291,13 +291,13 @@ fn extract_data_records(step: &str) -> Vec<(u64, String)> {
             continue;
         }
         // Parse #id=body;
-        if let Some(stripped) = line.strip_prefix('#') {
-            if let Some(eq) = stripped.find('=') {
-                let id_str = &stripped[..eq];
-                let body = stripped[eq + 1..].trim_end_matches(';');
-                if let Ok(id) = id_str.parse::<u64>() {
-                    result.push((id, body.to_string()));
-                }
+        if let Some(stripped) = line.strip_prefix('#')
+            && let Some(eq) = stripped.find('=')
+        {
+            let id_str = &stripped[..eq];
+            let body = stripped[eq + 1..].trim_end_matches(';');
+            if let Ok(id) = id_str.parse::<u64>() {
+                result.push((id, body.to_string()));
             }
         }
     }
