@@ -39,7 +39,7 @@ use std::f64::consts::PI;
 use crate::fit::interpolate_points;
 use crate::geom::{
     BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, Curve3, CurveEval,
-    CylindricalSurface, Ellipse3, Hyperbola3, Line3, OffsetCurve3, Parabola3, Plane,
+    CylindricalSurface, Ellipse3, Line3, Plane,
     SphericalSurface, Surface3, SurfaceEval,
 };
 
@@ -285,7 +285,7 @@ pub fn cylinder_to_bspline_range(cyl: &CylindricalSurface, v0: f64, v1: f64) -> 
 pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
     let r = sphere.radius;
     let x_ax = crate::geom::any_perpendicular(sphere.axis);
-    let y_ax = sphere.axis.cross(x_ax).normalize();
+    let _y_ax = sphere.axis.cross(x_ax).normalize();
     let _z_ax = sphere.axis.normalize();
 
     // We use 5 v-rows: v = 0°(south pole), 45°, 90°(equator), 135°, 180°(north pole)
@@ -443,9 +443,8 @@ fn build_uniform_knots(n_ctrl: usize, degree: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::{Circle3, Curve3, Line3, SurfaceEval, any_perpendicular};
+    use crate::geom::{Circle3, Curve3, Line3, SurfaceEval};
     use glam::DVec3;
-    use std::f64::consts::PI;
 
     fn approx_eq3(a: DVec3, b: DVec3, tol: f64) -> bool {
         (a - b).length() < tol

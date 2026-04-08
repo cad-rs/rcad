@@ -397,10 +397,6 @@ fn numeric_surface_projection(
     }
 }
 
-// Helper re-imported locally to keep this module self-contained
-fn any_perpendicular(v: DVec3) -> DVec3 {
-    crate::geom::any_perpendicular(v)
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

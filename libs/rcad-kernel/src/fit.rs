@@ -468,7 +468,7 @@ mod tests {
             DVec3::new(2.0, 0.0, 0.0),
         ];
         let curve = interpolate_points(&pts).unwrap();
-        for (i, &pt) in pts.iter().enumerate() {
+        for (i, &_pt) in pts.iter().enumerate() {
             let t = i as f64 / (pts.len() - 1) as f64;
             // The interpolated t isn't exactly equidistant in parameter space
             // but the curve passes through each point at its chord-length param.

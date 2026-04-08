@@ -570,7 +570,7 @@ impl SurfaceEval for ConicalSurface {
         let r = v * self.half_angle_rad.tan();
         self.apex + v * self.axis + r * (u.cos() * x_ax + u.sin() * y_ax)
     }
-    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+    fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
         let radial = u.cos() * x_ax + u.sin() * y_ax;
@@ -943,7 +943,7 @@ impl SurfaceEval for BSplineSurface {
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let eps = 1e-5;
-        let [u0, u1, v0, v1] = self.default_domain();
+        let [_u0, u1, _v0, v1] = self.default_domain();
         let du = if u + eps <= u1 {
             self.point_at(u + eps, v) - self.point_at(u, v)
         } else {

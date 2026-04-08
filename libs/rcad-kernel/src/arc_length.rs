@@ -121,6 +121,7 @@ mod tests {
     use std::f64::consts::PI;
 
     const TOL: f64 = 1e-9;
+    #[allow(dead_code)]
     const NUM_TOL: f64 = 1e-6;
 
     fn approx_eq(a: f64, b: f64, tol: f64) -> bool {

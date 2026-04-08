@@ -216,7 +216,7 @@ pub enum CurveEnd {
 ///
 /// Analogous to `GeomAPI_ExtendCurveToPoint`.
 pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3) -> BSplineCurve3 {
-    let n = curve.control_points.len();
+    let _n = curve.control_points.len();
     let mut new_ctrl = curve.control_points.clone();
     let mut new_w = curve.weights.clone();
     let mut new_knots = curve.knots.clone();
