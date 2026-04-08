@@ -345,6 +345,10 @@ impl<'a> PaveFiller<'a> {
             | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
                 self.intersect_plane_cylinder_faces(f1, f2, pl, cyl);
             }
+            (Surface3::Sphere(sph1), Surface3::Sphere(sph2)) => {
+                let (sph1, sph2) = (*sph1, *sph2);
+                self.intersect_sphere_sphere_faces(f1, f2, &sph1, &sph2);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -507,6 +511,96 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    // ── Sphere × Sphere analytic face-face intersection ───────────────────────
+
+    fn intersect_sphere_sphere_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        sph1: &SphericalSurface,
+        sph2: &SphericalSurface,
+    ) {
+        use inttools::pcurve_derive::fallback_pcurve_by_projection;
+        use std::f64::consts::TAU;
+
+        let d_vec = sph2.center - sph1.center;
+        let d = d_vec.length();
+
+        // No intersection if disjoint or one contains the other
+        if d < 1e-14
+            || d >= sph1.radius + sph2.radius
+            || d <= (sph1.radius - sph2.radius).abs()
+        {
+            return;
+        }
+
+        // Distance from sph1 center to the radical plane
+        let h = (d * d + sph1.radius * sph1.radius - sph2.radius * sph2.radius) / (2.0 * d);
+        let r_circ_sq = sph1.radius * sph1.radius - h * h;
+        if r_circ_sq <= 0.0 {
+            return; // Tangent or near-tangent
+        }
+        let r_circ = r_circ_sq.sqrt();
+
+        // Normal of the intersection circle (axis of the radical plane)
+        let normal = d_vec.normalize();
+        // Center of the intersection circle
+        let center = sph1.center + normal * h;
+
+        let circle = Circle3 {
+            center,
+            normal,
+            radius: r_circ,
+        };
+
+        let curve3 = Curve3::Circle(circle);
+        let t_range = [0.0_f64, TAU];
+        // Use projection-based PCurves since the circle may not be a latitude line
+        let pcurve_a = fallback_pcurve_by_projection(
+            &curve3,
+            &t_range,
+            &Surface3::Sphere(*sph1),
+        );
+        let pcurve_b = fallback_pcurve_by_projection(
+            &curve3,
+            &t_range,
+            &Surface3::Sphere(*sph2),
+        );
+
+        let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
+        if pts.len() < 2 {
+            return;
+        }
+
+        let v_start = self.ds.add_vertex(pts[0]);
+        let v_end = self.ds.add_vertex(*pts.last().unwrap());
+
+        let curve_idx = self.ds.intersection_curves.len();
+        self.ds.intersection_curves.push(IntersectionCurve {
+            curve: curve3,
+            polyline: vec![],
+            start_vertex: v_start,
+            end_vertex: v_end,
+            t_range: [0.0, TAU],
+            pcurve_on_a: Some(pcurve_a),
+            pcurve_on_b: Some(pcurve_b),
+        });
+
+        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+        self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+        self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+        self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+        self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+        self.ds.interferences.push(Interference::FaceFace {
+            f1,
+            f2,
+            curves: vec![curve_idx],
+            points: vec![],
+        });
+    }
+
     // ── Plane × Cylinder analytic face-face intersection ──────────────────────
 
     fn intersect_plane_cylinder_faces(
@@ -666,33 +760,91 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // Compute bounding box from both faces' boundary vertices for marching bound check
-        let aabb_min = {
-            let mut mn = DVec3::splat(f64::INFINITY);
+        // Compute bounding box for marching bounds.
+        // For curved surfaces (sphere, cylinder, etc.), the boundary_verts may be
+        // degenerate (e.g. sphere seam gives only south pole twice). Always use
+        // surface-derived bounds for non-planar surfaces.
+        let surface_aabb = |s: &Surface3| -> (DVec3, DVec3) {
+            match s {
+                Surface3::Sphere(sph) => {
+                    let r = sph.radius + 0.1;
+                    (sph.center - DVec3::splat(r), sph.center + DVec3::splat(r))
+                }
+                Surface3::Cylinder(_cyl) => {
+                    // Use stored vertices from ds to get cylinder extent
+                    (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY))
+                }
+                _ => (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY))
+            }
+        };
+
+        let mut aabb_min = DVec3::splat(f64::INFINITY);
+        let mut aabb_max = DVec3::splat(f64::NEG_INFINITY);
+
+        // For planar faces, use boundary verts; for curved surfaces, use surface-derived bounds
+        let use_surface_bounds_f1 = !matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
+        let use_surface_bounds_f2 = !matches!(self.ds.faces[f2].surface, Surface3::Plane(_));
+
+        if use_surface_bounds_f1 {
+            let (mn, mx) = surface_aabb(&s1);
+            if mn.x.is_finite() {
+                aabb_min = aabb_min.min(mn);
+                aabb_max = aabb_max.max(mx);
+            }
+        } else {
             for &vi in &self.ds.faces[f1].boundary_verts {
-                mn = mn.min(self.ds.vertices[vi].point);
+                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
+                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
+            }
+        }
+
+        if use_surface_bounds_f2 {
+            let (mn, mx) = surface_aabb(&s2);
+            if mn.x.is_finite() {
+                aabb_min = aabb_min.min(mn);
+                aabb_max = aabb_max.max(mx);
+            }
+        } else {
+            for &vi in &self.ds.faces[f2].boundary_verts {
+                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
+                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
+            }
+        }
+
+        // For any still-infinite bounds (e.g., cylinders), use a generous fallback
+        if !aabb_min.x.is_finite() || !aabb_max.x.is_finite() {
+            // Fall back to boundary verts + large slack
+            for &vi in &self.ds.faces[f1].boundary_verts {
+                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
+                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
             }
             for &vi in &self.ds.faces[f2].boundary_verts {
-                mn = mn.min(self.ds.vertices[vi].point);
+                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
+                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
             }
-            mn - DVec3::splat(0.1)
-        };
-        let aabb_max = {
-            let mut mx = DVec3::splat(f64::NEG_INFINITY);
-            for &vi in &self.ds.faces[f1].boundary_verts {
-                mx = mx.max(self.ds.vertices[vi].point);
-            }
-            for &vi in &self.ds.faces[f2].boundary_verts {
-                mx = mx.max(self.ds.vertices[vi].point);
-            }
-            mx + DVec3::splat(0.1)
-        };
+            // Add extra slack for cylinders whose boundary verts may be degenerate
+            let slack = 5.0;
+            aabb_min -= DVec3::splat(slack);
+            aabb_max += DVec3::splat(slack);
+        }
+
+        let aabb_min = aabb_min - DVec3::splat(0.1);
+        let aabb_max = aabb_max + DVec3::splat(0.1);
 
         // March each seed
         let step_size = self.estimate_step_size(&s1, &s2);
         let mut curve_indices = Vec::new();
+        // Track all points already covered by marched curves, to deduplicate
+        // seeds that trace the same intersection curve.
+        let mut covered_points: Vec<DVec3> = Vec::new();
+        let dedup_tol = step_size * 3.0;
 
         for seed in seeds {
+            // Skip if this seed is near any point already covered by a previous curve
+            if covered_points.iter().any(|&cp| (cp - seed).length_squared() < dedup_tol * dedup_tol) {
+                continue;
+            }
+
             let curve = inttools::marching::march_intersection(
                 &s1,
                 &s2,
@@ -704,6 +856,13 @@ impl<'a> PaveFiller<'a> {
 
             if curve.points.len() < 2 {
                 continue;
+            }
+
+            // Mark all curve points as covered (sample every few for efficiency)
+            for (i, &p) in curve.points.iter().enumerate() {
+                if i % 5 == 0 {
+                    covered_points.push(p);
+                }
             }
 
             let v_start = self.ds.add_vertex(curve.points[0]);

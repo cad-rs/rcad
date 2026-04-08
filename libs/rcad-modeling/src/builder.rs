@@ -20,6 +20,7 @@ pub use surface::*;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::geom::{Curve3, Surface3};
 use std::error::Error;
 use std::fmt;
 
@@ -107,8 +108,46 @@ fn basis_from_axis_ref(axis: DVec3, ref_dir: DVec3) -> Result<(DVec3, DVec3, DVe
 }
 
 fn translate_brep(brep: &mut BRep, offset: DVec3) {
+    // Translate vertices
     for vertex in &mut brep.vertices {
         vertex.point += offset;
+    }
+    // Translate analytic geometry in GeomStore
+    for curve in &mut brep.geom.curves {
+        match curve {
+            Curve3::Line(l) => l.origin += offset,
+            Curve3::Circle(c) => c.center += offset,
+            Curve3::Ellipse(e) => e.center += offset,
+            Curve3::Hyperbola(h) => h.center += offset,
+            Curve3::BSpline(b) => {
+                for cp in &mut b.control_points {
+                    *cp += offset;
+                }
+            }
+            Curve3::Bezier(b) => {
+                for cp in &mut b.control_points {
+                    *cp += offset;
+                }
+            }
+            _ => {}
+        }
+    }
+    for surface in &mut brep.geom.surfaces {
+        match surface {
+            Surface3::Plane(p) => p.origin += offset,
+            Surface3::Cylinder(c) => c.origin += offset,
+            Surface3::Sphere(s) => s.center += offset,
+            Surface3::Cone(c) => c.apex += offset,
+            Surface3::Torus(t) => t.center += offset,
+            Surface3::BSpline(b) => {
+                for row in &mut b.control_points {
+                    for cp in row {
+                        *cp += offset;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
     for solid in &mut brep.solids {
         for shell in &mut solid.shells {
@@ -120,9 +159,83 @@ fn translate_brep(brep: &mut BRep, offset: DVec3) {
 }
 
 fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, z_axis: DVec3) {
+    let xform_point = |p: DVec3| -> DVec3 {
+        origin + x_axis * p.x + y_axis * p.y + z_axis * p.z
+    };
+    let xform_vec = |v: DVec3| -> DVec3 {
+        (x_axis * v.x + y_axis * v.y + z_axis * v.z).normalize_or_zero()
+    };
+
+    // Transform vertices
     for vertex in &mut brep.vertices {
-        vertex.point =
-            origin + x_axis * vertex.point.x + y_axis * vertex.point.y + z_axis * vertex.point.z;
+        vertex.point = xform_point(vertex.point);
+    }
+
+    // Transform analytic geometry in GeomStore
+    for curve in &mut brep.geom.curves {
+        match curve {
+            Curve3::Line(l) => {
+                l.origin = xform_point(l.origin);
+                l.direction = xform_vec(l.direction);
+            }
+            Curve3::Circle(c) => {
+                c.center = xform_point(c.center);
+                c.normal = xform_vec(c.normal);
+            }
+            Curve3::Ellipse(e) => {
+                e.center = xform_point(e.center);
+                e.normal = xform_vec(e.normal);
+                e.major_dir = xform_vec(e.major_dir);
+            }
+            Curve3::Hyperbola(h) => {
+                h.center = xform_point(h.center);
+                h.normal = xform_vec(h.normal);
+                h.major_dir = xform_vec(h.major_dir);
+            }
+            Curve3::BSpline(b) => {
+                for cp in &mut b.control_points {
+                    *cp = xform_point(*cp);
+                }
+            }
+            Curve3::Bezier(b) => {
+                for cp in &mut b.control_points {
+                    *cp = xform_point(*cp);
+                }
+            }
+            _ => {}
+        }
+    }
+    for surface in &mut brep.geom.surfaces {
+        match surface {
+            Surface3::Plane(p) => {
+                p.origin = xform_point(p.origin);
+                p.normal = xform_vec(p.normal);
+            }
+            Surface3::Cylinder(c) => {
+                c.origin = xform_point(c.origin);
+                c.axis = xform_vec(c.axis);
+            }
+            Surface3::Sphere(s) => {
+                s.center = xform_point(s.center);
+                s.axis = xform_vec(s.axis);
+            }
+            Surface3::Cone(c) => {
+                c.apex = xform_point(c.apex);
+                c.axis = xform_vec(c.axis);
+            }
+            Surface3::Torus(t) => {
+                t.center = xform_point(t.center);
+                t.axis = xform_vec(t.axis);
+            }
+            Surface3::BSpline(b) => {
+                for row in &mut b.control_points {
+                    for cp in row {
+                        *cp = xform_point(*cp);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     for solid in &mut brep.solids {

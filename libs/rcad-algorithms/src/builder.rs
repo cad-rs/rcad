@@ -341,46 +341,98 @@ impl<'a> BooleanBuilder<'a> {
             .map(|&vi| self.ds.vertices[vi].point)
             .collect();
 
-        // Collect all intersection curve segments that cross this face
-        let mut segments: Vec<(DVec3, DVec3)> = Vec::new();
+        if boundary_3d.len() < 3 {
+            return vec![];
+        }
+
+        // Project boundary to 2D in the plane
+        let (u_axis, v_axis) = plane_local_basis(plane);
+        let project_to_2d = |p: DVec3| -> DVec2 {
+            let d = p - plane.origin;
+            DVec2::new(d.dot(u_axis), d.dot(v_axis))
+        };
+        let lift_to_3d = |uv: DVec2| -> DVec3 {
+            plane.origin + u_axis * uv.x + v_axis * uv.y
+        };
+
+        let boundary_2d: Vec<DVec2> = boundary_3d.iter().map(|&p| project_to_2d(p)).collect();
+
+        // Process each intersection curve to split the polygon
+        let mut polygons_2d: Vec<Vec<DVec2>> = vec![boundary_2d];
+
         for &ci in &face.face_info.curves_in {
             let ic = &self.ds.intersection_curves[ci];
-            let p_start = self.ds.vertices[ic.start_vertex].point;
-            let p_end = self.ds.vertices[ic.end_vertex].point;
-            segments.push((p_start, p_end));
+
+            let curve_halfspace_split: Option<Vec<Vec<DVec2>>> = match &ic.curve {
+                Curve3::Circle(circle) => {
+                    // Plane-sphere intersection produces a circle lying in the plane.
+                    // Project the circle center to 2D and split by the circle boundary.
+                    let center_2d = project_to_2d(circle.center);
+                    let radius = circle.radius;
+                    let mut next: Vec<Vec<DVec2>> = Vec::new();
+                    for poly in &polygons_2d {
+                        let halves = split_polygon_by_circle_2d(poly, center_2d, radius);
+                        next.extend(halves);
+                    }
+                    Some(next)
+                }
+                Curve3::Line(line) => {
+                    // Use segment from start to end vertex
+                    let p_start = self.ds.vertices[ic.start_vertex].point;
+                    let p_end = self.ds.vertices[ic.end_vertex].point;
+                    if points_coincide(p_start, p_end) {
+                        None
+                    } else {
+                        let seg_s2d = project_to_2d(p_start);
+                        let _seg_e2d = project_to_2d(p_end);
+                        let mut next: Vec<Vec<DVec2>> = Vec::new();
+                        for poly in &polygons_2d {
+                            // Use line direction to split
+                            let dir = DVec2::new(
+                                (line.direction - plane.normal * line.direction.dot(plane.normal)).dot(u_axis),
+                                (line.direction - plane.normal * line.direction.dot(plane.normal)).dot(v_axis),
+                            );
+                            let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
+                            next.extend(halves);
+                        }
+                        Some(next)
+                    }
+                }
+                _ => {
+                    // For other curves, fall back to segment approach
+                    let p_start = self.ds.vertices[ic.start_vertex].point;
+                    let p_end = self.ds.vertices[ic.end_vertex].point;
+                    if !points_coincide(p_start, p_end) {
+                        let seg_s2d = project_to_2d(p_start);
+                        let seg_e2d = project_to_2d(p_end);
+                        let mut next: Vec<Vec<DVec2>> = Vec::new();
+                        for poly in &polygons_2d {
+                            let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
+                            next.extend(halves);
+                        }
+                        Some(next)
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if let Some(new_polys) = curve_halfspace_split
+                && !new_polys.is_empty() {
+                    polygons_2d = new_polys;
+                }
         }
 
-        if segments.is_empty() {
-            return vec![SubFace {
-                boundary: boundary_3d,
-                surface: face.surface.clone(),
-                normal: face.normal,
-            }];
-        }
-
-        // For each intersection segment, split the polygon into two halves.
-        // For box-box cases, each face gets at most one intersection segment,
-        // producing at most two sub-faces.
-        let mut polygons = vec![boundary_3d];
-
-        for (seg_start, seg_end) in &segments {
-            let mut new_polygons = Vec::new();
-
-            for poly in &polygons {
-                let split = split_polygon_by_segment(poly, *seg_start, *seg_end, plane);
-                new_polygons.extend(split);
-            }
-
-            polygons = new_polygons;
-        }
-
-        polygons
+        polygons_2d
             .into_iter()
             .filter(|p| p.len() >= 3)
-            .map(|boundary| SubFace {
-                boundary,
-                surface: face.surface.clone(),
-                normal: face.normal,
+            .map(|poly_2d| {
+                let boundary = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
+                SubFace {
+                    boundary,
+                    surface: face.surface.clone(),
+                    normal: face.normal,
+                }
             })
             .collect()
     }
@@ -562,17 +614,28 @@ impl<'a> BooleanBuilder<'a> {
         let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
         for &ci in &face.face_info.curves_in {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
-                let [t0, t1] = {
-                    let ic = &self.ds.intersection_curves[ci];
-                    ic.t_range
-                };
+                let ic = &self.ds.intersection_curves[ci];
+                let [t0, t1] = ic.t_range;
                 const N: usize = 32;
-                let pts: Vec<DVec2> = (0..=N)
-                    .map(|i| {
-                        let t = t0 + (t1 - t0) * i as f64 / N as f64;
-                        pcurve.point_at(t)
-                    })
-                    .collect();
+                let pts: Vec<DVec2> = match &pcurve {
+                    // BSpline PCurves from polyline_pcurve_by_projection use
+                    // chord-length parameterization normalized to [0,1].
+                    // The 3D arc-length t_range is unrelated to the BSpline domain.
+                    rcad_kernel::geom::Curve2d::BSpline(_) => (0..=N)
+                        .map(|i| {
+                            let t = i as f64 / N as f64;
+                            pcurve.point_at(t)
+                        })
+                        .collect(),
+                    // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
+                    // t parameterization as the 3D intersection curve.
+                    _ => (0..=N)
+                        .map(|i| {
+                            let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                            pcurve.point_at(t)
+                        })
+                        .collect(),
+                };
                 if pts.len() >= 2 {
                     trim_polylines.push(pts);
                 }
@@ -605,10 +668,22 @@ impl<'a> BooleanBuilder<'a> {
                     .iter()
                     .map(|uv| surface.point_at(uv.x, uv.y))
                     .collect();
+                // For curved surfaces, compute the actual surface normal at the centroid UV
+                let sub_normal = {
+                    let n = uv_poly.len() as f64;
+                    let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
+                    let computed = surface.normal_at(centroid_uv.x, centroid_uv.y);
+                    // If normal computation failed, fall back to face normal
+                    if computed.length_squared() > 0.5 {
+                        computed
+                    } else {
+                        normal
+                    }
+                };
                 SubFace {
                     boundary,
                     surface: surface.clone(),
-                    normal,
+                    normal: sub_normal,
                 }
             })
             .collect()
@@ -638,126 +713,6 @@ impl<'a> BooleanBuilder<'a> {
     }
 }
 
-/// Split a 3D polygon by a line segment. Returns the resulting sub-polygons
-/// (1 if segment doesn't cross, 2 if it splits the polygon).
-fn split_polygon_by_segment(
-    poly: &[DVec3],
-    seg_start: DVec3,
-    seg_end: DVec3,
-    plane: &Plane,
-) -> Vec<Vec<DVec3>> {
-    let n = poly.len();
-    let (u_axis, v_axis) = plane_local_basis(plane);
-
-    let project = |p: DVec3| -> [f64; 2] {
-        let d = p - plane.origin;
-        [d.dot(u_axis), d.dot(v_axis)]
-    };
-
-    let seg_s = project(seg_start);
-    let seg_e = project(seg_end);
-    let seg_dir_2d = [seg_e[0] - seg_s[0], seg_e[1] - seg_s[1]];
-
-    // Classify each polygon vertex by which side of the segment it's on
-    let signed_dist = |p: [f64; 2]| -> f64 {
-        // Cross product of seg_dir with (p - seg_s)
-        seg_dir_2d[0] * (p[1] - seg_s[1]) - seg_dir_2d[1] * (p[0] - seg_s[0])
-    };
-
-    let poly_2d: Vec<[f64; 2]> = poly.iter().map(|&p| project(p)).collect();
-    let sides: Vec<f64> = poly_2d.iter().map(|p| signed_dist(*p)).collect();
-
-    // Find edges that cross the segment line
-    let mut crossings: Vec<(usize, DVec3)> = Vec::new(); // (edge_index, intersection_point)
-
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let si = sides[i];
-        let sj = sides[j];
-
-        if si.abs() < TOLERANCE_ABS {
-            // Vertex i is on the line — don't double-count
-            continue;
-        }
-        if sj.abs() < TOLERANCE_ABS {
-            // Vertex j is on the line — will be handled when processing edge starting at j
-            continue;
-        }
-
-        if si * sj < 0.0 {
-            // Edge crosses the line
-            let t = si / (si - sj);
-            let p = poly[i] + (poly[j] - poly[i]) * t;
-            crossings.push((i, p));
-        }
-    }
-
-    if crossings.len() < 2 {
-        // Segment doesn't properly split this polygon
-        return vec![poly.to_vec()];
-    }
-
-    // Sort crossings by position along the polygon boundary
-    crossings.sort_by_key(|(idx, _)| *idx);
-
-    // Take the first two crossings to split the polygon
-    let (idx1, pt1) = crossings[0];
-    let (idx2, pt2) = crossings[1];
-
-    // Build two sub-polygons by walking the boundary
-    let mut poly_a = Vec::new();
-    let mut poly_b = Vec::new();
-
-    // Walk from start to first crossing
-    for &p in poly.iter().take(idx1 + 1) {
-        poly_a.push(p);
-    }
-    poly_a.push(pt1);
-    poly_a.push(pt2);
-    for &p in poly.iter().skip(idx2 + 1) {
-        poly_a.push(p);
-    }
-
-    // Walk from first crossing to second crossing
-    poly_b.push(pt1);
-    for &p in poly.iter().skip(idx1 + 1).take(idx2 - idx1) {
-        poly_b.push(p);
-    }
-    poly_b.push(pt2);
-
-    // Remove near-duplicate consecutive vertices
-    let dedup = |v: Vec<DVec3>| -> Vec<DVec3> {
-        let mut result: Vec<DVec3> = Vec::new();
-        for p in v {
-            if result.is_empty() || !points_coincide(*result.last().unwrap(), p) {
-                result.push(p);
-            }
-        }
-        // Check wrap-around
-        if result.len() > 1 && points_coincide(*result.first().unwrap(), *result.last().unwrap()) {
-            result.pop();
-        }
-        result
-    };
-
-    let poly_a = dedup(poly_a);
-    let poly_b = dedup(poly_b);
-
-    let mut result = Vec::new();
-    if poly_a.len() >= 3 {
-        result.push(poly_a);
-    }
-    if poly_b.len() >= 3 {
-        result.push(poly_b);
-    }
-
-    if result.is_empty() {
-        vec![poly.to_vec()]
-    } else {
-        result
-    }
-}
-
 /// Split a 2D UV polygon by a 2D trim polyline.
 ///
 /// Algorithm:
@@ -765,6 +720,10 @@ fn split_polygon_by_segment(
 /// 2. Project trim endpoints onto boundary edges to find exact split points.
 /// 3. Split polygon into two halves at those points, inserting the trim polyline
 ///    between them.
+///
+/// For closed trim polylines (start ≈ end), uses a closed-curve splitting
+/// algorithm: the trim forms an interior polygon that divides the outer polygon
+/// into "inside trim" and "outside trim" regions.
 ///
 /// Returns 1 polygon if splitting is degenerate, or 2 sub-polygons otherwise.
 fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
@@ -775,6 +734,32 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
 
     let trim_start = *trim.first().unwrap();
     let trim_end = *trim.last().unwrap();
+
+    // Detect closed trim: start ≈ end in UV space
+    let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
+    if is_closed_trim {
+        // The trim is a closed loop. Check if it's inside the polygon.
+        // Use the trim as an interior boundary for "inside" and return
+        // [trim_polygon, outer_polygon].
+        let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
+        let is_inside = point_in_polygon_2d(poly, trim_centroid);
+        if is_inside {
+            // Return: [trim polygon (inner cap), outer polygon (without cap)]
+            // Deduplicate closing point from trim if needed
+            let trim_dedup: Vec<DVec2> = {
+                let mut v = trim.to_vec();
+                if v.len() > 1 && (v[0] - *v.last().unwrap()).length_squared() < 1e-12 {
+                    v.pop();
+                }
+                v
+            };
+            if trim_dedup.len() >= 3 {
+                return vec![trim_dedup, poly.to_vec()];
+            }
+        }
+        // If trim centroid is not inside the polygon, can't split
+        return vec![poly.to_vec()];
+    }
 
     // Find closest point on each polygon edge for trim_start and trim_end,
     // returning (edge_index, parameter t in [0,1], projected point).
@@ -879,4 +864,332 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     } else {
         out
     }
+}
+
+/// Split a 2D polygon by a circle boundary.
+///
+/// Vertices inside the circle (distance < radius) are on the "inside" group,
+/// vertices outside (distance > radius) are on the "outside" group.
+/// Returns up to 2 sub-polygons: the part inside and the part outside.
+///
+/// When the circle is fully inside the polygon (all vertices outside),
+/// samples the circle at N_CIRCLE_SAMPLES points and returns both
+/// the approximate circular cap and the annular region.
+fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec<Vec<DVec2>> {
+    const N_CIRCLE_SAMPLES: usize = 24;
+    let n = poly.len();
+    if n < 3 {
+        return vec![poly.to_vec()];
+    }
+
+    let tol = TOLERANCE_ABS;
+
+    // Signed distance: negative = inside circle, positive = outside
+    let signed_dist = |p: DVec2| -> f64 { (p - center).length() - radius };
+
+    let dists: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
+
+    // Check if all vertices are on the same side
+    let all_inside = dists.iter().all(|&d| d <= tol);
+    let all_outside = dists.iter().all(|&d| d >= -tol);
+
+    if all_inside {
+        // All polygon vertices inside circle — keep whole polygon
+        return vec![poly.to_vec()];
+    }
+
+    if all_outside {
+        // Circle is fully inside the polygon OR polygon is fully outside circle.
+        // Check if circle center is inside the polygon:
+        let center_inside = point_in_polygon_2d(poly, center);
+        if !center_inside {
+            // Circle doesn't overlap with this polygon — keep as-is
+            return vec![poly.to_vec()];
+        }
+        // Circle is fully inside the polygon — produce circular cap + annular region
+        // Sample the circle at N points
+        let circle_poly: Vec<DVec2> = (0..N_CIRCLE_SAMPLES)
+            .map(|i| {
+                let theta = std::f64::consts::TAU * i as f64 / N_CIRCLE_SAMPLES as f64;
+                center + DVec2::new(theta.cos(), theta.sin()) * radius
+            })
+            .collect();
+        // Return: inside = circle polygon, outside = original polygon (with circle as hole)
+        // For simplicity, return just the circle as the "inside" part
+        // and the original polygon as the "outside" part (approximate)
+        return vec![circle_poly, poly.to_vec()];
+    }
+
+    // Find crossings: edges where signed distance changes sign
+    let mut crossings: Vec<(usize, DVec2)> = Vec::new();
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let di = dists[i];
+        let dj = dists[j];
+
+        if di.abs() < tol {
+            continue; // vertex i is on the circle
+        }
+        if dj.abs() < tol {
+            continue; // vertex j is on the circle (handled when edge starting at j is processed)
+        }
+
+        if di * dj < 0.0 {
+            // Edge crosses the circle boundary
+            // Find exact crossing: solve |a + t*(b-a) - center|² = r²
+            let a = poly[i];
+            let b = poly[j];
+            let ab = b - a;
+            let ac = a - center;
+            let qa = ab.dot(ab);
+            let qb = 2.0 * ab.dot(ac);
+            let qc = ac.dot(ac) - radius * radius;
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc < 0.0 {
+                continue;
+            }
+            let sq = disc.sqrt();
+            for &sign in &[-1.0_f64, 1.0_f64] {
+                let t = (-qb + sign * sq) / (2.0 * qa);
+                if t > -tol && t < 1.0 + tol {
+                    let t = t.clamp(0.0, 1.0);
+                    let pt = a + t * ab;
+                    crossings.push((i, pt));
+                    break; // take the first valid crossing on this edge
+                }
+            }
+        }
+    }
+
+    if crossings.len() < 2 {
+        // Can't split — keep as-is
+        return vec![poly.to_vec()];
+    }
+
+    // Sort crossings by edge index
+    crossings.sort_by_key(|(idx, _)| *idx);
+
+    // Take the first two crossings
+    let (idx1, pt1) = crossings[0];
+    let (idx2, pt2) = crossings[1];
+
+    if idx1 == idx2 {
+        return vec![poly.to_vec()];
+    }
+
+    // Sample the arc between pt1 and pt2 (going through the inside of the polygon)
+    // Determine which arc (minor or major) connects pt1 to pt2 and stays inside the polygon
+    let theta1 = (pt1 - center).to_angle();
+    let theta2 = (pt2 - center).to_angle();
+
+    // For the "inside" sub-polygon, we need the arc that passes through the inside of the polygon.
+    // Try both arcs and pick the one whose midpoint is inside the polygon.
+    let mid_theta_cw = (theta1 + theta2) * 0.5;
+    let mid_theta_ccw = mid_theta_cw + std::f64::consts::PI;
+    let mid_cw = center + DVec2::new(mid_theta_cw.cos(), mid_theta_cw.sin()) * radius;
+    let _mid_ccw = center + DVec2::new(mid_theta_ccw.cos(), mid_theta_ccw.sin()) * radius;
+
+    // The arc midpoint that is inside the polygon corresponds to the "inside" portion
+    let arc_goes_cw_inside = point_in_polygon_2d(poly, mid_cw);
+    let inner_mid_theta = if arc_goes_cw_inside { mid_theta_cw } else { mid_theta_ccw };
+
+    // Determine angular span and direction for the inner arc
+    let arc_n = ((N_CIRCLE_SAMPLES as f64 * (theta2 - theta1).abs() / std::f64::consts::TAU) as usize).max(3);
+
+    // Build arc points from pt1 to pt2 going through inner_mid_theta
+    let inner_arc: Vec<DVec2> = {
+        // Compute proper arc from theta1 through inner_mid_theta to theta2
+        let delta = {
+            let mut d = theta2 - theta1;
+            // Adjust delta to go through inner_mid_theta
+            let going_ccw = inner_mid_theta > theta1 || inner_mid_theta < theta2;
+            if going_ccw {
+                while d < 0.0 { d += std::f64::consts::TAU; }
+                if d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+            } else {
+                while d > 0.0 { d -= std::f64::consts::TAU; }
+                if d < -std::f64::consts::TAU { d += std::f64::consts::TAU; }
+            }
+            d
+        };
+        (0..=arc_n)
+            .map(|i| {
+                let t = i as f64 / arc_n as f64;
+                let theta = theta1 + delta * t;
+                center + DVec2::new(theta.cos(), theta.sin()) * radius
+            })
+            .collect()
+    };
+
+    // Sub-polygon "inside" (circle side): pt1 → arc → pt2 + polygon walk from idx2 to idx1
+    // Actually: vertices of polygon that are INSIDE the circle + arc from pt1 to pt2
+    let poly_inside_verts: Vec<DVec2> = poly[idx1 + 1..=idx2].to_vec();
+
+    let mut sub_inside: Vec<DVec2> = vec![pt1];
+    sub_inside.extend_from_slice(&poly_inside_verts);
+    sub_inside.push(pt2);
+    // Add arc back (reversed, so the boundary goes: inside polygon verts, then arc back to pt1)
+    for &p in inner_arc.iter().skip(1).rev().skip(1) {
+        sub_inside.push(p);
+    }
+
+    // Sub-polygon "outside" (non-circle side): pt2 → arc → pt1 + polygon walk
+    let poly_outside_verts_a: Vec<DVec2> = poly[..=idx1].to_vec();
+    let poly_outside_verts_b: Vec<DVec2> = poly[idx2 + 1..].to_vec();
+
+    let mut sub_outside: Vec<DVec2> = poly_outside_verts_a;
+    sub_outside.push(pt1);
+    // Add inner arc (forward) as the "hole" boundary
+    for &p in inner_arc.iter().skip(1).rev().skip(1) {
+        sub_outside.push(p);
+    }
+    sub_outside.push(pt2);
+    sub_outside.extend(poly_outside_verts_b);
+
+    let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
+        let mut result: Vec<DVec2> = Vec::new();
+        for p in v {
+            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+                result.push(p);
+            }
+        }
+        if result.len() > 1
+            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
+        {
+            result.pop();
+        }
+        result
+    };
+
+    let sub_inside = dedup(sub_inside);
+    let sub_outside = dedup(sub_outside);
+
+    let mut out = Vec::new();
+    if sub_inside.len() >= 3 {
+        out.push(sub_inside);
+    }
+    if sub_outside.len() >= 3 {
+        out.push(sub_outside);
+    }
+
+    if out.is_empty() {
+        vec![poly.to_vec()]
+    } else {
+        out
+    }
+}
+
+/// Check if a 2D point is inside a 2D polygon using ray casting.
+fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let vi = poly[i];
+        let vj = poly[j];
+        if ((vi.y > pt.y) != (vj.y > pt.y))
+            && (pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Split a 2D polygon by an infinite line through `point` with direction `dir`.
+///
+/// Vertices on the positive side (cross product > 0) form one group, negative side the other.
+fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec<DVec2>> {
+    let n = poly.len();
+    if n < 3 {
+        return vec![poly.to_vec()];
+    }
+    let tol = TOLERANCE_ABS;
+
+    // Signed distance from line
+    let signed_dist = |p: DVec2| -> f64 {
+        let d = p - point;
+        dir.x * d.y - dir.y * d.x // perpendicular component
+    };
+
+    let dists: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
+    let all_pos = dists.iter().all(|&d| d >= -tol);
+    let all_neg = dists.iter().all(|&d| d <= tol);
+
+    if all_pos || all_neg {
+        return vec![poly.to_vec()];
+    }
+
+    let mut crossings: Vec<(usize, DVec2)> = Vec::new();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let di = dists[i];
+        let dj = dists[j];
+        if di.abs() < tol || dj.abs() < tol {
+            continue;
+        }
+        if di * dj < 0.0 {
+            let t = di / (di - dj);
+            let pt = poly[i] + t * (poly[j] - poly[i]);
+            crossings.push((i, pt));
+        }
+    }
+
+    if crossings.len() < 2 {
+        return vec![poly.to_vec()];
+    }
+
+    crossings.sort_by_key(|(idx, _)| *idx);
+
+    let (idx1, pt1) = crossings[0];
+    let (idx2, pt2) = crossings[1];
+    if idx1 == idx2 {
+        return vec![poly.to_vec()];
+    }
+
+    let mut sub_a: Vec<DVec2> = poly[..=idx1].to_vec();
+    sub_a.push(pt1);
+    sub_a.push(pt2);
+    sub_a.extend_from_slice(&poly[idx2 + 1..]);
+
+    let mut sub_b: Vec<DVec2> = vec![pt1];
+    sub_b.extend_from_slice(&poly[idx1 + 1..=idx2]);
+    sub_b.push(pt2);
+
+    let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
+        let mut result: Vec<DVec2> = Vec::new();
+        for p in v {
+            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+                result.push(p);
+            }
+        }
+        if result.len() > 1
+            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
+        {
+            result.pop();
+        }
+        result
+    };
+
+    let sub_a = dedup(sub_a);
+    let sub_b = dedup(sub_b);
+    let mut out = Vec::new();
+    if sub_a.len() >= 3 {
+        out.push(sub_a);
+    }
+    if sub_b.len() >= 3 {
+        out.push(sub_b);
+    }
+    if out.is_empty() { vec![poly.to_vec()] } else { out }
+}
+
+/// Split a 2D polygon by a segment from `seg_start` to `seg_end`.
+fn split_polygon_2d_by_segment(poly: &[DVec2], seg_start: DVec2, seg_end: DVec2) -> Vec<Vec<DVec2>> {
+    let dir = seg_end - seg_start;
+    if dir.length_squared() < 1e-18 {
+        return vec![poly.to_vec()];
+    }
+    split_polygon_2d_by_line(poly, seg_start, dir.normalize())
 }

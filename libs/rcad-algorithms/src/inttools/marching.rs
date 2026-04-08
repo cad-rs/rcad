@@ -218,6 +218,9 @@ fn march_one_direction(
 ) -> Vec<DVec3> {
     let mut points = vec![seed];
     let mut current = seed;
+    // Use a larger tolerance for closure detection to accommodate accumulated marching error.
+    // The closure tolerance is proportional to the step size.
+    let closure_tol = (step_size * step_size * 4.0).max(TOLERANCE_ABS * 1000.0);
 
     for _ in 0..max_steps {
         let g1 = surface_gradient(s1, current);
@@ -237,7 +240,7 @@ fn march_one_direction(
         }
 
         // Check if we've returned to start (closed curve)
-        if points.len() > 3 && points_coincide(next, points[0]) {
+        if points.len() > 3 && (next - points[0]).length_squared() < closure_tol {
             points.push(points[0]);
             break;
         }

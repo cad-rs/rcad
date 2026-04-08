@@ -147,6 +147,7 @@ impl DS {
     /// the edge curve so that the resulting UV polygon is well-defined even when
     /// the wire has very few vertices (e.g. a sphere with only 2 poles).
     pub fn compute_uv_boundaries(&mut self) {
+        use std::f64::consts::PI;
         const N_SAMPLES: usize = 8;
 
         for fi in 0..self.faces.len() {
@@ -155,6 +156,60 @@ impl DS {
             }
 
             let surface = self.faces[fi].surface.clone();
+
+            // For sphere and cylinder, the UV boundary is the full parameter
+            // domain rectangle. The topological boundary (seam edge) maps to a
+            // degenerate line in UV space and cannot be used as a polygon.
+            match &surface {
+                Surface3::Sphere(_) => {
+                    // Sphere param from projection: u = longitude [-π, π] (atan2 range),
+                    // v = colatitude [0, π]. Use the full domain as UV boundary.
+                    let uv = vec![
+                        DVec2::new(-PI, 0.0),
+                        DVec2::new(PI, 0.0),
+                        DVec2::new(PI, PI),
+                        DVec2::new(-PI, PI),
+                    ];
+                    self.faces[fi].uv_boundary = Some(uv);
+                    continue;
+                }
+                Surface3::Cylinder(cyl) => {
+                    // Cylinder param from projection: u = azimuth [-π, π], v = height along axis.
+                    // Estimate height range from boundary vertices.
+                    let boundary_edges = self.faces[fi].boundary_edges.clone();
+                    let mut h_min = f64::INFINITY;
+                    let mut h_max = f64::NEG_INFINITY;
+                    let axis = cyl.axis.normalize();
+                    let origin = cyl.origin;
+                    for ei in &boundary_edges {
+                        let edge = &self.edges[*ei];
+                        let [t0, t1] = edge.t_range;
+                        for k in 0..=N_SAMPLES {
+                            let t = t0 + (t1 - t0) * k as f64 / N_SAMPLES as f64;
+                            let p = edge.curve.point_at(t);
+                            let h = (p - origin).dot(axis);
+                            h_min = h_min.min(h);
+                            h_max = h_max.max(h);
+                        }
+                    }
+                    if !h_min.is_finite() || !h_max.is_finite() {
+                        h_min = -1.0;
+                        h_max = 1.0;
+                    }
+                    // Add small margin
+                    let margin = (h_max - h_min) * 0.01 + 1e-9;
+                    let uv = vec![
+                        DVec2::new(-PI, h_min - margin),
+                        DVec2::new(PI, h_min - margin),
+                        DVec2::new(PI, h_max + margin),
+                        DVec2::new(-PI, h_max + margin),
+                    ];
+                    self.faces[fi].uv_boundary = Some(uv);
+                    continue;
+                }
+                _ => {}
+            }
+
             let boundary_edges = self.faces[fi].boundary_edges.clone();
 
             if boundary_edges.is_empty() {
