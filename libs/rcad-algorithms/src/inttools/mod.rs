@@ -1,4 +1,5 @@
 pub mod coplanar;
+pub mod pcurve_derive;
 pub mod curve_surface;
 pub mod edge_face;
 pub mod intss;

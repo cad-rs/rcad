@@ -1,0 +1,367 @@
+//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
+//! intersection results.
+//!
+//! Each function takes a 3D intersection curve together with surface geometry
+//! and returns the exact [`Curve2d`] that represents that intersection in the
+//! surface's (u, v) parameter domain.
+
+use glam::{DVec2, DVec3};
+use rcad_kernel::fit::interpolate_points_2d;
+use rcad_kernel::geom::{
+    any_perpendicular, Circle2d, Circle3, CurveEval, CylindricalSurface, Curve2d, Ellipse2d,
+    Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3,
+};
+use rcad_kernel::projection::closest_point_on_surface;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plane functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Project a [`Circle3`] onto a [`Plane`]'s (u, v) domain.
+///
+/// Uses `any_perpendicular(plane.normal)` as the u-axis and
+/// `plane.normal × u_axis` as the v-axis, matching [`Plane::point_at`].
+///
+/// If the circle lies in the plane (its normal is parallel to the plane
+/// normal), the result is an analytic [`Circle2d`].  Otherwise the circle
+/// projects to a general conic and is approximated with a [`BSplineCurve2`]
+/// built from 33 sampled points.
+pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
+    let u_axis = any_perpendicular(plane.normal);
+    let v_axis = plane.normal.cross(u_axis);
+
+    // Test whether the circle lies in the plane.
+    let normal_dot = circle.normal.normalize().dot(plane.normal.normalize()).abs();
+    if (normal_dot - 1.0).abs() < 1e-6 {
+        // Circle lies in the plane → analytic Circle2d.
+        let diff = circle.center - plane.origin;
+        let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
+        return Curve2d::Circle(Circle2d {
+            center: center_2d,
+            radius: circle.radius,
+        });
+    }
+
+    // Oblique case: sample the circle and project each point into the plane.
+    let n_samples = 33_usize;
+    let pts: Vec<DVec2> = (0..n_samples)
+        .map(|i| {
+            let t = std::f64::consts::TAU * i as f64 / (n_samples - 1) as f64;
+            let p3 = circle.point_at(t);
+            // Project onto the plane (drop the normal component).
+            let diff = p3 - plane.origin;
+            DVec2::new(diff.dot(u_axis), diff.dot(v_axis))
+        })
+        .collect();
+
+    let bspline = interpolate_points_2d(&pts).expect("circle samples should not be degenerate");
+    Curve2d::BSpline(bspline)
+}
+
+/// Project an [`Ellipse3`] onto a [`Plane`]'s (u, v) domain.
+///
+/// Returns an analytic [`Ellipse2d`] with the projected center, major
+/// direction, and radii (unchanged — projection along a parallel normal
+/// preserves semi-axes when the ellipse is coplanar with the plane).
+pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
+    let u_axis = any_perpendicular(plane.normal);
+    let v_axis = plane.normal.cross(u_axis);
+
+    let diff = ellipse.center - plane.origin;
+    let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
+
+    let major_proj = DVec2::new(
+        ellipse.major_dir.dot(u_axis),
+        ellipse.major_dir.dot(v_axis),
+    );
+    let major_dir_2d = if major_proj.length() > 1e-12 {
+        major_proj.normalize()
+    } else {
+        DVec2::X
+    };
+
+    Curve2d::Ellipse(Ellipse2d {
+        center: center_2d,
+        major_dir: major_dir_2d,
+        major_radius: ellipse.major_radius,
+        minor_radius: ellipse.minor_radius,
+    })
+}
+
+/// Project a [`Line3`] onto a [`Plane`]'s (u, v) domain.
+///
+/// Returns a [`Line2d`] whose origin and direction are the projections of the
+/// 3D line's origin and direction into the plane's parameter space.
+pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
+    let u_axis = any_perpendicular(plane.normal);
+    let v_axis = plane.normal.cross(u_axis);
+
+    let diff = line.origin - plane.origin;
+    let origin_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
+
+    let dir_2d = DVec2::new(line.direction.dot(u_axis), line.direction.dot(v_axis));
+    let direction_2d = if dir_2d.length() > 1e-12 {
+        dir_2d.normalize()
+    } else {
+        DVec2::X
+    };
+
+    Curve2d::Line(Line2d {
+        origin: origin_2d,
+        direction: direction_2d,
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sphere functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the PCurve of a [`Circle3`] on a [`SphericalSurface`].
+///
+/// A circle of intersection on a sphere is a latitude line (constant
+/// colatitude φ).  The sphere's (u, v) domain is (longitude, colatitude).
+///
+/// φ = acos((circle_center - sphere_center) · axis / sphere_radius)
+///
+/// Returns a horizontal [`Line2d`] at v = φ in (θ, φ) space.
+pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> Curve2d {
+    let along_axis = (circle.center - sphere.center).dot(sphere.axis.normalize());
+    let phi = (along_axis / sphere.radius).clamp(-1.0, 1.0).acos();
+
+    Curve2d::Line(Line2d {
+        origin: DVec2::new(0.0, phi),
+        direction: DVec2::new(1.0, 0.0),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cylinder functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the PCurve of a [`Circle3`] on a [`CylindricalSurface`].
+///
+/// A circle perpendicular to the cylinder axis at height h returns a
+/// horizontal [`Line2d`] at v = h in (θ, h) space.
+pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> Curve2d {
+    let h = (circle.center - cyl.origin).dot(cyl.axis.normalize());
+
+    Curve2d::Line(Line2d {
+        origin: DVec2::new(0.0, h),
+        direction: DVec2::new(1.0, 0.0),
+    })
+}
+
+/// Compute the PCurve of a [`Line3`] on a [`CylindricalSurface`].
+///
+/// A line parallel to the cylinder axis at azimuth θ returns a vertical
+/// [`Line2d`] at u = θ in (θ, h) space.
+pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2d {
+    let u_axis = any_perpendicular(cyl.axis);
+    let v_axis = cyl.axis.cross(u_axis).normalize();
+
+    let radial = line.origin - cyl.origin;
+    let radial_perp = radial - cyl.axis * radial.dot(cyl.axis.normalize());
+    let theta = radial_perp
+        .dot(v_axis)
+        .atan2(radial_perp.dot(u_axis));
+
+    let h = radial.dot(cyl.axis.normalize());
+
+    Curve2d::Line(Line2d {
+        origin: DVec2::new(theta, h),
+        direction: DVec2::new(0.0, 1.0),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Numeric fallback functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Derive a PCurve by sampling `curve` at 33 evenly-spaced parameter values
+/// over `t_range` and projecting each 3D point onto `surface`.
+///
+/// Intended as a fallback for curve/surface combinations that do not have an
+/// analytic form.  Returns a [`BSplineCurve2`] interpolated through the
+/// projected (u, v) points.
+///
+/// # Panics
+/// Panics if the 33 projected points are all coincident (degenerate curve).
+pub fn fallback_pcurve_by_projection(
+    curve: &rcad_kernel::geom::Curve3,
+    t_range: &[f64; 2],
+    surface: &Surface3,
+) -> Curve2d {
+    let n = 33_usize;
+    let pts: Vec<DVec2> = (0..n)
+        .map(|i| {
+            let t = t_range[0] + (t_range[1] - t_range[0]) * i as f64 / (n - 1) as f64;
+            let p3 = curve.point_at(t);
+            let proj = closest_point_on_surface(surface, p3, 16);
+            DVec2::new(proj.params.0, proj.params.1)
+        })
+        .collect();
+
+    let bspline =
+        interpolate_points_2d(&pts).expect("fallback curve samples should not be degenerate");
+    Curve2d::BSpline(bspline)
+}
+
+/// Project a 3D polyline onto `surface` and interpolate a [`BSplineCurve2`].
+///
+/// Returns `None` if the polyline has fewer than 2 points or all projected
+/// points are coincident.
+pub fn polyline_pcurve_by_projection(
+    polyline: &[DVec3],
+    surface: &Surface3,
+) -> Option<Curve2d> {
+    if polyline.len() < 2 {
+        return None;
+    }
+
+    let pts: Vec<DVec2> = polyline
+        .iter()
+        .map(|&p3| {
+            let proj = closest_point_on_surface(surface, p3, 16);
+            DVec2::new(proj.params.0, proj.params.1)
+        })
+        .collect();
+
+    interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::geom::{Curve2dEval, SphericalSurface};
+    use std::f64::consts::PI;
+
+    /// A circle whose normal is Z lying in the XY plane (z = 0) projects to a
+    /// Circle2d in the plane's (u, v) space.
+    #[test]
+    fn circle_on_plane_is_circle() {
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let circle = Circle3 {
+            center: DVec3::new(1.0, 2.0, 0.0),
+            normal: DVec3::Z,
+            radius: 3.0,
+        };
+
+        let pcurve = circle_pcurve_on_plane(&circle, &plane);
+
+        match pcurve {
+            Curve2d::Circle(c) => {
+                assert!((c.radius - 3.0).abs() < 1e-9, "radius={}", c.radius);
+            }
+            other => panic!("expected Circle2d, got {other:?}"),
+        }
+    }
+
+    /// A circle at z = 1 on a sphere of radius 2 (axis = Z, center = origin)
+    /// should produce φ = acos(0.5) = π/3.
+    #[test]
+    fn circle_on_sphere_is_latitude() {
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        };
+        let circle = Circle3 {
+            center: DVec3::new(0.0, 0.0, 1.0),
+            normal: DVec3::Z,
+            radius: (3.0_f64).sqrt(), // r² + z² = 4  ⟹  r = √3
+        };
+
+        let pcurve = circle_pcurve_on_sphere(&circle, &sphere);
+
+        match pcurve {
+            Curve2d::Line(l) => {
+                let expected_phi = (0.5_f64).acos(); // π/3
+                assert!(
+                    (l.origin.y - expected_phi).abs() < 1e-9,
+                    "phi={}, expected {}",
+                    l.origin.y,
+                    expected_phi
+                );
+                // Direction must be horizontal (constant colatitude).
+                assert!((l.direction.x - 1.0).abs() < 1e-9);
+                assert!(l.direction.y.abs() < 1e-9);
+            }
+            other => panic!("expected Line2d, got {other:?}"),
+        }
+    }
+
+    /// A circle at height h = 3 on a cylinder should produce a horizontal
+    /// line at v = 3.
+    #[test]
+    fn circle_on_cylinder_is_h_line() {
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
+        let circle = Circle3 {
+            center: DVec3::new(0.0, 0.0, 3.0),
+            normal: DVec3::Z,
+            radius: 1.0,
+        };
+
+        let pcurve = circle_pcurve_on_cylinder(&circle, &cyl);
+
+        match pcurve {
+            Curve2d::Line(l) => {
+                assert!(
+                    (l.origin.y - 3.0).abs() < 1e-9,
+                    "h={}, expected 3.0",
+                    l.origin.y
+                );
+                assert!((l.direction.x - 1.0).abs() < 1e-9);
+                assert!(l.direction.y.abs() < 1e-9);
+            }
+            other => panic!("expected Line2d, got {other:?}"),
+        }
+    }
+
+    /// The fallback projection of any curve on a sphere should produce a
+    /// BSplineCurve2.
+    #[test]
+    fn fallback_projection_produces_bspline() {
+        use rcad_kernel::geom::Curve3;
+
+        let sphere_surface = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+        // A circle on the sphere at the equator (z = 0, r = 2).
+        let circle = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 2.0,
+        };
+        let curve3 = Curve3::Circle(circle);
+        let t_range = [0.0_f64, PI]; // half circle
+
+        let pcurve = fallback_pcurve_by_projection(&curve3, &t_range, &sphere_surface);
+
+        match pcurve {
+            Curve2d::BSpline(ref b) => {
+                // Should have at least some control points.
+                assert!(!b.control_points.is_empty());
+                // Evaluate endpoints to make sure the BSpline is usable.
+                let p0 = pcurve.point_at(0.0);
+                let p1 = pcurve.point_at(1.0);
+                // Both must be finite.
+                assert!(p0.x.is_finite() && p0.y.is_finite());
+                assert!(p1.x.is_finite() && p1.y.is_finite());
+            }
+            other => panic!("expected BSpline2, got {other:?}"),
+        }
+    }
+}
