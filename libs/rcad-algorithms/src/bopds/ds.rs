@@ -135,8 +135,57 @@ impl DS {
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
         ds.load_brep(b, ShapeOrigin::ShapeB);
+        ds.compute_uv_boundaries();
 
         ds
+    }
+
+    /// Compute UV boundary for all curved faces by projecting 3D boundary
+    /// points onto the face surface's parameter domain.
+    ///
+    /// For each boundary edge, we sample `N_SAMPLES` evenly-spaced points along
+    /// the edge curve so that the resulting UV polygon is well-defined even when
+    /// the wire has very few vertices (e.g. a sphere with only 2 poles).
+    pub fn compute_uv_boundaries(&mut self) {
+        const N_SAMPLES: usize = 8;
+
+        for fi in 0..self.faces.len() {
+            if matches!(self.faces[fi].surface, Surface3::Plane(_)) {
+                continue; // Planar faces use existing 2D projection logic
+            }
+
+            let surface = self.faces[fi].surface.clone();
+            let boundary_edges = self.faces[fi].boundary_edges.clone();
+
+            if boundary_edges.is_empty() {
+                continue;
+            }
+
+            let mut pts_3d: Vec<DVec3> = Vec::new();
+            for ei in &boundary_edges {
+                let edge = &self.edges[*ei];
+                let [t0, t1] = edge.t_range;
+                for k in 0..N_SAMPLES {
+                    let t = t0 + (t1 - t0) * (k as f64) / (N_SAMPLES as f64);
+                    pts_3d.push(edge.curve.point_at(t));
+                }
+            }
+
+            if pts_3d.is_empty() {
+                continue;
+            }
+
+            let uv_pts: Vec<DVec2> = pts_3d
+                .iter()
+                .map(|&p| {
+                    let proj =
+                        rcad_kernel::projection::closest_point_on_surface(&surface, p, 16);
+                    DVec2::new(proj.params.0, proj.params.1)
+                })
+                .collect();
+
+            self.faces[fi].uv_boundary = Some(uv_pts);
+        }
     }
 
     fn load_brep(&mut self, brep: &BRep, origin: ShapeOrigin) {
@@ -337,5 +386,27 @@ mod tests {
         assert!(ds.vertices[8].origin == Some(ShapeOrigin::ShapeB));
         assert!(ds.edges[0].origin == ShapeOrigin::ShapeA);
         assert!(ds.edges[12].origin == ShapeOrigin::ShapeB);
+    }
+
+    #[test]
+    fn ds_sphere_has_uv_boundary() {
+        use rcad_modeling::make_sphere_brep;
+
+        let a = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = make_sphere_brep(DVec3::new(1.0, 0.0, 0.0), 1.0).unwrap();
+        let ds = DS::new(&a, &b);
+
+        // Sphere faces should have uv_boundary computed
+        let sphere_faces: Vec<_> = ds
+            .faces
+            .iter()
+            .filter(|f| matches!(f.surface, Surface3::Sphere(_)))
+            .collect();
+        assert!(!sphere_faces.is_empty(), "should have sphere faces");
+        for f in &sphere_faces {
+            assert!(f.uv_boundary.is_some(), "sphere face should have uv_boundary");
+            let uv = f.uv_boundary.as_ref().unwrap();
+            assert!(uv.len() >= 3, "uv boundary should have at least 3 points");
+        }
     }
 }
