@@ -7,7 +7,7 @@
 //!      Construction, evaluation, STEP round-trip
 
 use glam::DVec3;
-use rcad_algorithms::{SurfaceCurve, SurfaceSurfaceIntersection, intersect_surfaces};
+use rcad_algorithms::{SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces};
 use rcad_kernel::{
     TrimmedSurface,
     geom::{CylindricalSurface, Plane, SphericalSurface, Surface3, SurfaceEval},
@@ -19,8 +19,8 @@ fn separator(title: &str) {
     println!("──────────────────────────────────────────");
 }
 
-fn curve_label(c: &SurfaceCurve) -> &'static str {
-    match c {
+fn curve_label(c: &SurfaceIntersectionResult) -> &'static str {
+    match &c.curve_3d {
         SurfaceCurve::Circle(_) => "Circle",
         SurfaceCurve::Ellipse(_) => "Ellipse",
         SurfaceCurve::Line(_) => "Line",
@@ -60,7 +60,7 @@ fn demo_intss() {
         print!("Plane(z=0) ∩ Plane(x=0): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        assert!(matches!(r.curves[0], SurfaceCurve::Line(_)));
+        assert!(matches!(r.curves[0].curve_3d, SurfaceCurve::Line(_)));
         println!("  PASS");
     }
 
@@ -96,7 +96,7 @@ fn demo_intss() {
         print!("Plane(z=0) ∩ Sphere(r=3): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        if let SurfaceCurve::Circle(c) = &r.curves[0] {
+        if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
             assert!(
                 (c.radius - 3.0).abs() < 1e-6,
                 "expected r=3, got {}",
@@ -123,7 +123,7 @@ fn demo_intss() {
         print!("Plane(z=2) ∩ Sphere(r=3): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        if let SurfaceCurve::Circle(c) = &r.curves[0] {
+        if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
             let expected = (9.0_f64 - 4.0).sqrt();
             assert!(
                 (c.radius - expected).abs() < 1e-6,
@@ -151,7 +151,7 @@ fn demo_intss() {
         print!("Plane(z=3) ∩ Sphere(r=3) [tangent]: ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        assert!(matches!(r.curves[0], SurfaceCurve::Point(_)));
+        assert!(matches!(r.curves[0].curve_3d, SurfaceCurve::Point(_)));
         println!("  PASS");
     }
 
@@ -170,7 +170,7 @@ fn demo_intss() {
         print!("Plane(z=2,⊥) ∩ Cylinder(r=2,Z-axis): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        assert!(matches!(r.curves[0], SurfaceCurve::Circle(_)));
+        assert!(matches!(r.curves[0].curve_3d, SurfaceCurve::Circle(_)));
         println!("  PASS");
     }
 
@@ -190,7 +190,7 @@ fn demo_intss() {
         print!("Sphere(r=1,O) ∩ Sphere(r=1,(1,0,0)): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 1);
-        if let SurfaceCurve::Circle(c) = &r.curves[0] {
+        if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
             assert!((c.center.x - 0.5).abs() < 1e-6, "center.x should be 0.5");
             println!("  PASS: circle at x={:.4}, r={:.4}", c.center.x, c.radius);
         } else {
@@ -233,7 +233,7 @@ fn demo_intss() {
         print!("Cylinder(r=1) ∩ Cylinder(r=1, d=1.5 apart): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 2, "expected 2 lines");
-        assert!(r.curves.iter().all(|c| matches!(c, SurfaceCurve::Line(_))));
+        assert!(r.curves.iter().all(|c| matches!(c.curve_3d, SurfaceCurve::Line(_))));
         println!("  PASS");
     }
 

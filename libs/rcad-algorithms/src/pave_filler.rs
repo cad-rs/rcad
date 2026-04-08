@@ -386,6 +386,8 @@ impl<'a> PaveFiller<'a> {
                         start_vertex: v_start,
                         end_vertex: v_end,
                         t_range: [t_min, t_max],
+                        pcurve_on_a: None,
+                        pcurve_on_b: None,
                     });
 
                     self.ds.interferences.push(Interference::FaceFace {
@@ -468,6 +470,8 @@ impl<'a> PaveFiller<'a> {
                     start_vertex: v_start,
                     end_vertex: v_end,
                     t_range: [0.0, std::f64::consts::TAU],
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
                 });
 
                 self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
@@ -514,6 +518,8 @@ impl<'a> PaveFiller<'a> {
                     start_vertex: v_start,
                     end_vertex: v_end,
                     t_range,
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
                 });
                 ds.faces[f1].face_info.curves_in.insert(curve_idx);
                 ds.faces[f2].face_info.curves_in.insert(curve_idx);
@@ -645,6 +651,8 @@ impl<'a> PaveFiller<'a> {
                 start_vertex: v_start,
                 end_vertex: v_end,
                 t_range: [0.0, arc_len.max(1e-10)],
+                pcurve_on_a: None,
+                pcurve_on_b: None,
             });
 
             self.ds.faces[f1].face_info.curves_in.insert(curve_idx);

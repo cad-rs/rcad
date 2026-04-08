@@ -9,4 +9,4 @@ pub mod plane_plane;
 pub mod plane_sphere;
 pub mod vertex_ops;
 
-pub use intss::{SurfaceCurve, SurfaceSurfaceIntersection, intersect_surfaces};
+pub use intss::{SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces};

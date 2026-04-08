@@ -26,7 +26,7 @@ pub use hlr::{HlrCamera, HlrResult, HlrSegment, hlr, hlr_to_svg};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep,
 };
-pub use inttools::{SurfaceCurve, SurfaceSurfaceIntersection, intersect_surfaces};
+pub use inttools::{SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces};
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 
 /// Perform a boolean operation on two BReps.

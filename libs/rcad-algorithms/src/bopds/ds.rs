@@ -1,5 +1,5 @@
-use glam::DVec3;
-use rcad_kernel::geom::*;
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{Curve2d, *};
 use rcad_kernel::{BRep, CurveEval};
 
 use super::face_info::FaceInfo;
@@ -50,6 +50,8 @@ pub struct DSFace {
     pub face_info: FaceInfo,
     /// Original face index within the source BRep's flattened face list.
     pub source_face_idx: usize,
+    /// UV-space boundary polygon on this face's surface (populated in Task 3+).
+    pub uv_boundary: Option<Vec<DVec2>>,
 }
 
 /// Record of an intersection between two sub-shapes.
@@ -104,6 +106,10 @@ pub struct IntersectionCurve {
     pub start_vertex: usize,
     pub end_vertex: usize,
     pub t_range: [f64; 2],
+    /// PCurve (2D parametric curve) of this intersection on surface A (populated in Task 3+).
+    pub pcurve_on_a: Option<Curve2d>,
+    /// PCurve (2D parametric curve) of this intersection on surface B (populated in Task 3+).
+    pub pcurve_on_b: Option<Curve2d>,
 }
 
 /// Central data structure (OCCT: BOPDS_DS).
@@ -266,6 +272,7 @@ impl DS {
                         origin,
                         face_info: FaceInfo::default(),
                         source_face_idx: face_idx,
+                        uv_boundary: None,
                     });
 
                     face_idx += 1;
