@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 glam.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "properties"
+harness = false

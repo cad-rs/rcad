@@ -8,4 +8,9 @@ rcad-kernel = { path = "../rcad-kernel" }
 glam.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 rcad-modeling = { path = "../rcad-modeling" }
+
+[[bench]]
+name = "boolean"
+harness = false

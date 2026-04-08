@@ -7,3 +7,10 @@ edition = "2024"
 rcad-kernel = { path = "../rcad-kernel" }
 rcad-modeling = { path = "../rcad-modeling" }
 glam.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "step_io"
+harness = false
