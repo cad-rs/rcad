@@ -159,12 +159,9 @@ fn translate_brep(brep: &mut BRep, offset: DVec3) {
 }
 
 fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, z_axis: DVec3) {
-    let xform_point = |p: DVec3| -> DVec3 {
-        origin + x_axis * p.x + y_axis * p.y + z_axis * p.z
-    };
-    let xform_vec = |v: DVec3| -> DVec3 {
-        (x_axis * v.x + y_axis * v.y + z_axis * v.z).normalize_or_zero()
-    };
+    let xform_point = |p: DVec3| -> DVec3 { origin + x_axis * p.x + y_axis * p.y + z_axis * p.z };
+    let xform_vec =
+        |v: DVec3| -> DVec3 { (x_axis * v.x + y_axis * v.y + z_axis * v.z).normalize_or_zero() };
 
     // Transform vertices
     for vertex in &mut brep.vertices {

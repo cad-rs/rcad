@@ -527,10 +527,7 @@ impl<'a> PaveFiller<'a> {
         let d = d_vec.length();
 
         // No intersection if disjoint or one contains the other
-        if d < 1e-14
-            || d >= sph1.radius + sph2.radius
-            || d <= (sph1.radius - sph2.radius).abs()
-        {
+        if d < 1e-14 || d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
             return;
         }
 
@@ -556,16 +553,8 @@ impl<'a> PaveFiller<'a> {
         let curve3 = Curve3::Circle(circle);
         let t_range = [0.0_f64, TAU];
         // Use projection-based PCurves since the circle may not be a latitude line
-        let pcurve_a = fallback_pcurve_by_projection(
-            &curve3,
-            &t_range,
-            &Surface3::Sphere(*sph1),
-        );
-        let pcurve_b = fallback_pcurve_by_projection(
-            &curve3,
-            &t_range,
-            &Surface3::Sphere(*sph2),
-        );
+        let pcurve_a = fallback_pcurve_by_projection(&curve3, &t_range, &Surface3::Sphere(*sph1));
+        let pcurve_b = fallback_pcurve_by_projection(&curve3, &t_range, &Surface3::Sphere(*sph2));
 
         let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
         if pts.len() < 2 {
@@ -774,7 +763,7 @@ impl<'a> PaveFiller<'a> {
                     // Use stored vertices from ds to get cylinder extent
                     (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY))
                 }
-                _ => (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY))
+                _ => (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY)),
             }
         };
 
@@ -841,7 +830,10 @@ impl<'a> PaveFiller<'a> {
 
         for seed in seeds {
             // Skip if this seed is near any point already covered by a previous curve
-            if covered_points.iter().any(|&cp| (cp - seed).length_squared() < dedup_tol * dedup_tol) {
+            if covered_points
+                .iter()
+                .any(|&cp| (cp - seed).length_squared() < dedup_tol * dedup_tol)
+            {
                 continue;
             }
 

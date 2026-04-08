@@ -8,8 +8,8 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
-    any_perpendicular, Circle2d, Circle3, CurveEval, CylindricalSurface, Curve2d, Ellipse2d,
-    Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3,
+    Circle2d, Circle3, Curve2d, CurveEval, CylindricalSurface, Ellipse2d, Ellipse3, Line2d, Line3,
+    Plane, SphericalSurface, Surface3, any_perpendicular,
 };
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -31,7 +31,11 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
     let v_axis = plane.normal.cross(u_axis);
 
     // Test whether the circle lies in the plane.
-    let normal_dot = circle.normal.normalize().dot(plane.normal.normalize()).abs();
+    let normal_dot = circle
+        .normal
+        .normalize()
+        .dot(plane.normal.normalize())
+        .abs();
     if (normal_dot - 1.0).abs() < 1e-6 {
         // Circle lies in the plane → analytic Circle2d.
         let diff = circle.center - plane.origin;
@@ -70,10 +74,7 @@ pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
     let diff = ellipse.center - plane.origin;
     let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
 
-    let major_proj = DVec2::new(
-        ellipse.major_dir.dot(u_axis),
-        ellipse.major_dir.dot(v_axis),
-    );
+    let major_proj = DVec2::new(ellipse.major_dir.dot(u_axis), ellipse.major_dir.dot(v_axis));
     let major_dir_2d = if major_proj.length() > 1e-12 {
         major_proj.normalize()
     } else {
@@ -161,9 +162,7 @@ pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2
 
     let radial = line.origin - cyl.origin;
     let radial_perp = radial - cyl.axis * radial.dot(cyl.axis.normalize());
-    let theta = radial_perp
-        .dot(v_axis)
-        .atan2(radial_perp.dot(u_axis));
+    let theta = radial_perp.dot(v_axis).atan2(radial_perp.dot(u_axis));
 
     let h = radial.dot(cyl.axis.normalize());
 
@@ -210,10 +209,7 @@ pub fn fallback_pcurve_by_projection(
 ///
 /// Returns `None` if the polyline has fewer than 2 points or all projected
 /// points are coincident.
-pub fn polyline_pcurve_by_projection(
-    polyline: &[DVec3],
-    surface: &Surface3,
-) -> Option<Curve2d> {
+pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> Option<Curve2d> {
     if polyline.len() < 2 {
         return None;
     }

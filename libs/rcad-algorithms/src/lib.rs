@@ -26,7 +26,9 @@ pub use hlr::{HlrCamera, HlrResult, HlrSegment, hlr, hlr_to_svg};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep,
 };
-pub use inttools::{SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces};
+pub use inttools::{
+    SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
+};
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 
 /// Perform a boolean operation on two BReps.
@@ -387,7 +389,10 @@ mod tests {
         let v = rcad_kernel::properties::volume(&brep);
         let v_sphere = rcad_kernel::properties::volume(&a);
         assert!(v > 0.0, "result volume should be positive, got {v}");
-        assert!(v < v_sphere, "intersection should be smaller than one sphere");
+        assert!(
+            v < v_sphere,
+            "intersection should be smaller than one sphere"
+        );
     }
 
     #[test]
@@ -435,22 +440,10 @@ mod tests {
                 is not yet accurate enough for the Steinmetz solid test"]
     fn boolean_cylinder_cylinder_intersection() {
         // Two perpendicular cylinders (Steinmetz solid)
-        let a = make_cylinder_brep(
-            DVec3::new(0.0, -2.0, 0.0),
-            DVec3::Y,
-            DVec3::X,
-            1.0,
-            4.0,
-        )
-        .unwrap();
-        let b = make_cylinder_brep(
-            DVec3::new(-2.0, 0.0, 0.0),
-            DVec3::X,
-            DVec3::Y,
-            1.0,
-            4.0,
-        )
-        .unwrap();
+        let a =
+            make_cylinder_brep(DVec3::new(0.0, -2.0, 0.0), DVec3::Y, DVec3::X, 1.0, 4.0).unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(-2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 4.0).unwrap();
         let result = boolean_op(BooleanOpType::Intersection, &a, &b);
         assert!(
             result.is_ok(),
@@ -460,7 +453,10 @@ mod tests {
         let brep = result.unwrap();
         assert!(!brep.solids[0].shells[0].faces.is_empty());
         let v = rcad_kernel::properties::volume(&brep);
-        assert!(v > 0.0, "Steinmetz solid volume should be positive, got {v}");
+        assert!(
+            v > 0.0,
+            "Steinmetz solid volume should be positive, got {v}"
+        );
         // The Steinmetz solid of radius r has volume 16/3 * r^3, approx 5.33 for r=1
         assert!(
             (v - 16.0 / 3.0).abs() < 0.5,

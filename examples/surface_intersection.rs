@@ -7,7 +7,9 @@
 //!      Construction, evaluation, STEP round-trip
 
 use glam::DVec3;
-use rcad_algorithms::{SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces};
+use rcad_algorithms::{
+    SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
+};
 use rcad_kernel::{
     TrimmedSurface,
     geom::{CylindricalSurface, Plane, SphericalSurface, Surface3, SurfaceEval},
@@ -233,7 +235,11 @@ fn demo_intss() {
         print!("Cylinder(r=1) ∩ Cylinder(r=1, d=1.5 apart): ");
         print_result(&r);
         assert_eq!(r.curves.len(), 2, "expected 2 lines");
-        assert!(r.curves.iter().all(|c| matches!(c.curve_3d, SurfaceCurve::Line(_))));
+        assert!(
+            r.curves
+                .iter()
+                .all(|c| matches!(c.curve_3d, SurfaceCurve::Line(_)))
+        );
         println!("  PASS");
     }
 

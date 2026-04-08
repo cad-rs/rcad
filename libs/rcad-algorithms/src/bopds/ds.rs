@@ -233,8 +233,7 @@ impl DS {
             let uv_pts: Vec<DVec2> = pts_3d
                 .iter()
                 .map(|&p| {
-                    let proj =
-                        rcad_kernel::projection::closest_point_on_surface(&surface, p, 16);
+                    let proj = rcad_kernel::projection::closest_point_on_surface(&surface, p, 16);
                     DVec2::new(proj.params.0, proj.params.1)
                 })
                 .collect();
@@ -459,7 +458,10 @@ mod tests {
             .collect();
         assert!(!sphere_faces.is_empty(), "should have sphere faces");
         for f in &sphere_faces {
-            assert!(f.uv_boundary.is_some(), "sphere face should have uv_boundary");
+            assert!(
+                f.uv_boundary.is_some(),
+                "sphere face should have uv_boundary"
+            );
             let uv = f.uv_boundary.as_ref().unwrap();
             assert!(uv.len() >= 3, "uv boundary should have at least 3 points");
         }

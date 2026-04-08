@@ -351,9 +351,7 @@ impl<'a> BooleanBuilder<'a> {
             let d = p - plane.origin;
             DVec2::new(d.dot(u_axis), d.dot(v_axis))
         };
-        let lift_to_3d = |uv: DVec2| -> DVec3 {
-            plane.origin + u_axis * uv.x + v_axis * uv.y
-        };
+        let lift_to_3d = |uv: DVec2| -> DVec3 { plane.origin + u_axis * uv.x + v_axis * uv.y };
 
         let boundary_2d: Vec<DVec2> = boundary_3d.iter().map(|&p| project_to_2d(p)).collect();
 
@@ -389,8 +387,10 @@ impl<'a> BooleanBuilder<'a> {
                         for poly in &polygons_2d {
                             // Use line direction to split
                             let dir = DVec2::new(
-                                (line.direction - plane.normal * line.direction.dot(plane.normal)).dot(u_axis),
-                                (line.direction - plane.normal * line.direction.dot(plane.normal)).dot(v_axis),
+                                (line.direction - plane.normal * line.direction.dot(plane.normal))
+                                    .dot(u_axis),
+                                (line.direction - plane.normal * line.direction.dot(plane.normal))
+                                    .dot(v_axis),
                             );
                             let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
                             next.extend(halves);
@@ -418,9 +418,10 @@ impl<'a> BooleanBuilder<'a> {
             };
 
             if let Some(new_polys) = curve_halfspace_split
-                && !new_polys.is_empty() {
-                    polygons_2d = new_polys;
-                }
+                && !new_polys.is_empty()
+            {
+                polygons_2d = new_polys;
+            }
         }
 
         polygons_2d
@@ -701,12 +702,12 @@ impl<'a> BooleanBuilder<'a> {
             if let Interference::FaceFace { f1, f2, curves, .. } = interference
                 && curves.contains(&curve_idx)
             {
-                    let ic = &self.ds.intersection_curves[curve_idx];
-                    if *f1 == face_idx {
-                        return ic.pcurve_on_a.clone();
-                    } else if *f2 == face_idx {
-                        return ic.pcurve_on_b.clone();
-                    }
+                let ic = &self.ds.intersection_curves[curve_idx];
+                if *f1 == face_idx {
+                    return ic.pcurve_on_a.clone();
+                } else if *f2 == face_idx {
+                    return ic.pcurve_on_b.clone();
+                }
             }
         }
         None
@@ -840,9 +841,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
                 result.push(p);
             }
         }
-        if result.len() > 1
-            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
-        {
+        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
             result.pop();
         }
         result
@@ -992,10 +991,16 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
 
     // The arc midpoint that is inside the polygon corresponds to the "inside" portion
     let arc_goes_cw_inside = point_in_polygon_2d(poly, mid_cw);
-    let inner_mid_theta = if arc_goes_cw_inside { mid_theta_cw } else { mid_theta_ccw };
+    let inner_mid_theta = if arc_goes_cw_inside {
+        mid_theta_cw
+    } else {
+        mid_theta_ccw
+    };
 
     // Determine angular span and direction for the inner arc
-    let arc_n = ((N_CIRCLE_SAMPLES as f64 * (theta2 - theta1).abs() / std::f64::consts::TAU) as usize).max(3);
+    let arc_n = ((N_CIRCLE_SAMPLES as f64 * (theta2 - theta1).abs() / std::f64::consts::TAU)
+        as usize)
+        .max(3);
 
     // Build arc points from pt1 to pt2 going through inner_mid_theta
     let inner_arc: Vec<DVec2> = {
@@ -1005,11 +1010,19 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
             // Adjust delta to go through inner_mid_theta
             let going_ccw = inner_mid_theta > theta1 || inner_mid_theta < theta2;
             if going_ccw {
-                while d < 0.0 { d += std::f64::consts::TAU; }
-                if d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+                while d < 0.0 {
+                    d += std::f64::consts::TAU;
+                }
+                if d > std::f64::consts::TAU {
+                    d -= std::f64::consts::TAU;
+                }
             } else {
-                while d > 0.0 { d -= std::f64::consts::TAU; }
-                if d < -std::f64::consts::TAU { d += std::f64::consts::TAU; }
+                while d > 0.0 {
+                    d -= std::f64::consts::TAU;
+                }
+                if d < -std::f64::consts::TAU {
+                    d += std::f64::consts::TAU;
+                }
             }
             d
         };
@@ -1054,9 +1067,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
                 result.push(p);
             }
         }
-        if result.len() > 1
-            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
-        {
+        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
             result.pop();
         }
         result
@@ -1165,9 +1176,7 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
                 result.push(p);
             }
         }
-        if result.len() > 1
-            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
-        {
+        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
             result.pop();
         }
         result
@@ -1182,11 +1191,19 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
     if sub_b.len() >= 3 {
         out.push(sub_b);
     }
-    if out.is_empty() { vec![poly.to_vec()] } else { out }
+    if out.is_empty() {
+        vec![poly.to_vec()]
+    } else {
+        out
+    }
 }
 
 /// Split a 2D polygon by a segment from `seg_start` to `seg_end`.
-fn split_polygon_2d_by_segment(poly: &[DVec2], seg_start: DVec2, seg_end: DVec2) -> Vec<Vec<DVec2>> {
+fn split_polygon_2d_by_segment(
+    poly: &[DVec2],
+    seg_start: DVec2,
+    seg_end: DVec2,
+) -> Vec<Vec<DVec2>> {
     let dir = seg_end - seg_start;
     if dir.length_squared() < 1e-18 {
         return vec![poly.to_vec()];

@@ -401,7 +401,12 @@ fn solve_interpolation(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec
 }
 
 /// Solve the 2D exact-interpolation system B * ctrl = data via Gaussian elimination.
-fn solve_interpolation_2d(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec2]) -> Vec<DVec2> {
+fn solve_interpolation_2d(
+    params: &[f64],
+    knots: &[f64],
+    degree: usize,
+    pts: &[DVec2],
+) -> Vec<DVec2> {
     let n = pts.len();
     let a = collocation_matrix(params, knots, degree, n, n);
 
@@ -681,10 +686,7 @@ mod tests {
         // Midpoint should lie at (1, 1) since points are equally spaced
         let params = chord_length_params_2d(&pts).unwrap();
         let mid = curve.point_at(params[1]);
-        assert!(
-            mid.distance(DVec2::new(1.0, 1.0)) < 1e-5,
-            "midpoint={mid}"
-        );
+        assert!(mid.distance(DVec2::new(1.0, 1.0)) < 1e-5, "midpoint={mid}");
     }
 
     #[test]
@@ -716,9 +718,6 @@ mod tests {
         // Midpoint radius should be ≈ 1.0
         let mid_pt = curve.point_at(0.5);
         let radius = mid_pt.length();
-        assert!(
-            (radius - 1.0).abs() < 0.01,
-            "midpoint radius={radius}"
-        );
+        assert!((radius - 1.0).abs() < 0.01, "midpoint radius={radius}");
     }
 }

@@ -177,7 +177,11 @@ fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersec
         }
         PlaneCylinderResult::Ellipse(e) => {
             let pca = ellipse_pcurve_on_plane(&e, p);
-            let pcb = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &Surface3::Cylinder(*c));
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Ellipse(e),
+                &[0.0, TAU],
+                &Surface3::Cylinder(*c),
+            );
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Ellipse(e),
                 pcurve_on_a: Some(pca),
@@ -318,7 +322,11 @@ fn sphere_x_sphere(s1: &SphericalSurface, s2: &SphericalSurface) -> SurfaceSurfa
     let center = s1.center + axis * a;
 
     if r_circle < TOLERANCE_ABS {
-        out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Point(center), pcurve_on_a: None, pcurve_on_b: None });
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Point(center),
+            pcurve_on_a: None,
+            pcurve_on_b: None,
+        });
     } else {
         let circle = Circle3 {
             center,
