@@ -353,6 +353,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
+        use inttools::pcurve_derive::line_pcurve_on_plane;
+
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
             inttools::plane_plane::PlanePlaneResult::Parallel => {}
             inttools::plane_plane::PlanePlaneResult::Coincident => {
@@ -380,14 +382,16 @@ impl<'a> PaveFiller<'a> {
                     let v_end = self.ds.add_vertex(p_end);
 
                     let curve_idx = self.ds.intersection_curves.len();
+                    let pca = line_pcurve_on_plane(&line, p1);
+                    let pcb = line_pcurve_on_plane(&line, p2);
                     self.ds.intersection_curves.push(IntersectionCurve {
                         curve: Curve3::Line(line),
                         polyline: vec![],
                         start_vertex: v_start,
                         end_vertex: v_end,
                         t_range: [t_min, t_max],
-                        pcurve_on_a: None,
-                        pcurve_on_b: None,
+                        pcurve_on_a: Some(pca),
+                        pcurve_on_b: Some(pcb),
                     });
 
                     self.ds.interferences.push(Interference::FaceFace {
@@ -434,7 +438,11 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         sphere: &SphericalSurface,
     ) {
+        use inttools::pcurve_derive::{circle_pcurve_on_plane, circle_pcurve_on_sphere};
         use inttools::plane_sphere::{PlaneSphereResult, intersect_plane_sphere};
+
+        // Determine which face carries the plane (for correct pcurve_on_a/b assignment)
+        let plane_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
 
         match intersect_plane_sphere(plane, sphere) {
             PlaneSphereResult::NoIntersection => {}
@@ -460,6 +468,14 @@ impl<'a> PaveFiller<'a> {
                     return;
                 }
 
+                let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
+                let pcurve_sphere = circle_pcurve_on_sphere(&circle, sphere);
+                let (pcurve_on_a, pcurve_on_b) = if plane_is_f1 {
+                    (Some(pcurve_plane), Some(pcurve_sphere))
+                } else {
+                    (Some(pcurve_sphere), Some(pcurve_plane))
+                };
+
                 let v_start = self.ds.add_vertex(pts[0]);
                 let v_end = self.ds.add_vertex(*pts.last().unwrap());
 
@@ -470,8 +486,8 @@ impl<'a> PaveFiller<'a> {
                     start_vertex: v_start,
                     end_vertex: v_end,
                     t_range: [0.0, std::f64::consts::TAU],
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a,
+                    pcurve_on_b,
                 });
 
                 self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
@@ -500,35 +516,57 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         cyl: &CylindricalSurface,
     ) {
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_plane,
+            fallback_pcurve_by_projection, line_pcurve_on_cylinder, line_pcurve_on_plane,
+        };
         use inttools::plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder};
         use rcad_kernel::CurveEval;
+        use std::f64::consts::TAU;
 
         let result = intersect_plane_cylinder(plane, cyl);
 
-        let add_curve_for =
-            |ds: &mut DS, curve: Curve3, t_range: [f64; 2], f1: usize, f2: usize| {
-                let p_start = curve.point_at(t_range[0]);
-                let p_end = curve.point_at(t_range[1]);
-                let v_start = ds.add_vertex(p_start);
-                let v_end = ds.add_vertex(p_end);
-                let curve_idx = ds.intersection_curves.len();
-                ds.intersection_curves.push(IntersectionCurve {
-                    curve,
-                    polyline: vec![],
-                    start_vertex: v_start,
-                    end_vertex: v_end,
-                    t_range,
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
-                });
-                ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                ds.faces[f2].face_info.curves_in.insert(curve_idx);
-                ds.faces[f1].face_info.vertices_in.insert(v_start);
-                ds.faces[f1].face_info.vertices_in.insert(v_end);
-                ds.faces[f2].face_info.vertices_in.insert(v_start);
-                ds.faces[f2].face_info.vertices_in.insert(v_end);
-                curve_idx
-            };
+        // Determine which face carries the plane (for correct pcurve_on_a/b assignment)
+        let plane_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if plane_is_f1 {
+                (Some(pca), Some(pcb))
+            } else {
+                (Some(pcb), Some(pca))
+            }
+        };
+
+        let add_curve = |ds: &mut DS,
+                         curve: Curve3,
+                         t_range: [f64; 2],
+                         pcurve_on_a: Option<Curve2d>,
+                         pcurve_on_b: Option<Curve2d>,
+                         f1: usize,
+                         f2: usize|
+         -> usize {
+            let p_start = curve.point_at(t_range[0]);
+            let p_end = curve.point_at(t_range[1]);
+            let v_start = ds.add_vertex(p_start);
+            let v_end = ds.add_vertex(p_end);
+            let curve_idx = ds.intersection_curves.len();
+            ds.intersection_curves.push(IntersectionCurve {
+                curve,
+                polyline: vec![],
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range,
+                pcurve_on_a,
+                pcurve_on_b,
+            });
+            ds.faces[f1].face_info.curves_in.insert(curve_idx);
+            ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            ds.faces[f1].face_info.vertices_in.insert(v_start);
+            ds.faces[f1].face_info.vertices_in.insert(v_end);
+            ds.faces[f2].face_info.vertices_in.insert(v_start);
+            ds.faces[f2].face_info.vertices_in.insert(v_end);
+            curve_idx
+        };
 
         let mut curve_indices = Vec::new();
 
@@ -538,26 +576,65 @@ impl<'a> PaveFiller<'a> {
             PlaneCylinderResult::TwoLines(l1, l2) => {
                 // Clip each line to the face bounding-box extent
                 let extent = 20.0_f64;
-                let ci1 = add_curve_for(self.ds, Curve3::Line(l1), [-extent, extent], f1, f2);
-                let ci2 = add_curve_for(self.ds, Curve3::Line(l2), [-extent, extent], f1, f2);
+                let (pca1, pcb1) = make_pcurves(
+                    line_pcurve_on_plane(&l1, plane),
+                    line_pcurve_on_cylinder(&l1, cyl),
+                );
+                let ci1 = add_curve(
+                    self.ds,
+                    Curve3::Line(l1),
+                    [-extent, extent],
+                    pca1,
+                    pcb1,
+                    f1,
+                    f2,
+                );
+                let (pca2, pcb2) = make_pcurves(
+                    line_pcurve_on_plane(&l2, plane),
+                    line_pcurve_on_cylinder(&l2, cyl),
+                );
+                let ci2 = add_curve(
+                    self.ds,
+                    Curve3::Line(l2),
+                    [-extent, extent],
+                    pca2,
+                    pcb2,
+                    f1,
+                    f2,
+                );
                 curve_indices.push(ci1);
                 curve_indices.push(ci2);
             }
             PlaneCylinderResult::Circle(circle) => {
-                let ci = add_curve_for(
+                let (pca, pcb) = make_pcurves(
+                    circle_pcurve_on_plane(&circle, plane),
+                    circle_pcurve_on_cylinder(&circle, cyl),
+                );
+                let ci = add_curve(
                     self.ds,
                     Curve3::Circle(circle),
-                    [0.0, std::f64::consts::TAU],
+                    [0.0, TAU],
+                    pca,
+                    pcb,
                     f1,
                     f2,
                 );
                 curve_indices.push(ci);
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
-                let ci = add_curve_for(
+                let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
+                let pcb_cyl = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(ellipse),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cyl);
+                let ci = add_curve(
                     self.ds,
                     Curve3::Ellipse(ellipse),
-                    [0.0, std::f64::consts::TAU],
+                    [0.0, TAU],
+                    pca,
+                    pcb,
                     f1,
                     f2,
                 );
@@ -576,6 +653,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
+        use inttools::pcurve_derive::polyline_pcurve_by_projection;
+
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
@@ -638,6 +717,8 @@ impl<'a> PaveFiller<'a> {
                 .map(|w| (w[1] - w[0]).length())
                 .sum();
             let dir = (curve.points.last().unwrap() - curve.points[0]).normalize_or_zero();
+            let pcurve_a = polyline_pcurve_by_projection(&curve.points, &s1);
+            let pcurve_b = polyline_pcurve_by_projection(&curve.points, &s2);
             self.ds.intersection_curves.push(IntersectionCurve {
                 curve: Curve3::Line(Line3 {
                     origin: curve.points[0],
@@ -651,8 +732,8 @@ impl<'a> PaveFiller<'a> {
                 start_vertex: v_start,
                 end_vertex: v_end,
                 t_range: [0.0, arc_len.max(1e-10)],
-                pcurve_on_a: None,
-                pcurve_on_b: None,
+                pcurve_on_a: pcurve_a,
+                pcurve_on_b: pcurve_b,
             });
 
             self.ds.faces[f1].face_info.curves_in.insert(curve_idx);

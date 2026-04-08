@@ -19,11 +19,16 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{
-    Circle3, ConicalSurface, Curve2d, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface,
-    Surface3, SurfaceEval, any_perpendicular,
+    Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Line3, Plane,
+    SphericalSurface, Surface3, SurfaceEval, any_perpendicular,
 };
 
 use crate::inttools::{
+    pcurve_derive::{
+        circle_pcurve_on_cylinder, circle_pcurve_on_plane, circle_pcurve_on_sphere,
+        ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
+        line_pcurve_on_plane, polyline_pcurve_by_projection,
+    },
     plane_cone::{PlaneConicalResult, intersect_plane_cone},
     plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
     plane_plane::{PlanePlaneResult, intersect_plane_plane},
@@ -111,7 +116,13 @@ fn plane_x_plane(p1: &Plane, p2: &Plane) -> SurfaceSurfaceIntersection {
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_plane(p1, p2) {
         PlanePlaneResult::Line(l) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = line_pcurve_on_plane(&l, p1);
+            let pcb = line_pcurve_on_plane(&l, p2);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlanePlaneResult::Coincident => {} // surfaces identical — infinite overlap
         PlanePlaneResult::Parallel => {}   // no intersection
@@ -127,10 +138,20 @@ fn plane_x_sphere(p: &Plane, s: &SphericalSurface) -> SurfaceSurfaceIntersection
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_sphere(p, s) {
         PlaneSphereResult::Circle(c) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(c), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = circle_pcurve_on_plane(&c, p);
+            let pcb = circle_pcurve_on_sphere(&c, s);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(c),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneSphereResult::TangentPoint(pt) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Point(pt), pcurve_on_a: None, pcurve_on_b: None });
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Point(pt),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
         }
         PlaneSphereResult::NoIntersection => {}
     }
@@ -142,20 +163,51 @@ fn plane_x_sphere(p: &Plane, s: &SphericalSurface) -> SurfaceSurfaceIntersection
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_cylinder(p, c) {
-        PlaneCylinderResult::Circle(c) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(c), pcurve_on_a: None, pcurve_on_b: None });
+        PlaneCylinderResult::Circle(circ) => {
+            let pca = circle_pcurve_on_plane(&circ, p);
+            let pcb = circle_pcurve_on_cylinder(&circ, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneCylinderResult::Ellipse(e) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Ellipse(e), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = ellipse_pcurve_on_plane(&e, p);
+            let pcb = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &Surface3::Cylinder(*c));
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Ellipse(e),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneCylinderResult::TangentLine(l) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = line_pcurve_on_plane(&l, p);
+            let pcb = line_pcurve_on_cylinder(&l, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneCylinderResult::TwoLines(l1, l2) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l1), pcurve_on_a: None, pcurve_on_b: None });
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l2), pcurve_on_a: None, pcurve_on_b: None });
+            let pca1 = line_pcurve_on_plane(&l1, p);
+            let pcb1 = line_pcurve_on_cylinder(&l1, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l1),
+                pcurve_on_a: Some(pca1),
+                pcurve_on_b: Some(pcb1),
+            });
+            let pca2 = line_pcurve_on_plane(&l2, p);
+            let pcb2 = line_pcurve_on_cylinder(&l2, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l2),
+                pcurve_on_a: Some(pca2),
+                pcurve_on_b: Some(pcb2),
+            });
         }
         PlaneCylinderResult::NoIntersection => {}
     }
@@ -167,23 +219,59 @@ fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersec
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
     let mut out = SurfaceSurfaceIntersection::default();
+    let cone_surf = Surface3::Cone(*c);
     match intersect_plane_cone(p, c) {
-        PlaneConicalResult::Circle(c) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(c), pcurve_on_a: None, pcurve_on_b: None });
+        PlaneConicalResult::Circle(circ) => {
+            let pca = circle_pcurve_on_plane(&circ, p);
+            let pcb = fallback_pcurve_by_projection(&Curve3::Circle(circ), &[0.0, TAU], &cone_surf);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneConicalResult::Ellipse(e) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Ellipse(e), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = ellipse_pcurve_on_plane(&e, p);
+            let pcb = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &cone_surf);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Ellipse(e),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneConicalResult::SingleLine(l) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l), pcurve_on_a: None, pcurve_on_b: None });
+            let pca = line_pcurve_on_plane(&l, p);
+            let pcb = fallback_pcurve_by_projection(&Curve3::Line(l), &[-10.0, 10.0], &cone_surf);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
         PlaneConicalResult::TwoLines(l1, l2) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l1), pcurve_on_a: None, pcurve_on_b: None });
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(l2), pcurve_on_a: None, pcurve_on_b: None });
+            let pca1 = line_pcurve_on_plane(&l1, p);
+            let pcb1 = fallback_pcurve_by_projection(&Curve3::Line(l1), &[-10.0, 10.0], &cone_surf);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l1),
+                pcurve_on_a: Some(pca1),
+                pcurve_on_b: Some(pcb1),
+            });
+            let pca2 = line_pcurve_on_plane(&l2, p);
+            let pcb2 = fallback_pcurve_by_projection(&Curve3::Line(l2), &[-10.0, 10.0], &cone_surf);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(l2),
+                pcurve_on_a: Some(pca2),
+                pcurve_on_b: Some(pcb2),
+            });
         }
         PlaneConicalResult::Point(pt) => {
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Point(pt), pcurve_on_a: None, pcurve_on_b: None });
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Point(pt),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
         }
         PlaneConicalResult::NoIntersection => {}
     }
@@ -232,11 +320,18 @@ fn sphere_x_sphere(s1: &SphericalSurface, s2: &SphericalSurface) -> SurfaceSurfa
     if r_circle < TOLERANCE_ABS {
         out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Point(center), pcurve_on_a: None, pcurve_on_b: None });
     } else {
-        out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(Circle3 {
+        let circle = Circle3 {
             center,
             normal: axis,
             radius: r_circle,
-        }), pcurve_on_a: None, pcurve_on_b: None });
+        };
+        let pca = circle_pcurve_on_sphere(&circle, s1);
+        let pcb = circle_pcurve_on_sphere(&circle, s2);
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Circle(circle),
+            pcurve_on_a: Some(pca),
+            pcurve_on_b: Some(pcb),
+        });
     }
     out
 }
@@ -274,20 +369,34 @@ fn sphere_x_cylinder(s: &SphericalSurface, c: &CylindricalSurface) -> SurfaceSur
         let mut out = SurfaceSurfaceIntersection::default();
         if dz_sq.abs() < TOLERANCE_ABS {
             // Tangent — single circle at sphere center height
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(Circle3 {
+            let circle = Circle3 {
                 center: s.center,
                 normal: c.axis,
                 radius: c.radius,
-            }), pcurve_on_a: None, pcurve_on_b: None });
+            };
+            let pca = circle_pcurve_on_sphere(&circle, s);
+            let pcb = circle_pcurve_on_cylinder(&circle, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circle),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         } else {
             let dz = dz_sq.sqrt();
             for &sign in &[1.0f64, -1.0] {
                 let center = s.center + c.axis * (sign * dz);
-                out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(Circle3 {
+                let circle = Circle3 {
                     center,
                     normal: c.axis,
                     radius: c.radius,
-                }), pcurve_on_a: None, pcurve_on_b: None });
+                };
+                let pca = circle_pcurve_on_sphere(&circle, s);
+                let pcb = circle_pcurve_on_cylinder(&circle, c);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circle),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
             }
         }
         return out;
@@ -363,11 +472,22 @@ fn sphere_x_cone(s: &SphericalSurface, c: &ConicalSurface) -> SurfaceSurfaceInte
                 let r_sol = (c.radius + z_sol * ta).max(0.0);
                 let center = c.apex + c.axis * z_sol;
                 if r_sol > TOLERANCE_ABS {
-                    out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Circle(Circle3 {
+                    let circle = Circle3 {
                         center,
                         normal: c.axis,
                         radius: r_sol,
-                    }), pcurve_on_a: None, pcurve_on_b: None });
+                    };
+                    let pca = circle_pcurve_on_sphere(&circle, s);
+                    let pcb = fallback_pcurve_by_projection(
+                        &Curve3::Circle(circle),
+                        &[0.0, std::f64::consts::TAU],
+                        &Surface3::Cone(*c),
+                    );
+                    out.curves.push(SurfaceIntersectionResult {
+                        curve_3d: SurfaceCurve::Circle(circle),
+                        pcurve_on_a: Some(pca),
+                        pcurve_on_b: Some(pcb),
+                    });
                 }
             }
             prev_f = f;
@@ -436,10 +556,17 @@ fn cylinder_x_cylinder(
         for &sign in &[1.0f64, -1.0f64] {
             let dir_in_plane = sep_dir * cos_t + perp * (sign * sin_t);
             let pt = c1.origin + dir_in_plane * r1;
-            out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Line(Line3 {
+            let line = Line3 {
                 origin: pt,
                 direction: c1.axis,
-            }), pcurve_on_a: None, pcurve_on_b: None });
+            };
+            let pca = line_pcurve_on_cylinder(&line, c1);
+            let pcb = line_pcurve_on_cylinder(&line, c2);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(line),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
             if sin_t < TOLERANCE_ABS {
                 break;
             } // tangent — only one line
@@ -509,7 +636,13 @@ fn numeric_intss(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
 
     let mut out = SurfaceSurfaceIntersection::default();
     if intersection_pts.len() >= 2 {
-        out.curves.push(SurfaceIntersectionResult { curve_3d: SurfaceCurve::Polyline(intersection_pts), pcurve_on_a: None, pcurve_on_b: None });
+        let pca = polyline_pcurve_by_projection(&intersection_pts, s1);
+        let pcb = polyline_pcurve_by_projection(&intersection_pts, s2);
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Polyline(intersection_pts),
+            pcurve_on_a: pca,
+            pcurve_on_b: pcb,
+        });
     }
     out
 }
