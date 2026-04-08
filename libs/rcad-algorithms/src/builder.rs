@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
-use rcad_kernel::geom::*;
+use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
 
 use crate::bopds::ds::*;
@@ -307,7 +307,7 @@ impl<'a> BooleanBuilder<'a> {
             Surface3::Cylinder(_)
             | Surface3::Sphere(_)
             | Surface3::Cone(_)
-            | Surface3::Torus(_) => self.split_curved_face(face_idx),
+            | Surface3::Torus(_) => self.split_curved_face_parametric(face_idx),
             _ => {
                 // Other curved surfaces — return whole face for now
                 let boundary = face
@@ -397,10 +397,10 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Split a curved face (Cylinder, Sphere, Cone, Torus) by intersection polylines.
     ///
-    /// Strategy: for each intersection polyline that crosses the face, we split the
-    /// boundary point list into two halves at the points closest to the polyline endpoints.
-    /// This is an approximation sufficient for classification and boolean result assembly.
-    fn split_curved_face(&self, face_idx: usize) -> Vec<SubFace> {
+    /// Legacy approximate method: for each intersection polyline that crosses the face,
+    /// we split the boundary point list into two halves at the points closest to the
+    /// polyline endpoints. Kept as fallback when UV data or PCurves are unavailable.
+    fn split_curved_face_legacy(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let surface = face.surface.clone();
         let normal = face.normal;
@@ -538,6 +538,104 @@ impl<'a> BooleanBuilder<'a> {
             })
             .collect()
     }
+
+    /// Split a curved face using parameter-space (UV) 2D clipping.
+    ///
+    /// For each intersection curve on this face, samples the associated PCurve
+    /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
+    /// Maps resulting sub-polygons back to 3D via surface evaluation.
+    ///
+    /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
+    fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+
+        // Need UV boundary to operate in parameter space
+        let uv_boundary = match &face.uv_boundary {
+            Some(b) if b.len() >= 3 => b.clone(),
+            _ => return self.split_curved_face_legacy(face_idx),
+        };
+
+        let surface = face.surface.clone();
+        let normal = face.normal;
+
+        // Collect 2D trim polylines from PCurves for each intersection curve
+        let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
+        for &ci in &face.face_info.curves_in {
+            if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
+                let [t0, t1] = {
+                    let ic = &self.ds.intersection_curves[ci];
+                    ic.t_range
+                };
+                const N: usize = 32;
+                let pts: Vec<DVec2> = (0..=N)
+                    .map(|i| {
+                        let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                        pcurve.point_at(t)
+                    })
+                    .collect();
+                if pts.len() >= 2 {
+                    trim_polylines.push(pts);
+                }
+            }
+        }
+
+        // If no PCurves available, fall back to legacy method
+        if trim_polylines.is_empty() {
+            return self.split_curved_face_legacy(face_idx);
+        }
+
+        // Split UV polygon by each trim polyline
+        let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
+
+        for trim in &trim_polylines {
+            let mut next: Vec<Vec<DVec2>> = Vec::new();
+            for poly in uv_polygons.drain(..) {
+                let halves = split_uv_polygon_by_trim(&poly, trim);
+                next.extend(halves);
+            }
+            uv_polygons = next;
+        }
+
+        // Map each UV sub-polygon back to 3D
+        uv_polygons
+            .into_iter()
+            .filter(|p| p.len() >= 3)
+            .map(|uv_poly| {
+                let boundary: Vec<DVec3> = uv_poly
+                    .iter()
+                    .map(|uv| surface.point_at(uv.x, uv.y))
+                    .collect();
+                SubFace {
+                    boundary,
+                    surface: surface.clone(),
+                    normal,
+                }
+            })
+            .collect()
+    }
+
+    /// Find the PCurve (2D parametric curve) for the given intersection curve
+    /// as it lies on the given face. Searches FaceFace interferences to determine
+    /// whether this face is f1 (use pcurve_on_a) or f2 (use pcurve_on_b).
+    fn find_pcurve_for_face(
+        &self,
+        curve_idx: usize,
+        face_idx: usize,
+    ) -> Option<rcad_kernel::geom::Curve2d> {
+        for interference in &self.ds.interferences {
+            if let Interference::FaceFace { f1, f2, curves, .. } = interference
+                && curves.contains(&curve_idx)
+            {
+                    let ic = &self.ds.intersection_curves[curve_idx];
+                    if *f1 == face_idx {
+                        return ic.pcurve_on_a.clone();
+                    } else if *f2 == face_idx {
+                        return ic.pcurve_on_b.clone();
+                    }
+            }
+        }
+        None
+    }
 }
 
 /// Split a 3D polygon by a line segment. Returns the resulting sub-polygons
@@ -657,5 +755,128 @@ fn split_polygon_by_segment(
         vec![poly.to_vec()]
     } else {
         result
+    }
+}
+
+/// Split a 2D UV polygon by a 2D trim polyline.
+///
+/// Algorithm:
+/// 1. Find trim start/end's closest edge on the polygon boundary.
+/// 2. Project trim endpoints onto boundary edges to find exact split points.
+/// 3. Split polygon into two halves at those points, inserting the trim polyline
+///    between them.
+///
+/// Returns 1 polygon if splitting is degenerate, or 2 sub-polygons otherwise.
+fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
+    let n = poly.len();
+    if n < 3 || trim.len() < 2 {
+        return vec![poly.to_vec()];
+    }
+
+    let trim_start = *trim.first().unwrap();
+    let trim_end = *trim.last().unwrap();
+
+    // Find closest point on each polygon edge for trim_start and trim_end,
+    // returning (edge_index, parameter t in [0,1], projected point).
+    let closest_on_boundary = |q: DVec2| -> (usize, f64, DVec2) {
+        let mut best_edge = 0usize;
+        let mut best_t = 0.0f64;
+        let mut best_pt = poly[0];
+        let mut best_dist = f64::INFINITY;
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = poly[i];
+            let b = poly[j];
+            let ab = b - a;
+            let len_sq = ab.dot(ab);
+            let t = if len_sq < 1e-14 {
+                0.0
+            } else {
+                ((q - a).dot(ab) / len_sq).clamp(0.0, 1.0)
+            };
+            let proj = a + t * ab;
+            let dist = (q - proj).length_squared();
+            if dist < best_dist {
+                best_dist = dist;
+                best_edge = i;
+                best_t = t;
+                best_pt = proj;
+            }
+        }
+        (best_edge, best_t, best_pt)
+    };
+
+    let (edge_s, _t_s, pt_s) = closest_on_boundary(trim_start);
+    let (edge_e, _t_e, pt_e) = closest_on_boundary(trim_end);
+
+    // Ensure ia <= ib for consistent polygon walking
+    let (ia, ib, p_a, p_b, trim_forward) = if edge_s <= edge_e {
+        (edge_s, edge_e, pt_s, pt_e, true)
+    } else {
+        (edge_e, edge_s, pt_e, pt_s, false)
+    };
+
+    if ia == ib {
+        // Both endpoints project to the same edge — degenerate, can't split
+        return vec![poly.to_vec()];
+    }
+
+    // Build the trim points in the correct order for each half
+    let trim_pts: Vec<DVec2> = if trim_forward {
+        trim.to_vec()
+    } else {
+        trim.iter().copied().rev().collect()
+    };
+
+    // Sub-polygon A: poly[0..=ia] + p_a + trim_pts (interior only) + p_b + poly[ib+1..]
+    let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
+    sub_a.push(p_a);
+    // Interior trim points (skip first and last which are endpoints)
+    for &p in trim_pts.iter().skip(1).rev().skip(1) {
+        sub_a.push(p);
+    }
+    sub_a.push(p_b);
+    sub_a.extend_from_slice(&poly[ib + 1..]);
+
+    // Sub-polygon B: p_a + poly[ia+1..=ib] + p_b + trim_pts reversed (interior only)
+    let mut sub_b: Vec<DVec2> = vec![p_a];
+    sub_b.extend_from_slice(&poly[ia + 1..=ib]);
+    sub_b.push(p_b);
+    for &p in trim_pts.iter().skip(1).rev().skip(1).rev() {
+        sub_b.push(p);
+    }
+
+    // Deduplicate consecutive near-equal points
+    let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
+        let mut result: Vec<DVec2> = Vec::new();
+        for p in v {
+            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+                result.push(p);
+            }
+        }
+        if result.len() > 1
+            && (result[0] - *result.last().unwrap()).length_squared() < 1e-18
+        {
+            result.pop();
+        }
+        result
+    };
+
+    let sub_a = dedup_2d(sub_a);
+    let sub_b = dedup_2d(sub_b);
+
+    let mut out = Vec::new();
+    if sub_a.len() >= 3 {
+        out.push(sub_a);
+    }
+    if sub_b.len() >= 3 {
+        out.push(sub_b);
+    }
+
+    if out.is_empty() {
+        vec![poly.to_vec()]
+    } else {
+        out
     }
 }
