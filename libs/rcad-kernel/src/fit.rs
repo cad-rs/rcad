@@ -2,17 +2,18 @@
 //!
 //! Analogous to OCCT `GeomAPI_Interpolate` and `GeomAPI_PointsToBSpline`.
 //!
-//! Two public functions:
-//! - [`interpolate_points`] — exact interpolation (passes through all points)
+//! Public functions:
+//! - [`interpolate_points`] — exact interpolation (passes through all points, 3D)
+//! - [`interpolate_points_2d`] — exact interpolation for 2D points
 //! - [`approximate_points`] — least-squares B-spline approximation
 //!
 //! Both use **chord-length parameterization** and a **cubic (degree-3)** B-spline
 //! with clamped knots.  The interpolation builds and solves a tridiagonal linear
 //! system (Thomas algorithm) for the control points.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
-use crate::geom::BSplineCurve3;
+use crate::geom::{BSplineCurve2, BSplineCurve3};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -94,6 +95,60 @@ pub fn interpolate_points(pts: &[DVec3]) -> Result<BSplineCurve3, FitError> {
     })
 }
 
+/// Build a cubic B-spline that passes **exactly** through each 2D point in `pts`.
+///
+/// This is the 2D analogue of [`interpolate_points`], producing a [`BSplineCurve2`].
+///
+/// # Parameterization
+/// Uses chord-length parameterization normalized to `[0, 1]`.
+///
+/// # Knot vector
+/// Clamped cubic knots constructed from the chord-length parameters.
+///
+/// # Returns
+/// A [`BSplineCurve2`] with degree 3 (or `n-1` for small inputs), non-rational
+/// (all weights = 1).
+///
+/// # Errors
+/// Returns [`FitError::TooFewPoints`] when fewer than 2 points are given.
+/// Returns [`FitError::DegeneratePoints`] when all points coincide.
+///
+/// # Examples
+/// ```rust
+/// use glam::DVec2;
+/// use rcad_kernel::fit::interpolate_points_2d;
+/// let pts = vec![
+///     DVec2::new(0.0, 0.0),
+///     DVec2::new(1.0, 1.0),
+///     DVec2::new(2.0, 0.0),
+/// ];
+/// let curve = interpolate_points_2d(&pts).unwrap();
+/// ```
+pub fn interpolate_points_2d(pts: &[DVec2]) -> Result<BSplineCurve2, FitError> {
+    let n = pts.len();
+    if n < 2 {
+        return Err(FitError::TooFewPoints);
+    }
+
+    // Chord-length parameters: t[0]=0, t[n-1]=1
+    let params = chord_length_params_2d(pts)?;
+
+    let degree = 3_usize.min(n - 1);
+
+    // Build clamped knot vector
+    let knots = clamped_knots_from_params(&params, degree);
+
+    // Solve interpolation system via Gaussian elimination with partial pivoting
+    let ctrl = solve_interpolation_2d(&params, &knots, degree, pts);
+
+    Ok(BSplineCurve2 {
+        degree,
+        knots,
+        control_points: ctrl,
+        weights: vec![1.0; n],
+    })
+}
+
 /// Build a cubic B-spline that **approximates** `pts` with `n_ctrl` control points
 /// (must satisfy `2 ≤ n_ctrl < pts.len()`).
 ///
@@ -151,6 +206,25 @@ pub fn approximate_points(pts: &[DVec3], n_ctrl: usize) -> Result<BSplineCurve3,
 
 /// Chord-length parameterization normalized to [0, 1].
 fn chord_length_params(pts: &[DVec3]) -> Result<Vec<f64>, FitError> {
+    let n = pts.len();
+    let mut params = Vec::with_capacity(n);
+    params.push(0.0_f64);
+    let mut total = 0.0_f64;
+    for i in 1..n {
+        total += (pts[i] - pts[i - 1]).length();
+        params.push(total);
+    }
+    if total < 1e-14 {
+        return Err(FitError::DegeneratePoints);
+    }
+    for p in &mut params {
+        *p /= total;
+    }
+    Ok(params)
+}
+
+/// Chord-length parameterization for 2D points, normalized to [0, 1].
+fn chord_length_params_2d(pts: &[DVec2]) -> Result<Vec<f64>, FitError> {
     let n = pts.len();
     let mut params = Vec::with_capacity(n);
     params.push(0.0_f64);
@@ -324,6 +398,20 @@ fn solve_interpolation(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec
     let cz = gauss_solve(&a, &rhs_z);
 
     (0..n).map(|i| DVec3::new(cx[i], cy[i], cz[i])).collect()
+}
+
+/// Solve the 2D exact-interpolation system B * ctrl = data via Gaussian elimination.
+fn solve_interpolation_2d(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec2]) -> Vec<DVec2> {
+    let n = pts.len();
+    let a = collocation_matrix(params, knots, degree, n, n);
+
+    let rhs_x: Vec<f64> = pts.iter().map(|p| p.x).collect();
+    let rhs_y: Vec<f64> = pts.iter().map(|p| p.y).collect();
+
+    let cx = gauss_solve(&a, &rhs_x);
+    let cy = gauss_solve(&a, &rhs_y);
+
+    (0..n).map(|i| DVec2::new(cx[i], cy[i])).collect()
 }
 
 /// Gaussian elimination with partial pivoting for a dense n×n system.
@@ -569,5 +657,68 @@ mod tests {
         assert_eq!(p[0], 0.0);
         assert_eq!(p[2], 1.0);
         assert!(approx_eq(p[1], 1.0 / 3.0, 1e-12));
+    }
+
+    // ── 2D interpolation tests ──────────────────────────────────────────────
+
+    #[test]
+    fn interpolate_2d_line() {
+        // 3 collinear points along y = x
+        let pts = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(2.0, 2.0),
+        ];
+        use crate::geom::Curve2dEval;
+        let curve = interpolate_points_2d(&pts).unwrap();
+
+        // Endpoints must be exact
+        let p0 = curve.point_at(0.0);
+        let p1 = curve.point_at(1.0);
+        assert!(p0.distance(DVec2::new(0.0, 0.0)) < 1e-6, "start={p0}");
+        assert!(p1.distance(DVec2::new(2.0, 2.0)) < 1e-6, "end={p1}");
+
+        // Midpoint should lie at (1, 1) since points are equally spaced
+        let params = chord_length_params_2d(&pts).unwrap();
+        let mid = curve.point_at(params[1]);
+        assert!(
+            mid.distance(DVec2::new(1.0, 1.0)) < 1e-5,
+            "midpoint={mid}"
+        );
+    }
+
+    #[test]
+    fn interpolate_2d_circle_arc() {
+        // 9 points on a quarter circle of radius 1
+        use crate::geom::Curve2dEval;
+        let n = 9_usize;
+        let pts: Vec<DVec2> = (0..n)
+            .map(|i| {
+                let a = std::f64::consts::FRAC_PI_2 * i as f64 / (n - 1) as f64;
+                DVec2::new(a.cos(), a.sin())
+            })
+            .collect();
+
+        let curve = interpolate_points_2d(&pts).unwrap();
+
+        // Endpoints
+        assert!(
+            curve.point_at(0.0).distance(pts[0]) < 1e-5,
+            "start err={}",
+            curve.point_at(0.0).distance(pts[0])
+        );
+        assert!(
+            curve.point_at(1.0).distance(*pts.last().unwrap()) < 1e-5,
+            "end err={}",
+            curve.point_at(1.0).distance(*pts.last().unwrap())
+        );
+
+        // Midpoint radius should be ≈ 1.0
+        let mid_pt = curve.point_at(0.5);
+        let radius = mid_pt.length();
+        assert!(
+            (radius - 1.0).abs() < 0.01,
+            "midpoint radius={radius}"
+        );
     }
 }

@@ -80,7 +80,7 @@ pub use extend::{
     extend_curve_to_point, insert_knot_to_multiplicity, trim_curve, trim_surface,
 };
 pub use extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
-pub use fit::{FitError, approximate_points, interpolate_points};
+pub use fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};
 pub use nurbs_convert::{
     bezier_curve_to_bspline, bezier_surface_to_bspline, circle_to_bspline, curve_to_bspline,
     cylinder_to_bspline, ellipse_to_bspline, line_to_bspline, line_to_bspline_range,
