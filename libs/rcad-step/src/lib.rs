@@ -15,6 +15,42 @@ pub mod writer;
 pub use assembly::{AssemblyComponent, write_assembly};
 pub use writer::{ExportSelection, StepWriter};
 
+/// Errors that can occur when reading or parsing a STEP file.
+#[derive(Debug, Clone)]
+pub enum StepError {
+    /// File I/O error.
+    Io(String),
+    /// Not a valid STEP file (missing ISO-10303-21, no DATA/ENDSEC, etc.).
+    InvalidFormat(String),
+    /// A required STEP entity is missing or malformed.
+    MissingEntity {
+        entity_type: &'static str,
+        id: Option<u64>,
+    },
+    /// Parse produced an empty or degenerate result.
+    EmptyResult(String),
+}
+
+impl std::fmt::Display for StepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(msg) => write!(f, "I/O error: {msg}"),
+            Self::InvalidFormat(msg) => write!(f, "invalid STEP format: {msg}"),
+            Self::MissingEntity {
+                entity_type,
+                id: Some(id),
+            } => write!(f, "missing {entity_type} entity #{id}"),
+            Self::MissingEntity {
+                entity_type,
+                id: None,
+            } => write!(f, "missing {entity_type} entity"),
+            Self::EmptyResult(msg) => write!(f, "STEP parse produced empty result: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for StepError {}
+
 #[derive(Debug, Clone)]
 struct AdvancedFaceRecord {
     bounds: Vec<u64>,
@@ -169,14 +205,16 @@ impl ParsedStep {
 pub struct StepReader;
 
 impl StepReader {
-    pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, String> {
-        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, StepError> {
+        let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string(&content)
     }
 
-    pub fn parse_string(content: &str) -> Result<BRep, String> {
+    pub fn parse_string(content: &str) -> Result<BRep, StepError> {
         if !content.contains("ISO-10303-21") {
-            return Err("Invalid STEP file format".to_string());
+            return Err(StepError::InvalidFormat(
+                "missing ISO-10303-21 header".into(),
+            ));
         }
         let entities = parse_entities(content)?;
         build_brep_from_parsed(&entities)
@@ -188,15 +226,17 @@ impl StepReader {
     /// Returns `None` for color when the file has no color entities.
     pub fn read_file_with_color<P: AsRef<Path>>(
         path: P,
-    ) -> Result<(BRep, Option<StepColor>), String> {
-        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    ) -> Result<(BRep, Option<StepColor>), StepError> {
+        let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_color(&content)
     }
 
     /// Parse a STEP string, returning both the BRep and an optional color map.
-    pub fn parse_string_with_color(content: &str) -> Result<(BRep, Option<StepColor>), String> {
+    pub fn parse_string_with_color(content: &str) -> Result<(BRep, Option<StepColor>), StepError> {
         if !content.contains("ISO-10303-21") {
-            return Err("Invalid STEP file format".to_string());
+            return Err(StepError::InvalidFormat(
+                "missing ISO-10303-21 header".into(),
+            ));
         }
         let entities = parse_entities(content)?;
         let (brep, face_id_map) = build_brep_with_face_map(&entities)?;
@@ -205,7 +245,7 @@ impl StepReader {
     }
 }
 
-fn parse_entities(content: &str) -> Result<ParsedStep, String> {
+fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
     let data = extract_data_section(content)?;
     let records = split_records(data);
     let mut parsed = ParsedStep::new();
@@ -501,12 +541,12 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
     Ok(parsed)
 }
 
-fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, String> {
+fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, StepError> {
     build_brep_with_face_map(parsed).map(|(brep, _)| brep)
 }
 
 /// Build BRep and return the STEP face-id → flat-face-index mapping used for color resolution.
-fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, usize>), String> {
+fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, usize>), StepError> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
         collect_edge_vertices(parsed)
@@ -519,7 +559,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         if let Some(brep) = brep_from_points_bbox(parsed) {
             return Ok((brep, HashMap::new()));
         }
-        return Err("STEP parse produced no vertices".to_string());
+        return Err(StepError::EmptyResult("no vertices".into()));
     }
 
     let mut vertex_ids: Vec<u64> = used_vertex_ids.into_iter().collect();
@@ -531,11 +571,17 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         let point_id = *parsed
             .vertex_points
             .get(vertex_id)
-            .ok_or_else(|| format!("Missing VERTEX_POINT reference for #{}", vertex_id))?;
+            .ok_or(StepError::MissingEntity {
+                entity_type: "VERTEX_POINT",
+                id: Some(*vertex_id),
+            })?;
         let point = *parsed
             .cartesian_points
             .get(&point_id)
-            .ok_or_else(|| format!("Missing CARTESIAN_POINT #{}", point_id))?;
+            .ok_or(StepError::MissingEntity {
+                entity_type: "CARTESIAN_POINT",
+                id: Some(point_id),
+            })?;
         vertices.push(Vertex {
             point: glam::DVec3::new(point[0], point[1], point[2]),
         });
@@ -717,7 +763,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         if let Some(brep) = brep_from_points_bbox(parsed) {
             return Ok((brep, HashMap::new()));
         }
-        return Err("STEP parse produced no triangulated faces or edges".to_string());
+        return Err(StepError::EmptyResult("no faces or edges".into()));
     }
 
     let mut brep = BRep {
@@ -897,7 +943,7 @@ fn collect_shell_faces(parsed: &ParsedStep) -> Vec<Vec<u64>> {
 fn collect_used_vertices(
     parsed: &ParsedStep,
     shell_face_sets: &[Vec<u64>],
-) -> Result<BTreeSet<u64>, String> {
+) -> Result<BTreeSet<u64>, StepError> {
     let mut used = BTreeSet::new();
 
     for shell in shell_face_sets {
@@ -905,25 +951,43 @@ fn collect_used_vertices(
             let bound_ids = parsed
                 .advanced_faces
                 .get(face_id)
-                .ok_or_else(|| format!("Missing ADVANCED_FACE #{}", face_id))?;
+                .ok_or(StepError::MissingEntity {
+                    entity_type: "ADVANCED_FACE",
+                    id: Some(*face_id),
+                })?;
             for bound_id in &bound_ids.bounds {
                 let loop_id = parsed
                     .face_bounds
                     .get(bound_id)
-                    .ok_or_else(|| format!("Missing FACE_BOUND #{}", bound_id))?;
-                let oriented_ids = parsed
-                    .edge_loops
-                    .get(loop_id)
-                    .ok_or_else(|| format!("Missing EDGE_LOOP #{}", loop_id))?;
+                    .ok_or(StepError::MissingEntity {
+                        entity_type: "FACE_BOUND",
+                        id: Some(*bound_id),
+                    })?;
+                let oriented_ids =
+                    parsed
+                        .edge_loops
+                        .get(loop_id)
+                        .ok_or(StepError::MissingEntity {
+                            entity_type: "EDGE_LOOP",
+                            id: Some(*loop_id),
+                        })?;
                 for oriented_id in oriented_ids {
-                    let (edge_curve_id, _) = parsed
-                        .oriented_edges
-                        .get(oriented_id)
-                        .ok_or_else(|| format!("Missing ORIENTED_EDGE #{}", oriented_id))?;
-                    let (start, end, _) = parsed
-                        .edge_curves
-                        .get(edge_curve_id)
-                        .ok_or_else(|| format!("Missing EDGE_CURVE #{}", edge_curve_id))?;
+                    let (edge_curve_id, _) =
+                        parsed
+                            .oriented_edges
+                            .get(oriented_id)
+                            .ok_or(StepError::MissingEntity {
+                                entity_type: "ORIENTED_EDGE",
+                                id: Some(*oriented_id),
+                            })?;
+                    let (start, end, _) =
+                        parsed
+                            .edge_curves
+                            .get(edge_curve_id)
+                            .ok_or(StepError::MissingEntity {
+                                entity_type: "EDGE_CURVE",
+                                id: Some(*edge_curve_id),
+                            })?;
                     used.insert(*start);
                     used.insert(*end);
                 }
@@ -1829,14 +1893,14 @@ fn dedup_consecutive(polygon: &mut Vec<usize>) {
     *polygon = deduped;
 }
 
-fn extract_data_section(content: &str) -> Result<&str, String> {
+fn extract_data_section(content: &str) -> Result<&str, StepError> {
     let start = content
         .find("DATA;")
-        .ok_or_else(|| "STEP file missing DATA section".to_string())?;
+        .ok_or_else(|| StepError::InvalidFormat("missing DATA section".into()))?;
     let after_start = &content[start + "DATA;".len()..];
     let end = after_start
         .find("ENDSEC;")
-        .ok_or_else(|| "STEP file missing ENDSEC after DATA".to_string())?;
+        .ok_or_else(|| StepError::InvalidFormat("missing ENDSEC after DATA".into()))?;
     Ok(&after_start[..end])
 }
 
@@ -1881,7 +1945,7 @@ fn split_records(data: &str) -> Vec<String> {
     records
 }
 
-fn parse_entity_record(record: &str) -> Result<Option<(u64, &str)>, String> {
+fn parse_entity_record(record: &str) -> Result<Option<(u64, &str)>, StepError> {
     let line = record.trim();
     if !line.starts_with('#') {
         return Ok(None);
@@ -1889,11 +1953,11 @@ fn parse_entity_record(record: &str) -> Result<Option<(u64, &str)>, String> {
 
     let eq = line
         .find('=')
-        .ok_or_else(|| format!("Invalid STEP entity record: {}", line))?;
+        .ok_or_else(|| StepError::InvalidFormat(format!("invalid entity record: {line}")))?;
     let id_str = line[1..eq].trim();
     let id = id_str
         .parse::<u64>()
-        .map_err(|e| format!("Invalid STEP entity id {}: {}", id_str, e))?;
+        .map_err(|e| StepError::InvalidFormat(format!("invalid entity id {id_str}: {e}")))?;
     Ok(Some((id, line[eq + 1..].trim())))
 }
 
