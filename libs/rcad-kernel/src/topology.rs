@@ -36,7 +36,10 @@ impl WireEdge {
     }
     /// Shorthand: reversed reference.
     pub const fn rev(idx: usize) -> Self {
-        Self { idx, forward: false }
+        Self {
+            idx,
+            forward: false,
+        }
     }
 }
 

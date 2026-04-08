@@ -209,7 +209,8 @@ pub fn pick_edge(
         return None;
     }
 
-    let vp = glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
+    let vp =
+        glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let mut best: Option<(f32, f32, usize)> = None;
 
     for (idx, edge) in brep.edges.iter().enumerate() {
@@ -432,11 +433,12 @@ impl Camera {
     }
 
     pub fn eye_position(&self) -> glam::Vec3 {
-        self.target + glam::Vec3::new(
-            self.distance * self.rot_y.cos() * self.rot_x.cos(),
-            self.distance * self.rot_x.sin(),
-            self.distance * self.rot_y.sin() * self.rot_x.cos(),
-        )
+        self.target
+            + glam::Vec3::new(
+                self.distance * self.rot_y.cos() * self.rot_x.cos(),
+                self.distance * self.rot_x.sin(),
+                self.distance * self.rot_y.sin() * self.rot_x.cos(),
+            )
     }
 
     pub fn pan_pixels(&mut self, dx: f32, dy: f32) {
@@ -481,7 +483,8 @@ fn screen_ray(
     let ndc_x = (2.0 * cursor_pos[0] / viewport_size[0]) - 1.0;
     let ndc_y = 1.0 - (2.0 * cursor_pos[1] / viewport_size[1]);
 
-    let vp = glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
+    let vp =
+        glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let inv = vp.inverse();
 
     let near = inv * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
@@ -535,7 +538,11 @@ pub fn cursor_point_on_plane(
     }
 
     let point = ray_origin + ray_dir * t;
-    Some(glam::DVec3::new(point.x as f64, point.y as f64, point.z as f64))
+    Some(glam::DVec3::new(
+        point.x as f64,
+        point.y as f64,
+        point.z as f64,
+    ))
 }
 
 fn ray_triangle_intersection(
@@ -564,11 +571,7 @@ fn ray_triangle_intersection(
         return None;
     }
     let t = e2.dot(qvec) * inv_det;
-    if t.is_finite() {
-        Some(t)
-    } else {
-        None
-    }
+    if t.is_finite() { Some(t) } else { None }
 }
 
 fn project_to_screen(vp: glam::Mat4, p: glam::Vec3, viewport_size: [f32; 2]) -> Option<[f32; 3]> {
@@ -919,30 +922,33 @@ impl WgpuRenderer {
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let material_transparent_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Transparent Material Buffer"),
-            contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [0.18, 0.64, 0.96, 0.3],
-                flags: [0.0, 0.0, 0.0, 0.0],
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let material_face_highlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Face Highlight Material Buffer"),
-            contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [1.0, 0.45, 0.05, 0.45],
-                flags: [1.0, 0.0, 0.0, 0.0],
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let material_edge_highlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Edge Highlight Material Buffer"),
-            contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [1.0, 0.95, 0.1, 1.0],
-                flags: [1.0, 0.0, 0.0, 0.0],
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let material_transparent_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Transparent Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.18, 0.64, 0.96, 0.3],
+                    flags: [0.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let material_face_highlight_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Face Highlight Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [1.0, 0.45, 0.05, 0.45],
+                    flags: [1.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let material_edge_highlight_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Edge Highlight Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [1.0, 0.95, 0.1, 1.0],
+                    flags: [1.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material Bind Group"),
@@ -952,30 +958,33 @@ impl WgpuRenderer {
                 resource: material_buffer.as_entire_binding(),
             }],
         });
-        let material_face_highlight_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Face Highlight Material Bind Group"),
-            layout: &material_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_face_highlight_buffer.as_entire_binding(),
-            }],
-        });
-        let material_edge_highlight_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Edge Highlight Material Bind Group"),
-            layout: &material_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_edge_highlight_buffer.as_entire_binding(),
-            }],
-        });
-        let material_transparent_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Transparent Material Bind Group"),
-            layout: &material_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: material_transparent_buffer.as_entire_binding(),
-            }],
-        });
+        let material_face_highlight_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Face Highlight Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_face_highlight_buffer.as_entire_binding(),
+                }],
+            });
+        let material_edge_highlight_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Edge Highlight Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_edge_highlight_buffer.as_entire_binding(),
+                }],
+            });
+        let material_transparent_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Transparent Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_transparent_buffer.as_entire_binding(),
+                }],
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
@@ -1017,22 +1026,24 @@ impl WgpuRenderer {
         );
 
         // Build background grid
-        let grid_major_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Major Material Buffer"),
-            contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [0.35, 0.35, 0.35, 0.5],
-                flags: [1.0, 0.0, 0.0, 0.0], // unlit
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let grid_minor_material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Grid Minor Material Buffer"),
-            contents: bytemuck::cast_slice(&[MaterialUniform {
-                color: [0.25, 0.25, 0.25, 0.3],
-                flags: [1.0, 0.0, 0.0, 0.0], // unlit
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let grid_major_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Major Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.35, 0.35, 0.35, 0.5],
+                    flags: [1.0, 0.0, 0.0, 0.0], // unlit
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let grid_minor_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grid Minor Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.25, 0.25, 0.25, 0.3],
+                    flags: [1.0, 0.0, 0.0, 0.0], // unlit
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
         let grid_major_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Grid Major Material Bind Group"),
             layout: &material_bind_group_layout,
@@ -1073,9 +1084,9 @@ impl WgpuRenderer {
 
         // Build axis arrows (X=red, Y=green, Z=blue)
         let axis_colors: [[f32; 4]; 3] = [
-            [1.0, 0.2, 0.2, 1.0],  // X — red
-            [0.2, 1.0, 0.2, 1.0],  // Y — green
-            [0.3, 0.5, 1.0, 1.0],  // Z — blue
+            [1.0, 0.2, 0.2, 1.0], // X — red
+            [0.2, 1.0, 0.2, 1.0], // Y — green
+            [0.3, 0.5, 1.0, 1.0], // Z — blue
         ];
         let axis_dirs = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
         let axis_names = ["X", "Y", "Z"];
@@ -1102,8 +1113,7 @@ impl WgpuRenderer {
             });
             axes_material_bind_groups_vec.push(bg);
 
-            let (verts, tri_idx, line_idx) =
-                build_axis_arrow_mesh(axis_dirs[i], 1.0, 0.03, 0.1, 8);
+            let (verts, tri_idx, line_idx) = build_axis_arrow_mesh(axis_dirs[i], 1.0, 0.03, 0.1, 8);
 
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("Axis {} Vertex Buffer", axis_names[i])),
@@ -1245,17 +1255,21 @@ impl WgpuRenderer {
     }
 
     pub fn upload_mesh(&self, device: &wgpu::Device, mesh: &Mesh) {
-        *self.vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        }));
+        *self.vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ));
 
-        *self.index_buffer.lock().unwrap() = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        }));
+        *self.index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        ));
 
         *self.index_count.lock().unwrap() = mesh.indices.len() as u32;
 
@@ -1355,8 +1369,14 @@ impl WgpuRenderer {
         let lcount = *self.line_index_count.lock().unwrap();
 
         // Draw model based on display mode
-        let draw_triangles = matches!(mode, DisplayMode::Solid | DisplayMode::SolidWithEdges | DisplayMode::Transparent);
-        let draw_wireframe = matches!(mode, DisplayMode::Wireframe | DisplayMode::SolidWithEdges | DisplayMode::Transparent);
+        let draw_triangles = matches!(
+            mode,
+            DisplayMode::Solid | DisplayMode::SolidWithEdges | DisplayMode::Transparent
+        );
+        let draw_wireframe = matches!(
+            mode,
+            DisplayMode::Wireframe | DisplayMode::SolidWithEdges | DisplayMode::Transparent
+        );
 
         // In transparent mode, draw wireframe first so it's behind the translucent surface
         if mode == DisplayMode::Transparent && draw_wireframe && lcount > 0 {
@@ -1472,7 +1492,8 @@ impl WgpuRenderer {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
             render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(axis.tri_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass
+                .set_index_buffer(axis.tri_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..axis.tri_index_count, 0, 0..1);
 
             // Draw shaft (line)
@@ -1484,7 +1505,8 @@ impl WgpuRenderer {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
             render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(axis.line_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass
+                .set_index_buffer(axis.line_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..axis.line_index_count, 0, 0..1);
         }
     }
@@ -1505,14 +1527,20 @@ impl WgpuRenderer {
         // Draw minor lines first (thinner/dimmer)
         if self.grid.minor_index_count > 0 {
             render_pass.set_bind_group(1, &self.grid_minor_material_bind_group, &[]);
-            render_pass.set_index_buffer(self.grid.minor_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(
+                self.grid.minor_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
             render_pass.draw_indexed(0..self.grid.minor_index_count, 0, 0..1);
         }
 
         // Draw major lines on top
         if self.grid.major_index_count > 0 {
             render_pass.set_bind_group(1, &self.grid_major_material_bind_group, &[]);
-            render_pass.set_index_buffer(self.grid.major_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(
+                self.grid.major_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
             render_pass.draw_indexed(0..self.grid.major_index_count, 0, 0..1);
         }
     }
@@ -1725,8 +1753,7 @@ impl WgpuRenderer {
         let bytes_per_pixel = 4u32;
         // wgpu requires rows to be aligned to 256 bytes
         let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let padded_bytes_per_row =
-            (unpadded_bytes_per_row + 255) & !255;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
         let buffer_size = (padded_bytes_per_row * height) as u64;
 
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {

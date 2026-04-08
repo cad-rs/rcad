@@ -49,10 +49,7 @@ impl<'a> PaveFiller<'a> {
 
         for &ai in &a_verts {
             for &bi in &b_verts {
-                if points_coincide(
-                    self.ds.vertices[ai].point,
-                    self.ds.vertices[bi].point,
-                ) {
+                if points_coincide(self.ds.vertices[ai].point, self.ds.vertices[bi].point) {
                     self.ds.interferences.push(Interference::VertexVertex {
                         v1: ai,
                         v2: bi,
@@ -374,10 +371,8 @@ impl<'a> PaveFiller<'a> {
                 let verts1 = self.ds.face_boundary_points(f1);
                 let verts2 = self.ds.face_boundary_points(f2);
 
-                let range1 =
-                    inttools::edge_face::clip_line_to_convex_polygon(&line, p1, &verts1);
-                let range2 =
-                    inttools::edge_face::clip_line_to_convex_polygon(&line, p2, &verts2);
+                let range1 = inttools::edge_face::clip_line_to_convex_polygon(&line, p1, &verts1);
+                let range2 = inttools::edge_face::clip_line_to_convex_polygon(&line, p2, &verts2);
 
                 if let (Some((t1_min, t1_max)), Some((t2_min, t2_max))) = (range1, range2) {
                     let t_min = t1_min.max(t2_min);
@@ -445,7 +440,7 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         sphere: &SphericalSurface,
     ) {
-        use inttools::plane_sphere::{intersect_plane_sphere, PlaneSphereResult};
+        use inttools::plane_sphere::{PlaneSphereResult, intersect_plane_sphere};
 
         match intersect_plane_sphere(plane, sphere) {
             PlaneSphereResult::NoIntersection => {}
@@ -467,7 +462,9 @@ impl<'a> PaveFiller<'a> {
             PlaneSphereResult::Circle(circle) => {
                 // Sample the circle and clip to both face boundaries
                 let pts = sample_circle_arc(&circle, 0.0, std::f64::consts::TAU, 32);
-                if pts.len() < 2 { return; }
+                if pts.len() < 2 {
+                    return;
+                }
 
                 let v_start = self.ds.add_vertex(pts[0]);
                 let v_end = self.ds.add_vertex(*pts.last().unwrap());
@@ -507,32 +504,33 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         cyl: &CylindricalSurface,
     ) {
-        use inttools::plane_cylinder::{intersect_plane_cylinder, PlaneCylinderResult};
+        use inttools::plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder};
         use rcad_kernel::CurveEval;
 
         let result = intersect_plane_cylinder(plane, cyl);
 
-        let add_curve_for = |ds: &mut DS, curve: Curve3, t_range: [f64; 2], f1: usize, f2: usize| {
-            let p_start = curve.point_at(t_range[0]);
-            let p_end = curve.point_at(t_range[1]);
-            let v_start = ds.add_vertex(p_start);
-            let v_end = ds.add_vertex(p_end);
-            let curve_idx = ds.intersection_curves.len();
-            ds.intersection_curves.push(IntersectionCurve {
-                curve,
-                polyline: vec![],
-                start_vertex: v_start,
-                end_vertex: v_end,
-                t_range,
-            });
-            ds.faces[f1].face_info.curves_in.insert(curve_idx);
-            ds.faces[f2].face_info.curves_in.insert(curve_idx);
-            ds.faces[f1].face_info.vertices_in.insert(v_start);
-            ds.faces[f1].face_info.vertices_in.insert(v_end);
-            ds.faces[f2].face_info.vertices_in.insert(v_start);
-            ds.faces[f2].face_info.vertices_in.insert(v_end);
-            curve_idx
-        };
+        let add_curve_for =
+            |ds: &mut DS, curve: Curve3, t_range: [f64; 2], f1: usize, f2: usize| {
+                let p_start = curve.point_at(t_range[0]);
+                let p_end = curve.point_at(t_range[1]);
+                let v_start = ds.add_vertex(p_start);
+                let v_end = ds.add_vertex(p_end);
+                let curve_idx = ds.intersection_curves.len();
+                ds.intersection_curves.push(IntersectionCurve {
+                    curve,
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range,
+                });
+                ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                ds.faces[f1].face_info.vertices_in.insert(v_start);
+                ds.faces[f1].face_info.vertices_in.insert(v_end);
+                ds.faces[f2].face_info.vertices_in.insert(v_start);
+                ds.faces[f2].face_info.vertices_in.insert(v_end);
+                curve_idx
+            };
 
         let mut curve_indices = Vec::new();
 
@@ -542,18 +540,8 @@ impl<'a> PaveFiller<'a> {
             PlaneCylinderResult::TwoLines(l1, l2) => {
                 // Clip each line to the face bounding-box extent
                 let extent = 20.0_f64;
-                let ci1 = add_curve_for(
-                    &mut self.ds,
-                    Curve3::Line(l1),
-                    [-extent, extent],
-                    f1, f2,
-                );
-                let ci2 = add_curve_for(
-                    &mut self.ds,
-                    Curve3::Line(l2),
-                    [-extent, extent],
-                    f1, f2,
-                );
+                let ci1 = add_curve_for(&mut self.ds, Curve3::Line(l1), [-extent, extent], f1, f2);
+                let ci2 = add_curve_for(&mut self.ds, Curve3::Line(l2), [-extent, extent], f1, f2);
                 curve_indices.push(ci1);
                 curve_indices.push(ci2);
             }
@@ -562,7 +550,8 @@ impl<'a> PaveFiller<'a> {
                     &mut self.ds,
                     Curve3::Circle(circle),
                     [0.0, std::f64::consts::TAU],
-                    f1, f2,
+                    f1,
+                    f2,
                 );
                 curve_indices.push(ci);
             }
@@ -571,7 +560,8 @@ impl<'a> PaveFiller<'a> {
                     &mut self.ds,
                     Curve3::Ellipse(ellipse),
                     [0.0, std::f64::consts::TAU],
-                    f1, f2,
+                    f1,
+                    f2,
                 );
                 curve_indices.push(ci);
             }
@@ -644,14 +634,20 @@ impl<'a> PaveFiller<'a> {
 
             let curve_idx = self.ds.intersection_curves.len();
             // Compute arc-length for t_range
-            let arc_len: f64 = curve.points.windows(2)
+            let arc_len: f64 = curve
+                .points
+                .windows(2)
                 .map(|w| (w[1] - w[0]).length())
                 .sum();
             let dir = (curve.points.last().unwrap() - curve.points[0]).normalize_or_zero();
             self.ds.intersection_curves.push(IntersectionCurve {
                 curve: Curve3::Line(Line3 {
                     origin: curve.points[0],
-                    direction: if dir.length_squared() > 0.5 { dir } else { DVec3::X },
+                    direction: if dir.length_squared() > 0.5 {
+                        dir
+                    } else {
+                        DVec3::X
+                    },
                 }),
                 polyline: curve.points.clone(),
                 start_vertex: v_start,
@@ -684,18 +680,10 @@ impl<'a> PaveFiller<'a> {
             Surface3::Cylinder(cyl) => {
                 inttools::marching::sample_cylinder(cyl, [-5.0, 5.0], n1, n2)
             }
-            Surface3::Sphere(sph) => {
-                inttools::marching::sample_sphere(sph, n1, n2)
-            }
-            Surface3::Torus(torus) => {
-                inttools::marching::sample_torus(torus, n1, n2)
-            }
-            Surface3::Plane(plane) => {
-                sample_plane(plane, 5.0, n1)
-            }
-            Surface3::Cone(cone) => {
-                sample_cone(cone, 0.01, 5.0, n1, n2)
-            }
+            Surface3::Sphere(sph) => inttools::marching::sample_sphere(sph, n1, n2),
+            Surface3::Torus(torus) => inttools::marching::sample_torus(torus, n1, n2),
+            Surface3::Plane(plane) => sample_plane(plane, 5.0, n1),
+            Surface3::Cone(cone) => sample_cone(cone, 0.01, 5.0, n1, n2),
             _ => vec![],
         }
     }
@@ -707,18 +695,26 @@ impl<'a> PaveFiller<'a> {
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) | Surface3::BSpline(_)
-            | Surface3::LinearExtrusion(_) | Surface3::Revolution(_)
-            | Surface3::Bezier(_) | Surface3::Offset(_) | Surface3::Trimmed(_) => 1.0,
+            Surface3::Plane(_)
+            | Surface3::BSpline(_)
+            | Surface3::LinearExtrusion(_)
+            | Surface3::Revolution(_)
+            | Surface3::Bezier(_)
+            | Surface3::Offset(_)
+            | Surface3::Trimmed(_) => 1.0,
         };
         let size2 = match s2 {
             Surface3::Sphere(s) => s.radius,
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
-            Surface3::Plane(_) | Surface3::BSpline(_)
-            | Surface3::LinearExtrusion(_) | Surface3::Revolution(_)
-            | Surface3::Bezier(_) | Surface3::Offset(_) | Surface3::Trimmed(_) => 1.0,
+            Surface3::Plane(_)
+            | Surface3::BSpline(_)
+            | Surface3::LinearExtrusion(_)
+            | Surface3::Revolution(_)
+            | Surface3::Bezier(_)
+            | Surface3::Offset(_)
+            | Surface3::Trimmed(_) => 1.0,
         };
         size1.min(size2) * 0.1
     }
@@ -868,7 +864,13 @@ fn sample_plane(plane: &Plane, half_extent: f64, n: usize) -> Vec<DVec3> {
 }
 
 /// Sample a cone surface between heights `h_min` and `h_max` along its axis.
-fn sample_cone(cone: &ConicalSurface, h_min: f64, h_max: f64, n_theta: usize, n_h: usize) -> Vec<DVec3> {
+fn sample_cone(
+    cone: &ConicalSurface,
+    h_min: f64,
+    h_max: f64,
+    n_theta: usize,
+    n_h: usize,
+) -> Vec<DVec3> {
     let u = rcad_kernel::any_perpendicular(cone.axis);
     let v = cone.axis.cross(u);
     let tan_h = cone.half_angle_rad.tan();

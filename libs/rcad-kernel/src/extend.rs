@@ -51,10 +51,12 @@ pub fn trim_curve(curve: &BSplineCurve3, t0: f64, t1: f64) -> BSplineCurve3 {
 
     // Find the first occurrence index of t0 and t1 in the refined knot vector.
     // After inserting t0/t1 with multiplicity=degree, each appears exactly `degree` times.
-    let first_t0 = knots.iter()
+    let first_t0 = knots
+        .iter()
         .rposition(|&k| (k - t0).abs() < 1e-12)
         .unwrap_or(d);
-    let first_t1 = knots.iter()
+    let first_t1 = knots
+        .iter()
         .position(|&k| (k - t1).abs() < 1e-12)
         .unwrap_or(knots.len().saturating_sub(d + 1));
 
@@ -63,14 +65,14 @@ pub fn trim_curve(curve: &BSplineCurve3, t0: f64, t1: f64) -> BSplineCurve3 {
     // The segment starts where T[j+d] == t0, i.e. j = first_t0 - d.
     // The segment ends just before T[j] == t1, i.e. j = first_t1 (exclusive).
     let i_start = first_t0.saturating_sub(d);
-    let i_end   = first_t1;
+    let i_end = first_t1;
 
     // Guard against bad slice
     let n_ctrl = c2.control_points.len();
     let i_start = i_start.min(n_ctrl.saturating_sub(1));
-    let i_end   = i_end.min(n_ctrl).max(i_start + 1);
+    let i_end = i_end.min(n_ctrl).max(i_start + 1);
 
-    let new_ctrl    = c2.control_points[i_start..i_end].to_vec();
+    let new_ctrl = c2.control_points[i_start..i_end].to_vec();
     let new_weights = c2.weights[i_start..i_end].to_vec();
 
     // Knot vector: n_ctrl_new + degree + 1 knots starting at k_start = i_start.
@@ -78,7 +80,7 @@ pub fn trim_curve(curve: &BSplineCurve3, t0: f64, t1: f64) -> BSplineCurve3 {
     //  knots[i_start .. i_start + n_ctrl_new + d].)
     let n_ctrl_new = new_ctrl.len();
     let k_start = i_start;
-    let k_end   = (k_start + n_ctrl_new + d + 1).min(knots.len());
+    let k_end = (k_start + n_ctrl_new + d + 1).min(knots.len());
     let k_start = k_start.min(k_end);
     let raw_knots: Vec<f64> = knots[k_start..k_end].to_vec();
 
@@ -106,7 +108,11 @@ pub fn insert_knot_to_multiplicity(
     t: f64,
     target_mult: usize,
 ) -> BSplineCurve3 {
-    let current_mult = curve.knots.iter().filter(|&&k| (k - t).abs() < 1e-14).count();
+    let current_mult = curve
+        .knots
+        .iter()
+        .filter(|&&k| (k - t).abs() < 1e-14)
+        .count();
     let mut result = curve.clone();
     for _ in current_mult..target_mult {
         result = insert_knot_once(&result, t);
@@ -179,7 +185,11 @@ fn find_span(n_ctrl: usize, degree: usize, t: f64, knots: &[f64]) -> usize {
     let mut hi = n + 1;
     let mut mid = (lo + hi) / 2;
     while t < knots[mid] || t >= knots[mid + 1] {
-        if t < knots[mid] { hi = mid; } else { lo = mid; }
+        if t < knots[mid] {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
         mid = (lo + hi) / 2;
     }
     mid
@@ -205,11 +215,7 @@ pub enum CurveEnd {
 /// point to lie on the tangent line.
 ///
 /// Analogous to `GeomAPI_ExtendCurveToPoint`.
-pub fn extend_curve_to_point(
-    curve: &BSplineCurve3,
-    end: CurveEnd,
-    target: DVec3,
-) -> BSplineCurve3 {
+pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3) -> BSplineCurve3 {
     let n = curve.control_points.len();
     let mut new_ctrl = curve.control_points.clone();
     let mut new_w = curve.weights.clone();
@@ -225,7 +231,11 @@ pub fn extend_curve_to_point(
             let t_ext = t_max + 1.0;
             // Remove the last repeated knot, insert the interior + new endpoint
             // New knots: original_without_last_max, t_max, t_ext, t_ext
-            let n_last_max = new_knots.iter().rev().take_while(|&&k| (k - t_max).abs() < 1e-14).count();
+            let n_last_max = new_knots
+                .iter()
+                .rev()
+                .take_while(|&&k| (k - t_max).abs() < 1e-14)
+                .count();
             for _ in 0..n_last_max.saturating_sub(1) {
                 new_knots.pop();
             }
@@ -237,7 +247,10 @@ pub fn extend_curve_to_point(
         CurveEnd::Start => {
             let t_min = *new_knots.first().unwrap();
             let t_ext = t_min - 1.0;
-            let n_first_min = new_knots.iter().take_while(|&&k| (k - t_min).abs() < 1e-14).count();
+            let n_first_min = new_knots
+                .iter()
+                .take_while(|&&k| (k - t_min).abs() < 1e-14)
+                .count();
             for _ in 0..n_first_min.saturating_sub(1) {
                 new_knots.remove(0);
             }
@@ -266,11 +279,7 @@ pub fn extend_curve_to_point(
 /// specified end, by moving the endpoint along the end tangent direction.
 ///
 /// Analogous to extending a curve by a linear segment of the given length.
-pub fn extend_curve_by_length(
-    curve: &BSplineCurve3,
-    end: CurveEnd,
-    length: f64,
-) -> BSplineCurve3 {
+pub fn extend_curve_by_length(curve: &BSplineCurve3, end: CurveEnd, length: f64) -> BSplineCurve3 {
     let target = match end {
         CurveEnd::End => {
             let [_, t1] = curve.default_domain();
@@ -338,11 +347,15 @@ pub fn extend_bspline_surface(
         SurfaceBoundary::UMax => {
             // Extrapolate: new_row[j] = 2*last_row[j] - second_last_row[j] + dist*normal
             let n_rows = result.control_points.len();
-            if n_rows < 2 { return result; }
+            if n_rows < 2 {
+                return result;
+            }
             let last = &result.control_points[n_rows - 1];
             let prev = &result.control_points[n_rows - 2];
             let normal_offset = boundary_normal_offset(&result, boundary, dist);
-            let new_row: Vec<DVec3> = last.iter().zip(prev.iter())
+            let new_row: Vec<DVec3> = last
+                .iter()
+                .zip(prev.iter())
                 .map(|(&l, &p)| 2.0 * l - p + normal_offset)
                 .collect();
             let new_w_row: Vec<f64> = result.weights[n_rows - 1].clone();
@@ -351,15 +364,21 @@ pub fn extend_bspline_surface(
             // Extend knot vector
             let last_k = *result.knots_u.last().unwrap();
             let second_last_k = result.knots_u[result.knots_u.len() - 2];
-            result.knots_u.push(last_k + (last_k - second_last_k).max(1e-10));
+            result
+                .knots_u
+                .push(last_k + (last_k - second_last_k).max(1e-10));
         }
         SurfaceBoundary::UMin => {
             let n_rows = result.control_points.len();
-            if n_rows < 2 { return result; }
+            if n_rows < 2 {
+                return result;
+            }
             let first = result.control_points[0].clone();
             let second = result.control_points[1].clone();
             let normal_offset = boundary_normal_offset(&result, boundary, dist);
-            let new_row: Vec<DVec3> = first.iter().zip(second.iter())
+            let new_row: Vec<DVec3> = first
+                .iter()
+                .zip(second.iter())
                 .map(|(&f, &s)| 2.0 * f - s + normal_offset)
                 .collect();
             let new_w_row: Vec<f64> = result.weights[0].clone();
@@ -367,33 +386,51 @@ pub fn extend_bspline_surface(
             result.weights.insert(0, new_w_row);
             let first_k = result.knots_u[0];
             let second_k = result.knots_u[1];
-            result.knots_u.insert(0, first_k - (second_k - first_k).max(1e-10));
+            result
+                .knots_u
+                .insert(0, first_k - (second_k - first_k).max(1e-10));
         }
         SurfaceBoundary::VMax => {
             let normal_offset = boundary_normal_offset(&result, boundary, dist);
-            for (row, w_row) in result.control_points.iter_mut().zip(result.weights.iter_mut()) {
+            for (row, w_row) in result
+                .control_points
+                .iter_mut()
+                .zip(result.weights.iter_mut())
+            {
                 let n = row.len();
-                if n < 2 { continue; }
+                if n < 2 {
+                    continue;
+                }
                 let new_pt = 2.0 * row[n - 1] - row[n - 2] + normal_offset;
                 row.push(new_pt);
                 w_row.push(*w_row.last().unwrap());
             }
             let last_k = *result.knots_v.last().unwrap();
             let second_last_k = result.knots_v[result.knots_v.len() - 2];
-            result.knots_v.push(last_k + (last_k - second_last_k).max(1e-10));
+            result
+                .knots_v
+                .push(last_k + (last_k - second_last_k).max(1e-10));
         }
         SurfaceBoundary::VMin => {
             let normal_offset = boundary_normal_offset(&result, boundary, dist);
-            for (row, w_row) in result.control_points.iter_mut().zip(result.weights.iter_mut()) {
+            for (row, w_row) in result
+                .control_points
+                .iter_mut()
+                .zip(result.weights.iter_mut())
+            {
                 let n = row.len();
-                if n < 2 { continue; }
+                if n < 2 {
+                    continue;
+                }
                 let new_pt = 2.0 * row[0] - row[1] + normal_offset;
                 row.insert(0, new_pt);
                 w_row.insert(0, w_row[0]);
             }
             let first_k = result.knots_v[0];
             let second_k = result.knots_v[1];
-            result.knots_v.insert(0, first_k - (second_k - first_k).max(1e-10));
+            result
+                .knots_v
+                .insert(0, first_k - (second_k - first_k).max(1e-10));
         }
     }
 
@@ -409,10 +446,10 @@ fn boundary_normal_offset(surface: &BSplineSurface, boundary: SurfaceBoundary, d
     let surf = Surface3::BSpline(surface.clone());
     let [u0, u1, v0, v1] = surf.default_domain();
     let (u, v) = match boundary {
-        SurfaceBoundary::UMin  => (u0, (v0 + v1) / 2.0),
-        SurfaceBoundary::UMax  => (u1, (v0 + v1) / 2.0),
-        SurfaceBoundary::VMin  => ((u0 + u1) / 2.0, v0),
-        SurfaceBoundary::VMax  => ((u0 + u1) / 2.0, v1),
+        SurfaceBoundary::UMin => (u0, (v0 + v1) / 2.0),
+        SurfaceBoundary::UMax => (u1, (v0 + v1) / 2.0),
+        SurfaceBoundary::VMin => ((u0 + u1) / 2.0, v0),
+        SurfaceBoundary::VMax => ((u0 + u1) / 2.0, v1),
     };
     dist * surf.normal_at(u, v)
 }
@@ -466,7 +503,11 @@ mod tests {
     #[test]
     fn trim_surface_domain() {
         use crate::geom::{CylindricalSurface, SurfaceEval};
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
         let surf = trim_surface(Surface3::Cylinder(cyl), 0.0, 1.0, 0.0, 2.0);
         let [u0, u1, v0, v1] = surf.default_domain();
         assert!((u0 - 0.0).abs() < 1e-10);
@@ -489,6 +530,10 @@ mod tests {
             weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
         };
         let extended = extend_bspline_surface(&bs, SurfaceBoundary::UMax, 0.0);
-        assert_eq!(extended.control_points.len(), 3, "should have 3 rows after extension");
+        assert_eq!(
+            extended.control_points.len(),
+            3,
+            "should have 3 rows after extension"
+        );
     }
 }

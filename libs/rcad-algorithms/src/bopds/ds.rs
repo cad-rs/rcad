@@ -251,11 +251,7 @@ impl DS {
                                 };
 
                                 // The non-shared vertex of e is the boundary vertex
-                                let non_shared = if shared == e.start {
-                                    e.end
-                                } else {
-                                    e.start
-                                };
+                                let non_shared = if shared == e.start { e.end } else { e.start };
                                 verts.push(non_shared + vert_offset);
                             }
                             verts

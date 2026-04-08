@@ -58,9 +58,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
         if (angle_between - half_angle).abs() < TOLERANCE_ANG {
             // Tangent — single line
             let dir = plane.normal.cross(cone.axis).normalize();
-            let gen_dir = (cone.axis * half_angle.cos()
-                + dir * half_angle.sin())
-            .normalize();
+            let gen_dir = (cone.axis * half_angle.cos() + dir * half_angle.sin()).normalize();
             return PlaneConicalResult::SingleLine(Line3 {
                 origin: cone.apex,
                 direction: gen_dir,
@@ -74,14 +72,23 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
                 return PlaneConicalResult::Point(cone.apex);
             }
             let perp_in_plane = cross.normalize();
-            let projected_axis = (cone.axis - plane.normal * cone.axis.dot(plane.normal)).normalize();
+            let projected_axis =
+                (cone.axis - plane.normal * cone.axis.dot(plane.normal)).normalize();
 
-            let d1 = (projected_axis * half_angle.cos() + perp_in_plane * half_angle.sin()).normalize();
-            let d2 = (projected_axis * half_angle.cos() - perp_in_plane * half_angle.sin()).normalize();
+            let d1 =
+                (projected_axis * half_angle.cos() + perp_in_plane * half_angle.sin()).normalize();
+            let d2 =
+                (projected_axis * half_angle.cos() - perp_in_plane * half_angle.sin()).normalize();
 
             return PlaneConicalResult::TwoLines(
-                Line3 { origin: cone.apex, direction: d1 },
-                Line3 { origin: cone.apex, direction: d2 },
+                Line3 {
+                    origin: cone.apex,
+                    direction: d1,
+                },
+                Line3 {
+                    origin: cone.apex,
+                    direction: d2,
+                },
             );
         }
 

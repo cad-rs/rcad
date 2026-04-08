@@ -1,16 +1,19 @@
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, LinearExtrusionSurface, PCurve, RevolutionSurface, Surface3};
-use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
-use rcad_kernel::appearance::{Color, StepColor};
+use rcad_kernel::{
+    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, LinearExtrusionSurface,
+    PCurve, RevolutionSurface, Surface3,
+};
+use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-pub mod writer;
 pub mod assembly;
+pub mod writer;
 
-pub use assembly::{write_assembly, AssemblyComponent};
+pub use assembly::{AssemblyComponent, write_assembly};
 pub use writer::{ExportSelection, StepWriter};
 
 #[derive(Debug, Clone)]
@@ -61,7 +64,18 @@ struct ParsedStep {
     /// 2D axis2 placements: id → (location, ref_dir)
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
-    b_spline_surfaces: HashMap<u64, (usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)>,
+    b_spline_surfaces: HashMap<
+        u64,
+        (
+            usize,
+            usize,
+            Vec<Vec<u64>>,
+            Vec<usize>,
+            Vec<f64>,
+            Vec<usize>,
+            Vec<f64>,
+        ),
+    >,
     /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id → (profile_curve_ref, direction_ref)
     linear_extrusions: HashMap<u64, (u64, u64)>,
     /// SURFACE_OF_REVOLUTION: maps entity id → (profile_curve_ref, axis_placement_ref)
@@ -171,7 +185,9 @@ impl StepReader {
     ///
     /// Colors are extracted from the `STYLED_ITEM → COLOUR_RGB` chain.
     /// Returns `None` for color when the file has no color entities.
-    pub fn read_file_with_color<P: AsRef<Path>>(path: P) -> Result<(BRep, Option<StepColor>), String> {
+    pub fn read_file_with_color<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(BRep, Option<StepColor>), String> {
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         Self::parse_string_with_color(&content)
     }
@@ -291,8 +307,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 }
                 "SURFACE_CURVE" => {
                     // SURFACE_CURVE('', #3d_curve, (#pcurve1, ...), .PCURVE_S1.)
-                    if let Some((curve3d_ref, pcurve_refs, same_param)) = parse_surface_curve(args) {
-                        parsed.surface_curves.insert(id, (curve3d_ref, pcurve_refs, same_param));
+                    if let Some((curve3d_ref, pcurve_refs, same_param)) = parse_surface_curve(args)
+                    {
+                        parsed
+                            .surface_curves
+                            .insert(id, (curve3d_ref, pcurve_refs, same_param));
                     }
                 }
                 "PCURVE" => {
@@ -331,7 +350,9 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 }
                 "TOROIDAL_SURFACE" => {
                     if let Some((placement, major, minor)) = parse_toroidal_surface(args) {
-                        parsed.toroidal_surfaces.insert(id, (placement, major, minor));
+                        parsed
+                            .toroidal_surfaces
+                            .insert(id, (placement, major, minor));
                     }
                 }
                 "SURFACE_OF_LINEAR_EXTRUSION" => {
@@ -351,7 +372,9 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 "RECTANGULAR_TRIMMED_SURFACE" => {
                     // RECTANGULAR_TRIMMED_SURFACE('name', #basis, u1, u2, v1, v2, .T., .T.)
                     if let Some((basis_ref, trim)) = parse_rectangular_trimmed_surface(args) {
-                        parsed.rectangular_trimmed_surfaces.insert(id, (basis_ref, trim));
+                        parsed
+                            .rectangular_trimmed_surfaces
+                            .insert(id, (basis_ref, trim));
                     }
                 }
                 "VERTEX_POINT" => {
@@ -381,7 +404,9 @@ fn parse_entities(content: &str) -> Result<ParsedStep, String> {
                 }
                 "ADVANCED_FACE" => {
                     if let Some((bounds, surface)) = parse_advanced_face(args) {
-                        parsed.advanced_faces.insert(id, AdvancedFaceRecord { bounds, surface });
+                        parsed
+                            .advanced_faces
+                            .insert(id, AdvancedFaceRecord { bounds, surface });
                     }
                 }
                 "CLOSED_SHELL" => {
@@ -626,13 +651,16 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         let edge_idx = edge_index_by_curve.get(step_curve_id).copied();
         // Also check if any edge_curve entry references this surface_curve indirectly
         let edge_idx = edge_idx.or_else(|| {
-            parsed.edge_curves.iter().find_map(|(ec_id, (_, _, curve_ref))| {
-                if curve_ref.as_ref() == Some(step_curve_id) {
-                    edge_index_by_curve.get(ec_id).copied()
-                } else {
-                    None
-                }
-            })
+            parsed
+                .edge_curves
+                .iter()
+                .find_map(|(ec_id, (_, _, curve_ref))| {
+                    if curve_ref.as_ref() == Some(step_curve_id) {
+                        edge_index_by_curve.get(ec_id).copied()
+                    } else {
+                        None
+                    }
+                })
         });
         let Some(edge_idx) = edge_idx else { continue };
 
@@ -645,24 +673,28 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
                 continue;
             };
             // Resolve the surface into GeomStore
-            let surface_idx = if let Some(existing) = surface_store_index_by_step.get(&surface_step_id) {
-                *existing
-            } else if let Some(surf) = resolve_surface(parsed, surface_step_id) {
-                let sidx = geom.surfaces.len();
-                geom.surfaces.push(surf);
-                surface_store_index_by_step.insert(surface_step_id, sidx);
-                // Also update face_surface entries pointing to this surface
-                sidx
-            } else {
-                continue;
-            };
+            let surface_idx =
+                if let Some(existing) = surface_store_index_by_step.get(&surface_step_id) {
+                    *existing
+                } else if let Some(surf) = resolve_surface(parsed, surface_step_id) {
+                    let sidx = geom.surfaces.len();
+                    geom.surfaces.push(surf);
+                    surface_store_index_by_step.insert(surface_step_id, sidx);
+                    // Also update face_surface entries pointing to this surface
+                    sidx
+                } else {
+                    continue;
+                };
             // Resolve the 2D curve
             let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else {
                 continue;
             };
             let c2didx = geom.curve2ds.len();
             geom.curve2ds.push(curve2d);
-            pcs.push(PCurve { surface_idx, curve2d_idx: c2didx });
+            pcs.push(PCurve {
+                surface_idx,
+                curve2d_idx: c2didx,
+            });
         }
         if !pcs.is_empty() {
             if geom.edge_pcurves.len() <= edge_idx {
@@ -701,13 +733,15 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         if tol > 0.0 && (tol - CONFUSION).abs() > CONFUSION * 0.5 {
             let n_verts = brep.vertices.len();
             let n_edges = brep.edges.len();
-            let n_faces: usize = brep.solids.iter()
+            let n_faces: usize = brep
+                .solids
+                .iter()
                 .flat_map(|s| s.shells.iter())
                 .map(|sh| sh.faces.len())
                 .sum();
             brep.geom.vertex_tolerance = vec![tol; n_verts];
-            brep.geom.edge_tolerance   = vec![tol; n_edges];
-            brep.geom.face_tolerance   = vec![tol; n_faces];
+            brep.geom.edge_tolerance = vec![tol; n_edges];
+            brep.geom.face_tolerance = vec![tol; n_faces];
         }
     }
 
@@ -858,7 +892,10 @@ fn collect_shell_faces(parsed: &ParsedStep) -> Vec<Vec<u64>> {
     shells
 }
 
-fn collect_used_vertices(parsed: &ParsedStep, shell_face_sets: &[Vec<u64>]) -> Result<BTreeSet<u64>, String> {
+fn collect_used_vertices(
+    parsed: &ParsedStep,
+    shell_face_sets: &[Vec<u64>],
+) -> Result<BTreeSet<u64>, String> {
     let mut used = BTreeSet::new();
 
     for shell in shell_face_sets {
@@ -1013,7 +1050,10 @@ fn build_face(
             }
             idx
         };
-        wire_edge_indices.push(WireEdge { idx: edge_index, forward: orientation });
+        wire_edge_indices.push(WireEdge {
+            idx: edge_index,
+            forward: orientation,
+        });
     }
 
     while polygon.len() > 1 && polygon.first() == polygon.last() {
@@ -1031,7 +1071,13 @@ fn build_face(
     {
         triangulate_point_loop(vertices, &sampled_loop_points)
     } else if let Some(surface_ref) = bound_ids.surface {
-        triangulate_surface_fallback(parsed, surface_ref, vertices, &face_vertex_indices, has_seam)
+        triangulate_surface_fallback(
+            parsed,
+            surface_ref,
+            vertices,
+            &face_vertex_indices,
+            has_seam,
+        )
     } else {
         Vec::new()
     };
@@ -1041,14 +1087,17 @@ fn build_face(
 
     let normal = compute_normal(&triangles[0], vertex_index_by_id, parsed);
 
-    Some((Face {
-        outer_wire: Wire {
-            edges: wire_edge_indices,
+    Some((
+        Face {
+            outer_wire: Wire {
+                edges: wire_edge_indices,
+            },
+            inner_wires: Vec::new(),
+            normal,
+            triangles,
         },
-        inner_wires: Vec::new(),
-        normal,
-        triangles,
-    }, bound_ids.surface))
+        bound_ids.surface,
+    ))
 }
 
 fn compute_normal(
@@ -1180,7 +1229,9 @@ fn sample_circle_edge(
     } else if sweep <= 0.0 {
         sweep += std::f64::consts::TAU;
     }
-    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0).ceil().max(8.0) as usize;
+    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0)
+        .ceil()
+        .max(8.0) as usize;
     let mut points = Vec::with_capacity(seg + 1);
     for i in 0..=seg {
         let t = a0 + sweep * (i as f64 / seg as f64);
@@ -1218,7 +1269,9 @@ fn sample_ellipse_edge(
     } else if sweep <= 0.0 {
         sweep += std::f64::consts::TAU;
     }
-    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0).ceil().max(8.0) as usize;
+    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0)
+        .ceil()
+        .max(8.0) as usize;
     let mut points = Vec::with_capacity(seg + 1);
     for i in 0..=seg {
         let t = t0 + sweep * (i as f64 / seg as f64);
@@ -1262,8 +1315,10 @@ fn triangulate_spherical_surface(
     let v = axis.cross(u).normalize_or_zero();
     let w = axis.normalize_or_zero();
 
-    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, center, w, u, v, has_seam);
-    let (phi_min, phi_max) = infer_polar_range(vertices, face_vertex_indices, center, w, *radius, has_seam);
+    let (theta_min, theta_max) =
+        infer_angular_range(vertices, face_vertex_indices, center, w, u, v, has_seam);
+    let (phi_min, phi_max) =
+        infer_polar_range(vertices, face_vertex_indices, center, w, *radius, has_seam);
 
     let u_segments = 32usize;
     let v_segments = 16usize;
@@ -1320,16 +1375,40 @@ fn triangulate_surface_fallback(
         return triangulate_bspline_surface(parsed, surface_ref, vertices);
     }
     if parsed.spherical_surfaces.contains_key(&surface_ref) {
-        return triangulate_spherical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
+        return triangulate_spherical_surface(
+            parsed,
+            surface_ref,
+            vertices,
+            face_vertex_indices,
+            has_seam,
+        );
     }
     if parsed.cylindrical_surfaces.contains_key(&surface_ref) {
-        return triangulate_cylindrical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
+        return triangulate_cylindrical_surface(
+            parsed,
+            surface_ref,
+            vertices,
+            face_vertex_indices,
+            has_seam,
+        );
     }
     if parsed.conical_surfaces.contains_key(&surface_ref) {
-        return triangulate_conical_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
+        return triangulate_conical_surface(
+            parsed,
+            surface_ref,
+            vertices,
+            face_vertex_indices,
+            has_seam,
+        );
     }
     if parsed.toroidal_surfaces.contains_key(&surface_ref) {
-        return triangulate_toroidal_surface(parsed, surface_ref, vertices, face_vertex_indices, has_seam);
+        return triangulate_toroidal_surface(
+            parsed,
+            surface_ref,
+            vertices,
+            face_vertex_indices,
+            has_seam,
+        );
     }
     Vec::new()
 }
@@ -1354,8 +1433,10 @@ fn triangulate_cylindrical_surface(
     let u = ref_dir;
     let v = axis.cross(u).normalize_or_zero();
     let w = axis.normalize_or_zero();
-    let (t_min, t_max) = infer_axis_range(vertices, face_vertex_indices, origin, w, -*radius, *radius);
-    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
+    let (t_min, t_max) =
+        infer_axis_range(vertices, face_vertex_indices, origin, w, -*radius, *radius);
+    let (theta_min, theta_max) =
+        infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
 
     let radial_segments = 40usize;
     let height_segments = 12usize;
@@ -1384,7 +1465,8 @@ fn triangulate_conical_surface(
     face_vertex_indices: &[usize],
     has_seam: bool,
 ) -> Vec<[usize; 3]> {
-    let Some((placement_ref, ref_radius, half_angle_rad)) = parsed.conical_surfaces.get(&surface_ref)
+    let Some((placement_ref, ref_radius, half_angle_rad)) =
+        parsed.conical_surfaces.get(&surface_ref)
     else {
         return Vec::new();
     };
@@ -1405,7 +1487,8 @@ fn triangulate_conical_surface(
     let w = axis.normalize_or_zero();
     let default_h = ref_radius.abs().max(0.1) / tan_a.abs();
     let (t_min, t_max) = infer_axis_range(vertices, face_vertex_indices, origin, w, 0.0, default_h);
-    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
+    let (theta_min, theta_max) =
+        infer_angular_range(vertices, face_vertex_indices, origin, w, u, v, has_seam);
 
     let radial_segments = 40usize;
     let height_segments = 12usize;
@@ -1435,7 +1518,8 @@ fn triangulate_toroidal_surface(
     face_vertex_indices: &[usize],
     has_seam: bool,
 ) -> Vec<[usize; 3]> {
-    let Some((placement_ref, major_radius, minor_radius)) = parsed.toroidal_surfaces.get(&surface_ref)
+    let Some((placement_ref, major_radius, minor_radius)) =
+        parsed.toroidal_surfaces.get(&surface_ref)
     else {
         return Vec::new();
     };
@@ -1455,12 +1539,26 @@ fn triangulate_toroidal_surface(
     let w = axis.normalize_or_zero();
 
     // Infer major angle (theta) range from boundary vertices
-    let (theta_min, theta_max) = infer_angular_range(vertices, face_vertex_indices, center, w, u_dir, v_dir, has_seam);
+    let (theta_min, theta_max) = infer_angular_range(
+        vertices,
+        face_vertex_indices,
+        center,
+        w,
+        u_dir,
+        v_dir,
+        has_seam,
+    );
 
     // Infer minor angle (phi) range: project boundary vertices into the minor circle plane
     let (phi_min, phi_max) = infer_torus_minor_range(
-        vertices, face_vertex_indices, center, w, u_dir, v_dir,
-        *major_radius, has_seam,
+        vertices,
+        face_vertex_indices,
+        center,
+        w,
+        u_dir,
+        v_dir,
+        *major_radius,
+        has_seam,
     );
 
     let major_segments = 48usize;
@@ -1642,12 +1740,7 @@ fn infer_torus_minor_range(
     (phi_min, phi_max)
 }
 
-fn triangulate_grid(
-    base: usize,
-    rows: usize,
-    cols: usize,
-    stride: usize,
-) -> Vec<[usize; 3]> {
+fn triangulate_grid(base: usize, rows: usize, cols: usize, stride: usize) -> Vec<[usize; 3]> {
     let mut triangles = Vec::with_capacity(rows * cols * 2);
     for r in 0..rows {
         for c in 0..cols {
@@ -1683,7 +1776,9 @@ fn triangulate_bspline_surface(
         let v = v0 + (v1 - v0) * (j as f64 / nv as f64);
         for i in 0..=nu {
             let u = u0 + (u1 - u0) * (i as f64 / nu as f64);
-            vertices.push(Vertex { point: surface.point_at(u, v) });
+            vertices.push(Vertex {
+                point: surface.point_at(u, v),
+            });
         }
     }
     triangulate_grid(base, nv, nu, nu + 1)
@@ -1928,7 +2023,15 @@ fn parse_bspline_curve_full(args: &str) -> Option<(usize, Vec<u64>, Vec<usize>, 
 /// Returns (degree_u, degree_v, ctrl_grid[v_row][u_col], mults_u, knots_u, mults_v, knots_v)
 fn parse_bspline_surface_with_knots(
     args: &str,
-) -> Option<(usize, usize, Vec<Vec<u64>>, Vec<usize>, Vec<f64>, Vec<usize>, Vec<f64>)> {
+) -> Option<(
+    usize,
+    usize,
+    Vec<Vec<u64>>,
+    Vec<usize>,
+    Vec<f64>,
+    Vec<usize>,
+    Vec<f64>,
+)> {
     // STEP format:
     // ('name', degree_u, degree_v, ((#p00,#p01,...),(#p10,...)),
     //   .UNSPECIFIED., .F., .F., .F.,
@@ -1945,7 +2048,8 @@ fn parse_bspline_surface_with_knots(
     // Strip outer parens to get the row-list string, then split rows by top-level comma
     let grid_outer = parts[3].trim();
     let grid_inner = grid_outer
-        .strip_prefix('(').unwrap_or(grid_outer)
+        .strip_prefix('(')
+        .unwrap_or(grid_outer)
         .trim_end_matches(')');
     let rows_raw = split_top_level(grid_inner, ',');
     let ctrl_grid: Vec<Vec<u64>> = rows_raw
@@ -1957,15 +2061,23 @@ fn parse_bspline_surface_with_knots(
         return None;
     }
 
-    let mults_u: Vec<usize> = parse_float_list(parts[8]).into_iter().map(|v| v as usize).collect();
-    let mults_v: Vec<usize> = parse_float_list(parts[9]).into_iter().map(|v| v as usize).collect();
+    let mults_u: Vec<usize> = parse_float_list(parts[8])
+        .into_iter()
+        .map(|v| v as usize)
+        .collect();
+    let mults_v: Vec<usize> = parse_float_list(parts[9])
+        .into_iter()
+        .map(|v| v as usize)
+        .collect();
     let knots_u: Vec<f64> = parse_float_list(parts[10]);
     let knots_v: Vec<f64> = parse_float_list(parts[11]);
 
     if mults_u.is_empty() || knots_u.is_empty() || mults_v.is_empty() || knots_v.is_empty() {
         return None;
     }
-    Some((degree_u, degree_v, ctrl_grid, mults_u, knots_u, mults_v, knots_v))
+    Some((
+        degree_u, degree_v, ctrl_grid, mults_u, knots_u, mults_v, knots_v,
+    ))
 }
 
 fn parse_conical_surface(args: &str) -> Option<(u64, f64, f64)> {
@@ -2055,8 +2167,11 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
     }
 
     // BSpline: use full data if available, otherwise fall through to None
-    if let Some((degree, ctrl_refs, mults, knot_vals)) = parsed.b_spline_curves_full.get(&actual_ref) {
-        let control_points: Vec<glam::DVec3> = ctrl_refs.iter()
+    if let Some((degree, ctrl_refs, mults, knot_vals)) =
+        parsed.b_spline_curves_full.get(&actual_ref)
+    {
+        let control_points: Vec<glam::DVec3> = ctrl_refs
+            .iter()
             .filter_map(|&r| point_from_ref(parsed, r))
             .collect();
         if control_points.len() >= 2 {
@@ -2135,7 +2250,9 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         }));
     }
 
-    if let Some((placement_ref, ref_radius, half_angle_rad)) = parsed.conical_surfaces.get(&surface_ref) {
+    if let Some((placement_ref, ref_radius, half_angle_rad)) =
+        parsed.conical_surfaces.get(&surface_ref)
+    {
         let (apex, axis) = placement_from_ref(parsed, *placement_ref)?;
         return Some(Surface3::Cone(rcad_kernel::geom::ConicalSurface {
             apex,
@@ -2145,7 +2262,9 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         }));
     }
 
-    if let Some((placement_ref, major_radius, minor_radius)) = parsed.toroidal_surfaces.get(&surface_ref) {
+    if let Some((placement_ref, major_radius, minor_radius)) =
+        parsed.toroidal_surfaces.get(&surface_ref)
+    {
         let (center, axis) = placement_from_ref(parsed, *placement_ref)?;
         return Some(Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center,
@@ -2192,10 +2311,12 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
             resolve_curve(parsed, profile_ref),
             direction_from_ref(parsed, dir_ref),
         ) {
-            return Some(Surface3::LinearExtrusion(rcad_kernel::geom::LinearExtrusionSurface {
-                profile: Box::new(profile),
-                direction: dir.normalize_or_zero(),
-            }));
+            return Some(Surface3::LinearExtrusion(
+                rcad_kernel::geom::LinearExtrusionSurface {
+                    profile: Box::new(profile),
+                    direction: dir.normalize_or_zero(),
+                },
+            ));
         }
     }
 
@@ -2203,12 +2324,10 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
     if let Some((profile_ref, axis_ref)) = parsed.revolutions.get(&surface_ref).copied() {
         if let Some(profile) = resolve_curve(parsed, profile_ref) {
             // Try AXIS2_PLACEMENT_3D first (common in practice), then fall back to a direction ref
-            let axis_result = placement_from_ref(parsed, axis_ref)
-                .or_else(|| {
-                    // Treat as bare direction ref at origin
-                    direction_from_ref(parsed, axis_ref)
-                        .map(|d| (glam::DVec3::ZERO, d))
-                });
+            let axis_result = placement_from_ref(parsed, axis_ref).or_else(|| {
+                // Treat as bare direction ref at origin
+                direction_from_ref(parsed, axis_ref).map(|d| (glam::DVec3::ZERO, d))
+            });
             if let Some((axis_origin, axis_dir)) = axis_result {
                 return Some(Surface3::Revolution(rcad_kernel::geom::RevolutionSurface {
                     profile: Box::new(profile),
@@ -2220,7 +2339,11 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
     }
 
     // RECTANGULAR_TRIMMED_SURFACE
-    if let Some((basis_ref, trim)) = parsed.rectangular_trimmed_surfaces.get(&surface_ref).copied() {
+    if let Some((basis_ref, trim)) = parsed
+        .rectangular_trimmed_surfaces
+        .get(&surface_ref)
+        .copied()
+    {
         if let Some(basis) = resolve_surface(parsed, basis_ref) {
             return Some(Surface3::Trimmed(rcad_kernel::TrimmedSurface {
                 basis: Box::new(basis),
@@ -2260,9 +2383,12 @@ fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
     let refs = parse_ref_list(args);
     let basis_ref = *refs.first()?;
     // Extract all floats (the 4 trim parameters)
-    let floats: Vec<f64> = args.split(',')
+    let floats: Vec<f64> = args
+        .split(',')
         .filter_map(|tok| {
-            let t = tok.trim().trim_matches(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != 'E' && c != 'e');
+            let t = tok.trim().trim_matches(|c: char| {
+                !c.is_ascii_digit() && c != '.' && c != '-' && c != 'E' && c != 'e'
+            });
             t.parse::<f64>().ok()
         })
         .collect();
@@ -2284,7 +2410,8 @@ fn parse_colour_rgb(args: &str) -> Option<[f64; 3]> {
     } else {
         args
     };
-    let floats: Vec<f64> = rest.split(',')
+    let floats: Vec<f64> = rest
+        .split(',')
         .filter_map(|s| s.trim().parse::<f64>().ok())
         .collect();
     if floats.len() >= 3 {
@@ -2334,9 +2461,15 @@ fn direction_from_ref(parsed: &ParsedStep, direction_ref: u64) -> Option<glam::D
     Some(glam::DVec3::new(d[0], d[1], d[2]).normalize_or_zero())
 }
 
-fn placement_from_ref(parsed: &ParsedStep, placement_ref: u64) -> Option<(glam::DVec3, glam::DVec3)> {
+fn placement_from_ref(
+    parsed: &ParsedStep,
+    placement_ref: u64,
+) -> Option<(glam::DVec3, glam::DVec3)> {
     let (origin_ref, axis_ref, _) = *parsed.axis2_placements.get(&placement_ref)?;
-    Some((point_from_ref(parsed, origin_ref)?, direction_from_ref(parsed, axis_ref)?))
+    Some((
+        point_from_ref(parsed, origin_ref)?,
+        direction_from_ref(parsed, axis_ref)?,
+    ))
 }
 
 fn placement_frame_from_ref(
@@ -2482,7 +2615,9 @@ fn sample_standalone_circle(
         sweep += std::f64::consts::TAU;
     }
 
-    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0).ceil().max(8.0) as usize;
+    let seg = ((sweep.abs() / std::f64::consts::TAU) * 64.0)
+        .ceil()
+        .max(8.0) as usize;
     let mut points = Vec::with_capacity(seg + 1);
     for i in 0..=seg {
         let t = t0 + sweep * (i as f64 / seg as f64);
@@ -2542,7 +2677,9 @@ fn parse_ref_list(input: &str) -> Vec<u64> {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if start < i && let Ok(v) = input[start..i].parse::<u64>() {
+            if start < i
+                && let Ok(v) = input[start..i].parse::<u64>()
+            {
                 refs.push(v);
             }
         } else {
@@ -2556,7 +2693,8 @@ fn parse_ref_list(input: &str) -> Vec<u64> {
 /// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` → `[1.0, 2.0, 3.0]`.
 fn parse_float_list(input: &str) -> Vec<f64> {
     let inner = input.trim().trim_start_matches('(').trim_end_matches(')');
-    inner.split(',')
+    inner
+        .split(',')
         .filter_map(|s| s.trim().parse::<f64>().ok())
         .collect()
 }
@@ -2646,7 +2784,10 @@ fn parse_surface_curve(args: &str) -> Option<(u64, Vec<u64>, bool)> {
     // 4th field is the master_representation flag (optional, default .T.)
     // In STEP AP214 this is ".PCURVE_S1." / ".PCURVE_S2." / ".CURVE_3D." / "$"
     // We treat it as same_parameter=true unless explicitly set to .F.
-    let same_param = parts.get(3).map(|s| !s.trim().eq_ignore_ascii_case(".F.")).unwrap_or(true);
+    let same_param = parts
+        .get(3)
+        .map(|s| !s.trim().eq_ignore_ascii_case(".F."))
+        .unwrap_or(true);
     Some((curve3d_ref, pcurve_refs, same_param))
 }
 
@@ -2679,17 +2820,25 @@ fn parse_definitional_rep(args: &str) -> Option<u64> {
 fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     if let Some((origin_ref, vector_ref)) = parsed.lines.get(&curve_ref) {
         // Try 2D cartesian point first, fall back to 3D
-        let origin = parsed.cartesian_points_2d.get(origin_ref)
+        let origin = parsed
+            .cartesian_points_2d
+            .get(origin_ref)
             .map(|&p| glam::DVec2::new(p[0], p[1]))
             .or_else(|| {
-                parsed.cartesian_points.get(origin_ref)
+                parsed
+                    .cartesian_points
+                    .get(origin_ref)
                     .map(|&p| glam::DVec2::new(p[0], p[1]))
             })?;
         let (dir_ref, _mag) = *parsed.vectors.get(vector_ref)?;
-        let dir2d = parsed.directions_2d.get(&dir_ref)
+        let dir2d = parsed
+            .directions_2d
+            .get(&dir_ref)
             .map(|&d| glam::DVec2::new(d[0], d[1]))
             .or_else(|| {
-                parsed.directions.get(&dir_ref)
+                parsed
+                    .directions
+                    .get(&dir_ref)
                     .map(|&d| glam::DVec2::new(d[0], d[1]))
             })?;
         return Some(Curve2d::Line(rcad_kernel::geom::Line2d {
@@ -2700,11 +2849,15 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
 
     if let Some((placement_ref, radius)) = parsed.circles.get(&curve_ref) {
         // 2D circle: extract center from the 2D placement
-        let center = parsed.axis2_placements_2d.get(placement_ref)
+        let center = parsed
+            .axis2_placements_2d
+            .get(placement_ref)
             .and_then(|(loc_ref, _)| parsed.cartesian_points_2d.get(loc_ref))
             .map(|&p| glam::DVec2::new(p[0], p[1]))
             .or_else(|| {
-                parsed.axis2_placements.get(placement_ref)
+                parsed
+                    .axis2_placements
+                    .get(placement_ref)
                     .and_then(|(loc_ref, _, _)| parsed.cartesian_points.get(loc_ref))
                     .map(|&p| glam::DVec2::new(p[0], p[1]))
             })?;
@@ -2717,16 +2870,24 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     // 2D Ellipse: ELLIPSE referencing an AXIS2_PLACEMENT_2D
     if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_ref) {
         if let Some((loc_ref, dir_ref)) = parsed.axis2_placements_2d.get(placement_ref) {
-            let center = parsed.cartesian_points_2d.get(loc_ref)
+            let center = parsed
+                .cartesian_points_2d
+                .get(loc_ref)
                 .map(|&p| glam::DVec2::new(p[0], p[1]))
                 .or_else(|| {
-                    parsed.cartesian_points.get(loc_ref)
+                    parsed
+                        .cartesian_points
+                        .get(loc_ref)
                         .map(|&p| glam::DVec2::new(p[0], p[1]))
                 })?;
-            let major_dir = parsed.directions_2d.get(dir_ref)
+            let major_dir = parsed
+                .directions_2d
+                .get(dir_ref)
                 .map(|&d| glam::DVec2::new(d[0], d[1]))
                 .or_else(|| {
-                    parsed.directions.get(dir_ref)
+                    parsed
+                        .directions
+                        .get(dir_ref)
                         .map(|&d| glam::DVec2::new(d[0], d[1]))
                 })
                 .unwrap_or(glam::DVec2::X)
@@ -2743,9 +2904,12 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     // 2D B-Spline curve: B_SPLINE_CURVE_WITH_KNOTS with 2D control points
     if let Some((degree, cp_refs, mults, knot_vals)) = parsed.b_spline_curves_full.get(&curve_ref) {
         // Check if ALL control points are 2D (present in cartesian_points_2d)
-        let all_2d = cp_refs.iter().all(|id| parsed.cartesian_points_2d.contains_key(id));
+        let all_2d = cp_refs
+            .iter()
+            .all(|id| parsed.cartesian_points_2d.contains_key(id));
         if all_2d {
-            let control_points: Vec<glam::DVec2> = cp_refs.iter()
+            let control_points: Vec<glam::DVec2> = cp_refs
+                .iter()
                 .filter_map(|id| parsed.cartesian_points_2d.get(id))
                 .map(|&p| glam::DVec2::new(p[0], p[1]))
                 .collect();
@@ -2776,7 +2940,10 @@ mod tests {
     #[test]
     fn parses_hfss_into_non_trivial_brep() {
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        assert!(brep.vertices.len() > 8, "hfss should have more than box vertices");
+        assert!(
+            brep.vertices.len() > 8,
+            "hfss should have more than box vertices"
+        );
         assert!(!brep.edges.is_empty(), "hfss should produce edges");
 
         let triangle_count: usize = brep
@@ -2882,7 +3049,10 @@ mod tests {
         let brep = StepReader::parse_string(EDGE_ONLY_STEP).expect("edge-only STEP should parse");
         assert_eq!(brep.vertices.len(), 2);
         assert_eq!(brep.edges.len(), 1);
-        assert!(brep.solids.is_empty(), "edge-only data should not fabricate solids");
+        assert!(
+            brep.solids.is_empty(),
+            "edge-only data should not fabricate solids"
+        );
     }
 
     #[test]

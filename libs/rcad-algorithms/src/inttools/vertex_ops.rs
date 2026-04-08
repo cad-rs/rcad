@@ -55,7 +55,10 @@ mod tests {
 
     #[test]
     fn vertex_on_plane_test() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         assert!(vertex_on_plane(DVec3::new(5.0, 3.0, 0.0), &plane));
         assert!(!vertex_on_plane(DVec3::new(5.0, 3.0, 1.0), &plane));
     }

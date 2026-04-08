@@ -43,16 +43,19 @@ fn demo_tapering_sweep() {
         .map(|i| DVec3::new(0.0, 0.0, i as f64 * 0.5))
         .collect();
 
-    let brep = sweep_pipe_variable(&profiles, &spine)
-        .expect("sweep_pipe_variable (tapering) failed");
+    let brep =
+        sweep_pipe_variable(&profiles, &spine).expect("sweep_pipe_variable (tapering) failed");
 
     let n_faces = face_count(&brep);
     // (n_stations-1) lateral groups × n_sides lateral faces + 2 cap faces
     let expected = (n_stations - 1) * n_sides + 2;
     println!("  Stations: {}, sides: {}", n_stations, n_sides);
     println!("  Faces: {} (expect {})", n_faces, expected);
-    assert_eq!(n_faces, expected,
-        "tapering sweep: unexpected face count {} (expected {})", n_faces, expected);
+    assert_eq!(
+        n_faces, expected,
+        "tapering sweep: unexpected face count {} (expected {})",
+        n_faces, expected
+    );
 
     println!("  ✓ sweep_pipe_variable: tapering hexagon produces correct face count");
 }
@@ -85,15 +88,18 @@ fn demo_twisted_sweep() {
         .map(|i| DVec3::new(0.0, 0.0, i as f64 * 0.4))
         .collect();
 
-    let brep = sweep_pipe_variable(&profiles, &spine)
-        .expect("sweep_pipe_variable (twisted) failed");
+    let brep =
+        sweep_pipe_variable(&profiles, &spine).expect("sweep_pipe_variable (twisted) failed");
 
     let n_faces = face_count(&brep);
     let expected = (n_stations - 1) * n_sides + 2;
     println!("  Stations: {}, sides: {}", n_stations, n_sides);
     println!("  Faces: {} (expect {})", n_faces, expected);
-    assert_eq!(n_faces, expected,
-        "twisted sweep: unexpected face count {} (expected {})", n_faces, expected);
+    assert_eq!(
+        n_faces, expected,
+        "twisted sweep: unexpected face count {} (expected {})",
+        n_faces, expected
+    );
 
     println!("  ✓ sweep_pipe_variable: twisted square produces correct face count");
 }
@@ -103,22 +109,26 @@ fn demo_twisted_sweep() {
 fn demo_fillet_edges() {
     println!("\n=== 3. fillet_edges — batch API demonstration ===");
 
-    let base = box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 1.5, 1.0)
-        .expect("box_brep failed");
+    let base = box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 1.5, 1.0).expect("box_brep failed");
     let before = face_count(&base);
     println!("  Box faces before: {}", before); // 6
 
     // ── 3a. Single-entry batch: equivalent to fillet_edge directly ──
-    let result_single = fillet_edges(&base, &[(0, 0.15)])
-        .expect("fillet_edges single failed");
+    let result_single = fillet_edges(&base, &[(0, 0.15)]).expect("fillet_edges single failed");
     let after_single = face_count(&result_single);
-    println!("  After fillet_edges(&[(0, 0.15)]): {} faces (expect {})",
-        after_single, before + 3);
+    println!(
+        "  After fillet_edges(&[(0, 0.15)]): {} faces (expect {})",
+        after_single,
+        before + 3
+    );
     assert_eq!(after_single, before + 3);
 
     let result_direct = fillet_edge(&base, 0, 0.15).expect("fillet_edge direct failed");
-    assert_eq!(face_count(&result_direct), after_single,
-        "fillet_edges single should match fillet_edge direct");
+    assert_eq!(
+        face_count(&result_direct),
+        after_single,
+        "fillet_edges single should match fillet_edge direct"
+    );
     println!("  Matches fillet_edge(&base, 0, 0.15) directly: ✓");
 
     // ── 3b. Empty input returns clone ──
@@ -138,9 +148,17 @@ fn demo_fillet_edges() {
     let r1 = fillet_edge(&base, 0, 0.12).expect("fillet(0)");
     let r2 = fillet_edge(&base, 4, 0.12).expect("fillet(4)");
     let r3 = fillet_edge(&base, 8, 0.12).expect("fillet(8)");
-    println!("  Three separate fillet_edge calls on original: {}, {}, {} faces each",
-        face_count(&r1), face_count(&r2), face_count(&r3));
-    assert!(face_count(&r1) == before + 3 && face_count(&r2) == before + 3 && face_count(&r3) == before + 3);
+    println!(
+        "  Three separate fillet_edge calls on original: {}, {}, {} faces each",
+        face_count(&r1),
+        face_count(&r2),
+        face_count(&r3)
+    );
+    assert!(
+        face_count(&r1) == before + 3
+            && face_count(&r2) == before + 3
+            && face_count(&r3) == before + 3
+    );
 
     println!("  ✓ fillet_edges: API verified; each fillet adds 3 faces (1 cyl + 2 closing)");
 }
@@ -162,26 +180,27 @@ fn demo_step_export() {
                 .collect()
         })
         .collect();
-    let spine: Vec<DVec3> = (0..3)
-        .map(|i| DVec3::new(0.0, 0.0, i as f64))
-        .collect();
+    let spine: Vec<DVec3> = (0..3).map(|i| DVec3::new(0.0, 0.0, i as f64)).collect();
 
-    let brep = sweep_pipe_variable(&profiles, &spine)
-        .expect("sweep_pipe_variable failed");
+    let brep = sweep_pipe_variable(&profiles, &spine).expect("sweep_pipe_variable failed");
 
-    let step_str = StepWriter::write_string(&brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step_str = StepWriter::write_string(
+        &brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
 
     let has_advanced_face = step_str.contains("ADVANCED_FACE");
-    let has_closed_shell  = step_str.contains("CLOSED_SHELL");
+    let has_closed_shell = step_str.contains("CLOSED_SHELL");
     println!("  STEP contains ADVANCED_FACE: {}", has_advanced_face);
     println!("  STEP contains CLOSED_SHELL:  {}", has_closed_shell);
     assert!(has_advanced_face, "STEP output missing ADVANCED_FACE");
-    assert!(has_closed_shell,  "STEP output missing CLOSED_SHELL");
+    assert!(has_closed_shell, "STEP output missing CLOSED_SHELL");
 
-    let face_lines = step_str.lines()
+    let face_lines = step_str
+        .lines()
         .filter(|l| l.contains("ADVANCED_FACE"))
         .count();
     println!("  ADVANCED_FACE entities in STEP: {}", face_lines);

@@ -4,19 +4,19 @@
 //! The API intentionally prefers OCCT-style direct constructor functions
 //! over fluent builder structs.
 
-mod curve;
-mod solid;
-mod surface;
 pub mod brep_builder;
+mod curve;
 pub mod fillet;
 pub mod ops;
+mod solid;
+mod surface;
 
-pub use curve::*;
-pub use solid::*;
-pub use surface::*;
 pub use brep_builder::*;
+pub use curve::*;
 pub use fillet::{chamfer_edge, corner_blend, fillet_edge, fillet_edges};
 pub use ops::*;
+pub use solid::*;
+pub use surface::*;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
@@ -121,16 +121,15 @@ fn translate_brep(brep: &mut BRep, offset: DVec3) {
 
 fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, z_axis: DVec3) {
     for vertex in &mut brep.vertices {
-        vertex.point = origin
-            + x_axis * vertex.point.x
-            + y_axis * vertex.point.y
-            + z_axis * vertex.point.z;
+        vertex.point =
+            origin + x_axis * vertex.point.x + y_axis * vertex.point.y + z_axis * vertex.point.z;
     }
 
     for solid in &mut brep.solids {
         for shell in &mut solid.shells {
             for face in &mut shell.faces {
-                let transformed = x_axis * face.normal.x + y_axis * face.normal.y + z_axis * face.normal.z;
+                let transformed =
+                    x_axis * face.normal.x + y_axis * face.normal.y + z_axis * face.normal.z;
                 face.normal = transformed.normalize_or_zero();
             }
         }
@@ -159,8 +158,16 @@ mod tests {
         let brep = box_brep(DVec3::new(1.0, 2.0, 3.0), DVec3::Y, DVec3::Z, 2.0, 3.0, 4.0).unwrap();
 
         assert_eq!(brep.vertices.len(), 8);
-        assert!(brep.vertices.iter().any(|v| v.point == DVec3::new(1.0, 2.0, 3.0)));
-        assert!(brep.vertices.iter().any(|v| v.point == DVec3::new(5.0, 4.0, 6.0)));
+        assert!(
+            brep.vertices
+                .iter()
+                .any(|v| v.point == DVec3::new(1.0, 2.0, 3.0))
+        );
+        assert!(
+            brep.vertices
+                .iter()
+                .any(|v| v.point == DVec3::new(5.0, 4.0, 6.0))
+        );
     }
 
     #[test]

@@ -22,9 +22,9 @@
 //!   (inner wires are preserved as-is, with reindexed edge refs).
 
 use rcad_kernel::{
+    BRep,
     geom::SurfaceEval,
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
-    BRep,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,21 +107,25 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
                 for face in &shell.faces {
                     let reindex_wire = |w: &Wire| -> Wire {
                         Wire {
-                            edges: w.edges.iter().map(|we| WireEdge {
-                                idx: we.idx + e_off,
-                                forward: we.forward,
-                            }).collect(),
+                            edges: w
+                                .edges
+                                .iter()
+                                .map(|we| WireEdge {
+                                    idx: we.idx + e_off,
+                                    forward: we.forward,
+                                })
+                                .collect(),
                         }
                     };
                     all_faces.push(Face {
                         outer_wire: reindex_wire(&face.outer_wire),
                         inner_wires: face.inner_wires.iter().map(|w| reindex_wire(w)).collect(),
                         normal: face.normal,
-                        triangles: face.triangles.iter().map(|tri| [
-                            tri[0] + v_off,
-                            tri[1] + v_off,
-                            tri[2] + v_off,
-                        ]).collect(),
+                        triangles: face
+                            .triangles
+                            .iter()
+                            .map(|tri| [tri[0] + v_off, tri[1] + v_off, tri[2] + v_off])
+                            .collect(),
                     });
                 }
             }
@@ -293,13 +297,19 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         let surf_off = geom.surfaces.len();
         geom.surfaces.extend(brep.geom.surfaces.iter().cloned());
 
-        let n_faces_this = brep.solids.first()
+        let n_faces_this = brep
+            .solids
+            .first()
             .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
             .unwrap_or(0);
 
         // face_surface mapping (offset surface indices)
         for fi in 0..n_faces_this {
-            let mapped = brep.geom.face_surface.get(fi).and_then(|o| *o)
+            let mapped = brep
+                .geom
+                .face_surface
+                .get(fi)
+                .and_then(|o| *o)
                 .map(|idx| idx + surf_off);
             while geom.face_surface.len() < face_offset + fi + 1 {
                 geom.face_surface.push(None);
@@ -320,7 +330,9 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     }
 
     let shell = Shell { faces: all_faces };
-    let solid = Solid { shells: vec![shell] };
+    let solid = Solid {
+        shells: vec![shell],
+    };
     let result_brep = BRep {
         vertices: compact_vertices,
         edges: compact_edges,
@@ -346,12 +358,20 @@ mod tests {
 
     #[test]
     fn sew_single_brep_is_identity() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let result = sew_shells(&[brep.clone()], 1e-6);
         assert_eq!(result.stitched_pairs, 0);
         // All edges of a closed box should be non-free (each edge borders 2 faces)
-        assert_eq!(result.free_edges.len(), 0,
-            "closed box should have no free edges, got {:?}", result.free_edges);
+        assert_eq!(
+            result.free_edges.len(),
+            0,
+            "closed box should have no free edges, got {:?}",
+            result.free_edges
+        );
     }
 
     #[test]
@@ -362,15 +382,27 @@ mod tests {
         // only if we offset B. Since from_primitive always starts at 0,
         // the two boxes overlap at x=0 face and x=1 face.
         // For a real sewing test, we use two boxes with coincident vertices.
-        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let a = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         // Second box: same vertices as A (completely coincident) → all edges stitched
-        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let result = sew_shells(&[a, b], 1e-6);
         // Completely overlapping boxes should stitch all edges
-        assert!(result.stitched_pairs > 0,
-            "expected stitched pairs for coincident boxes, got 0");
-        println!("sew two coincident boxes: stitched={}, free={:?}",
-            result.stitched_pairs, result.free_edges);
+        assert!(
+            result.stitched_pairs > 0,
+            "expected stitched pairs for coincident boxes, got 0"
+        );
+        println!(
+            "sew two coincident boxes: stitched={}, free={:?}",
+            result.stitched_pairs, result.free_edges
+        );
     }
 
     #[test]

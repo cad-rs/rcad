@@ -8,8 +8,8 @@
 //!      first and second derivatives.
 //!   3. Deduplication within a parameter tolerance; sort by distance ascending.
 
-use glam::DVec3;
 use crate::geom::{Curve3, CurveEval};
+use glam::DVec3;
 
 /// A single local-minimum pair returned by [`extrema_curve_curve`].
 #[derive(Debug, Clone)]
@@ -37,7 +37,10 @@ impl CurveCurveExtrema {
     /// Convenience: distance of the global (closest) minimum.
     /// Returns `f64::INFINITY` if no pairs were found.
     pub fn min_distance(&self) -> f64 {
-        self.pairs.first().map(|p| p.distance).unwrap_or(f64::INFINITY)
+        self.pairs
+            .first()
+            .map(|p| p.distance)
+            .unwrap_or(f64::INFINITY)
     }
 }
 
@@ -49,7 +52,7 @@ fn curve_domain(c: &Curve3) -> [f64; 2] {
     match c {
         Curve3::Line(l) => {
             let _ = l;
-            [-1e6, 1e6]   // infinite line: clamp to large range for sampling
+            [-1e6, 1e6] // infinite line: clamp to large range for sampling
         }
         other => other.default_domain(),
     }
@@ -61,7 +64,7 @@ fn sq_dist(c1: &Curve3, c2: &Curve3, s: f64, t: f64) -> f64 {
     (c1.point_at(s) - c2.point_at(t)).length_squared()
 }
 
-const H: f64 = 1e-6;   // finite-difference step
+const H: f64 = 1e-6; // finite-difference step
 
 /// Gradient of f(s,t) = |C1(s) − C2(t)|²
 ///   df/ds = 2 · (C1(s)−C2(t)) · C1'(s)
@@ -81,7 +84,10 @@ fn hessian_diag(c1: &Curve3, c2: &Curve3, s: f64, t: f64) -> [f64; 2] {
     let d1 = (c1.point_at(s + H) - c1.point_at(s - H)) / (2.0 * H);
     let d2 = (c2.point_at(t + H) - c2.point_at(t - H)) / (2.0 * H);
     // Gauss-Newton diagonal: 2 * ||d_i||^2
-    [2.0 * d1.length_squared().max(1e-30), 2.0 * d2.length_squared().max(1e-30)]
+    [
+        2.0 * d1.length_squared().max(1e-30),
+        2.0 * d2.length_squared().max(1e-30),
+    ]
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -149,8 +155,12 @@ pub fn extrema_curve_curve(c1: &Curve3, c2: &Curve3, n_samples: usize) -> CurveC
 
     // ── 1. Coarse grid ────────────────────────────────────────────────────────
     // Evaluate sq_dist on an n×n grid; collect indices of local grid-minima.
-    let ss: Vec<f64> = (0..n).map(|i| dom1[0] + (dom1[1] - dom1[0]) * i as f64 / (n - 1) as f64).collect();
-    let tt: Vec<f64> = (0..n).map(|j| dom2[0] + (dom2[1] - dom2[0]) * j as f64 / (n - 1) as f64).collect();
+    let ss: Vec<f64> = (0..n)
+        .map(|i| dom1[0] + (dom1[1] - dom1[0]) * i as f64 / (n - 1) as f64)
+        .collect();
+    let tt: Vec<f64> = (0..n)
+        .map(|j| dom2[0] + (dom2[1] - dom2[0]) * j as f64 / (n - 1) as f64)
+        .collect();
 
     let mut grid = vec![vec![0.0f64; n]; n];
     for (i, &s) in ss.iter().enumerate() {
@@ -164,12 +174,17 @@ pub fn extrema_curve_curve(c1: &Curve3, c2: &Curve3, n_samples: usize) -> CurveC
     for i in 0..n {
         for j in 0..n {
             let v = grid[i][j];
-            let is_min = (0usize..2).flat_map(|di| (0usize..2).map(move |dj| (di, dj)))
+            let is_min = (0usize..2)
+                .flat_map(|di| (0usize..2).map(move |dj| (di, dj)))
                 .all(|(di, dj)| {
                     let ni = i.wrapping_add(di).wrapping_sub(1);
                     let nj = j.wrapping_add(dj).wrapping_sub(1);
-                    if ni == i && nj == j { return true; }
-                    if ni >= n || nj >= n { return true; }
+                    if ni == i && nj == j {
+                        return true;
+                    }
+                    if ni >= n || nj >= n {
+                        return true;
+                    }
                     grid[ni][nj] >= v
                 });
             if is_min {
@@ -203,13 +218,15 @@ pub fn extrema_curve_curve(c1: &Curve3, c2: &Curve3, n_samples: usize) -> CurveC
 
     // ── 3. Deduplicate within parameter tolerance ─────────────────────────────
     const DEDUP_TOL: f64 = 1e-4;
-    pairs.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+    pairs.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut kept: Vec<ExtremaPair> = Vec::new();
     'outer: for p in pairs {
         for k in &kept {
-            if (p.param1 - k.param1).abs() < DEDUP_TOL
-                && (p.param2 - k.param2).abs() < DEDUP_TOL
-            {
+            if (p.param1 - k.param1).abs() < DEDUP_TOL && (p.param2 - k.param2).abs() < DEDUP_TOL {
                 continue 'outer;
             }
         }
@@ -230,11 +247,18 @@ mod tests {
     use glam::DVec3;
 
     fn line(origin: DVec3, dir: DVec3) -> Curve3 {
-        Curve3::Line(Line3 { origin, direction: dir.normalize() })
+        Curve3::Line(Line3 {
+            origin,
+            direction: dir.normalize(),
+        })
     }
 
     fn circle(center: DVec3, normal: DVec3, radius: f64) -> Curve3 {
-        Curve3::Circle(Circle3 { center, normal: normal.normalize(), radius })
+        Curve3::Circle(Circle3 {
+            center,
+            normal: normal.normalize(),
+            radius,
+        })
     }
 
     #[test]

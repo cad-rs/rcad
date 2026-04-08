@@ -2,7 +2,7 @@ use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use rcad_render::{
-    cursor_point_on_plane, Camera, SelectionMode, SelectionState, DEFAULT_EDGE_PICK_RADIUS_PX,
+    Camera, DEFAULT_EDGE_PICK_RADIUS_PX, SelectionMode, SelectionState, cursor_point_on_plane,
 };
 use std::collections::HashSet;
 
@@ -124,7 +124,11 @@ impl CreationController {
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
-                    let hit_outer = face.outer_wire.edges.iter().any(|e| selected_edges.contains(&e.idx));
+                    let hit_outer = face
+                        .outer_wire
+                        .edges
+                        .iter()
+                        .any(|e| selected_edges.contains(&e.idx));
                     let hit_inner = face
                         .inner_wires
                         .iter()
@@ -233,7 +237,9 @@ impl CreationController {
                 Tool::Sphere => "Sphere: click center",
             },
             CommandState::BoxBase { .. } => "Box: click opposite base corner",
-            CommandState::BoxHeight { .. } => "Box: move mouse for height, click or Enter to finish",
+            CommandState::BoxHeight { .. } => {
+                "Box: move mouse for height, click or Enter to finish"
+            }
             CommandState::SphereRadius { .. } => "Sphere: click radius point or Enter to finish",
         }
     }
@@ -429,7 +435,9 @@ impl CreationController {
                 second,
                 box_height_from_screen(anchor_screen_y, current_screen_y, camera_distance),
             ),
-            CommandState::SphereRadius { center, current } => build_sphere_from_points(center, current),
+            CommandState::SphereRadius { center, current } => {
+                build_sphere_from_points(center, current)
+            }
         }
     }
 }
@@ -449,13 +457,13 @@ fn face_by_index(brep: &BRep, face_index: usize) -> Option<&Face> {
     None
 }
 
-fn box_height_from_screen(anchor_screen_y: f32, current_screen_y: f32, camera_distance: f32) -> f64 {
+fn box_height_from_screen(
+    anchor_screen_y: f32,
+    current_screen_y: f32,
+    camera_distance: f32,
+) -> f64 {
     let raw = (anchor_screen_y - current_screen_y) * camera_distance * 0.01;
-    if raw.abs() < 0.1 {
-        1.0
-    } else {
-        raw as f64
-    }
+    if raw.abs() < 0.1 { 1.0 } else { raw as f64 }
 }
 
 fn build_box_from_points(first: DVec3, second: DVec3, depth_signed: f64) -> Option<BRep> {
@@ -468,7 +476,11 @@ fn build_box_from_points(first: DVec3, second: DVec3, depth_signed: f64) -> Opti
         return None;
     }
 
-    let origin_z = if depth_signed < 0.0 { depth_signed } else { 0.0 };
+    let origin_z = if depth_signed < 0.0 {
+        depth_signed
+    } else {
+        0.0
+    };
     make_box_brep(
         DVec3::new(min_x, min_y, origin_z),
         DVec3::X,
@@ -510,8 +522,12 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
             .map(|curve| curve.map(|idx| idx + curve_offset)),
     );
     // edge_curve_range has no index offset — parameters are curve-local values
-    dst.geom.edge_curve_range.extend(src.geom.edge_curve_range.iter().cloned());
-    dst.geom.edge_degenerated.extend(src.geom.edge_degenerated.iter().cloned());
+    dst.geom
+        .edge_curve_range
+        .extend(src.geom.edge_curve_range.iter().cloned());
+    dst.geom
+        .edge_degenerated
+        .extend(src.geom.edge_degenerated.iter().cloned());
 
     let mut face_counter = 0usize;
     for solid in src.solids {
@@ -529,13 +545,28 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
 
                 new_faces.push(Face {
                     outer_wire: Wire {
-                        edges: face.outer_wire.edges.into_iter().map(|we| WireEdge { idx: we.idx + edge_offset, forward: we.forward }).collect(),
+                        edges: face
+                            .outer_wire
+                            .edges
+                            .into_iter()
+                            .map(|we| WireEdge {
+                                idx: we.idx + edge_offset,
+                                forward: we.forward,
+                            })
+                            .collect(),
                     },
                     inner_wires: face
                         .inner_wires
                         .into_iter()
                         .map(|wire| Wire {
-                            edges: wire.edges.into_iter().map(|we| WireEdge { idx: we.idx + edge_offset, forward: we.forward }).collect(),
+                            edges: wire
+                                .edges
+                                .into_iter()
+                                .map(|we| WireEdge {
+                                    idx: we.idx + edge_offset,
+                                    forward: we.forward,
+                                })
+                                .collect(),
                         })
                         .collect(),
                     normal: face.normal,

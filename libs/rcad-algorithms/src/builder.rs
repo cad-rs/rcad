@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::*;
 use rcad_kernel::topology::*;
-use rcad_kernel::BRep;
 
 use crate::bopds::ds::*;
-use crate::classify::{classify_point, Classification};
+use crate::classify::{Classification, classify_point};
 use crate::history::{BooleanHistory, FaceOrigin};
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
@@ -54,8 +54,7 @@ impl SubFace {
         // Use centroid offset slightly inward along the normal.
         // The offset avoids the sample sitting exactly on a face of the other
         // solid (which causes ambiguous IN/OUT classification).
-        let centroid =
-            self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64;
+        let centroid = self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64;
         centroid + self.normal * TOLERANCE_ABS * 10.0
     }
 }
@@ -120,11 +119,7 @@ impl ResultBuilder {
         let normal = if flip { -sub.normal } else { sub.normal };
 
         // Add vertices
-        let vert_indices: Vec<usize> = sub
-            .boundary
-            .iter()
-            .map(|&p| self.add_vertex(p))
-            .collect();
+        let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
 
         // Add edges
         let mut edge_indices = Vec::new();
@@ -422,8 +417,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Analytic curve — sample it into a polyline (e.g. circle)
                 let pts: Vec<DVec3> = (0..=16)
                     .map(|i| {
-                        let t = ic.t_range[0]
-                            + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 16.0;
+                        let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 16.0;
                         use rcad_kernel::CurveEval;
                         ic.curve.point_at(t)
                     })
@@ -438,7 +432,11 @@ impl<'a> BooleanBuilder<'a> {
                 .iter()
                 .map(|&vi| self.ds.vertices[vi].point)
                 .collect();
-            return vec![SubFace { boundary, surface, normal }];
+            return vec![SubFace {
+                boundary,
+                surface,
+                normal,
+            }];
         }
 
         // Collect boundary vertices
@@ -449,7 +447,11 @@ impl<'a> BooleanBuilder<'a> {
             .collect();
 
         if boundary_pts.len() < 3 {
-            return vec![SubFace { boundary: boundary_pts, surface, normal }];
+            return vec![SubFace {
+                boundary: boundary_pts,
+                surface,
+                normal,
+            }];
         }
 
         // For each intersection polyline, split the boundary into two sub-faces

@@ -78,7 +78,11 @@ mod tests {
     use crate::geom::PrimitiveSolid;
 
     fn box_2x2x2() -> BRep {
-        BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 })
+        BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        })
     }
 
     #[test]
@@ -94,7 +98,12 @@ mod tests {
         let brep = box_2x2x2();
         for ei in 0..edge_count(&brep) {
             let adj = edge_adjacent_faces(&brep, ei);
-            assert_eq!(adj.len(), 2, "edge {ei} should have 2 adjacent faces, got {:?}", adj);
+            assert_eq!(
+                adj.len(),
+                2,
+                "edge {ei} should have 2 adjacent faces, got {:?}",
+                adj
+            );
         }
     }
 
@@ -103,7 +112,12 @@ mod tests {
         let brep = box_2x2x2();
         for vi in 0..vertex_count(&brep) {
             let adj = vertex_adjacent_edges(&brep, vi);
-            assert_eq!(adj.len(), 3, "vertex {vi} should have 3 adjacent edges, got {:?}", adj);
+            assert_eq!(
+                adj.len(),
+                3,
+                "vertex {vi} should have 3 adjacent edges, got {:?}",
+                adj
+            );
         }
     }
 
@@ -113,7 +127,12 @@ mod tests {
         // Each face of a box has 4 edges
         for fi in 0..face_count(&brep) {
             let edges = face_edges(&brep, fi);
-            assert_eq!(edges.len(), 4, "face {fi} should have 4 edges, got {:?}", edges);
+            assert_eq!(
+                edges.len(),
+                4,
+                "face {fi} should have 4 edges, got {:?}",
+                edges
+            );
         }
     }
 

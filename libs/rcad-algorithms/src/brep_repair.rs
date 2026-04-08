@@ -16,8 +16,8 @@
 //! original unchanged.
 
 use glam::DVec3;
-use rcad_kernel::{BRep, CurveEval};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::{BRep, CurveEval};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -95,7 +95,11 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
         let rb = find(parent, b);
         if ra != rb {
             // Merge to the smaller index so result is deterministic
-            if ra < rb { parent[rb] = ra; } else { parent[ra] = rb; }
+            if ra < rb {
+                parent[rb] = ra;
+            } else {
+                parent[ra] = rb;
+            }
         }
     }
 
@@ -138,27 +142,43 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     }
 
     // Re-map edges
-    let new_edges: Vec<Edge> = brep.edges.iter().map(|e| Edge {
-        start: remap[e.start],
-        end: remap[e.end],
-    }).collect();
+    let new_edges: Vec<Edge> = brep
+        .edges
+        .iter()
+        .map(|e| Edge {
+            start: remap[e.start],
+            end: remap[e.end],
+        })
+        .collect();
 
     // Rebuild solids with remapped wires (topology is unchanged, just vertex indices)
-    let new_solids = brep.solids.iter().map(|solid| Solid {
-        shells: solid.shells.iter().map(|shell| Shell {
-            faces: shell.faces.iter().map(|face| {
-                let remap_wire = |w: &Wire| Wire {
-                    edges: w.edges.clone(),  // WireEdge indices are edge indices, not vertex
-                };
-                Face {
-                    outer_wire: remap_wire(&face.outer_wire),
-                    inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
-                    normal: face.normal,
-                    triangles: face.triangles.clone(),
-                }
-            }).collect(),
-        }).collect(),
-    }).collect();
+    let new_solids = brep
+        .solids
+        .iter()
+        .map(|solid| Solid {
+            shells: solid
+                .shells
+                .iter()
+                .map(|shell| Shell {
+                    faces: shell
+                        .faces
+                        .iter()
+                        .map(|face| {
+                            let remap_wire = |w: &Wire| Wire {
+                                edges: w.edges.clone(), // WireEdge indices are edge indices, not vertex
+                            };
+                            Face {
+                                outer_wire: remap_wire(&face.outer_wire),
+                                inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
+                                normal: face.normal,
+                                triangles: face.triangles.clone(),
+                            }
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
 
     let mut result = brep.clone();
     result.vertices = new_vertices;
@@ -178,39 +198,59 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
     let mut removed = 0usize;
 
-    let new_solids = brep.solids.iter().map(|solid| Solid {
-        shells: solid.shells.iter().map(|shell| {
-            let new_faces: Vec<Face> = shell.faces.iter().filter(|face| {
-                let wire = &face.outer_wire;
-                // Must have at least 3 edges
-                if wire.edges.len() < 3 {
-                    removed += 1;
-                    return false;
-                }
-                // Collect distinct vertex positions
-                let pts: Vec<DVec3> = wire.edges.iter().filter_map(|we| {
-                    brep.edges.get(we.idx).map(|e| {
-                        let vidx = if we.forward { e.start } else { e.end };
-                        brep.vertices.get(vidx).map(|v| v.point)
-                    }).flatten()
-                }).collect();
+    let new_solids = brep
+        .solids
+        .iter()
+        .map(|solid| Solid {
+            shells: solid
+                .shells
+                .iter()
+                .map(|shell| {
+                    let new_faces: Vec<Face> = shell
+                        .faces
+                        .iter()
+                        .filter(|face| {
+                            let wire = &face.outer_wire;
+                            // Must have at least 3 edges
+                            if wire.edges.len() < 3 {
+                                removed += 1;
+                                return false;
+                            }
+                            // Collect distinct vertex positions
+                            let pts: Vec<DVec3> = wire
+                                .edges
+                                .iter()
+                                .filter_map(|we| {
+                                    brep.edges
+                                        .get(we.idx)
+                                        .map(|e| {
+                                            let vidx = if we.forward { e.start } else { e.end };
+                                            brep.vertices.get(vidx).map(|v| v.point)
+                                        })
+                                        .flatten()
+                                })
+                                .collect();
 
-                if pts.len() < 3 {
-                    removed += 1;
-                    return false;
-                }
+                            if pts.len() < 3 {
+                                removed += 1;
+                                return false;
+                            }
 
-                // Check for zero area using Newell's method
-                let area2 = newell_area(&pts);
-                if area2 < 1e-20 {
-                    removed += 1;
-                    return false;
-                }
-                true
-            }).cloned().collect();
-            Shell { faces: new_faces }
-        }).collect(),
-    }).collect();
+                            // Check for zero area using Newell's method
+                            let area2 = newell_area(&pts);
+                            if area2 < 1e-20 {
+                                removed += 1;
+                                return false;
+                            }
+                            true
+                        })
+                        .cloned()
+                        .collect();
+                    Shell { faces: new_faces }
+                })
+                .collect(),
+        })
+        .collect();
 
     let mut result = brep.clone();
     result.solids = new_solids;
@@ -227,38 +267,62 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
 pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
     let mut changed = 0usize;
 
-    let new_solids = brep.solids.iter().map(|solid| Solid {
-        shells: solid.shells.iter().map(|shell| Shell {
-            faces: shell.faces.iter().map(|face| {
-                let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
-                    brep.edges.get(we.idx).map(|e| {
-                        let vidx = if we.forward { e.start } else { e.end };
-                        brep.vertices.get(vidx).map(|v| v.point)
-                    }).flatten()
-                }).collect();
+    let new_solids = brep
+        .solids
+        .iter()
+        .map(|solid| Solid {
+            shells: solid
+                .shells
+                .iter()
+                .map(|shell| Shell {
+                    faces: shell
+                        .faces
+                        .iter()
+                        .map(|face| {
+                            let pts: Vec<DVec3> = face
+                                .outer_wire
+                                .edges
+                                .iter()
+                                .filter_map(|we| {
+                                    brep.edges
+                                        .get(we.idx)
+                                        .map(|e| {
+                                            let vidx = if we.forward { e.start } else { e.end };
+                                            brep.vertices.get(vidx).map(|v| v.point)
+                                        })
+                                        .flatten()
+                                })
+                                .collect();
 
-                let new_normal = if pts.len() >= 3 {
-                    let n = newell_normal(&pts);
-                    if n.length() > 1e-14 { n.normalize() } else { face.normal }
-                } else {
-                    face.normal
-                };
+                            let new_normal = if pts.len() >= 3 {
+                                let n = newell_normal(&pts);
+                                if n.length() > 1e-14 {
+                                    n.normalize()
+                                } else {
+                                    face.normal
+                                }
+                            } else {
+                                face.normal
+                            };
 
-                let dot = face.normal.dot(new_normal);
-                // dot < cos(1°) ≈ 0.9998 means the normal changed significantly
-                if dot < 0.9998 {
-                    changed += 1;
-                }
+                            let dot = face.normal.dot(new_normal);
+                            // dot < cos(1°) ≈ 0.9998 means the normal changed significantly
+                            if dot < 0.9998 {
+                                changed += 1;
+                            }
 
-                Face {
-                    outer_wire: face.outer_wire.clone(),
-                    inner_wires: face.inner_wires.clone(),
-                    normal: new_normal,
-                    triangles: face.triangles.clone(),
-                }
-            }).collect(),
-        }).collect(),
-    }).collect();
+                            Face {
+                                outer_wire: face.outer_wire.clone(),
+                                inner_wires: face.inner_wires.clone(),
+                                normal: new_normal,
+                                triangles: face.triangles.clone(),
+                            }
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
 
     let mut result = brep.clone();
     result.solids = new_solids;
@@ -278,28 +342,41 @@ pub fn fix_wire_orientation(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     let tol2 = tolerance * tolerance;
     let mut total_fixed = 0usize;
 
-    let new_solids = brep.solids.iter().map(|solid| Solid {
-        shells: solid.shells.iter().map(|shell| Shell {
-            faces: shell.faces.iter().map(|face| {
-                let (new_outer, fixed_outer) =
-                    fix_wire(&face.outer_wire, brep, tol2);
-                let (new_inners, fixed_inner): (Vec<Wire>, usize) = face.inner_wires.iter()
-                    .map(|w| fix_wire(w, brep, tol2))
-                    .fold((Vec::new(), 0), |(mut wires, n), (w, f)| {
-                        wires.push(w);
-                        (wires, n + f)
-                    });
-                let fixed = fixed_outer + fixed_inner;
-                total_fixed += fixed;
-                Face {
-                    outer_wire: new_outer,
-                    inner_wires: new_inners,
-                    normal: face.normal,
-                    triangles: face.triangles.clone(),
-                }
-            }).collect(),
-        }).collect(),
-    }).collect();
+    let new_solids = brep
+        .solids
+        .iter()
+        .map(|solid| Solid {
+            shells: solid
+                .shells
+                .iter()
+                .map(|shell| Shell {
+                    faces: shell
+                        .faces
+                        .iter()
+                        .map(|face| {
+                            let (new_outer, fixed_outer) = fix_wire(&face.outer_wire, brep, tol2);
+                            let (new_inners, fixed_inner): (Vec<Wire>, usize) = face
+                                .inner_wires
+                                .iter()
+                                .map(|w| fix_wire(w, brep, tol2))
+                                .fold((Vec::new(), 0), |(mut wires, n), (w, f)| {
+                                    wires.push(w);
+                                    (wires, n + f)
+                                });
+                            let fixed = fixed_outer + fixed_inner;
+                            total_fixed += fixed;
+                            Face {
+                                outer_wire: new_outer,
+                                inner_wires: new_inners,
+                                normal: face.normal,
+                                triangles: face.triangles.clone(),
+                            }
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
 
     let mut result = brep.clone();
     result.solids = new_solids;
@@ -322,13 +399,27 @@ fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
 
     for i in 0..n {
         let next = (i + 1) % n;
-        let e_curr = match brep.edges.get(edges[i].idx) { Some(e) => e, None => continue };
-        let e_next = match brep.edges.get(edges[next].idx) { Some(e) => e, None => continue };
+        let e_curr = match brep.edges.get(edges[i].idx) {
+            Some(e) => e,
+            None => continue,
+        };
+        let e_next = match brep.edges.get(edges[next].idx) {
+            Some(e) => e,
+            None => continue,
+        };
 
         // end vertex of current edge
-        let end_v = if edges[i].forward { e_curr.end } else { e_curr.start };
+        let end_v = if edges[i].forward {
+            e_curr.end
+        } else {
+            e_curr.start
+        };
         // start vertex of next edge
-        let start_v = if edges[next].forward { e_next.start } else { e_next.end };
+        let start_v = if edges[next].forward {
+            e_next.start
+        } else {
+            e_next.end
+        };
 
         if end_v == start_v {
             continue; // already connected
@@ -344,7 +435,11 @@ fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
         }
 
         // Try flipping the *next* edge to see if that connects the chain
-        let alt_start = if edges[next].forward { e_next.end } else { e_next.start };
+        let alt_start = if edges[next].forward {
+            e_next.end
+        } else {
+            e_next.start
+        };
         if alt_start == end_v {
             edges[next].forward = !edges[next].forward;
             flipped += 1;
@@ -384,12 +479,21 @@ mod tests {
 
     #[test]
     fn repair_unit_box_is_no_op() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let (fixed, report) = repair(&brep, 1e-7);
         assert_eq!(report.vertices_merged, 0);
         assert_eq!(report.degenerate_faces_removed, 0);
         // Face count unchanged
-        let faces: usize = fixed.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum();
+        let faces: usize = fixed
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
         assert_eq!(faces, 6, "unit box should have 6 faces after repair");
     }
 
@@ -398,69 +502,108 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
         let mut brep = BRep::new();
         // Add two vertices at nearly the same position
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1e-9, 0.0, 0.0) }); // dup of 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1e-9, 0.0, 0.0),
+        }); // dup of 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
         brep.edges.push(Edge { start: 0, end: 2 });
         brep.edges.push(Edge { start: 2, end: 3 });
         brep.edges.push(Edge { start: 3, end: 0 });
         let face = Face {
-            outer_wire: Wire { edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)] },
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
         };
-        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
 
         let (fixed, merged) = merge_close_vertices(&brep, 1e-6);
         assert!(merged >= 1, "should merge the near-duplicate vertex");
-        assert!(fixed.vertices.len() < brep.vertices.len(), "should have fewer vertices");
+        assert!(
+            fixed.vertices.len() < brep.vertices.len(),
+            "should have fewer vertices"
+        );
     }
 
     #[test]
     fn recompute_normals_fixes_zero_normal() {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
         brep.edges.push(Edge { start: 2, end: 0 });
         // Face with wrong/zero normal
         let face = Face {
-            outer_wire: Wire { edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)] },
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
             inner_wires: vec![],
-            normal: DVec3::ZERO,  // intentionally wrong
+            normal: DVec3::ZERO, // intentionally wrong
             triangles: vec![],
         };
-        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
         let (fixed, n) = recompute_face_normals(&brep);
-        assert!(n > 0 || fixed.solids[0].shells[0].faces[0].normal != DVec3::ZERO,
-            "normal should have been fixed");
+        assert!(
+            n > 0 || fixed.solids[0].shells[0].faces[0].normal != DVec3::ZERO,
+            "normal should have been fixed"
+        );
     }
 
     #[test]
     fn remove_degenerate_face() {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 0 });
         // Only 2 edges — degenerate
         let face = Face {
-            outer_wire: Wire { edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)] },
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
+            },
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
         };
-        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
         let (fixed, n) = remove_degenerate_faces(&brep);
         assert_eq!(n, 1);
-        let face_count: usize = fixed.solids.iter()
-            .flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum();
+        let face_count: usize = fixed
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
         assert_eq!(face_count, 0);
     }
 }

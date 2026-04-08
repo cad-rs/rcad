@@ -107,8 +107,18 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
 
     // Step 2: Newton refinement
     // For infinite domains, don't clamp the Newton step
-    let clamp_t = |t: f64| if t0_raw.is_infinite() || t1_raw.is_infinite() { t } else { t.clamp(t0, t1) };
-    let dt = if (t1 - t0).is_finite() { (t1 - t0) * 1e-6 } else { 1e-6 };
+    let clamp_t = |t: f64| {
+        if t0_raw.is_infinite() || t1_raw.is_infinite() {
+            t
+        } else {
+            t.clamp(t0, t1)
+        }
+    };
+    let dt = if (t1 - t0).is_finite() {
+        (t1 - t0) * 1e-6
+    } else {
+        1e-6
+    };
     for _ in 0..30 {
         let p = curve.point_at(best_t);
         let diff = p - query;
@@ -116,14 +126,17 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
         let t_plus = best_t + dt;
         let t_minus = best_t - dt;
         let span = t_plus - t_minus;
-        if span.abs() < 1e-20 { break; }
+        if span.abs() < 1e-20 {
+            break;
+        }
         let tangent = (curve.point_at(t_plus) - curve.point_at(t_minus)) / span;
         let tang_sq = tangent.dot(tangent);
         if tang_sq < 1e-20 {
             break;
         }
         // Second-order term (curvature denominator term)
-        let curvature_approx = (curve.point_at(best_t + 2.0 * dt) - 2.0 * p + curve.point_at(best_t - 2.0 * dt))
+        let curvature_approx = (curve.point_at(best_t + 2.0 * dt) - 2.0 * p
+            + curve.point_at(best_t - 2.0 * dt))
             / (dt * dt);
         let denom = tang_sq + diff.dot(curvature_approx);
         let delta = diff.dot(tangent) / if denom.abs() > 1e-20 { denom } else { tang_sq };
@@ -181,7 +194,6 @@ pub fn closest_point_on_surface(
 
     match surface {
         // ── Analytic closed-form projections ──────────────────────────────────
-
         Surface3::Plane(plane) => {
             // Project onto the infinite plane, no clamping needed.
             let d = (query - plane.origin).dot(plane.normal);
@@ -262,9 +274,12 @@ pub fn closest_point_on_surface(
             let point = cone.apex + cone.axis * s + r_hat * s * tan_h;
             SurfaceProjection {
                 point,
-                params: (s, r_hat.dot(any_perpendicular(cone.axis)).atan2(
-                    r_hat.dot(cone.axis.cross(any_perpendicular(cone.axis)))
-                )),
+                params: (
+                    s,
+                    r_hat
+                        .dot(any_perpendicular(cone.axis))
+                        .atan2(r_hat.dot(cone.axis.cross(any_perpendicular(cone.axis)))),
+                ),
                 distance: (point - query).length(),
             }
         }
@@ -289,9 +304,9 @@ pub fn closest_point_on_surface(
             } else {
                 tube_center + w / w_len * torus.minor_radius
             };
-            let u = major_dir.dot(any_perpendicular(torus.axis)).atan2(
-                major_dir.dot(torus.axis.cross(any_perpendicular(torus.axis)))
-            );
+            let u = major_dir
+                .dot(any_perpendicular(torus.axis))
+                .atan2(major_dir.dot(torus.axis.cross(any_perpendicular(torus.axis))));
             let w_dir = (point - tube_center).normalize_or_zero();
             let v_param = w_dir.dot(torus.axis).atan2(w_dir.dot(major_dir));
             SurfaceProjection {
@@ -404,7 +419,11 @@ mod tests {
         });
         let q = DVec3::new(3.0, 5.0, -2.0);
         let r = closest_point_on_surface(&plane, q, 8);
-        assert!((r.point - DVec3::new(3.0, 0.0, -2.0)).length() < 1e-9, "point={}", r.point);
+        assert!(
+            (r.point - DVec3::new(3.0, 0.0, -2.0)).length() < 1e-9,
+            "point={}",
+            r.point
+        );
         assert!((r.distance - 5.0).abs() < 1e-9);
     }
 
@@ -458,8 +477,11 @@ mod tests {
         });
         let q = DVec3::new(2.0, 0.0, 0.0);
         let r = closest_point_on_curve(&circle, q, 64);
-        assert!((r.point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
-            "expected (1,0,0) got {}", r.point);
+        assert!(
+            (r.point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
+            "expected (1,0,0) got {}",
+            r.point
+        );
         assert!((r.distance - 1.0).abs() < 1e-6);
     }
 
@@ -473,7 +495,12 @@ mod tests {
         let q = DVec3::new(3.0, 4.0, 0.0);
         let r = closest_point_on_curve(&line, q, 32);
         let expected = DVec3::new(3.0, 0.0, 0.0);
-        assert!((r.point - expected).length() < 1e-4, "expected {:?} got {}", expected, r.point);
+        assert!(
+            (r.point - expected).length() < 1e-4,
+            "expected {:?} got {}",
+            expected,
+            r.point
+        );
         assert!((r.distance - 4.0).abs() < 1e-4, "distance={}", r.distance);
     }
 
@@ -494,7 +521,10 @@ mod tests {
         });
         let q = DVec3::new(0.5, 0.5, 5.0);
         let r = closest_point_on_surface(&surf, q, 8);
-        assert!((r.point - DVec3::new(0.5, 0.5, 0.0)).length() < 1e-4,
-            "got {}", r.point);
+        assert!(
+            (r.point - DVec3::new(0.5, 0.5, 0.0)).length() < 1e-4,
+            "got {}",
+            r.point
+        );
     }
 }

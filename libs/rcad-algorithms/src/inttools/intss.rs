@@ -21,17 +21,17 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 use rcad_kernel::geom::{
-    any_perpendicular, Circle3, CurveEval, Ellipse3, Line3, Plane, SphericalSurface,
-    CylindricalSurface, ConicalSurface, Surface3, SurfaceEval,
+    Circle3, ConicalSurface, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
+    SphericalSurface, Surface3, SurfaceEval, any_perpendicular,
 };
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
 use crate::inttools::{
-    plane_plane::{intersect_plane_plane, PlanePlaneResult},
-    plane_sphere::{intersect_plane_sphere, PlaneSphereResult},
-    plane_cylinder::{intersect_plane_cylinder, PlaneCylinderResult},
-    plane_cone::{intersect_plane_cone, PlaneConicalResult},
+    plane_cone::{PlaneConicalResult, intersect_plane_cone},
+    plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
+    plane_plane::{PlanePlaneResult, intersect_plane_plane},
+    plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
 };
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public result types
@@ -59,7 +59,9 @@ pub struct SurfaceSurfaceIntersection {
 }
 
 impl SurfaceSurfaceIntersection {
-    pub fn is_empty(&self) -> bool { self.curves.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.curves.is_empty()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -74,18 +76,18 @@ pub fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceInterse
     use Surface3::*;
     match (s1, s2) {
         // ── Plane × * ─────────────────────────────────────────────────────
-        (Plane(p1), Plane(p2))         => plane_x_plane(p1, p2),
-        (Plane(p),  Sphere(s))  | (Sphere(s),  Plane(p))   => plane_x_sphere(p, s),
-        (Plane(p),  Cylinder(c))| (Cylinder(c),Plane(p))   => plane_x_cylinder(p, c),
-        (Plane(p),  Cone(c))    | (Cone(c),    Plane(p))   => plane_x_cone(p, c),
+        (Plane(p1), Plane(p2)) => plane_x_plane(p1, p2),
+        (Plane(p), Sphere(s)) | (Sphere(s), Plane(p)) => plane_x_sphere(p, s),
+        (Plane(p), Cylinder(c)) | (Cylinder(c), Plane(p)) => plane_x_cylinder(p, c),
+        (Plane(p), Cone(c)) | (Cone(c), Plane(p)) => plane_x_cone(p, c),
 
         // ── Sphere × * ────────────────────────────────────────────────────
-        (Sphere(s1), Sphere(s2))       => sphere_x_sphere(s1, s2),
-        (Sphere(s),  Cylinder(c)) | (Cylinder(c), Sphere(s)) => sphere_x_cylinder(s, c),
-        (Sphere(s),  Cone(c))     | (Cone(c),     Sphere(s)) => sphere_x_cone(s, c),
+        (Sphere(s1), Sphere(s2)) => sphere_x_sphere(s1, s2),
+        (Sphere(s), Cylinder(c)) | (Cylinder(c), Sphere(s)) => sphere_x_cylinder(s, c),
+        (Sphere(s), Cone(c)) | (Cone(c), Sphere(s)) => sphere_x_cone(s, c),
 
         // ── Cylinder × Cylinder ───────────────────────────────────────────
-        (Cylinder(c1), Cylinder(c2))   => cylinder_x_cylinder(c1, c2),
+        (Cylinder(c1), Cylinder(c2)) => cylinder_x_cylinder(c1, c2),
 
         // ── Cylinder × Cone and Cone × Cone fall through to numeric ───────
         // ── All others → numeric marching ─────────────────────────────────
@@ -100,9 +102,11 @@ pub fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceInterse
 fn plane_x_plane(p1: &Plane, p2: &Plane) -> SurfaceSurfaceIntersection {
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_plane(p1, p2) {
-        PlanePlaneResult::Line(l)      => { out.curves.push(SurfaceCurve::Line(l)); }
-        PlanePlaneResult::Coincident   => {} // surfaces identical — infinite overlap
-        PlanePlaneResult::Parallel     => {} // no intersection
+        PlanePlaneResult::Line(l) => {
+            out.curves.push(SurfaceCurve::Line(l));
+        }
+        PlanePlaneResult::Coincident => {} // surfaces identical — infinite overlap
+        PlanePlaneResult::Parallel => {}   // no intersection
     }
     out
 }
@@ -114,9 +118,13 @@ fn plane_x_plane(p1: &Plane, p2: &Plane) -> SurfaceSurfaceIntersection {
 fn plane_x_sphere(p: &Plane, s: &SphericalSurface) -> SurfaceSurfaceIntersection {
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_sphere(p, s) {
-        PlaneSphereResult::Circle(c)        => { out.curves.push(SurfaceCurve::Circle(c)); }
-        PlaneSphereResult::TangentPoint(pt) => { out.curves.push(SurfaceCurve::Point(pt)); }
-        PlaneSphereResult::NoIntersection   => {}
+        PlaneSphereResult::Circle(c) => {
+            out.curves.push(SurfaceCurve::Circle(c));
+        }
+        PlaneSphereResult::TangentPoint(pt) => {
+            out.curves.push(SurfaceCurve::Point(pt));
+        }
+        PlaneSphereResult::NoIntersection => {}
     }
     out
 }
@@ -128,14 +136,20 @@ fn plane_x_sphere(p: &Plane, s: &SphericalSurface) -> SurfaceSurfaceIntersection
 fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersection {
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_cylinder(p, c) {
-        PlaneCylinderResult::Circle(c)       => { out.curves.push(SurfaceCurve::Circle(c)); }
-        PlaneCylinderResult::Ellipse(e)      => { out.curves.push(SurfaceCurve::Ellipse(e)); }
-        PlaneCylinderResult::TangentLine(l)  => { out.curves.push(SurfaceCurve::Line(l)); }
-        PlaneCylinderResult::TwoLines(l1,l2) => {
+        PlaneCylinderResult::Circle(c) => {
+            out.curves.push(SurfaceCurve::Circle(c));
+        }
+        PlaneCylinderResult::Ellipse(e) => {
+            out.curves.push(SurfaceCurve::Ellipse(e));
+        }
+        PlaneCylinderResult::TangentLine(l) => {
+            out.curves.push(SurfaceCurve::Line(l));
+        }
+        PlaneCylinderResult::TwoLines(l1, l2) => {
             out.curves.push(SurfaceCurve::Line(l1));
             out.curves.push(SurfaceCurve::Line(l2));
         }
-        PlaneCylinderResult::NoIntersection  => {}
+        PlaneCylinderResult::NoIntersection => {}
     }
     out
 }
@@ -147,15 +161,23 @@ fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersec
 fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
     let mut out = SurfaceSurfaceIntersection::default();
     match intersect_plane_cone(p, c) {
-        PlaneConicalResult::Circle(c)        => { out.curves.push(SurfaceCurve::Circle(c)); }
-        PlaneConicalResult::Ellipse(e)       => { out.curves.push(SurfaceCurve::Ellipse(e)); }
-        PlaneConicalResult::SingleLine(l)    => { out.curves.push(SurfaceCurve::Line(l)); }
-        PlaneConicalResult::TwoLines(l1,l2)  => {
+        PlaneConicalResult::Circle(c) => {
+            out.curves.push(SurfaceCurve::Circle(c));
+        }
+        PlaneConicalResult::Ellipse(e) => {
+            out.curves.push(SurfaceCurve::Ellipse(e));
+        }
+        PlaneConicalResult::SingleLine(l) => {
+            out.curves.push(SurfaceCurve::Line(l));
+        }
+        PlaneConicalResult::TwoLines(l1, l2) => {
             out.curves.push(SurfaceCurve::Line(l1));
             out.curves.push(SurfaceCurve::Line(l2));
         }
-        PlaneConicalResult::Point(pt)        => { out.curves.push(SurfaceCurve::Point(pt)); }
-        PlaneConicalResult::NoIntersection   => {}
+        PlaneConicalResult::Point(pt) => {
+            out.curves.push(SurfaceCurve::Point(pt));
+        }
+        PlaneConicalResult::NoIntersection => {}
     }
     out
 }
@@ -306,7 +328,11 @@ fn sphere_x_cone(s: &SphericalSurface, c: &ConicalSurface) -> SurfaceSurfaceInte
             let z = z_c - r_s + 2.0 * r_s * frac;
             let dz = z - z_c;
             let r_sphere_sq = r_s * r_s - dz * dz;
-            if r_sphere_sq < 0.0 { prev_f = f64::NAN; prev_z = z; continue; }
+            if r_sphere_sq < 0.0 {
+                prev_f = f64::NAN;
+                prev_z = z;
+                continue;
+            }
             let r_sphere = r_sphere_sq.sqrt();
             let r_cone = c.radius + z * ta;
             let f = r_sphere - r_cone;
@@ -317,21 +343,31 @@ fn sphere_x_cone(s: &SphericalSurface, c: &ConicalSurface) -> SurfaceSurfaceInte
                 for _ in 0..32 {
                     let mid = (lo + hi) * 0.5;
                     let dm = mid - z_c;
-                    let rsm = (r_s*r_s - dm*dm).max(0.0).sqrt();
+                    let rsm = (r_s * r_s - dm * dm).max(0.0).sqrt();
                     let rcm = c.radius + mid * ta;
-                    if (rsm - rcm) * (rsm - (c.radius + lo * ta)) < 0.0 { hi = mid; } else { lo = mid; }
+                    if (rsm - rcm) * (rsm - (c.radius + lo * ta)) < 0.0 {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
                 }
                 let z_sol = (lo + hi) * 0.5;
                 let r_sol = (c.radius + z_sol * ta).max(0.0);
                 let center = c.apex + c.axis * z_sol;
                 if r_sol > TOLERANCE_ABS {
-                    out.curves.push(SurfaceCurve::Circle(Circle3 { center, normal: c.axis, radius: r_sol }));
+                    out.curves.push(SurfaceCurve::Circle(Circle3 {
+                        center,
+                        normal: c.axis,
+                        radius: r_sol,
+                    }));
                 }
             }
             prev_f = f;
             prev_z = z;
         }
-        if !out.curves.is_empty() { return out; }
+        if !out.curves.is_empty() {
+            return out;
+        }
     }
 
     numeric_intss(&Surface3::Sphere(*s), &Surface3::Cone(*c))
@@ -345,7 +381,10 @@ fn sphere_x_cone(s: &SphericalSurface, c: &ConicalSurface) -> SurfaceSurfaceInte
 ///
 /// Analytic case: parallel axes → ellipses (or circles if same radius and
 /// same orientation).  General case (skew/crossing axes) → numerical.
-fn cylinder_x_cylinder(c1: &CylindricalSurface, c2: &CylindricalSurface) -> SurfaceSurfaceIntersection {
+fn cylinder_x_cylinder(
+    c1: &CylindricalSurface,
+    c2: &CylindricalSurface,
+) -> SurfaceSurfaceIntersection {
     if vectors_parallel(c1.axis, c2.axis) {
         // Parallel cylinders.
         // Find separation of axes.
@@ -371,9 +410,17 @@ fn cylinder_x_cylinder(c1: &CylindricalSurface, c2: &CylindricalSurface) -> Surf
         // These intersection lines are infinitely long — represent as lines through 2 points.
         let mut out = SurfaceSurfaceIntersection::default();
         // Direction of separation (in perp plane)
-        let sep_dir = if d > TOLERANCE_ABS { proj / d } else { any_perpendicular(c1.axis) };
+        let sep_dir = if d > TOLERANCE_ABS {
+            proj / d
+        } else {
+            any_perpendicular(c1.axis)
+        };
         // Angle of intersection point from c1 axis towards c2 axis
-        let cos_t = if d > TOLERANCE_ABS { (d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1) } else { 0.0 };
+        let cos_t = if d > TOLERANCE_ABS {
+            (d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)
+        } else {
+            0.0
+        };
         let cos_t = cos_t.clamp(-1.0, 1.0);
         let sin_t = (1.0 - cos_t * cos_t).sqrt();
         let perp = c1.axis.cross(sep_dir).normalize_or_zero();
@@ -381,8 +428,13 @@ fn cylinder_x_cylinder(c1: &CylindricalSurface, c2: &CylindricalSurface) -> Surf
         for &sign in &[1.0f64, -1.0f64] {
             let dir_in_plane = sep_dir * cos_t + perp * (sign * sin_t);
             let pt = c1.origin + dir_in_plane * r1;
-            out.curves.push(SurfaceCurve::Line(Line3 { origin: pt, direction: c1.axis }));
-            if sin_t < TOLERANCE_ABS { break; } // tangent — only one line
+            out.curves.push(SurfaceCurve::Line(Line3 {
+                origin: pt,
+                direction: c1.axis,
+            }));
+            if sin_t < TOLERANCE_ABS {
+                break;
+            } // tangent — only one line
         }
         return out;
     }
@@ -436,7 +488,10 @@ fn numeric_intss(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
             let p = s1.point_at(u, v);
 
             // Find closest point on s2
-            let min_sq = s2_pts.iter().map(|q| (p - *q).length_squared()).fold(f64::INFINITY, f64::min);
+            let min_sq = s2_pts
+                .iter()
+                .map(|q| (p - *q).length_squared())
+                .fold(f64::INFINITY, f64::min);
 
             if min_sq.sqrt() < threshold {
                 intersection_pts.push(p);
@@ -458,21 +513,33 @@ fn numeric_intss(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{Plane, SphericalSurface, CylindricalSurface};
     use glam::DVec3;
+    use rcad_kernel::geom::{CylindricalSurface, Plane, SphericalSurface};
 
     #[test]
     fn plane_plane_parallel() {
-        let p1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let p2 = Surface3::Plane(Plane { origin: DVec3::new(0.0,0.0,1.0), normal: DVec3::Z });
+        let p1 = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let p2 = Surface3::Plane(Plane {
+            origin: DVec3::new(0.0, 0.0, 1.0),
+            normal: DVec3::Z,
+        });
         let r = intersect_surfaces(&p1, &p2);
         assert!(r.is_empty(), "parallel planes: no intersection");
     }
 
     #[test]
     fn plane_plane_intersect() {
-        let p1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let p2 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::X });
+        let p1 = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let p2 = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::X,
+        });
         let r = intersect_surfaces(&p1, &p2);
         assert_eq!(r.curves.len(), 1);
         assert!(matches!(r.curves[0], SurfaceCurve::Line(_)));
@@ -481,19 +548,37 @@ mod tests {
     #[test]
     fn sphere_sphere_equator() {
         // Two equal spheres touching at (1,0,0): each has r=1, centers at (0,0,0) and (2,0,0)
-        let s1 = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 });
-        let s2 = Surface3::Sphere(SphericalSurface { center: DVec3::new(1.0,0.0,0.0), axis: DVec3::Z, radius: 1.0 });
+        let s1 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let s2 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(1.0, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
         let r = intersect_surfaces(&s1, &s2);
         assert_eq!(r.curves.len(), 1, "expected one circle");
         if let SurfaceCurve::Circle(c) = &r.curves[0] {
             assert!((c.center.x - 0.5).abs() < 1e-6, "center should be at x=0.5");
-        } else { panic!("expected Circle"); }
+        } else {
+            panic!("expected Circle");
+        }
     }
 
     #[test]
     fn sphere_sphere_disjoint() {
-        let s1 = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 });
-        let s2 = Surface3::Sphere(SphericalSurface { center: DVec3::new(5.0,0.0,0.0), axis: DVec3::Z, radius: 1.0 });
+        let s1 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let s2 = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(5.0, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
         let r = intersect_surfaces(&s1, &s2);
         assert!(r.is_empty(), "disjoint spheres: no intersection");
     }
@@ -501,8 +586,16 @@ mod tests {
     #[test]
     fn cylinder_cylinder_parallel_intersecting() {
         // Two parallel cylinders r=1 centered at (0,0,0) and (1.5,0,0)
-        let c1 = Surface3::Cylinder(CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 });
-        let c2 = Surface3::Cylinder(CylindricalSurface { origin: DVec3::new(1.5,0.0,0.0), axis: DVec3::Z, radius: 1.0 });
+        let c1 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let c2 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(1.5, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
         let r = intersect_surfaces(&c1, &c2);
         // Two parallel lines
         assert_eq!(r.curves.len(), 2, "expected two intersection lines");
@@ -511,8 +604,16 @@ mod tests {
     #[test]
     fn cylinder_cylinder_tangent() {
         // Two parallel cylinders r=1 separated by exactly 2 (tangent externally)
-        let c1 = Surface3::Cylinder(CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 });
-        let c2 = Surface3::Cylinder(CylindricalSurface { origin: DVec3::new(2.0,0.0,0.0), axis: DVec3::Z, radius: 1.0 });
+        let c1 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let c2 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(2.0, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
         let r = intersect_surfaces(&c1, &c2);
         // One tangent line
         assert_eq!(r.curves.len(), 1, "tangent cylinders: one line");
@@ -520,12 +621,21 @@ mod tests {
 
     #[test]
     fn plane_sphere_great_circle() {
-        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
-        let s = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0 });
+        let p = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+        });
         let r = intersect_surfaces(&p, &s);
         assert_eq!(r.curves.len(), 1);
         if let SurfaceCurve::Circle(c) = &r.curves[0] {
             assert!((c.radius - 3.0).abs() < 1e-6);
-        } else { panic!("expected Circle"); }
+        } else {
+            panic!("expected Circle");
+        }
     }
 }

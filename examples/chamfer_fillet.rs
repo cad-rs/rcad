@@ -51,7 +51,10 @@ fn demo_chamfer() {
 
     let step = StepWriter::write_string(
         &result,
-        ExportSelection { selected_faces: &[], selected_edges: &[] },
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
     );
     save("box_chamfer.step", &step);
     println!("  STEP records: {}", step_record_count(&step));
@@ -73,7 +76,10 @@ fn demo_fillet() {
 
     let step = StepWriter::write_string(
         &result,
-        ExportSelection { selected_faces: &[], selected_edges: &[] },
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
     );
     save("box_fillet.step", &step);
     println!("  STEP records: {}", step_record_count(&step));
@@ -82,7 +88,9 @@ fn demo_fillet() {
 // ── 3. All edges chamfered ────────────────────────────────────────────────────
 
 fn demo_all_edges_chamfer() {
-    println!("\n=== 3. All-edges chamfer: chamfer each original edge independently, export one ===");
+    println!(
+        "\n=== 3. All-edges chamfer: chamfer each original edge independently, export one ==="
+    );
 
     let base = box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 1.5, 1.0).unwrap();
     let original_edge_count = base.edges.len();
@@ -96,7 +104,10 @@ fn demo_all_edges_chamfer() {
             Err(_) => {}
         }
     }
-    println!("  Successfully chamfered {} of {original_edge_count} edges", results.len());
+    println!(
+        "  Successfully chamfered {} of {original_edge_count} edges",
+        results.len()
+    );
 
     // Export the last successful result (all should be 9 faces each).
     if let Some((last_idx, last_result)) = results.last() {
@@ -106,7 +117,10 @@ fn demo_all_edges_chamfer() {
         );
         let step = StepWriter::write_string(
             last_result,
-            ExportSelection { selected_faces: &[], selected_edges: &[] },
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
         );
         save("box_all_chamfer.step", &step);
         println!("  STEP records: {}", step_record_count(&step));

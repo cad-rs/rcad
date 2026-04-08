@@ -309,12 +309,7 @@ fn collocation_matrix(
 /// strict diagonal dominance for chord-length parameterization).
 ///
 /// Falls back to Gauss elimination for small n.
-fn solve_interpolation(
-    params: &[f64],
-    knots: &[f64],
-    degree: usize,
-    pts: &[DVec3],
-) -> Vec<DVec3> {
+fn solve_interpolation(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec3]) -> Vec<DVec3> {
     let n = pts.len();
     let a = collocation_matrix(params, knots, degree, n, n);
 
@@ -393,12 +388,12 @@ fn gauss_solve(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
 /// Endpoints are pinned to `p0` (first) and `p1` (last).
 /// Returns a Vec of length `n_ctrl`.
 fn solve_least_squares(
-    a: &[Vec<f64>],      // collocation matrix n_data × n_ctrl
+    a: &[Vec<f64>], // collocation matrix n_data × n_ctrl
     pts: &[DVec3],
-    coord: usize,        // 0=x, 1=y, 2=z
+    coord: usize, // 0=x, 1=y, 2=z
     p0: f64,
     p1: f64,
-    m: usize,            // number of free unknowns = n_ctrl - 2
+    m: usize, // number of free unknowns = n_ctrl - 2
     n_ctrl: usize,
 ) -> Vec<f64> {
     let n_data = pts.len();
@@ -416,9 +411,7 @@ fn solve_least_squares(
         .collect();
 
     // Sub-matrix A_inner = A[:, 1..n_ctrl-1]  (n_data × m)
-    let a_inner: Vec<Vec<f64>> = (0..n_data)
-        .map(|i| a[i][1..n_ctrl - 1].to_vec())
-        .collect();
+    let a_inner: Vec<Vec<f64>> = (0..n_data).map(|i| a[i][1..n_ctrl - 1].to_vec()).collect();
 
     // Normal equations: (A_inner^T A_inner) x = A_inner^T rhs
     let mut ata = vec![vec![0.0_f64; m]; m];
@@ -516,18 +509,28 @@ mod tests {
 
     #[test]
     fn interpolate_rejects_single_point() {
-        assert!(matches!(interpolate_points(&[DVec3::ZERO]), Err(FitError::TooFewPoints)));
+        assert!(matches!(
+            interpolate_points(&[DVec3::ZERO]),
+            Err(FitError::TooFewPoints)
+        ));
     }
 
     #[test]
     fn interpolate_rejects_coincident_points() {
         let pts = vec![DVec3::ZERO; 3];
-        assert!(matches!(interpolate_points(&pts), Err(FitError::DegeneratePoints)));
+        assert!(matches!(
+            interpolate_points(&pts),
+            Err(FitError::DegeneratePoints)
+        ));
     }
 
     #[test]
     fn approximate_falls_back_to_interpolate_when_n_ctrl_eq_n() {
-        let pts = vec![DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0), DVec3::new(2.0, 0.0, 0.0)];
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(2.0, 0.0, 0.0),
+        ];
         let c_approx = approximate_points(&pts, 3).unwrap();
         let c_interp = interpolate_points(&pts).unwrap();
         // Both should give same endpoints
@@ -555,7 +558,11 @@ mod tests {
 
     #[test]
     fn chord_params_normalized() {
-        let pts = vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0), DVec3::new(3.0, 0.0, 0.0)];
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(3.0, 0.0, 0.0),
+        ];
         let p = chord_length_params(&pts).unwrap();
         assert_eq!(p[0], 0.0);
         assert_eq!(p[2], 1.0);

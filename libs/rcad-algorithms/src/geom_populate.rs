@@ -1,6 +1,6 @@
 use glam::DVec3;
-use rcad_kernel::geom::*;
 use rcad_kernel::BRep;
+use rcad_kernel::geom::*;
 
 /// Populates `brep.geom` with analytic geometry for a box BRep.
 ///
@@ -41,7 +41,10 @@ pub fn populate_box_geom(brep: &mut BRep) {
             for face in &shell.faces {
                 // Use the first wire vertex rather than face.triangles (triangles
                 // are rendering metadata and must not be used in modeling code).
-                let origin = face.outer_wire.edges.first()
+                let origin = face
+                    .outer_wire
+                    .edges
+                    .first()
                     .and_then(|we| brep.edges.get(we.idx))
                     .map(|e| brep.vertices[e.start].point)
                     .unwrap_or(DVec3::ZERO);

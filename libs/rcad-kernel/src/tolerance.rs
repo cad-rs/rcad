@@ -159,14 +159,22 @@ mod tests {
 
     #[test]
     fn stored_tolerance_returned() {
-        let mut brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         brep.geom.edge_tolerance = vec![1e-5; brep.edges.len()];
         assert!((edge_tolerance(&brep, 0) - 1e-5).abs() < 1e-20);
     }
 
     #[test]
     fn model_tolerance_returns_max() {
-        let mut brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         brep.geom.vertex_tolerance = vec![1e-6; brep.vertices.len()];
         brep.geom.edge_tolerance = vec![1e-5; brep.edges.len()];
         // max is 1e-5

@@ -5,9 +5,9 @@
 //! Run: cargo run --example sweep_ops
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
-use rcad_kernel::BRep;
 use rcad_modeling::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::{extrude, revolve};
 use rcad_scene::append_brep;
@@ -84,11 +84,15 @@ fn main() {
 
     let mid_sq = square_profile(-1.0, -1.0, 2.0, 2.0);
     let mut mid = extrude(&mid_sq, 0, DVec3::Z, 0.5).expect("mid");
-    for v in &mut mid.vertices { v.point.z += 0.5; }
+    for v in &mut mid.vertices {
+        v.point.z += 0.5;
+    }
 
     let top_sq = square_profile(-0.5, -0.5, 1.0, 1.0);
     let mut top = extrude(&top_sq, 0, DVec3::Z, 0.5).expect("top");
-    for v in &mut top.vertices { v.point.z += 1.0; }
+    for v in &mut top.vertices {
+        v.point.z += 1.0;
+    }
 
     append_brep(&mut base, mid);
     append_brep(&mut base, top);
@@ -102,10 +106,10 @@ fn main() {
 /// Axis-aligned rectangle at (x, y, 0) with given width and height.
 fn rect_profile(x: f64, y: f64, w: f64, h: f64) -> BRep {
     let pts = [
-        DVec3::new(x,     y,     0.0),
-        DVec3::new(x + w, y,     0.0),
+        DVec3::new(x, y, 0.0),
+        DVec3::new(x + w, y, 0.0),
         DVec3::new(x + w, y + h, 0.0),
-        DVec3::new(x,     y + h, 0.0),
+        DVec3::new(x, y + h, 0.0),
     ];
     polygon_profile(&pts)
 }
@@ -122,10 +126,12 @@ fn triangle_profile(a: DVec3, b: DVec3, c: DVec3) -> BRep {
 
 /// Regular hexagon centered at `center` in the XY plane with circumradius `r`.
 fn hexagon_profile(center: DVec3, r: f64) -> BRep {
-    let pts: Vec<DVec3> = (0..6).map(|i| {
-        let angle = std::f64::consts::FRAC_PI_3 * i as f64;
-        center + DVec3::new(r * angle.cos(), r * angle.sin(), 0.0)
-    }).collect();
+    let pts: Vec<DVec3> = (0..6)
+        .map(|i| {
+            let angle = std::f64::consts::FRAC_PI_3 * i as f64;
+            center + DVec3::new(r * angle.cos(), r * angle.sin(), 0.0)
+        })
+        .collect();
     polygon_profile(&pts)
 }
 
@@ -138,12 +144,12 @@ fn hexagon_profile(center: DVec3, r: f64) -> BRep {
 ///   └──────┘
 fn l_profile(x: f64, y: f64, w: f64, h: f64, t: f64) -> BRep {
     let pts = [
-        DVec3::new(x,         y,         0.0),
-        DVec3::new(x + w,     y,         0.0),
-        DVec3::new(x + w,     y + t,     0.0),
-        DVec3::new(x + t,     y + t,     0.0),
-        DVec3::new(x + t,     y + h,     0.0),
-        DVec3::new(x,         y + h,     0.0),
+        DVec3::new(x, y, 0.0),
+        DVec3::new(x + w, y, 0.0),
+        DVec3::new(x + w, y + t, 0.0),
+        DVec3::new(x + t, y + t, 0.0),
+        DVec3::new(x + t, y + h, 0.0),
+        DVec3::new(x, y + h, 0.0),
     ];
     polygon_profile(&pts)
 }
@@ -165,23 +171,38 @@ fn polygon_profile(pts: &[DVec3]) -> BRep {
         let len = (b - a).length();
         let eidx = make_edge(
             &mut brep,
-            Curve3::Line(Line3 { origin: a, direction: dir }),
-            0.0, len,
-            vis[i], vis[j],
-        ).expect("make_edge");
-        wire_edges.push(WireEdge { idx: eidx, forward: true });
+            Curve3::Line(Line3 {
+                origin: a,
+                direction: dir,
+            }),
+            0.0,
+            len,
+            vis[i],
+            vis[j],
+        )
+        .expect("make_edge");
+        wire_edges.push(WireEdge {
+            idx: eidx,
+            forward: true,
+        });
     }
 
-    let surface = Surface3::Plane(Plane { origin: pts[0], normal: DVec3::Z });
+    let surface = Surface3::Plane(Plane {
+        origin: pts[0],
+        normal: DVec3::Z,
+    });
     make_face(&mut brep, surface, make_wire(wire_edges), vec![]).expect("make_face");
     brep
 }
 
 fn write_step(brep: &BRep, path: &str) {
-    let step = StepWriter::write_string(brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     std::fs::write(path, step).expect("write STEP file");
     println!("  -> {path}");
 }

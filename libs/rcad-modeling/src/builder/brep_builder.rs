@@ -4,9 +4,9 @@
 //! appending curves, edges, wires, faces, and solids. The caller is responsible
 //! for topological consistency.
 
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::BRep;
 
 use crate::builder::BuildError;
 
@@ -87,7 +87,9 @@ pub fn make_face(
 
     // Create solid/shell structure on demand
     if brep.solids.is_empty() {
-        brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: Vec::new() }],
+        });
     }
     if brep.solids[0].shells.is_empty() {
         brep.solids[0].shells.push(Shell { faces: Vec::new() });

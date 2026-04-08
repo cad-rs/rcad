@@ -120,7 +120,10 @@ pub fn imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
                         .boundary
                         .windows(2)
                         .enumerate()
-                        .map(|(i, _)| WireEdge { idx: i, forward: true })
+                        .map(|(i, _)| WireEdge {
+                            idx: i,
+                            forward: true,
+                        })
                         .collect(),
                 },
                 inner_wires: vec![],
@@ -155,7 +158,9 @@ pub fn imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
         vertices: target.vertices.clone(),
         edges: target.edges.clone(),
         solids: vec![Solid {
-            shells: vec![Shell { faces: result_faces }],
+            shells: vec![Shell {
+                faces: result_faces,
+            }],
         }],
         geom: target.geom.clone(),
     };
@@ -216,7 +221,9 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
         let ic = &ds.intersection_curves[ci];
         let p0 = ds.vertices[ic.start_vertex].point;
         let p1 = ds.vertices[ic.end_vertex].point;
-        if (p1 - p0).length_squared() > crate::tolerance::TOLERANCE_ABS * crate::tolerance::TOLERANCE_ABS {
+        if (p1 - p0).length_squared()
+            > crate::tolerance::TOLERANCE_ABS * crate::tolerance::TOLERANCE_ABS
+        {
             segments.push((p0, p1));
         }
     }
@@ -237,7 +244,8 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
     };
     let unproject = |uv: [f64; 2]| -> DVec3 { plane.origin + u_axis * uv[0] + v_axis * uv[1] };
 
-    let mut polygons_2d: Vec<Vec<[f64; 2]>> = vec![boundary_3d.iter().map(|&p| project(p)).collect()];
+    let mut polygons_2d: Vec<Vec<[f64; 2]>> =
+        vec![boundary_3d.iter().map(|&p| project(p)).collect()];
 
     for (seg_a, seg_b) in &segments {
         let sa = project(*seg_a);
@@ -269,9 +277,8 @@ fn split_poly_2d(poly: &[[f64; 2]], sa: [f64; 2], sb: [f64; 2]) -> Vec<Vec<[f64;
     let n = poly.len();
     let seg_dir = [sb[0] - sa[0], sb[1] - sa[1]];
 
-    let signed_dist = |p: [f64; 2]| -> f64 {
-        seg_dir[0] * (p[1] - sa[1]) - seg_dir[1] * (p[0] - sa[0])
-    };
+    let signed_dist =
+        |p: [f64; 2]| -> f64 { seg_dir[0] * (p[1] - sa[1]) - seg_dir[1] * (p[0] - sa[0]) };
 
     let sides: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
 
@@ -315,9 +322,15 @@ fn split_poly_2d(poly: &[[f64; 2]], sa: [f64; 2], sb: [f64; 2]) -> Vec<Vec<[f64;
     sub_b.push(ca);
 
     let mut result = Vec::new();
-    if sub_a.len() >= 3 { result.push(sub_a); }
-    if sub_b.len() >= 3 { result.push(sub_b); }
-    if result.is_empty() { result.push(poly.to_vec()); }
+    if sub_a.len() >= 3 {
+        result.push(sub_a);
+    }
+    if sub_b.len() >= 3 {
+        result.push(sub_b);
+    }
+    if result.is_empty() {
+        result.push(poly.to_vec());
+    }
     result
 }
 
@@ -404,9 +417,7 @@ pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapRep
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Collect (flat_face_idx, vertex_points, surface, normal) for every face in brep.
-fn collect_faces_with_surfaces(
-    brep: &BRep,
-) -> Vec<(usize, Vec<DVec3>, Surface3, DVec3)> {
+fn collect_faces_with_surfaces(brep: &BRep) -> Vec<(usize, Vec<DVec3>, Surface3, DVec3)> {
     let mut result = Vec::new();
     let mut flat_idx = 0usize;
     for solid in &brep.solids {

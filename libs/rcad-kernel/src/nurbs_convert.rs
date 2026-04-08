@@ -36,12 +36,12 @@
 use glam::DVec3;
 use std::f64::consts::PI;
 
+use crate::fit::interpolate_points;
 use crate::geom::{
-    BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, CylindricalSurface,
-    Curve3, CurveEval, Ellipse3, Hyperbola3, Line3, OffsetCurve3, Parabola3, Plane,
+    BSplineCurve3, BSplineSurface, BezierCurve3, BezierSurface, Circle3, Curve3, CurveEval,
+    CylindricalSurface, Ellipse3, Hyperbola3, Line3, OffsetCurve3, Parabola3, Plane,
     SphericalSurface, Surface3, SurfaceEval,
 };
-use crate::fit::interpolate_points;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve conversions
@@ -121,15 +121,15 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3) -> BSplineCurve3 {
     // but using the standard 9-point construction:
     // P0 at 0°, P1 midpoint weight, P2 at 90°, etc.
     let pts = [
-        c + a * x_ax,                        // 0°
-        c + a * x_ax + b * y_ax,             // corner at (a, b)
-        c + b * y_ax,                         // 90°
-        c - a * x_ax + b * y_ax,             // corner at (-a, b)
-        c - a * x_ax,                         // 180°
-        c - a * x_ax - b * y_ax,             // corner at (-a, -b)
-        c - b * y_ax,                         // 270°
-        c + a * x_ax - b * y_ax,             // corner at (a, -b)
-        c + a * x_ax,                         // 360° = 0° (closed)
+        c + a * x_ax,            // 0°
+        c + a * x_ax + b * y_ax, // corner at (a, b)
+        c + b * y_ax,            // 90°
+        c - a * x_ax + b * y_ax, // corner at (-a, b)
+        c - a * x_ax,            // 180°
+        c - a * x_ax - b * y_ax, // corner at (-a, -b)
+        c - b * y_ax,            // 270°
+        c + a * x_ax - b * y_ax, // corner at (a, -b)
+        c + a * x_ax,            // 360° = 0° (closed)
     ];
 
     let weights = [1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0];
@@ -137,11 +137,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3) -> BSplineCurve3 {
     // Clamped quadratic knot vector for 9 control points
     // [0,0,0, 1/4, 1/4, 1/2, 1/2, 3/4, 3/4, 1,1,1]
     let knots = vec![
-        0.0, 0.0, 0.0,
-        0.25, 0.25,
-        0.5, 0.5,
-        0.75, 0.75,
-        1.0, 1.0, 1.0,
+        0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
     ];
 
     BSplineCurve3 {
@@ -176,7 +172,11 @@ pub fn bezier_curve_to_bspline(bezier: &BezierCurve3) -> BSplineCurve3 {
 fn sample_curve_to_bspline(curve: &Curve3, n: usize) -> BSplineCurve3 {
     let [t0, t1] = curve.default_domain();
     // For hyperbola / parabola with large "infinite" domain, use a sensible range
-    let (t0, t1) = if t1 - t0 > 1e6 { (-10.0, 10.0) } else { (t0, t1) };
+    let (t0, t1) = if t1 - t0 > 1e6 {
+        (-10.0, 10.0)
+    } else {
+        (t0, t1)
+    };
     let n = n.max(4);
     let pts: Vec<DVec3> = (0..n)
         .map(|i| {
@@ -184,13 +184,12 @@ fn sample_curve_to_bspline(curve: &Curve3, n: usize) -> BSplineCurve3 {
             curve.point_at(t)
         })
         .collect();
-    interpolate_points(&pts)
-        .unwrap_or_else(|_| BSplineCurve3 {
-            degree: 1,
-            knots: vec![0.0, 0.0, 1.0, 1.0],
-            control_points: vec![pts[0], *pts.last().unwrap()],
-            weights: vec![1.0, 1.0],
-        })
+    interpolate_points(&pts).unwrap_or_else(|_| BSplineCurve3 {
+        degree: 1,
+        knots: vec![0.0, 0.0, 1.0, 1.0],
+        control_points: vec![pts[0], *pts.last().unwrap()],
+        weights: vec![1.0, 1.0],
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,7 +223,13 @@ pub fn plane_to_bspline(plane: &Plane) -> BSplineSurface {
 }
 
 /// Convert a `Plane` over a specified UV domain `[u0,u1]×[v0,v1]`.
-pub fn plane_to_bspline_domain(plane: &Plane, u0: f64, u1: f64, v0: f64, v1: f64) -> BSplineSurface {
+pub fn plane_to_bspline_domain(
+    plane: &Plane,
+    u0: f64,
+    u1: f64,
+    v0: f64,
+    v1: f64,
+) -> BSplineSurface {
     let p00 = plane.point_at(u0, v0);
     let p10 = plane.point_at(u1, v0);
     let p01 = plane.point_at(u0, v1);
@@ -291,7 +296,11 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
     let v_weights = [1.0f64, 2.0f64.sqrt() / 2.0, 1.0, 2.0f64.sqrt() / 2.0, 1.0];
 
     // Each v-row is a scaled copy of the circle NURBS
-    let circle_base = Circle3 { center: sphere.center, normal: sphere.axis, radius: r };
+    let circle_base = Circle3 {
+        center: sphere.center,
+        normal: sphere.axis,
+        radius: r,
+    };
     let c_base = circle_to_bspline(&circle_base);
     let n_u = c_base.control_points.len();
 
@@ -304,11 +313,15 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
         let vw = v_weights[vi];
         // Shift along axis + scale circle radius
         let axis_offset = sphere.center + cos_v * r * sphere.axis;
-        let row_pts: Vec<DVec3> = c_base.control_points.iter().map(|p| {
-            // p is on circle of radius r at sphere.center; scale xy by sin_v
-            let delta = *p - sphere.center;
-            axis_offset + sin_v * delta
-        }).collect();
+        let row_pts: Vec<DVec3> = c_base
+            .control_points
+            .iter()
+            .map(|p| {
+                // p is on circle of radius r at sphere.center; scale xy by sin_v
+                let delta = *p - sphere.center;
+                axis_offset + sin_v * delta
+            })
+            .collect();
         let row_w: Vec<f64> = c_base.weights.iter().map(|&w| w * vw).collect();
         ctrl_grid.push(row_pts);
         w_grid.push(row_w);
@@ -340,7 +353,11 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
 /// endpoint knots in both parametric directions.
 pub fn bezier_surface_to_bspline(bezier: &BezierSurface) -> BSplineSurface {
     let nu = bezier.control_points.len();
-    let nv = if nu > 0 { bezier.control_points[0].len() } else { 0 };
+    let nv = if nu > 0 {
+        bezier.control_points[0].len()
+    } else {
+        0
+    };
     let deg_u = (nu - 1).max(1);
     let deg_v = (nv - 1).max(1);
 
@@ -367,8 +384,16 @@ pub fn bezier_surface_to_bspline(bezier: &BezierSurface) -> BSplineSurface {
 /// `n_u`, `n_v` improves accuracy.
 fn sample_surface_to_bspline(surface: &Surface3, n_u: usize, n_v: usize) -> BSplineSurface {
     let [u0, u1, v0, v1] = surface.default_domain();
-    let (u0, u1) = if (u1 - u0).abs() > 1e6 { (-10.0, 10.0) } else { (u0, u1) };
-    let (v0, v1) = if (v1 - v0).abs() > 1e6 { (-10.0, 10.0) } else { (v0, v1) };
+    let (u0, u1) = if (u1 - u0).abs() > 1e6 {
+        (-10.0, 10.0)
+    } else {
+        (u0, u1)
+    };
+    let (v0, v1) = if (v1 - v0).abs() > 1e6 {
+        (-10.0, 10.0)
+    } else {
+        (v0, v1)
+    };
     let n_u = n_u.max(2);
     let n_v = n_v.max(2);
 
@@ -418,7 +443,7 @@ fn build_uniform_knots(n_ctrl: usize, degree: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::{any_perpendicular, Circle3, Curve3, Line3, SurfaceEval};
+    use crate::geom::{Circle3, Curve3, Line3, SurfaceEval, any_perpendicular};
     use glam::DVec3;
     use std::f64::consts::PI;
 
@@ -430,7 +455,10 @@ mod tests {
 
     #[test]
     fn line_bspline_endpoints() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let line = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         let bs = line_to_bspline(&line);
         let p0 = bs.point_at(0.0);
         let p1 = bs.point_at(1.0);
@@ -440,7 +468,11 @@ mod tests {
 
     #[test]
     fn circle_bspline_is_exact() {
-        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
+        let circle = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 2.0,
+        };
         let bs = circle_to_bspline(&circle);
         // The NURBS circle evaluates with rational weights — test a few points
         for i in 0..8 {
@@ -491,16 +523,22 @@ mod tests {
     #[test]
     fn plane_bspline_corners() {
         use crate::geom::Plane;
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         let bs = plane_to_bspline(&plane);
         // Should evaluate points at corners of the [-1,1]×[-1,1] domain
         let p00 = bs.point_at(0.0, 0.0);
         let p11 = bs.point_at(1.0, 1.0);
         // p at (u=0,v=0) should be corner of domain
-        assert!(p00.distance(DVec3::new(-1.0, -1.0, 0.0)) < 1e-10 ||
-                p00.distance(DVec3::new(1.0, 1.0, 0.0)) < 1e-10 ||
-                p00.z.abs() < 1e-10,  // at least z=0
-                "plane corner z={}", p00.z);
+        assert!(
+            p00.distance(DVec3::new(-1.0, -1.0, 0.0)) < 1e-10
+                || p00.distance(DVec3::new(1.0, 1.0, 0.0)) < 1e-10
+                || p00.z.abs() < 1e-10, // at least z=0
+            "plane corner z={}",
+            p00.z
+        );
         let _ = p11;
     }
 

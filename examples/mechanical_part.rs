@@ -5,7 +5,7 @@
 //! Run: cargo run --example mechanical_part
 
 use glam::DVec3;
-use rcad_algorithms::{boolean_op, geom_populate::populate_box_geom, BooleanOpType};
+use rcad_algorithms::{BooleanOpType, boolean_op, geom_populate::populate_box_geom};
 use rcad_kernel::BRep;
 use rcad_modeling::*;
 use rcad_scene::append_brep;
@@ -21,8 +21,7 @@ fn main() {
     populate_box_geom(&mut plate_h);
     populate_box_geom(&mut plate_v);
 
-    let bracket = boolean_op(BooleanOpType::Union, &plate_h, &plate_v)
-        .expect("L-bracket union");
+    let bracket = boolean_op(BooleanOpType::Union, &plate_h, &plate_v).expect("L-bracket union");
     write_step(&bracket, "output_bracket.step");
     println!("  -> output_bracket.step (L-bracket base)");
 
@@ -37,8 +36,7 @@ fn main() {
     // Need to populate geom on the bracket result for further booleans.
     // Since bracket is a complex result, we build it step by step:
     // Cut slot1 from horizontal plate first
-    let r1 = boolean_op(BooleanOpType::Difference, &plate_h, &slot1)
-        .expect("slot1 cut");
+    let r1 = boolean_op(BooleanOpType::Difference, &plate_h, &slot1).expect("slot1 cut");
     write_step(&r1, "output_bracket_slot1.step");
     println!("  -> output_bracket_slot1.step (horizontal plate with slot 1)");
 
@@ -47,22 +45,17 @@ fn main() {
     let mut assembly = bracket;
 
     // Decorative sphere at the bracket corner
-    let sphere = make_sphere_brep(DVec3::new(1.0, 9.0, 3.0), 0.8)
-        .expect("sphere");
+    let sphere = make_sphere_brep(DVec3::new(1.0, 9.0, 3.0), 0.8).expect("sphere");
     append_brep(&mut assembly, sphere);
 
     // Cylinder pin in slot 1 location
-    let pin1 = make_cylinder_brep(
-        DVec3::new(5.75, -0.5, 3.0), DVec3::Y, DVec3::X,
-        0.5, 3.0,
-    ).expect("pin1");
+    let pin1 = make_cylinder_brep(DVec3::new(5.75, -0.5, 3.0), DVec3::Y, DVec3::X, 0.5, 3.0)
+        .expect("pin1");
     append_brep(&mut assembly, pin1);
 
     // Cylinder pin in slot 2 location
-    let pin2 = make_cylinder_brep(
-        DVec3::new(8.75, -0.5, 3.0), DVec3::Y, DVec3::X,
-        0.5, 3.0,
-    ).expect("pin2");
+    let pin2 = make_cylinder_brep(DVec3::new(8.75, -0.5, 3.0), DVec3::Y, DVec3::X, 0.5, 3.0)
+        .expect("pin2");
     append_brep(&mut assembly, pin2);
 
     write_step(&assembly, "output_bracket_assembly.step");
@@ -83,10 +76,8 @@ fn main() {
     append_brep(&mut pyramid, top);
 
     // Add a torus crown on top
-    let crown = make_torus_brep(
-        DVec3::new(4.0, 7.0, 4.0), DVec3::Y, DVec3::X,
-        1.5, 0.3,
-    ).expect("crown");
+    let crown =
+        make_torus_brep(DVec3::new(4.0, 7.0, 4.0), DVec3::Y, DVec3::X, 1.5, 0.3).expect("crown");
     append_brep(&mut pyramid, crown);
 
     write_step(&pyramid, "output_pyramid.step");
@@ -99,8 +90,7 @@ fn main() {
     populate_box_geom(&mut outer);
     populate_box_geom(&mut inner);
 
-    let hollow = boolean_op(BooleanOpType::Difference, &outer, &inner)
-        .expect("hollow box");
+    let hollow = boolean_op(BooleanOpType::Difference, &outer, &inner).expect("hollow box");
     write_step(&hollow, "output_hollow_box.step");
     println!("  -> output_hollow_box.step (hollow box)");
 
@@ -108,8 +98,7 @@ fn main() {
 }
 
 fn make_box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
-    let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, w, h, d)
-        .expect("make_box_brep");
+    let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, w, h, d).expect("make_box_brep");
     for v in &mut brep.vertices {
         v.point += DVec3::new(x, y, z);
     }
@@ -117,9 +106,12 @@ fn make_box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
 }
 
 fn write_step(brep: &BRep, path: &str) {
-    let step = StepWriter::write_string(brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     std::fs::write(path, step).expect("write STEP file");
 }

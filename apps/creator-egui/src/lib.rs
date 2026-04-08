@@ -3,10 +3,10 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_modeling::make_box_brep;
 use rcad_render::{
-    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes, Camera, Mesh, SelectionMode,
-    SelectionState, Tessellator, WgpuRenderer,
+    Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
+    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
-use rcad_scene::{append_brep, CreationController, Tool};
+use rcad_scene::{CreationController, Tool, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
@@ -152,13 +152,19 @@ impl eframe::App for RCadApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Tools");
                 if ui
-                    .selectable_label(self.creation.active_tool() == Tool::SelectFace, "Select Face")
+                    .selectable_label(
+                        self.creation.active_tool() == Tool::SelectFace,
+                        "Select Face",
+                    )
                     .clicked()
                 {
                     self.set_tool(Tool::SelectFace);
                 }
                 if ui
-                    .selectable_label(self.creation.active_tool() == Tool::SelectEdge, "Select Edge")
+                    .selectable_label(
+                        self.creation.active_tool() == Tool::SelectEdge,
+                        "Select Edge",
+                    )
                     .clicked()
                 {
                     self.set_tool(Tool::SelectEdge);
@@ -180,123 +186,138 @@ impl eframe::App for RCadApp {
             });
         });
 
-        egui::SidePanel::left("info").min_width(180.0).show(ctx, |ui| {
-            ui.heading("RCAD  ·  egui");
-            ui.separator();
-            ui.label(format!("Vertices : {}", self.brep.vertices.len()));
-            ui.label(format!("Edges    : {}", self.brep.edges.len()));
-            let face_count: usize = self
-                .brep
-                .solids
-                .iter()
-                .flat_map(|s| &s.shells)
-                .map(|sh| sh.faces.len())
-                .sum();
-            ui.label(format!("Faces    : {}", face_count));
-            ui.label(format!("Triangles: {}", self.mesh.indices.len() / 3));
-            ui.label(format!("Curves   : {}", self.brep.geom.curves.len()));
-            ui.label(format!("Surfaces : {}", self.brep.geom.surfaces.len()));
-            ui.separator();
-            ui.label("Selection Mode");
-            ui.horizontal(|ui| {
-                if ui.button("Select Face").clicked() {
-                    self.creation
-                        .set_selection_mode(SelectionMode::Face, &mut self.selection);
-                }
-                if ui.button("Select Edge").clicked() {
-                    self.creation
-                        .set_selection_mode(SelectionMode::Edge, &mut self.selection);
-                }
-            });
-            let mut additive_select = self.selection.additive_select;
-            if ui.checkbox(&mut additive_select, "Additive Select").changed() {
-                self.creation
-                    .set_additive_select(&mut self.selection, additive_select);
-            }
-            ui.separator();
-            ui.label("Topology Nav");
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Grow Faces").clicked() {
-                    self.creation
-                        .grow_selected_faces(&self.brep, &mut self.selection);
-                }
-                if ui.button("Grow Edges").clicked() {
-                    self.creation
-                        .grow_selected_edges(&self.brep, &mut self.selection);
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Face -> Edges").clicked() {
-                    self.creation
-                        .select_face_boundary_edges(&self.brep, &mut self.selection);
-                }
-                if ui.button("Edge -> Faces").clicked() {
-                    self.creation
-                        .select_edge_incident_faces(&self.brep, &mut self.selection);
-                }
-            });
-            if ui.button("Clear Selection").clicked() {
-                self.creation.clear_selection(&mut self.selection);
-            }
-            ui.label(format!(
-                "Selected Faces: {}",
-                self.selection.selected_faces.len()
-            ));
-            ui.label(format!(
-                "Selected Edges: {}",
-                self.selection.selected_edges.len()
-            ));
-            ui.label(format!(
-                "Hover Face: {}",
-                self.selection
-                    .hovered_face
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            ));
-            ui.label(format!(
-                "Hover Edge: {}",
-                self.selection
-                    .hovered_edge
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            ));
-            ui.label(format!(
-                "Hover Pos: {}",
-                self.selection
-                    .last_hover_pos
-                    .map(|(x, y)| format!("{x:.1}, {y:.1}"))
-                    .unwrap_or_else(|| "-".to_string())
-            ));
-                    ui.label(format!("Active Tool: {}", self.creation.tool_name()));
-                    ui.label("Left click: select/create, Alt+Left drag: rotate");
-                    ui.label("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish");
-
-            if ui.button("Export STEP").clicked() {
-                self.export_status = Some(match export_step_file(&self.brep, &self.selection) {
-                    Ok(path) => format!("Exported: {}", path),
-                    Err(err) => format!("Export failed: {}", err),
+        egui::SidePanel::left("info")
+            .min_width(180.0)
+            .show(ctx, |ui| {
+                ui.heading("RCAD  ·  egui");
+                ui.separator();
+                ui.label(format!("Vertices : {}", self.brep.vertices.len()));
+                ui.label(format!("Edges    : {}", self.brep.edges.len()));
+                let face_count: usize = self
+                    .brep
+                    .solids
+                    .iter()
+                    .flat_map(|s| &s.shells)
+                    .map(|sh| sh.faces.len())
+                    .sum();
+                ui.label(format!("Faces    : {}", face_count));
+                ui.label(format!("Triangles: {}", self.mesh.indices.len() / 3));
+                ui.label(format!("Curves   : {}", self.brep.geom.curves.len()));
+                ui.label(format!("Surfaces : {}", self.brep.geom.surfaces.len()));
+                ui.separator();
+                ui.label("Selection Mode");
+                ui.horizontal(|ui| {
+                    if ui.button("Select Face").clicked() {
+                        self.creation
+                            .set_selection_mode(SelectionMode::Face, &mut self.selection);
+                    }
+                    if ui.button("Select Edge").clicked() {
+                        self.creation
+                            .set_selection_mode(SelectionMode::Edge, &mut self.selection);
+                    }
                 });
-            }
-            if let Some(status) = &self.export_status {
-                ui.label(status);
-            }
+                let mut additive_select = self.selection.additive_select;
+                if ui
+                    .checkbox(&mut additive_select, "Additive Select")
+                    .changed()
+                {
+                    self.creation
+                        .set_additive_select(&mut self.selection, additive_select);
+                }
+                ui.separator();
+                ui.label("Topology Nav");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Grow Faces").clicked() {
+                        self.creation
+                            .grow_selected_faces(&self.brep, &mut self.selection);
+                    }
+                    if ui.button("Grow Edges").clicked() {
+                        self.creation
+                            .grow_selected_edges(&self.brep, &mut self.selection);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Face -> Edges").clicked() {
+                        self.creation
+                            .select_face_boundary_edges(&self.brep, &mut self.selection);
+                    }
+                    if ui.button("Edge -> Faces").clicked() {
+                        self.creation
+                            .select_edge_incident_faces(&self.brep, &mut self.selection);
+                    }
+                });
+                if ui.button("Clear Selection").clicked() {
+                    self.creation.clear_selection(&mut self.selection);
+                }
+                ui.label(format!(
+                    "Selected Faces: {}",
+                    self.selection.selected_faces.len()
+                ));
+                ui.label(format!(
+                    "Selected Edges: {}",
+                    self.selection.selected_edges.len()
+                ));
+                ui.label(format!(
+                    "Hover Face: {}",
+                    self.selection
+                        .hovered_face
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                ui.label(format!(
+                    "Hover Edge: {}",
+                    self.selection
+                        .hovered_edge
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                ui.label(format!(
+                    "Hover Pos: {}",
+                    self.selection
+                        .last_hover_pos
+                        .map(|(x, y)| format!("{x:.1}, {y:.1}"))
+                        .unwrap_or_else(|| "-".to_string())
+                ));
+                ui.label(format!("Active Tool: {}", self.creation.tool_name()));
+                ui.label("Left click: select/create, Alt+Left drag: rotate");
+                ui.label("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish");
 
-            if ui.button("Reset Camera").clicked() {
-                self.camera = Camera::new();
-            }
-        });
+                if ui.button("Export STEP").clicked() {
+                    self.export_status =
+                        Some(match export_step_file(&self.brep, &self.selection) {
+                            Ok(path) => format!("Exported: {}", path),
+                            Err(err) => format!("Export failed: {}", err),
+                        });
+                }
+                if let Some(status) = &self.export_status {
+                    ui.label(status);
+                }
+
+                if ui.button("Reset Camera").clicked() {
+                    self.camera = Camera::new();
+                }
+            });
 
         // ── Topology Tree Panel ───────────────────────────────────────────────
         {
             // Pre-compute global face indices so collapsed headers don't desync counts.
             let mut fi_counter = 0usize;
-            let solid_face_starts: Vec<Vec<usize>> = self.brep.solids.iter().map(|solid| {
-                solid.shells.iter().map(|shell| {
-                    let start = fi_counter;
-                    fi_counter += shell.faces.len();
-                    start
-                }).collect()
-            }).collect();
+            let solid_face_starts: Vec<Vec<usize>> = self
+                .brep
+                .solids
+                .iter()
+                .map(|solid| {
+                    solid
+                        .shells
+                        .iter()
+                        .map(|shell| {
+                            let start = fi_counter;
+                            fi_counter += shell.faces.len();
+                            start
+                        })
+                        .collect()
+                })
+                .collect();
 
             let brep = &self.brep;
             let sel_faces: &[usize] = &self.selection.selected_faces;
@@ -318,11 +339,8 @@ impl eframe::App for RCadApp {
                                 .id_salt(("body", si))
                                 .default_open(si == 0)
                                 .show(ui, |ui| {
-                                    for (shi, (shell, &fi_start)) in solid
-                                        .shells
-                                        .iter()
-                                        .zip(shell_fi_starts.iter())
-                                        .enumerate()
+                                    for (shi, (shell, &fi_start)) in
+                                        solid.shells.iter().zip(shell_fi_starts.iter()).enumerate()
                                     {
                                         egui::CollapsingHeader::new(format!("Shell {shi}"))
                                             .id_salt(("shell", si, shi))
@@ -336,10 +354,9 @@ impl eframe::App for RCadApp {
                                                     } else {
                                                         ui.visuals().text_color()
                                                     };
-                                                    let face_text = egui::RichText::new(
-                                                        format!("▲ Face {fi}"),
-                                                    )
-                                                    .color(face_color);
+                                                    let face_text =
+                                                        egui::RichText::new(format!("▲ Face {fi}"))
+                                                            .color(face_color);
                                                     let fr = egui::CollapsingHeader::new(face_text)
                                                         .id_salt(("face", fi))
                                                         .show(ui, |ui| {
@@ -388,23 +405,20 @@ impl eframe::App for RCadApp {
                         }
                         // ── Flat vertex list ─────────────────────────────────
                         ui.separator();
-                        egui::CollapsingHeader::new(format!(
-                            "Vertices ({})",
-                            brep.vertices.len()
-                        ))
-                        .id_salt("all_vertices")
-                        .default_open(false)
-                        .show(ui, |ui| {
-                            for (vi, v) in brep.vertices.iter().enumerate() {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "v{vi}: ({:.3}, {:.3}, {:.3})",
-                                        v.point.x, v.point.y, v.point.z
-                                    ))
-                                    .monospace(),
-                                );
-                            }
-                        });
+                        egui::CollapsingHeader::new(format!("Vertices ({})", brep.vertices.len()))
+                            .id_salt("all_vertices")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                for (vi, v) in brep.vertices.iter().enumerate() {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "v{vi}: ({:.3}, {:.3}, {:.3})",
+                                            v.point.x, v.point.y, v.point.z
+                                        ))
+                                        .monospace(),
+                                    );
+                                }
+                            });
                     });
                 });
 
@@ -431,8 +445,11 @@ impl eframe::App for RCadApp {
 
             if response.dragged() {
                 let delta = ui.input(|i| i.pointer.delta());
-                let pan_with_middle = ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
-                let rotate_with_alt = ui.input(|i| i.modifiers.alt && i.pointer.button_down(egui::PointerButton::Primary));
+                let pan_with_middle =
+                    ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+                let rotate_with_alt = ui.input(|i| {
+                    i.modifiers.alt && i.pointer.button_down(egui::PointerButton::Primary)
+                });
                 if pan_with_middle {
                     self.camera.pan_pixels(delta.x, delta.y);
                     ctx.request_repaint();
@@ -460,7 +477,10 @@ impl eframe::App for RCadApp {
                     if self.creation.is_command_active() {
                         ctx.request_repaint();
                     }
-                } else if matches!(self.creation.active_tool(), Tool::SelectFace | Tool::SelectEdge) {
+                } else if matches!(
+                    self.creation.active_tool(),
+                    Tool::SelectFace | Tool::SelectEdge
+                ) {
                     self.creation
                         .clear_hover_if_selection_tool(&mut self.selection);
                 }
@@ -542,7 +562,9 @@ fn show_edge_item(
     sel_edges: &[usize],
     edge_toggle: &mut Option<usize>,
 ) {
-    let Some(edge) = brep.edges.get(ei) else { return };
+    let Some(edge) = brep.edges.get(ei) else {
+        return;
+    };
     let is_esel = sel_edges.contains(&ei);
     let color = if is_esel {
         egui::Color32::from_rgb(100, 180, 255)

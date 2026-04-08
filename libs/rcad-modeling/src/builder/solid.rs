@@ -1,6 +1,6 @@
 use super::{
-    basis_from_axis_ref, basis_from_x_y, transform_brep, translate_brep, validate_point,
-    validate_positive, BuildError,
+    BuildError, basis_from_axis_ref, basis_from_x_y, transform_brep, translate_brep,
+    validate_point, validate_positive,
 };
 use glam::DVec3;
 use rcad_kernel::{BRep, PrimitiveSolid};
@@ -110,7 +110,10 @@ pub fn make_cylinder_brep(
 pub fn cone_primitive(base_radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
     let base_radius = validate_positive("base_radius", base_radius)?;
     let height = validate_positive("height", height)?;
-    Ok(PrimitiveSolid::Cone { base_radius, height })
+    Ok(PrimitiveSolid::Cone {
+        base_radius,
+        height,
+    })
 }
 
 pub fn make_cone_primitive(base_radius: f64, height: f64) -> Result<PrimitiveSolid, BuildError> {
@@ -142,13 +145,13 @@ pub fn make_cone_brep(
     cone_brep(center, axis, ref_dir, base_radius, height)
 }
 
-pub fn torus_primitive(
-    major_radius: f64,
-    minor_radius: f64,
-) -> Result<PrimitiveSolid, BuildError> {
+pub fn torus_primitive(major_radius: f64, minor_radius: f64) -> Result<PrimitiveSolid, BuildError> {
     let major_radius = validate_positive("major_radius", major_radius)?;
     let minor_radius = validate_positive("minor_radius", minor_radius)?;
-    Ok(PrimitiveSolid::Torus { major_radius, minor_radius })
+    Ok(PrimitiveSolid::Torus {
+        major_radius,
+        minor_radius,
+    })
 }
 
 pub fn make_torus_primitive(

@@ -65,7 +65,11 @@ pub struct HlrCamera {
 
 impl HlrCamera {
     pub fn new(eye: DVec3, target: DVec3) -> Self {
-        Self { eye, target, up: DVec3::Y }
+        Self {
+            eye,
+            target,
+            up: DVec3::Y,
+        }
     }
 
     pub fn with_up(mut self, up: DVec3) -> Self {
@@ -81,20 +85,17 @@ impl HlrCamera {
 
     /// Front view (looking along +Y, up = +Z).
     pub fn front(distance: f64) -> Self {
-        Self::new(DVec3::new(0.0, -distance, 0.0), DVec3::ZERO)
-            .with_up(DVec3::Z)
+        Self::new(DVec3::new(0.0, -distance, 0.0), DVec3::ZERO).with_up(DVec3::Z)
     }
 
     /// Top view (looking down -Z).
     pub fn top(distance: f64) -> Self {
-        Self::new(DVec3::new(0.0, 0.0, distance), DVec3::ZERO)
-            .with_up(DVec3::Y)
+        Self::new(DVec3::new(0.0, 0.0, distance), DVec3::ZERO).with_up(DVec3::Y)
     }
 
     /// Right-side view (looking along -X, up = +Z).
     pub fn right(distance: f64) -> Self {
-        Self::new(DVec3::new(distance, 0.0, 0.0), DVec3::ZERO)
-            .with_up(DVec3::Z)
+        Self::new(DVec3::new(distance, 0.0, 0.0), DVec3::ZERO).with_up(DVec3::Z)
     }
 }
 
@@ -107,11 +108,12 @@ fn look_at(eye: DVec3, target: DVec3, up: DVec3) -> DMat4 {
     let up = right.cross(forward);
 
     DMat4::from_cols(
-        DVec4::new(right.x,   right.y,   right.z,   -right.dot(eye)),
-        DVec4::new(up.x,      up.y,      up.z,      -up.dot(eye)),
-        DVec4::new(-forward.x,-forward.y,-forward.z, forward.dot(eye)),
-        DVec4::new(0.0,       0.0,       0.0,        1.0),
-    ).transpose()
+        DVec4::new(right.x, right.y, right.z, -right.dot(eye)),
+        DVec4::new(up.x, up.y, up.z, -up.dot(eye)),
+        DVec4::new(-forward.x, -forward.y, -forward.z, forward.dot(eye)),
+        DVec4::new(0.0, 0.0, 0.0, 1.0),
+    )
+    .transpose()
 }
 
 /// Project a world-space point to 2D screen space using the view matrix.
@@ -139,7 +141,10 @@ fn collect_triangles(brep: &BRep) -> Vec<[DVec3; 3]> {
                     }
                 } else {
                     // Fan-triangulate from wire
-                    let pts: Vec<DVec3> = face.outer_wire.edges.iter()
+                    let pts: Vec<DVec3> = face
+                        .outer_wire
+                        .edges
+                        .iter()
                         .filter_map(|we| {
                             let edge = brep.edges.get(we.idx)?;
                             let vi = if we.forward { edge.start } else { edge.end };
@@ -167,14 +172,20 @@ fn ray_triangle_intersect(origin: DVec3, dir: DVec3, tri: &[DVec3; 3]) -> Option
     let edge2 = tri[2] - tri[0];
     let h = dir.cross(edge2);
     let a = edge1.dot(h);
-    if a.abs() < EPS { return None; }
+    if a.abs() < EPS {
+        return None;
+    }
     let f = 1.0 / a;
     let s = origin - tri[0];
     let u = f * s.dot(h);
-    if !(0.0..=1.0).contains(&u) { return None; }
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
     let q = s.cross(edge1);
     let v = f * dir.dot(q);
-    if v < 0.0 || u + v > 1.0 { return None; }
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
     let t = f * edge2.dot(q);
     if t > EPS { Some(t) } else { None }
 }
@@ -227,28 +238,40 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     }
 
     for &edge_idx in &edge_indices {
-        let Some(edge) = brep.edges.get(edge_idx) else { continue };
-        let Some(v_start) = brep.vertices.get(edge.start) else { continue };
-        let Some(v_end) = brep.vertices.get(edge.end) else { continue };
+        let Some(edge) = brep.edges.get(edge_idx) else {
+            continue;
+        };
+        let Some(v_start) = brep.vertices.get(edge.start) else {
+            continue;
+        };
+        let Some(v_end) = brep.vertices.get(edge.end) else {
+            continue;
+        };
 
         let p0 = v_start.point;
         let p1 = v_end.point;
-        if (p1 - p0).length_squared() < 1e-12 { continue; }
+        if (p1 - p0).length_squared() < 1e-12 {
+            continue;
+        }
 
         // Sample the edge
-        let sample_vis: Vec<bool> = (0..samples).map(|i| {
-            let t = i as f64 / (samples - 1) as f64;
-            let world_pt = p0 + (p1 - p0) * t;
-            let dist = (camera.eye - world_pt).length();
-            !is_occluded(world_pt, camera.eye, &triangles, dist)
-        }).collect();
+        let sample_vis: Vec<bool> = (0..samples)
+            .map(|i| {
+                let t = i as f64 / (samples - 1) as f64;
+                let world_pt = p0 + (p1 - p0) * t;
+                let dist = (camera.eye - world_pt).length();
+                !is_occluded(world_pt, camera.eye, &triangles, dist)
+            })
+            .collect();
 
         // Build projected 2D points
-        let screen_pts: Vec<DVec2> = (0..samples).map(|i| {
-            let t = i as f64 / (samples - 1) as f64;
-            let world_pt = p0 + (p1 - p0) * t;
-            project(world_pt, &view).0
-        }).collect();
+        let screen_pts: Vec<DVec2> = (0..samples)
+            .map(|i| {
+                let t = i as f64 / (samples - 1) as f64;
+                let world_pt = p0 + (p1 - p0) * t;
+                project(world_pt, &view).0
+            })
+            .collect();
 
         // Merge consecutive same-visibility samples into segments
         let mut seg_start = 0usize;
@@ -344,18 +367,28 @@ mod tests {
     #[test]
     fn unit_box_hlr_produces_segments() {
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0, height: 1.0, depth: 1.0,
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
         });
         let camera = HlrCamera::isometric(5.0);
         let result = hlr(&brep, &camera, 8);
-        assert!(!result.segments.is_empty(), "HLR should produce segments for a box");
-        assert!(result.visible().count() > 0, "some segments should be visible");
+        assert!(
+            !result.segments.is_empty(),
+            "HLR should produce segments for a box"
+        );
+        assert!(
+            result.visible().count() > 0,
+            "some segments should be visible"
+        );
     }
 
     #[test]
     fn hlr_svg_is_valid_xml() {
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0, height: 1.0, depth: 1.0,
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
         });
         let camera = HlrCamera::isometric(5.0);
         let result = hlr(&brep, &camera, 8);
@@ -368,7 +401,9 @@ mod tests {
     #[test]
     fn top_view_box_has_visible_top_edges() {
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0, height: 1.0, depth: 1.0,
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
         });
         let camera = HlrCamera::top(5.0);
         let result = hlr(&brep, &camera, 8);

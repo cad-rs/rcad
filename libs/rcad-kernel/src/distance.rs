@@ -14,11 +14,7 @@
 
 use glam::DVec3;
 
-use crate::{
-    closest_point_on_surface,
-    geom::SurfaceEval,
-    BRep,
-};
+use crate::{BRep, closest_point_on_surface, geom::SurfaceEval};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -226,7 +222,10 @@ mod tests {
         let d = point_to_shape_distance(DVec3::new(0.0, 0.0, 5.0), &brep);
         println!("point_to_sphere_distance (vertical): {}", d.distance);
         assert!(d.distance > 0.0, "distance should be positive");
-        assert!(d.distance < 10.0, "distance should be finite and reasonable");
+        assert!(
+            d.distance < 10.0,
+            "distance should be finite and reasonable"
+        );
     }
 
     #[test]
@@ -235,7 +234,11 @@ mod tests {
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let d = point_to_shape_distance(DVec3::new(5.0, 0.0, 0.0), &brep);
         println!("point_to_sphere_distance: {}", d.distance);
-        assert!((d.distance - 4.0).abs() < 0.1, "expected ~4.0, got {}", d.distance);
+        assert!(
+            (d.distance - 4.0).abs() < 0.1,
+            "expected ~4.0, got {}",
+            d.distance
+        );
     }
 
     #[test]
@@ -243,9 +246,17 @@ mod tests {
         // Two spheres far apart: one at origin (r=1), one implicitly at origin too.
         // Two boxes: one at default position, check distance is non-negative.
         let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
-        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let d = min_distance(&a, &b);
-        assert!(d.distance >= 0.0, "distance must be non-negative, got {}", d.distance);
+        assert!(
+            d.distance >= 0.0,
+            "distance must be non-negative, got {}",
+            d.distance
+        );
         println!("min_distance sphere-box: {}", d.distance);
     }
 }

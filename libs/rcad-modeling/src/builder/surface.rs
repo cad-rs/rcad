@@ -1,9 +1,9 @@
-use super::{normalize_vector, validate_point, validate_positive, BuildError};
+use super::{BuildError, normalize_vector, validate_point, validate_positive};
 use glam::DVec3;
+use rcad_kernel::Surface3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface,
 };
-use rcad_kernel::Surface3;
 
 pub fn plane(origin: DVec3, normal: DVec3) -> Result<Surface3, BuildError> {
     let origin = validate_point("origin", origin)?;

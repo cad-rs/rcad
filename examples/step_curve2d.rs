@@ -12,14 +12,12 @@
 use std::f64::consts::PI;
 
 use glam::DVec2;
+use rcad_kernel::geom::{Circle2d, Line2d};
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Ellipse2d, PrimitiveSolid,
-    Curve2dEval,
-    CONFUSION,
+    BRep, BSplineCurve2, CONFUSION, Curve2d, Curve2dEval, Ellipse2d, PrimitiveSolid,
     model_tolerance,
 };
-use rcad_kernel::geom::{Circle2d, Line2d};
-use rcad_step::{StepWriter, StepReader, ExportSelection};
+use rcad_step::{ExportSelection, StepReader, StepWriter};
 
 // ── 1. Ellipse2d evaluation ───────────────────────────────────────────────────
 
@@ -33,21 +31,39 @@ fn demo_ellipse2d_eval() {
         minor_radius: 1.5,
     };
 
-    let p0    = e.point_at(0.0);
-    let p90   = e.point_at(PI / 2.0);
-    let p180  = e.point_at(PI);
-    let p270  = e.point_at(3.0 * PI / 2.0);
-    let p360  = e.point_at(2.0 * PI);
+    let p0 = e.point_at(0.0);
+    let p90 = e.point_at(PI / 2.0);
+    let p180 = e.point_at(PI);
+    let p270 = e.point_at(3.0 * PI / 2.0);
+    let p360 = e.point_at(2.0 * PI);
 
     println!("  Ellipse2d center=(1,2) major_r=3 minor_r=1.5 major_dir=+X");
-    println!("    t=0      → ({:.4}, {:.4})  (expect 4.0000, 2.0000)", p0.x, p0.y);
-    println!("    t=π/2    → ({:.4}, {:.4})  (expect 1.0000, 3.5000)", p90.x, p90.y);
-    println!("    t=π      → ({:.4}, {:.4})  (expect -2.0000, 2.0000)", p180.x, p180.y);
-    println!("    t=3π/2   → ({:.4}, {:.4})  (expect 1.0000, 0.5000)", p270.x, p270.y);
-    println!("    t=2π     → ({:.4}, {:.4})  (expect 4.0000, 2.0000 — closed)", p360.x, p360.y);
+    println!(
+        "    t=0      → ({:.4}, {:.4})  (expect 4.0000, 2.0000)",
+        p0.x, p0.y
+    );
+    println!(
+        "    t=π/2    → ({:.4}, {:.4})  (expect 1.0000, 3.5000)",
+        p90.x, p90.y
+    );
+    println!(
+        "    t=π      → ({:.4}, {:.4})  (expect -2.0000, 2.0000)",
+        p180.x, p180.y
+    );
+    println!(
+        "    t=3π/2   → ({:.4}, {:.4})  (expect 1.0000, 0.5000)",
+        p270.x, p270.y
+    );
+    println!(
+        "    t=2π     → ({:.4}, {:.4})  (expect 4.0000, 2.0000 — closed)",
+        p360.x, p360.y
+    );
 
     // Verify closure
-    assert!((p360 - p0).length() < 1e-10, "Ellipse2d should be closed at t=2π");
+    assert!(
+        (p360 - p0).length() < 1e-10,
+        "Ellipse2d should be closed at t=2π"
+    );
 
     // Diagonal major_dir test
     let e45 = Ellipse2d {
@@ -58,9 +74,14 @@ fn demo_ellipse2d_eval() {
     };
     let q0 = e45.point_at(0.0);
     let expected_q0 = DVec2::new(2.0 / 2.0_f64.sqrt(), 2.0 / 2.0_f64.sqrt());
-    println!("  Ellipse2d 45° major_dir, t=0 → ({:.4}, {:.4})  (expect {:.4}, {:.4})",
-        q0.x, q0.y, expected_q0.x, expected_q0.y);
-    assert!((q0 - expected_q0).length() < 1e-10, "Diagonal major_dir at t=0");
+    println!(
+        "  Ellipse2d 45° major_dir, t=0 → ({:.4}, {:.4})  (expect {:.4}, {:.4})",
+        q0.x, q0.y, expected_q0.x, expected_q0.y
+    );
+    assert!(
+        (q0 - expected_q0).length() < 1e-10,
+        "Diagonal major_dir at t=0"
+    );
 
     println!("  ✓ Ellipse2d evaluated correctly at all canonical parameter values");
 }
@@ -80,29 +101,39 @@ fn demo_ellipse2d_in_geomstore() {
 
     // Add an Ellipse2d PCurve — e.g., an elliptical path in the torus parameter domain
     let ellipse_pcurve = Curve2d::Ellipse(Ellipse2d {
-        center: DVec2::new(PI, PI),   // center at (π, π) in torus (u,v) space
+        center: DVec2::new(PI, PI), // center at (π, π) in torus (u,v) space
         major_dir: DVec2::X,
         major_radius: 1.0,
         minor_radius: 0.5,
     });
     let c2d_idx = brep.geom.curve2ds.len();
     brep.geom.curve2ds.push(ellipse_pcurve);
-    brep.geom.curve2d_range.push(None);    // full ellipse, no trim
+    brep.geom.curve2d_range.push(None); // full ellipse, no trim
 
     // Verify it's stored and can be evaluated
     let stored = &brep.geom.curve2ds[c2d_idx];
     let pt = stored.point_at(0.0);
     println!("  Stored Curve2d::Ellipse at idx {}", c2d_idx);
-    println!("    point_at(0) = ({:.4}, {:.4})  (expect {:.4}, 3.1416)", pt.x, pt.y, PI + 1.0);
-    assert!((pt.x - (PI + 1.0)).abs() < 1e-10 && (pt.y - PI).abs() < 1e-10,
-        "Stored Ellipse2d should evaluate correctly");
+    println!(
+        "    point_at(0) = ({:.4}, {:.4})  (expect {:.4}, 3.1416)",
+        pt.x,
+        pt.y,
+        PI + 1.0
+    );
+    assert!(
+        (pt.x - (PI + 1.0)).abs() < 1e-10 && (pt.y - PI).abs() < 1e-10,
+        "Stored Ellipse2d should evaluate correctly"
+    );
 
     // Also verify the Ellipse variant is matched correctly
     let is_ellipse = matches!(&brep.geom.curve2ds[c2d_idx], Curve2d::Ellipse(_));
     println!("  Variant is Curve2d::Ellipse: {}", is_ellipse);
     assert!(is_ellipse);
 
-    println!("  curve2ds pool size after insertion: {}", brep.geom.curve2ds.len());
+    println!(
+        "  curve2ds pool size after insertion: {}",
+        brep.geom.curve2ds.len()
+    );
     println!("  ✓ Ellipse2d stored as Curve2d::Ellipse in GeomStore and dispatches correctly");
 }
 
@@ -119,14 +150,14 @@ fn demo_curve2d_range() {
         origin: DVec2::ZERO,
         direction: DVec2::X,
     }));
-    brep.geom.curve2d_range.push(None);   // natural domain
+    brep.geom.curve2d_range.push(None); // natural domain
 
     // (b) Circle2d — trimmed to upper half [0, π]
     brep.geom.curve2ds.push(Curve2d::Circle(Circle2d {
         center: DVec2::ZERO,
         radius: 1.0,
     }));
-    brep.geom.curve2d_range.push(Some([0.0, PI]));   // upper semicircle only
+    brep.geom.curve2d_range.push(Some([0.0, PI])); // upper semicircle only
 
     // (c) Ellipse2d — trimmed to first quadrant [0, π/2]
     brep.geom.curve2ds.push(Curve2d::Ellipse(Ellipse2d {
@@ -140,24 +171,42 @@ fn demo_curve2d_range() {
     assert_eq!(brep.geom.curve2ds.len(), 3);
     assert_eq!(brep.geom.curve2d_range.len(), 3);
 
-    println!("  curve2d[0] = Line, range = {:?}", brep.geom.curve2d_range[0]);
-    println!("  curve2d[1] = Circle r=1, range = {:?}", brep.geom.curve2d_range[1]);
-    println!("  curve2d[2] = Ellipse a=2 b=1, range = {:?}", brep.geom.curve2d_range[2]);
+    println!(
+        "  curve2d[0] = Line, range = {:?}",
+        brep.geom.curve2d_range[0]
+    );
+    println!(
+        "  curve2d[1] = Circle r=1, range = {:?}",
+        brep.geom.curve2d_range[1]
+    );
+    println!(
+        "  curve2d[2] = Ellipse a=2 b=1, range = {:?}",
+        brep.geom.curve2d_range[2]
+    );
 
-    assert!(brep.geom.curve2d_range[0].is_none(), "Line should have no trim range");
+    assert!(
+        brep.geom.curve2d_range[0].is_none(),
+        "Line should have no trim range"
+    );
     let [t1, t2] = brep.geom.curve2d_range[1].unwrap();
-    assert!((t1 - 0.0).abs() < 1e-10 && (t2 - PI).abs() < 1e-10,
-        "Circle trim should be [0, π]");
+    assert!(
+        (t1 - 0.0).abs() < 1e-10 && (t2 - PI).abs() < 1e-10,
+        "Circle trim should be [0, π]"
+    );
     let [t1e, t2e] = brep.geom.curve2d_range[2].unwrap();
-    assert!((t1e - 0.0).abs() < 1e-10 && (t2e - PI / 2.0).abs() < 1e-10,
-        "Ellipse trim should be [0, π/2]");
+    assert!(
+        (t1e - 0.0).abs() < 1e-10 && (t2e - PI / 2.0).abs() < 1e-10,
+        "Ellipse trim should be [0, π/2]"
+    );
 
     // Evaluate at trimmed endpoints to confirm they're geometrically meaningful
     let circle = &brep.geom.curve2ds[1];
     let p_start = circle.point_at(t1);
-    let p_end   = circle.point_at(t2);
-    println!("  Circle trimmed [0,π]: start=({:.4},{:.4}) end=({:.4},{:.4})",
-        p_start.x, p_start.y, p_end.x, p_end.y);
+    let p_end = circle.point_at(t2);
+    println!(
+        "  Circle trimmed [0,π]: start=({:.4},{:.4}) end=({:.4},{:.4})",
+        p_start.x, p_start.y, p_end.x, p_end.y
+    );
     println!("  ✓ curve2d_range stores per-curve trim ranges (None = natural domain)");
 }
 
@@ -180,14 +229,23 @@ fn demo_step_bspline2d_export() {
     };
     brep.geom.curve2ds[0] = Curve2d::BSpline(bs);
 
-    let step_str = StepWriter::write_string(&brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step_str = StepWriter::write_string(
+        &brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
 
     let has_bspline = step_str.contains("B_SPLINE_CURVE_WITH_KNOTS");
-    println!("  STEP output contains B_SPLINE_CURVE_WITH_KNOTS: {}", has_bspline);
-    assert!(has_bspline, "STEP export should contain B_SPLINE_CURVE_WITH_KNOTS for BSplineCurve2");
+    println!(
+        "  STEP output contains B_SPLINE_CURVE_WITH_KNOTS: {}",
+        has_bspline
+    );
+    assert!(
+        has_bspline,
+        "STEP export should contain B_SPLINE_CURVE_WITH_KNOTS for BSplineCurve2"
+    );
 
     // Count occurrences
     let count = step_str.matches("B_SPLINE_CURVE_WITH_KNOTS").count();
@@ -258,13 +316,31 @@ END-ISO-10303-21;
     match result {
         Ok(brep) => {
             let mt = model_tolerance(&brep);
-            println!("  Parsed BRep: {} vertices, {} edges", brep.vertices.len(), brep.edges.len());
-            println!("  model_tolerance = {:.2e}  (expect 5.00e-6 from UNCERTAINTY_MEASURE)", mt);
-            assert!((mt - 5e-6).abs() < 1e-12,
-                "model_tolerance should be 5e-6, got {}", mt);
-            println!("  vertex_tolerance[0] = {:.2e}", rcad_kernel::vertex_tolerance(&brep, 0));
-            println!("  edge_tolerance[0]   = {:.2e}", rcad_kernel::edge_tolerance(&brep, 0));
-            println!("  ✓ UNCERTAINTY_MEASURE_WITH_UNIT correctly populates GeomStore tolerance vecs");
+            println!(
+                "  Parsed BRep: {} vertices, {} edges",
+                brep.vertices.len(),
+                brep.edges.len()
+            );
+            println!(
+                "  model_tolerance = {:.2e}  (expect 5.00e-6 from UNCERTAINTY_MEASURE)",
+                mt
+            );
+            assert!(
+                (mt - 5e-6).abs() < 1e-12,
+                "model_tolerance should be 5e-6, got {}",
+                mt
+            );
+            println!(
+                "  vertex_tolerance[0] = {:.2e}",
+                rcad_kernel::vertex_tolerance(&brep, 0)
+            );
+            println!(
+                "  edge_tolerance[0]   = {:.2e}",
+                rcad_kernel::edge_tolerance(&brep, 0)
+            );
+            println!(
+                "  ✓ UNCERTAINTY_MEASURE_WITH_UNIT correctly populates GeomStore tolerance vecs"
+            );
         }
         Err(e) => {
             println!("  STEP parse error: {}", e);
@@ -290,9 +366,15 @@ END-ISO-10303-21;
 "#;
     if let Ok(brep2) = StepReader::parse_string(simple_step) {
         let mt2 = model_tolerance(&brep2);
-        println!("\n  File without UNCERTAINTY: model_tolerance = {:.2e}  (expect {:.2e} CONFUSION)", mt2, CONFUSION);
-        assert!((mt2 - CONFUSION).abs() < 1e-12,
-            "Without UNCERTAINTY, model_tolerance should be CONFUSION={}", CONFUSION);
+        println!(
+            "\n  File without UNCERTAINTY: model_tolerance = {:.2e}  (expect {:.2e} CONFUSION)",
+            mt2, CONFUSION
+        );
+        assert!(
+            (mt2 - CONFUSION).abs() < 1e-12,
+            "Without UNCERTAINTY, model_tolerance should be CONFUSION={}",
+            CONFUSION
+        );
         println!("  ✓ Without UNCERTAINTY_MEASURE, tolerance falls back to CONFUSION");
     }
 }

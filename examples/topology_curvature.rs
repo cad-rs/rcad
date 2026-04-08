@@ -41,7 +41,10 @@ fn demo_topo_queries() {
         }
     }
     if bad_edges.is_empty() {
-        println!("  ✓ All {} edges have exactly 2 adjacent faces", edge_count(&brep));
+        println!(
+            "  ✓ All {} edges have exactly 2 adjacent faces",
+            edge_count(&brep)
+        );
     } else {
         println!("  ✗ Edges with wrong adjacency count: {:?}", bad_edges);
     }
@@ -55,7 +58,10 @@ fn demo_topo_queries() {
         }
     }
     if bad_verts.is_empty() {
-        println!("  ✓ All {} vertices have exactly 3 adjacent edges", vertex_count(&brep));
+        println!(
+            "  ✓ All {} vertices have exactly 3 adjacent edges",
+            vertex_count(&brep)
+        );
     } else {
         println!("  ✗ Vertices with wrong edge count: {:?}", bad_verts);
     }
@@ -79,31 +85,71 @@ fn demo_analytic_curvature() {
 
     // Cylinder r=1, h=3  (K=0, H=0.5 everywhere)
     let cyl_brep = cylinder_brep(DVec3::ZERO, DVec3::Y, DVec3::X, 1.0, 3.0).unwrap();
-    if let Some(s) = cyl_brep.geom.surfaces.iter().find(|s| matches!(s, Surface3::Cylinder(_))) {
+    if let Some(s) = cyl_brep
+        .geom
+        .surfaces
+        .iter()
+        .find(|s| matches!(s, Surface3::Cylinder(_)))
+    {
         print_curvature("Cylinder(r=1) at (0,0)", s, 0.0, 0.0);
-        print_curvature("Cylinder(r=1) at (π/2,1)", s, std::f64::consts::FRAC_PI_2, 1.0);
+        print_curvature(
+            "Cylinder(r=1) at (π/2,1)",
+            s,
+            std::f64::consts::FRAC_PI_2,
+            1.0,
+        );
     }
 
     // Sphere r=1  (K=1, H=1 everywhere)
     let sph_brep = sphere_brep(DVec3::ZERO, 1.0).unwrap();
-    if let Some(s) = sph_brep.geom.surfaces.iter().find(|s| matches!(s, Surface3::Sphere(_))) {
-        print_curvature("Sphere(r=1) at (0,π/2)", s, 0.0, std::f64::consts::FRAC_PI_2);
+    if let Some(s) = sph_brep
+        .geom
+        .surfaces
+        .iter()
+        .find(|s| matches!(s, Surface3::Sphere(_)))
+    {
+        print_curvature(
+            "Sphere(r=1) at (0,π/2)",
+            s,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+        );
     }
 
     // Sphere r=2  (K=0.25, H=0.5)
     let sph2_brep = sphere_brep(DVec3::ZERO, 2.0).unwrap();
-    if let Some(s) = sph2_brep.geom.surfaces.iter().find(|s| matches!(s, Surface3::Sphere(_))) {
-        print_curvature("Sphere(r=2) at (0,π/2)", s, 0.0, std::f64::consts::FRAC_PI_2);
+    if let Some(s) = sph2_brep
+        .geom
+        .surfaces
+        .iter()
+        .find(|s| matches!(s, Surface3::Sphere(_)))
+    {
+        print_curvature(
+            "Sphere(r=2) at (0,π/2)",
+            s,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+        );
     }
 
     // Torus R=2, r=0.5  (outer equator v=0)
     //   k_tube = 1/r = 2.0,  k_major = 1/(R+r) = 1/2.5 = 0.4
     //   K = 0.8,  H = 1.2
     let tor_brep = torus_brep(DVec3::ZERO, DVec3::Y, DVec3::X, 2.0, 0.5).unwrap();
-    if let Some(s) = tor_brep.geom.surfaces.iter().find(|s| matches!(s, Surface3::Torus(_))) {
+    if let Some(s) = tor_brep
+        .geom
+        .surfaces
+        .iter()
+        .find(|s| matches!(s, Surface3::Torus(_)))
+    {
         print_curvature("Torus(R=2,r=0.5) outer (v=0)", s, 0.0, 0.0);
         print_curvature("Torus(R=2,r=0.5) inner (v=π)", s, 0.0, std::f64::consts::PI);
-        print_curvature("Torus(R=2,r=0.5) side  (v=π/2)", s, 0.0, std::f64::consts::FRAC_PI_2);
+        print_curvature(
+            "Torus(R=2,r=0.5) side  (v=π/2)",
+            s,
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+        );
     }
 }
 

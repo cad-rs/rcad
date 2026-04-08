@@ -154,11 +154,7 @@ fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec
 }
 
 /// Find seed points for intersection curve marching by sampling one surface.
-pub fn find_seed_points(
-    s1: &Surface3,
-    s2: &Surface3,
-    sample_points: &[DVec3],
-) -> Vec<DVec3> {
+pub fn find_seed_points(s1: &Surface3, s2: &Surface3, sample_points: &[DVec3]) -> Vec<DVec3> {
     let mut seeds = Vec::new();
 
     // Look for sign changes of F2 along the sample points
@@ -203,8 +199,8 @@ pub fn march_intersection(
     }
 
     // Check closure
-    let is_closed = points.len() > 2
-        && points_coincide(*points.first().unwrap(), *points.last().unwrap());
+    let is_closed =
+        points.len() > 2 && points_coincide(*points.first().unwrap(), *points.last().unwrap());
     if is_closed {
         points.pop();
     }
@@ -254,7 +250,12 @@ fn march_one_direction(
 }
 
 /// Generate sample points on a cylinder surface for seed finding.
-pub fn sample_cylinder(cyl: &CylindricalSurface, height_range: [f64; 2], n_theta: usize, n_h: usize) -> Vec<DVec3> {
+pub fn sample_cylinder(
+    cyl: &CylindricalSurface,
+    height_range: [f64; 2],
+    n_theta: usize,
+    n_h: usize,
+) -> Vec<DVec3> {
     let u = if cyl.axis.x.abs() < 0.9 {
         cyl.axis.cross(DVec3::X).normalize()
     } else {
@@ -264,7 +265,8 @@ pub fn sample_cylinder(cyl: &CylindricalSurface, height_range: [f64; 2], n_theta
 
     let mut points = Vec::with_capacity(n_theta * n_h);
     for ih in 0..n_h {
-        let h = height_range[0] + (height_range[1] - height_range[0]) * ih as f64 / (n_h - 1).max(1) as f64;
+        let h = height_range[0]
+            + (height_range[1] - height_range[0]) * ih as f64 / (n_h - 1).max(1) as f64;
         for it in 0..n_theta {
             let theta = 2.0 * std::f64::consts::PI * it as f64 / n_theta as f64;
             let p = cyl.origin + cyl.axis * h + (u * theta.cos() + v * theta.sin()) * cyl.radius;
@@ -289,7 +291,8 @@ pub fn sample_sphere(sphere: &SphericalSurface, n_theta: usize, n_phi: usize) ->
         for it in 0..n_theta {
             let theta = 2.0 * std::f64::consts::PI * it as f64 / n_theta as f64;
             let p = sphere.center
-                + sphere.radius * (sphere.axis * phi.cos() + (u * theta.cos() + v * theta.sin()) * phi.sin());
+                + sphere.radius
+                    * (sphere.axis * phi.cos() + (u * theta.cos() + v * theta.sin()) * phi.sin());
             points.push(p);
         }
     }
@@ -315,7 +318,8 @@ pub fn sample_torus(torus: &ToroidalSurface, n_u: usize, n_v: usize) -> Vec<DVec
 
         for iv in 0..n_v {
             let v = 2.0 * std::f64::consts::PI * iv as f64 / n_v as f64;
-            let p = ring_center + (ring_outward * v.cos() + torus.axis * v.sin()) * torus.minor_radius;
+            let p =
+                ring_center + (ring_outward * v.cos() + torus.axis * v.sin()) * torus.minor_radius;
             points.push(p);
         }
     }
@@ -407,21 +411,36 @@ mod tests {
         let seed = seeds[0];
 
         // Verify seed is approximately on both surfaces
-        assert!(surface_implicit(&sphere, seed).abs() < 0.1,
-            "seed not near sphere: F={}", surface_implicit(&sphere, seed));
-        assert!(surface_implicit(&cyl, seed).abs() < 0.1,
-            "seed not near cylinder: F={}", surface_implicit(&cyl, seed));
+        assert!(
+            surface_implicit(&sphere, seed).abs() < 0.1,
+            "seed not near sphere: F={}",
+            surface_implicit(&sphere, seed)
+        );
+        assert!(
+            surface_implicit(&cyl, seed).abs() < 0.1,
+            "seed not near cylinder: F={}",
+            surface_implicit(&cyl, seed)
+        );
 
         let curve = march_intersection(&sphere, &cyl, seed, 0.1, 200, |_| true);
-        assert!(curve.points.len() > 5,
-            "Expected marched curve with several points, got {}", curve.points.len());
+        assert!(
+            curve.points.len() > 5,
+            "Expected marched curve with several points, got {}",
+            curve.points.len()
+        );
 
         // All points should be approximately on both surfaces
         for p in &curve.points {
-            assert!(surface_implicit(&sphere, *p).abs() < 0.05,
-                "point not on sphere: F={}", surface_implicit(&sphere, *p));
-            assert!(surface_implicit(&cyl, *p).abs() < 0.05,
-                "point not on cylinder: F={}", surface_implicit(&cyl, *p));
+            assert!(
+                surface_implicit(&sphere, *p).abs() < 0.05,
+                "point not on sphere: F={}",
+                surface_implicit(&sphere, *p)
+            );
+            assert!(
+                surface_implicit(&cyl, *p).abs() < 0.05,
+                "point not on cylinder: F={}",
+                surface_implicit(&cyl, *p)
+            );
         }
     }
 

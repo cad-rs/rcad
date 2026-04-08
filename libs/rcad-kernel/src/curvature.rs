@@ -60,11 +60,19 @@ pub fn principal_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
             let k1 = 1.0 / r;
             let k2 = cos_v / (big_r + r * cos_v);
             // Return larger magnitude first for consistency
-            if k1.abs() >= k2.abs() { (k1, k2) } else { (k2, k1) }
+            if k1.abs() >= k2.abs() {
+                (k1, k2)
+            } else {
+                (k2, k1)
+            }
         }
 
         Surface3::BSpline(_) => numerical_curvatures(surface, u, v),
-        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Bezier(_) | Surface3::Offset(_) | Surface3::Trimmed(_) => numerical_curvatures(surface, u, v),
+        Surface3::LinearExtrusion(_)
+        | Surface3::Revolution(_)
+        | Surface3::Bezier(_)
+        | Surface3::Offset(_)
+        | Surface3::Trimmed(_) => numerical_curvatures(surface, u, v),
     }
 }
 
@@ -107,7 +115,7 @@ fn numerical_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
     let u = u.clamp(u0 + EPS * 3.0, u1 - EPS * 3.0);
     let v = v.clamp(v0 + EPS * 3.0, v1 - EPS * 3.0);
 
-    let p    = surface.point_at(u, v);
+    let p = surface.point_at(u, v);
     let p_up = surface.point_at(u + EPS, v);
     let p_um = surface.point_at(u - EPS, v);
     let p_vp = surface.point_at(u, v + EPS);
@@ -163,8 +171,8 @@ fn numerical_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
 mod tests {
     use super::*;
     use crate::geom::{
-        CylindricalSurface, Plane, SphericalSurface, ToroidalSurface, ConicalSurface,
-        BSplineSurface,
+        BSplineSurface, ConicalSurface, CylindricalSurface, Plane, SphericalSurface,
+        ToroidalSurface,
     };
     use glam::DVec3;
 
@@ -176,7 +184,10 @@ mod tests {
 
     #[test]
     fn plane_has_zero_curvature() {
-        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let s = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         assert_eq!(k1, 0.0);
         assert_eq!(k2, 0.0);
@@ -193,7 +204,11 @@ mod tests {
             radius: r,
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
-        assert!(approx_eq(k1.max(k2), 1.0 / r, TOL), "max k = {}", k1.max(k2));
+        assert!(
+            approx_eq(k1.max(k2), 1.0 / r, TOL),
+            "max k = {}",
+            k1.max(k2)
+        );
         assert!(approx_eq(k1.min(k2), 0.0, TOL), "min k = {}", k1.min(k2));
         assert!(approx_eq(gaussian_curvature(&s, 0.0, 0.0), 0.0, TOL));
         assert!(approx_eq(mean_curvature(&s, 0.0, 0.0), 0.5 / r, TOL));
@@ -210,7 +225,11 @@ mod tests {
         let (k1, k2) = principal_curvatures(&s, 0.0, std::f64::consts::FRAC_PI_2);
         assert!(approx_eq(k1, 1.0 / r, TOL));
         assert!(approx_eq(k2, 1.0 / r, TOL));
-        assert!(approx_eq(gaussian_curvature(&s, 0.0, 0.0), 1.0 / (r * r), TOL));
+        assert!(approx_eq(
+            gaussian_curvature(&s, 0.0, 0.0),
+            1.0 / (r * r),
+            TOL
+        ));
         assert!(approx_eq(mean_curvature(&s, 0.0, 0.0), 1.0 / r, TOL));
     }
 
@@ -245,8 +264,14 @@ mod tests {
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         let expected_k_tube = 1.0 / r;
         let expected_k_major = 1.0 / (big_r + r);
-        assert!(approx_eq(k1.max(k2), expected_k_tube, TOL), "k_tube mismatch: {k1} {k2}");
-        assert!(approx_eq(k1.min(k2), expected_k_major, TOL), "k_major mismatch: {k1} {k2}");
+        assert!(
+            approx_eq(k1.max(k2), expected_k_tube, TOL),
+            "k_tube mismatch: {k1} {k2}"
+        );
+        assert!(
+            approx_eq(k1.min(k2), expected_k_major, TOL),
+            "k_major mismatch: {k1} {k2}"
+        );
     }
 
     #[test]

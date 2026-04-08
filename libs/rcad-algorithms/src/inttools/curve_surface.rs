@@ -123,7 +123,9 @@ pub fn intersect_circle_plane(
             % (2.0 * std::f64::consts::PI);
 
         if theta >= t_range[0] - TOLERANCE_ABS && theta <= t_range[1] + TOLERANCE_ABS {
-            let point = circle.center + u * (circle.radius * theta.cos()) + v * (circle.radius * theta.sin());
+            let point = circle.center
+                + u * (circle.radius * theta.cos())
+                + v * (circle.radius * theta.sin());
             hits.push(CurveSurfaceHit {
                 point,
                 curve_param: theta,

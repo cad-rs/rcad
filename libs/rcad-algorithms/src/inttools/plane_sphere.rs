@@ -10,10 +10,7 @@ pub enum PlaneSphereResult {
     Circle(Circle3),
 }
 
-pub fn intersect_plane_sphere(
-    plane: &Plane,
-    sphere: &SphericalSurface,
-) -> PlaneSphereResult {
+pub fn intersect_plane_sphere(plane: &Plane, sphere: &SphericalSurface) -> PlaneSphereResult {
     let signed_dist = (sphere.center - plane.origin).dot(plane.normal);
     let abs_dist = signed_dist.abs();
 

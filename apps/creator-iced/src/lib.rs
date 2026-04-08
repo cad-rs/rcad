@@ -2,10 +2,10 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length, Task};
 use rcad_kernel::BRep;
 use rcad_render::{
-    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes, Camera, Mesh,
-    SelectionMode, SelectionState, Tessellator, WgpuRenderer,
+    Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
+    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
-use rcad_scene::{append_brep, CreationController, Tool};
+use rcad_scene::{CreationController, Tool, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
@@ -184,74 +184,76 @@ impl RCadApp {
         .padding(8)
         .width(Length::Fill);
 
-        let info = container(column![
-            text("RCAD  ·  iced").size(20),
-            text("─────────────────"),
-            text(format!("Vertices : {}", self.brep.vertices.len())),
-            text(format!("Edges    : {}", self.brep.edges.len())),
-            text(format!("Faces    : {}", face_count)),
-            text(format!("Triangles: {}", self.mesh.indices.len() / 3)),
-            text(format!("Curves   : {}", self.brep.geom.curves.len())),
-            text(format!("Surfaces : {}", self.brep.geom.surfaces.len())),
-            text("─────────────────"),
-            text("Selection Mode"),
-            row![
-                button("Select Face").on_press(Message::SetSelectionMode(SelectionMode::Face)),
-                button("Select Edge").on_press(Message::SetSelectionMode(SelectionMode::Edge))
+        let info = container(
+            column![
+                text("RCAD  ·  iced").size(20),
+                text("─────────────────"),
+                text(format!("Vertices : {}", self.brep.vertices.len())),
+                text(format!("Edges    : {}", self.brep.edges.len())),
+                text(format!("Faces    : {}", face_count)),
+                text(format!("Triangles: {}", self.mesh.indices.len() / 3)),
+                text(format!("Curves   : {}", self.brep.geom.curves.len())),
+                text(format!("Surfaces : {}", self.brep.geom.surfaces.len())),
+                text("─────────────────"),
+                text("Selection Mode"),
+                row![
+                    button("Select Face").on_press(Message::SetSelectionMode(SelectionMode::Face)),
+                    button("Select Edge").on_press(Message::SetSelectionMode(SelectionMode::Edge))
+                ]
+                .spacing(6),
+                checkbox(self.selection.additive_select)
+                    .label("Additive Select")
+                    .on_toggle(Message::SetAdditiveSelect),
+                text("Topology Nav"),
+                row![
+                    button("Grow Faces").on_press(Message::GrowSelectedFaces),
+                    button("Grow Edges").on_press(Message::GrowSelectedEdges)
+                ]
+                .spacing(6),
+                row![
+                    button("Face -> Edges").on_press(Message::SelectFaceBoundaryEdges),
+                    button("Edge -> Faces").on_press(Message::SelectEdgeIncidentFaces)
+                ]
+                .spacing(6),
+                button("Clear Selection").on_press(Message::ClearSelection),
+                text(format!(
+                    "Selected Faces: {}",
+                    self.selection.selected_faces.len()
+                )),
+                text(format!(
+                    "Selected Edges: {}",
+                    self.selection.selected_edges.len()
+                )),
+                text(format!(
+                    "Hover Face: {}",
+                    self.selection
+                        .hovered_face
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                )),
+                text(format!(
+                    "Hover Edge: {}",
+                    self.selection
+                        .hovered_edge
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                )),
+                text(format!(
+                    "Hover Pos: {}",
+                    self.selection
+                        .last_hover_pos
+                        .map(|(x, y)| format!("{x:.1}, {y:.1}"))
+                        .unwrap_or_else(|| "-".to_string())
+                )),
+                text(format!("Active Tool: {}", self.creation.tool_name())),
+                text("Left click: select/create, Alt+Left drag: rotate"),
+                text("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish"),
+                button("Export STEP").on_press(Message::ExportStep),
+                text(self.export_status.clone().unwrap_or_default()),
+                button("Reset Camera").on_press(Message::ResetCamera),
             ]
-            .spacing(6),
-            checkbox(self.selection.additive_select)
-                .label("Additive Select")
-                .on_toggle(Message::SetAdditiveSelect),
-            text("Topology Nav"),
-            row![
-                button("Grow Faces").on_press(Message::GrowSelectedFaces),
-                button("Grow Edges").on_press(Message::GrowSelectedEdges)
-            ]
-            .spacing(6),
-            row![
-                button("Face -> Edges").on_press(Message::SelectFaceBoundaryEdges),
-                button("Edge -> Faces").on_press(Message::SelectEdgeIncidentFaces)
-            ]
-            .spacing(6),
-            button("Clear Selection").on_press(Message::ClearSelection),
-            text(format!(
-                "Selected Faces: {}",
-                self.selection.selected_faces.len()
-            )),
-            text(format!(
-                "Selected Edges: {}",
-                self.selection.selected_edges.len()
-            )),
-            text(format!(
-                "Hover Face: {}",
-                self.selection
-                    .hovered_face
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            )),
-            text(format!(
-                "Hover Edge: {}",
-                self.selection
-                    .hovered_edge
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            )),
-            text(format!(
-                "Hover Pos: {}",
-                self.selection
-                    .last_hover_pos
-                    .map(|(x, y)| format!("{x:.1}, {y:.1}"))
-                    .unwrap_or_else(|| "-".to_string())
-            )),
-            text(format!("Active Tool: {}", self.creation.tool_name())),
-            text("Left click: select/create, Alt+Left drag: rotate"),
-            text("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish"),
-            button("Export STEP").on_press(Message::ExportStep),
-            text(self.export_status.clone().unwrap_or_default()),
-            button("Reset Camera").on_press(Message::ResetCamera),
-        ]
-        .spacing(8))
+            .spacing(8),
+        )
         .padding(12)
         .width(Length::Fixed(220.0))
         .height(Length::Fill);
@@ -272,10 +274,15 @@ impl RCadApp {
             .height(Length::Fill),
         );
 
-        column![toolbar, row![info, viewport].width(Length::Fill).height(Length::Fill)]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        column![
+            toolbar,
+            row![info, viewport]
+                .width(Length::Fill)
+                .height(Length::Fill)
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn handle_primary_click(&mut self, cursor: [f32; 2], viewport: [f32; 2]) {
@@ -360,10 +367,9 @@ impl iced::widget::shader::Pipeline for RCadPipeline {
         format: iced::wgpu::TextureFormat,
     ) -> Self {
         Self {
-            renderer: WgpuRenderer::new(
-                unsafe { std::mem::transmute(device) },
-                unsafe { std::mem::transmute(format) },
-            ),
+            renderer: WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe {
+                std::mem::transmute(format)
+            }),
         }
     }
 }
@@ -385,10 +391,14 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             }
             iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => match key {
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
-                    return Some(iced::widget::shader::Action::publish(Message::CancelCommand));
+                    return Some(iced::widget::shader::Action::publish(
+                        Message::CancelCommand,
+                    ));
                 }
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
-                    return Some(iced::widget::shader::Action::publish(Message::ConfirmCommand));
+                    return Some(iced::widget::shader::Action::publish(
+                        Message::ConfirmCommand,
+                    ));
                 }
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
                     return Some(iced::widget::shader::Action::publish(Message::UndoLastStep));
@@ -436,7 +446,9 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
                         iced::mouse::ScrollDelta::Lines { y, .. } => *y * 20.0,
                         iced::mouse::ScrollDelta::Pixels { y, .. } => *y,
                     };
-                    return Some(iced::widget::shader::Action::publish(Message::ZoomCamera(y)));
+                    return Some(iced::widget::shader::Action::publish(Message::ZoomCamera(
+                        y,
+                    )));
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
@@ -523,7 +535,10 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
     }
 }
 
-fn local_cursor_position(cursor: iced::mouse::Cursor, bounds: iced::Rectangle) -> Option<iced::Point> {
+fn local_cursor_position(
+    cursor: iced::mouse::Cursor,
+    bounds: iced::Rectangle,
+) -> Option<iced::Point> {
     let absolute = cursor.position()?;
     if absolute.x < bounds.x
         || absolute.y < bounds.y
@@ -532,7 +547,10 @@ fn local_cursor_position(cursor: iced::mouse::Cursor, bounds: iced::Rectangle) -
     {
         return None;
     }
-    Some(iced::Point::new(absolute.x - bounds.x, absolute.y - bounds.y))
+    Some(iced::Point::new(
+        absolute.x - bounds.x,
+        absolute.y - bounds.y,
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -611,13 +629,17 @@ impl Default for RCadApp {
 }
 
 pub fn run_native(step_content: Option<String>) -> iced::Result {
-    iced::application(move || RCadApp::new(step_content.clone()), RCadApp::update, RCadApp::view)
-        .title("RCAD Creator · iced")
-        .window(iced::window::Settings {
-            size: iced::Size::new(900.0, 600.0),
-            ..Default::default()
-        })
-        .run()
+    iced::application(
+        move || RCadApp::new(step_content.clone()),
+        RCadApp::update,
+        RCadApp::view,
+    )
+    .title("RCAD Creator · iced")
+    .window(iced::window::Settings {
+        size: iced::Size::new(900.0, 600.0),
+        ..Default::default()
+    })
+    .run()
 }
 
 #[cfg(target_arch = "wasm32")]

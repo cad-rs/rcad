@@ -6,9 +6,9 @@
 //! Run: cargo run --example brep_builder_demo
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
-use rcad_kernel::BRep;
 use rcad_modeling::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_scene::append_brep;
 use rcad_step::writer::{ExportSelection, StepWriter};
@@ -90,10 +90,12 @@ fn main() {
 
 /// Build a regular N-gon face in the XY plane centered at `center`.
 fn regular_polygon(center: DVec3, r: f64, n: usize) -> BRep {
-    let pts: Vec<DVec3> = (0..n).map(|i| {
-        let angle = std::f64::consts::TAU * i as f64 / n as f64;
-        center + DVec3::new(r * angle.cos(), r * angle.sin(), 0.0)
-    }).collect();
+    let pts: Vec<DVec3> = (0..n)
+        .map(|i| {
+            let angle = std::f64::consts::TAU * i as f64 / n as f64;
+            center + DVec3::new(r * angle.cos(), r * angle.sin(), 0.0)
+        })
+        .collect();
     planar_face_xy(&pts)
 }
 
@@ -110,8 +112,8 @@ fn triangle_face(a: DVec3, b: DVec3, c: DVec3) -> BRep {
 /// A diamond (rhombus): `w` = horizontal half-span, `h` = vertical half-span.
 fn flat_diamond(center: DVec3, w: f64, h: f64) -> BRep {
     planar_face_xy(&[
-        center + DVec3::new(w,  0.0, 0.0),
-        center + DVec3::new(0.0, h,  0.0),
+        center + DVec3::new(w, 0.0, 0.0),
+        center + DVec3::new(0.0, h, 0.0),
         center + DVec3::new(-w, 0.0, 0.0),
         center + DVec3::new(0.0, -h, 0.0),
     ])
@@ -121,11 +123,13 @@ fn flat_diamond(center: DVec3, w: f64, h: f64) -> BRep {
 fn hexagram(center: DVec3, r: f64) -> BRep {
     let inner = r * 0.5;
     // Star polygon — 12 alternating outer/inner vertices
-    let pts: Vec<DVec3> = (0..12).map(|i| {
-        let angle = std::f64::consts::TAU * i as f64 / 12.0;
-        let radius = if i % 2 == 0 { r } else { inner };
-        center + DVec3::new(radius * angle.cos(), radius * angle.sin(), 0.0)
-    }).collect();
+    let pts: Vec<DVec3> = (0..12)
+        .map(|i| {
+            let angle = std::f64::consts::TAU * i as f64 / 12.0;
+            let radius = if i % 2 == 0 { r } else { inner };
+            center + DVec3::new(radius * angle.cos(), radius * angle.sin(), 0.0)
+        })
+        .collect();
     planar_face_xy(&pts)
 }
 
@@ -137,16 +141,16 @@ fn plus_profile(center: DVec3, arm_len: f64, t: f64) -> BRep {
     // 12-vertex plus sign (CCW)
     let pts = [
         c + DVec3::new(-th, -h, 0.0),
-        c + DVec3::new( th, -h, 0.0),
-        c + DVec3::new( th, -th, 0.0),
-        c + DVec3::new(  h, -th, 0.0),
-        c + DVec3::new(  h,  th, 0.0),
-        c + DVec3::new( th,  th, 0.0),
-        c + DVec3::new( th,   h, 0.0),
-        c + DVec3::new(-th,   h, 0.0),
-        c + DVec3::new(-th,  th, 0.0),
-        c + DVec3::new( -h,  th, 0.0),
-        c + DVec3::new( -h, -th, 0.0),
+        c + DVec3::new(th, -h, 0.0),
+        c + DVec3::new(th, -th, 0.0),
+        c + DVec3::new(h, -th, 0.0),
+        c + DVec3::new(h, th, 0.0),
+        c + DVec3::new(th, th, 0.0),
+        c + DVec3::new(th, h, 0.0),
+        c + DVec3::new(-th, h, 0.0),
+        c + DVec3::new(-th, th, 0.0),
+        c + DVec3::new(-h, th, 0.0),
+        c + DVec3::new(-h, -th, 0.0),
         c + DVec3::new(-th, -th, 0.0),
     ];
     planar_face_xy(&pts)
@@ -163,14 +167,14 @@ fn t_profile(center: DVec3, fw: f64, fh: f64, wt: f64, ft: f64) -> BRep {
     let hwt = wt / 2.0;
     let c = center;
     let pts = [
-        c + DVec3::new(-hw,   0.0,     0.0),
-        c + DVec3::new( hw,   0.0,     0.0),
-        c + DVec3::new( hw,   ft,      0.0),
-        c + DVec3::new( hwt,  ft,      0.0),
-        c + DVec3::new( hwt,  fh,      0.0),
-        c + DVec3::new(-hwt,  fh,      0.0),
-        c + DVec3::new(-hwt,  ft,      0.0),
-        c + DVec3::new(-hw,   ft,      0.0),
+        c + DVec3::new(-hw, 0.0, 0.0),
+        c + DVec3::new(hw, 0.0, 0.0),
+        c + DVec3::new(hw, ft, 0.0),
+        c + DVec3::new(hwt, ft, 0.0),
+        c + DVec3::new(hwt, fh, 0.0),
+        c + DVec3::new(-hwt, fh, 0.0),
+        c + DVec3::new(-hwt, ft, 0.0),
+        c + DVec3::new(-hw, ft, 0.0),
     ];
     planar_face_xy(&pts)
 }
@@ -197,8 +201,18 @@ fn emit_tri_face(brep: &mut BRep, a: DVec3, b: DVec3, c: DVec3) {
     let mk_edge = |brep: &mut BRep, p: DVec3, q: DVec3, vp: usize, vq: usize| {
         let dir = (q - p).normalize_or_zero();
         let len = (q - p).length();
-        make_edge(brep, Curve3::Line(Line3 { origin: p, direction: dir }), 0.0, len, vp, vq)
-            .expect("edge")
+        make_edge(
+            brep,
+            Curve3::Line(Line3 {
+                origin: p,
+                direction: dir,
+            }),
+            0.0,
+            len,
+            vp,
+            vq,
+        )
+        .expect("edge")
     };
 
     let e0 = mk_edge(brep, a, b, va, vb);
@@ -208,9 +222,18 @@ fn emit_tri_face(brep: &mut BRep, a: DVec3, b: DVec3, c: DVec3) {
     let normal = (b - a).cross(c - a).normalize_or_zero();
     let surface = Surface3::Plane(Plane { origin: a, normal });
     let wire = make_wire(vec![
-        WireEdge { idx: e0, forward: true },
-        WireEdge { idx: e1, forward: true },
-        WireEdge { idx: e2, forward: true },
+        WireEdge {
+            idx: e0,
+            forward: true,
+        },
+        WireEdge {
+            idx: e1,
+            forward: true,
+        },
+        WireEdge {
+            idx: e2,
+            forward: true,
+        },
     ]);
     make_face(brep, surface, wire, vec![]).expect("face");
 }
@@ -232,23 +255,38 @@ fn planar_face_xy(pts: &[DVec3]) -> BRep {
         let len = (b - a).length();
         let eidx = make_edge(
             &mut brep,
-            Curve3::Line(Line3 { origin: a, direction: dir }),
-            0.0, len,
-            vis[i], vis[j],
-        ).expect("edge");
-        wire_edges.push(WireEdge { idx: eidx, forward: true });
+            Curve3::Line(Line3 {
+                origin: a,
+                direction: dir,
+            }),
+            0.0,
+            len,
+            vis[i],
+            vis[j],
+        )
+        .expect("edge");
+        wire_edges.push(WireEdge {
+            idx: eidx,
+            forward: true,
+        });
     }
 
-    let surface = Surface3::Plane(Plane { origin: pts[0], normal: DVec3::Z });
+    let surface = Surface3::Plane(Plane {
+        origin: pts[0],
+        normal: DVec3::Z,
+    });
     make_face(&mut brep, surface, make_wire(wire_edges), vec![]).expect("face");
     brep
 }
 
 fn write_step(brep: &BRep, path: &str) {
-    let step = StepWriter::write_string(brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     std::fs::write(path, step).expect("write STEP file");
     println!("  -> {path}");
 }

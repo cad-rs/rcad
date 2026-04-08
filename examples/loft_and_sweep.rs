@@ -13,7 +13,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_modeling::{loft, sweep_pipe};
-use rcad_step::{StepReader, StepWriter, ExportSelection};
+use rcad_step::{ExportSelection, StepReader, StepWriter};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,9 @@ END-ISO-10303-21;
                 let s = &brep.geom.surfaces[0];
                 println!("  Surface type: {:?}", std::mem::discriminant(s));
             } else {
-                println!("  (No full BRep topology — standalone surface entity only; see ADVANCED_FACE for full topology)");
+                println!(
+                    "  (No full BRep topology — standalone surface entity only; see ADVANCED_FACE for full topology)"
+                );
             }
         }
         Err(e) => {
@@ -91,16 +93,21 @@ fn demo_loft() {
 
     let brep = loft(&[profile_bot, profile_top]).expect("loft failed");
 
-    let n_faces = brep.solids.first()
+    let n_faces = brep
+        .solids
+        .first()
         .and_then(|s| s.shells.first())
         .map(|sh| sh.faces.len())
         .unwrap_or(0);
     println!("  Faces: {} (expected 6 = 2 caps + 4 lateral)", n_faces);
 
-    let step = StepWriter::write_string(&brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        &brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     save("loft_solid.step", &step);
     println!("  STEP records: {}", step_record_count(&step));
 }
@@ -132,18 +139,27 @@ fn demo_pipe_sweep() {
 
     let brep = sweep_pipe(&profile_2d, &spine).expect("sweep_pipe failed");
 
-    let n_faces = brep.solids.first()
+    let n_faces = brep
+        .solids
+        .first()
         .and_then(|s| s.shells.first())
         .map(|sh| sh.faces.len())
         .unwrap_or(0);
     let expected_lateral = (n_spine - 1) * 6; // (stations-1) × hex_sides
     println!("  Spine stations: {n_spine}, hex sides: 6");
-    println!("  Faces: {n_faces} (expected {} lateral + 2 caps = {})", expected_lateral, expected_lateral + 2);
+    println!(
+        "  Faces: {n_faces} (expected {} lateral + 2 caps = {})",
+        expected_lateral,
+        expected_lateral + 2
+    );
 
-    let step = StepWriter::write_string(&brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        &brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     save("pipe_sweep.step", &step);
     println!("  STEP records: {}", step_record_count(&step));
 }

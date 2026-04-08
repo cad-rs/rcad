@@ -8,12 +8,12 @@
 //! Both functions return a new BRep rather than modifying in place.
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{CylindricalSurface, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Face, Vertex, WireEdge};
-use rcad_kernel::BRep;
 
-use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 use crate::builder::BuildError;
+use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -98,7 +98,10 @@ fn add_line_edge(dst: &mut BRep, va: usize, vb: usize) -> Result<usize, BuildErr
     let pb = dst.vertices[vb].point;
     let dir = (pb - pa).normalize_or_zero();
     let len = (pb - pa).length();
-    let curve = rcad_kernel::geom::Curve3::Line(Line3 { origin: pa, direction: dir });
+    let curve = rcad_kernel::geom::Curve3::Line(Line3 {
+        origin: pa,
+        direction: dir,
+    });
     make_edge(dst, curve, 0.0, len, va, vb)
 }
 
@@ -108,12 +111,19 @@ fn add_closing_triangle(dst: &mut BRep, v0: usize, v1: usize, v2: usize) -> Resu
     let p1 = dst.vertices[v1].point;
     let p2 = dst.vertices[v2].point;
     let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
-    let surf = Surface3::Plane(Plane { origin: p0, normal: n });
+    let surf = Surface3::Plane(Plane {
+        origin: p0,
+        normal: n,
+    });
 
     let e01 = add_line_edge(dst, v0, v1)?;
     let e12 = add_line_edge(dst, v1, v2)?;
     let e20 = add_line_edge(dst, v2, v0)?;
-    let wire = make_wire(vec![WireEdge::fwd(e01), WireEdge::fwd(e12), WireEdge::fwd(e20)]);
+    let wire = make_wire(vec![
+        WireEdge::fwd(e01),
+        WireEdge::fwd(e12),
+        WireEdge::fwd(e20),
+    ]);
     make_face(dst, surf, wire, vec![])?;
     Ok(())
 }
@@ -148,8 +158,16 @@ fn copy_face_remapped(
 
     for we in &face.outer_wire.edges {
         let src_edge = &src.edges[we.idx];
-        let old_va = if we.forward { src_edge.start } else { src_edge.end };
-        let old_vb = if we.forward { src_edge.end } else { src_edge.start };
+        let old_va = if we.forward {
+            src_edge.start
+        } else {
+            src_edge.end
+        };
+        let old_vb = if we.forward {
+            src_edge.end
+        } else {
+            src_edge.start
+        };
         let new_va = vi_remap[old_va];
         let new_vb = vi_remap[old_vb];
 
@@ -162,7 +180,10 @@ fn copy_face_remapped(
 
     // Compute face normal from first 3 vertices of the wire.
     let normal = {
-        let pts: Vec<DVec3> = face.outer_wire.edges.iter()
+        let pts: Vec<DVec3> = face
+            .outer_wire
+            .edges
+            .iter()
             .take(3)
             .filter_map(|we| {
                 let src_e = &src.edges[we.idx];
@@ -177,9 +198,10 @@ fn copy_face_remapped(
         }
     };
 
-    let surf = Surface3::Plane(Plane { origin: dst.vertices[vi_remap[
-        src.edges[face.outer_wire.edges[0].idx].start
-    ]].point, normal });
+    let surf = Surface3::Plane(Plane {
+        origin: dst.vertices[vi_remap[src.edges[face.outer_wire.edges[0].idx].start]].point,
+        normal,
+    });
 
     make_face(dst, surf, wire, vec![])?;
     Ok(())
@@ -207,13 +229,16 @@ pub fn chamfer_edge(brep: &BRep, edge_idx: usize, dist: f64) -> Result<BRep, Bui
         return Err(BuildError::InvalidIndex(edge_idx));
     }
 
-    let (f0, f1) = find_adjacent_faces(brep, edge_idx)
-        .ok_or(BuildError::DegenerateGeometry("edge must be shared by exactly 2 faces"))?;
+    let (f0, f1) = find_adjacent_faces(brep, edge_idx).ok_or(BuildError::DegenerateGeometry(
+        "edge must be shared by exactly 2 faces",
+    ))?;
 
     let s0 = setback_direction(brep, f0, edge_idx);
     let s1 = setback_direction(brep, f1, edge_idx);
     if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
-        return Err(BuildError::DegenerateGeometry("cannot compute setback direction"));
+        return Err(BuildError::DegenerateGeometry(
+            "cannot compute setback direction",
+        ));
     }
 
     let edge = &brep.edges[edge_idx];
@@ -250,13 +275,16 @@ pub fn fillet_edge(brep: &BRep, edge_idx: usize, radius: f64) -> Result<BRep, Bu
         return Err(BuildError::InvalidIndex(edge_idx));
     }
 
-    let (f0, f1) = find_adjacent_faces(brep, edge_idx)
-        .ok_or(BuildError::DegenerateGeometry("edge must be shared by exactly 2 faces"))?;
+    let (f0, f1) = find_adjacent_faces(brep, edge_idx).ok_or(BuildError::DegenerateGeometry(
+        "edge must be shared by exactly 2 faces",
+    ))?;
 
     let s0 = setback_direction(brep, f0, edge_idx);
     let s1 = setback_direction(brep, f1, edge_idx);
     if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
-        return Err(BuildError::DegenerateGeometry("cannot compute setback direction"));
+        return Err(BuildError::DegenerateGeometry(
+            "cannot compute setback direction",
+        ));
     }
 
     // Compute dihedral angle from face normals (exterior angle beta).
@@ -360,13 +388,21 @@ fn rebuild_with_chamfer_verts(
         let pc = nv1b;
         let _pd = nv0b;
         let n = (pb - pa).cross(pc - pa).normalize_or_zero();
-        let surf = Surface3::Plane(Plane { origin: pa, normal: n });
+        let surf = Surface3::Plane(Plane {
+            origin: pa,
+            normal: n,
+        });
 
         let ea = add_line_edge(&mut dst, nv0a_idx, nv1a_idx)?;
         let eb = add_line_edge(&mut dst, nv1a_idx, nv1b_idx)?;
         let ec = add_line_edge(&mut dst, nv1b_idx, nv0b_idx)?;
         let ed = add_line_edge(&mut dst, nv0b_idx, nv0a_idx)?;
-        let wire = make_wire(vec![WireEdge::fwd(ea), WireEdge::fwd(eb), WireEdge::fwd(ec), WireEdge::fwd(ed)]);
+        let wire = make_wire(vec![
+            WireEdge::fwd(ea),
+            WireEdge::fwd(eb),
+            WireEdge::fwd(ec),
+            WireEdge::fwd(ed),
+        ]);
         make_face(&mut dst, surf, wire, vec![])?;
     }
 
@@ -435,7 +471,12 @@ fn rebuild_with_fillet_verts(
         let eb = add_line_edge(&mut dst, nv1a_idx, nv1b_idx)?;
         let ec = add_line_edge(&mut dst, nv1b_idx, nv0b_idx)?;
         let ed = add_line_edge(&mut dst, nv0b_idx, nv0a_idx)?;
-        let wire = make_wire(vec![WireEdge::fwd(ea), WireEdge::fwd(eb), WireEdge::fwd(ec), WireEdge::fwd(ed)]);
+        let wire = make_wire(vec![
+            WireEdge::fwd(ea),
+            WireEdge::fwd(eb),
+            WireEdge::fwd(ec),
+            WireEdge::fwd(ed),
+        ]);
         make_face(&mut dst, surf, wire, vec![])?;
     }
 
@@ -458,7 +499,10 @@ fn build_remap(
 ) -> Vec<usize> {
     let mut remap: Vec<usize> = (0..brep.vertices.len()).collect();
     // Check if this face actually references v0_orig / v1_orig
-    let face_verts: Vec<usize> = face.outer_wire.edges.iter()
+    let face_verts: Vec<usize> = face
+        .outer_wire
+        .edges
+        .iter()
         .filter_map(|we| brep.edges.get(we.idx))
         .flat_map(|e| [e.start, e.end])
         .collect();
@@ -548,7 +592,11 @@ pub fn corner_blend(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep,
 
     // Helper: edge_idx → setback vertex index in dst
     let sb_vi_for_edge = |ei: usize| -> Option<usize> {
-        setbacks.iter().enumerate().find(|&(_, &(e, _))| e == ei).map(|(i, _)| sb_indices[i])
+        setbacks
+            .iter()
+            .enumerate()
+            .find(|&(_, &(e, _))| e == ei)
+            .map(|(i, _)| sb_indices[i])
     };
 
     for face in &shell.faces {
@@ -605,9 +653,7 @@ pub fn corner_blend(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep,
         let new_boundary = {
             let mut deduped: Vec<DVec3> = Vec::new();
             for p in new_boundary {
-                if deduped.is_empty()
-                    || !points_coincide(*deduped.last().unwrap(), p)
-                {
+                if deduped.is_empty() || !points_coincide(*deduped.last().unwrap(), p) {
                     deduped.push(p);
                 }
             }
@@ -671,7 +717,11 @@ mod tests {
     use rcad_kernel::geom::PrimitiveSolid;
 
     fn box_brep_2x2x2() -> BRep {
-        BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 })
+        BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        })
     }
 
     #[test]
@@ -682,7 +732,10 @@ mod tests {
         // 6 original - 2 trimmed + 1 chamfer + 2 closing triangles = 7 total?
         // Actually: original 6 faces all kept (2 trimmed in-place), +1 chamfer +2 closing = 9
         // But our rebuild copies all 6 faces (2 with remap, 4 unchanged), + 1 chamfer + 2 closing = 9
-        assert_eq!(n_faces, 9, "expected 9 faces after chamfer (6 + 1 chamfer + 2 closing)");
+        assert_eq!(
+            n_faces, 9,
+            "expected 9 faces after chamfer (6 + 1 chamfer + 2 closing)"
+        );
     }
 
     #[test]
@@ -690,7 +743,10 @@ mod tests {
         let brep = box_brep_2x2x2();
         let result = fillet_edge(&brep, 0, 0.2).unwrap();
         let n_faces = result.solids[0].shells[0].faces.len();
-        assert_eq!(n_faces, 9, "expected 9 faces after fillet (6 + 1 fillet + 2 closing)");
+        assert_eq!(
+            n_faces, 9,
+            "expected 9 faces after fillet (6 + 1 fillet + 2 closing)"
+        );
     }
 
     #[test]
@@ -716,11 +772,18 @@ mod tests {
         let brep = box_brep_2x2x2();
         // vertex 0 is the corner at (0,0,0) in the default box BRep
         // find which vertex that is
-        let vi = brep.vertices.iter().position(|v| v.point.length() < 1e-6).unwrap_or(0);
+        let vi = brep
+            .vertices
+            .iter()
+            .position(|v| v.point.length() < 1e-6)
+            .unwrap_or(0);
         let result = corner_blend(&brep, vi, 0.1).unwrap();
         let n_faces = result.solids[0].shells[0].faces.len();
         // 6 original faces (trimmed) + 1 corner triangle = 7
-        assert!(n_faces >= 7, "expected at least 7 faces after corner_blend, got {n_faces}");
+        assert!(
+            n_faces >= 7,
+            "expected at least 7 faces after corner_blend, got {n_faces}"
+        );
     }
 
     #[test]

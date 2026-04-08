@@ -13,13 +13,12 @@
 use std::f64::consts::PI;
 
 use glam::DVec3;
+use rcad_kernel::geom::{Circle3, Line3};
 use rcad_kernel::{
     BRep, BSplineSurface, Curve3, LinearExtrusionSurface, PrimitiveSolid, RevolutionSurface,
-    Surface3, SurfaceEval,
-    face_domain,
+    Surface3, SurfaceEval, face_domain,
 };
-use rcad_kernel::geom::{Line3, Circle3};
-use rcad_step::{StepWriter, StepReader, ExportSelection};
+use rcad_step::{ExportSelection, StepReader, StepWriter};
 
 // ── 1. face_surface_range ────────────────────────────────────────────────────
 
@@ -28,7 +27,9 @@ fn demo_face_surface_range() {
 
     let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 
-    let n_faces: usize = brep.solids.iter()
+    let n_faces: usize = brep
+        .solids
+        .iter()
         .flat_map(|s| s.shells.iter())
         .map(|sh| sh.faces.len())
         .sum();
@@ -41,8 +42,10 @@ fn demo_face_surface_range() {
     brep.geom.face_surface_range[0] = Some([0.0, PI, 0.0, PI / 2.0]);
 
     let d0 = face_domain(&brep, 0);
-    println!("  face_domain(0) = [{:.4}, {:.4}, {:.4}, {:.4}]  (expect [0, π, 0, π/2])",
-        d0[0], d0[1], d0[2], d0[3]);
+    println!(
+        "  face_domain(0) = [{:.4}, {:.4}, {:.4}, {:.4}]  (expect [0, π, 0, π/2])",
+        d0[0], d0[1], d0[2], d0[3]
+    );
     assert!((d0[0] - 0.0).abs() < 1e-10);
     assert!((d0[1] - PI).abs() < 1e-10);
     assert!((d0[2] - 0.0).abs() < 1e-10);
@@ -51,19 +54,25 @@ fn demo_face_surface_range() {
     // Face 1 (if it exists) should fall back to sphere's default_domain
     if n_faces > 1 {
         let d1 = face_domain(&brep, 1);
-        println!("  face_domain(1) = [{:.4}, {:.4}, {:.4}, {:.4}]  (sphere default [0,2π,0,π])",
-            d1[0], d1[1], d1[2], d1[3]);
+        println!(
+            "  face_domain(1) = [{:.4}, {:.4}, {:.4}, {:.4}]  (sphere default [0,2π,0,π])",
+            d1[0], d1[1], d1[2], d1[3]
+        );
         assert!((d1[0] - 0.0).abs() < 1e-10);
         assert!((d1[1] - 2.0 * PI).abs() < 1e-10);
     } else {
         // Single-face sphere: check the natural domain without override
         brep.geom.face_surface_range[0] = None;
         let dn = face_domain(&brep, 0);
-        println!("  face_domain without override = [{:.4}, {:.4}, {:.4}, {:.4}]  (sphere natural)",
-            dn[0], dn[1], dn[2], dn[3]);
+        println!(
+            "  face_domain without override = [{:.4}, {:.4}, {:.4}, {:.4}]  (sphere natural)",
+            dn[0], dn[1], dn[2], dn[3]
+        );
         assert!((dn[1] - 2.0 * PI).abs() < 1e-10);
     }
-    println!("  ✓ face_surface_range stores per-face domain; face_domain() returns override or default");
+    println!(
+        "  ✓ face_surface_range stores per-face domain; face_domain() returns override or default"
+    );
 }
 
 // ── 2. LinearExtrusionSurface ─────────────────────────────────────────────────
@@ -84,41 +93,60 @@ fn demo_linear_extrusion_surface() {
 
     // S(0, 0) = profile(0) + 0·Z = (1, 0, 0)
     let p00 = surf.point_at(0.0, 0.0);
-    println!("  S(u=0, v=0) = ({:.4}, {:.4}, {:.4})  (expect 1, 0, 0)",
-        p00.x, p00.y, p00.z);
+    println!(
+        "  S(u=0, v=0) = ({:.4}, {:.4}, {:.4})  (expect 1, 0, 0)",
+        p00.x, p00.y, p00.z
+    );
     assert!((p00 - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-10);
 
     // S(0.5, 2.0) = profile(0.5) + 2·Z = (1, 0.5, 2)
     let p05_2 = surf.point_at(0.5, 2.0);
-    println!("  S(u=0.5, v=2) = ({:.4}, {:.4}, {:.4})  (expect 1, 0.5, 2)",
-        p05_2.x, p05_2.y, p05_2.z);
+    println!(
+        "  S(u=0.5, v=2) = ({:.4}, {:.4}, {:.4})  (expect 1, 0.5, 2)",
+        p05_2.x, p05_2.y, p05_2.z
+    );
     assert!((p05_2 - DVec3::new(1.0, 0.5, 2.0)).length() < 1e-10);
 
     // S(1.0, -3.0) = profile(1.0) + (-3)·Z = (1, 1, -3)
     let p1_m3 = surf.point_at(1.0, -3.0);
-    println!("  S(u=1, v=-3) = ({:.4}, {:.4}, {:.4})  (expect 1, 1, -3)",
-        p1_m3.x, p1_m3.y, p1_m3.z);
+    println!(
+        "  S(u=1, v=-3) = ({:.4}, {:.4}, {:.4})  (expect 1, 1, -3)",
+        p1_m3.x, p1_m3.y, p1_m3.z
+    );
     assert!((p1_m3 - DVec3::new(1.0, 1.0, -3.0)).length() < 1e-10);
 
     // Normal should be perpendicular to extrusion direction (Z)
     let n = surf.normal_at(0.5, 0.0);
     println!("  normal at (0.5,0) = ({:.4}, {:.4}, {:.4})", n.x, n.y, n.z);
-    assert!(n.dot(DVec3::Z).abs() < 1e-6, "normal should be perpendicular to extrusion direction");
+    assert!(
+        n.dot(DVec3::Z).abs() < 1e-6,
+        "normal should be perpendicular to extrusion direction"
+    );
 
     // default_domain: u domain from Line3 (infinite), v infinite
     let [u1, u2, v1, v2] = surf.default_domain();
-    println!("  default_domain = [{:.4}, {:.4}, {:.4}, {:.4}]  (line: [-∞,∞], ext: [-∞,∞])",
-        u1.max(-1e15), u2.min(1e15), v1.max(-1e15), v2.min(1e15));
+    println!(
+        "  default_domain = [{:.4}, {:.4}, {:.4}, {:.4}]  (line: [-∞,∞], ext: [-∞,∞])",
+        u1.max(-1e15),
+        u2.min(1e15),
+        v1.max(-1e15),
+        v2.min(1e15)
+    );
     assert!(u1.is_infinite() && u2.is_infinite() && v1.is_infinite() && v2.is_infinite());
 
     // Verify via Surface3 enum dispatch
     let s3 = Surface3::LinearExtrusion(LinearExtrusionSurface {
-        profile: Box::new(Curve3::Line(Line3 { origin: DVec3::new(2.0, 0.0, 0.0), direction: DVec3::Y })),
+        profile: Box::new(Curve3::Line(Line3 {
+            origin: DVec3::new(2.0, 0.0, 0.0),
+            direction: DVec3::Y,
+        })),
         direction: DVec3::Z,
     });
     let pt = s3.point_at(0.0, 1.0);
-    println!("  Surface3::LinearExtrusion dispatch: S(0,1) = ({:.4}, {:.4}, {:.4})  (expect 2,0,1)",
-        pt.x, pt.y, pt.z);
+    println!(
+        "  Surface3::LinearExtrusion dispatch: S(0,1) = ({:.4}, {:.4}, {:.4})  (expect 2,0,1)",
+        pt.x, pt.y, pt.z
+    );
     assert!((pt - DVec3::new(2.0, 0.0, 1.0)).length() < 1e-10);
 
     println!("  ✓ LinearExtrusionSurface: S(u,v)=profile(u)+v·dir; normal ⊥ dir; dispatch works");
@@ -144,28 +172,46 @@ fn demo_revolution_surface() {
 
     // S(u=0, v=0) → rotate (2,0,0) by 0 → (2, 0, 0)
     let p00 = surf.point_at(0.0, 0.0);
-    println!("  S(u=0, v=0) = ({:.4}, {:.4}, {:.4})  (expect 2, 0, 0)", p00.x, p00.y, p00.z);
+    println!(
+        "  S(u=0, v=0) = ({:.4}, {:.4}, {:.4})  (expect 2, 0, 0)",
+        p00.x, p00.y, p00.z
+    );
     assert!((p00 - DVec3::new(2.0, 0.0, 0.0)).length() < 1e-9);
 
     // S(u=π/2, v=0) → rotate (2,0,0) by π/2 → (0, 2, 0)
     let p90_0 = surf.point_at(PI / 2.0, 0.0);
-    println!("  S(u=π/2, v=0) = ({:.4}, {:.4}, {:.4})  (expect 0, 2, 0)", p90_0.x, p90_0.y, p90_0.z);
+    println!(
+        "  S(u=π/2, v=0) = ({:.4}, {:.4}, {:.4})  (expect 0, 2, 0)",
+        p90_0.x, p90_0.y, p90_0.z
+    );
     assert!((p90_0 - DVec3::new(0.0, 2.0, 0.0)).length() < 1e-9);
 
     // S(u=π, v=0) → rotate (2,0,0) by π → (-2, 0, 0)
     let p180_0 = surf.point_at(PI, 0.0);
-    println!("  S(u=π, v=0) = ({:.4}, {:.4}, {:.4})  (expect -2, 0, 0)", p180_0.x, p180_0.y, p180_0.z);
+    println!(
+        "  S(u=π, v=0) = ({:.4}, {:.4}, {:.4})  (expect -2, 0, 0)",
+        p180_0.x, p180_0.y, p180_0.z
+    );
     assert!((p180_0 - DVec3::new(-2.0, 0.0, 0.0)).length() < 1e-9);
 
     // S(u=0, v=1.5) → profile(1.5) = (2,0,1.5) rotated by 0 → (2, 0, 1.5)
     let p0_15 = surf.point_at(0.0, 1.5);
-    println!("  S(u=0, v=1.5) = ({:.4}, {:.4}, {:.4})  (expect 2, 0, 1.5)", p0_15.x, p0_15.y, p0_15.z);
+    println!(
+        "  S(u=0, v=1.5) = ({:.4}, {:.4}, {:.4})  (expect 2, 0, 1.5)",
+        p0_15.x, p0_15.y, p0_15.z
+    );
     assert!((p0_15 - DVec3::new(2.0, 0.0, 1.5)).length() < 1e-9);
 
     // Normal should point radially outward (perpendicular to Z)
     let n = surf.normal_at(0.0, 0.0);
-    println!("  normal at (0,0) = ({:.4}, {:.4}, {:.4})  (expect radial outward)", n.x, n.y, n.z);
-    assert!(n.dot(DVec3::Z).abs() < 0.05, "normal should be roughly perpendicular to Z for this cylinder");
+    println!(
+        "  normal at (0,0) = ({:.4}, {:.4}, {:.4})  (expect radial outward)",
+        n.x, n.y, n.z
+    );
+    assert!(
+        n.dot(DVec3::Z).abs() < 0.05,
+        "normal should be roughly perpendicular to Z for this cylinder"
+    );
     assert!(n.length() > 0.99);
 
     // Also test via Surface3 enum dispatch
@@ -183,11 +229,18 @@ fn demo_revolution_surface() {
 
     // default_domain: u in [0, 2π], v from profile
     let [u1, u2, v1, v2] = surf.default_domain();
-    println!("  default_domain u=[{:.4},{:.4}] v=[{:.4},{:.4}]  (u: [0,2π], v: line [-∞,∞])",
-        u1, u2, v1.max(-1e15), v2.min(1e15));
+    println!(
+        "  default_domain u=[{:.4},{:.4}] v=[{:.4},{:.4}]  (u: [0,2π], v: line [-∞,∞])",
+        u1,
+        u2,
+        v1.max(-1e15),
+        v2.min(1e15)
+    );
     assert!((u1 - 0.0).abs() < 1e-10 && (u2 - 2.0 * PI).abs() < 1e-10);
 
-    println!("  ✓ RevolutionSurface: S(u,v)=rotate(profile(v),axis,u); radial normal; dispatch works");
+    println!(
+        "  ✓ RevolutionSurface: S(u,v)=rotate(profile(v),axis,u); radial normal; dispatch works"
+    );
 }
 
 // ── 4. BSplineSurface STEP export ────────────────────────────────────────────
@@ -198,7 +251,9 @@ fn demo_bspline_surface_step_export() {
     // Build a box BRep and replace the first face surface with a bilinear BSplineSurface
     // (degree 1×1, 4 control points forming a unit square in Z=0)
     let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
-        width: 1.0, height: 1.0, depth: 1.0,
+        width: 1.0,
+        height: 1.0,
+        depth: 1.0,
     });
 
     let bs = BSplineSurface {
@@ -217,21 +272,32 @@ fn demo_bspline_surface_step_export() {
     // Push the BSplineSurface as surface index 0 and point the first face at it.
     brep.geom.surfaces.push(Surface3::BSpline(bs));
     // Set face_surface for all 6 box faces; face 0 maps to our BSpline (index 0).
-    let n_faces = brep.solids.iter()
+    let n_faces = brep
+        .solids
+        .iter()
         .flat_map(|s| s.shells.iter())
         .map(|sh| sh.faces.len())
         .sum::<usize>();
     brep.geom.face_surface = vec![None; n_faces];
     brep.geom.face_surface[0] = Some(0);
 
-    let step_str = StepWriter::write_string(&brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step_str = StepWriter::write_string(
+        &brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
 
     let has_bspline = step_str.contains("B_SPLINE_SURFACE_WITH_KNOTS");
-    println!("  STEP output contains B_SPLINE_SURFACE_WITH_KNOTS: {}", has_bspline);
-    assert!(has_bspline, "Expected B_SPLINE_SURFACE_WITH_KNOTS in STEP output");
+    println!(
+        "  STEP output contains B_SPLINE_SURFACE_WITH_KNOTS: {}",
+        has_bspline
+    );
+    assert!(
+        has_bspline,
+        "Expected B_SPLINE_SURFACE_WITH_KNOTS in STEP output"
+    );
 
     let count = step_str.matches("B_SPLINE_SURFACE_WITH_KNOTS").count();
     println!("  Occurrences of B_SPLINE_SURFACE_WITH_KNOTS: {}", count);
@@ -302,13 +368,19 @@ END-ISO-10303-21;
     let result = StepReader::parse_string(step_content);
     match result {
         Ok(brep) => {
-            println!("  Parsed BRep: {} vertices, {} edges, {} surfaces",
-                brep.vertices.len(), brep.edges.len(), brep.geom.surfaces.len());
+            println!(
+                "  Parsed BRep: {} vertices, {} edges, {} surfaces",
+                brep.vertices.len(),
+                brep.edges.len(),
+                brep.geom.surfaces.len()
+            );
 
             // Check if any surface is LinearExtrusion
-            let has_extrusion = brep.geom.surfaces.iter().any(|s| {
-                matches!(s, Surface3::LinearExtrusion(_))
-            });
+            let has_extrusion = brep
+                .geom
+                .surfaces
+                .iter()
+                .any(|s| matches!(s, Surface3::LinearExtrusion(_)));
             println!("  Contains Surface3::LinearExtrusion: {}", has_extrusion);
 
             if has_extrusion {
@@ -316,16 +388,22 @@ END-ISO-10303-21;
                 for surf in &brep.geom.surfaces {
                     if let Surface3::LinearExtrusion(les) = surf {
                         let pt = les.point_at(0.0, 0.5);
-                        println!("  LinearExtrusion.point_at(0, 0.5) = ({:.4}, {:.4}, {:.4})",
-                            pt.x, pt.y, pt.z);
-                        println!("  direction = ({:.4}, {:.4}, {:.4})",
-                            les.direction.x, les.direction.y, les.direction.z);
+                        println!(
+                            "  LinearExtrusion.point_at(0, 0.5) = ({:.4}, {:.4}, {:.4})",
+                            pt.x, pt.y, pt.z
+                        );
+                        println!(
+                            "  direction = ({:.4}, {:.4}, {:.4})",
+                            les.direction.x, les.direction.y, les.direction.z
+                        );
                         break;
                     }
                 }
                 println!("  ✓ SURFACE_OF_LINEAR_EXTRUSION parsed into Surface3::LinearExtrusion");
             } else {
-                println!("  (LinearExtrusion not found in geom.surfaces — surface may be on face directly)");
+                println!(
+                    "  (LinearExtrusion not found in geom.surfaces — surface may be on face directly)"
+                );
                 println!("  ✓ STEP with SURFACE_OF_LINEAR_EXTRUSION parsed without error");
             }
         }

@@ -13,10 +13,7 @@ pub enum PlaneCylinderResult {
     Ellipse(Ellipse3),
 }
 
-pub fn intersect_plane_cylinder(
-    plane: &Plane,
-    cyl: &CylindricalSurface,
-) -> PlaneCylinderResult {
+pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> PlaneCylinderResult {
     let cos_angle = plane.normal.dot(cyl.axis).abs();
 
     if cos_angle < TOLERANCE_ANG {

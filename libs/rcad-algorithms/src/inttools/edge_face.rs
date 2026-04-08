@@ -10,11 +10,7 @@ pub struct EdgeFaceHit {
 
 /// Intersect a line segment (bounded by t_range) with a plane.
 /// Does NOT check face boundary containment — caller must do that.
-pub fn intersect_line_plane(
-    line: &Line3,
-    t_range: [f64; 2],
-    plane: &Plane,
-) -> Option<EdgeFaceHit> {
+pub fn intersect_line_plane(line: &Line3, t_range: [f64; 2], plane: &Plane) -> Option<EdgeFaceHit> {
     let denom = line.direction.dot(plane.normal);
     if denom.abs() < TOLERANCE_ABS {
         return None;
@@ -164,7 +160,10 @@ mod tests {
             origin: DVec3::new(0.5, 0.5, -1.0),
             direction: DVec3::Z,
         };
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         let hit = intersect_line_plane(&line, [-10.0, 10.0], &plane).unwrap();
         assert!((hit.edge_param - 1.0).abs() < TOLERANCE_ABS);
         assert!(points_coincide(hit.point, DVec3::new(0.5, 0.5, 0.0)));
@@ -176,26 +175,43 @@ mod tests {
             origin: DVec3::new(0.0, 0.0, 1.0),
             direction: DVec3::X,
         };
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         assert!(intersect_line_plane(&line, [-10.0, 10.0], &plane).is_none());
     }
 
     #[test]
     fn point_inside_square() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         let verts = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(1.0, 1.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
         ];
-        assert!(point_in_planar_face(DVec3::new(0.5, 0.5, 0.0), &plane, &verts));
-        assert!(!point_in_planar_face(DVec3::new(1.5, 0.5, 0.0), &plane, &verts));
+        assert!(point_in_planar_face(
+            DVec3::new(0.5, 0.5, 0.0),
+            &plane,
+            &verts
+        ));
+        assert!(!point_in_planar_face(
+            DVec3::new(1.5, 0.5, 0.0),
+            &plane,
+            &verts
+        ));
     }
 
     #[test]
     fn clip_line_to_square() {
-        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
         let verts = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),

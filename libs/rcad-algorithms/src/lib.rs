@@ -15,17 +15,19 @@ pub mod triangulate;
 
 use rcad_kernel::BRep;
 
-pub use brep_check::{check, CheckIssue, CheckResult};
+pub use brep_check::{CheckIssue, CheckResult, check};
 pub use brep_repair::{
-    fix_wire_orientation, merge_close_vertices, remove_degenerate_faces,
-    recompute_face_normals, repair, RepairReport,
+    RepairReport, fix_wire_orientation, merge_close_vertices, recompute_face_normals,
+    remove_degenerate_faces, repair,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
-pub use hlr::{hlr, hlr_to_svg, HlrCamera, HlrResult, HlrSegment};
-pub use imprint::{detect_gaps_overlaps, imprint_brep, Gap, GapOverlapReport, ImprintResult, Overlap};
-pub use section::{section, section_curves, section_polylines, SectionCurve};
-pub use inttools::{intersect_surfaces, SurfaceCurve, SurfaceSurfaceIntersection};
+pub use hlr::{HlrCamera, HlrResult, HlrSegment, hlr, hlr_to_svg};
+pub use imprint::{
+    Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep,
+};
+pub use inttools::{SurfaceCurve, SurfaceSurfaceIntersection, intersect_surfaces};
+pub use section::{SectionCurve, section, section_curves, section_polylines};
 
 /// Perform a boolean operation on two BReps.
 ///
@@ -59,10 +61,7 @@ pub fn boolean_op_with_history(
 }
 
 /// Union two BReps and return both the result and face origin history.
-pub fn union_with_history(
-    a: &BRep,
-    b: &BRep,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+pub fn union_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
     boolean_op_with_history(BooleanOpType::Union, a, b)
 }
 
@@ -75,10 +74,7 @@ pub fn intersection_with_history(
 }
 
 /// Subtract solid B from solid A and return both the result and face origin history.
-pub fn difference_with_history(
-    a: &BRep,
-    b: &BRep,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+pub fn difference_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
     boolean_op_with_history(BooleanOpType::Difference, a, b)
 }
 
@@ -282,7 +278,9 @@ mod tests {
     fn classify_point_on_face() {
         use classify::Classification;
         let mut brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
-            width: 2.0, height: 2.0, depth: 2.0,
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
         geom_populate::populate_box_geom(&mut brep);
         let ds = bopds::ds::DS::new(&brep, &rcad_kernel::BRep::new());

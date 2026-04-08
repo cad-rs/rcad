@@ -3,7 +3,7 @@
 //! Run: cargo run --example boolean_ops
 
 use glam::DVec3;
-use rcad_algorithms::{boolean_op, geom_populate::populate_box_geom, BooleanOpType};
+use rcad_algorithms::{BooleanOpType, boolean_op, geom_populate::populate_box_geom};
 use rcad_kernel::BRep;
 use rcad_modeling::*;
 use rcad_step::writer::{ExportSelection, StepWriter};
@@ -66,8 +66,7 @@ fn main() {
 
 /// Helper: create an axis-aligned box at (x, y, z) with given dimensions.
 fn make_box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
-    let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, w, h, d)
-        .expect("make_box_brep");
+    let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, w, h, d).expect("make_box_brep");
     for v in &mut brep.vertices {
         v.point += DVec3::new(x, y, z);
     }
@@ -75,10 +74,13 @@ fn make_box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
 }
 
 fn write_step(brep: &BRep, path: &str) {
-    let step = StepWriter::write_string(brep, ExportSelection {
-        selected_faces: &[],
-        selected_edges: &[],
-    });
+    let step = StepWriter::write_string(
+        brep,
+        ExportSelection {
+            selected_faces: &[],
+            selected_edges: &[],
+        },
+    );
     std::fs::write(path, step).expect("write STEP file");
     println!("  -> {path}");
 }

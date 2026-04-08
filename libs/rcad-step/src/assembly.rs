@@ -16,8 +16,8 @@
 //! ```
 
 use glam::DVec3;
-use rcad_kernel::appearance::StepColor;
 use rcad_kernel::BRep;
+use rcad_kernel::appearance::StepColor;
 
 use crate::writer::{ExportSelection, StepWriter};
 
@@ -115,17 +115,20 @@ fn write_assembly_step(
         app_ctx
     ));
     let prod_ctx = push!(format!(
-        "PRODUCT_CONTEXT('part definition',#{},'mechanical')", app_ctx
+        "PRODUCT_CONTEXT('part definition',#{},'mechanical')",
+        app_ctx
     ));
     let def_ctx = push!(format!(
-        "PRODUCT_DEFINITION_CONTEXT('part definition',#{},'design')", app_ctx
+        "PRODUCT_DEFINITION_CONTEXT('part definition',#{},'design')",
+        app_ctx
     ));
 
     // Measurement context
     let len_unit = push!("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )".to_string());
     let rad_unit = push!("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string());
     let meas = push!(format!(
-        "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})", rad_unit
+        "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})",
+        rad_unit
     ));
     let dim_exp = push!("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
     let deg_unit = push!(format!(
@@ -144,35 +147,45 @@ fn write_assembly_step(
 
     // Assembly root product
     let asm_product = push!(format!(
-        "PRODUCT('{}','{}','',( #{} ))", assembly_name, assembly_name, prod_ctx
+        "PRODUCT('{}','{}','',( #{} ))",
+        assembly_name, assembly_name, prod_ctx
     ));
     let asm_formation = push!(format!(
-        "PRODUCT_DEFINITION_FORMATION('','',#{})", asm_product
+        "PRODUCT_DEFINITION_FORMATION('','',#{})",
+        asm_product
     ));
     let asm_definition = push!(format!(
-        "PRODUCT_DEFINITION('','',#{},#{})", asm_formation, def_ctx
+        "PRODUCT_DEFINITION('','',#{},#{})",
+        asm_formation, def_ctx
     ));
     let asm_shape = push!(format!(
-        "PRODUCT_DEFINITION_SHAPE('','',#{})", asm_definition
+        "PRODUCT_DEFINITION_SHAPE('','',#{})",
+        asm_definition
     ));
     let asm_rep = push!(format!(
-        "SHAPE_REPRESENTATION('{}',(#{}),#{})", assembly_name, geom_ctx, geom_ctx
+        "SHAPE_REPRESENTATION('{}',(#{}),#{})",
+        assembly_name, geom_ctx, geom_ctx
     ));
-    push!(format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", asm_shape, asm_rep));
+    push!(format!(
+        "SHAPE_DEFINITION_REPRESENTATION(#{},#{})",
+        asm_shape, asm_rep
+    ));
 
     // Component products + NAUO links
     for (i, (comp_name, brep, comp_color)) in components.iter().enumerate() {
         // Write the component geometry as a standalone STEP string,
         // then inline its DATA section records with offset IDs.
-        let colors = comp_color.map(|c| {
-            StepColor::new().with_solid_color(c)
-        });
+        let colors = comp_color.map(|c| StepColor::new().with_solid_color(c));
         let comp_step = if let Some(sc) = &colors {
             StepWriter::write_string_colored(brep, sc)
         } else {
-            StepWriter::write_string(brep, ExportSelection {
-                selected_faces: &[], selected_edges: &[],
-            })
+            StepWriter::write_string(
+                brep,
+                ExportSelection {
+                    selected_faces: &[],
+                    selected_edges: &[],
+                },
+            )
         };
 
         // Extract DATA records from component STEP string and re-number them
@@ -180,11 +193,14 @@ fn write_assembly_step(
         let id_offset = next_id - 1;
 
         // Re-number and collect component records
-        let renumbered: Vec<String> = comp_records.iter().map(|(orig_id, body)| {
-            let new_id = orig_id + id_offset;
-            let renumbered_body = renumber_refs(body, id_offset);
-            format!("#{}={};", new_id, renumbered_body)
-        }).collect();
+        let renumbered: Vec<String> = comp_records
+            .iter()
+            .map(|(orig_id, body)| {
+                let new_id = orig_id + id_offset;
+                let renumbered_body = renumber_refs(body, id_offset);
+                format!("#{}={};", new_id, renumbered_body)
+            })
+            .collect();
 
         // Find the highest ID in the component (= shape_representation or similar)
         let comp_max_id = comp_records.iter().map(|(id, _)| *id).max().unwrap_or(1);
@@ -198,29 +214,38 @@ fn write_assembly_step(
 
         // Component product/definition
         let comp_product = push!(format!(
-            "PRODUCT('{}','{}','',( #{} ))", comp_name, comp_name, prod_ctx
+            "PRODUCT('{}','{}','',( #{} ))",
+            comp_name, comp_name, prod_ctx
         ));
         let comp_formation = push!(format!(
-            "PRODUCT_DEFINITION_FORMATION('','',#{})", comp_product
+            "PRODUCT_DEFINITION_FORMATION('','',#{})",
+            comp_product
         ));
         let comp_definition = push!(format!(
-            "PRODUCT_DEFINITION('','',#{},#{})", comp_formation, def_ctx
+            "PRODUCT_DEFINITION('','',#{},#{})",
+            comp_formation, def_ctx
         ));
         let comp_pds = push!(format!(
-            "PRODUCT_DEFINITION_SHAPE('','',#{})", comp_definition
+            "PRODUCT_DEFINITION_SHAPE('','',#{})",
+            comp_definition
         ));
         push!(format!(
-            "SHAPE_DEFINITION_REPRESENTATION(#{},#{})", comp_pds, shape_rep_id
+            "SHAPE_DEFINITION_REPRESENTATION(#{},#{})",
+            comp_pds, shape_rep_id
         ));
 
         // NEXT_ASSEMBLY_USAGE_OCCURRENCE: link component to assembly
         let nauo = push!(format!(
             "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','{}','',#{},#{},$)",
-            i + 1, comp_name, asm_definition, comp_definition
+            i + 1,
+            comp_name,
+            asm_definition,
+            comp_definition
         ));
         // PRODUCT_DEFINITION_SHAPE for the occurrence
         push!(format!(
-            "PRODUCT_DEFINITION_SHAPE('Acme','occurrence shape',#{})", nauo
+            "PRODUCT_DEFINITION_SHAPE('Acme','occurrence shape',#{})",
+            nauo
         ));
     }
 
@@ -228,8 +253,14 @@ fn write_assembly_step(
     let mut out = String::new();
     out.push_str("ISO-10303-21;\n");
     out.push_str("HEADER;\n");
-    let _ = writeln!(out, "FILE_DESCRIPTION(('RCAD assembly: {}'),'2;1');", assembly_name);
-    out.push_str("FILE_NAME('rcad_assembly.step','2026-04-03T00:00:00',(''),(''),'RCAD','RCAD','');\n");
+    let _ = writeln!(
+        out,
+        "FILE_DESCRIPTION(('RCAD assembly: {}'),'2;1');",
+        assembly_name
+    );
+    out.push_str(
+        "FILE_NAME('rcad_assembly.step','2026-04-03T00:00:00',(''),(''),'RCAD','RCAD','');\n",
+    );
     out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
     out.push_str("ENDSEC;\n");
     out.push_str("DATA;\n");
@@ -248,14 +279,22 @@ fn extract_data_records(step: &str) -> Vec<(u64, String)> {
     let mut result = Vec::new();
     for line in step.lines() {
         let line = line.trim();
-        if line == "DATA;" { in_data = true; continue; }
-        if line == "ENDSEC;" { in_data = false; continue; }
-        if !in_data { continue; }
+        if line == "DATA;" {
+            in_data = true;
+            continue;
+        }
+        if line == "ENDSEC;" {
+            in_data = false;
+            continue;
+        }
+        if !in_data {
+            continue;
+        }
         // Parse #id=body;
         if let Some(stripped) = line.strip_prefix('#') {
             if let Some(eq) = stripped.find('=') {
                 let id_str = &stripped[..eq];
-                let body = stripped[eq+1..].trim_end_matches(';');
+                let body = stripped[eq + 1..].trim_end_matches(';');
                 if let Ok(id) = id_str.parse::<u64>() {
                     result.push((id, body.to_string()));
                 }

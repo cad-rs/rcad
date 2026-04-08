@@ -31,7 +31,8 @@ fn tet_signed_volume(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 fn face_triangles<'a>(brep: &'a BRep, face: &'a crate::topology::Face) -> Vec<[DVec3; 3]> {
     let raw: Vec<[DVec3; 3]> = if !face.triangles.is_empty() {
         // Use pre-triangulated data
-        face.triangles.iter()
+        face.triangles
+            .iter()
             .filter_map(|&[i, j, k]| {
                 let a = brep.vertices.get(i)?.point;
                 let b = brep.vertices.get(j)?.point;
@@ -41,7 +42,10 @@ fn face_triangles<'a>(brep: &'a BRep, face: &'a crate::topology::Face) -> Vec<[D
             .collect()
     } else {
         // Fan-triangulate from wire vertices
-        let wire_pts: Vec<DVec3> = face.outer_wire.edges.iter()
+        let wire_pts: Vec<DVec3> = face
+            .outer_wire
+            .edges
+            .iter()
             .filter_map(|we| {
                 let edge = brep.edges.get(we.idx)?;
                 let vidx = if we.forward { edge.start } else { edge.end };
@@ -79,7 +83,8 @@ fn face_triangles<'a>(brep: &'a BRep, face: &'a crate::topology::Face) -> Vec<[D
 /// For each face, sums the areas of its triangles (pre-triangulated or fan).
 /// Returns 0.0 if the BRep has no faces.
 pub fn surface_area(brep: &BRep) -> f64 {
-    brep.solids.iter()
+    brep.solids
+        .iter()
         .flat_map(|s| &s.shells)
         .flat_map(|sh| &sh.faces)
         .flat_map(|f| face_triangles(brep, f))
@@ -93,7 +98,8 @@ pub fn surface_area(brep: &BRep) -> f64 {
 /// Works correctly for a closed, consistently-oriented mesh.
 /// Returns 0.0 for open shells or empty BReps.
 pub fn volume(brep: &BRep) -> f64 {
-    brep.solids.iter()
+    brep.solids
+        .iter()
         .flat_map(|s| &s.shells)
         .flat_map(|sh| &sh.faces)
         .flat_map(|f| face_triangles(brep, f))
@@ -161,9 +167,9 @@ impl InertiaTensor {
     /// Returns the 3×3 inertia matrix as row-major `[[f64;3];3]`.
     pub fn to_matrix(&self) -> [[f64; 3]; 3] {
         [
-            [ self.ixx, -self.ixy, -self.ixz],
-            [-self.ixy,  self.iyy, -self.iyz],
-            [-self.ixz, -self.iyz,  self.izz],
+            [self.ixx, -self.ixy, -self.ixz],
+            [-self.ixy, self.iyy, -self.iyz],
+            [-self.ixz, -self.iyz, self.izz],
         ]
     }
 }
@@ -195,9 +201,9 @@ pub fn inertia_tensor(brep: &BRep) -> InertiaTensor {
 
                     // Symmetric quadratic sums for each coordinate pair.
                     // For ∫_tet x² dV = sv/10 * x2_sym (from simplex integration).
-                    let x2 = a.x*a.x + b.x*b.x + c.x*c.x + a.x*b.x + a.x*c.x + b.x*c.x;
-                    let y2 = a.y*a.y + b.y*b.y + c.y*c.y + a.y*b.y + a.y*c.y + b.y*c.y;
-                    let z2 = a.z*a.z + b.z*b.z + c.z*c.z + a.z*b.z + a.z*c.z + b.z*c.z;
+                    let x2 = a.x * a.x + b.x * b.x + c.x * c.x + a.x * b.x + a.x * c.x + b.x * c.x;
+                    let y2 = a.y * a.y + b.y * b.y + c.y * c.y + a.y * b.y + a.y * c.y + b.y * c.y;
+                    let z2 = a.z * a.z + b.z * b.z + c.z * c.z + a.z * b.z + a.z * c.z + b.z * c.z;
 
                     ixx += sv / 10.0 * (y2 + z2);
                     iyy += sv / 10.0 * (x2 + z2);
@@ -205,12 +211,27 @@ pub fn inertia_tensor(brep: &BRep) -> InertiaTensor {
 
                     // For ∫_tet xy dV = sv/20 * xy_mixed (from simplex integration).
                     // Product-moment: Ixy = -∫xy dV, etc.
-                    let xy = 2.0*(a.x*a.y+b.x*b.y+c.x*c.y)
-                           + a.x*b.y + b.x*a.y + a.x*c.y + c.x*a.y + b.x*c.y + c.x*b.y;
-                    let xz = 2.0*(a.x*a.z+b.x*b.z+c.x*c.z)
-                           + a.x*b.z + b.x*a.z + a.x*c.z + c.x*a.z + b.x*c.z + c.x*b.z;
-                    let yz = 2.0*(a.y*a.z+b.y*b.z+c.y*c.z)
-                           + a.y*b.z + b.y*a.z + a.y*c.z + c.y*a.z + b.y*c.z + c.y*b.z;
+                    let xy = 2.0 * (a.x * a.y + b.x * b.y + c.x * c.y)
+                        + a.x * b.y
+                        + b.x * a.y
+                        + a.x * c.y
+                        + c.x * a.y
+                        + b.x * c.y
+                        + c.x * b.y;
+                    let xz = 2.0 * (a.x * a.z + b.x * b.z + c.x * c.z)
+                        + a.x * b.z
+                        + b.x * a.z
+                        + a.x * c.z
+                        + c.x * a.z
+                        + b.x * c.z
+                        + c.x * b.z;
+                    let yz = 2.0 * (a.y * a.z + b.y * b.z + c.y * c.z)
+                        + a.y * b.z
+                        + b.y * a.z
+                        + a.y * c.z
+                        + c.y * a.z
+                        + b.y * c.z
+                        + c.y * b.z;
 
                     ixy += sv / 20.0 * xy;
                     ixz += sv / 20.0 * xz;
@@ -243,39 +264,74 @@ mod tests {
 
     #[test]
     fn unit_box_surface_area() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let area = surface_area(&brep);
-        assert!((area - 6.0).abs() < EPS, "unit box surface area should be 6, got {area}");
+        assert!(
+            (area - 6.0).abs() < EPS,
+            "unit box surface area should be 6, got {area}"
+        );
     }
 
     #[test]
     fn unit_box_volume() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let vol = volume(&brep);
-        assert!((vol - 1.0).abs() < EPS, "unit box volume should be 1, got {vol}");
+        assert!(
+            (vol - 1.0).abs() < EPS,
+            "unit box volume should be 1, got {vol}"
+        );
     }
 
     #[test]
     fn box_2x3x4_volume() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 3.0, depth: 4.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
         let vol = volume(&brep);
-        assert!((vol - 24.0).abs() < EPS, "2×3×4 box volume should be 24, got {vol}");
+        assert!(
+            (vol - 24.0).abs() < EPS,
+            "2×3×4 box volume should be 24, got {vol}"
+        );
     }
 
     #[test]
     fn box_2x3x4_surface_area() {
         // SA = 2*(2*3 + 3*4 + 2*4) = 2*(6+12+8) = 52
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 3.0, depth: 4.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
         let area = surface_area(&brep);
-        assert!((area - 52.0).abs() < EPS, "2×3×4 box SA should be 52, got {area}");
+        assert!(
+            (area - 52.0).abs() < EPS,
+            "2×3×4 box SA should be 52, got {area}"
+        );
     }
 
     #[test]
     fn unit_box_centroid() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let c = centroid(&brep);
         // unit box: centroid at (0.5, 0.5, 0.5)
-        assert!((c - DVec3::splat(0.5)).length() < 1e-4, "centroid should be (0.5,0.5,0.5), got {c}");
+        assert!(
+            (c - DVec3::splat(0.5)).length() < 1e-4,
+            "centroid should be (0.5,0.5,0.5), got {c}"
+        );
     }
 
     #[test]
@@ -283,13 +339,32 @@ mod tests {
         // Unit box [0,1]^3 about the world origin:
         // Ixx = ∫(y²+z²)dV = (1/3 + 1/3) = 2/3
         // By symmetry, Iyy = Izz = 2/3
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let it = inertia_tensor(&brep);
         let expected = 2.0 / 3.0;
         let tol = 1e-4;
-        assert!((it.ixx - expected).abs() < tol, "Ixx = {} expected {}", it.ixx, expected);
-        assert!((it.iyy - expected).abs() < tol, "Iyy = {} expected {}", it.iyy, expected);
-        assert!((it.izz - expected).abs() < tol, "Izz = {} expected {}", it.izz, expected);
+        assert!(
+            (it.ixx - expected).abs() < tol,
+            "Ixx = {} expected {}",
+            it.ixx,
+            expected
+        );
+        assert!(
+            (it.iyy - expected).abs() < tol,
+            "Iyy = {} expected {}",
+            it.iyy,
+            expected
+        );
+        assert!(
+            (it.izz - expected).abs() < tol,
+            "Izz = {} expected {}",
+            it.izz,
+            expected
+        );
     }
 
     #[test]
@@ -301,14 +376,33 @@ mod tests {
         //   = 1*1*(∫₀² x² dx) + 1*2*(∫₀¹ z² dz) = (8/3) + 2*(1/3) = 8/3+2/3 = 10/3
         // Izz = ∫(x²+y²)dV = (8/3) + 2*(1/3) = 10/3
         // Ixx = 2*(1/3) + 2*(1/3) = 4/3
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 1.0, depth: 1.0 });
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 1.0,
+            depth: 1.0,
+        });
         let it = inertia_tensor(&brep);
         let tol = 1e-3;
         let expected_ixx = 4.0 / 3.0;
         let expected_iyy = 10.0 / 3.0;
         let expected_izz = 10.0 / 3.0;
-        assert!((it.ixx - expected_ixx).abs() < tol, "Ixx = {} expected {}", it.ixx, expected_ixx);
-        assert!((it.iyy - expected_iyy).abs() < tol, "Iyy = {} expected {}", it.iyy, expected_iyy);
-        assert!((it.izz - expected_izz).abs() < tol, "Izz = {} expected {}", it.izz, expected_izz);
+        assert!(
+            (it.ixx - expected_ixx).abs() < tol,
+            "Ixx = {} expected {}",
+            it.ixx,
+            expected_ixx
+        );
+        assert!(
+            (it.iyy - expected_iyy).abs() < tol,
+            "Iyy = {} expected {}",
+            it.iyy,
+            expected_iyy
+        );
+        assert!(
+            (it.izz - expected_izz).abs() < tol,
+            "Izz = {} expected {}",
+            it.izz,
+            expected_izz
+        );
     }
 }

@@ -1,7 +1,7 @@
-use super::{normalize_rejection, normalize_vector, validate_point, BuildError};
+use super::{BuildError, normalize_rejection, normalize_vector, validate_point};
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, Ellipse3, Line3};
 use rcad_kernel::Curve3;
+use rcad_kernel::geom::{Circle3, Ellipse3, Line3};
 
 pub fn line(origin: DVec3, direction: DVec3) -> Result<Curve3, BuildError> {
     let origin = validate_point("origin", origin)?;

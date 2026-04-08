@@ -67,8 +67,8 @@ pub struct Hyperbola3 {
     pub center: Point3,
     pub normal: Vec3,
     pub major_dir: Vec3,
-    pub semi_major: f64,   // a  (transverse semi-axis)
-    pub semi_minor: f64,   // b  (conjugate semi-axis)
+    pub semi_major: f64, // a  (transverse semi-axis)
+    pub semi_minor: f64, // b  (conjugate semi-axis)
 }
 
 /// A 3D parabola defined by its vertex, axis, and focal parameter `p`
@@ -82,8 +82,8 @@ pub struct Hyperbola3 {
 pub struct Parabola3 {
     pub vertex: Point3,
     pub normal: Vec3,
-    pub axis_dir: Vec3,    // direction from vertex toward focus
-    pub focal_param: f64,  // p  (= 2 × focal_length)
+    pub axis_dir: Vec3,   // direction from vertex toward focus
+    pub focal_param: f64, // p  (= 2 × focal_length)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,10 +92,10 @@ pub enum Curve3 {
     Circle(Circle3),
     Ellipse(Ellipse3),
     BSpline(BSplineCurve3),
-    Bezier(BezierCurve3),    // Phase M
-    Offset(OffsetCurve3),    // Phase M
-    Hyperbola(Hyperbola3),   // Phase S
-    Parabola(Parabola3),     // Phase S
+    Bezier(BezierCurve3),  // Phase M
+    Offset(OffsetCurve3),  // Phase M
+    Hyperbola(Hyperbola3), // Phase S
+    Parabola(Parabola3),   // Phase S
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -206,7 +206,10 @@ pub struct TrimmedSurface {
 
 impl TrimmedSurface {
     pub fn new(basis: Surface3, u1: f64, u2: f64, v1: f64, v2: f64) -> Self {
-        Self { basis: Box::new(basis), trim: [u1, u2, v1, v2] }
+        Self {
+            basis: Box::new(basis),
+            trim: [u1, u2, v1, v2],
+        }
     }
 }
 
@@ -239,8 +242,8 @@ pub enum Surface3 {
     Cone(ConicalSurface),
     Torus(ToroidalSurface),
     BSpline(BSplineSurface),
-    LinearExtrusion(LinearExtrusionSurface),  // Phase K
-    Revolution(RevolutionSurface),            // Phase K
+    LinearExtrusion(LinearExtrusionSurface), // Phase K
+    Revolution(RevolutionSurface),           // Phase K
     Bezier(BezierSurface),                   // Phase M
     Offset(OffsetSurface),                   // Phase M
     Trimmed(TrimmedSurface),                 // Phase Q
@@ -334,9 +337,9 @@ pub struct BezierCurve2 {
 pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
-    Ellipse(Ellipse2d),     // Phase J
+    Ellipse(Ellipse2d), // Phase J
     BSpline(BSplineCurve2),
-    Bezier(BezierCurve2),   // Phase M
+    Bezier(BezierCurve2), // Phase M
 }
 
 // ── Geometric evaluation traits ──────────────────────────────────────────────
@@ -440,21 +443,19 @@ impl CurveEval for Hyperbola3 {
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
         let minor_dir = self.normal.cross(self.major_dir).normalize();
-        let v = self.semi_major * t.sinh() * self.major_dir
-              + self.semi_minor * t.cosh() * minor_dir;
+        let v =
+            self.semi_major * t.sinh() * self.major_dir + self.semi_minor * t.cosh() * minor_dir;
         v.normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 2] {
-        [-1e4, 1e4]  // unbounded; caller trims as needed
+        [-1e4, 1e4] // unbounded; caller trims as needed
     }
 }
 
 impl CurveEval for Parabola3 {
     fn point_at(&self, t: f64) -> DVec3 {
         let dir_perp = self.normal.cross(self.axis_dir).normalize();
-        self.vertex
-            + (t * t / (2.0 * self.focal_param)) * self.axis_dir
-            + t * dir_perp
+        self.vertex + (t * t / (2.0 * self.focal_param)) * self.axis_dir + t * dir_perp
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
         let dir_perp = self.normal.cross(self.axis_dir).normalize();
@@ -462,7 +463,7 @@ impl CurveEval for Parabola3 {
         v.normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 2] {
-        [-1e4, 1e4]  // unbounded
+        [-1e4, 1e4] // unbounded
     }
 }
 
@@ -517,7 +518,12 @@ impl SurfaceEval for Plane {
         self.normal
     }
     fn default_domain(&self) -> [f64; 4] {
-        [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY]
+        [
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+        ]
     }
 }
 
@@ -544,8 +550,7 @@ impl SurfaceEval for SphericalSurface {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
         self.center
-            + self.radius
-                * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
+            + self.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
@@ -705,7 +710,13 @@ impl SurfaceEval for Surface3 {
 
 /// De Boor's algorithm in homogeneous 4D space.
 /// Returns `[wx, wy, wz, w]` (not divided by w yet).
-fn de_boor_homo(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64], t: f64) -> [f64; 4] {
+fn de_boor_homo(
+    degree: usize,
+    knots: &[f64],
+    points: &[DVec3],
+    weights: &[f64],
+    t: f64,
+) -> [f64; 4] {
     let n = points.len();
     if n == 0 {
         return [0.0; 4];
@@ -716,7 +727,11 @@ fn de_boor_homo(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64],
         let t_clamped = t.clamp(t_min, t_max);
         let mut span = degree;
         for i in degree..knots.len() - degree - 1 {
-            if knots[i] <= t_clamped { span = i; } else { break; }
+            if knots[i] <= t_clamped {
+                span = i;
+            } else {
+                break;
+            }
         }
         span
     };
@@ -731,7 +746,11 @@ fn de_boor_homo(degree: usize, knots: &[f64], points: &[DVec3], weights: &[f64],
         for j in (r..=degree).rev() {
             let i = k - degree + j;
             let denom = knots[i + degree - r + 1] - knots[i];
-            let alpha = if denom.abs() < 1e-15 { 0.0 } else { (t - knots[i]) / denom };
+            let alpha = if denom.abs() < 1e-15 {
+                0.0
+            } else {
+                (t - knots[i]) / denom
+            };
             for c in 0..4 {
                 d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
             }
@@ -854,7 +873,13 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
 
 impl CurveEval for BSplineCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        de_boor(self.degree, &self.knots, &self.control_points, &self.weights, t)
+        de_boor(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
         // Central difference approximation
@@ -896,15 +921,20 @@ impl SurfaceEval for BSplineSurface {
         let col_homo: Vec<[f64; 4]> = (0..n_v)
             .map(|j| {
                 let pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
-                let wts: Vec<f64>   = (0..n_u).map(|i| self.weights[i][j]).collect();
+                let wts: Vec<f64> = (0..n_u).map(|i| self.weights[i][j]).collect();
                 de_boor_homo(self.degree_u, &self.knots_u, &pts, &wts, u)
             })
             .collect();
         // Step 2: build the v-direction "control points" and "weights" from col_homo
-        let v_pts: Vec<DVec3> = col_homo.iter()
+        let v_pts: Vec<DVec3> = col_homo
+            .iter()
             .map(|h| {
                 let w = h[3];
-                if w.abs() < 1e-15 { DVec3::ZERO } else { DVec3::new(h[0]/w, h[1]/w, h[2]/w) }
+                if w.abs() < 1e-15 {
+                    DVec3::ZERO
+                } else {
+                    DVec3::new(h[0] / w, h[1] / w, h[2] / w)
+                }
             })
             .collect();
         let v_wts: Vec<f64> = col_homo.iter().map(|h| h[3]).collect();
@@ -934,9 +964,17 @@ impl SurfaceEval for BSplineSurface {
         let nu = self.knots_u.len();
         let nv = self.knots_v.len();
         let u0 = if nu > du { self.knots_u[du] } else { 0.0 };
-        let u1 = if nu > du + 1 { self.knots_u[nu - du - 1] } else { 1.0 };
+        let u1 = if nu > du + 1 {
+            self.knots_u[nu - du - 1]
+        } else {
+            1.0
+        };
         let v0 = if nv > dv { self.knots_v[dv] } else { 0.0 };
-        let v1 = if nv > dv + 1 { self.knots_v[nv - dv - 1] } else { 1.0 };
+        let v1 = if nv > dv + 1 {
+            self.knots_v[nv - dv - 1]
+        } else {
+            1.0
+        };
         [u0, u1, v0, v1]
     }
 }
@@ -967,7 +1005,13 @@ impl Curve2dEval for Ellipse2d {
 
 impl Curve2dEval for BSplineCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
-        de_boor_2d(self.degree, &self.knots, &self.control_points, &self.weights, t)
+        de_boor_2d(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
     }
 }
 
@@ -1006,7 +1050,11 @@ fn de_casteljau_3d(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
         }
     }
     let w = d[0][3];
-    if w.abs() < 1e-15 { DVec3::ZERO } else { DVec3::new(d[0][0] / w, d[0][1] / w, d[0][2] / w) }
+    if w.abs() < 1e-15 {
+        DVec3::ZERO
+    } else {
+        DVec3::new(d[0][0] / w, d[0][1] / w, d[0][2] / w)
+    }
 }
 
 /// De Casteljau algorithm for rational Bezier curve evaluation in 2D.
@@ -1028,7 +1076,11 @@ fn de_casteljau_2d(points: &[DVec2], weights: &[f64], t: f64) -> DVec2 {
         }
     }
     let w = d[0][2];
-    if w.abs() < 1e-15 { DVec2::ZERO } else { DVec2::new(d[0][0] / w, d[0][1] / w) }
+    if w.abs() < 1e-15 {
+        DVec2::ZERO
+    } else {
+        DVec2::new(d[0][0] / w, d[0][1] / w)
+    }
 }
 
 impl CurveEval for BezierCurve3 {
@@ -1051,9 +1103,13 @@ impl CurveEval for BezierCurve3 {
 impl SurfaceEval for BezierSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let n_u = self.control_points.len();
-        if n_u == 0 { return DVec3::ZERO; }
+        if n_u == 0 {
+            return DVec3::ZERO;
+        }
         let n_v = self.control_points[0].len();
-        if n_v == 0 { return DVec3::ZERO; }
+        if n_v == 0 {
+            return DVec3::ZERO;
+        }
         // Apply de Casteljau in u for each v-column, producing n_v intermediate points
         let row_points: Vec<DVec3> = (0..n_v)
             .map(|j| {
@@ -1133,21 +1189,32 @@ mod eval_tests {
 
     #[test]
     fn line3_point_at() {
-        let l = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let l = Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        };
         assert!((l.point_at(3.0) - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
     }
 
     #[test]
     fn circle3_point_at_zero_is_on_circle() {
         // Circle in XY plane, normal = Z
-        let c = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
+        let c = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 2.0,
+        };
         let p0 = c.point_at(0.0);
         assert!((p0.length() - 2.0).abs() < 1e-10);
     }
 
     #[test]
     fn circle3_full_revolution_closes() {
-        let c = Circle3 { center: DVec3::new(1.0, 2.0, 3.0), normal: DVec3::Y, radius: 5.0 };
+        let c = Circle3 {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            normal: DVec3::Y,
+            radius: 5.0,
+        };
         let p0 = c.point_at(0.0);
         let p2pi = c.point_at(2.0 * PI);
         assert!((p0 - p2pi).length() < 1e-10);
@@ -1155,7 +1222,11 @@ mod eval_tests {
 
     #[test]
     fn circle3_quarter_turn() {
-        let c = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+        let c = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        };
         let p0 = c.point_at(0.0);
         let p90 = c.point_at(FRAC_PI_2);
         // 90° rotation: p0 and p90 should be perpendicular from center
@@ -1165,7 +1236,11 @@ mod eval_tests {
 
     #[test]
     fn sphere_surface_north_pole() {
-        let s = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let s = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 3.0,
+        };
         // v=0 is north pole regardless of u
         let p = s.point_at(0.0, 0.0);
         // Should be at (0, 3, 0)
@@ -1174,18 +1249,30 @@ mod eval_tests {
 
     #[test]
     fn sphere_surface_point_on_sphere() {
-        let s = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 2.0 };
+        let s = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 2.0,
+        };
         for u in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
             for v in [0.1, 0.5, 1.0, PI / 2.0, PI - 0.1] {
                 let p = s.point_at(u, v);
-                assert!((p.length() - 2.0).abs() < 1e-9, "u={u} v={v} |p|={}", p.length());
+                assert!(
+                    (p.length() - 2.0).abs() < 1e-9,
+                    "u={u} v={v} |p|={}",
+                    p.length()
+                );
             }
         }
     }
 
     #[test]
     fn cylinder_surface_point_on_cylinder() {
-        let c = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let c = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 3.0,
+        };
         for u in [0.0, 1.0, PI, 2.0 * PI - 0.1] {
             let p = c.point_at(u, 0.0);
             let radial = DVec3::new(p.x, 0.0, p.z).length();
@@ -1227,7 +1314,12 @@ mod eval_tests {
 
     #[test]
     fn torus_surface_point_on_torus() {
-        let t = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Y, major_radius: 5.0, minor_radius: 1.0 };
+        let t = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Y,
+            major_radius: 5.0,
+            minor_radius: 1.0,
+        };
         for u in [0.0, PI / 2.0, PI] {
             for v in [0.0, PI / 2.0, PI] {
                 let p = t.point_at(u, v);

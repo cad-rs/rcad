@@ -30,18 +30,18 @@ impl Color {
     }
 
     // ── Preset colors ─────────────────────────────────────────────────
-    pub const RED:     Self = Self::new(1.0, 0.0, 0.0);
-    pub const GREEN:   Self = Self::new(0.0, 0.8, 0.0);
-    pub const BLUE:    Self = Self::new(0.0, 0.4, 1.0);
-    pub const YELLOW:  Self = Self::new(1.0, 0.9, 0.0);
-    pub const CYAN:    Self = Self::new(0.0, 0.9, 0.9);
+    pub const RED: Self = Self::new(1.0, 0.0, 0.0);
+    pub const GREEN: Self = Self::new(0.0, 0.8, 0.0);
+    pub const BLUE: Self = Self::new(0.0, 0.4, 1.0);
+    pub const YELLOW: Self = Self::new(1.0, 0.9, 0.0);
+    pub const CYAN: Self = Self::new(0.0, 0.9, 0.9);
     pub const MAGENTA: Self = Self::new(0.9, 0.0, 0.9);
-    pub const WHITE:   Self = Self::new(1.0, 1.0, 1.0);
-    pub const GRAY:    Self = Self::new(0.6, 0.6, 0.6);
-    pub const SILVER:  Self = Self::new(0.75, 0.75, 0.78);
-    pub const GOLD:    Self = Self::new(1.0, 0.84, 0.0);
-    pub const ORANGE:  Self = Self::new(1.0, 0.5, 0.0);
-    pub const BLACK:   Self = Self::new(0.05, 0.05, 0.05);
+    pub const WHITE: Self = Self::new(1.0, 1.0, 1.0);
+    pub const GRAY: Self = Self::new(0.6, 0.6, 0.6);
+    pub const SILVER: Self = Self::new(0.75, 0.75, 0.78);
+    pub const GOLD: Self = Self::new(1.0, 0.84, 0.0);
+    pub const ORANGE: Self = Self::new(1.0, 0.5, 0.0);
+    pub const BLACK: Self = Self::new(0.05, 0.05, 0.05);
 }
 
 /// Per-face color assignment.

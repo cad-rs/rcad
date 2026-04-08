@@ -64,29 +64,62 @@ mod tests {
 
     #[test]
     fn parallel_planes() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::new(0.0, 0.0, 1.0), normal: DVec3::Z };
-        assert!(matches!(intersect_plane_plane(&p1, &p2), PlanePlaneResult::Parallel));
+        let p1 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let p2 = Plane {
+            origin: DVec3::new(0.0, 0.0, 1.0),
+            normal: DVec3::Z,
+        };
+        assert!(matches!(
+            intersect_plane_plane(&p1, &p2),
+            PlanePlaneResult::Parallel
+        ));
     }
 
     #[test]
     fn coincident_planes() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::new(1.0, 2.0, 0.0), normal: DVec3::Z };
-        assert!(matches!(intersect_plane_plane(&p1, &p2), PlanePlaneResult::Coincident));
+        let p1 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let p2 = Plane {
+            origin: DVec3::new(1.0, 2.0, 0.0),
+            normal: DVec3::Z,
+        };
+        assert!(matches!(
+            intersect_plane_plane(&p1, &p2),
+            PlanePlaneResult::Coincident
+        ));
     }
 
     #[test]
     fn anti_parallel_coincident() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::ZERO, normal: -DVec3::Z };
-        assert!(matches!(intersect_plane_plane(&p1, &p2), PlanePlaneResult::Coincident));
+        let p1 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let p2 = Plane {
+            origin: DVec3::ZERO,
+            normal: -DVec3::Z,
+        };
+        assert!(matches!(
+            intersect_plane_plane(&p1, &p2),
+            PlanePlaneResult::Coincident
+        ));
     }
 
     #[test]
     fn xy_vs_xz_planes() {
-        let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
-        let p2 = Plane { origin: DVec3::ZERO, normal: DVec3::Y };
+        let p1 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let p2 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Y,
+        };
         match intersect_plane_plane(&p1, &p2) {
             PlanePlaneResult::Line(line) => {
                 // Intersection should be along X axis

@@ -17,11 +17,7 @@ pub struct CoplanarResult {
 
 /// Analyze two coplanar face polygons. Computes overlap and exclusive regions
 /// using the Sutherland-Hodgman polygon clipping algorithm.
-pub fn analyze_coplanar_faces(
-    poly1: &[DVec3],
-    poly2: &[DVec3],
-    plane: &Plane,
-) -> CoplanarResult {
+pub fn analyze_coplanar_faces(poly1: &[DVec3], poly2: &[DVec3], plane: &Plane) -> CoplanarResult {
     let (u_axis, v_axis) = plane_local_basis(plane);
 
     let to_2d = |p: DVec3| -> [f64; 2] {
@@ -114,12 +110,7 @@ fn is_inside(point: [f64; 2], a: [f64; 2], b: [f64; 2]) -> bool {
 }
 
 /// 2D line segment intersection.
-fn line_intersect_2d(
-    p1: [f64; 2],
-    p2: [f64; 2],
-    p3: [f64; 2],
-    p4: [f64; 2],
-) -> Option<[f64; 2]> {
+fn line_intersect_2d(p1: [f64; 2], p2: [f64; 2], p3: [f64; 2], p4: [f64; 2]) -> Option<[f64; 2]> {
     let d1x = p2[0] - p1[0];
     let d1y = p2[1] - p1[1];
     let d2x = p4[0] - p3[0];

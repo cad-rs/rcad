@@ -9,15 +9,13 @@
 use glam::DVec3;
 use rcad_algorithms::geom_populate::populate_box_geom;
 use rcad_algorithms::{
-    difference_with_history, intersection_with_history, union_with_history, FaceOrigin,
+    FaceOrigin, difference_with_history, intersection_with_history, union_with_history,
 };
 use rcad_kernel::{
-    edge_same_parameter, edge_same_range,
+    BRep, edge_same_parameter, edge_same_range,
     geom::{
-        BezierSurface, CylindricalSurface, OffsetSurface, PrimitiveSolid,
-        Surface3, SurfaceEval,
+        BezierSurface, CylindricalSurface, OffsetSurface, PrimitiveSolid, Surface3, SurfaceEval,
     },
-    BRep,
 };
 use rcad_modeling::corner_blend;
 
@@ -79,7 +77,7 @@ fn demo_m1() {
     println!("All edges same_parameter = true: {all_same_param}");
     println!("All edges same_range     = true: {all_same_range}");
     assert!(all_same_param, "default same_parameter should be true");
-    assert!(all_same_range,  "default same_range     should be true");
+    assert!(all_same_range, "default same_range     should be true");
     println!("M.1 PASS");
 }
 
@@ -178,7 +176,10 @@ fn demo_m3() {
     let dist_from_axis = (p.x * p.x + p.z * p.z).sqrt();
 
     println!("Offset surface point at (0,0): {p}");
-    println!("Distance from axis: {dist_from_axis:.6}  (expected {:.6})", 1.0 + offset_d);
+    println!(
+        "Distance from axis: {dist_from_axis:.6}  (expected {:.6})",
+        1.0 + offset_d
+    );
     assert!(
         (dist_from_axis - (1.0 + offset_d)).abs() < 1e-4,
         "offset point should be at radius + offset_distance from axis"
@@ -225,7 +226,11 @@ fn demo_m4() {
         assert_eq!(history.len(), n, "history length must equal face count");
         assert!(history.count_from_a() > 0, "some faces from A");
         assert!(history.count_from_b() > 0, "some faces from B");
-        println!("  from A: {}  from B: {}", history.count_from_a(), history.count_from_b());
+        println!(
+            "  from A: {}  from B: {}",
+            history.count_from_a(),
+            history.count_from_b()
+        );
     }
 
     // Intersection
@@ -241,7 +246,11 @@ fn demo_m4() {
                 "intersection face {i} should be From A or B"
             );
         }
-        println!("  from A: {}  from B: {}", history.count_from_a(), history.count_from_b());
+        println!(
+            "  from A: {}  from B: {}",
+            history.count_from_a(),
+            history.count_from_b()
+        );
     }
 
     // Difference
@@ -250,7 +259,11 @@ fn demo_m4() {
         let n = face_count(&result);
         println!("Difference A−B: {n} result faces");
         assert_eq!(history.len(), n);
-        println!("  from A: {}  from B: {}", history.count_from_a(), history.count_from_b());
+        println!(
+            "  from A: {}  from B: {}",
+            history.count_from_a(),
+            history.count_from_b()
+        );
     }
 
     println!("M.4 PASS");
@@ -290,13 +303,14 @@ fn demo_m5() {
     );
 
     // Verify the corner triangle exists: one face should have exactly 3 boundary edges
-    let corner_tri = result
-        .solids[0]
-        .shells[0]
+    let corner_tri = result.solids[0].shells[0]
         .faces
         .iter()
         .any(|f| f.outer_wire.edges.len() == 3);
-    assert!(corner_tri, "should have at least one triangular face (the corner patch)");
+    assert!(
+        corner_tri,
+        "should have at least one triangular face (the corner patch)"
+    );
 
     println!("M.5 PASS");
 }

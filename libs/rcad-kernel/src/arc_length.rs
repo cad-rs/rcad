@@ -20,21 +20,21 @@ use crate::geom::{Curve3, CurveEval};
 // Source: Abramowitz & Stegun Table 25.4, standard reference.
 const GL16_NODES: [f64; 16] = [
     -0.095012509837637440185,
-     0.095012509837637440185,
+    0.095012509837637440185,
     -0.281603550779258913230,
-     0.281603550779258913230,
+    0.281603550779258913230,
     -0.458016777657227386342,
-     0.458016777657227386342,
+    0.458016777657227386342,
     -0.617876244402643748447,
-     0.617876244402643748447,
+    0.617876244402643748447,
     -0.755404408355003033895,
-     0.755404408355003033895,
+    0.755404408355003033895,
     -0.865631202387831743880,
-     0.865631202387831743880,
+    0.865631202387831743880,
     -0.944575023073232576078,
-     0.944575023073232576078,
+    0.944575023073232576078,
     -0.989400934991649932596,
-     0.989400934991649932596,
+    0.989400934991649932596,
 ];
 
 const GL16_WEIGHTS: [f64; 16] = [
@@ -70,14 +70,14 @@ fn gl16_arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
     let fd_eps = ((t2 - t1).abs() * 0.5).max(1.0) * 1e-8;
 
     let half = (t2 - t1) * 0.5;
-    let mid  = (t2 + t1) * 0.5;
-    let sum: f64 = GL16_NODES.iter()
+    let mid = (t2 + t1) * 0.5;
+    let sum: f64 = GL16_NODES
+        .iter()
         .zip(GL16_WEIGHTS.iter())
         .map(|(&xi, &wi)| {
             let t = mid + half * xi;
             // Un-normalized derivative |dP/dt|
-            let dp = (curve.point_at(t + fd_eps) - curve.point_at(t - fd_eps))
-                   / (2.0 * fd_eps);
+            let dp = (curve.point_at(t + fd_eps) - curve.point_at(t - fd_eps)) / (2.0 * fd_eps);
             wi * dp.length()
         })
         .sum();
@@ -101,13 +101,13 @@ pub fn arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
             // direction is always a unit vector by convention
             t2 - t1
         }
-        Curve3::Circle(c) => {
-            c.radius * (t2 - t1)
-        }
-        Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_) | Curve3::Offset(_)
-        | Curve3::Hyperbola(_) | Curve3::Parabola(_) => {
-            gl16_arc_length(curve, t1, t2)
-        }
+        Curve3::Circle(c) => c.radius * (t2 - t1),
+        Curve3::Ellipse(_)
+        | Curve3::BSpline(_)
+        | Curve3::Bezier(_)
+        | Curve3::Offset(_)
+        | Curve3::Hyperbola(_)
+        | Curve3::Parabola(_) => gl16_arc_length(curve, t1, t2),
     }
 }
 
@@ -129,7 +129,10 @@ mod tests {
 
     #[test]
     fn line_arc_length_analytic() {
-        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let c = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
         assert!(approx_eq(arc_length(&c, 0.0, 5.0), 5.0, TOL));
         assert!(approx_eq(arc_length(&c, -2.0, 3.0), 5.0, TOL));
         assert!(approx_eq(arc_length(&c, 5.0, 0.0), -5.0, TOL)); // signed
@@ -174,7 +177,10 @@ mod tests {
         let a = 2.0_f64;
         let b = 1.0_f64;
         let ramanujan = PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt());
-        assert!(approx_eq(l, ramanujan, 1e-3), "ellipse perimeter {l} vs Ramanujan {ramanujan}");
+        assert!(
+            approx_eq(l, ramanujan, 1e-3),
+            "ellipse perimeter {l} vs Ramanujan {ramanujan}"
+        );
     }
 
     #[test]

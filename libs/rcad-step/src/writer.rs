@@ -1,6 +1,6 @@
+use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
 use rcad_kernel::{Hyperbola3, Parabola3};
-use rcad_kernel::appearance::{Color, StepColor};
 use std::collections::{BTreeSet, HashMap};
 
 pub struct ExportSelection<'a> {
@@ -28,7 +28,14 @@ impl StepWriter {
     /// + `SURFACE_STYLE_USAGE` + `FILL_AREA_STYLE_COLOUR` + `COLOUR_RGB`.
     pub fn write_string_colored(brep: &BRep, colors: &StepColor) -> String {
         let mut writer = Part21Writer::new();
-        writer.write_brep(brep, ExportSelection { selected_faces: &[], selected_edges: &[] }, Some(colors));
+        writer.write_brep(
+            brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            Some(colors),
+        );
         writer.finish()
     }
 }
@@ -55,7 +62,9 @@ impl Part21Writer {
         out.push_str("ISO-10303-21;\n");
         out.push_str("HEADER;\n");
         out.push_str("FILE_DESCRIPTION(('RCAD exported geometry'),'2;1');\n");
-        out.push_str("FILE_NAME('rcad_export.step','2026-04-02T00:00:00',(''),(''),'RCAD','RCAD','');\n");
+        out.push_str(
+            "FILE_NAME('rcad_export.step','2026-04-02T00:00:00',(''),(''),'RCAD','RCAD','');\n",
+        );
         out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
         out.push_str("ENDSEC;\n");
         out.push_str("DATA;\n");
@@ -68,7 +77,12 @@ impl Part21Writer {
         out
     }
 
-    fn write_brep(&mut self, brep: &BRep, selection: ExportSelection<'_>, colors: Option<&StepColor>) {
+    fn write_brep(
+        &mut self,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        colors: Option<&StepColor>,
+    ) {
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
@@ -186,7 +200,8 @@ impl Part21Writer {
 
         let mut primary_rep = None;
         if export_all && !solid_items.is_empty() {
-            let brep_rep = self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
+            let brep_rep =
+                self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
             self.shape_representation_relationship("", "", base_rep, brep_rep);
             primary_rep = Some(brep_rep);
         } else if !face_items.is_empty() {
@@ -196,15 +211,16 @@ impl Part21Writer {
                     continue;
                 }
                 let shell_id = self.open_shell(&format!("export_shell_{}", i), shell_faces);
-                let model_id = self.shell_based_surface_model(
-                    &format!("export_shell_model_{}", i),
-                    &[shell_id],
-                );
+                let model_id = self
+                    .shell_based_surface_model(&format!("export_shell_model_{}", i), &[shell_id]);
                 shell_model_items.push(model_id);
             }
             if !shell_model_items.is_empty() {
-                let surface_rep =
-                    self.manifold_surface_shape_representation("rcad_export", &shell_model_items, context);
+                let surface_rep = self.manifold_surface_shape_representation(
+                    "rcad_export",
+                    &shell_model_items,
+                    context,
+                );
                 self.shape_representation_relationship("", "", base_rep, surface_rep);
                 primary_rep = Some(surface_rep);
             }
@@ -235,7 +251,12 @@ impl Part21Writer {
         }
     }
 
-    fn write_face(&mut self, brep: &BRep, face: &Face, face_surface: Option<Surface3>) -> FaceExportResult {
+    fn write_face(
+        &mut self,
+        brep: &BRep,
+        face: &Face,
+        face_surface: Option<Surface3>,
+    ) -> FaceExportResult {
         // Only fall back to triangles when there is no analytic surface AND the
         // wire is degenerate (cannot form a valid edge loop).
         if face_surface.is_none() && is_degenerate_face_wire(brep, face) {
@@ -364,8 +385,16 @@ impl Part21Writer {
         let Some(edge) = brep.edges.get(edge_idx) else {
             return self.write_edge_curve_by_index(brep, edge_idx);
         };
-        let start_pt = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or(glam::DVec3::ZERO);
-        let end_pt = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or(glam::DVec3::ZERO);
+        let start_pt = brep
+            .vertices
+            .get(edge.start)
+            .map(|v| v.point)
+            .unwrap_or(glam::DVec3::ZERO);
+        let end_pt = brep
+            .vertices
+            .get(edge.end)
+            .map(|v| v.point)
+            .unwrap_or(glam::DVec3::ZERO);
 
         let v0 = self.vertex_point_by_index(brep, edge.start);
         let v1 = self.vertex_point_by_index(brep, edge.end);
@@ -384,7 +413,8 @@ impl Part21Writer {
                     circle_normal = any_perpendicular_dvec3(sphere.axis);
                 }
                 let circle_normal = circle_normal.normalize_or_zero();
-                let placement = self.axis2_from_origin_axis("seam_axis", sphere.center, circle_normal);
+                let placement =
+                    self.axis2_from_origin_axis("seam_axis", sphere.center, circle_normal);
                 self.circle("seam_circle", placement, sphere.radius.max(1e-9))
             }
             Some(Surface3::Cone(_cone)) => {
@@ -416,7 +446,12 @@ impl Part21Writer {
         };
 
         // Wrap in SURFACE_CURVE if PCurves are available for this seam edge.
-        let pcurves = brep.geom.edge_pcurves.get(edge_idx).cloned().unwrap_or_default();
+        let pcurves = brep
+            .geom
+            .edge_pcurves
+            .get(edge_idx)
+            .cloned()
+            .unwrap_or_default();
         let final_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
             for pc in &pcurves {
@@ -438,7 +473,8 @@ impl Part21Writer {
     fn write_surface(&mut self, face_surface: Option<Surface3>, fallback_placement: u64) -> u64 {
         match face_surface {
             Some(Surface3::Plane(plane)) => {
-                let placement = self.axis2_from_origin_axis("plane_axis", plane.origin, plane.normal);
+                let placement =
+                    self.axis2_from_origin_axis("plane_axis", plane.origin, plane.normal);
                 self.plane("face_plane", placement)
             }
             Some(Surface3::Cylinder(cyl)) => {
@@ -446,11 +482,8 @@ impl Part21Writer {
                 self.cylindrical_surface("face_cylinder", placement, cyl.radius.max(1e-9))
             }
             Some(Surface3::Sphere(sphere)) => {
-                let placement = self.axis2_from_origin_axis(
-                    "sphere_axis",
-                    sphere.center,
-                    sphere.axis,
-                );
+                let placement =
+                    self.axis2_from_origin_axis("sphere_axis", sphere.center, sphere.axis);
                 self.spherical_surface("face_sphere", placement, sphere.radius.max(1e-9))
             }
             Some(Surface3::Cone(cone)) => {
@@ -473,7 +506,10 @@ impl Part21Writer {
             }
             None => self.plane("face_plane", fallback_placement),
             Some(Surface3::BSpline(bs)) => self.write_bspline_surface(&bs.clone()),
-            Some(Surface3::LinearExtrusion(_)) | Some(Surface3::Revolution(_)) | Some(Surface3::Bezier(_)) | Some(Surface3::Offset(_)) => {
+            Some(Surface3::LinearExtrusion(_))
+            | Some(Surface3::Revolution(_))
+            | Some(Surface3::Bezier(_))
+            | Some(Surface3::Offset(_)) => {
                 // Swept/Bezier/Offset surfaces: fall back to plane (no direct STEP writer yet)
                 self.plane("face_plane", fallback_placement)
             }
@@ -499,7 +535,9 @@ impl Part21Writer {
         let cp_grid: Vec<Vec<u64>> = (0..n_v)
             .map(|vi| {
                 (0..n_u)
-                    .map(|ui| self.cartesian_point("bs_cp", dvec3_to_array(bs.control_points[ui][vi])))
+                    .map(|ui| {
+                        self.cartesian_point("bs_cp", dvec3_to_array(bs.control_points[ui][vi]))
+                    })
                     .collect()
             })
             .collect();
@@ -531,15 +569,47 @@ impl Part21Writer {
         let rows: Vec<String> = cp_grid
             .iter()
             .map(|row| {
-                let refs = row.iter().map(|&r| format!("#{}", r)).collect::<Vec<_>>().join(",");
+                let refs = row
+                    .iter()
+                    .map(|&r| format!("#{}", r))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 format!("({})", refs)
             })
             .collect();
         let cp_str = format!("({})", rows.join(","));
-        let mu_str: String = format!("({})", mults_u.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(","));
-        let mv_str: String = format!("({})", mults_v.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(","));
-        let ku_str: String = format!("({})", knots_u.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(","));
-        let kv_str: String = format!("({})", knots_v.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(","));
+        let mu_str: String = format!(
+            "({})",
+            mults_u
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let mv_str: String = format!(
+            "({})",
+            mults_v
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let ku_str: String = format!(
+            "({})",
+            knots_u
+                .iter()
+                .map(|k| format!("{:.9}", k))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let kv_str: String = format!(
+            "({})",
+            knots_v
+                .iter()
+                .map(|k| format!("{:.9}", k))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         self.push(format!(
             "B_SPLINE_SURFACE_WITH_KNOTS('{}',{},{},{},.UNSPECIFIED.,.F.,.F.,.F.,{},{},{},{},.UNSPECIFIED.)",
             name, degree_u, degree_v, cp_str, mu_str, mv_str, ku_str, kv_str
@@ -603,10 +673,16 @@ impl Part21Writer {
             .unwrap_or([0.0, 0.0, 0.0]);
         let v0 = self.vertex_point_by_index(brep, edge.start);
         let v1 = self.vertex_point_by_index(brep, edge.end);
-        let basis_curve_3d = self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
+        let basis_curve_3d =
+            self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
 
         // Wrap in SURFACE_CURVE if PCurves are available
-        let pcurves = brep.geom.edge_pcurves.get(edge_idx).cloned().unwrap_or_default();
+        let pcurves = brep
+            .geom
+            .edge_pcurves
+            .get(edge_idx)
+            .cloned()
+            .unwrap_or_default();
         let basis_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
             for pc in &pcurves {
@@ -658,13 +734,17 @@ impl Part21Writer {
             }
             Some(Curve2d::Ellipse(e)) => {
                 let p = self.cartesian_point_2d("pc_center", [e.center.x, e.center.y]);
-                let ref_dir = self.direction_2d("pc_major_dir", normalize2([e.major_dir.x, e.major_dir.y]));
+                let ref_dir =
+                    self.direction_2d("pc_major_dir", normalize2([e.major_dir.x, e.major_dir.y]));
                 let placement = self.axis2_placement_2d("pc_placement", p, ref_dir);
-                self.ellipse("pcurve_ellipse", placement, e.major_radius.max(1e-9), e.minor_radius.max(1e-9))
+                self.ellipse(
+                    "pcurve_ellipse",
+                    placement,
+                    e.major_radius.max(1e-9),
+                    e.minor_radius.max(1e-9),
+                )
             }
-            Some(Curve2d::BSpline(bs)) => {
-                self.write_bspline_curve2d(&bs.clone())
-            }
+            Some(Curve2d::BSpline(bs)) => self.write_bspline_curve2d(&bs.clone()),
             Some(Curve2d::Bezier(_)) => {
                 // Bezier PCurve: fall back to degenerate line (no Bezier 2D STEP writer yet)
                 let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
@@ -733,29 +813,44 @@ impl Part21Writer {
                     end_point[0] - start_point[0],
                     end_point[1] - start_point[1],
                     end_point[2] - start_point[2],
-                ]).max(1e-9);
+                ])
+                .max(1e-9);
                 let vec_id = self.vector("line_vec", dir_id, len);
                 self.line("edge_line", origin, vec_id)
             }
             Curve3::Circle(circle) => {
-                let placement = self.axis2_from_origin_axis("circle_axis", circle.center, circle.normal);
+                let placement =
+                    self.axis2_from_origin_axis("circle_axis", circle.center, circle.normal);
                 self.circle("edge_circle", placement, circle.radius.max(1e-9))
             }
             Curve3::Ellipse(ellipse) => {
                 let placement = self.axis2_from_origin_axis_ref(
-                    "ellipse_axis", ellipse.center, ellipse.normal, ellipse.major_dir,
+                    "ellipse_axis",
+                    ellipse.center,
+                    ellipse.normal,
+                    ellipse.major_dir,
                 );
-                self.ellipse("edge_ellipse", placement, ellipse.major_radius.max(1e-9), ellipse.minor_radius.max(1e-9))
+                self.ellipse(
+                    "edge_ellipse",
+                    placement,
+                    ellipse.major_radius.max(1e-9),
+                    ellipse.minor_radius.max(1e-9),
+                )
             }
-            Curve3::BSpline(bs) => {
-                self.write_bspline_curve(&bs.clone(), start_point, end_point)
-            }
+            Curve3::BSpline(bs) => self.write_bspline_curve(&bs.clone(), start_point, end_point),
             Curve3::Hyperbola(h) => {
-                let placement = self.axis2_from_origin_axis_ref("hyp_axis", h.center, h.normal, h.major_dir);
-                self.hyperbola("edge_hyperbola", placement, h.semi_major.max(1e-9), h.semi_minor.max(1e-9))
+                let placement =
+                    self.axis2_from_origin_axis_ref("hyp_axis", h.center, h.normal, h.major_dir);
+                self.hyperbola(
+                    "edge_hyperbola",
+                    placement,
+                    h.semi_major.max(1e-9),
+                    h.semi_minor.max(1e-9),
+                )
             }
             Curve3::Parabola(p) => {
-                let placement = self.axis2_from_origin_axis_ref("par_axis", p.vertex, p.normal, p.axis_dir);
+                let placement =
+                    self.axis2_from_origin_axis_ref("par_axis", p.vertex, p.normal, p.axis_dir);
                 self.parabola("edge_parabola", placement, p.focal_param.max(1e-9))
             }
             Curve3::Offset(o) => {
@@ -802,9 +897,11 @@ impl Part21Writer {
         }
 
         // Write control points
-        let cp_ids: Vec<u64> = bs.control_points.iter().map(|&p| {
-            self.cartesian_point("bs_cp", dvec3_to_array(p))
-        }).collect();
+        let cp_ids: Vec<u64> = bs
+            .control_points
+            .iter()
+            .map(|&p| self.cartesian_point("bs_cp", dvec3_to_array(p)))
+            .collect();
 
         // Compress knot vector into (multiplicities, knot_values)
         let (mults, knots) = compress_knot_vector(&bs.knots);
@@ -840,9 +937,11 @@ impl Part21Writer {
             return self.line("bs2_fallback_line", p, vec);
         }
 
-        let cp_ids: Vec<u64> = bs.control_points.iter().map(|p| {
-            self.cartesian_point_2d("bs2_cp", [p.x, p.y])
-        }).collect();
+        let cp_ids: Vec<u64> = bs
+            .control_points
+            .iter()
+            .map(|p| self.cartesian_point_2d("bs2_cp", [p.x, p.y]))
+            .collect();
 
         let (mults, knots) = compress_knot_vector(&bs.knots);
         let rational = bs.weights.iter().any(|&w| (w - 1.0).abs() > 1e-8);
@@ -870,13 +969,29 @@ impl Part21Writer {
         rational: bool,
         weights: &[f64],
     ) -> u64 {
-        let cp_list = control_points.iter().map(|id| format!("#{}", id)).collect::<Vec<_>>().join(",");
-        let mult_list = multiplicities.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(",");
-        let knot_list = knots.iter().map(|k| format!("{:.9}", k)).collect::<Vec<_>>().join(",");
+        let cp_list = control_points
+            .iter()
+            .map(|id| format!("#{}", id))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mult_list = multiplicities
+            .iter()
+            .map(|m| m.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let knot_list = knots
+            .iter()
+            .map(|k| format!("{:.9}", k))
+            .collect::<Vec<_>>()
+            .join(",");
 
         if rational {
             // B_SPLINE_CURVE_WITH_KNOTS + RATIONAL_B_SPLINE_CURVE complex entity
-            let weight_list = weights.iter().map(|w| format!("{:.6}", w)).collect::<Vec<_>>().join(",");
+            let weight_list = weights
+                .iter()
+                .map(|w| format!("{:.6}", w))
+                .collect::<Vec<_>>()
+                .join(",");
             self.push(format!(
                 "( B_SPLINE_CURVE('{}',{},({}),{},.F.,.F.) B_SPLINE_CURVE_WITH_KNOTS(({}),({}),{}) RATIONAL_B_SPLINE_CURVE(({}) )",
                 name, degree, cp_list, knot_type,
@@ -886,8 +1001,7 @@ impl Part21Writer {
         } else {
             self.push(format!(
                 "B_SPLINE_CURVE_WITH_KNOTS('{}',{},({}),{},.F.,.F.,({}),({}),{})",
-                name, degree, cp_list, knot_type,
-                mult_list, knot_list, knot_type
+                name, degree, cp_list, knot_type, mult_list, knot_list, knot_type
             ))
         }
     }
@@ -994,8 +1108,7 @@ impl Part21Writer {
             "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})",
             radian_unit
         ));
-        let dim_exp =
-            self.push("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
+        let dim_exp = self.push("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
         self.push(format!(
             "( CONVERSION_BASED_UNIT('DEGREE',#{}) NAMED_UNIT(#{}) PLANE_ANGLE_UNIT() )",
             measure, dim_exp
@@ -1092,7 +1205,10 @@ impl Part21Writer {
     }
 
     fn vector(&mut self, name: &str, direction: u64, magnitude: f64) -> u64 {
-        self.push(format!("VECTOR('{}',#{},{:.9})", name, direction, magnitude))
+        self.push(format!(
+            "VECTOR('{}',#{},{:.9})",
+            name, direction, magnitude
+        ))
     }
 
     fn axis2_placement_3d(&mut self, name: &str, origin: u64, axis: u64, ref_dir: u64) -> u64 {
@@ -1156,7 +1272,13 @@ impl Part21Writer {
         ))
     }
 
-    fn conical_surface(&mut self, name: &str, placement: u64, radius: f64, semi_angle_deg: f64) -> u64 {
+    fn conical_surface(
+        &mut self,
+        name: &str,
+        placement: u64,
+        radius: f64,
+        semi_angle_deg: f64,
+    ) -> u64 {
         self.push(format!(
             "CONICAL_SURFACE('{}',#{},{:.9},{:.9})",
             name, placement, radius, semi_angle_deg
@@ -1180,7 +1302,14 @@ impl Part21Writer {
         self.push(format!("VERTEX_POINT('{}',#{})", name, point))
     }
 
-    fn edge_curve(&mut self, name: &str, start: u64, end: u64, curve: u64, same_sense: bool) -> u64 {
+    fn edge_curve(
+        &mut self,
+        name: &str,
+        start: u64,
+        end: u64,
+        curve: u64,
+        same_sense: bool,
+    ) -> u64 {
         self.push(format!(
             "EDGE_CURVE('{}',#{},#{},#{},{})",
             name,
@@ -1213,7 +1342,13 @@ impl Part21Writer {
         ))
     }
 
-    fn advanced_face(&mut self, name: &str, bounds: &[u64], surface: u64, orientation: bool) -> u64 {
+    fn advanced_face(
+        &mut self,
+        name: &str,
+        bounds: &[u64],
+        surface: u64,
+        orientation: bool,
+    ) -> u64 {
         self.push(format!(
             "ADVANCED_FACE('{}',({}),#{},{})",
             name,
@@ -1232,7 +1367,11 @@ impl Part21Writer {
     }
 
     fn shell_based_surface_model(&mut self, name: &str, shells: &[u64]) -> u64 {
-        self.push(format!("SHELL_BASED_SURFACE_MODEL('{}',({}))", name, refs(shells)))
+        self.push(format!(
+            "SHELL_BASED_SURFACE_MODEL('{}',({}))",
+            name,
+            refs(shells)
+        ))
     }
 
     fn manifold_solid_brep(&mut self, name: &str, outer: u64) -> u64 {
@@ -1240,7 +1379,11 @@ impl Part21Writer {
     }
 
     fn geometric_curve_set(&mut self, name: &str, curves: &[u64]) -> u64 {
-        self.push(format!("GEOMETRIC_CURVE_SET('{}',({}))", name, refs(curves)))
+        self.push(format!(
+            "GEOMETRIC_CURVE_SET('{}',({}))",
+            name,
+            refs(curves)
+        ))
     }
 
     fn shape_representation(&mut self, name: &str, items: &[u64], context: u64) -> u64 {
@@ -1252,7 +1395,12 @@ impl Part21Writer {
         ))
     }
 
-    fn manifold_surface_shape_representation(&mut self, name: &str, items: &[u64], context: u64) -> u64 {
+    fn manifold_surface_shape_representation(
+        &mut self,
+        name: &str,
+        items: &[u64],
+        context: u64,
+    ) -> u64 {
         self.push(format!(
             "MANIFOLD_SURFACE_SHAPE_REPRESENTATION('{}',({}),#{})",
             name,
@@ -1261,7 +1409,12 @@ impl Part21Writer {
         ))
     }
 
-    fn advanced_brep_shape_representation(&mut self, name: &str, items: &[u64], context: u64) -> u64 {
+    fn advanced_brep_shape_representation(
+        &mut self,
+        name: &str,
+        items: &[u64],
+        context: u64,
+    ) -> u64 {
         self.push(format!(
             "ADVANCED_BREP_SHAPE_REPRESENTATION('{}',({}),#{})",
             name,
@@ -1293,10 +1446,7 @@ impl Part21Writer {
     ) -> u64 {
         self.push(format!(
             "SHAPE_REPRESENTATION_RELATIONSHIP('{}','{}',#{},#{})",
-            name,
-            description,
-            rep_1,
-            rep_2
+            name, description, rep_1, rep_2
         ))
     }
 
@@ -1349,7 +1499,12 @@ impl Part21Writer {
     }
 
     fn styled_item(&mut self, name: &str, styles: &[u64], item: u64) -> u64 {
-        self.push(format!("STYLED_ITEM('{}',({},),#{})", name, refs(styles), item))
+        self.push(format!(
+            "STYLED_ITEM('{}',({},),#{})",
+            name,
+            refs(styles),
+            item
+        ))
     }
 
     fn push(&mut self, body: String) -> u64 {
@@ -1414,11 +1569,7 @@ fn refs(items: &[u64]) -> String {
 }
 
 fn bool_token(value: bool) -> &'static str {
-    if value {
-        ".T."
-    } else {
-        ".F."
-    }
+    if value { ".T." } else { ".F." }
 }
 
 fn dvec3_to_array(v: glam::DVec3) -> [f64; 3] {
@@ -1645,8 +1796,16 @@ mod tests {
                 }
             }
         }
-        assert!(sphere_count >= 1, "expected at least 1 sphere face after round-trip, got {}", sphere_count);
-        assert!(cone_count >= 1, "expected at least 1 cone face after round-trip, got {}", cone_count);
+        assert!(
+            sphere_count >= 1,
+            "expected at least 1 sphere face after round-trip, got {}",
+            sphere_count
+        );
+        assert!(
+            cone_count >= 1,
+            "expected at least 1 cone face after round-trip, got {}",
+            cone_count
+        );
     }
 }
 
@@ -1674,7 +1833,10 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Cone(c) => Some(c.axis),
         Surface3::Torus(t) => Some(t.axis),
         Surface3::BSpline(_) => None,
-        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) | Surface3::Bezier(_) | Surface3::Offset(_) => None,
+        Surface3::LinearExtrusion(_)
+        | Surface3::Revolution(_)
+        | Surface3::Bezier(_)
+        | Surface3::Offset(_) => None,
         Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
     }
 }

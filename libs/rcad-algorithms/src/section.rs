@@ -15,9 +15,9 @@
 //! 3. Chain segments into closed or open polyline loops.
 
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Plane};
 use rcad_kernel::topology::{Edge, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::BRep;
 
 use crate::triangulate::triangulate_polygon;
 
@@ -50,7 +50,9 @@ fn segment_plane_intersect(plane: &Plane, a: DVec3, b: DVec3) -> Option<DVec3> {
 /// Collect triangles for a face (pre-triangulated or fan-triangulated from wire).
 fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
     if !face.triangles.is_empty() {
-        return face.triangles.iter()
+        return face
+            .triangles
+            .iter()
             .filter_map(|&[i, j, k]| {
                 let a = brep.vertices.get(i)?.point;
                 let b = brep.vertices.get(j)?.point;
@@ -61,7 +63,10 @@ fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
     }
 
     // Fan-triangulate from wire vertices
-    let wire_pts: Vec<DVec3> = face.outer_wire.edges.iter()
+    let wire_pts: Vec<DVec3> = face
+        .outer_wire
+        .edges
+        .iter()
         .filter_map(|we| {
             let edge = brep.edges.get(we.idx)?;
             let vidx = if we.forward { edge.start } else { edge.end };
@@ -232,13 +237,19 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
             result.vertices.push(Vertex { point: b });
 
             let edge_idx = result.edges.len();
-            result.edges.push(Edge { start: vi_a, end: vi_b });
+            result.edges.push(Edge {
+                start: vi_a,
+                end: vi_b,
+            });
 
             // Register curve in geom
             let len = (b - a).length();
             let dir = if len > 1e-10 { (b - a) / len } else { DVec3::X };
             let curve_idx = result.geom.curves.len();
-            result.geom.curves.push(Curve3::Line(Line3 { origin: a, direction: dir }));
+            result.geom.curves.push(Curve3::Line(Line3 {
+                origin: a,
+                direction: dir,
+            }));
 
             while result.geom.edge_curve.len() <= edge_idx {
                 result.geom.edge_curve.push(None);
@@ -265,13 +276,18 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
     if !wire_list.is_empty() {
         // Store wires as faces with no surface (open section wires, not closed faces)
         use rcad_kernel::topology::Face;
-        let faces: Vec<_> = wire_list.into_iter().map(|w| Face {
-            outer_wire: w,
-            inner_wires: vec![],
-            normal: plane.normal,
-            triangles: vec![],
-        }).collect();
-        result.solids.push(Solid { shells: vec![Shell { faces }] });
+        let faces: Vec<_> = wire_list
+            .into_iter()
+            .map(|w| Face {
+                outer_wire: w,
+                inner_wires: vec![],
+                normal: plane.normal,
+                triangles: vec![],
+            })
+            .collect();
+        result.solids.push(Solid {
+            shells: vec![Shell { faces }],
+        });
     }
 
     result
@@ -336,13 +352,13 @@ pub enum SectionCurve {
 /// assert!(!curves.is_empty());
 /// ```
 pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
-    use rcad_kernel::geom::Surface3;
     use crate::inttools::{
-        plane_cone::{intersect_plane_cone, PlaneConicalResult},
-        plane_cylinder::{intersect_plane_cylinder, PlaneCylinderResult},
-        plane_plane::{intersect_plane_plane, PlanePlaneResult},
-        plane_sphere::{intersect_plane_sphere, PlaneSphereResult},
+        plane_cone::{PlaneConicalResult, intersect_plane_cone},
+        plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
+        plane_plane::{PlanePlaneResult, intersect_plane_plane},
+        plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
     };
+    use rcad_kernel::geom::Surface3;
 
     let mut results: Vec<SectionCurve> = Vec::new();
 
@@ -355,7 +371,9 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
         for shell in &solid.shells {
             for face in &shell.faces {
                 // Look up the analytic surface for this face
-                let surf_opt = brep.geom.face_surface
+                let surf_opt = brep
+                    .geom
+                    .face_surface
                     .get(face_global_idx)
                     .and_then(|o| *o)
                     .and_then(|si| brep.geom.surfaces.get(si));
@@ -368,32 +386,26 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                                 _ => None,
                             }
                         }
-                        Surface3::Sphere(sph) => {
-                            match intersect_plane_sphere(plane, sph) {
-                                PlaneSphereResult::Circle(c) => Some(Curve3::Circle(c)),
-                                PlaneSphereResult::TangentPoint(_) => None,
-                                PlaneSphereResult::NoIntersection => None,
-                            }
-                        }
-                        Surface3::Cylinder(cyl) => {
-                            match intersect_plane_cylinder(plane, cyl) {
-                                PlaneCylinderResult::Circle(c) => Some(Curve3::Circle(c)),
-                                PlaneCylinderResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
-                                PlaneCylinderResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
-                                PlaneCylinderResult::TangentLine(_) => None,
-                                PlaneCylinderResult::NoIntersection => None,
-                            }
-                        }
-                        Surface3::Cone(cone) => {
-                            match intersect_plane_cone(plane, cone) {
-                                PlaneConicalResult::Circle(c) => Some(Curve3::Circle(c)),
-                                PlaneConicalResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
-                                PlaneConicalResult::SingleLine(l) => Some(Curve3::Line(l)),
-                                PlaneConicalResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
-                                PlaneConicalResult::Point(_) => None,
-                                PlaneConicalResult::NoIntersection => None,
-                            }
-                        }
+                        Surface3::Sphere(sph) => match intersect_plane_sphere(plane, sph) {
+                            PlaneSphereResult::Circle(c) => Some(Curve3::Circle(c)),
+                            PlaneSphereResult::TangentPoint(_) => None,
+                            PlaneSphereResult::NoIntersection => None,
+                        },
+                        Surface3::Cylinder(cyl) => match intersect_plane_cylinder(plane, cyl) {
+                            PlaneCylinderResult::Circle(c) => Some(Curve3::Circle(c)),
+                            PlaneCylinderResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                            PlaneCylinderResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
+                            PlaneCylinderResult::TangentLine(_) => None,
+                            PlaneCylinderResult::NoIntersection => None,
+                        },
+                        Surface3::Cone(cone) => match intersect_plane_cone(plane, cone) {
+                            PlaneConicalResult::Circle(c) => Some(Curve3::Circle(c)),
+                            PlaneConicalResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                            PlaneConicalResult::SingleLine(l) => Some(Curve3::Line(l)),
+                            PlaneConicalResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
+                            PlaneConicalResult::Point(_) => None,
+                            PlaneConicalResult::NoIntersection => None,
+                        },
                         // All other surfaces: use polyline fallback
                         _ => {
                             let segs: Vec<[DVec3; 2]> = face_triangles(brep, face)
@@ -449,24 +461,45 @@ mod tests {
 
     #[test]
     fn section_of_unit_box_at_midplane_z() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-        let plane = Plane { origin: DVec3::new(0.0, 0.0, 0.5), normal: DVec3::Z };
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let plane = Plane {
+            origin: DVec3::new(0.0, 0.0, 0.5),
+            normal: DVec3::Z,
+        };
 
         let polylines = section_polylines(&brep, &plane);
-        assert!(!polylines.is_empty(), "section of unit box should yield at least one loop");
+        assert!(
+            !polylines.is_empty(),
+            "section of unit box should yield at least one loop"
+        );
 
         // All points should be at z ≈ 0.5
         for poly in &polylines {
             for &p in poly {
-                assert!((p.z - 0.5).abs() < 1e-5, "section point z should be 0.5, got {}", p.z);
+                assert!(
+                    (p.z - 0.5).abs() < 1e-5,
+                    "section point z should be 0.5, got {}",
+                    p.z
+                );
             }
         }
     }
 
     #[test]
     fn section_misses_when_plane_outside() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-        let plane = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let plane = Plane {
+            origin: DVec3::new(0.0, 0.0, 5.0),
+            normal: DVec3::Z,
+        };
 
         let polylines = section_polylines(&brep, &plane);
         assert!(polylines.is_empty(), "section outside box should be empty");
@@ -474,8 +507,15 @@ mod tests {
 
     #[test]
     fn section_points_within_box_bounds() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 3.0, depth: 4.0 });
-        let plane = Plane { origin: DVec3::new(0.0, 1.5, 0.0), normal: DVec3::Y };
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+        let plane = Plane {
+            origin: DVec3::new(0.0, 1.5, 0.0),
+            normal: DVec3::Y,
+        };
 
         let polylines = section_polylines(&brep, &plane);
         assert!(!polylines.is_empty());

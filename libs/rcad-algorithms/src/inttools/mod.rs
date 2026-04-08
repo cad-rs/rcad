@@ -1,12 +1,12 @@
-pub mod plane_plane;
-pub mod edge_face;
-pub mod vertex_ops;
 pub mod coplanar;
-pub mod plane_cylinder;
-pub mod plane_sphere;
-pub mod plane_cone;
 pub mod curve_surface;
-pub mod marching;
+pub mod edge_face;
 pub mod intss;
+pub mod marching;
+pub mod plane_cone;
+pub mod plane_cylinder;
+pub mod plane_plane;
+pub mod plane_sphere;
+pub mod vertex_ops;
 
-pub use intss::{intersect_surfaces, SurfaceCurve, SurfaceSurfaceIntersection};
+pub use intss::{SurfaceCurve, SurfaceSurfaceIntersection, intersect_surfaces};
