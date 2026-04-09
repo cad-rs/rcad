@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use glam::{DVec2, DVec3};
-use rcad_algorithms::{boolean_op, BooleanOpType};
+use rcad_algorithms::{boolean_op, boolean_op_par, BooleanOpType};
 use rcad_modeling::{
     make_box_brep, make_cylinder_brep, make_sphere_brep,
     fillet_edge, loft, sweep_pipe,
@@ -37,6 +37,40 @@ fn boolean_diff_box_cylinder(c: &mut Criterion) {
     let b = make_cylinder_brep(DVec3::new(1.0, 1.0, -0.5), DVec3::Z, DVec3::X, 0.4, 3.0).unwrap();
     c.bench_function("boolean_diff_box_cylinder", |bench| {
         bench.iter(|| boolean_op(BooleanOpType::Difference, &a, &b).unwrap())
+    });
+}
+
+// ── Parallel Boolean operations ───────────────────────────────────────────────
+
+fn boolean_union_boxes_par(c: &mut Criterion) {
+    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    let b = make_box_brep(DVec3::new(0.5, 0.5, 0.5), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+    c.bench_function("boolean_union_boxes_par", |bench| {
+        bench.iter(|| boolean_op_par(BooleanOpType::Union, &a, &b).unwrap())
+    });
+}
+
+fn boolean_diff_box_sphere_par(c: &mut Criterion) {
+    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+    let b = make_sphere_brep(DVec3::new(1.0, 1.0, 1.0), 0.8).unwrap();
+    c.bench_function("boolean_diff_box_sphere_par", |bench| {
+        bench.iter(|| boolean_op_par(BooleanOpType::Difference, &a, &b).unwrap())
+    });
+}
+
+fn boolean_union_box_cylinder_par(c: &mut Criterion) {
+    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+    let b = make_cylinder_brep(DVec3::new(1.0, 1.0, -0.5), DVec3::Z, DVec3::X, 0.5, 3.0).unwrap();
+    c.bench_function("boolean_union_box_cylinder_par", |bench| {
+        bench.iter(|| boolean_op_par(BooleanOpType::Union, &a, &b).unwrap())
+    });
+}
+
+fn boolean_diff_box_cylinder_par(c: &mut Criterion) {
+    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+    let b = make_cylinder_brep(DVec3::new(1.0, 1.0, -0.5), DVec3::Z, DVec3::X, 0.4, 3.0).unwrap();
+    c.bench_function("boolean_diff_box_cylinder_par", |bench| {
+        bench.iter(|| boolean_op_par(BooleanOpType::Difference, &a, &b).unwrap())
     });
 }
 
@@ -111,6 +145,10 @@ criterion_group!(
     boolean_diff_box_sphere,
     boolean_union_box_cylinder,
     boolean_diff_box_cylinder,
+    boolean_union_boxes_par,
+    boolean_diff_box_sphere_par,
+    boolean_union_box_cylinder_par,
+    boolean_diff_box_cylinder_par,
     intss_plane_sphere,
     fillet_box_edge,
     loft_two_circles,

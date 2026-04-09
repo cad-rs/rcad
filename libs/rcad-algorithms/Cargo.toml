@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 rcad-kernel = { path = "../rcad-kernel" }
 glam.workspace = true
+rayon = "1.10"
 
 [dev-dependencies]
 criterion = { workspace = true }

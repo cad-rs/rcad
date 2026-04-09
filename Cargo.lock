@@ -2628,6 +2628,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "glam 0.29.3",
+ "rayon",
  "rcad-kernel",
  "rcad-modeling",
 ]
