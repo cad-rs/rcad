@@ -498,8 +498,11 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 | 参数 | 值 | 说明 |
 |------|----|------|
-| `TOLERANCE_ABS` | `1e-7` | 点重合判断（OCCT CONFUSION 默认值）|
-| `TOLERANCE_ANG` | `1e-12` | 向量平行判断 |
+| `CONFUSION` (`rcad-kernel`) | `1e-7` | 点重合判断（OCCT `Precision::Confusion()`）|
+| `ANGULAR` (`rcad-kernel`) | `1e-12` | 角度精度（OCCT `Precision::Angular()`）|
+| `APPROXIMATION` (`rcad-kernel`) | `1e-4` | 曲面近似容差（OCCT `Precision::Approximation()`）|
+| `TOLERANCE_ABS` (`rcad-algorithms`) | `1e-7` | 算法层点重合判断，与 `CONFUSION` 对齐 |
+| `TOLERANCE_ANG` (`rcad-algorithms`) | `1e-9` | 算法层平行向量判断；比 `ANGULAR` 宽松，容许交叉计算中的浮点积累误差 |
 | `vertex_tolerance` | per-vertex | 从 STEP `UNCERTAINTY_MEASURE_WITH_UNIT` 读取 |
 | `edge_tolerance` | per-edge | 同上 |
 | `face_tolerance` | per-face | 同上 |
@@ -595,4 +598,4 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 ---
 
-*文档更新于 2026-04-04（Phase T 完成）*
+*文档更新于 2026-04-09（错误处理、集成测试、Benchmark 扩展完成）*

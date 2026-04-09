@@ -10,6 +10,7 @@ glam.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true }
+rcad-modeling = { path = "../rcad-modeling" }
 
 [[bench]]
 name = "step_io"

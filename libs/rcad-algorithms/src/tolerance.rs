@@ -1,12 +1,20 @@
 use glam::DVec3;
 
-/// Absolute tolerance for point coincidence (matches OCCT Precision::Confusion).
+/// Absolute tolerance for point coincidence.
+///
+/// Matches `rcad_kernel::tolerance::CONFUSION` = `Precision::Confusion()` in OCCT.
+/// Two points are considered coincident when their distance is below this value.
 pub const TOLERANCE_ABS: f64 = 1e-7;
 
-/// Angular tolerance for parallel/perpendicular checks (radians).
+/// Angular tolerance for parallel/perpendicular checks (radians, as cross-product magnitude).
+///
+/// This is intentionally **looser** than `rcad_kernel::tolerance::ANGULAR` (1e-12):
+/// the algorithms layer needs to tolerate slightly imperfect parallelism that
+/// arises from floating-point accumulation during intersection computation.
+/// Used in [`vectors_parallel`] as `cross(a,b).length_squared() < TOLERANCE_ANG²`.
 pub const TOLERANCE_ANG: f64 = 1e-9;
 
-/// Tolerance squared (avoids sqrt in distance checks).
+/// Tolerance squared — avoids `sqrt` in distance checks.
 pub const TOLERANCE_ABS_SQ: f64 = TOLERANCE_ABS * TOLERANCE_ABS;
 
 #[inline]

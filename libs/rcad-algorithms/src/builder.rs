@@ -24,6 +24,10 @@ pub enum BooleanError {
     EmptyInput,
     MissingGeometry(&'static str),
     DegenerateResult,
+    /// A numeric operation produced a non-finite or NaN value.
+    NumericalFailure(&'static str),
+    /// An expected non-empty collection was empty (e.g. polyline with no points).
+    EmptyCollection(&'static str),
 }
 
 impl std::fmt::Display for BooleanError {
@@ -32,6 +36,8 @@ impl std::fmt::Display for BooleanError {
             Self::EmptyInput => write!(f, "empty input"),
             Self::MissingGeometry(msg) => write!(f, "missing geometry: {msg}"),
             Self::DegenerateResult => write!(f, "degenerate result"),
+            Self::NumericalFailure(msg) => write!(f, "numerical failure: {msg}"),
+            Self::EmptyCollection(msg) => write!(f, "unexpected empty collection: {msg}"),
         }
     }
 }
@@ -510,8 +516,9 @@ impl<'a> BooleanBuilder<'a> {
         let mut result_boundaries: Vec<Vec<DVec3>> = vec![boundary_pts];
 
         for polyline in &all_polylines {
-            let seg_start = *polyline.first().unwrap();
-            let seg_end = *polyline.last().unwrap();
+            let (Some(&seg_start), Some(&seg_end)) = (polyline.first(), polyline.last()) else {
+                continue;
+            };
 
             let mut next_result: Vec<Vec<DVec3>> = Vec::new();
             for bnd in result_boundaries.drain(..) {
@@ -522,24 +529,30 @@ impl<'a> BooleanBuilder<'a> {
                 }
 
                 // Find indices of boundary points closest to the two polyline endpoints
-                let (i_start, _) = bnd
+                let Some((i_start, _)) = bnd
                     .iter()
                     .enumerate()
                     .min_by(|(_, a), (_, b)| {
                         a.distance_squared(seg_start)
                             .partial_cmp(&b.distance_squared(seg_start))
-                            .unwrap()
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .unwrap();
-                let (i_end, _) = bnd
+                else {
+                    next_result.push(bnd);
+                    continue;
+                };
+                let Some((i_end, _)) = bnd
                     .iter()
                     .enumerate()
                     .min_by(|(_, a), (_, b)| {
                         a.distance_squared(seg_end)
                             .partial_cmp(&b.distance_squared(seg_end))
-                            .unwrap()
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    .unwrap();
+                else {
+                    next_result.push(bnd);
+                    continue;
+                };
 
                 // Ensure i_start < i_end for consistent splitting
                 let (ia, ib, p_a, p_b) = if i_start <= i_end {
@@ -733,8 +746,8 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         return vec![poly.to_vec()];
     }
 
-    let trim_start = *trim.first().unwrap();
-    let trim_end = *trim.last().unwrap();
+    let trim_start = trim[0];
+    let trim_end = trim[trim.len() - 1];
 
     // Detect closed trim: start ≈ end in UV space
     let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
@@ -749,7 +762,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             // Deduplicate closing point from trim if needed
             let trim_dedup: Vec<DVec2> = {
                 let mut v = trim.to_vec();
-                if v.len() > 1 && (v[0] - *v.last().unwrap()).length_squared() < 1e-12 {
+                if v.len() > 1 && (v[0] - v[v.len() - 1]).length_squared() < 1e-12 {
                     v.pop();
                 }
                 v
@@ -837,11 +850,11 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
             result.pop();
         }
         result
@@ -1063,11 +1076,11 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
             result.pop();
         }
         result
@@ -1172,11 +1185,11 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
     let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - *result.last().unwrap()).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - *result.last().unwrap()).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
             result.pop();
         }
         result

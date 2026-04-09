@@ -2668,7 +2668,9 @@ dependencies = [
  "bytemuck",
  "glam 0.29.3",
  "image",
+ "rcad-algorithms",
  "rcad-kernel",
+ "rcad-modeling",
  "wgpu",
 ]
 

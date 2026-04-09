@@ -514,7 +514,7 @@ impl<'a> PaveFiller<'a> {
                 };
 
                 let v_start = self.ds.add_vertex(pts[0]);
-                let v_end = self.ds.add_vertex(*pts.last().unwrap());
+                let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
 
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
@@ -595,7 +595,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         let v_start = self.ds.add_vertex(pts[0]);
-        let v_end = self.ds.add_vertex(*pts.last().unwrap());
+        let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
 
         let curve_idx = self.ds.intersection_curves.len();
         self.ds.intersection_curves.push(IntersectionCurve {
@@ -891,7 +891,7 @@ impl<'a> PaveFiller<'a> {
             }
 
             let v_start = self.ds.add_vertex(curve.points[0]);
-            let v_end = self.ds.add_vertex(*curve.points.last().unwrap());
+            let v_end = self.ds.add_vertex(curve.points[curve.points.len() - 1]);
 
             let curve_idx = self.ds.intersection_curves.len();
             // Compute arc-length for t_range
@@ -900,7 +900,7 @@ impl<'a> PaveFiller<'a> {
                 .windows(2)
                 .map(|w| (w[1] - w[0]).length())
                 .sum();
-            let dir = (curve.points.last().unwrap() - curve.points[0]).normalize_or_zero();
+            let dir = (curve.points[curve.points.len() - 1] - curve.points[0]).normalize_or_zero();
             let pcurve_a = polyline_pcurve_by_projection(&curve.points, &s1);
             let pcurve_b = polyline_pcurve_by_projection(&curve.points, &s2);
             self.ds.intersection_curves.push(IntersectionCurve {
@@ -1018,7 +1018,7 @@ impl<'a> PaveFiller<'a> {
                 },
             ];
             all_paves.extend_from_slice(&edge.paves);
-            all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap());
+            all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
 
             // Deduplicate paves at the same parameter
             all_paves.dedup_by(|a, b| params_equal(a.param, b.param));

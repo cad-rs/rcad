@@ -54,11 +54,18 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 - **Memory Management**: Rust's ownership model replaces OCCT's `Handle` (smart pointers) with `Arc` and `Weak` for reference counting in cyclic graphs.
 - **Concurrency**: Parallelize long-running algorithms (e.g., Boolean operations) using `rayon` for native targets and a compatible strategy for WASM (Web Workers).
 - **Accuracy**: Double precision (`f64`) for all geometric calculations; configurable tolerances for topological consistency.
+- **Error Handling**: All public APIs in `rcad-algorithms`, `rcad-modeling`, and `rcad-step` MUST return `Result<T, E>` with typed error enums. `unwrap`/`panic` in production code paths is forbidden; use `let-else`, indexed access with prior length checks, or `unwrap_or` with documented fallback semantics.
+  - `BooleanError`: `EmptyInput | MissingGeometry | DegenerateResult | NumericalFailure | EmptyCollection`
+  - `BuildError`: `NonFiniteValue | NonPositiveValue | ZeroVector | ParallelVectors | DegenerateGeometry | InvalidIndex`
+  - `StepError`: `Io | InvalidFormat | MissingEntity | EmptyResult`
 
 ## 8. Development Roadmap
 - **Phase 1 (Completed)**: Kernel primitives, basic STEP reader, egui integration.
 - **Phase 2 (Completed)**: iced integration, shared renderer pipeline, picking/highlight, dual-app interaction alignment.
 - **Phase 3 (In Progress)**: richer topology/geometry entities, robust STEP coverage, modeling algorithms (booleans/fillets/sweeps).
+  - Error handling hardening: `unwrap`/`panic` removed from boolean op critical paths; structured `BooleanError` variants.
+  - Integration tests: `rcad-algorithms/tests/`, `rcad-step/tests/`, `rcad-render/tests/`.
+  - Benchmark coverage: fillet, loft, sweep, box-cylinder booleans added to `rcad-algorithms/benches/`.
 - **Phase 4 (Planned)**: full STEP export and advanced CAD command system.
 
 ## 9. Modeling API Principles (Mandatory)

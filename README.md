@@ -25,6 +25,7 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 **Algorithms (`rcad-algorithms`)**
 - Boolean ops: `boolean_op(Union|Intersection|Difference)` + `*_with_history`; full support for planar solids; curved solids (Cylinder/Sphere) partially supported
+- `BooleanError` variants: `EmptyInput`, `MissingGeometry`, `DegenerateResult`, `NumericalFailure`, `EmptyCollection`
 - B-Rep repair: `merge_close_vertices`, `remove_degenerate_faces`, `recompute_face_normals`, `fix_wire_orientation`, `repair`
 - Face imprinting: `imprint_brep`; gap/overlap detection: `detect_gaps_overlaps`
 - Section: `section_polylines`, `section_curves` (analytic Circle/Ellipse/Line for Plane/Sphere/Cylinder/Cone faces)
@@ -121,6 +122,11 @@ cargo run -p creator-iced -- assets/hfss.step
 cargo check --workspace
 cargo test  --workspace
 ```
+
+Integration tests live in `libs/*/tests/`:
+- `rcad-algorithms/tests/boolean_integration.rs` — chained boolean ops, error paths
+- `rcad-step/tests/round_trip.rs` — STEP write → parse round-trip
+- `rcad-render/tests/smoke.rs` — CPU tessellation smoke tests
 
 ## WASM-specific notes
 
