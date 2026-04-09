@@ -3,7 +3,7 @@ use rcad_kernel::geom::*;
 
 use crate::bopds::ds::*;
 use crate::inttools;
-use crate::tolerance::*;
+use crate::tolerance::{AdaptiveTolerance, ToleranceLevel};
 
 /// Classification of a point relative to a solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,13 +20,17 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         return Classification::Out;
     }
 
+    // Compute adaptive tolerance based on model scale
+    let tol = AdaptiveTolerance::from_scale(ds.model_scale());
+    let on_surface_tol = tol.tolerance(ToleranceLevel::Relaxed);
+
     // First check: is the point ON any face surface within face bounds?
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
         match &face.surface {
             Surface3::Plane(plane) => {
                 let d = (point - plane.origin).dot(plane.normal);
-                if d.abs() < TOLERANCE_ABS * 100.0 {
+                if d.abs() < on_surface_tol {
                     let face_verts = ds.face_boundary_points(fi);
                     if inttools::edge_face::point_in_planar_face(point, plane, &face_verts) {
                         return Classification::On;
@@ -37,12 +41,12 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
                 let v = point - c.origin;
                 let along = v.dot(c.axis);
                 let perp = (v - c.axis * along).length();
-                if (perp - c.radius).abs() < TOLERANCE_ABS * 100.0 {
+                if (perp - c.radius).abs() < on_surface_tol {
                     return Classification::On;
                 }
             }
             Surface3::Sphere(s) => {
-                if ((point - s.center).length() - s.radius).abs() < TOLERANCE_ABS * 100.0 {
+                if ((point - s.center).length() - s.radius).abs() < on_surface_tol {
                     return Classification::On;
                 }
             }
@@ -50,7 +54,7 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
                 let v = point - c.apex;
                 let along = v.dot(c.axis);
                 let perp = (v - c.axis * along).length();
-                if (perp - along * c.half_angle_rad.tan()).abs() < TOLERANCE_ABS * 100.0 {
+                if (perp - along * c.half_angle_rad.tan()).abs() < on_surface_tol {
                     return Classification::On;
                 }
             }
@@ -86,17 +90,21 @@ fn ray_cast_classify(
     ds: &DS,
 ) -> Option<Classification> {
     let mut crossings = 0u32;
+    let tol = AdaptiveTolerance::from_scale(ds.model_scale());
+    let ray_tol = tol.tolerance(ToleranceLevel::Strict);
+    let boundary_tol = tol.tolerance(ToleranceLevel::Relaxed);
+    let parallel_tol_sq = tol.tolerance_sq(ToleranceLevel::Strict);
 
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
         match &face.surface {
             Surface3::Plane(plane) => {
                 let denom = ray_dir.dot(plane.normal);
-                if denom.abs() < TOLERANCE_ABS {
+                if denom.abs() < ray_tol {
                     continue; // parallel to ray
                 }
                 let t = (plane.origin - point).dot(plane.normal) / denom;
-                if t < TOLERANCE_ABS {
+                if t < ray_tol {
                     continue; // behind ray origin
                 }
 
@@ -104,7 +112,7 @@ fn ray_cast_classify(
 
                 // Check if hit is near a face boundary edge/vertex — if so, this ray is ambiguous
                 let face_verts = ds.face_boundary_points(fi);
-                if is_near_polygon_boundary(&hit, &face_verts, plane) {
+                if is_near_polygon_boundary(&hit, &face_verts, plane, boundary_tol) {
                     return None; // ambiguous, try different ray
                 }
 
@@ -118,7 +126,7 @@ fn ray_cast_classify(
                 let d = ray_dir - c.axis * ray_dir.dot(c.axis);
                 let f = oc - c.axis * oc.dot(c.axis);
                 let a = d.length_squared();
-                if a < TOLERANCE_ABS * TOLERANCE_ABS {
+                if a < parallel_tol_sq {
                     continue; // ray parallel to cylinder axis
                 }
                 let b = 2.0 * d.dot(f);
@@ -144,10 +152,10 @@ fn ray_cast_classify(
                 } else {
                     (-1e9, 1e9) // unbounded fallback
                 };
-                let slack = TOLERANCE_ABS * 10.0;
+                let slack = boundary_tol;
                 let sq = disc.sqrt();
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
-                    if t > TOLERANCE_ABS {
+                    if t > ray_tol {
                         let hit = point + ray_dir * t;
                         let h = (hit - c.origin).dot(axis);
                         if h >= h_min - slack && h <= h_max + slack {
@@ -168,7 +176,7 @@ fn ray_cast_classify(
                 }
                 let sq = disc.sqrt();
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
-                    if t > TOLERANCE_ABS {
+                    if t > ray_tol {
                         let hit = point + ray_dir * t;
                         let face_verts = ds.face_boundary_points(fi);
                         // A sphere primitive has at most 2 wire vertices (poles),
@@ -177,7 +185,7 @@ fn ray_cast_classify(
                         let in_face = if face_verts.len() < 3 {
                             true // whole sphere is one face
                         } else {
-                            point_in_face_aabb(hit, &face_verts)
+                            point_in_face_aabb(hit, &face_verts, boundary_tol)
                         };
                         if in_face {
                             crossings += 1;
@@ -197,17 +205,17 @@ fn ray_cast_classify(
                 let b = 2.0 * (d_perp.dot(co_perp) - tan_a * tan_a * d_along * co_along);
                 let cc = co_perp.length_squared() - tan_a * tan_a * co_along * co_along;
                 let disc = b * b - 4.0 * a * cc;
-                if a.abs() < TOLERANCE_ABS * TOLERANCE_ABS || disc < 0.0 {
+                if a.abs() < parallel_tol_sq || disc < 0.0 {
                     continue;
                 }
                 let sq = disc.sqrt();
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
-                    if t > TOLERANCE_ABS {
+                    if t > ray_tol {
                         let hit = point + ray_dir * t;
                         let along = (hit - c.apex).dot(c.axis);
                         if along >= 0.0 {
                             let face_verts = ds.face_boundary_points(fi);
-                            if point_in_face_aabb(hit, &face_verts) {
+                            if point_in_face_aabb(hit, &face_verts, boundary_tol) {
                                 crossings += 1;
                             }
                         }
@@ -226,7 +234,7 @@ fn ray_cast_classify(
 }
 
 /// Conservative face containment check using AABB of the face boundary vertices.
-fn point_in_face_aabb(point: DVec3, face_verts: &[DVec3]) -> bool {
+fn point_in_face_aabb(point: DVec3, face_verts: &[DVec3], slack: f64) -> bool {
     if face_verts.is_empty() {
         return false;
     }
@@ -236,12 +244,11 @@ fn point_in_face_aabb(point: DVec3, face_verts: &[DVec3]) -> bool {
         mn = mn.min(v);
         mx = mx.max(v);
     }
-    let slack = TOLERANCE_ABS * 10.0;
     point.cmpge(mn - DVec3::splat(slack)).all() && point.cmple(mx + DVec3::splat(slack)).all()
 }
 
 /// Check if a point is close to any edge of a polygon (within tolerance).
-fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane) -> bool {
+fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane, boundary_tol: f64) -> bool {
     let (u_axis, v_axis) = inttools::edge_face::plane_local_basis(plane);
     let project = |p: DVec3| -> (f64, f64) {
         let d = p - plane.origin;
@@ -250,7 +257,7 @@ fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane) -> bo
 
     let (px, py) = project(*point);
     let n = verts.len();
-    let boundary_tol = TOLERANCE_ABS * 1000.0; // generous boundary tolerance
+    let tol_sq = boundary_tol * boundary_tol;
 
     for i in 0..n {
         let j = (i + 1) % n;
@@ -261,7 +268,7 @@ fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane) -> bo
         let dx = bx - ax;
         let dy = by - ay;
         let len_sq = dx * dx + dy * dy;
-        if len_sq < TOLERANCE_ABS * TOLERANCE_ABS {
+        if len_sq < tol_sq {
             continue;
         }
 
@@ -271,7 +278,7 @@ fn is_near_polygon_boundary(point: &DVec3, verts: &[DVec3], plane: &Plane) -> bo
         let cy = ay + t * dy;
         let dist_sq = (px - cx) * (px - cx) + (py - cy) * (py - cy);
 
-        if dist_sq < boundary_tol * boundary_tol {
+        if dist_sq < tol_sq {
             return true;
         }
     }

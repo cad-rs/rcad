@@ -9,7 +9,7 @@
 //! from two BReps that are either too close (gap) or interpenetrating (overlap),
 //! using face bounding-box pre-filtering and `closest_point_on_surface`.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
@@ -184,14 +184,19 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             boundary,
             surface: face.surface.clone(),
             normal: face.normal,
+            uv_centroid: None,
+            sample_override: None,
         }];
     }
 
     match &face.surface.clone() {
         Surface3::Plane(plane) => split_planar_face_simple(ds, face_idx, plane),
+        Surface3::Cylinder(_)
+        | Surface3::Sphere(_)
+        | Surface3::Cone(_)
+        | Surface3::Torus(_) => split_curved_face(ds, face_idx),
         _ => {
-            // For curved surfaces: return whole face (splitting would require
-            // the full BooleanBuilder machinery)
+            // For other curved surfaces: return whole face for now
             let boundary = face
                 .boundary_verts
                 .iter()
@@ -201,6 +206,8 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 boundary,
                 surface: face.surface.clone(),
                 normal: face.normal,
+                uv_centroid: None,
+                sample_override: None,
             }]
         }
     }
@@ -233,6 +240,8 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             boundary: boundary_3d,
             surface: face.surface.clone(),
             normal: face.normal,
+            uv_centroid: None,
+            sample_override: None,
         }];
     }
 
@@ -267,6 +276,8 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
                 boundary,
                 surface: face.surface.clone(),
                 normal: face.normal,
+                uv_centroid: None,
+            sample_override: None,
             }
         })
         .collect()
@@ -494,4 +505,602 @@ fn sample_face_points(pts: &[DVec3], n: usize) -> Vec<DVec3> {
     let step = (pts.len() as f64 / n as f64).ceil() as usize;
     let step = step.max(1);
     pts.iter().step_by(step).copied().collect()
+}
+
+// Split a curved face (Cylinder, Sphere, Cone, Torus) using parameter-space (UV) 2D clipping.
+// Falls back to legacy method when UV data or PCurves are missing.
+fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+
+    // Need UV boundary to operate in parameter space
+    let uv_boundary = match &face.uv_boundary {
+        Some(b) if b.len() >= 3 => b.clone(),
+        _ => return split_curved_face_legacy(ds, face_idx),
+    };
+
+    let surface = face.surface.clone();
+    let normal = face.normal;
+
+    // Collect 2D trim polylines from PCurves for each intersection curve
+    let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
+    for &ci in &face.face_info.curves_in {
+        if let Some(pcurve) = find_pcurve_for_face(ds, ci, face_idx) {
+            let ic = &ds.intersection_curves[ci];
+            let [t0, t1] = ic.t_range;
+            const N: usize = 32;
+            let pts: Vec<DVec2> = match &pcurve {
+                // BSpline PCurves from polyline_pcurve_by_projection use
+                // chord-length parameterization normalized to [0,1].
+                rcad_kernel::geom::Curve2d::BSpline(_) => (0..=N)
+                    .map(|i| {
+                        let t = i as f64 / N as f64;
+                        pcurve.point_at(t)
+                    })
+                    .collect(),
+                // Analytic curves use the same t parameterization as the 3D intersection curve.
+                _ => (0..=N)
+                    .map(|i| {
+                        let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                        pcurve.point_at(t)
+                    })
+                    .collect(),
+            };
+            if pts.len() >= 2 {
+                trim_polylines.push(pts);
+            }
+        }
+    }
+
+    // If no PCurves available, fall back to legacy method
+    if trim_polylines.is_empty() {
+        return split_curved_face_legacy(ds, face_idx);
+    }
+
+    // Split UV polygon by each trim polyline
+    let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
+
+    for trim in &trim_polylines {
+        let mut next: Vec<Vec<DVec2>> = Vec::new();
+        for poly in uv_polygons.drain(..) {
+            let halves = split_uv_polygon_by_trim(&poly, trim);
+            next.extend(halves);
+        }
+        uv_polygons = next;
+    }
+
+    // Map each UV sub-polygon back to 3D
+    uv_polygons
+        .into_iter()
+        .filter(|p| p.len() >= 3)
+        .map(|uv_poly| {
+            let n = uv_poly.len() as f64;
+            let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
+
+            let boundary: Vec<DVec3> = match &surface {
+                Surface3::Sphere(_) => {
+                    sphere_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                }
+                _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
+            };
+            // For curved surfaces, compute the actual surface normal at the centroid UV
+            let sub_normal = {
+                let computed = surface.normal_at(centroid_uv.x, centroid_uv.y);
+                if computed.length_squared() > 0.5 {
+                    computed
+                } else {
+                    normal
+                }
+            };
+            SubFace {
+                boundary,
+                surface: surface.clone(),
+                normal: sub_normal,
+                uv_centroid: Some(centroid_uv),
+                sample_override: None,
+            }
+        })
+        .collect()
+}
+
+// Legacy approximate method for curved face splitting.
+fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+    let surface = face.surface.clone();
+    let normal = face.normal;
+
+    // Collect all intersection polylines for this face
+    let mut all_polylines: Vec<Vec<DVec3>> = Vec::new();
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        if ic.polyline.len() >= 2 {
+            all_polylines.push(ic.polyline.clone());
+        } else {
+            // Analytic curve - sample it into a polyline
+            let pts: Vec<DVec3> = (0..=16)
+                .map(|i| {
+                    let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 16.0;
+                    use rcad_kernel::CurveEval;
+                    ic.curve.point_at(t)
+                })
+                .collect();
+            all_polylines.push(pts);
+        }
+    }
+
+    if all_polylines.is_empty() {
+        let boundary = face
+            .boundary_verts
+            .iter()
+            .map(|&vi| ds.vertices[vi].point)
+            .collect();
+        return vec![SubFace {
+            boundary,
+            surface,
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+        }];
+    }
+
+    // Collect boundary vertices
+    let boundary_pts: Vec<DVec3> = face
+        .boundary_verts
+        .iter()
+        .map(|&vi| ds.vertices[vi].point)
+        .collect();
+
+    if boundary_pts.len() < 3 {
+        return vec![SubFace {
+            boundary: boundary_pts,
+            surface,
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+        }];
+    }
+
+    // For each intersection polyline, split the boundary
+    let mut result_boundaries: Vec<Vec<DVec3>> = vec![boundary_pts];
+
+    for polyline in &all_polylines {
+        let (Some(&seg_start), Some(&seg_end)) = (polyline.first(), polyline.last()) else {
+            continue;
+        };
+
+        let mut next_result: Vec<Vec<DVec3>> = Vec::new();
+        for bnd in result_boundaries.drain(..) {
+            let n = bnd.len();
+            if n < 3 {
+                next_result.push(bnd);
+                continue;
+            }
+
+            let Some((i_start, _)) = bnd
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| {
+                    a.distance_squared(seg_start)
+                        .partial_cmp(&b.distance_squared(seg_start))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            else {
+                next_result.push(bnd);
+                continue;
+            };
+            let Some((i_end, _)) = bnd
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| {
+                    a.distance_squared(seg_end)
+                        .partial_cmp(&b.distance_squared(seg_end))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            else {
+                next_result.push(bnd);
+                continue;
+            };
+
+            let (ia, ib, p_a, p_b) = if i_start <= i_end {
+                (i_start, i_end, seg_start, seg_end)
+            } else {
+                (i_end, i_start, seg_end, seg_start)
+            };
+
+            if ia == ib {
+                next_result.push(bnd);
+                continue;
+            }
+
+            // Sub-face A
+            let mut sub_a: Vec<DVec3> = bnd[..=ia].to_vec();
+            sub_a.push(p_a);
+            for &p in polyline.iter().skip(1).rev().skip(1) {
+                sub_a.push(p);
+            }
+            sub_a.push(p_b);
+            sub_a.extend_from_slice(&bnd[ib..]);
+
+            // Sub-face B
+            let mut sub_b: Vec<DVec3> = bnd[ia..=ib].to_vec();
+            sub_b.push(p_b);
+            for &p in polyline.iter().skip(1).rev().skip(1) {
+                sub_b.push(p);
+            }
+            sub_b.push(p_a);
+
+            if sub_a.len() >= 3 {
+                next_result.push(sub_a);
+            }
+            if sub_b.len() >= 3 {
+                next_result.push(sub_b);
+            }
+        }
+        result_boundaries = next_result;
+    }
+
+    result_boundaries
+        .into_iter()
+        .filter(|b| b.len() >= 3)
+        .map(|boundary| SubFace {
+            boundary,
+            surface: surface.clone(),
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+        })
+        .collect()
+}
+
+// Find the PCurve for the given intersection curve as it lies on the given face.
+fn find_pcurve_for_face(
+    ds: &DS,
+    curve_idx: usize,
+    face_idx: usize,
+) -> Option<rcad_kernel::geom::Curve2d> {
+    use crate::bopds::ds::Interference;
+    for interference in &ds.interferences {
+        if let Interference::FaceFace { f1, f2, curves, .. } = interference {
+            if curves.contains(&curve_idx) {
+                let ic = &ds.intersection_curves[curve_idx];
+                if *f1 == face_idx {
+                    return ic.pcurve_on_a.clone();
+                } else if *f2 == face_idx {
+                    return ic.pcurve_on_b.clone();
+                }
+            }
+        }
+    }
+    None
+}
+
+// Build a 3D boundary polygon for a sphere sub-face given its UV polygon.
+fn sphere_subface_boundary_3d(
+    uv_poly: &[DVec2],
+    trim_polylines_uv: &[Vec<DVec2>],
+    surface: &Surface3,
+) -> Vec<DVec3> {
+    use std::f64::consts::PI;
+    use crate::tolerance::TOLERANCE_ABS;
+    const POLE_EPSILON: f64 = 0.05;
+
+    let mut pts: Vec<DVec3> = Vec::new();
+
+    // Map non-degenerate UV corners to 3D
+    for uv in uv_poly {
+        let v = uv.y;
+        if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+            pts.push(surface.point_at(uv.x, uv.y));
+        } else if v <= POLE_EPSILON {
+            pts.push(surface.point_at(0.0, 0.0)); // north pole
+        } else {
+            pts.push(surface.point_at(0.0, PI)); // south pole
+        }
+    }
+
+    // Add trim polyline 3D points
+    for trim_uv in trim_polylines_uv {
+        for (idx, uv) in trim_uv.iter().enumerate() {
+            if idx % 2 != 0 { continue; }
+            let v = uv.y;
+            if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+                let p3 = surface.point_at(uv.x, uv.y);
+                if point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1) {
+                    pts.push(p3);
+                }
+            }
+        }
+    }
+
+    // Deduplicate
+    let mut deduped: Vec<DVec3> = Vec::new();
+    for p in &pts {
+        if deduped.iter().all(|q: &DVec3| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+            deduped.push(*p);
+        }
+    }
+
+    deduped
+}
+
+// Check if a 2D point is within margin of any edge of a polygon.
+fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
+    let n = poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = poly[i];
+        let b = poly[j];
+        let ab = b - a;
+        let len_sq = ab.length_squared();
+        let t = if len_sq < 1e-14 { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
+        let closest = a + t * ab;
+        if (pt - closest).length() < margin {
+            return true;
+        }
+    }
+    false
+}
+
+// Split a 2D UV polygon by a 2D trim polyline.
+fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
+    let n = poly.len();
+    if n < 3 || trim.len() < 2 {
+        return vec![poly.to_vec()];
+    }
+
+    let trim_start = trim[0];
+    let trim_end = trim[trim.len() - 1];
+
+    // Detect closed trim
+    let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
+    if is_closed_trim {
+        let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
+        let is_inside = point_in_polygon_2d(poly, trim_centroid);
+        if is_inside {
+            let trim_dedup: Vec<DVec2> = {
+                let mut v = trim.to_vec();
+                if v.len() > 1 && (v[0] - v[v.len() - 1]).length_squared() < 1e-12 {
+                    v.pop();
+                }
+                v
+            };
+            if trim_dedup.len() >= 3 {
+                return vec![trim_dedup, poly.to_vec()];
+            }
+        }
+        return vec![poly.to_vec()];
+    }
+
+    // Find closest point on polygon boundary for trim endpoints
+    let closest_on_boundary = |q: DVec2| -> (usize, f64, DVec2) {
+        let mut best_edge = 0usize;
+        let mut best_t = 0.0f64;
+        let mut best_pt = poly[0];
+        let mut best_dist = f64::INFINITY;
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = poly[i];
+            let b = poly[j];
+            let ab = b - a;
+            let len_sq = ab.dot(ab);
+            let t = if len_sq < 1e-14 {
+                0.0
+            } else {
+                ((q - a).dot(ab) / len_sq).clamp(0.0, 1.0)
+            };
+            let proj = a + t * ab;
+            let dist = (q - proj).length_squared();
+            if dist < best_dist {
+                best_dist = dist;
+                best_edge = i;
+                best_t = t;
+                best_pt = proj;
+            }
+        }
+        (best_edge, best_t, best_pt)
+    };
+
+    let (edge_s, _t_s, pt_s) = closest_on_boundary(trim_start);
+    let (edge_e, _t_e, pt_e) = closest_on_boundary(trim_end);
+
+    let (ia, ib, p_a, p_b, trim_forward) = if edge_s <= edge_e {
+        (edge_s, edge_e, pt_s, pt_e, true)
+    } else {
+        (edge_e, edge_s, pt_e, pt_s, false)
+    };
+
+    if ia == ib {
+        return vec![poly.to_vec()];
+    }
+
+    let trim_pts: Vec<DVec2> = if trim_forward {
+        trim.to_vec()
+    } else {
+        trim.iter().copied().rev().collect()
+    };
+
+    // Sub-polygon A
+    let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
+    sub_a.push(p_a);
+    for &p in trim_pts.iter().skip(1).rev().skip(1) {
+        sub_a.push(p);
+    }
+    sub_a.push(p_b);
+    sub_a.extend_from_slice(&poly[ib + 1..]);
+
+    // Sub-polygon B
+    let mut sub_b: Vec<DVec2> = vec![p_a];
+    sub_b.extend_from_slice(&poly[ia + 1..=ib]);
+    sub_b.push(p_b);
+    for &p in trim_pts.iter().skip(1).rev().skip(1).rev() {
+        sub_b.push(p);
+    }
+
+    let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
+        let mut result: Vec<DVec2> = Vec::new();
+        for p in v {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
+                result.push(p);
+            }
+        }
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
+            result.pop();
+        }
+        result
+    };
+
+    let sub_a = dedup_2d(sub_a);
+    let sub_b = dedup_2d(sub_b);
+
+    let mut out = Vec::new();
+    if sub_a.len() >= 3 {
+        out.push(sub_a);
+    }
+    if sub_b.len() >= 3 {
+        out.push(sub_b);
+    }
+
+    if out.is_empty() {
+        vec![poly.to_vec()]
+    } else {
+        out
+    }
+}
+
+// Check if a 2D point is inside a 2D polygon using ray casting.
+fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let vi = poly[i];
+        let vj = poly[j];
+        if ((vi.y > pt.y) != (vj.y > pt.y))
+            && (pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec3;
+    use rcad_modeling::builder::{box_brep, sphere_brep};
+    use crate::geom_populate::populate_box_geom;
+
+    fn make_box(origin: DVec3, x: DVec3, y: DVec3, w: f64, h: f64, d: f64) -> BRep {
+        box_brep(origin, x, y, w, h, d).expect("box creation should succeed")
+    }
+
+    fn make_sphere(center: DVec3, radius: f64) -> BRep {
+        sphere_brep(center, radius).expect("sphere creation should succeed")
+    }
+
+    #[test]
+    fn test_imprint_box_onto_box() {
+        // Two overlapping boxes
+        let mut target = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        let mut tool = make_box(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        
+        populate_box_geom(&mut target);
+        populate_box_geom(&mut tool);
+        
+        let result = imprint_brep(&target, &tool);
+        
+        // Result should have faces split where tool boundary crosses target
+        assert!(!result.brep.solids[0].shells[0].faces.is_empty());
+        // Should have seam edges where target and tool faces meet
+        assert!(!result.seam_edges.is_empty());
+    }
+
+    #[test]
+    fn test_imprint_no_intersection() {
+        // Two non-overlapping boxes
+        let mut target = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
+        let mut tool = make_box(DVec3::new(5.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
+        
+        populate_box_geom(&mut target);
+        populate_box_geom(&mut tool);
+        
+        let result = imprint_brep(&target, &tool);
+        
+        // No intersection means no seam edges
+        assert!(result.seam_edges.is_empty());
+        // Target faces should remain unchanged (6 faces)
+        assert_eq!(result.brep.solids[0].shells[0].faces.len(), 6);
+    }
+
+    #[test]
+    fn test_imprint_sphere_onto_box() {
+        // Sphere intersecting a box - tests curved surface handling
+        let mut target = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        let tool = make_sphere(DVec3::new(1.0, 1.0, 1.0), 1.5);
+        
+        populate_box_geom(&mut target);
+        // Sphere already has geometry populated
+        
+        let result = imprint_brep(&target, &tool);
+        
+        // Should have faces (even if just original faces)
+        assert!(!result.brep.solids[0].shells[0].faces.is_empty());
+    }
+
+    #[test]
+    fn test_gap_detection_overlapping_boxes() {
+        let a = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        let b = make_box(DVec3::new(2.1, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        
+        let report = detect_gaps_overlaps(&a, &b, 0.5);
+        
+        // There should be a small gap between the boxes
+        assert!(!report.gaps.is_empty() || !report.overlaps.is_empty() || !report.shared_faces.is_empty());
+    }
+
+    #[test]
+    fn test_gap_detection_touching_boxes() {
+        let a = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        let b = make_box(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
+        
+        let report = detect_gaps_overlaps(&a, &b, 0.01);
+        
+        // Boxes are touching, might have shared faces
+        // Just verify it doesn't panic
+        let _ = report.gaps.len() + report.overlaps.len() + report.shared_faces.len();
+    }
+
+    #[test]
+    fn test_split_face_by_curves_empty() {
+        // Test that split_face_by_curves handles empty curves correctly
+        // This is tested indirectly through imprint_brep with non-overlapping shapes
+        let target = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
+        let tool = make_box(DVec3::new(10.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
+        
+        let result = imprint_brep(&target, &tool);
+        
+        // No intersection means faces should not be split
+        assert_eq!(result.brep.solids[0].shells[0].faces.len(), 6);
+    }
+
+    #[test]
+    fn test_detect_gaps_overlaps_empty_brep() {
+        // Empty BRep should not panic
+        let empty = BRep {
+            vertices: vec![],
+            edges: vec![],
+            solids: vec![],
+            geom: Default::default(),
+        };
+        let box_brep = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
+        
+        let report = detect_gaps_overlaps(&empty, &box_brep, 0.1);
+        
+        // Should return empty report
+        assert!(report.gaps.is_empty());
+        assert!(report.overlaps.is_empty());
+        assert!(report.shared_faces.is_empty());
+    }
 }

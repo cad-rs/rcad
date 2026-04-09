@@ -401,6 +401,8 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                         Surface3::Cone(cone) => match intersect_plane_cone(plane, cone) {
                             PlaneConicalResult::Circle(c) => Some(Curve3::Circle(c)),
                             PlaneConicalResult::Ellipse(e) => Some(Curve3::Ellipse(e)),
+                            PlaneConicalResult::Parabola(par) => Some(Curve3::Parabola(par)),
+                            PlaneConicalResult::Hyperbola(hyp) => Some(Curve3::Hyperbola(hyp)),
                             PlaneConicalResult::SingleLine(l) => Some(Curve3::Line(l)),
                             PlaneConicalResult::TwoLines(l1, _l2) => Some(Curve3::Line(l1)),
                             PlaneConicalResult::Point(_) => None,

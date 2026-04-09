@@ -140,6 +140,28 @@ impl DS {
         ds
     }
 
+    /// Compute the characteristic scale of the model from all vertices.
+    /// Returns the diagonal of the bounding box, or 1.0 if empty.
+    pub fn model_scale(&self) -> f64 {
+        use glam::DVec3;
+        let mut min_pt = DVec3::splat(f64::INFINITY);
+        let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+        let mut has_vertices = false;
+
+        for v in &self.vertices {
+            min_pt = min_pt.min(v.point);
+            max_pt = max_pt.max(v.point);
+            has_vertices = true;
+        }
+
+        if !has_vertices {
+            return 1.0;
+        }
+
+        let diagonal = (max_pt - min_pt).length();
+        diagonal.max(1e-10)
+    }
+
     /// Compute UV boundary for all curved faces by projecting 3D boundary
     /// points onto the face surface's parameter domain.
     ///

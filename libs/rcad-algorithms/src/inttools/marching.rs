@@ -126,7 +126,7 @@ pub fn project_onto_surface(surface: &Surface3, point: DVec3, max_iter: usize) -
 /// Project a point onto the intersection of two surfaces.
 fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec3 {
     let mut p = point;
-    for _ in 0..20 {
+    for _ in 0..50 {
         let f1 = surface_implicit(s1, p);
         let f2 = surface_implicit(s2, p);
         if f1.abs() < TOLERANCE_ABS && f2.abs() < TOLERANCE_ABS {
@@ -176,6 +176,56 @@ pub fn find_seed_points(s1: &Surface3, s2: &Surface3, sample_points: &[DVec3]) -
     seeds
 }
 
+/// Like `find_seed_points` but treats `sample_points` as a `n_u × n_v` grid
+/// (row-major: index = iu * n_v + iv) and checks sign changes along BOTH the
+/// u-direction and v-direction edges. This avoids missing seeds when the
+/// intersection curve runs along one of the grid directions.
+pub fn find_seed_points_grid(
+    s1: &Surface3,
+    s2: &Surface3,
+    sample_points: &[DVec3],
+    n_u: usize,
+    n_v: usize,
+) -> Vec<DVec3> {
+    assert_eq!(sample_points.len(), n_u * n_v, "grid size mismatch");
+    let mut seeds = Vec::new();
+
+    let values: Vec<f64> = sample_points
+        .iter()
+        .map(|&p| surface_implicit(s2, p))
+        .collect();
+
+    let idx = |iu: usize, iv: usize| iu * n_v + iv;
+
+    // Check u-direction edges (vary iv, fixed iu)
+    for iu in 0..n_u {
+        for iv in 0..n_v.saturating_sub(1) {
+            let a = idx(iu, iv);
+            let b = idx(iu, iv + 1);
+            if values[a] * values[b] < 0.0 {
+                let t = values[a] / (values[a] - values[b]);
+                let p = sample_points[a].lerp(sample_points[b], t);
+                seeds.push(project_onto_intersection(s1, s2, p));
+            }
+        }
+    }
+
+    // Check v-direction edges (vary iu, fixed iv)
+    for iu in 0..n_u.saturating_sub(1) {
+        for iv in 0..n_v {
+            let a = idx(iu, iv);
+            let b = idx(iu + 1, iv);
+            if values[a] * values[b] < 0.0 {
+                let t = values[a] / (values[a] - values[b]);
+                let p = sample_points[a].lerp(sample_points[b], t);
+                seeds.push(project_onto_intersection(s1, s2, p));
+            }
+        }
+    }
+
+    seeds
+}
+
 /// March an intersection curve starting from a seed point.
 /// Traces in both directions along the curve until it returns to start
 /// (closed) or exits bounds.
@@ -218,9 +268,10 @@ fn march_one_direction(
 ) -> Vec<DVec3> {
     let mut points = vec![seed];
     let mut current = seed;
-    // Use a larger tolerance for closure detection to accommodate accumulated marching error.
-    // The closure tolerance is proportional to the step size.
-    let closure_tol = (step_size * step_size * 4.0).max(TOLERANCE_ABS * 1000.0);
+    // Closure tolerance: within 2× step_size of start is considered closed.
+    let closure_tol_sq = (step_size * 2.0) * (step_size * 2.0);
+    // Track arc length to avoid infinite loops.
+    let mut arc_len = 0.0_f64;
 
     for _ in 0..max_steps {
         let g1 = surface_gradient(s1, current);
@@ -239,9 +290,21 @@ fn march_one_direction(
             break;
         }
 
-        // Check if we've returned to start (closed curve)
-        if points.len() > 3 && (next - points[0]).length_squared() < closure_tol {
-            points.push(points[0]);
+        let step_dist = (next - current).length();
+        arc_len += step_dist;
+
+        // Check if we've returned to start (closed curve).
+        // Only check after traversing at least 10 steps (to avoid false early closure)
+        // AND only against points[0] (the seed), but with 3× step_size tolerance.
+        if points.len() > 10 && (next - points[0]).length_squared() < closure_tol_sq {
+            points.push(points[0]); // seal the loop
+            return points;
+        }
+
+        // Cap arc length to prevent runaway on infinite/very long open curves.
+        // Allow up to 2× the AABB diagonal + some margin.
+        let arc_cap = step_size * (max_steps as f64).min(400.0);
+        if arc_len >= arc_cap {
             break;
         }
 
