@@ -36,6 +36,8 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 **Data exchange (`rcad-step`)**
 - STEP AP203/AP214 read/write for all geometry and topology types above
 - Color import (`parse_string_with_color`) and export (`write_string_colored`)
+- OBJ mesh read/write (`ObjReader`, `ObjWriter`, `write_obj`)
+- IGES mesh read/write via Type-106 polyline bridge (`IgesReader`, `IgesWriter`)
 
 **Rendering (`rcad-render`)**
 - wgpu-based renderer with Blinn-Phong lighting (configurable light direction, headlight mode)
@@ -130,6 +132,9 @@ Integration tests live in `libs/*/tests/`:
 - `rcad-scene/tests/creation_controller.rs` — CreationController state machine (no GPU required)
 - `rcad-step/tests/round_trip.rs` — STEP write → parse round-trip
 - `rcad-render/tests/smoke.rs` — CPU tessellation smoke tests
+
+Useful examples:
+- `cargo run -p rcad-examples --example obj_iges_io` — OBJ / IGES mesh import-export demo using bundled sample assets in `assets/`
 
 ## WASM-specific notes
 

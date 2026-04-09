@@ -473,6 +473,35 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 ---
 
+### OBJ 网格读写
+
+```rust
+ObjReader::parse_string(obj) -> Result<BRep, ObjError>
+ObjReader::read_file(path) -> Result<BRep, ObjError>
+
+ObjWriter::write_string(&brep) -> String
+ObjWriter::write_file(&brep, path) -> Result<usize>
+write_obj(&brep, &mut writer) -> Result<usize>
+```
+
+范围：三角网格级别交换（`v` / `f`），`f` 多边形按扇形三角化，支持正/负索引。
+
+---
+
+### IGES 网格读写（Type 106）
+
+```rust
+IgesReader::parse_string(iges) -> Result<BRep, IgesError>
+IgesReader::read_file(path) -> Result<BRep, IgesError>
+
+IgesWriter::write_string(&brep) -> String
+IgesWriter::write_file(&brep, path) -> Result<usize>
+```
+
+范围：通过 IGES Type 106（copious-data polyline）桥接三角面片，定位于网格互操作，不包含解析曲面/拓扑语义。
+
+---
+
 ## 7. 渲染与可视化
 
 ### 渲染管线（wgpu）
@@ -579,8 +608,8 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 |------|------|------|------|
 | STEP AP203/AP214 读 | `STEPControl_Reader` | `StepReader` | ✅ |
 | STEP AP203/AP214 写 | `STEPControl_Writer` | `StepWriter` | ✅ |
-| IGES | `IGESControl_Reader/Writer` | — | ❌ |
-| OBJ | `RWObj` | — | ❌ |
+| IGES（网格桥接） | `IGESControl_Reader/Writer` | `IgesReader` / `IgesWriter` | ✅ Type 106 |
+| OBJ（网格） | `RWObj` | `ObjReader` / `ObjWriter` | ✅ |
 | GDS-II | — | — | ❌ |
 
 ### 目前不支持的 OCCT 功能（低优先或尚未规划）

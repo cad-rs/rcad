@@ -102,3 +102,7 @@ path = "surface_intersection.rs"
 [[example]]
 name = "boolean_imprint"
 path = "boolean_imprint.rs"
+
+[[example]]
+name = "obj_iges_io"
+path = "obj_iges_io.rs"
