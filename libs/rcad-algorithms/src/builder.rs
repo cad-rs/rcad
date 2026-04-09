@@ -53,15 +53,56 @@ pub struct SubFace {
     pub surface: Surface3,
     /// Normal direction.
     pub normal: DVec3,
+    /// UV centroid of this sub-face's parameter-space polygon (for curved surfaces).
+    /// Used by `sample_point` to produce a geometrically representative interior point.
+    pub uv_centroid: Option<DVec2>,
+    /// Explicit override for the sample point. When set, `sample_point()` uses this
+    /// instead of computing it from the boundary centroid. Used when the centroid would
+    /// fall in a different classification region (e.g. the outer annular region around
+    /// an embedded circle, whose centroid falls inside the circle).
+    pub sample_override: Option<DVec3>,
 }
 
 impl SubFace {
     fn sample_point(&self) -> DVec3 {
-        // Use centroid offset slightly inward along the normal.
-        // The offset avoids the sample sitting exactly on a face of the other
-        // solid (which causes ambiguous IN/OUT classification).
-        let centroid = self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64;
-        centroid + self.normal * TOLERANCE_ABS * 10.0
+        // Returns a point slightly INSIDE the surface (toward the interior of the solid),
+        // so classify_point can tell whether this sub-face is inside or outside
+        // the other solid.
+        //
+        // For sphere sub-faces the outward normal points AWAY from the sphere center,
+        // so we must offset toward the center to stay inside the sphere's volume.
+        // We use the UV centroid to get a point in the middle of the spherical cap.
+        if let Some(pt) = self.sample_override {
+            return pt;
+        }
+        match &self.surface {
+            Surface3::Sphere(s) => {
+                // Use UV centroid to pick a point in the CENTER of the spherical cap
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    s.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    s.center + s.radius * DVec3::X
+                };
+                // Offset inward toward sphere center
+                let to_center = (s.center - surface_pt).normalize_or_zero();
+                let inward = if to_center.length_squared() > 0.5 {
+                    to_center
+                } else {
+                    -self.normal
+                };
+                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+            }
+            _ => {
+                let centroid = if self.boundary.is_empty() {
+                    DVec3::ZERO
+                } else {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                };
+                centroid + self.normal * TOLERANCE_ABS * 10.0
+            }
+        }
     }
 }
 
@@ -284,6 +325,19 @@ impl<'a> BooleanBuilder<'a> {
             return Err(BooleanError::DegenerateResult);
         }
 
+        // Debug-mode geometry integrity check.
+        // Verifies that every face in the result has a non-zero normal vector.
+        // This catches the most common class of geometry regression (degenerate faces
+        // produced by a wrong normal computation) without requiring a full wire-closure
+        // check (which the current builder doesn't yet guarantee for all curve types).
+        #[cfg(debug_assertions)]
+        for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
+            debug_assert!(
+                face.normal != glam::DVec3::ZERO,
+                "boolean_op result face {fi} has zero normal"
+            );
+        }
+
         Ok((brep, history))
     }
 
@@ -304,6 +358,8 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface: face.surface.clone(),
                 normal: face.normal,
+                uv_centroid: None,
+                sample_override: None,
             }];
         }
 
@@ -325,6 +381,8 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: face.surface.clone(),
                     normal: face.normal,
+                    uv_centroid: None,
+                sample_override: None,
                 }]
             }
         }
@@ -363,6 +421,10 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process each intersection curve to split the polygon
         let mut polygons_2d: Vec<Vec<DVec2>> = vec![boundary_2d];
+        // Track circles that were embedded inside polygons (center_2d, radius).
+        // When such a circle is fully inside a polygon, that polygon's centroid
+        // may fall inside the circle — we must use a vertex-based sample instead.
+        let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
 
         for &ci in &face.face_info.curves_in {
             let ic = &self.ds.intersection_curves[ci];
@@ -378,6 +440,8 @@ impl<'a> BooleanBuilder<'a> {
                         let halves = split_polygon_by_circle_2d(poly, center_2d, radius);
                         next.extend(halves);
                     }
+                    // Track this circle so we can compute correct sample points later
+                    embedded_circles.push((center_2d, radius));
                     Some(next)
                 }
                 Curve3::Line(line) => {
@@ -434,11 +498,34 @@ impl<'a> BooleanBuilder<'a> {
             .into_iter()
             .filter(|p| p.len() >= 3)
             .map(|poly_2d| {
-                let boundary = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
+                let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
+                // If there are embedded circles and this polygon's centroid falls inside
+                // one of them, use the first boundary vertex (offset by normal) as the
+                // sample point instead. All polygon vertices of the outer region are
+                // outside all embedded circles, so the first vertex is a valid sample.
+                let sample_override = if !embedded_circles.is_empty() {
+                    let centroid_2d = {
+                        let sum = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p);
+                        sum / poly_2d.len() as f64
+                    };
+                    let centroid_in_circle = embedded_circles.iter().any(|&(c, r)| {
+                        (centroid_2d - c).length() < r
+                    });
+                    if centroid_in_circle && !boundary.is_empty() {
+                        // Pick first vertex (outside the circle) + normal offset
+                        Some(boundary[0] + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 SubFace {
                     boundary,
                     surface: face.surface.clone(),
                     normal: face.normal,
+                    uv_centroid: None,
+                    sample_override,
                 }
             })
             .collect()
@@ -493,6 +580,8 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface,
                 normal,
+                uv_centroid: None,
+                sample_override: None,
             }];
         }
 
@@ -508,6 +597,8 @@ impl<'a> BooleanBuilder<'a> {
                 boundary: boundary_pts,
                 surface,
                 normal,
+                uv_centroid: None,
+                sample_override: None,
             }];
         }
 
@@ -601,6 +692,8 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface: surface.clone(),
                 normal,
+                uv_centroid: None,
+                sample_override: None,
             })
             .collect()
     }
@@ -678,14 +771,19 @@ impl<'a> BooleanBuilder<'a> {
             .into_iter()
             .filter(|p| p.len() >= 3)
             .map(|uv_poly| {
-                let boundary: Vec<DVec3> = uv_poly
-                    .iter()
-                    .map(|uv| surface.point_at(uv.x, uv.y))
-                    .collect();
+                let n = uv_poly.len() as f64;
+                let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
+
+                let boundary: Vec<DVec3> = match &surface {
+                    Surface3::Sphere(_) => {
+                        // Sphere poles: v=0 and v=π are degenerate (all u map to one point).
+                        // Skip UV corners at v < ε or v > π-ε and supplement with trim points.
+                        sphere_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                    }
+                    _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
+                };
                 // For curved surfaces, compute the actual surface normal at the centroid UV
                 let sub_normal = {
-                    let n = uv_poly.len() as f64;
-                    let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
                     let computed = surface.normal_at(centroid_uv.x, centroid_uv.y);
                     // If normal computation failed, fall back to face normal
                     if computed.length_squared() > 0.5 {
@@ -698,6 +796,8 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: surface.clone(),
                     normal: sub_normal,
+                    uv_centroid: Some(centroid_uv),
+                    sample_override: None,
                 }
             })
             .collect()
@@ -725,6 +825,88 @@ impl<'a> BooleanBuilder<'a> {
         }
         None
     }
+}
+
+/// Build a 3D boundary polygon for a sphere sub-face given its UV polygon.
+///
+/// The sphere has singularities at v=0 (north pole) and v=π (south pole):
+/// `point_at(u, 0)` and `point_at(u, π)` both return a single point regardless
+/// of u, so UV polygon corners near the poles map to degenerate 3D vertices.
+///
+/// Strategy:
+/// 1. Map each UV corner that is NOT near a pole to a 3D point normally.
+/// 2. Supplement with intersection-curve (trim) 3D points that lie within
+///    or near the boundary of this UV sub-polygon.
+/// 3. Deduplicate and return at least 3 distinct 3D points.
+fn sphere_subface_boundary_3d(
+    uv_poly: &[DVec2],
+    trim_polylines_uv: &[Vec<DVec2>],
+    surface: &Surface3,
+) -> Vec<DVec3> {
+    use std::f64::consts::PI;
+    const POLE_EPSILON: f64 = 0.05; // ~3° from pole
+
+    let mut pts: Vec<DVec3> = Vec::new();
+
+    // 1. Map non-degenerate UV corners to 3D
+    for uv in uv_poly {
+        let v = uv.y;
+        if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+            pts.push(surface.point_at(uv.x, uv.y));
+        }
+        // At poles, collapse to a single well-defined 3D point
+        else if v <= POLE_EPSILON {
+            pts.push(surface.point_at(0.0, 0.0)); // north pole
+        } else {
+            pts.push(surface.point_at(0.0, PI)); // south pole
+        }
+    }
+
+    // 2. Add trim polyline 3D points.
+    //    Include trim UV points that are inside the sub-polygon OR very close to its boundary.
+    //    This captures the intersection circle that forms the actual edge of the sub-face.
+    for trim_uv in trim_polylines_uv {
+        // Sample up to every-other trim point to avoid excessive density
+        for (idx, uv) in trim_uv.iter().enumerate() {
+            if idx % 2 != 0 { continue; } // sparse sampling
+            let v = uv.y;
+            if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+                let p3 = surface.point_at(uv.x, uv.y);
+                // Include if inside or very near the boundary of the sub-polygon
+                if point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1) {
+                    pts.push(p3);
+                }
+            }
+        }
+    }
+
+    // 3. Deduplicate (merge points within TOLERANCE_ABS)
+    let mut deduped: Vec<DVec3> = Vec::new();
+    for p in &pts {
+        if deduped.iter().all(|q: &DVec3| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+            deduped.push(*p);
+        }
+    }
+
+    deduped
+}
+
+/// Check if a 2D point is within `margin` of any edge of a polygon.
+fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
+    let n = poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = poly[i];
+        let b = poly[j];
+        let ab = b - a;
+        let len_sq = ab.length_squared();
+        let t = if len_sq < 1e-14 { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
+        let closest = a + t * ab;
+        if (pt - closest).length() < margin {
+            return true;
+        }
+    }
+    false
 }
 
 /// Split a 2D UV polygon by a 2D trim polyline.

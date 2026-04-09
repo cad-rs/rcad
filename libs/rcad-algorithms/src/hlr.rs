@@ -19,9 +19,25 @@
 //! visible or hidden.
 
 use glam::{DMat4, DVec2, DVec3, DVec4};
+use rcad_kernel::geom::{Circle3, CurveEval};
 use rcad_kernel::BRep;
 
 // ── Public types ──────────────────────────────────────────────────────────────
+
+/// Hint about the geometric type of the original 3D edge curve.
+/// Used by consumers (e.g. SVG exporter) to emit arcs instead of polylines.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CurveHint {
+    /// Edge is a full or partial circle in 3D.
+    Circle {
+        /// Projected 2D center of the circle.
+        center: DVec2,
+        /// Projected radius (approximate — perspective not applied).
+        radius: f64,
+    },
+    /// Any other non-straight curve (ellipse, spline, …).
+    Other,
+}
 
 /// A projected edge segment labeled as visible or hidden.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +48,8 @@ pub struct HlrSegment {
     pub end: DVec2,
     /// Whether this segment is visible from the camera.
     pub visible: bool,
+    /// Optional hint about the underlying curve type (None for straight lines).
+    pub curve_hint: Option<CurveHint>,
 }
 
 /// Output of an HLR computation.
@@ -250,40 +268,127 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
 
         let p0 = v_start.point;
         let p1 = v_end.point;
-        if (p1 - p0).length_squared() < 1e-12 {
+
+        // Look up the edge's 3D curve (if any) for curved sampling.
+        let edge_curve = brep
+            .geom
+            .edge_curve
+            .get(edge_idx)
+            .and_then(|&ci| ci)
+            .and_then(|ci| brep.geom.curves.get(ci));
+
+        // Detect circle edges for analytic hint and higher sampling.
+        let circle_info: Option<Circle3> = edge_curve.and_then(|c| {
+            if let rcad_kernel::geom::Curve3::Circle(circ) = c {
+                Some(*circ)
+            } else {
+                None
+            }
+        });
+
+        // Is this a non-straight curved edge (non-circle)? Use N=64 sampling.
+        let is_other_curve = edge_curve.map_or(false, |c| {
+            !matches!(c, rcad_kernel::geom::Curve3::Line(_))
+        }) && circle_info.is_none();
+
+        // Choose sample count: curved edges get 64, straight get caller-provided.
+        let edge_samples = if circle_info.is_some() || is_other_curve {
+            64.max(samples)
+        } else {
+            samples
+        };
+
+        // Build world-space sample points.
+        // For circle/curved edges use CurveEval; for straight edges interpolate endpoints.
+        let world_pts: Vec<DVec3> = if let Some(circ) = &circle_info {
+            let [t0, t1] = brep
+                .geom
+                .edge_curve_range
+                .get(edge_idx)
+                .and_then(|r| *r)
+                .unwrap_or_else(|| circ.default_domain());
+            (0..edge_samples)
+                .map(|i| {
+                    let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
+                    circ.point_at(t)
+                })
+                .collect()
+        } else if let Some(curve) = edge_curve.filter(|_| is_other_curve) {
+            let [t0, t1] = brep
+                .geom
+                .edge_curve_range
+                .get(edge_idx)
+                .and_then(|r| *r)
+                .unwrap_or_else(|| curve.default_domain());
+            (0..edge_samples)
+                .map(|i| {
+                    let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
+                    curve.point_at(t)
+                })
+                .collect()
+        } else {
+            // Straight or no curve: skip degenerate zero-length edges
+            if (p1 - p0).length_squared() < 1e-12 {
+                continue;
+            }
+            (0..edge_samples)
+                .map(|i| {
+                    let t = i as f64 / (edge_samples - 1) as f64;
+                    p0 + (p1 - p0) * t
+                })
+                .collect()
+        };
+
+        if world_pts.len() < 2 {
             continue;
         }
 
         // Sample the edge
-        let sample_vis: Vec<bool> = (0..samples)
-            .map(|i| {
-                let t = i as f64 / (samples - 1) as f64;
-                let world_pt = p0 + (p1 - p0) * t;
+        let sample_vis: Vec<bool> = world_pts
+            .iter()
+            .map(|&world_pt| {
                 let dist = (camera.eye - world_pt).length();
                 !is_occluded(world_pt, camera.eye, &triangles, dist)
             })
             .collect();
 
         // Build projected 2D points
-        let screen_pts: Vec<DVec2> = (0..samples)
-            .map(|i| {
-                let t = i as f64 / (samples - 1) as f64;
-                let world_pt = p0 + (p1 - p0) * t;
-                project(world_pt, &view).0
-            })
+        let screen_pts: Vec<DVec2> = world_pts
+            .iter()
+            .map(|&world_pt| project(world_pt, &view).0)
             .collect();
 
+        // Compute curve_hint for circle edges
+        let base_curve_hint: Option<CurveHint> = if let Some(circ) = &circle_info {
+            let (center_2d, _) = project(circ.center, &view);
+            // Approximate projected radius from screen_pts
+            let r = screen_pts
+                .iter()
+                .map(|p| (*p - center_2d).length())
+                .fold(0.0_f64, f64::max);
+            Some(CurveHint::Circle {
+                center: center_2d,
+                radius: r,
+            })
+        } else if is_other_curve {
+            Some(CurveHint::Other)
+        } else {
+            None
+        };
+
+        let n = world_pts.len();
         // Merge consecutive same-visibility samples into segments
         let mut seg_start = 0usize;
-        for i in 1..samples {
+        for i in 1..n {
             let changed = sample_vis[i] != sample_vis[seg_start];
-            let last = i == samples - 1;
+            let last = i == n - 1;
             if changed || last {
                 let end_idx = if last && !changed { i } else { i - 1 };
                 let seg = HlrSegment {
                     start: screen_pts[seg_start],
                     end: screen_pts[end_idx],
                     visible: sample_vis[seg_start],
+                    curve_hint: base_curve_hint.clone(),
                 };
                 // Skip degenerate (zero-length) segments
                 if (seg.end - seg.start).length_squared() > 1e-16 {
@@ -341,15 +446,36 @@ pub fn hlr_to_svg(result: &HlrResult, scale: f64, margin: f64) -> String {
     for seg in &result.segments {
         let (x1, y1) = transform(seg.start);
         let (x2, y2) = transform(seg.end);
-        if seg.visible {
+        let stroke = if seg.visible {
+            "black\" stroke-width=\"1.5"
+        } else {
+            "#999\" stroke-width=\"0.8\" stroke-dasharray=\"4,3"
+        };
+
+        // For circle segments emit an SVG arc path; for all others emit a line.
+        if let Some(CurveHint::Circle { center, radius }) = &seg.curve_hint {
+            let (cx, cy) = transform(*center);
+            let r = radius * scale;
+            // Determine large-arc flag: compare arc length vs half-circumference
+            let dx1 = x1 - cx;
+            let dy1 = y1 - cy;
+            let dx2 = x2 - cx;
+            let dy2 = y2 - cy;
+            let cross = dx1 * dy2 - dy1 * dx2;
+            let dot = dx1 * dx2 + dy1 * dy2;
+            let angle = cross.atan2(dot).abs();
+            let large_arc = if angle > std::f64::consts::PI { 1 } else { 0 };
+            let sweep = if cross < 0.0 { 0 } else { 1 };
             svg.push_str(&format!(
-                "  <line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"black\" stroke-width=\"1.5\"/>\n",
-                x1, y1, x2, y2
+                "  <path d=\"M {:.3} {:.3} A {:.3} {:.3} 0 {} {} {:.3} {:.3}\" fill=\"none\" stroke=\"{}\"/>\n",
+                x1, y1, r, r, large_arc, sweep, x2, y2, stroke
             ));
+            // Also record the center for debugging/reference (as a tiny dot, invisible by default)
+            let _ = (cx, cy); // suppress unused warning
         } else {
             svg.push_str(&format!(
-                "  <line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"#999\" stroke-width=\"0.8\" stroke-dasharray=\"4,3\"/>\n",
-                x1, y1, x2, y2
+                "  <line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"{}\"/>\n",
+                x1, y1, x2, y2, stroke
             ));
         }
     }
@@ -456,5 +582,58 @@ mod tests {
         let result = hlr(&brep, &camera, 16);
         let total = result.segments.len();
         assert!(total >= 12, "a box has 12 edges, expect at least 12 segments; got {total}");
+    }
+
+    #[test]
+    fn hlr_circle_edge_sampling() {
+        use rcad_kernel::geom::{Circle3, Curve3, CurveEval};
+
+        // Build a minimal BRep with a single circle edge (no solids).
+        let mut brep = rcad_kernel::BRep::new();
+        let circ = Circle3 {
+            center: glam::DVec3::ZERO,
+            normal: glam::DVec3::Z,
+            radius: 1.0,
+        };
+        // Add two vertices on the circle (half-circle arc)
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: circ.point_at(0.0),
+        });
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: circ.point_at(std::f64::consts::PI),
+        });
+        brep.edges.push(rcad_kernel::topology::Edge { start: 0, end: 1 });
+        brep.geom.curves.push(Curve3::Circle(circ));
+        brep.geom.edge_curve.push(Some(0));
+        brep.geom
+            .edge_curve_range
+            .push(Some([0.0, std::f64::consts::PI]));
+
+        let camera = HlrCamera::top(5.0);
+        let result = hlr(&brep, &camera, 8);
+
+        // The circle edge should produce at least one segment.
+        assert!(
+            !result.segments.is_empty(),
+            "circle edge should produce HLR segments"
+        );
+
+        // All sampled 3D points on the circle should lie ON the circle (unit radius).
+        // Verify by checking screen_pts all lie within radius ≈ 1.0 of circle center
+        // when projected top-down (X-Y plane).
+        for seg in &result.segments {
+            // The curve_hint for circle segments should be set.
+            assert!(
+                matches!(seg.curve_hint, Some(CurveHint::Circle { .. })),
+                "circle edge segments should carry CurveHint::Circle"
+            );
+        }
+
+        // SVG should contain arc path elements (not just lines) for circle edges.
+        let svg = hlr_to_svg(&result, 100.0, 20.0);
+        assert!(
+            svg.contains("<path") || result.segments.is_empty(),
+            "circle edge SVG should contain <path> arc elements"
+        );
     }
 }

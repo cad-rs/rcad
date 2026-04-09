@@ -70,6 +70,71 @@ pub fn vertex_count(brep: &BRep) -> usize {
     brep.vertices.len()
 }
 
+/// Returns `true` if `edge_idx` is a degenerate edge — i.e. its start and end
+/// vertices are the same point (within floating-point equality), or it is
+/// explicitly flagged degenerate in `brep.geom.edge_degenerated`.
+///
+/// Analogous to `BRep_Tool::Degenerated(edge)` in OCCT.
+pub fn is_degenerate_edge(brep: &BRep, edge_idx: usize) -> bool {
+    // Honour explicit flag first.
+    if brep
+        .geom
+        .edge_degenerated
+        .get(edge_idx)
+        .copied()
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let Some(edge) = brep.edges.get(edge_idx) else {
+        return false;
+    };
+    let Some(v_start) = brep.vertices.get(edge.start) else {
+        return false;
+    };
+    let Some(v_end) = brep.vertices.get(edge.end) else {
+        return false;
+    };
+    (v_end.point - v_start.point).length_squared() < 1e-20
+}
+
+/// Returns all edge indices that are candidates for seam edges — edges whose
+/// start and end vertices are the same (or nearly the same) 3D point, but that
+/// are *not* flagged as degenerate.
+///
+/// Seam edges appear on surfaces of revolution (cylinder, sphere, cone, torus)
+/// where the UV seam is a real geometric curve even though it starts and ends
+/// at the same 3D location.
+///
+/// Analogous to walking seam edges on `BRep_Tool::IsClosed` surfaces in OCCT.
+pub fn seam_edge_candidates(brep: &BRep) -> Vec<usize> {
+    brep.edges
+        .iter()
+        .enumerate()
+        .filter(|(ei, edge)| {
+            // Must not be degenerate.
+            if brep
+                .geom
+                .edge_degenerated
+                .get(*ei)
+                .copied()
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            let Some(v0) = brep.vertices.get(edge.start) else {
+                return false;
+            };
+            let Some(v1) = brep.vertices.get(edge.end) else {
+                return false;
+            };
+            // Seam: start ≈ end but not formally degenerate (has non-zero curve length).
+            (v1.point - v0.point).length_squared() < 1e-10
+        })
+        .map(|(ei, _)| ei)
+        .collect()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -145,5 +210,41 @@ mod tests {
         assert!(edge_adjacent_faces(&brep, 0).is_empty());
         assert!(vertex_adjacent_edges(&brep, 0).is_empty());
         assert!(face_edges(&brep, 0).is_empty());
+    }
+
+    #[test]
+    fn is_degenerate_edge_zero_length() {
+        use crate::topology::Vertex;
+        use glam::DVec3;
+
+        let mut brep = BRep::new();
+        // Edge 0: normal non-degenerate edge (different endpoints)
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.edges.push(crate::topology::Edge { start: 0, end: 1 });
+        // Edge 1: degenerate — same start and end vertex
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.vertices.push(Vertex { point: DVec3::Y }); // same point
+        brep.edges.push(crate::topology::Edge { start: 2, end: 3 });
+        // Edge 2: explicitly flagged degenerate
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::Z });
+        brep.edges.push(crate::topology::Edge { start: 4, end: 5 });
+        brep.geom.edge_degenerated = vec![false, false, true];
+
+        assert!(!is_degenerate_edge(&brep, 0), "edge 0 should not be degenerate");
+        assert!(is_degenerate_edge(&brep, 1), "edge 1 should be degenerate (zero length)");
+        assert!(is_degenerate_edge(&brep, 2), "edge 2 should be degenerate (explicit flag)");
+        assert!(!is_degenerate_edge(&brep, 99), "out-of-bounds should not be degenerate");
+    }
+
+    #[test]
+    fn seam_edge_candidates_on_box() {
+        // A plain box has no seam edges.
+        let brep = box_2x2x2();
+        assert!(
+            seam_edge_candidates(&brep).is_empty(),
+            "a box should have no seam edge candidates"
+        );
     }
 }

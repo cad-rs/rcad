@@ -127,13 +127,30 @@ fn ray_cast_classify(
                 if disc < 0.0 {
                     continue;
                 }
+                // Compute height range along cylinder axis from boundary verts.
+                // Cylinder primitives only have 2 seam vertices but their axis
+                // projections give the correct height extent for the finite face.
+                let face_verts = ds.face_boundary_points(fi);
+                let axis = c.axis.normalize();
+                let (h_min, h_max) = if face_verts.len() >= 2 {
+                    let mut mn = f64::INFINITY;
+                    let mut mx = f64::NEG_INFINITY;
+                    for &v in &face_verts {
+                        let h = (v - c.origin).dot(axis);
+                        mn = mn.min(h);
+                        mx = mx.max(h);
+                    }
+                    (mn, mx)
+                } else {
+                    (-1e9, 1e9) // unbounded fallback
+                };
+                let slack = TOLERANCE_ABS * 10.0;
                 let sq = disc.sqrt();
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
                     if t > TOLERANCE_ABS {
-                        // Check hit is within bounding box of face
                         let hit = point + ray_dir * t;
-                        let face_verts = ds.face_boundary_points(fi);
-                        if point_in_face_aabb(hit, &face_verts) {
+                        let h = (hit - c.origin).dot(axis);
+                        if h >= h_min - slack && h <= h_max + slack {
                             crossings += 1;
                         }
                     }
@@ -154,7 +171,15 @@ fn ray_cast_classify(
                     if t > TOLERANCE_ABS {
                         let hit = point + ray_dir * t;
                         let face_verts = ds.face_boundary_points(fi);
-                        if point_in_face_aabb(hit, &face_verts) {
+                        // A sphere primitive has at most 2 wire vertices (poles),
+                        // which form a degenerate AABB. Treat the whole sphere
+                        // surface as the face whenever we don't have a proper polygon.
+                        let in_face = if face_verts.len() < 3 {
+                            true // whole sphere is one face
+                        } else {
+                            point_in_face_aabb(hit, &face_verts)
+                        };
+                        if in_face {
                             crossings += 1;
                         }
                     }

@@ -108,7 +108,8 @@ pub use tolerance::{
     face_domain, face_tolerance, model_tolerance, vertex_tolerance,
 };
 pub use topo_query::{
-    edge_adjacent_faces, edge_count, face_count, face_edges, vertex_adjacent_edges, vertex_count,
+    edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
+    seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
 pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 

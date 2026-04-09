@@ -10,9 +10,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 pub mod assembly;
+pub mod obj_writer;
 pub mod writer;
 
 pub use assembly::{AssemblyComponent, write_assembly};
+pub use obj_writer::write_obj;
 pub use writer::{ExportSelection, StepWriter};
 
 /// Errors that can occur when reading or parsing a STEP file.

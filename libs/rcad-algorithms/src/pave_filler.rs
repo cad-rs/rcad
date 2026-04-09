@@ -768,90 +768,178 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// For curved×curved face pairs, use numeric_intss_with_density (sign-change
+    /// edge marching) which returns ordered polylines without the closure/drift
+    /// issues of the gradient marcher.
+    fn intersect_ff_by_numeric_intss(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        s1: &Surface3,
+        s2: &Surface3,
+    ) {
+        use inttools::intss::numeric_intss_with_domains;
+        use inttools::pcurve_derive::polyline_pcurve_by_projection;
+
+        // Use face-specific UV domains (set up by DS::setup_uv_boundaries)
+        // if available.  For cylinders this encodes the actual face height range,
+        // ensuring the intersection polyline endpoints fall *inside* the UV
+        // boundary rectangle and can be used to split it.
+        let dom1 = self.ds.faces[f1]
+            .uv_boundary
+            .as_ref()
+            .and_then(|uv| {
+                if uv.len() >= 3 {
+                    let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                    let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite() {
+                        return Some([u_min, u_max, v_min, v_max]);
+                    }
+                }
+                None
+            });
+        let dom2 = self.ds.faces[f2]
+            .uv_boundary
+            .as_ref()
+            .and_then(|uv| {
+                if uv.len() >= 3 {
+                    let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                    let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite() {
+                        return Some([u_min, u_max, v_min, v_max]);
+                    }
+                }
+                None
+            });
+
+        let result = numeric_intss_with_domains(s1, s2, 64, dom1, dom2);
+        if result.is_empty() {
+            return;
+        }
+
+        let mut curve_indices = Vec::new();
+        for sir in &result.curves {
+            let chain = match &sir.curve_3d {
+                crate::inttools::intss::SurfaceCurve::Polyline(pts) => pts.clone(),
+                _ => continue,
+            };
+            if chain.len() < 2 {
+                continue;
+            }
+
+            let v_start = self.ds.add_vertex(chain[0]);
+            let v_end = self.ds.add_vertex(chain[chain.len() - 1]);
+
+            let arc_len: f64 = chain.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+            let dir = (chain[chain.len() - 1] - chain[0]).normalize_or_zero();
+            let pcurve_a = polyline_pcurve_by_projection(&chain, s1);
+            let pcurve_b = polyline_pcurve_by_projection(&chain, s2);
+
+            let curve_idx = self.ds.intersection_curves.len();
+            self.ds.intersection_curves.push(IntersectionCurve {
+                curve: Curve3::Line(Line3 {
+                    origin: chain[0],
+                    direction: if dir.length_squared() > 0.5 {
+                        dir
+                    } else {
+                        DVec3::X
+                    },
+                }),
+                polyline: chain,
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range: [0.0, arc_len.max(1e-10)],
+                pcurve_on_a: pcurve_a,
+                pcurve_on_b: pcurve_b,
+            });
+
+            self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+            self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+            self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+            self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+            self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+            curve_indices.push(curve_idx);
+        }
+
+        if !curve_indices.is_empty() {
+            self.ds.interferences.push(Interference::FaceFace {
+                f1,
+                f2,
+                curves: curve_indices,
+                points: vec![],
+            });
+        }
+    }
+
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
         use inttools::pcurve_derive::polyline_pcurve_by_projection;
 
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // Generate sample points on the first surface for seed finding
-        let samples = self.generate_surface_samples(&s1, 16, 8);
-        let seeds = inttools::marching::find_seed_points(&s1, &s2, &samples);
+        // For curved-curved surface pairs (e.g. Cylinder × Cylinder), use the
+        // sign-change grid marching from numeric_intss_with_density, which produces
+        // ordered polylines directly without the closure/drift issues of the gradient
+        // marcher.
+        let both_curved = !matches!(&s1, Surface3::Plane(_)) && !matches!(&s2, Surface3::Plane(_));
+        if both_curved {
+            self.intersect_ff_by_numeric_intss(f1, f2, &s1, &s2);
+            return;
+        }
+
+        // For plane-curved pairs: use gradient marching with grid-based seed finder.
+        let (n_u, n_v) = (16usize, 16usize);
+        let samples = self.generate_surface_samples_grid(&s1, n_u, n_v);
+        let seeds = inttools::marching::find_seed_points_grid(&s1, &s2, &samples, n_u, n_v);
 
         if seeds.is_empty() {
             return;
         }
 
-        // Compute bounding box for marching bounds.
-        // For curved surfaces (sphere, cylinder, etc.), the boundary_verts may be
-        // degenerate (e.g. sphere seam gives only south pole twice). Always use
-        // surface-derived bounds for non-planar surfaces.
-        let surface_aabb = |s: &Surface3| -> (DVec3, DVec3) {
-            match s {
-                Surface3::Sphere(sph) => {
-                    let r = sph.radius + 0.1;
-                    (sph.center - DVec3::splat(r), sph.center + DVec3::splat(r))
-                }
-                Surface3::Cylinder(_cyl) => {
-                    // Use stored vertices from ds to get cylinder extent
-                    (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY))
-                }
-                _ => (DVec3::splat(f64::NEG_INFINITY), DVec3::splat(f64::INFINITY)),
+        // Compute a finite bounding box that contains both faces' intersection region.
+        // Use boundary vertices (actual face extent) with a generous margin.
+        let bounds_from_face = |face_idx: usize| -> (DVec3, DVec3) {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            // Use boundary vertices (from wire edges)
+            for &vi in &self.ds.faces[face_idx].boundary_verts {
+                let p = self.ds.vertices[vi].point;
+                mn = mn.min(p);
+                mx = mx.max(p);
             }
+            // Also sample boundary edges for curved edges (e.g. circles)
+            for &ei in &self.ds.faces[face_idx].boundary_edges {
+                if let Some(edge) = self.ds.edges.get(ei) {
+                    let [t0, t1] = edge.t_range;
+                    for k in 0..=8usize {
+                        let t = t0 + (t1 - t0) * k as f64 / 8.0;
+                        let p = edge.curve.point_at(t);
+                        if p.is_finite() {
+                            mn = mn.min(p);
+                            mx = mx.max(p);
+                        }
+                    }
+                }
+            }
+            // If still infinite, use a generous default
+            if !mn.is_finite() || !mx.is_finite() {
+                mn = DVec3::splat(-10.0);
+                mx = DVec3::splat(10.0);
+            }
+            (mn, mx)
         };
 
-        let mut aabb_min = DVec3::splat(f64::INFINITY);
-        let mut aabb_max = DVec3::splat(f64::NEG_INFINITY);
-
-        // For planar faces, use boundary verts; for curved surfaces, use surface-derived bounds
-        let use_surface_bounds_f1 = !matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
-        let use_surface_bounds_f2 = !matches!(self.ds.faces[f2].surface, Surface3::Plane(_));
-
-        if use_surface_bounds_f1 {
-            let (mn, mx) = surface_aabb(&s1);
-            if mn.x.is_finite() {
-                aabb_min = aabb_min.min(mn);
-                aabb_max = aabb_max.max(mx);
-            }
-        } else {
-            for &vi in &self.ds.faces[f1].boundary_verts {
-                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
-                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
-            }
-        }
-
-        if use_surface_bounds_f2 {
-            let (mn, mx) = surface_aabb(&s2);
-            if mn.x.is_finite() {
-                aabb_min = aabb_min.min(mn);
-                aabb_max = aabb_max.max(mx);
-            }
-        } else {
-            for &vi in &self.ds.faces[f2].boundary_verts {
-                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
-                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
-            }
-        }
-
-        // For any still-infinite bounds (e.g., cylinders), use a generous fallback
-        if !aabb_min.x.is_finite() || !aabb_max.x.is_finite() {
-            // Fall back to boundary verts + large slack
-            for &vi in &self.ds.faces[f1].boundary_verts {
-                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
-                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
-            }
-            for &vi in &self.ds.faces[f2].boundary_verts {
-                aabb_min = aabb_min.min(self.ds.vertices[vi].point);
-                aabb_max = aabb_max.max(self.ds.vertices[vi].point);
-            }
-            // Add extra slack for cylinders whose boundary verts may be degenerate
-            let slack = 5.0;
-            aabb_min -= DVec3::splat(slack);
-            aabb_max += DVec3::splat(slack);
-        }
-
-        let aabb_min = aabb_min - DVec3::splat(0.1);
-        let aabb_max = aabb_max + DVec3::splat(0.1);
+        let (mn1, mx1) = bounds_from_face(f1);
+        let (mn2, mx2) = bounds_from_face(f2);
+        let margin = 1.0;
+        let aabb_min = mn1.min(mn2) - DVec3::splat(margin);
+        let aabb_max = mx1.max(mx2) + DVec3::splat(margin);
 
         // March each seed
         let step_size = self.estimate_step_size(&s1, &s2);
@@ -950,6 +1038,74 @@ impl<'a> PaveFiller<'a> {
             Surface3::Plane(plane) => sample_plane(plane, 5.0, n1),
             Surface3::Cone(cone) => sample_cone(cone, 0.01, 5.0, n1, n2),
             _ => vec![],
+        }
+    }
+
+    /// Like `generate_surface_samples` but returns a structured `n_u × n_v` grid
+    /// (row-major) so callers can use grid-aware adjacency for seed detection.
+    fn generate_surface_samples_grid(
+        &self,
+        surface: &Surface3,
+        n_u: usize,
+        n_v: usize,
+    ) -> Vec<DVec3> {
+        match surface {
+            Surface3::Cylinder(cyl) => {
+                // u = azimuth index (0..n_u), v = height index (0..n_v)
+                // sample_cylinder returns row = height, col = azimuth,
+                // so transpose to row = azimuth, col = height for grid indexing.
+                // Rebuild in (n_u azimuth) × (n_v height) order.
+                let height_range = [-5.0_f64, 5.0_f64];
+                let u_ax = if cyl.axis.x.abs() < 0.9 {
+                    cyl.axis.cross(DVec3::X).normalize()
+                } else {
+                    cyl.axis.cross(DVec3::Y).normalize()
+                };
+                let v_ax = cyl.axis.cross(u_ax);
+                let mut pts = Vec::with_capacity(n_u * n_v);
+                for iu in 0..n_u {
+                    let theta =
+                        2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
+                    for iv in 0..n_v {
+                        let h = height_range[0]
+                            + (height_range[1] - height_range[0]) * iv as f64
+                                / (n_v - 1).max(1) as f64;
+                        pts.push(
+                            cyl.origin
+                                + cyl.axis * h
+                                + (u_ax * theta.cos() + v_ax * theta.sin()) * cyl.radius,
+                        );
+                    }
+                }
+                pts
+            }
+            Surface3::Sphere(sph) => {
+                let u_ax = if sph.axis.x.abs() < 0.9 {
+                    sph.axis.cross(DVec3::X).normalize()
+                } else {
+                    sph.axis.cross(DVec3::Y).normalize()
+                };
+                let v_ax = sph.axis.cross(u_ax);
+                let mut pts = Vec::with_capacity(n_u * n_v);
+                for iu in 0..n_u {
+                    let theta =
+                        2.0 * std::f64::consts::PI * iu as f64 / n_u as f64;
+                    for iv in 0..n_v {
+                        let phi = std::f64::consts::PI * iv as f64 / (n_v - 1).max(1) as f64;
+                        pts.push(
+                            sph.center
+                                + sph.radius
+                                    * (sph.axis * phi.cos()
+                                        + (u_ax * theta.cos() + v_ax * theta.sin()) * phi.sin()),
+                        );
+                    }
+                }
+                pts
+            }
+            _ => {
+                // Fallback: flat list
+                self.generate_surface_samples(surface, n_u, n_v)
+            }
         }
     }
 
