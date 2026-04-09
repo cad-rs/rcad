@@ -160,4 +160,68 @@ mod tests {
         let tris = triangulate_polygon(&verts, DVec3::Z);
         assert_eq!(tris.len(), 3);
     }
+
+    #[test]
+    fn empty_polygon_returns_no_triangles() {
+        let tris = triangulate_polygon(&[], DVec3::Z);
+        assert!(tris.is_empty());
+    }
+
+    #[test]
+    fn two_vertex_polygon_returns_no_triangles() {
+        let verts = vec![DVec3::ZERO, DVec3::X];
+        let tris = triangulate_polygon(&verts, DVec3::Z);
+        assert!(tris.is_empty());
+    }
+
+    #[test]
+    fn triangle_count_is_n_minus_2() {
+        // A convex n-gon should always yield n-2 triangles.
+        for n in 3..=10 {
+            let verts: Vec<DVec3> = (0..n)
+                .map(|i| {
+                    let a = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                    DVec3::new(a.cos(), a.sin(), 0.0)
+                })
+                .collect();
+            let tris = triangulate_polygon(&verts, DVec3::Z);
+            assert_eq!(
+                tris.len(),
+                n - 2,
+                "expected {n}-gon to yield {} triangles, got {}",
+                n - 2,
+                tris.len()
+            );
+        }
+    }
+
+    #[test]
+    fn all_indices_in_bounds() {
+        // Every index in the triangulation must be < number of vertices.
+        let verts: Vec<DVec3> = (0..7)
+            .map(|i| {
+                let a = 2.0 * std::f64::consts::PI * i as f64 / 7.0;
+                DVec3::new(a.cos(), a.sin(), 0.0)
+            })
+            .collect();
+        let tris = triangulate_polygon(&verts, DVec3::Z);
+        for tri in &tris {
+            for &idx in tri.iter() {
+                assert!(idx < verts.len(), "index {idx} out of bounds for {n} vertices", n = verts.len());
+            }
+        }
+    }
+
+    #[test]
+    fn clockwise_quad_still_triangulates() {
+        // Reversed vertex order (CW) should be handled by sign-flip logic.
+        let verts = vec![
+            DVec3::new(0.0, 1.0, 0.0), // top-left first (CW)
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 0.0),
+        ];
+        let tris = triangulate_polygon(&verts, DVec3::Z);
+        assert_eq!(tris.len(), 2);
+    }
 }

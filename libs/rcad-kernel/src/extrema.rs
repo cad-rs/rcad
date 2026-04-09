@@ -305,4 +305,34 @@ mod tests {
         let d = ex.min_distance();
         assert!((d - 3.0).abs() < 0.01, "expected 3.0, got {d}");
     }
+
+    #[test]
+    fn intersecting_lines_have_zero_distance() {
+        // Two lines that cross at the origin → distance = 0
+        let c1 = line(DVec3::ZERO, DVec3::X);
+        let c2 = line(DVec3::ZERO, DVec3::Y);
+        let ex = extrema_curve_curve(&c1, &c2, 32);
+        let d = ex.min_distance();
+        assert!(d < 0.01, "crossing lines should have distance ≈ 0, got {d}");
+    }
+
+    #[test]
+    fn same_circle_has_zero_min_distance() {
+        // The same circle compared to itself → min distance = 0
+        let c = circle(DVec3::ZERO, DVec3::Z, 3.0);
+        let ex = extrema_curve_curve(&c, &c, 32);
+        let d = ex.min_distance();
+        assert!(d < 0.01, "same circle min distance should be 0, got {d}");
+    }
+
+    #[test]
+    fn extrema_pairs_are_sorted_by_distance() {
+        let c1 = line(DVec3::ZERO, DVec3::X);
+        let c2 = circle(DVec3::ZERO, DVec3::Z, 3.0);
+        let ex = extrema_curve_curve(&c1, &c2, 32);
+        let distances: Vec<f64> = ex.pairs.iter().map(|p| p.distance).collect();
+        for w in distances.windows(2) {
+            assert!(w[0] <= w[1] + 1e-10, "pairs should be sorted ascending by distance");
+        }
+    }
 }

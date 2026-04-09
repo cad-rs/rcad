@@ -6,7 +6,7 @@ use rcad_render::{
     Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
     build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
-use rcad_scene::{CreationController, Tool, append_brep};
+use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
@@ -180,6 +180,34 @@ impl eframe::App for RCadApp {
                     .clicked()
                 {
                     self.set_tool(Tool::Sphere);
+                }
+                if ui
+                    .selectable_label(self.creation.active_tool() == Tool::Cylinder, "Cylinder")
+                    .clicked()
+                {
+                    self.set_tool(Tool::Cylinder);
+                }
+                if ui
+                    .selectable_label(self.creation.active_tool() == Tool::Cone, "Cone")
+                    .clicked()
+                {
+                    self.set_tool(Tool::Cone);
+                }
+                if ui
+                    .selectable_label(self.creation.active_tool() == Tool::Torus, "Torus")
+                    .clicked()
+                {
+                    self.set_tool(Tool::Torus);
+                }
+                ui.separator();
+                ui.label("Work Plane:");
+                for plane in [WorkPlane::XY, WorkPlane::XZ, WorkPlane::YZ] {
+                    if ui
+                        .selectable_label(self.creation.work_plane() == plane, plane.label())
+                        .clicked()
+                    {
+                        self.creation.set_work_plane(plane);
+                    }
                 }
                 ui.separator();
                 ui.label(self.creation.command_hint());

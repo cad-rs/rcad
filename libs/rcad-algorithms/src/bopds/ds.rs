@@ -207,6 +207,58 @@ impl DS {
                     self.faces[fi].uv_boundary = Some(uv);
                     continue;
                 }
+                Surface3::Cone(cone) => {
+                    // Cone param: u = azimuth [0, 2π], v = slant distance from apex (v ≥ 0).
+                    // Estimate v range from boundary edge samples.
+                    let boundary_edges = self.faces[fi].boundary_edges.clone();
+                    let mut v_max = 0.0_f64;
+                    let apex = cone.apex;
+                    let axis = cone.axis.normalize();
+                    let tan_h = cone.half_angle_rad.tan();
+                    for ei in &boundary_edges {
+                        let edge = &self.edges[*ei];
+                        let [t0, t1] = edge.t_range;
+                        for k in 0..=N_SAMPLES {
+                            let t = t0 + (t1 - t0) * k as f64 / N_SAMPLES as f64;
+                            let p = edge.curve.point_at(t);
+                            let local = p - apex;
+                            let along = local.dot(axis);
+                            // slant distance s satisfies: z = s, r = s*tan(half)
+                            // → s = along / (1 + tan²) + radial/tan ... approximate: s ≈ along
+                            let radial_len = (local - axis * along).length();
+                            let s = if tan_h > 1e-14 {
+                                (along + radial_len / tan_h) * 0.5
+                            } else {
+                                along
+                            };
+                            v_max = v_max.max(s.max(0.0));
+                        }
+                    }
+                    if v_max < 1e-9 {
+                        v_max = 1.0;
+                    }
+                    let margin = v_max * 0.01 + 1e-9;
+                    let uv = vec![
+                        DVec2::new(0.0, 0.0),
+                        DVec2::new(2.0 * PI, 0.0),
+                        DVec2::new(2.0 * PI, v_max + margin),
+                        DVec2::new(0.0, v_max + margin),
+                    ];
+                    self.faces[fi].uv_boundary = Some(uv);
+                    continue;
+                }
+                Surface3::Torus(_) => {
+                    // Torus param: u = major angle [0, 2π], v = minor angle [0, 2π].
+                    // Full parameter domain is always the UV boundary.
+                    let uv = vec![
+                        DVec2::new(0.0, 0.0),
+                        DVec2::new(2.0 * PI, 0.0),
+                        DVec2::new(2.0 * PI, 2.0 * PI),
+                        DVec2::new(0.0, 2.0 * PI),
+                    ];
+                    self.faces[fi].uv_boundary = Some(uv);
+                    continue;
+                }
                 _ => {}
             }
 

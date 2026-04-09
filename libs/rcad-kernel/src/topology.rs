@@ -66,3 +66,87 @@ pub struct Shell {
 pub struct Solid {
     pub shells: Vec<Shell>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_edge_fwd_rev() {
+        let fwd = WireEdge::fwd(3);
+        assert_eq!(fwd.idx, 3);
+        assert!(fwd.forward);
+
+        let rev = WireEdge::rev(5);
+        assert_eq!(rev.idx, 5);
+        assert!(!rev.forward);
+    }
+
+    #[test]
+    fn wire_contains_edges() {
+        let w = Wire {
+            edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::rev(2)],
+        };
+        assert_eq!(w.edges.len(), 3);
+        assert!(!w.edges[2].forward);
+    }
+
+    #[test]
+    fn face_has_outer_wire_and_no_inner_wires_by_default() {
+        let f = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        assert!(f.inner_wires.is_empty());
+        assert_eq!(f.normal, DVec3::Z);
+    }
+
+    #[test]
+    fn face_with_inner_wire() {
+        let f = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![Wire {
+                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)],
+            }],
+            normal: DVec3::Y,
+            triangles: vec![],
+        };
+        assert_eq!(f.inner_wires.len(), 1);
+        assert_eq!(f.inner_wires[0].edges.len(), 2);
+    }
+
+    #[test]
+    fn shell_contains_faces() {
+        let shell = Shell {
+            faces: vec![
+                Face {
+                    outer_wire: Wire { edges: vec![] },
+                    inner_wires: vec![],
+                    normal: DVec3::X,
+                    triangles: vec![],
+                },
+                Face {
+                    outer_wire: Wire { edges: vec![] },
+                    inner_wires: vec![],
+                    normal: DVec3::NEG_X,
+                    triangles: vec![],
+                },
+            ],
+        };
+        assert_eq!(shell.faces.len(), 2);
+    }
+
+    #[test]
+    fn solid_contains_shells() {
+        let solid = Solid {
+            shells: vec![Shell { faces: vec![] }],
+        };
+        assert_eq!(solid.shells.len(), 1);
+    }
+}

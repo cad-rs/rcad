@@ -212,6 +212,21 @@ impl<'a> PaveFiller<'a> {
                 });
                 self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
+        } else {
+            // For curved surfaces, use closest-point projection to check if
+            // the vertex lies on the surface within tolerance.
+            let surface = face.surface.clone();
+            if !matches!(surface, Surface3::Plane(_)) {
+                let proj =
+                    rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
+                if proj.distance < TOLERANCE_ABS {
+                    self.ds.interferences.push(Interference::VertexFace {
+                        vertex: vi,
+                        face: fi,
+                    });
+                    self.ds.faces[fi].face_info.vertices_on.insert(vi);
+                }
+            }
         }
     }
 
@@ -270,6 +285,24 @@ impl<'a> PaveFiller<'a> {
             }
             (Curve3::Circle(circle), Surface3::Plane(plane)) => {
                 inttools::curve_surface::intersect_circle_plane(circle, edge_t_range, plane)
+                    .into_iter()
+                    .map(|h| (h.point, h.curve_param))
+                    .collect()
+            }
+            (Curve3::Circle(circle), Surface3::Cylinder(cyl)) => {
+                inttools::curve_surface::intersect_circle_cylinder(circle, edge_t_range, cyl)
+                    .into_iter()
+                    .map(|h| (h.point, h.curve_param))
+                    .collect()
+            }
+            (Curve3::Circle(circle), Surface3::Sphere(sph)) => {
+                inttools::curve_surface::intersect_circle_sphere(circle, edge_t_range, sph)
+                    .into_iter()
+                    .map(|h| (h.point, h.curve_param))
+                    .collect()
+            }
+            (Curve3::Circle(circle), Surface3::Cone(cone)) => {
+                inttools::curve_surface::intersect_circle_cone(circle, edge_t_range, cone)
                     .into_iter()
                     .map(|h| (h.point, h.curve_param))
                     .collect()

@@ -6,7 +6,7 @@ use rcad_render::{
     Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
     build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
-use rcad_scene::{CreationController, Tool, append_brep};
+use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
@@ -31,6 +31,7 @@ pub enum Message {
     SetSelectionMode(SelectionMode),
     SetAdditiveSelect(bool),
     SetTool(Tool),
+    SetWorkPlane(WorkPlane),
     CancelCommand,
     ConfirmCommand,
     UndoLastStep,
@@ -121,6 +122,9 @@ impl RCadApp {
             Message::SetTool(tool) => {
                 self.creation.set_tool(tool, &mut self.selection);
             }
+            Message::SetWorkPlane(plane) => {
+                self.creation.set_work_plane(plane);
+            }
             Message::CancelCommand => {
                 self.creation.cancel_active_command();
             }
@@ -178,6 +182,13 @@ impl RCadApp {
                 button("Select Edge").on_press(Message::SetTool(Tool::SelectEdge)),
                 button("Box").on_press(Message::SetTool(Tool::Box)),
                 button("Sphere").on_press(Message::SetTool(Tool::Sphere)),
+                button("Cylinder").on_press(Message::SetTool(Tool::Cylinder)),
+                button("Cone").on_press(Message::SetTool(Tool::Cone)),
+                button("Torus").on_press(Message::SetTool(Tool::Torus)),
+                text(" | Plane:"),
+                button("XY").on_press(Message::SetWorkPlane(WorkPlane::XY)),
+                button("XZ").on_press(Message::SetWorkPlane(WorkPlane::XZ)),
+                button("YZ").on_press(Message::SetWorkPlane(WorkPlane::YZ)),
                 text(self.creation.command_hint()),
             ]
             .spacing(8),
@@ -422,6 +433,7 @@ impl<'a> iced::widget::shader::Program<Message> for Scene<'a> {
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 if state.primary_pressed
+                    && !state.is_rotating
                     && state.primary_drag_distance < 3.0
                     && let Some(pos) = local_cursor_position(cursor, bounds)
                 {

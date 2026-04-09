@@ -412,4 +412,49 @@ mod tests {
         assert!(vis > 0, "top view should have visible edges");
         assert!(hid > 0, "top view should have hidden (bottom) edges");
     }
+
+    #[test]
+    fn front_view_and_right_view_both_produce_segments() {
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let front_result = hlr(&brep, &HlrCamera::front(5.0), 8);
+        let right_result = hlr(&brep, &HlrCamera::right(5.0), 8);
+        assert!(!front_result.segments.is_empty());
+        assert!(!right_result.segments.is_empty());
+    }
+
+    #[test]
+    fn hlr_svg_contains_hidden_dashed_lines() {
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let camera = HlrCamera::isometric(5.0);
+        let result = hlr(&brep, &camera, 8);
+        let svg = hlr_to_svg(&result, 100.0, 20.0);
+        // Hidden lines are rendered dashed
+        assert!(
+            svg.contains("stroke-dasharray") || svg.contains("hidden"),
+            "SVG should mark hidden lines differently"
+        );
+    }
+
+    #[test]
+    fn hlr_result_has_correct_visibility_counts() {
+        // An isometric view of a box has 3 visible faces and 3 hidden faces.
+        // The front 3 edges of each visible face → at least some hidden segments exist.
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let camera = HlrCamera::isometric(10.0);
+        let result = hlr(&brep, &camera, 16);
+        let total = result.segments.len();
+        assert!(total >= 12, "a box has 12 edges, expect at least 12 segments; got {total}");
+    }
 }

@@ -309,4 +309,95 @@ mod tests {
                 .any(|i| matches!(i, CheckIssue::DegenerateFace { .. }))
         );
     }
+
+    #[test]
+    fn zero_normal_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        for p in [DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Z] {
+            brep.vertices.push(Vertex { point: p });
+        }
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::ZERO, // zero normal — invalid
+            triangles: vec![],
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::ZeroNormal { .. })),
+            "expected ZeroNormal issue"
+        );
+    }
+
+    #[test]
+    fn invalid_edge_index_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.edges.push(Edge { start: 0, end: 1 }); // only edge 0 exists
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::fwd(0),
+                    WireEdge::fwd(99), // out-of-bounds
+                    WireEdge::fwd(0),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::InvalidEdgeIndex { .. })),
+            "expected InvalidEdgeIndex issue"
+        );
+    }
+
+    #[test]
+    fn invalid_vertex_index_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Vertex};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.edges.push(Edge { start: 0, end: 99 }); // vertex 99 doesn't exist
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::InvalidVertexIndex { .. })),
+            "expected InvalidVertexIndex issue"
+        );
+    }
 }

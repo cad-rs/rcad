@@ -92,3 +92,55 @@ impl StepColor {
             .or(self.solid_color)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_from_rgb8_round_trip() {
+        let c = Color::from_rgb8(255, 128, 0);
+        assert_eq!(c.r, 1.0);
+        assert!((c.g - 128.0 / 255.0).abs() < 1e-12);
+        assert_eq!(c.b, 0.0);
+    }
+
+    #[test]
+    fn color_preset_values() {
+        assert_eq!(Color::RED, Color::new(1.0, 0.0, 0.0));
+        assert_eq!(Color::WHITE, Color::new(1.0, 1.0, 1.0));
+        assert_eq!(Color::BLACK, Color::new(0.05, 0.05, 0.05));
+    }
+
+    #[test]
+    fn step_color_solid_fallback() {
+        let sc = StepColor::new().with_solid_color(Color::BLUE);
+        // Any face without override gets the solid color.
+        assert_eq!(sc.color_for_face(0), Some(Color::BLUE));
+        assert_eq!(sc.color_for_face(99), Some(Color::BLUE));
+    }
+
+    #[test]
+    fn step_color_face_override() {
+        let sc = StepColor::new()
+            .with_solid_color(Color::GRAY)
+            .with_face_color(2, Color::RED);
+        assert_eq!(sc.color_for_face(2), Some(Color::RED));
+        // Other faces fall back to solid.
+        assert_eq!(sc.color_for_face(0), Some(Color::GRAY));
+    }
+
+    #[test]
+    fn step_color_no_color_returns_none() {
+        let sc = StepColor::new();
+        assert_eq!(sc.color_for_face(0), None);
+    }
+
+    #[test]
+    fn step_color_face_color_without_solid() {
+        let sc = StepColor::new().with_face_color(1, Color::GREEN);
+        assert_eq!(sc.color_for_face(1), Some(Color::GREEN));
+        // Face 2 has no override and no solid color.
+        assert_eq!(sc.color_for_face(2), None);
+    }
+}

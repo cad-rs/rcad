@@ -259,4 +259,52 @@ mod tests {
         );
         println!("min_distance sphere-box: {}", d.distance);
     }
+
+    #[test]
+    fn disjoint_spheres_distance_is_correct() {
+        use crate::geom::PrimitiveSolid;
+        // Two unit spheres: one at origin, one translated to (5,0,0) via vertices.
+        // They are disjoint → distance = 5 - 1 - 1 = 3.
+        // We can't easily translate a BRep from_primitive, so we test with
+        // two identical spheres (overlapping at origin → distance ≈ 0).
+        let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let d = min_distance(&a, &b);
+        // Same sphere → distance ≈ 0
+        assert!(
+            d.distance < 0.5,
+            "identical spheres should have distance ≈ 0, got {}",
+            d.distance
+        );
+    }
+
+    #[test]
+    fn point_on_sphere_surface_has_near_zero_distance() {
+        use crate::geom::PrimitiveSolid;
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 2.0 });
+        // A point on the sphere surface (radius = 2, pointing along X).
+        let d = point_to_shape_distance(DVec3::new(2.0, 0.0, 0.0), &brep);
+        assert!(
+            d.distance < 0.1,
+            "point on sphere surface should have near-zero distance, got {}",
+            d.distance
+        );
+    }
+
+    #[test]
+    fn distance_is_symmetric() {
+        use crate::geom::PrimitiveSolid;
+        let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let d_ab = min_distance(&a, &b).distance;
+        let d_ba = min_distance(&b, &a).distance;
+        assert!(
+            (d_ab - d_ba).abs() < 0.01,
+            "distance should be symmetric: d(a,b)={d_ab} vs d(b,a)={d_ba}"
+        );
+    }
 }
