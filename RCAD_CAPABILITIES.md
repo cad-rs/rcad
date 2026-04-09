@@ -598,4 +598,4 @@ StepWriter::write_string_colored(&brep, &color, ExportSelection) -> String
 
 ---
 
-*文档更新于 2026-04-09（错误处理、集成测试、Benchmark 扩展完成）*
+*文档更新于 2026-04-09（UV 缝合修复、rcad-scene/rcad-modeling/rcad-kernel 集成测试新增、Clippy 清理完成）*

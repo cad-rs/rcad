@@ -371,9 +371,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sphere-sphere UV parametric splitting requires seam-aware PCurve handling; \
-                the closed intersection circle in UV space is not yet split correctly \
-                into two sub-faces that produce a valid closed solid"]
+    #[ignore = "sphere UV boundary degeneracy: the UV boundary [-π,0],[π,0],[π,π],[-π,π] \
+                maps to only 2 distinct 3D points (poles), making sub-face boundary vertices \
+                degenerate. Requires reparametrization of sphere domain or triangulation-based splitting."]
     fn boolean_sphere_sphere_intersection() {
         // Two overlapping unit spheres
         let a = make_sphere_brep(DVec3::new(-0.5, 0.0, 0.0), 1.0).unwrap();
@@ -396,7 +396,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sphere-sphere UV parametric splitting requires seam-aware PCurve handling"]
+    #[ignore = "sphere UV boundary degeneracy: same root cause as boolean_sphere_sphere_intersection; \
+                requires reparametrization so the sphere's boundary polygon maps to a non-degenerate \
+                3D polygon that can be split by the intersection curve."]
     fn boolean_sphere_sphere_difference() {
         // Large sphere minus small sphere
         let a = make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
@@ -435,9 +437,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "cylinder-cylinder intersection requires numerical marching PCurve handling \
-                with proper UV seam wrapping; volume computation for curved result faces \
-                is not yet accurate enough for the Steinmetz solid test"]
+    #[ignore = "cylinder-cylinder intersection: PaveFiller produces no intersection curves for \
+                perpendicular cylinders (Steinmetz configuration); the FF pass marching fallback \
+                needs Cylinder×Cylinder support. Returns DegenerateResult."]
     fn boolean_cylinder_cylinder_intersection() {
         // Two perpendicular cylinders (Steinmetz solid)
         let a =

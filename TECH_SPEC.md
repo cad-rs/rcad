@@ -64,7 +64,7 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 - **Phase 2 (Completed)**: iced integration, shared renderer pipeline, picking/highlight, dual-app interaction alignment.
 - **Phase 3 (In Progress)**: richer topology/geometry entities, robust STEP coverage, modeling algorithms (booleans/fillets/sweeps).
   - Error handling hardening: `unwrap`/`panic` removed from boolean op critical paths; structured `BooleanError` variants.
-  - Integration tests: `rcad-algorithms/tests/`, `rcad-step/tests/`, `rcad-render/tests/`.
+  - Integration tests: `rcad-algorithms/tests/`, `rcad-kernel/tests/`, `rcad-modeling/tests/`, `rcad-scene/tests/`, `rcad-step/tests/`, `rcad-render/tests/`.
   - Benchmark coverage: fillet, loft, sweep, box-cylinder booleans added to `rcad-algorithms/benches/`.
 - **Phase 4 (Planned)**: full STEP export and advanced CAD command system.
 

@@ -45,7 +45,7 @@ fn tessellate_box_with_triangles_has_indices() {
     let mesh = Tessellator::tessellate(&brep);
     assert!(!mesh.vertices.is_empty(), "should have vertices");
     // Triangle indices come in sets of 3
-    assert!(mesh.indices.len() % 3 == 0, "index count must be divisible by 3");
+    assert!(mesh.indices.len().is_multiple_of(3), "index count must be divisible by 3");
 }
 
 /// All triangle indices must be within bounds of the vertex buffer.

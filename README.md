@@ -125,6 +125,9 @@ cargo test  --workspace
 
 Integration tests live in `libs/*/tests/`:
 - `rcad-algorithms/tests/boolean_integration.rs` — chained boolean ops, error paths
+- `rcad-kernel/tests/geometry.rs` — projection, arc length, curvature, extrema, transformation
+- `rcad-modeling/tests/primitives.rs` — primitive face counts, sweep/loft/blend ops, error paths
+- `rcad-scene/tests/creation_controller.rs` — CreationController state machine (no GPU required)
 - `rcad-step/tests/round_trip.rs` — STEP write → parse round-trip
 - `rcad-render/tests/smoke.rs` — CPU tessellation smoke tests
 

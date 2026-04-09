@@ -129,8 +129,10 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
     let along_axis = (circle.center - sphere.center).dot(sphere.axis.normalize());
     let phi = (along_axis / sphere.radius).clamp(-1.0, 1.0).acos();
 
+    // Start the horizontal line at u = -π so that sampling over [0, 2π] spans
+    // the full [-π, +π] UV boundary of the sphere.
     Curve2d::Line(Line2d {
-        origin: DVec2::new(0.0, phi),
+        origin: DVec2::new(-std::f64::consts::PI, phi),
         direction: DVec2::new(1.0, 0.0),
     })
 }
@@ -191,7 +193,7 @@ pub fn fallback_pcurve_by_projection(
     surface: &Surface3,
 ) -> Curve2d {
     let n = 33_usize;
-    let pts: Vec<DVec2> = (0..n)
+    let mut pts: Vec<DVec2> = (0..n)
         .map(|i| {
             let t = t_range[0] + (t_range[1] - t_range[0]) * i as f64 / (n - 1) as f64;
             let p3 = curve.point_at(t);
@@ -199,6 +201,24 @@ pub fn fallback_pcurve_by_projection(
             DVec2::new(proj.params.0, proj.params.1)
         })
         .collect();
+
+    // Unwrap seam discontinuities: atan2-based u values are in [-π, π], but
+    // consecutive samples may jump by ~2π when the curve crosses the seam.
+    // Make the u sequence monotone so the interpolated BSpline has no kinks.
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            // Jumped from near -π back up to near +π: pull remaining down.
+            for p in &mut pts[i..] {
+                p.x -= std::f64::consts::TAU;
+            }
+        } else if du < -std::f64::consts::PI {
+            // Jumped from near +π down to near -π: push remaining up.
+            for p in &mut pts[i..] {
+                p.x += std::f64::consts::TAU;
+            }
+        }
+    }
 
     let bspline =
         interpolate_points_2d(&pts).expect("fallback curve samples should not be degenerate");
@@ -214,13 +234,27 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
         return None;
     }
 
-    let pts: Vec<DVec2> = polyline
+    let mut pts: Vec<DVec2> = polyline
         .iter()
         .map(|&p3| {
             let proj = closest_point_on_surface(surface, p3, 16);
             DVec2::new(proj.params.0, proj.params.1)
         })
         .collect();
+
+    // Unwrap seam discontinuities (same logic as fallback_pcurve_by_projection).
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x -= std::f64::consts::TAU;
+            }
+        } else if du < -std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x += std::f64::consts::TAU;
+            }
+        }
+    }
 
     interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
 }
@@ -284,6 +318,12 @@ mod tests {
                     "phi={}, expected {}",
                     l.origin.y,
                     expected_phi
+                );
+                // Origin x starts at -π so the line spans [-π, +π] over [0, 2π] sampling.
+                assert!(
+                    (l.origin.x + PI).abs() < 1e-9,
+                    "expected origin.x = -π, got {}",
+                    l.origin.x
                 );
                 // Direction must be horizontal (constant colatitude).
                 assert!((l.direction.x - 1.0).abs() < 1e-9);
