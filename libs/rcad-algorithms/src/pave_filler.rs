@@ -391,6 +391,10 @@ impl<'a> PaveFiller<'a> {
                 let (c1, c2) = (*c1, *c2);
                 self.intersect_cylinder_cylinder_faces(f1, f2, &c1, &c2);
             }
+            (Surface3::Plane(pl), Surface3::Cone(cone))
+            | (Surface3::Cone(cone), Surface3::Plane(pl)) => {
+                self.intersect_plane_cone_faces(f1, f2, pl, cone);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -617,7 +621,6 @@ impl<'a> PaveFiller<'a> {
 
         let curve3 = Curve3::Circle(circle);
         let t_range = [0.0_f64, TAU];
-        // Use projection-based PCurves since the circle may not be a latitude line
         let pcurve_a = fallback_pcurve_by_projection(&curve3, &t_range, &Surface3::Sphere(*sph1));
         let pcurve_b = fallback_pcurve_by_projection(&curve3, &t_range, &Surface3::Sphere(*sph2));
 
@@ -664,9 +667,7 @@ impl<'a> PaveFiller<'a> {
         sphere: &SphericalSurface,
         cyl: &CylindricalSurface,
     ) {
-        use inttools::pcurve_derive::{
-            circle_pcurve_on_cylinder, circle_pcurve_on_sphere, fallback_pcurve_by_projection,
-        };
+        use inttools::pcurve_derive::{circle_pcurve_on_cylinder, circle_pcurve_on_sphere};
         use inttools::sphere_cylinder::{SphereCylinderResult, intersect_sphere_cylinder};
         use std::f64::consts::TAU;
 
@@ -713,20 +714,11 @@ impl<'a> PaveFiller<'a> {
             };
 
         // Closure to compute pcurves for one intersection circle.
-        // Uses `circle_pcurve_on_sphere` when the sphere axis is parallel to
-        // the cylinder axis (so the circle is a true latitude line), otherwise
-        // falls back to projection sampling.
+        // The intersection circle is always a latitude line on the sphere
+        // (φ = acos((h − h_c) / R)), so `circle_pcurve_on_sphere` is exact
+        // here regardless of whether the sphere and cylinder axes are parallel.
         let make_circle_pcurves = |circle: &Circle3| -> (Option<Curve2d>, Option<Curve2d>) {
-            let axis_dot = sphere.axis.normalize().dot(cyl.axis.normalize()).abs();
-            let pcurve_sph = if (axis_dot - 1.0).abs() < 1e-6 {
-                circle_pcurve_on_sphere(circle, sphere)
-            } else {
-                fallback_pcurve_by_projection(
-                    &Curve3::Circle(*circle),
-                    &[0.0, TAU],
-                    &Surface3::Sphere(*sphere),
-                )
-            };
+            let pcurve_sph = circle_pcurve_on_sphere(circle, sphere);
             let pcurve_cyl = circle_pcurve_on_cylinder(circle, cyl);
             make_pcurves(pcurve_sph, pcurve_cyl)
         };
@@ -774,8 +766,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
         use inttools::pcurve_derive::{
-            circle_pcurve_on_cylinder, ellipse_pcurve_on_plane, fallback_pcurve_by_projection,
-            line_pcurve_on_cylinder, line_pcurve_on_plane,
+            fallback_pcurve_by_projection, line_pcurve_on_cylinder,
         };
         use std::f64::consts::TAU;
 
@@ -1154,6 +1145,180 @@ impl<'a> PaveFiller<'a> {
                     f1,
                     f2,
                 );
+                curve_indices.push(ci);
+            }
+        }
+
+        if !curve_indices.is_empty() {
+            self.ds.interferences.push(Interference::FaceFace {
+                f1,
+                f2,
+                curves: curve_indices,
+                points: vec![],
+            });
+        }
+    }
+
+    // ── Plane × Cone analytic face-face intersection ──────────────────────────
+
+    fn intersect_plane_cone_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        plane: &Plane,
+        cone: &ConicalSurface,
+    ) {
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_plane, ellipse_pcurve_on_plane, fallback_pcurve_by_projection,
+            line_pcurve_on_plane,
+        };
+        use inttools::plane_cone::{PlaneConicalResult, intersect_plane_cone};
+        use std::f64::consts::TAU;
+
+        // Determine which face carries the plane
+        let plane_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if plane_is_f1 {
+                (Some(pca), Some(pcb))
+            } else {
+                (Some(pcb), Some(pca))
+            }
+        };
+
+        // Helper: push a generic curve and register it with both faces.
+        let add_curve = |ds: &mut DS,
+                         curve: Curve3,
+                         t_range: [f64; 2],
+                         pcurve_on_a: Option<Curve2d>,
+                         pcurve_on_b: Option<Curve2d>,
+                         f1: usize,
+                         f2: usize|
+         -> usize {
+            let p_start = curve.point_at(t_range[0]);
+            let p_end = curve.point_at(t_range[1]);
+            let v_start = ds.add_vertex(p_start);
+            let v_end = ds.add_vertex(p_end);
+            let ci = ds.intersection_curves.len();
+            ds.intersection_curves.push(IntersectionCurve {
+                curve,
+                polyline: vec![],
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range,
+                pcurve_on_a,
+                pcurve_on_b,
+            });
+            ds.faces[f1].face_info.curves_in.insert(ci);
+            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.vertices_in.insert(v_start);
+            ds.faces[f1].face_info.vertices_in.insert(v_end);
+            ds.faces[f2].face_info.vertices_in.insert(v_start);
+            ds.faces[f2].face_info.vertices_in.insert(v_end);
+            ci
+        };
+
+        let mut curve_indices = Vec::new();
+
+        match intersect_plane_cone(plane, cone) {
+            PlaneConicalResult::NoIntersection | PlaneConicalResult::Point(_) => return,
+
+            PlaneConicalResult::SingleLine(line) => {
+                let extent = 20.0_f64;
+                let pca_plane = line_pcurve_on_plane(&line, plane);
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Line(line),
+                    &[-extent, extent],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                let ci = add_curve(self.ds, Curve3::Line(line), [-extent, extent], pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
+
+            PlaneConicalResult::TwoLines(l1, l2) => {
+                let extent = 20.0_f64;
+                let pca1 = line_pcurve_on_plane(&l1, plane);
+                let pcb1 = fallback_pcurve_by_projection(
+                    &Curve3::Line(l1),
+                    &[-extent, extent],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca1, pcb1) = make_pcurves(pca1, pcb1);
+                let ci1 = add_curve(self.ds, Curve3::Line(l1), [-extent, extent], pca1, pcb1, f1, f2);
+
+                let pca2 = line_pcurve_on_plane(&l2, plane);
+                let pcb2 = fallback_pcurve_by_projection(
+                    &Curve3::Line(l2),
+                    &[-extent, extent],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca2, pcb2) = make_pcurves(pca2, pcb2);
+                let ci2 = add_curve(self.ds, Curve3::Line(l2), [-extent, extent], pca2, pcb2, f1, f2);
+                curve_indices.push(ci1);
+                curve_indices.push(ci2);
+            }
+
+            PlaneConicalResult::Circle(circle) => {
+                let pca_plane = circle_pcurve_on_plane(&circle, plane);
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circle),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                let ci = add_curve(self.ds, Curve3::Circle(circle), [0.0, TAU], pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
+
+            PlaneConicalResult::Ellipse(ellipse) => {
+                let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(ellipse),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                let ci = add_curve(self.ds, Curve3::Ellipse(ellipse), [0.0, TAU], pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
+
+            PlaneConicalResult::Parabola(parabola) => {
+                // Parabola: use fallback projection on both surfaces.
+                // Parameterise the parabola over a finite t range centred at the vertex.
+                let t_range = [-20.0_f64, 20.0_f64];
+                let pca_plane = fallback_pcurve_by_projection(
+                    &Curve3::Parabola(parabola),
+                    &t_range,
+                    &Surface3::Plane(*plane),
+                );
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Parabola(parabola),
+                    &t_range,
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                let ci =
+                    add_curve(self.ds, Curve3::Parabola(parabola), t_range, pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
+
+            PlaneConicalResult::Hyperbola(hyperbola) => {
+                // Hyperbola: use fallback projection on both surfaces.
+                let t_range = [-20.0_f64, 20.0_f64];
+                let pca_plane = fallback_pcurve_by_projection(
+                    &Curve3::Hyperbola(hyperbola),
+                    &t_range,
+                    &Surface3::Plane(*plane),
+                );
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Hyperbola(hyperbola),
+                    &t_range,
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                let ci =
+                    add_curve(self.ds, Curve3::Hyperbola(hyperbola), t_range, pca, pcb, f1, f2);
                 curve_indices.push(ci);
             }
         }

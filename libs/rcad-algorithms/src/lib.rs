@@ -115,7 +115,7 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use rcad_kernel::PrimitiveSolid;
-    use rcad_modeling::{make_box_brep, make_cylinder_brep, make_sphere_brep};
+    use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep};
 
     fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
@@ -668,6 +668,65 @@ mod tests {
         let v_sphere = 4.0 * std::f64::consts::PI / 3.0 * 5.0_f64.powi(3);
         assert!(v > 0.0, "result volume should be positive, got {v}");
         assert!(v < v_sphere, "difference should be smaller than original sphere");
+    }
+
+    // ─── Cone × Plane Boolean Tests ───────────────────────────────────────────
+
+    /// Box minus a cone through it: the cone's lateral surface intersects the
+    /// box's planar faces, exercising the plane-cone circle intersection path.
+    #[test]
+    fn boolean_box_cone_difference() {
+        // Box: 4×4×4 at origin.  Cone: base at (2,2,-0.5), axis Z, r=0.8, h=5.
+        // The cone pokes through the box; plane-cone intersections are circles
+        // (planes ⊥ cone axis).
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let b =
+            make_cone_brep(DVec3::new(2.0, 2.0, -0.5), DVec3::Z, DVec3::X, 0.8, 5.0).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "box-cone difference failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+    }
+
+    /// Cone intersected with a box slab: the slab's top and bottom faces are
+    /// planes perpendicular to the cone axis, producing circle intersections.
+    /// This test verifies that the plane-cone code path does not panic.
+    #[test]
+    fn boolean_cone_box_intersection_circle() {
+        // Cone: base at origin, axis Z, base_radius=2, height=4.
+        // Slab: 6×6×4 at z=0..4 — same height as the cone; the lateral face of
+        // the slab does NOT cut the cone (slab is wide enough), so only the
+        // slab top (z=4, a plane ⊥ cone axis) intersects the cone's lateral surface
+        // near the apex region.  This exercises the plane-cone circle intersection.
+        let a = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 4.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(-3.0, -3.0, 0.0), DVec3::X, DVec3::Y, 6.0, 6.0, 3.0)
+                .unwrap();
+        // The box (z=0..3) clips the cone (z=0..4), leaving the lower frustum.
+        // The intersection may succeed or return DegenerateResult depending on
+        // classifier robustness; we only require it does not panic.
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        match result {
+            Ok(brep) => {
+                assert!(
+                    !brep.solids.is_empty() && !brep.solids[0].shells[0].faces.is_empty(),
+                    "intersection produced an empty result"
+                );
+            }
+            Err(BooleanError::DegenerateResult) => {
+                // DegenerateResult is an acceptable failure for complex curved intersections.
+            }
+            Err(e) => {
+                panic!("cone-box intersection failed unexpectedly: {e:?}");
+            }
+        }
     }
 
     /// Intersection of a sphere and a coaxial cylinder.

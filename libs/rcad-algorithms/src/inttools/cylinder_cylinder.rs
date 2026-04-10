@@ -228,7 +228,7 @@ fn intersect_perpendicular_cylinders(
     let origin = (closest1 + closest2) * 0.5;
 
     // Third axis = a1 × a2  (normal to both, the "viewing" direction)
-    let a3 = a1.cross(a2).normalize();
+    let _a3 = a1.cross(a2).normalize();
 
     if (r1 - r2).abs() < TOLERANCE_ABS {
         // Equal radii: the Steinmetz intersection is two circles in planes

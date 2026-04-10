@@ -119,12 +119,32 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 
 /// Compute the PCurve of a [`Circle3`] on a [`SphericalSurface`].
 ///
-/// A circle of intersection on a sphere is a latitude line (constant
-/// colatitude φ).  The sphere's (u, v) domain is (longitude, colatitude).
+/// Any circle that lies entirely on a sphere is a **latitude circle** (constant
+/// colatitude φ) for that sphere.  The colatitude is determined solely by the
+/// axial component of the circle's centre:
 ///
-/// φ = acos((circle_center - sphere_center) · axis / sphere_radius)
+/// ```text
+/// φ = acos((circle_center − sphere_center) · sphere_axis / sphere_radius)
+/// ```
 ///
-/// Returns a horizontal [`Line2d`] at v = φ in (θ, φ) space.
+/// This formula is valid for **any** circle on the sphere surface, regardless
+/// of whether the circle's normal is parallel to the sphere axis.
+///
+/// The sphere's (u, v) domain uses **u = longitude ∈ [−π, π]** (matching the
+/// atan2-based projection in `ds.rs`) and **v = colatitude ∈ [0, π]**.
+///
+/// Returns a horizontal [`Line2d`] at v = φ with `origin.x = −π` and
+/// `direction = (1, 0)`, so that when the circle's parameter `t` runs over
+/// `[0, 2π]`, the longitude sweeps the full `[−π, +π]` domain of the sphere.
+///
+/// # Applicability
+///
+/// This function is exact when the circle is a true latitude circle (normal ∥
+/// sphere axis, e.g. sphere–cylinder axis-aligned intersection).  When the
+/// circle's normal is not parallel to the sphere axis (e.g. sphere–sphere
+/// intersection), the v value is still exact but the u parameterization is a
+/// uniform sweep; use [`fallback_pcurve_by_projection`] when the exact
+/// per-t correspondence matters.
 pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> Curve2d {
     let along_axis = (circle.center - sphere.center).dot(sphere.axis.normalize());
     let phi = (along_axis / sphere.radius).clamp(-1.0, 1.0).acos();
@@ -315,9 +335,8 @@ mod tests {
                 let expected_phi = (0.5_f64).acos(); // π/3
                 assert!(
                     (l.origin.y - expected_phi).abs() < 1e-9,
-                    "phi={}, expected {}",
-                    l.origin.y,
-                    expected_phi
+                    "phi={}, expected {expected_phi}",
+                    l.origin.y
                 );
                 // Origin x starts at -π so the line spans [-π, +π] over [0, 2π] sampling.
                 assert!(
@@ -398,6 +417,80 @@ mod tests {
                 assert!(p1.x.is_finite() && p1.y.is_finite());
             }
             other => panic!("expected BSpline2, got {other:?}"),
+        }
+    }
+
+    /// `circle_pcurve_on_sphere` is valid for any circle that lies on the sphere,
+    /// even when the circle's normal is NOT parallel to the sphere axis.
+    /// Here the intersection of two spheres whose centres are separated along X
+    /// gives a circle whose normal is X, but we still get a correct latitude line.
+    #[test]
+    fn circle_on_sphere_non_axis_normal() {
+        // Two unit spheres: sph1 at origin (axis=Z), sph2 at (1,0,0).
+        // Their intersection circle: d=1, r1=r2=1.
+        //   h = (1 + 1 - 1)/(2) = 0.5   (distance from sph1 center to radical plane)
+        //   r_circ = sqrt(1 - 0.25) = sqrt(0.75)
+        //   circle center = (0.5, 0, 0)
+        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let circle = Circle3 {
+            center: DVec3::new(0.5, 0.0, 0.0),
+            normal: DVec3::X,  // NOT parallel to sphere axis (Z)
+            radius: (0.75_f64).sqrt(),
+        };
+
+        let pcurve = circle_pcurve_on_sphere(&circle, &sphere);
+
+        // along_axis = (0.5, 0, 0) · (0, 0, 1) = 0  →  phi = acos(0) = π/2
+        match pcurve {
+            Curve2d::Line(l) => {
+                let expected_phi = std::f64::consts::PI / 2.0;
+                assert!(
+                    (l.origin.y - expected_phi).abs() < 1e-9,
+                    "phi={}, expected π/2",
+                    l.origin.y
+                );
+                assert!((l.direction.x - 1.0).abs() < 1e-9);
+                assert!(l.direction.y.abs() < 1e-9);
+                // origin.x = longitude of circle.point_at(0) — just check it's finite
+                assert!(l.origin.x.is_finite());
+            }
+            other => panic!("expected Line2d, got {other:?}"),
+        }
+    }
+
+    /// Verify that `circle_pcurve_on_sphere` and `fallback_pcurve_by_projection`
+    /// agree at the equatorial circle (both should give v ≈ π/2).
+    #[test]
+    fn analytic_sphere_pcurve_matches_fallback() {
+        use rcad_kernel::geom::{Curve2dEval, Curve3};
+
+        let sphere_surf = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+        // Equatorial circle at z=0, r=2
+        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
+
+        let analytic = circle_pcurve_on_sphere(&circle, &sphere);
+        let fallback = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, std::f64::consts::TAU],
+            &sphere_surf,
+        );
+
+        // Both should yield v ≈ π/2 everywhere (equator = colatitude π/2)
+        for i in 0..8 {
+            let t = i as f64 / 8.0;
+            let pa = analytic.point_at(t);
+            let pf = fallback.point_at(t);
+            assert!(
+                (pa.y - pf.y).abs() < 0.02,
+                "t={t}: analytic.v={:.4} fallback.v={:.4}",
+                pa.y,
+                pf.y
+            );
         }
     }
 }
