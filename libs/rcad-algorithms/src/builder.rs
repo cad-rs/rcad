@@ -366,6 +366,12 @@ impl<'a> BooleanBuilder<'a> {
             return Err(BooleanError::EmptyInput);
         }
 
+        // Fall back to sequential for small models to avoid thread overhead.
+        const PAR_THRESHOLD: usize = 20;
+        if a_faces.len() + b_faces.len() < PAR_THRESHOLD {
+            return self.build_with_history();
+        }
+
         // Process A faces in parallel
         let a_results: Vec<_> = a_faces
             .par_iter()

@@ -10,6 +10,29 @@ pub struct SampledCurve {
     pub is_closed: bool,
 }
 
+/// Coarse UV grid search (5×5 over [0,1]²) to find the closest surface sample.
+/// Returns (u, v) of the closest grid point.
+fn closest_uv_coarse(surface: &Surface3, point: DVec3) -> (f64, f64) {
+    const N: usize = 5;
+    let mut best_u = 0.5_f64;
+    let mut best_v = 0.5_f64;
+    let mut best_dist_sq = f64::MAX;
+    for i in 0..N {
+        for j in 0..N {
+            let u = i as f64 / (N - 1) as f64;
+            let v = j as f64 / (N - 1) as f64;
+            let p = surface.point_at(u, v);
+            let d = (p - point).length_squared();
+            if d < best_dist_sq {
+                best_dist_sq = d;
+                best_u = u;
+                best_v = v;
+            }
+        }
+    }
+    (best_u, best_v)
+}
+
 /// Evaluate the implicit function F(P) for a surface: F=0 on surface.
 fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
     match surface {
@@ -35,12 +58,17 @@ fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             let d = perp_len - t.major_radius;
             (d * d + along * along).sqrt() - t.minor_radius
         }
-        Surface3::BSpline(_) => {
-            // Approximate implicit via SurfaceEval normal_at (fallback)
-            point.length() - 1.0
+        _ => {
+            // Closest-point signed distance: project onto the nearest surface sample.
+            let (u, v) = closest_uv_coarse(surface, point);
+            let closest = surface.point_at(u, v);
+            let normal = surface.normal_at(u, v);
+            let n_len = normal.length();
+            if n_len < 1e-14 {
+                return (point - closest).length();
+            }
+            (point - closest).dot(normal / n_len)
         }
-        Surface3::LinearExtrusion(_) | Surface3::Revolution(_) => point.length() - 1.0,
-        Surface3::Bezier(_) | Surface3::Offset(_) | Surface3::Trimmed(_) => point.length() - 1.0,
     }
 }
 
@@ -93,15 +121,15 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             }
             tv / tv_len
         }
-        Surface3::BSpline(s) => {
-            // Use SurfaceEval normal_at at (0,0) as a rough approximation
-            s.normal_at(0.0, 0.0)
+        _ => {
+            let (u, v) = closest_uv_coarse(surface, point);
+            let normal = surface.normal_at(u, v);
+            let n_len = normal.length();
+            if n_len < 1e-14 {
+                return DVec3::ZERO;
+            }
+            normal / n_len
         }
-        Surface3::LinearExtrusion(s) => s.normal_at(0.0, 0.0),
-        Surface3::Revolution(s) => s.normal_at(0.0, 0.0),
-        Surface3::Bezier(s) => s.normal_at(0.0, 0.0),
-        Surface3::Offset(s) => s.normal_at(0.0, 0.0),
-        Surface3::Trimmed(s) => s.normal_at(0.0, 0.0),
     }
 }
 
