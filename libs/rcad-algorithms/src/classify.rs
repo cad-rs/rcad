@@ -123,8 +123,9 @@ fn ray_cast_classify(
             Surface3::Cylinder(c) => {
                 // Ray-cylinder intersection: |perp(ray_origin + t*ray_dir - origin)|² = r²
                 let oc = point - c.origin;
-                let d = ray_dir - c.axis * ray_dir.dot(c.axis);
-                let f = oc - c.axis * oc.dot(c.axis);
+                let axis = c.axis.normalize();
+                let d = ray_dir - axis * ray_dir.dot(axis);
+                let f = oc - axis * oc.dot(axis);
                 let a = d.length_squared();
                 if a < parallel_tol_sq {
                     continue; // ray parallel to cylinder axis
@@ -136,10 +137,7 @@ fn ray_cast_classify(
                     continue;
                 }
                 // Compute height range along cylinder axis from boundary verts.
-                // Cylinder primitives only have 2 seam vertices but their axis
-                // projections give the correct height extent for the finite face.
                 let face_verts = ds.face_boundary_points(fi);
-                let axis = c.axis.normalize();
                 let (h_min, h_max) = if face_verts.len() >= 2 {
                     let mut mn = f64::INFINITY;
                     let mut mx = f64::NEG_INFINITY;
@@ -152,6 +150,9 @@ fn ray_cast_classify(
                 } else {
                     (-1e9, 1e9) // unbounded fallback
                 };
+                // Compute angular range of this cylinder face (finite arc vs full cylinder).
+                // Build a reference perpendicular to the axis for angle measurement.
+                let (angle_min, angle_max) = cylinder_face_angle_range(c, &face_verts, axis);
                 let slack = boundary_tol;
                 let sq = disc.sqrt();
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
@@ -159,6 +160,14 @@ fn ray_cast_classify(
                         let hit = point + ray_dir * t;
                         let h = (hit - c.origin).dot(axis);
                         if h >= h_min - slack && h <= h_max + slack {
+                            // Check angular containment if the face is a partial arc
+                            if angle_max - angle_min < std::f64::consts::TAU - 0.01 {
+                                let radial = hit - c.origin - axis * h;
+                                let angle = cylinder_angle(c, radial);
+                                if !angle_in_range(angle, angle_min, angle_max, slack / c.radius) {
+                                    continue;
+                                }
+                            }
                             crossings += 1;
                         }
                     }
@@ -231,6 +240,83 @@ fn ray_cast_classify(
     } else {
         Classification::Out
     })
+}
+
+/// Compute the angular range [min, max] of a cylinder face in radians.
+/// Returns (0, TAU) for a full cylinder face.
+fn cylinder_face_angle_range(
+    c: &rcad_kernel::geom::CylindricalSurface,
+    face_verts: &[DVec3],
+    axis: DVec3,
+) -> (f64, f64) {
+    if face_verts.len() < 2 {
+        return (0.0, std::f64::consts::TAU);
+    }
+    let angles: Vec<f64> = face_verts
+        .iter()
+        .map(|&v| {
+            let radial = v - c.origin - axis * (v - c.origin).dot(axis);
+            cylinder_angle(c, radial)
+        })
+        .collect();
+    let mut min_a = angles[0];
+    let mut max_a = angles[0];
+    for &a in &angles[1..] {
+        if a < min_a { min_a = a; }
+        if a > max_a { max_a = a; }
+    }
+    // If the angle span is essentially zero (all boundary vertices at same angle,
+    // e.g. on the seam), we cannot determine the arc range — treat as full cylinder.
+    if max_a - min_a < 1e-6 {
+        return (0.0, std::f64::consts::TAU);
+    }
+    // If span > π, the face might wrap around. Detect wraparound:
+    // if max-min > π, try wrapping angles and recompute.
+    if max_a - min_a > std::f64::consts::PI {
+        // Try normalizing angles relative to the first angle
+        let ref_a = angles[0];
+        let wrapped: Vec<f64> = angles
+            .iter()
+            .map(|&a| {
+                let mut d = a - ref_a;
+                while d < 0.0 { d += std::f64::consts::TAU; }
+                while d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+                d
+            })
+            .collect();
+        let span = wrapped.iter().cloned().fold(0.0_f64, f64::max);
+        if span < std::f64::consts::TAU - 0.01 {
+            // Not a full cylinder
+            let wmin = 0.0_f64;
+            let wmax = span;
+            return (ref_a + wmin, ref_a + wmax);
+        } else {
+            return (0.0, std::f64::consts::TAU);
+        }
+    }
+    // If the angular span is near zero, the boundary vertices all lie on the same
+    // generator line (e.g. the seam), which means we cannot determine the actual
+    // arc extent from vertex angles alone — treat as a full cylinder.
+    if max_a - min_a < 1e-6 {
+        return (0.0, std::f64::consts::TAU);
+    }
+    (min_a, max_a)
+}
+
+/// Compute the angle of a radial vector relative to the cylinder's reference direction.
+fn cylinder_angle(c: &rcad_kernel::geom::CylindricalSurface, radial: DVec3) -> f64 {
+    // Use any_perpendicular to get a reference direction
+    let axis = c.axis.normalize();
+    let ref_dir = rcad_kernel::geom::any_perpendicular(axis).normalize();
+    let perp_dir = axis.cross(ref_dir).normalize();
+    let x = radial.dot(ref_dir);
+    let y = radial.dot(perp_dir);
+    x.atan2(y) // in [-π, π]
+}
+
+/// Check if angle is within [min, max] range (with angular slack).
+fn angle_in_range(angle: f64, min_a: f64, max_a: f64, slack: f64) -> bool {
+    angle >= min_a - slack && angle <= max_a + slack
 }
 
 /// Conservative face containment check using AABB of the face boundary vertices.

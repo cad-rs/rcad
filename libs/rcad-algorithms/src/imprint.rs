@@ -17,6 +17,7 @@ use rcad_kernel::topology::*;
 
 use crate::bopds::ds::{DS, ShapeOrigin};
 use crate::builder::SubFace;
+use crate::bvh::{Aabb, Bvh};
 use crate::pave_filler::PaveFiller;
 use crate::triangulate::triangulate_polygon;
 
@@ -425,6 +426,73 @@ pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapRep
     }
 
     report
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimum distance
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 计算两个 BRep 之间的最小距离。
+///
+/// 使用 BVH 加速面对候选筛选，然后对候选面对采样计算距离。
+/// 返回两个 BRep 表面之间的最短距离（0.0 表示相交或接触）。
+pub fn min_distance(a: &BRep, b: &BRep) -> f64 {
+    use crate::bvh::{Aabb, Bvh};
+
+    // 空形状视为无穷远
+    if a.solids.is_empty() || b.solids.is_empty() {
+        return f64::INFINITY;
+    }
+    if a.solids[0].shells.is_empty() || b.solids[0].shells.is_empty() {
+        return f64::INFINITY;
+    }
+
+    let bvh_b = Bvh::build(b);
+
+    let faces_a = collect_faces_with_surfaces(a);
+    let faces_b = collect_faces_with_surfaces(b);
+
+    let mut global_min = f64::INFINITY;
+
+    for (fa_idx, fa_pts, _fa_surf, _fa_normal) in &faces_a {
+        if fa_pts.is_empty() {
+            continue;
+        }
+        // 用面 A 的 AABB 在 BVH B 中查询候选面
+        let (a_min, a_max) = aabb(fa_pts);
+        let query = Aabb { min: a_min, max: a_max };
+        let candidate_b_faces = bvh_b.query_aabb(&query);
+
+        // 若没有候选，也检查 B 最近面（用面中心查）
+        let centroid_a = fa_pts.iter().copied().sum::<DVec3>() / fa_pts.len() as f64;
+        let nearest = bvh_b.nearest_faces(centroid_a, f64::INFINITY, 3);
+        let mut check_faces: Vec<usize> = candidate_b_faces.clone();
+        for (fi, _) in &nearest {
+            if !check_faces.contains(fi) {
+                check_faces.push(*fi);
+            }
+        }
+
+        for fb_idx in check_faces {
+            if fb_idx >= faces_b.len() {
+                continue;
+            }
+            let (_, _fb_pts, fb_surf, _) = &faces_b[fb_idx];
+
+            // 对面 A 采样点，计算到面 B 曲面的距离
+            let samples = sample_face_points(fa_pts, 8);
+            for &sp in &samples {
+                let proj = closest_point_on_surface(fb_surf, sp, 8);
+                let d = proj.distance.abs();
+                if d < global_min {
+                    global_min = d;
+                }
+            }
+        }
+        let _ = fa_idx;
+    }
+
+    global_min
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 /// This module describes *what shape is*.
 pub mod geom;
 
+/// 装配体：层级结构、组件实例化、世界变换展平。
+///
+/// 类比 OCCT `XCAFDoc_ShapeTool` 管理的 shape 层级。
+pub mod assembly;
+
 /// Topology model types: vertex/edge/face/shell/solid incidence relationships.
 ///
 /// This module describes *how things are connected*.

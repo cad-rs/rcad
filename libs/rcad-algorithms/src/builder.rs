@@ -100,6 +100,21 @@ impl SubFace {
                 };
                 surface_pt + inward * (TOLERANCE_ABS * 10.0)
             }
+            Surface3::Cylinder(c) => {
+                // For cylinder faces, the outward normal points AWAY from the axis.
+                // To get a sample point just inside the solid, offset toward the axis.
+                let centroid = if self.boundary.is_empty() {
+                    DVec3::ZERO
+                } else {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                };
+                // Compute inward direction (toward cylinder axis)
+                let axis = c.axis.normalize();
+                let to_axis = c.origin + axis * (centroid - c.origin).dot(axis) - centroid;
+                let inward = to_axis.normalize_or_zero();
+                // Use inward offset so the sample is just inside the cylinder surface
+                centroid + inward * (TOLERANCE_ABS * 10.0)
+            }
             _ => {
                 let centroid = if self.boundary.is_empty() {
                     DVec3::ZERO
@@ -287,7 +302,8 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
-            for sub in &sub_faces {
+            for (si, sub) in sub_faces.iter().enumerate() {
+                let _ = si;
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &b_faces, self.ds);
 
@@ -301,6 +317,7 @@ impl<'a> BooleanBuilder<'a> {
                     BooleanOpType::Difference => class == Classification::Out,
                 };
 
+                eprintln!("[DEBUG]   sub {si}: sample={sample:?} class={class:?} keep={keep}");
                 if keep {
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(fi));
                 }
@@ -310,7 +327,8 @@ impl<'a> BooleanBuilder<'a> {
         // Process B faces against A solid
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
-            for sub in &sub_faces {
+            eprintln!("[DEBUG] B face {fi}: split into {} sub_faces", sub_faces.len());
+            for (si, sub) in sub_faces.iter().enumerate() {
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &a_faces, self.ds);
 
@@ -320,6 +338,7 @@ impl<'a> BooleanBuilder<'a> {
                     BooleanOpType::Difference => class == Classification::In,
                 };
 
+                eprintln!("[DEBUG]   sub {si}: sample={sample:?} class={class:?} keep={keep}");
                 if keep {
                     let flip = self.op == BooleanOpType::Difference;
                     result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(fi));
@@ -816,6 +835,31 @@ impl<'a> BooleanBuilder<'a> {
             .collect()
     }
 
+    /// Unwrap a UV polyline's U coordinate to remove seam jumps.
+    /// For periodic surfaces (cylinder, cone, torus), consecutive points whose
+    /// U values differ by more than π indicate a seam crossing; we accumulate
+    /// offsets of ±period to make the polyline continuous in U.
+    fn unwrap_u_polyline(&self, pts: Vec<glam::DVec2>, period: f64) -> Vec<glam::DVec2> {
+        if pts.len() < 2 {
+            return pts;
+        }
+        let mut result = Vec::with_capacity(pts.len());
+        result.push(pts[0]);
+        let mut offset = 0.0_f64;
+        for i in 1..pts.len() {
+            let prev_u = result[i - 1].x;
+            let curr_u = pts[i].x + offset;
+            let diff = curr_u - prev_u;
+            if diff > period * 0.5 {
+                offset -= period;
+            } else if diff < -period * 0.5 {
+                offset += period;
+            }
+            result.push(glam::DVec2::new(pts[i].x + offset, pts[i].y));
+        }
+        result
+    }
+
     /// Split a curved face using parameter-space (UV) 2D clipping.
     ///
     /// For each intersection curve on this face, samples the associated PCurve
@@ -824,6 +868,7 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
+
         let face = &self.ds.faces[face_idx];
 
         // Need UV boundary to operate in parameter space
@@ -837,12 +882,20 @@ impl<'a> BooleanBuilder<'a> {
 
         // Collect 2D trim polylines from PCurves for each intersection curve
         let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
+        // Detect if this face is a periodic surface (cylinder, cone, torus) needing seam unwrap.
+        let is_periodic_u = matches!(&surface,
+            Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_)
+        );
+        // For sphere, u is also periodic in [-π, π].
+        let is_sphere = matches!(&surface, Surface3::Sphere(_));
+        let u_period = if is_periodic_u { std::f64::consts::TAU } else if is_sphere { std::f64::consts::TAU } else { 0.0 };
+
         for &ci in &face.face_info.curves_in {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
-                const N: usize = 32;
-                let pts: Vec<DVec2> = match &pcurve {
+                const N: usize = 64;
+                let raw_pts: Vec<DVec2> = match &pcurve {
                     // BSpline PCurves from polyline_pcurve_by_projection use
                     // chord-length parameterization normalized to [0,1].
                     // The 3D arc-length t_range is unrelated to the BSpline domain.
@@ -861,7 +914,37 @@ impl<'a> BooleanBuilder<'a> {
                         })
                         .collect(),
                 };
-                if pts.len() >= 2 {
+                if raw_pts.len() < 2 {
+                    continue;
+                }
+
+                // For periodic surfaces, unwrap the u-coordinate to remove seam jumps.
+                // A jump > π in u between consecutive points indicates a seam crossing;
+                // we add/subtract 2π to make the polyline continuous.
+                let pts = if u_period > 0.0 {
+                    self.unwrap_u_polyline(raw_pts, u_period)
+                } else {
+                    raw_pts
+                };
+
+                // If the unwrapped polyline spans more than 2π in u, the intersection
+                // curve goes all the way around the surface — split at the seam instead
+                // of trying to split the UV polygon with a polyline that exits and re-enters.
+                if u_period > 0.0 && pts.len() >= 2 {
+                    let u_span = pts.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
+                        - pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    // If span > π (the trim cuts across the seam) we need to clip to [0, 2π].
+                    // Shift back into [0, 2π] by remapping each point mod 2π.
+                    let pts = if u_span > std::f64::consts::PI {
+                        // Re-centre: find the offset that brings the midpoint into [0, 2π].
+                        let u_mid = pts.iter().map(|p| p.x).sum::<f64>() / pts.len() as f64;
+                        let offset = (u_mid / u_period).floor() * u_period;
+                        pts.into_iter().map(|p| DVec2::new(p.x - offset, p.y)).collect::<Vec<_>>()
+                    } else {
+                        pts
+                    };
+                    trim_polylines.push(pts);
+                } else {
                     trim_polylines.push(pts);
                 }
             }

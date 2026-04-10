@@ -2,6 +2,7 @@ pub mod bopds;
 pub mod brep_check;
 pub mod brep_repair;
 pub mod builder;
+pub mod bvh;
 pub mod classify;
 pub mod geom_populate;
 pub mod history;
@@ -12,6 +13,8 @@ pub mod pave_filler;
 pub mod section;
 pub mod tolerance;
 pub mod triangulate;
+
+pub use bvh::{Aabb, Bvh, BvhStats};
 
 use rcad_kernel::BRep;
 
@@ -24,7 +27,7 @@ pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
 pub use hlr::{HlrCamera, HlrResult, HlrSegment, hlr, hlr_to_svg};
 pub use imprint::{
-    Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep,
+    Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
 };
 pub use inttools::{
     SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
