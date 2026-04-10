@@ -1,4 +1,238 @@
 use glam::DVec3;
+use rcad_kernel::geom::{Surface3, SurfaceEval};
+
+/// 曲面高质量三角化结果。
+#[derive(Debug, Clone)]
+pub struct SurfaceMesh {
+    /// 三角化产生的顶点列表（世界坐标）。
+    pub vertices: Vec<DVec3>,
+    /// 三角形索引，每个三角形由3个顶点索引组成。
+    pub triangles: Vec<[usize; 3]>,
+    /// 每个顶点的法向量。
+    pub normals: Vec<DVec3>,
+}
+
+/// 曲面三角化参数。
+#[derive(Debug, Clone)]
+pub struct TessellationParams {
+    /// 最大弦差（三角形中点到曲面的最大允许距离）。
+    /// 较小的值产生更细的网格，推荐范围 0.001~0.1。
+    pub chord_tolerance: f64,
+    /// 最大角度误差（弧度）。超过此角度的相邻三角形会被进一步细分。
+    pub angle_tolerance: f64,
+    /// 最小细分步长（UV 空间），防止无限细分。
+    pub min_step: f64,
+    /// 最大细分步长（UV 空间）。
+    pub max_step: f64,
+}
+
+impl Default for TessellationParams {
+    fn default() -> Self {
+        Self {
+            chord_tolerance: 0.01,
+            angle_tolerance: 0.1,  // ~5.7 degrees
+            min_step: 1e-4,
+            max_step: 0.5,
+        }
+    }
+}
+
+/// 对参数曲面进行自适应弦差控制三角化。
+///
+/// 在 UV 参数域上进行自适应细分：
+/// 1. 先以均匀网格覆盖 UV 域
+/// 2. 对每个四边形检查弦差（三角形中心到真实曲面的距离）
+/// 3. 超过 `params.chord_tolerance` 的四边形递归细分
+/// 4. 收集所有叶节点三角形
+///
+/// # 参数
+/// - `surface`：要三角化的曲面
+/// - `u_range`：UV 域 U 方向范围 [u_min, u_max]
+/// - `v_range`：UV 域 V 方向范围 [v_min, v_max]
+/// - `params`：三角化参数
+pub fn triangulate_surface(
+    surface: &Surface3,
+    u_range: [f64; 2],
+    v_range: [f64; 2],
+    params: &TessellationParams,
+) -> SurfaceMesh {
+    let mut vertices: Vec<DVec3> = Vec::new();
+    let mut normals: Vec<DVec3> = Vec::new();
+    let mut triangles: Vec<[usize; 3]> = Vec::new();
+
+    // UV 域初始格数（至少 2x2）
+    let initial_steps = 4usize;
+    let [u0, u1] = u_range;
+    let [v0, v1] = v_range;
+    let du = (u1 - u0) / initial_steps as f64;
+    let dv = (v1 - v0) / initial_steps as f64;
+
+    // 对每个初始四边形进行自适应细分
+    for i in 0..initial_steps {
+        for j in 0..initial_steps {
+            let ua = u0 + i as f64 * du;
+            let ub = ua + du;
+            let va = v0 + j as f64 * dv;
+            let vb = va + dv;
+
+            subdivide_quad(
+                surface,
+                [ua, ub],
+                [va, vb],
+                params,
+                0,
+                &mut vertices,
+                &mut normals,
+                &mut triangles,
+            );
+        }
+    }
+
+    SurfaceMesh { vertices, triangles, normals }
+}
+
+/// 最大递归深度（防止无限细分）。
+const MAX_DEPTH: usize = 8;
+
+/// 递归自适应细分一个 UV 四边形。
+fn subdivide_quad(
+    surface: &Surface3,
+    u_range: [f64; 2],
+    v_range: [f64; 2],
+    params: &TessellationParams,
+    depth: usize,
+    vertices: &mut Vec<DVec3>,
+    normals: &mut Vec<DVec3>,
+    triangles: &mut Vec<[usize; 3]>,
+) {
+    let [u0, u1] = u_range;
+    let [v0, v1] = v_range;
+
+    // 计算四角点
+    let p00 = surface.point_at(u0, v0);
+    let p10 = surface.point_at(u1, v0);
+    let p01 = surface.point_at(u0, v1);
+    let p11 = surface.point_at(u1, v1);
+
+    let um = (u0 + u1) * 0.5;
+    let vm = (v0 + v1) * 0.5;
+
+    // 检查是否需要继续细分
+    let should_subdivide = if depth < MAX_DEPTH {
+        let step_u = u1 - u0;
+        let step_v = v1 - v0;
+
+        // 检查步长是否还能细分
+        if step_u < params.min_step * 2.0 && step_v < params.min_step * 2.0 {
+            false
+        } else {
+            // 检查弦差：计算两个三角形的中心点到曲面的距离
+            let chord_exceeded = check_chord_tolerance(surface, p00, p10, p11, p01, um, vm, params.chord_tolerance);
+
+            // 检查角度误差（法向量变化）
+            let angle_exceeded = depth < MAX_DEPTH / 2 && check_angle_tolerance(surface, u0, u1, v0, v1, params.angle_tolerance);
+
+            chord_exceeded || angle_exceeded
+        }
+    } else {
+        false
+    };
+
+    if should_subdivide {
+        // 细分为4个子四边形
+        subdivide_quad(surface, [u0, um], [v0, vm], params, depth + 1, vertices, normals, triangles);
+        subdivide_quad(surface, [um, u1], [v0, vm], params, depth + 1, vertices, normals, triangles);
+        subdivide_quad(surface, [u0, um], [vm, v1], params, depth + 1, vertices, normals, triangles);
+        subdivide_quad(surface, [um, u1], [vm, v1], params, depth + 1, vertices, normals, triangles);
+    } else {
+        // 发射两个三角形
+        let n = vertices.len();
+
+        // 计算法向量
+        let n00 = surface.normal_at(u0, v0);
+        let n10 = surface.normal_at(u1, v0);
+        let n01 = surface.normal_at(u0, v1);
+        let n11 = surface.normal_at(u1, v1);
+
+        // 检查点是否退化（NaN 或 Inf）
+        let valid = [p00, p10, p01, p11].iter().all(|p| p.is_finite());
+        if !valid {
+            return;
+        }
+
+        vertices.extend_from_slice(&[p00, p10, p11, p01]);
+        normals.extend_from_slice(&[n00, n10, n11, n01]);
+
+        // 选择对角线方向使三角形更均匀
+        let d0 = (p11 - p00).length_squared();
+        let d1 = (p10 - p01).length_squared();
+        if d0 <= d1 {
+            // 沿 p00-p11 对角线
+            triangles.push([n, n + 1, n + 2]);
+            triangles.push([n, n + 2, n + 3]);
+        } else {
+            // 沿 p10-p01 对角线
+            triangles.push([n, n + 1, n + 3]);
+            triangles.push([n + 1, n + 2, n + 3]);
+        }
+    }
+}
+
+/// 检查弦差是否超过容差。
+/// 计算两个三角形的中心到曲面的近似距离。
+fn check_chord_tolerance(
+    surface: &Surface3,
+    p00: DVec3, p10: DVec3, p11: DVec3, p01: DVec3,
+    um: f64, vm: f64,
+    tolerance: f64,
+) -> bool {
+    // 三角形1 (p00, p10, p11) 的中心
+    let c1 = (p00 + p10 + p11) / 3.0;
+    // 三角形2 (p00, p11, p01) 的中心
+    let c2 = (p00 + p11 + p01) / 3.0;
+
+    // 曲面上对应 UV 中心的实际点
+    let surf_mid = surface.point_at(um, vm);
+
+    // 检查曲面中点到线性插值中点的距离
+    let interp_mid = (p00 + p10 + p11 + p01) / 4.0;
+    let chord_err = (surf_mid - interp_mid).length();
+
+    // 也检查各三角形中心处的弦差
+    let t1_u = (c1 - p00).length() / (p11 - p00).length().max(1e-10);
+    let _ = t1_u; // UV 坐标近似用中点替代
+    let chord1 = (surface.point_at(um, vm) - c1).length();
+    let chord2 = (surface.point_at(um, vm) - c2).length();
+
+    chord_err > tolerance || chord1 > tolerance || chord2 > tolerance
+}
+
+/// 检查角度误差（法向量变化）是否超过容差。
+fn check_angle_tolerance(
+    surface: &Surface3,
+    u0: f64, u1: f64, v0: f64, v1: f64,
+    tolerance: f64,
+) -> bool {
+    let n00 = surface.normal_at(u0, v0);
+    let n11 = surface.normal_at(u1, v1);
+    let n10 = surface.normal_at(u1, v0);
+    let n01 = surface.normal_at(u0, v1);
+
+    // 检查相邻角点的法向量夹角
+    for (a, b) in [(n00, n10), (n00, n01), (n11, n10), (n11, n01)] {
+        let la = a.length();
+        let lb = b.length();
+        if la < 0.5 || lb < 0.5 {
+            continue;
+        }
+        let cos_a = (a.dot(b) / (la * lb)).clamp(-1.0, 1.0);
+        let angle = cos_a.acos();
+        if angle > tolerance {
+            return true;
+        }
+    }
+    false
+}
 
 /// Ear-clipping triangulation for a simple polygon in 3D.
 /// Projects to 2D using the given normal, then runs ear-clipping.
