@@ -8,6 +8,7 @@ pub mod plane_cone;
 pub mod plane_cylinder;
 pub mod plane_plane;
 pub mod plane_sphere;
+pub mod sphere_cylinder;
 pub mod vertex_ops;
 
 pub use intss::{

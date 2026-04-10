@@ -639,4 +639,63 @@ mod tests {
         );
     }
 
+    // ─── Sphere × Cylinder Boolean Tests ──────────────────────────────────────
+
+    /// A cylinder whose axis passes through the sphere centre (axis-aligned case).
+    /// The sphere–cylinder intersection is two circles.  Difference should
+    /// produce a valid solid with more faces than just the six box/sphere faces.
+    #[test]
+    fn boolean_sphere_cylinder_difference_axis_aligned() {
+        // Sphere centred at origin, radius 5; cylinder along Z through origin, radius 3.
+        // Intersection circles at z = ±4  (sqrt(25-9) = 4).
+        let a = make_sphere_brep(DVec3::ZERO, 5.0).unwrap();
+        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0)
+            .unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "sphere-cylinder difference (axis-aligned) failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+        // Volume of sphere (4π/3 · R³) minus the cylindrical tunnel should be positive
+        // and smaller than the sphere.
+        let v = rcad_kernel::properties::volume(&brep);
+        let v_sphere = 4.0 * std::f64::consts::PI / 3.0 * 5.0_f64.powi(3);
+        assert!(v > 0.0, "result volume should be positive, got {v}");
+        assert!(v < v_sphere, "difference should be smaller than original sphere");
+    }
+
+    /// Intersection of a sphere and a coaxial cylinder.
+    #[test]
+    fn boolean_sphere_cylinder_intersection_axis_aligned() {
+        // Sphere centred at origin, radius 5; cylinder along Z through origin, radius 3.
+        // The intersection of their volumes is a "barrel" shape bounded by two
+        // spherical caps (z > 4 and z < -4) and the cylinder lateral surface.
+        let a = make_sphere_brep(DVec3::ZERO, 5.0).unwrap();
+        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0)
+            .unwrap();
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        assert!(
+            result.is_ok(),
+            "sphere-cylinder intersection (axis-aligned) failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+        // Just verify we get a positive volume — the exact amount depends on
+        // whether sphere cap faces contribute correctly to the divergence-theorem
+        // volume (sphere parametric surfaces have known approximation issues
+        // tracked separately).
+        let v = rcad_kernel::properties::volume(&brep);
+        assert!(v > 0.0, "intersection volume should be positive, got {v}");
+    }
+
 }

@@ -382,6 +382,11 @@ impl<'a> PaveFiller<'a> {
                 let (sph1, sph2) = (*sph1, *sph2);
                 self.intersect_sphere_sphere_faces(f1, f2, &sph1, &sph2);
             }
+            (Surface3::Sphere(sph), Surface3::Cylinder(cyl))
+            | (Surface3::Cylinder(cyl), Surface3::Sphere(sph)) => {
+                let (sph, cyl) = (*sph, *cyl);
+                self.intersect_sphere_cylinder_faces(f1, f2, &sph, &cyl);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -644,6 +649,114 @@ impl<'a> PaveFiller<'a> {
             curves: vec![curve_idx],
             points: vec![],
         });
+    }
+
+    // ── Sphere × Cylinder analytic face-face intersection ─────────────────────
+
+    fn intersect_sphere_cylinder_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        sphere: &SphericalSurface,
+        cyl: &CylindricalSurface,
+    ) {
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_cylinder, circle_pcurve_on_sphere, fallback_pcurve_by_projection,
+        };
+        use inttools::sphere_cylinder::{SphereCylinderResult, intersect_sphere_cylinder};
+        use std::f64::consts::TAU;
+
+        // Determine which face is the sphere face (for pcurve_on_a/b ordering)
+        let sphere_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Sphere(_));
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if sphere_is_f1 {
+                (Some(pca), Some(pcb))
+            } else {
+                (Some(pcb), Some(pca))
+            }
+        };
+
+        // Helper: add one intersection circle to the DS and return its index.
+        let add_circle =
+            |ds: &mut DS,
+             circle: &Circle3,
+             pcurve_on_a: Option<Curve2d>,
+             pcurve_on_b: Option<Curve2d>,
+             f1: usize,
+             f2: usize|
+             -> usize {
+                let pts = sample_circle_arc(circle, 0.0, TAU, 32);
+                let v_start = ds.add_vertex(pts[0]);
+                let v_end = ds.add_vertex(pts[pts.len() - 1]);
+                let curve_idx = ds.intersection_curves.len();
+                ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(*circle),
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, TAU],
+                    pcurve_on_a,
+                    pcurve_on_b,
+                });
+                ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                ds.faces[f1].face_info.vertices_in.insert(v_start);
+                ds.faces[f1].face_info.vertices_in.insert(v_end);
+                ds.faces[f2].face_info.vertices_in.insert(v_start);
+                ds.faces[f2].face_info.vertices_in.insert(v_end);
+                curve_idx
+            };
+
+        // Closure to compute pcurves for one intersection circle.
+        // Uses `circle_pcurve_on_sphere` when the sphere axis is parallel to
+        // the cylinder axis (so the circle is a true latitude line), otherwise
+        // falls back to projection sampling.
+        let make_circle_pcurves = |circle: &Circle3| -> (Option<Curve2d>, Option<Curve2d>) {
+            let axis_dot = sphere.axis.normalize().dot(cyl.axis.normalize()).abs();
+            let pcurve_sph = if (axis_dot - 1.0).abs() < 1e-6 {
+                circle_pcurve_on_sphere(circle, sphere)
+            } else {
+                fallback_pcurve_by_projection(
+                    &Curve3::Circle(*circle),
+                    &[0.0, TAU],
+                    &Surface3::Sphere(*sphere),
+                )
+            };
+            let pcurve_cyl = circle_pcurve_on_cylinder(circle, cyl);
+            make_pcurves(pcurve_sph, pcurve_cyl)
+        };
+
+        match intersect_sphere_cylinder(sphere, cyl) {
+            SphereCylinderResult::NoIntersection => return,
+            SphereCylinderResult::General => {
+                // Fall back to numeric marching for the quartic case.
+                self.intersect_ff_by_marching(f1, f2);
+                return;
+            }
+            SphereCylinderResult::TangentCircle(circle) => {
+                let (pca, pcb) = make_circle_pcurves(&circle);
+                let ci = add_circle(self.ds, &circle, pca, pcb, f1, f2);
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1,
+                    f2,
+                    curves: vec![ci],
+                    points: vec![],
+                });
+            }
+            SphereCylinderResult::TwoCircles(c1, c2) => {
+                let (pca1, pcb1) = make_circle_pcurves(&c1);
+                let ci1 = add_circle(self.ds, &c1, pca1, pcb1, f1, f2);
+                let (pca2, pcb2) = make_circle_pcurves(&c2);
+                let ci2 = add_circle(self.ds, &c2, pca2, pcb2, f1, f2);
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1,
+                    f2,
+                    curves: vec![ci1, ci2],
+                    points: vec![],
+                });
+            }
+        }
     }
 
     // ── Plane × Cylinder analytic face-face intersection ──────────────────────
