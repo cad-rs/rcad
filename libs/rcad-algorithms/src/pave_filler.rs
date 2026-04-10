@@ -395,6 +395,15 @@ impl<'a> PaveFiller<'a> {
             | (Surface3::Cone(cone), Surface3::Plane(pl)) => {
                 self.intersect_plane_cone_faces(f1, f2, pl, cone);
             }
+            (Surface3::Cylinder(cyl), Surface3::Cone(cone))
+            | (Surface3::Cone(cone), Surface3::Cylinder(cyl)) => {
+                let (cyl, cone) = (*cyl, *cone);
+                self.intersect_cylinder_cone_faces(f1, f2, &cyl, &cone);
+            }
+            (Surface3::Cone(cone1), Surface3::Cone(cone2)) => {
+                let (cone1, cone2) = (*cone1, *cone2);
+                self.intersect_cone_cone_faces(f1, f2, &cone1, &cone2);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -1330,6 +1339,156 @@ impl<'a> PaveFiller<'a> {
                 curves: curve_indices,
                 points: vec![],
             });
+        }
+    }
+
+    // ── Cylinder × Cone analytic face-face intersection ───────────────────────
+
+    fn intersect_cylinder_cone_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        cyl: &CylindricalSurface,
+        cone: &ConicalSurface,
+    ) {
+        use inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
+        use inttools::pcurve_derive::{circle_pcurve_on_cylinder, fallback_pcurve_by_projection};
+        use std::f64::consts::TAU;
+
+        // Determine which face carries the cylinder (for pcurve_on_a/b ordering).
+        let cyl_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Cylinder(_));
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if cyl_is_f1 { (Some(pca), Some(pcb)) } else { (Some(pcb), Some(pca)) }
+        };
+
+        match intersect_cylinder_cone(cyl, cone) {
+            CylinderConeResult::NoIntersection => return,
+
+            CylinderConeResult::General => {
+                self.intersect_ff_by_marching(f1, f2);
+                return;
+            }
+
+            CylinderConeResult::CoaxialCircle(circle) => {
+                let pca_cyl = circle_pcurve_on_cylinder(&circle, cyl);
+                let pcb_cone = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circle),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone),
+                );
+                let (pca, pcb) = make_pcurves(pca_cyl, pcb_cone);
+
+                let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
+                let v_start = self.ds.add_vertex(pts[0]);
+                let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+                let ci = self.ds.intersection_curves.len();
+                self.ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(circle),
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, TAU],
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
+                });
+                self.ds.faces[f1].face_info.curves_in.insert(ci);
+                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1,
+                    f2,
+                    curves: vec![ci],
+                    points: vec![],
+                });
+            }
+        }
+    }
+
+    // ── Cone × Cone analytic face-face intersection ────────────────────────────
+
+    fn intersect_cone_cone_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        cone1: &ConicalSurface,
+        cone2: &ConicalSurface,
+    ) {
+        use inttools::cone_cone::{ConeConeResult, intersect_cone_cone};
+        use inttools::pcurve_derive::fallback_pcurve_by_projection;
+        use std::f64::consts::TAU;
+
+        // Determine which face is cone1 (for pcurve_on_a/b ordering).
+        let cone1_is_f1 = {
+            if let Surface3::Cone(c) = &self.ds.faces[f1].surface {
+                (c.apex - cone1.apex).length_squared() < 1e-10
+                    && (c.axis - cone1.axis).length_squared() < 1e-10
+            } else {
+                false
+            }
+        };
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if cone1_is_f1 { (Some(pca), Some(pcb)) } else { (Some(pcb), Some(pca)) }
+        };
+
+        match intersect_cone_cone(cone1, cone2) {
+            ConeConeResult::NoIntersection | ConeConeResult::Coaxial => return,
+
+            ConeConeResult::CoaxialPoint(_pt) => {
+                // Single shared apex — a point contact, not a curve.
+                return;
+            }
+
+            ConeConeResult::General => {
+                self.intersect_ff_by_marching(f1, f2);
+                return;
+            }
+
+            ConeConeResult::CoaxialCircle(circle) => {
+                let pca_cone1 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circle),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone1),
+                );
+                let pcb_cone2 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circle),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone2),
+                );
+                let (pca, pcb) = make_pcurves(pca_cone1, pcb_cone2);
+
+                let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
+                let v_start = self.ds.add_vertex(pts[0]);
+                let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+                let ci = self.ds.intersection_curves.len();
+                self.ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(circle),
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, TAU],
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
+                });
+                self.ds.faces[f1].face_info.curves_in.insert(ci);
+                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1,
+                    f2,
+                    curves: vec![ci],
+                    points: vec![],
+                });
+            }
         }
     }
 

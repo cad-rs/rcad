@@ -1,5 +1,7 @@
 pub mod coplanar;
+pub mod cone_cone;
 pub mod curve_surface;
+pub mod cylinder_cone;
 pub mod cylinder_cylinder;
 pub mod edge_face;
 pub mod intss;
