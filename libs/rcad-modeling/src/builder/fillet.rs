@@ -1,15 +1,18 @@
 //! Chamfer and fillet operations on convex BRep edges.
 //!
-//! Both operations are limited to:
+//! `chamfer_edge` and `fillet_edge` are limited to:
 //! - Convex edges shared by exactly two planar faces
 //! - The first solid's first shell (`solids[0].shells[0]`)
-//! - One edge at a time (no corner blending)
 //!
-//! Both functions return a new BRep rather than modifying in place.
+//! `corner_blend` rounds a 3-edge convex vertex with a spherical patch.
+//!
+//! All functions return a new BRep rather than modifying in place.
+
+use std::f64::consts::PI;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{CylindricalSurface, Line3, Plane, Surface3};
+use rcad_kernel::geom::{any_perpendicular, Circle3, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
 use rcad_kernel::topology::{Face, Vertex, WireEdge};
 
 use crate::builder::BuildError;
@@ -125,6 +128,90 @@ fn add_closing_triangle(dst: &mut BRep, v0: usize, v1: usize, v2: usize) -> Resu
         WireEdge::fwd(e20),
     ]);
     make_face(dst, surf, wire, vec![])?;
+    Ok(())
+}
+
+/// Add a great-circle arc edge from vertex `va` to vertex `vb` on a sphere
+/// centred at `center` with `radius`.
+///
+/// The arc lies in the plane containing `center`, `pa`, and `pb`.
+/// Falls back to a straight line if the two points are (anti-)parallel from
+/// the centre (degenerate arc).
+fn add_arc_edge(
+    dst: &mut BRep,
+    va: usize,
+    vb: usize,
+    center: DVec3,
+    radius: f64,
+) -> Result<usize, BuildError> {
+    let pa = dst.vertices[va].point;
+    let pb = dst.vertices[vb].point;
+
+    let da = (pa - center).normalize_or_zero();
+    let db = (pb - center).normalize_or_zero();
+    let normal = da.cross(db).normalize_or_zero();
+
+    if normal.length_squared() < 1e-20 {
+        return add_line_edge(dst, va, vb);
+    }
+
+    // Reproduce the same x_ax / y_ax that Circle3::point_at uses internally.
+    let x_ax = any_perpendicular(normal);
+    let y_ax = normal.cross(x_ax);
+
+    let t_a = da.dot(y_ax).atan2(da.dot(x_ax));
+    let t_b = db.dot(y_ax).atan2(db.dot(x_ax));
+
+    // Take the short arc (|Δt| ≤ π).
+    let mut dt = t_b - t_a;
+    if dt > PI {
+        dt -= 2.0 * PI;
+    } else if dt < -PI {
+        dt += 2.0 * PI;
+    }
+
+    let circle = Circle3 { center, normal, radius };
+    make_edge(dst, Curve3::Circle(circle), t_a, t_a + dt, va, vb)
+}
+
+/// Add a spherical-triangle closing face bounded by three great-circle arcs.
+///
+/// The sphere is centred at `center` with `radius`.  The three vertices
+/// `v0`, `v1`, `v2` must already lie on that sphere (i.e. at distance
+/// `radius` from `center`).
+fn add_closing_spherical_triangle(
+    dst: &mut BRep,
+    v0: usize,
+    v1: usize,
+    v2: usize,
+    center: DVec3,
+    radius: f64,
+) -> Result<(), BuildError> {
+    let p0 = dst.vertices[v0].point;
+    let p1 = dst.vertices[v1].point;
+    let p2 = dst.vertices[v2].point;
+
+    // Sphere axis: outward normal through the centroid of the triangle.
+    let centroid = (p0 + p1 + p2) / 3.0;
+    let axis = (centroid - center).normalize_or_zero();
+    let axis = if axis.length_squared() < 1e-20 {
+        (p1 - p0).cross(p2 - p0).normalize_or_zero()
+    } else {
+        axis
+    };
+
+    let sphere = SphericalSurface { center, axis, radius };
+
+    let e01 = add_arc_edge(dst, v0, v1, center, radius)?;
+    let e12 = add_arc_edge(dst, v1, v2, center, radius)?;
+    let e20 = add_arc_edge(dst, v2, v0, center, radius)?;
+
+    let wire = make_wire(vec![
+        WireEdge::fwd(e01),
+        WireEdge::fwd(e12),
+        WireEdge::fwd(e20),
+    ]);
+    make_face(dst, Surface3::Sphere(sphere), wire, vec![])?;
     Ok(())
 }
 
@@ -699,8 +786,8 @@ pub fn corner_blend(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep,
         make_face(&mut dst, surf, wire, vec![])?;
     }
 
-    // Add the triangular closing face connecting the 3 setback vertices
-    add_closing_triangle(&mut dst, sb_indices[0], sb_indices[1], sb_indices[2])?;
+    // Add the spherical closing face connecting the 3 setback vertices
+    add_closing_spherical_triangle(&mut dst, sb_indices[0], sb_indices[1], sb_indices[2], v, radius)?;
 
     Ok(dst)
 }

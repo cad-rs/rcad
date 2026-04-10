@@ -302,8 +302,7 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
-            for (si, sub) in sub_faces.iter().enumerate() {
-                let _ = si;
+            for sub in sub_faces.iter() {
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &b_faces, self.ds);
 
@@ -317,7 +316,6 @@ impl<'a> BooleanBuilder<'a> {
                     BooleanOpType::Difference => class == Classification::Out,
                 };
 
-                eprintln!("[DEBUG]   sub {si}: sample={sample:?} class={class:?} keep={keep}");
                 if keep {
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(fi));
                 }
@@ -327,8 +325,7 @@ impl<'a> BooleanBuilder<'a> {
         // Process B faces against A solid
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
-            eprintln!("[DEBUG] B face {fi}: split into {} sub_faces", sub_faces.len());
-            for (si, sub) in sub_faces.iter().enumerate() {
+            for sub in sub_faces.iter() {
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &a_faces, self.ds);
 
@@ -338,7 +335,6 @@ impl<'a> BooleanBuilder<'a> {
                     BooleanOpType::Difference => class == Classification::In,
                 };
 
-                eprintln!("[DEBUG]   sub {si}: sample={sample:?} class={class:?} keep={keep}");
                 if keep {
                     let flip = self.op == BooleanOpType::Difference;
                     result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(fi));
