@@ -1136,22 +1136,12 @@ impl WgpuRenderer {
         }
 
         // Convert Vecs to fixed-size arrays
-        let axes_material_bind_groups = {
-            let mut iter = axes_material_bind_groups_vec.into_iter();
-            [
-                iter.next().unwrap(),
-                iter.next().unwrap(),
-                iter.next().unwrap(),
-            ]
-        };
-        let axes_buffers = {
-            let mut iter = axes_buffers_vec.into_iter();
-            [
-                iter.next().unwrap(),
-                iter.next().unwrap(),
-                iter.next().unwrap(),
-            ]
-        };
+        let axes_material_bind_groups: [_; 3] = axes_material_bind_groups_vec
+            .try_into()
+            .expect("axes loop always produces exactly 3 bind groups");
+        let axes_buffers: [_; 3] = axes_buffers_vec
+            .try_into()
+            .expect("axes loop always produces exactly 3 axis buffers");
 
         Self {
             pipeline,
@@ -1196,8 +1186,8 @@ impl WgpuRenderer {
         let height = height.max(1);
 
         {
-            let size = self.depth_size.lock().unwrap();
-            let has_view = self.depth_view.lock().unwrap().is_some();
+            let size = self.depth_size.lock().expect("render mutex poisoned");
+            let has_view = self.depth_view.lock().expect("render mutex poisoned").is_some();
             if has_view && *size == (width, height) {
                 return;
             }
@@ -1219,9 +1209,9 @@ impl WgpuRenderer {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        *self.depth_texture.lock().unwrap() = Some(texture);
-        *self.depth_view.lock().unwrap() = Some(view);
-        *self.depth_size.lock().unwrap() = (width, height);
+        *self.depth_texture.lock().expect("render mutex poisoned") = Some(texture);
+        *self.depth_view.lock().expect("render mutex poisoned") = Some(view);
+        *self.depth_size.lock().expect("render mutex poisoned") = (width, height);
     }
 
     pub fn prepare_scene(
@@ -1250,7 +1240,7 @@ impl WgpuRenderer {
     }
 
     pub fn upload_mesh(&self, device: &wgpu::Device, mesh: &Mesh) {
-        *self.vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(
+        *self.vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&mesh.vertices),
@@ -1258,7 +1248,7 @@ impl WgpuRenderer {
             },
         ));
 
-        *self.index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+        *self.index_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(&mesh.indices),
@@ -1266,20 +1256,20 @@ impl WgpuRenderer {
             },
         ));
 
-        *self.index_count.lock().unwrap() = mesh.indices.len() as u32;
+        *self.index_count.lock().expect("render mutex poisoned") = mesh.indices.len() as u32;
 
         if mesh.line_indices.is_empty() {
-            *self.line_index_buffer.lock().unwrap() = None;
-            *self.line_index_count.lock().unwrap() = 0;
+            *self.line_index_buffer.lock().expect("render mutex poisoned") = None;
+            *self.line_index_count.lock().expect("render mutex poisoned") = 0;
         } else {
-            *self.line_index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            *self.line_index_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Line Index Buffer"),
                     contents: bytemuck::cast_slice(&mesh.line_indices),
                     usage: wgpu::BufferUsages::INDEX,
                 },
             ));
-            *self.line_index_count.lock().unwrap() = mesh.line_indices.len() as u32;
+            *self.line_index_count.lock().expect("render mutex poisoned") = mesh.line_indices.len() as u32;
         }
     }
 
@@ -1290,53 +1280,53 @@ impl WgpuRenderer {
         edge_mesh: Option<&Mesh>,
     ) {
         if let Some(mesh) = face_mesh {
-            *self.highlight_face_vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            *self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Face Vertex Buffer"),
                     contents: bytemuck::cast_slice(&mesh.vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 },
             ));
-            *self.highlight_face_index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            *self.highlight_face_index_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Face Index Buffer"),
                     contents: bytemuck::cast_slice(&mesh.indices),
                     usage: wgpu::BufferUsages::INDEX,
                 },
             ));
-            *self.highlight_face_index_count.lock().unwrap() = mesh.indices.len() as u32;
+            *self.highlight_face_index_count.lock().expect("render mutex poisoned") = mesh.indices.len() as u32;
         } else {
-            *self.highlight_face_vertex_buffer.lock().unwrap() = None;
-            *self.highlight_face_index_buffer.lock().unwrap() = None;
-            *self.highlight_face_index_count.lock().unwrap() = 0;
+            *self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned") = None;
+            *self.highlight_face_index_buffer.lock().expect("render mutex poisoned") = None;
+            *self.highlight_face_index_count.lock().expect("render mutex poisoned") = 0;
         }
 
         if let Some(mesh) = edge_mesh {
-            *self.highlight_edge_vertex_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            *self.highlight_edge_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Edge Vertex Buffer"),
                     contents: bytemuck::cast_slice(&mesh.vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 },
             ));
-            *self.highlight_edge_index_buffer.lock().unwrap() = Some(device.create_buffer_init(
+            *self.highlight_edge_index_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Edge Index Buffer"),
                     contents: bytemuck::cast_slice(&mesh.indices),
                     usage: wgpu::BufferUsages::INDEX,
                 },
             ));
-            *self.highlight_edge_index_count.lock().unwrap() = mesh.indices.len() as u32;
+            *self.highlight_edge_index_count.lock().expect("render mutex poisoned") = mesh.indices.len() as u32;
         } else {
-            *self.highlight_edge_vertex_buffer.lock().unwrap() = None;
-            *self.highlight_edge_index_buffer.lock().unwrap() = None;
-            *self.highlight_edge_index_count.lock().unwrap() = 0;
+            *self.highlight_edge_vertex_buffer.lock().expect("render mutex poisoned") = None;
+            *self.highlight_edge_index_buffer.lock().expect("render mutex poisoned") = None;
+            *self.highlight_edge_index_count.lock().expect("render mutex poisoned") = 0;
         }
     }
 
     pub fn update_camera(&self, queue: &wgpu::Queue, camera: &Camera, aspect: f32) {
         let eye = camera.eye_position();
-        let ld = *self.light_dir.lock().unwrap();
+        let ld = *self.light_dir.lock().expect("render mutex poisoned");
         let uniform = CameraUniform {
             view_proj: camera.build_view_projection_matrix(aspect),
             eye_pos: [eye.x, eye.y, eye.z, 1.0],
@@ -1350,18 +1340,18 @@ impl WgpuRenderer {
         render_pass: &mut wgpu::RenderPass<'_>,
         use_depth_pipeline: bool,
     ) {
-        let mode = *self.display_mode.lock().unwrap();
+        let mode = *self.display_mode.lock().expect("render mutex poisoned");
 
         // Draw grid first (behind everything)
-        if *self.show_grid.lock().unwrap() {
+        if *self.show_grid.lock().expect("render mutex poisoned") {
             self.draw_grid_in_render_pass(render_pass, use_depth_pipeline);
         }
 
-        let vb_guard = self.vertex_buffer.lock().unwrap();
-        let ib_guard = self.index_buffer.lock().unwrap();
-        let count = *self.index_count.lock().unwrap();
-        let lib_guard = self.line_index_buffer.lock().unwrap();
-        let lcount = *self.line_index_count.lock().unwrap();
+        let vb_guard = self.vertex_buffer.lock().expect("render mutex poisoned");
+        let ib_guard = self.index_buffer.lock().expect("render mutex poisoned");
+        let count = *self.index_count.lock().expect("render mutex poisoned");
+        let lib_guard = self.line_index_buffer.lock().expect("render mutex poisoned");
+        let lcount = *self.line_index_count.lock().expect("render mutex poisoned");
 
         // Draw model based on display mode
         let draw_triangles = matches!(
@@ -1432,9 +1422,9 @@ impl WgpuRenderer {
         }
 
         // Draw face highlights
-        let hvb_guard = self.highlight_face_vertex_buffer.lock().unwrap();
-        let hib_guard = self.highlight_face_index_buffer.lock().unwrap();
-        let hcount = *self.highlight_face_index_count.lock().unwrap();
+        let hvb_guard = self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned");
+        let hib_guard = self.highlight_face_index_buffer.lock().expect("render mutex poisoned");
+        let hcount = *self.highlight_face_index_count.lock().expect("render mutex poisoned");
         if hcount > 0
             && let (Some(vb), Some(ib)) = (hvb_guard.as_ref(), hib_guard.as_ref())
         {
@@ -1451,9 +1441,9 @@ impl WgpuRenderer {
         }
 
         // Draw edge highlights
-        let evb_guard = self.highlight_edge_vertex_buffer.lock().unwrap();
-        let eib_guard = self.highlight_edge_index_buffer.lock().unwrap();
-        let ecount = *self.highlight_edge_index_count.lock().unwrap();
+        let evb_guard = self.highlight_edge_vertex_buffer.lock().expect("render mutex poisoned");
+        let eib_guard = self.highlight_edge_index_buffer.lock().expect("render mutex poisoned");
+        let ecount = *self.highlight_edge_index_count.lock().expect("render mutex poisoned");
         if ecount > 0
             && let (Some(vb), Some(ib)) = (evb_guard.as_ref(), eib_guard.as_ref())
         {
@@ -1470,7 +1460,7 @@ impl WgpuRenderer {
         }
 
         // Draw coordinate axes
-        if *self.show_axes.lock().unwrap() {
+        if *self.show_axes.lock().expect("render mutex poisoned") {
             self.draw_axes_in_render_pass(render_pass, use_depth_pipeline);
         }
     }
@@ -1546,27 +1536,27 @@ impl WgpuRenderer {
     }
 
     pub fn set_show_axes(&self, show: bool) {
-        *self.show_axes.lock().unwrap() = show;
+        *self.show_axes.lock().expect("render mutex poisoned") = show;
     }
 
     pub fn show_axes(&self) -> bool {
-        *self.show_axes.lock().unwrap()
+        *self.show_axes.lock().expect("render mutex poisoned")
     }
 
     pub fn set_display_mode(&self, mode: DisplayMode) {
-        *self.display_mode.lock().unwrap() = mode;
+        *self.display_mode.lock().expect("render mutex poisoned") = mode;
     }
 
     pub fn display_mode(&self) -> DisplayMode {
-        *self.display_mode.lock().unwrap()
+        *self.display_mode.lock().expect("render mutex poisoned")
     }
 
     pub fn set_show_grid(&self, show: bool) {
-        *self.show_grid.lock().unwrap() = show;
+        *self.show_grid.lock().expect("render mutex poisoned") = show;
     }
 
     pub fn show_grid(&self) -> bool {
-        *self.show_grid.lock().unwrap()
+        *self.show_grid.lock().expect("render mutex poisoned")
     }
 
     pub fn set_model_color(&self, queue: &wgpu::Queue, color: [f32; 4]) {
@@ -1586,11 +1576,11 @@ impl WgpuRenderer {
     }
 
     pub fn set_light_direction(&self, dir: glam::Vec3) {
-        *self.light_dir.lock().unwrap() = dir;
+        *self.light_dir.lock().expect("render mutex poisoned") = dir;
     }
 
     pub fn light_direction(&self) -> glam::Vec3 {
-        *self.light_dir.lock().unwrap()
+        *self.light_dir.lock().expect("render mutex poisoned")
     }
 
     /// Set light direction to match the camera eye direction (headlight mode).
@@ -1598,7 +1588,7 @@ impl WgpuRenderer {
         let eye = camera.eye_position();
         let dir = (eye - camera.target).normalize_or_zero();
         if dir.length_squared() > 1e-6 {
-            *self.light_dir.lock().unwrap() = dir;
+            *self.light_dir.lock().expect("render mutex poisoned") = dir;
         }
     }
 
@@ -1610,7 +1600,7 @@ impl WgpuRenderer {
         clip_bounds: Option<(u32, u32, u32, u32)>,
     ) {
         let use_depth = clip_bounds.is_some();
-        let depth_view_guard = self.depth_view.lock().unwrap();
+        let depth_view_guard = self.depth_view.lock().expect("render mutex poisoned");
         let depth_attachment = if use_depth {
             depth_view_guard
                 .as_ref()
@@ -1792,10 +1782,13 @@ impl WgpuRenderer {
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            sender.send(result).expect("screenshot channel: receiver dropped before GPU callback");
         });
-        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        receiver.recv().unwrap().unwrap();
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU device lost during screenshot");
+        receiver
+            .recv()
+            .expect("screenshot channel: sender dropped before recv")
+            .expect("GPU buffer map failed during screenshot");
 
         let data = buffer_slice.get_mapped_range();
         let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
