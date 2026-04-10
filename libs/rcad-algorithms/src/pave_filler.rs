@@ -475,7 +475,9 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         sphere: &SphericalSurface,
     ) {
-        use inttools::pcurve_derive::{circle_pcurve_on_plane, circle_pcurve_on_sphere};
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_plane, circle_pcurve_on_sphere, fallback_pcurve_by_projection,
+        };
         use inttools::plane_sphere::{PlaneSphereResult, intersect_plane_sphere};
 
         // Determine which face carries the plane (for correct pcurve_on_a/b assignment)
@@ -506,7 +508,28 @@ impl<'a> PaveFiller<'a> {
                 }
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
-                let pcurve_sphere = circle_pcurve_on_sphere(&circle, sphere);
+                // `circle_pcurve_on_sphere` is only analytically correct when the
+                // sphere axis is parallel to the cutting plane normal (i.e. the
+                // intersection circle is a latitude line in the sphere's UV domain).
+                // When the axis is not aligned with the plane normal, we fall back to
+                // projection-based sampling — exactly as `intersect_sphere_sphere_faces`
+                // already does — to obtain the correct parameter-space curve.
+                let axis_dot_normal = sphere
+                    .axis
+                    .normalize()
+                    .dot(plane.normal.normalize())
+                    .abs();
+                let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < 1e-6 {
+                    // Axis is parallel to plane normal → latitude line is exact.
+                    circle_pcurve_on_sphere(&circle, sphere)
+                } else {
+                    // Axis is NOT aligned → use projection fallback.
+                    fallback_pcurve_by_projection(
+                        &Curve3::Circle(circle),
+                        &[0.0, std::f64::consts::TAU],
+                        &Surface3::Sphere(*sphere),
+                    )
+                };
                 let (pcurve_on_a, pcurve_on_b) = if plane_is_f1 {
                     (Some(pcurve_plane), Some(pcurve_sphere))
                 } else {

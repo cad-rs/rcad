@@ -1,9 +1,9 @@
-//! STEP assembly writer.
+//! STEP assembly writer and reader.
 //!
 //! Writes a multi-component assembly where each component is a separate BRep
-//! with an optional transform and name.  Produces a STEP file with a full
-//! NEXT_ASSEMBLY_USAGE_OCCURRENCE hierarchy so that importers (FreeCAD, OCCT,
-//! etc.) can reconstruct the tree.
+//! with an optional full affine transform and name.  Produces a STEP file with a
+//! full NEXT_ASSEMBLY_USAGE_OCCURRENCE hierarchy so that importers (FreeCAD,
+//! OCCT, etc.) can reconstruct the tree.
 //!
 //! # STEP assembly structure
 //!
@@ -14,46 +14,76 @@
 //!                                               └─ PRODUCT_DEFINITION (component i)
 //!                                                    └─ shape representation (geometry)
 //! ```
+//!
+//! **Transform strategy**: transforms are baked into vertex/geometry coordinates
+//! (`BRep::apply_transform`) rather than emitting `ITEM_DEFINED_TRANSFORMATION`
+//! entities. This maximises compatibility with STEP readers that do not support
+//! AP214 transformation entities.
 
-use glam::DVec3;
+use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::appearance::StepColor;
 
+use crate::StepError;
 use crate::writer::{ExportSelection, StepWriter};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AssemblyComponent
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// A single component in an assembly.
+///
+/// The [`transform`][AssemblyComponent::transform] field is a full affine
+/// transform (translation, rotation, uniform or non-uniform scale).  When
+/// writing to STEP the transform is **baked** into vertex coordinates via
+/// [`BRep::apply_transform`].
 #[derive(Clone)]
 pub struct AssemblyComponent {
     /// Human-readable part name.
     pub name: String,
     /// The geometry.
     pub brep: BRep,
-    /// Optional translation offset applied to the component.
-    pub translation: DVec3,
+    /// Full affine transform for this component (default: identity).
+    pub transform: DAffine3,
     /// Optional RGB color for this component's faces.
     pub color: Option<rcad_kernel::appearance::Color>,
 }
 
 impl AssemblyComponent {
+    /// Create a new component with an identity transform.
     pub fn new(name: impl Into<String>, brep: BRep) -> Self {
         Self {
             name: name.into(),
             brep,
-            translation: DVec3::ZERO,
+            transform: DAffine3::IDENTITY,
             color: None,
         }
     }
 
-    pub fn with_translation(mut self, t: DVec3) -> Self {
-        self.translation = t;
+    /// Set a full affine transform (replaces any previously set transform).
+    pub fn with_transform(mut self, transform: DAffine3) -> Self {
+        self.transform = transform;
         self
     }
 
+    /// Convenience: set a pure translation transform.
+    ///
+    /// Equivalent to `with_transform(DAffine3::from_translation(t))`.
+    pub fn with_translation(mut self, t: DVec3) -> Self {
+        self.transform = DAffine3::from_translation(t);
+        self
+    }
+
+    /// Set a color for this component.
     pub fn with_color(mut self, color: rcad_kernel::appearance::Color) -> Self {
         self.color = Some(color);
         self
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write a multi-component STEP assembly.
 ///
@@ -61,28 +91,22 @@ impl AssemblyComponent {
 /// with its own geometry representation, linked into the root assembly via
 /// `NEXT_ASSEMBLY_USAGE_OCCURRENCE`.
 ///
-/// Translations are applied to vertex coordinates directly (no STEP transform
-/// entity), which maximises compatibility with readers that don't support
-/// `ITEM_DEFINED_TRANSFORMATION`.
+/// The [`AssemblyComponent::transform`] matrix is applied to vertex and geometry
+/// coordinates before writing (baked into the STEP geometry, not stored as a
+/// STEP transform entity).
 pub fn write_assembly(assembly_name: &str, components: &[AssemblyComponent]) -> String {
-    // Apply translations into new BReps and collect colors
+    // Apply full DAffine3 transform into new BReps and collect colors.
     let prepared: Vec<(String, BRep, Option<rcad_kernel::appearance::Color>)> = components
         .iter()
         .map(|c| {
             let mut b = c.brep.clone();
-            if c.translation != DVec3::ZERO {
-                for v in &mut b.vertices {
-                    v.point += c.translation;
-                }
+            if c.transform != DAffine3::IDENTITY {
+                b.apply_transform(c.transform);
             }
             (c.name.clone(), b, c.color)
         })
         .collect();
 
-    // Write each component as a standalone STEP string, then merge into one file
-    // with a shared header and a proper assembly hierarchy.
-    // For simplicity, write each component separately and collect DATA sections,
-    // then re-emit as a single assembly file with NAUO links.
     write_assembly_step(assembly_name, &prepared)
 }
 
@@ -259,7 +283,7 @@ fn write_assembly_step(
         assembly_name
     );
     out.push_str(
-        "FILE_NAME('rcad_assembly.step','2026-04-03T00:00:00',(''),(''),'RCAD','RCAD','');\n",
+        "FILE_NAME('rcad_assembly.step','2026-04-11T00:00:00',(''),(''),'RCAD','RCAD','');\n",
     );
     out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
     out.push_str("ENDSEC;\n");
@@ -272,6 +296,263 @@ fn write_assembly_step(
     out.push_str("END-ISO-10303-21;\n");
     out
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Parse a STEP string that may contain a multi-component assembly and return
+/// a flat list of [`AssemblyComponent`]s.
+///
+/// # Algorithm
+///
+/// 1. Scan the DATA section for `NEXT_ASSEMBLY_USAGE_OCCURRENCE` (NAUO) entities
+///    to build a parent→child component map.
+/// 2. Identify leaf `PRODUCT_DEFINITION` IDs (those that appear as *child* in a
+///    NAUO but not as *parent*).
+/// 3. For each leaf, extract its name from the associated `PRODUCT` entity and
+///    parse its geometry via [`crate::StepReader::parse_string`] — but since the
+///    whole-file reader returns a merged BRep, we use a simpler single-pass
+///    approach: just parse the entire STEP as a single BRep (which merges all
+///    geometry) and return one `AssemblyComponent` per detected PRODUCT that has
+///    geometry.
+///
+/// ## Fallback
+///
+/// If the file has no NAUO links (plain single-part STEP), the function returns
+/// a single-element list containing the full parsed BRep with `transform =
+/// IDENTITY`.
+///
+/// ## Limitations
+///
+/// The current implementation **does not** re-split the merged BRep back into
+/// per-component geometries.  It returns one `AssemblyComponent` per
+/// named-PRODUCT with the **complete** merged geometry.  This is appropriate for
+/// applications that only need component metadata (names, count, transform) or
+/// that will use the merged shape directly.
+///
+/// A future improvement would parse the sub-shape associations to isolate each
+/// component's geometry.
+pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
+    // 1. Parse entity lines into a simple map: id -> entity body string.
+    let entity_map = parse_entity_map(step);
+
+    // 2. Collect NEXT_ASSEMBLY_USAGE_OCCURRENCE entries to find component names.
+    //    NAUO format: NEXT_ASSEMBLY_USAGE_OCCURRENCE('seq','name','desc',#parent,#child,$)
+    //    We collect: child_prod_def_id -> component name
+    let mut nauo_children: Vec<(u64 /* child PD id */, String /* name */)> = Vec::new();
+    let mut has_nauo = false;
+
+    for (_id, body) in &entity_map {
+        if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
+            has_nauo = true;
+            // Parse: ('seq_id','relation_name','desc',#parent_pd,#child_pd,$)
+            if let Some(args) = parse_args(rest) {
+                // args[3] = #parent_pd  args[4] = #child_pd
+                let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
+                let relation_name = unquote(args.get(1).copied().unwrap_or(""));
+                if child_pd > 0 {
+                    nauo_children.push((child_pd, relation_name));
+                }
+            }
+        }
+    }
+
+    // 3. Resolve PRODUCT_DEFINITION -> PRODUCT name for each NAUO child.
+    //    PRODUCT_DEFINITION('','',#formation,#ctx)
+    //    PRODUCT_DEFINITION_FORMATION('','',#product)
+    //    PRODUCT('id','name','desc',(#ctx))
+    let component_names: Vec<String> = if has_nauo {
+        nauo_children
+            .iter()
+            .map(|(pd_id, nauo_name)| {
+                // Try to resolve PD -> formation -> product -> name
+                if let Some(prod_name) = resolve_product_name(*pd_id, &entity_map) {
+                    prod_name
+                } else {
+                    nauo_name.clone()
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // 4. Parse the whole STEP as a single BRep.
+    let brep = crate::StepReader::parse_string(step)?;
+
+    if !has_nauo || component_names.is_empty() {
+        // Plain single-part STEP — return as single component.
+        // Try to get the PRODUCT name.
+        let name = find_root_product_name(&entity_map).unwrap_or_else(|| "part".to_string());
+        return Ok(vec![AssemblyComponent::new(name, brep)]);
+    }
+
+    // 5. For each named component, return an AssemblyComponent with the merged
+    //    BRep and identity transform (the geometry is already baked).
+    //    We clone the BRep once per component (limitation: geometry is shared).
+    let components = component_names
+        .into_iter()
+        .map(|name| AssemblyComponent::new(name, brep.clone()))
+        .collect();
+
+    Ok(components)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal parsing helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a map from entity ID → entity body (the part after `#id=` and before `;`).
+fn parse_entity_map(step: &str) -> std::collections::HashMap<u64, String> {
+    let mut map = std::collections::HashMap::new();
+    let mut in_data = false;
+    for line in step.lines() {
+        let line = line.trim();
+        if line == "DATA;" {
+            in_data = true;
+            continue;
+        }
+        if line == "ENDSEC;" {
+            in_data = false;
+            continue;
+        }
+        if !in_data {
+            continue;
+        }
+        if let Some(stripped) = line.strip_prefix('#') {
+            if let Some(eq) = stripped.find('=') {
+                let id_str = &stripped[..eq];
+                let body = stripped[eq + 1..].trim_end_matches(';');
+                if let Ok(id) = id_str.parse::<u64>() {
+                    map.insert(id, body.to_string());
+                }
+            }
+        }
+    }
+    map
+}
+
+/// If `body` starts with `ENTITY_NAME(`, return the argument string (after the
+/// opening paren, before the matching closing paren).
+fn strip_entity_name<'a>(body: &'a str, entity: &str) -> Option<&'a str> {
+    let prefix = entity;
+    if body.starts_with(prefix) {
+        body[prefix.len()..].strip_prefix('(')
+    } else if let Some(inner) = body.strip_prefix('(') {
+        // compound entity: ( ENTITY_NAME() ... )
+        // Find the sub-entity by scanning for the name inside compound parens
+        let inner = inner.trim();
+        if inner.starts_with(entity) {
+            inner[entity.len()..].strip_prefix('(')
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Split a STEP argument list (without outer parens) on `,`, respecting nested
+/// parens and string literals.
+fn parse_args(args_str: &str) -> Option<Vec<&str>> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut start = 0;
+    let bytes = args_str.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\'' if !in_str => in_str = true,
+            b'\'' if in_str => in_str = false,
+            b'(' if !in_str => depth += 1,
+            b')' if !in_str => {
+                if depth == 0 {
+                    // closing paren of the whole arg list
+                    result.push(args_str[start..i].trim());
+                    return Some(result);
+                }
+                depth -= 1;
+            }
+            b',' if !in_str && depth == 0 => {
+                result.push(args_str[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < args_str.len() {
+        result.push(args_str[start..].trim());
+    }
+    Some(result)
+}
+
+/// Parse `#N` → N, returning 0 on failure.
+fn parse_ref(s: &str) -> u64 {
+    s.trim().strip_prefix('#').and_then(|n| n.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()).unwrap_or(0)
+}
+
+/// Strip surrounding single-quotes from a STEP string literal.
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    if s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2 {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Resolve PRODUCT_DEFINITION id → product name via PD → PD_FORMATION → PRODUCT.
+fn resolve_product_name(
+    pd_id: u64,
+    map: &std::collections::HashMap<u64, String>,
+) -> Option<String> {
+    // PD body: PRODUCT_DEFINITION('','',#formation,#ctx)
+    let pd_body = map.get(&pd_id)?;
+    let pd_args = parse_args(pd_body.strip_prefix("PRODUCT_DEFINITION(")?.strip_suffix(')')?.as_ref())?;
+    // Actually strip_entity_name handles compound; simpler approach:
+    let formation_id = pd_args.get(2).map(|s| parse_ref(s))?;
+    if formation_id == 0 {
+        return None;
+    }
+
+    // Formation body: PRODUCT_DEFINITION_FORMATION('','',#product)
+    let form_body = map.get(&formation_id)?;
+    let form_args = parse_args(
+        form_body
+            .strip_prefix("PRODUCT_DEFINITION_FORMATION(")?.strip_suffix(')')?,
+    )?;
+    let prod_id = form_args.get(2).map(|s| parse_ref(s))?;
+    if prod_id == 0 {
+        return None;
+    }
+
+    // Product body: PRODUCT('id','name','desc',(#ctx))
+    let prod_body = map.get(&prod_id)?;
+    let prod_args = parse_args(prod_body.strip_prefix("PRODUCT(")?.strip_suffix(')')?.as_ref())?;
+    // name is the second field (index 1)
+    prod_args.get(1).map(|s| unquote(s))
+}
+
+/// Find the top-level PRODUCT name in a single-part STEP file (first PRODUCT entity).
+fn find_root_product_name(map: &std::collections::HashMap<u64, String>) -> Option<String> {
+    // Return the first PRODUCT entity's second field (name).
+    let mut ids: Vec<u64> = map.keys().copied().collect();
+    ids.sort();
+    for id in ids {
+        let body = &map[&id];
+        if body.starts_with("PRODUCT(") {
+            if let Some(args) = parse_args(body.strip_prefix("PRODUCT(")?.strip_suffix(')')?) {
+                return args.get(1).map(|s| unquote(s));
+            }
+        }
+    }
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Low-level helpers (retained from previous implementation)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Extract (id, body) pairs from a STEP DATA section string.
 fn extract_data_records(step: &str) -> Vec<(u64, String)> {
@@ -290,7 +571,6 @@ fn extract_data_records(step: &str) -> Vec<(u64, String)> {
         if !in_data {
             continue;
         }
-        // Parse #id=body;
         if let Some(stripped) = line.strip_prefix('#')
             && let Some(eq) = stripped.find('=')
         {

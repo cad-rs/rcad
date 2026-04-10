@@ -140,7 +140,7 @@ fn chain_segments(segments: Vec<[DVec3; 2]>) -> Vec<Vec<DVec3>> {
         let mut extended = true;
         while extended {
             extended = false;
-            let tail = *chain.last().unwrap();
+            let tail = *chain.last().expect("chain is non-empty (initialized with 2 points)");
             for i in 0..remaining.len() {
                 if pts_close(remaining[i][0], tail) {
                     chain.push(remaining[i][1]);

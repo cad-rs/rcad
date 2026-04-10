@@ -196,8 +196,8 @@ impl DS {
                     continue;
                 }
                 Surface3::Cylinder(cyl) => {
-                    // Cylinder param from projection: u = azimuth [-π, π], v = height along axis.
-                    // Estimate height range from boundary vertices.
+                    // Cylinder param: u = azimuth [0, 2π] (matches CylindricalSurface::point_at),
+                    // v = height along axis.  Estimate height range from boundary edge samples.
                     let boundary_edges = self.faces[fi].boundary_edges.clone();
                     let mut h_min = f64::INFINITY;
                     let mut h_max = f64::NEG_INFINITY;
@@ -220,11 +220,14 @@ impl DS {
                     }
                     // Add small margin
                     let margin = (h_max - h_min) * 0.01 + 1e-9;
+                    // Use [0, 2π] to match CylindricalSurface::point_at parameterisation.
+                    // circle_pcurve_on_cylinder also uses u ∈ [0, 2π], so the trim polyline
+                    // will lie entirely inside this UV boundary.
                     let uv = vec![
-                        DVec2::new(-PI, h_min - margin),
-                        DVec2::new(PI, h_min - margin),
-                        DVec2::new(PI, h_max + margin),
-                        DVec2::new(-PI, h_max + margin),
+                        DVec2::new(0.0, h_min - margin),
+                        DVec2::new(2.0 * PI, h_min - margin),
+                        DVec2::new(2.0 * PI, h_max + margin),
+                        DVec2::new(0.0, h_max + margin),
                     ];
                     self.faces[fi].uv_boundary = Some(uv);
                     continue;

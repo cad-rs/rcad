@@ -1638,7 +1638,7 @@ fn compress_knot_vector(knots: &[f64]) -> (Vec<usize>, Vec<f64>) {
         if let Some(last) = vals.last()
             && (k - last).abs() < 1e-12
         {
-            *mults.last_mut().unwrap() += 1;
+            *mults.last_mut().expect("mults is non-empty by construction") += 1;
             continue;
         }
         vals.push(k);

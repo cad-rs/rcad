@@ -186,6 +186,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             normal: face.normal,
             uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
         }];
     }
 
@@ -208,6 +209,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 normal: face.normal,
                 uv_centroid: None,
                 sample_override: None,
+            uv_domain: None,
             }]
         }
     }
@@ -242,6 +244,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             normal: face.normal,
             uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
         }];
     }
 
@@ -278,6 +281,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
                 normal: face.normal,
                 uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
             }
         })
         .collect()
@@ -597,6 +601,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 normal: sub_normal,
                 uv_centroid: Some(centroid_uv),
                 sample_override: None,
+            uv_domain: None,
             }
         })
         .collect()
@@ -639,6 +644,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             normal,
             uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
         }];
     }
 
@@ -656,6 +662,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             normal,
             uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
         }];
     }
 
@@ -747,6 +754,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             normal,
             uv_centroid: None,
             sample_override: None,
+            uv_domain: None,
         })
         .collect()
 }

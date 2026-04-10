@@ -1,3 +1,6 @@
+pub mod assembly;
+pub use assembly::{Assembly, AssemblyNode, NodeContent, assembly_from_parts};
+
 use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};

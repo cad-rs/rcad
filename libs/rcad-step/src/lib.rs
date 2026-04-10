@@ -14,7 +14,7 @@ pub mod iges;
 pub mod obj_writer;
 pub mod writer;
 
-pub use assembly::{AssemblyComponent, write_assembly};
+pub use assembly::{AssemblyComponent, read_assembly, write_assembly};
 pub use iges::{IgesError, IgesReader, IgesWriter};
 pub use obj_writer::{ObjError, ObjReader, ObjWriter, write_obj};
 pub use writer::{ExportSelection, StepWriter};

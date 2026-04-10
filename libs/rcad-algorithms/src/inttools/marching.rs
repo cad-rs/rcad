@@ -250,7 +250,7 @@ pub fn march_intersection(
 
     // Check closure
     let is_closed =
-        points.len() > 2 && points_coincide(*points.first().unwrap(), *points.last().unwrap());
+        points.len() > 2 && points_coincide(*points.first().expect("points.len()>2"), *points.last().expect("points.len()>2"));
     if is_closed {
         points.pop();
     }

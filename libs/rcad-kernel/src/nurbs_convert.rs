@@ -186,7 +186,7 @@ fn sample_curve_to_bspline(curve: &Curve3, n: usize) -> BSplineCurve3 {
     interpolate_points(&pts).unwrap_or_else(|_| BSplineCurve3 {
         degree: 1,
         knots: vec![0.0, 0.0, 1.0, 1.0],
-        control_points: vec![pts[0], *pts.last().unwrap()],
+        control_points: vec![pts[0], *pts.last().expect("pts has n>=2 points")],
         weights: vec![1.0, 1.0],
     })
 }

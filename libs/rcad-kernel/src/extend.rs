@@ -227,7 +227,7 @@ pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3
             // and add an interior knot at (t_max + t_new)/2 to maintain valid
             // clamped structure: [..., t_max, t_max] → [..., t_max, t_ext, t_ext]
             // where t_ext = t_max + 1.
-            let t_max = *new_knots.last().unwrap();
+            let t_max = *new_knots.last().expect("knot vector is non-empty");
             let t_ext = t_max + 1.0;
             // Remove the last repeated knot, insert the interior + new endpoint
             // New knots: original_without_last_max, t_max, t_ext, t_ext
@@ -245,7 +245,7 @@ pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3
             new_w.push(1.0);
         }
         CurveEnd::Start => {
-            let t_min = *new_knots.first().unwrap();
+            let t_min = *new_knots.first().expect("knot vector is non-empty");
             let t_ext = t_min - 1.0;
             let n_first_min = new_knots
                 .iter()
@@ -262,8 +262,8 @@ pub fn extend_curve_to_point(curve: &BSplineCurve3, end: CurveEnd, target: DVec3
     }
 
     // Normalize knot vector to [0, 1]
-    let kmin = *new_knots.first().unwrap();
-    let kmax = *new_knots.last().unwrap();
+    let kmin = *new_knots.first().expect("knot vector is non-empty");
+    let kmax = *new_knots.last().expect("knot vector is non-empty");
     let krange = (kmax - kmin).max(1e-14);
     let norm_knots: Vec<f64> = new_knots.iter().map(|&k| (k - kmin) / krange).collect();
 
@@ -362,7 +362,7 @@ pub fn extend_bspline_surface(
             result.control_points.push(new_row);
             result.weights.push(new_w_row);
             // Extend knot vector
-            let last_k = *result.knots_u.last().unwrap();
+            let last_k = *result.knots_u.last().expect("knots_u is non-empty");
             let second_last_k = result.knots_u[result.knots_u.len() - 2];
             result
                 .knots_u
@@ -403,9 +403,9 @@ pub fn extend_bspline_surface(
                 }
                 let new_pt = 2.0 * row[n - 1] - row[n - 2] + normal_offset;
                 row.push(new_pt);
-                w_row.push(*w_row.last().unwrap());
+                w_row.push(*w_row.last().expect("w_row is non-empty"));
             }
-            let last_k = *result.knots_v.last().unwrap();
+            let last_k = *result.knots_v.last().expect("knots_v is non-empty");
             let second_last_k = result.knots_v[result.knots_v.len() - 2];
             result
                 .knots_v

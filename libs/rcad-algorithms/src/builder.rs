@@ -62,6 +62,11 @@ pub struct SubFace {
     /// fall in a different classification region (e.g. the outer annular region around
     /// an embedded circle, whose centroid falls inside the circle).
     pub sample_override: Option<DVec3>,
+    /// UV domain [u0, u1, v0, v1] of this sub-face's parameter-space region.
+    /// Propagated to `GeomStore.face_surface_range` in the result BRep so that
+    /// `tessellate_curved_face` uses the correct sub-domain instead of the full
+    /// surface domain.
+    pub uv_domain: Option<[f64; 4]>,
 }
 
 impl SubFace {
@@ -107,14 +112,14 @@ impl SubFace {
     }
 }
 
-type FaceEntry = (Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3);
+type FaceEntry = (Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3, Option<[f64; 4]>);
 
 /// Builds result BRep, deduplicating vertices and edges.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
     vertex_map: HashMap<u64, usize>, // hash of position → index
     edges: Vec<(usize, usize)>,
-    faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface)
+    faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
 }
 
@@ -185,7 +190,7 @@ impl ResultBuilder {
         }
 
         self.faces
-            .push((edge_indices, tris, normal, sub.surface.clone()));
+            .push((edge_indices, tris, normal, sub.surface.clone(), sub.uv_domain));
         self.face_origins.push(origin);
     }
 
@@ -205,7 +210,7 @@ impl ResultBuilder {
         let mut geom = rcad_kernel::GeomStore::default();
         let mut faces = Vec::new();
 
-        for (edge_indices, triangles, normal, surface) in self.faces {
+        for (edge_indices, triangles, normal, surface, uv_domain) in self.faces {
             let wire = Wire {
                 edges: edge_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
             };
@@ -219,6 +224,7 @@ impl ResultBuilder {
             let surf_idx = geom.surfaces.len();
             geom.surfaces.push(surface);
             geom.face_surface.push(Some(surf_idx));
+            geom.face_surface_range.push(uv_domain);
         }
 
         let history = BooleanHistory {
@@ -460,6 +466,7 @@ impl<'a> BooleanBuilder<'a> {
                 normal: face.normal,
                 uv_centroid: None,
                 sample_override: None,
+                uv_domain: None,
             }];
         }
 
@@ -482,7 +489,8 @@ impl<'a> BooleanBuilder<'a> {
                     surface: face.surface.clone(),
                     normal: face.normal,
                     uv_centroid: None,
-                sample_override: None,
+                    sample_override: None,
+                    uv_domain: None,
                 }]
             }
         }
@@ -626,6 +634,7 @@ impl<'a> BooleanBuilder<'a> {
                     normal: face.normal,
                     uv_centroid: None,
                     sample_override,
+                    uv_domain: None,
                 }
             })
             .collect()
@@ -682,6 +691,7 @@ impl<'a> BooleanBuilder<'a> {
                 normal,
                 uv_centroid: None,
                 sample_override: None,
+                uv_domain: None,
             }];
         }
 
@@ -699,6 +709,7 @@ impl<'a> BooleanBuilder<'a> {
                 normal,
                 uv_centroid: None,
                 sample_override: None,
+                uv_domain: None,
             }];
         }
 
@@ -794,6 +805,7 @@ impl<'a> BooleanBuilder<'a> {
                 normal,
                 uv_centroid: None,
                 sample_override: None,
+                uv_domain: None,
             })
             .collect()
     }
@@ -874,6 +886,21 @@ impl<'a> BooleanBuilder<'a> {
                 let n = uv_poly.len() as f64;
                 let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
 
+                // Compute the UV bounding box of this sub-polygon so that
+                // tessellate_curved_face samples only the correct sub-domain.
+                let u_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let u_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let uv_domain = if u_min.is_finite() && u_max.is_finite()
+                    && v_min.is_finite() && v_max.is_finite()
+                    && (u_max - u_min) > 1e-14 && (v_max - v_min) > 1e-14
+                {
+                    Some([u_min, u_max, v_min, v_max])
+                } else {
+                    None
+                };
+
                 let boundary: Vec<DVec3> = match &surface {
                     Surface3::Sphere(_) => {
                         // Sphere poles: v=0 and v=π are degenerate (all u map to one point).
@@ -898,6 +925,7 @@ impl<'a> BooleanBuilder<'a> {
                     normal: sub_normal,
                     uv_centroid: Some(centroid_uv),
                     sample_override: None,
+                    uv_domain,
                 }
             })
             .collect()
@@ -1031,29 +1059,28 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let trim_start = trim[0];
     let trim_end = trim[trim.len() - 1];
 
-    // Detect closed trim: start ≈ end in UV space
+    // Detect truly-closed trim: start ≈ end in UV space (e.g. a small loop entirely
+    // inside the face).  Wrapped-closed trims (start and end differ by ~2π in u,
+    // representing a full-circle cut around a cylinder or sphere) are intentionally
+    // NOT treated as closed loops here — they are open trims whose endpoints lie on
+    // opposite sides of the UV boundary seam and should split the face into two bands.
     let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
     if is_closed_trim {
-        // The trim is a closed loop. Check if it's inside the polygon.
-        // Use the trim as an interior boundary for "inside" and return
-        // [trim_polygon, outer_polygon].
+        // The trim is a truly closed loop entirely inside the polygon.
+        // Use the trim as an interior boundary and return [trim_polygon, outer_polygon].
         let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
         let is_inside = point_in_polygon_2d(poly, trim_centroid);
         if is_inside {
-            // Return: [trim polygon (inner cap), outer polygon (without cap)]
-            // Deduplicate closing point from trim if needed
-            let trim_dedup: Vec<DVec2> = {
-                let mut v = trim.to_vec();
-                if v.len() > 1 && (v[0] - v[v.len() - 1]).length_squared() < 1e-12 {
-                    v.pop();
-                }
-                v
-            };
+            let mut trim_dedup: Vec<DVec2> = trim.to_vec();
+            if trim_dedup.len() > 1
+                && (trim_dedup[0] - trim_dedup[trim_dedup.len() - 1]).length_squared() < 1e-12
+            {
+                trim_dedup.pop();
+            }
             if trim_dedup.len() >= 3 {
                 return vec![trim_dedup, poly.to_vec()];
             }
         }
-        // If trim centroid is not inside the polygon, can't split
         return vec![poly.to_vec()];
     }
 

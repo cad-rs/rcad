@@ -655,7 +655,7 @@ pub fn corner_blend(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep,
         let new_boundary = {
             let mut deduped: Vec<DVec3> = Vec::new();
             for p in new_boundary {
-                if deduped.is_empty() || !points_coincide(*deduped.last().unwrap(), p) {
+                if deduped.is_empty() || !points_coincide(*deduped.last().expect("deduped is non-empty"), p) {
                     deduped.push(p);
                 }
             }

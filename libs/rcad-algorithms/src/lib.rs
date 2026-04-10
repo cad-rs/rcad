@@ -72,11 +72,12 @@ pub fn boolean_op_with_history(
 ///
 /// # Example
 /// ```rust,no_run
-/// use rcad_algorithms::{boolean_op_par, BooleanOpType};
+/// use rcad_algorithms::{boolean_op_par, BooleanOpType, history::BooleanHistory};
 /// use rcad_kernel::BRep;
 ///
 /// fn parallel_union(a: &BRep, b: &BRep) -> BRep {
-///     boolean_op_par(BooleanOpType::Union, a, b).unwrap()
+///     let (brep, _history) = boolean_op_par(BooleanOpType::Union, a, b).unwrap();
+///     brep
 /// }
 /// ```
 pub fn boolean_op_par(
@@ -503,9 +504,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "volume conservation requires accurate volume computation for curved surface \
-                result faces; the divergence-theorem volume currently returns 0 for sphere \
-                faces due to missing triangulation in the primitive BRep"]
     fn volume_conservation_box_sphere() {
         // V(A∪B) ≈ V(A) + V(B) - V(A∩B), error < 5%
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
@@ -525,10 +523,30 @@ mod tests {
             inter_result.err()
         );
 
+        let union_brep = union_result.unwrap();
+        let inter_brep = inter_result.unwrap();
+
         let v_a = rcad_kernel::properties::volume(&a);
         let v_b = rcad_kernel::properties::volume(&b);
-        let v_union = rcad_kernel::properties::volume(&union_result.unwrap());
-        let v_inter = rcad_kernel::properties::volume(&inter_result.unwrap());
+        let v_union = rcad_kernel::properties::volume(&union_brep);
+        let v_inter = rcad_kernel::properties::volume(&inter_brep);
+
+        // Debug values — show face count and uv_domains
+        eprintln!("V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}");
+        eprintln!(
+            "Union faces={}, inter faces={}",
+            union_brep.solids[0].shells[0].faces.len(),
+            inter_brep.solids[0].shells[0].faces.len()
+        );
+        for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
+            let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
+            let surf_name = inter_brep.geom.face_surface.get(i).and_then(|o| *o)
+                .map(|si| format!("{:?}", std::mem::discriminant(&inter_brep.geom.surfaces[si])));
+            // Compute per-face contribution to volume
+            let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
+            let face_vol: f64 = face_tris.iter().map(|&[a,b,c]| a.dot(b.cross(c)) / 6.0).sum();
+            eprintln!("  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}", face.normal);
+        }
 
         let expected = v_a + v_b - v_inter;
         let error = (v_union - expected).abs() / expected;
@@ -540,8 +558,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sphere-sphere UV splitting and volume conservation both require more \
-                complete implementation of the Boolean pipeline for curved surfaces"]
+    #[ignore = "sphere-sphere boolean volume not yet correct: intersection faces cancel \
+                in divergence-theorem sum (net≈0) and union result is topologically \
+                incomplete (2 faces instead of expected composite); tracked as P0-B"]
     fn volume_conservation_spheres() {
         // V(A∪B) ≈ V(A) + V(B) - V(A∩B), error < 5%
         let a = make_sphere_brep(DVec3::new(-0.5, 0.0, 0.0), 1.0).unwrap();
@@ -561,10 +580,28 @@ mod tests {
             inter_result.err()
         );
 
+        let union_brep = union_result.unwrap();
+        let inter_brep = inter_result.unwrap();
+
         let v_a = rcad_kernel::properties::volume(&a);
         let v_b = rcad_kernel::properties::volume(&b);
-        let v_union = rcad_kernel::properties::volume(&union_result.unwrap());
-        let v_inter = rcad_kernel::properties::volume(&inter_result.unwrap());
+        let v_union = rcad_kernel::properties::volume(&union_brep);
+        let v_inter = rcad_kernel::properties::volume(&inter_brep);
+
+        eprintln!("sphere-sphere: V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}");
+        eprintln!(
+            "Union faces={}, inter faces={}",
+            union_brep.solids[0].shells[0].faces.len(),
+            inter_brep.solids[0].shells[0].faces.len()
+        );
+        for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
+            let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
+            let surf_name = inter_brep.geom.face_surface.get(i).and_then(|o| *o)
+                .map(|si| format!("{:?}", std::mem::discriminant(&inter_brep.geom.surfaces[si])));
+            let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
+            let face_vol: f64 = face_tris.iter().map(|&[a,b,c]| a.dot(b.cross(c)) / 6.0).sum();
+            eprintln!("  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}", face.normal);
+        }
 
         let expected = v_a + v_b - v_inter;
         let error = (v_union - expected).abs() / expected;

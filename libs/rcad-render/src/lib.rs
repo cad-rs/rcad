@@ -592,12 +592,22 @@ fn point_segment_distance_2d(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
     ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt()
 }
 
+#[allow(dead_code)]
 struct AxisBuffers {
     vertex_buffer: wgpu::Buffer,
     tri_index_buffer: wgpu::Buffer,
     tri_index_count: u32,
     line_index_buffer: wgpu::Buffer,
     line_index_count: u32,
+}
+
+impl std::fmt::Debug for AxisBuffers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AxisBuffers")
+            .field("tri_index_count", &self.tri_index_count)
+            .field("line_index_count", &self.line_index_count)
+            .finish_non_exhaustive()
+    }
 }
 
 fn build_axis_arrow_mesh(

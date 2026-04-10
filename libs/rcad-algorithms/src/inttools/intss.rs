@@ -649,8 +649,6 @@ fn torus_x_plane(
     torus: &rcad_kernel::geom::ToroidalSurface,
     plane: &rcad_kernel::geom::Plane,
 ) -> SurfaceSurfaceIntersection {
-    use std::f64::consts::PI;
-
     let axis = torus.axis.normalize();
     let normal = plane.normal.normalize();
 
@@ -747,7 +745,7 @@ fn pcurve_for_torus_circle(
     torus: &rcad_kernel::geom::ToroidalSurface,
     circle_center: DVec3,
     circle_radius: f64,
-    plane: &rcad_kernel::geom::Plane,
+    _plane: &rcad_kernel::geom::Plane,
 ) -> rcad_kernel::geom::Curve2d {
     use rcad_kernel::projection::closest_point_on_surface;
 
@@ -1011,7 +1009,7 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
         let mut chain = vec![pts[start]];
 
         loop {
-            let last = *chain.last().unwrap();
+            let last = *chain.last().expect("chain is non-empty (starts with 1 element)");
             // Find nearest unused point within gap_tol
             let mut best_dist = gap_tol;
             let mut best_idx = None;
@@ -1044,9 +1042,9 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
         changed = false;
         'outer: for i in 0..chains.len() {
             for j in (i + 1)..chains.len() {
-                let end_i = *chains[i].last().unwrap();
+                let end_i = *chains[i].last().expect("chains[i] is non-empty");
                 let start_j = chains[j][0];
-                let end_j = *chains[j].last().unwrap();
+                let end_j = *chains[j].last().expect("chains[j] is non-empty");
                 let start_i = chains[i][0];
 
                 // Determine merge direction
