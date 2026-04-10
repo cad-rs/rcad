@@ -387,6 +387,10 @@ impl<'a> PaveFiller<'a> {
                 let (sph, cyl) = (*sph, *cyl);
                 self.intersect_sphere_cylinder_faces(f1, f2, &sph, &cyl);
             }
+            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                let (c1, c2) = (*c1, *c2);
+                self.intersect_cylinder_cylinder_faces(f1, f2, &c1, &c2);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -756,6 +760,266 @@ impl<'a> PaveFiller<'a> {
                     points: vec![],
                 });
             }
+        }
+    }
+
+    // ── Cylinder × Cylinder analytic face-face intersection ──────────────────
+
+    fn intersect_cylinder_cylinder_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        cyl1: &CylindricalSurface,
+        cyl2: &CylindricalSurface,
+    ) {
+        use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_cylinder, ellipse_pcurve_on_plane, fallback_pcurve_by_projection,
+            line_pcurve_on_cylinder, line_pcurve_on_plane,
+        };
+        use std::f64::consts::TAU;
+
+        // Determine which face is cyl1 (for pcurve_on_a/b ordering)
+        let cyl1_is_f1 = {
+            if let Surface3::Cylinder(c) = &self.ds.faces[f1].surface {
+                (c.origin - cyl1.origin).length_squared() < 1e-10
+                    && (c.axis - cyl1.axis).length_squared() < 1e-10
+            } else {
+                false
+            }
+        };
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if cyl1_is_f1 {
+                (Some(pca), Some(pcb))
+            } else {
+                (Some(pcb), Some(pca))
+            }
+        };
+
+        // Helper: push a circle intersection curve and register it with both faces.
+        let add_circle =
+            |ds: &mut DS,
+             circle: &Circle3,
+             pcurve_on_a: Option<Curve2d>,
+             pcurve_on_b: Option<Curve2d>,
+             f1: usize,
+             f2: usize|
+             -> usize {
+                let pts = sample_circle_arc(circle, 0.0, TAU, 32);
+                let v_start = ds.add_vertex(pts[0]);
+                let v_end = ds.add_vertex(pts[pts.len() - 1]);
+                let ci = ds.intersection_curves.len();
+                ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(*circle),
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, TAU],
+                    pcurve_on_a,
+                    pcurve_on_b,
+                });
+                ds.faces[f1].face_info.curves_in.insert(ci);
+                ds.faces[f2].face_info.curves_in.insert(ci);
+                ds.faces[f1].face_info.vertices_in.insert(v_start);
+                ds.faces[f1].face_info.vertices_in.insert(v_end);
+                ds.faces[f2].face_info.vertices_in.insert(v_start);
+                ds.faces[f2].face_info.vertices_in.insert(v_end);
+                ci
+            };
+
+        // Helper: push a line generator intersection and register it.
+        let add_line = |ds: &mut DS,
+                        line: &Line3,
+                        t_range: [f64; 2],
+                        pcurve_on_a: Option<Curve2d>,
+                        pcurve_on_b: Option<Curve2d>,
+                        f1: usize,
+                        f2: usize|
+         -> usize {
+            use rcad_kernel::CurveEval;
+            let v_start = ds.add_vertex(Curve3::Line(*line).point_at(t_range[0]));
+            let v_end = ds.add_vertex(Curve3::Line(*line).point_at(t_range[1]));
+            let ci = ds.intersection_curves.len();
+            ds.intersection_curves.push(IntersectionCurve {
+                curve: Curve3::Line(*line),
+                polyline: vec![],
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range,
+                pcurve_on_a,
+                pcurve_on_b,
+            });
+            ds.faces[f1].face_info.curves_in.insert(ci);
+            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.vertices_in.insert(v_start);
+            ds.faces[f1].face_info.vertices_in.insert(v_end);
+            ds.faces[f2].face_info.vertices_in.insert(v_start);
+            ds.faces[f2].face_info.vertices_in.insert(v_end);
+            ci
+        };
+
+        // Helper: push an ellipse intersection and register it.
+        let add_ellipse = |ds: &mut DS,
+                           ellipse: &Ellipse3,
+                           pcurve_on_a: Option<Curve2d>,
+                           pcurve_on_b: Option<Curve2d>,
+                           f1: usize,
+                           f2: usize|
+         -> usize {
+            let pts = sample_circle_arc(
+                &Circle3 {
+                    center: ellipse.center,
+                    normal: ellipse.normal,
+                    radius: ellipse.major_radius.max(ellipse.minor_radius),
+                },
+                0.0,
+                TAU,
+                32,
+            );
+            let v_start = ds.add_vertex(pts[0]);
+            let v_end = ds.add_vertex(pts[pts.len() - 1]);
+            let ci = ds.intersection_curves.len();
+            ds.intersection_curves.push(IntersectionCurve {
+                curve: Curve3::Ellipse(*ellipse),
+                polyline: vec![],
+                start_vertex: v_start,
+                end_vertex: v_end,
+                t_range: [0.0, TAU],
+                pcurve_on_a,
+                pcurve_on_b,
+            });
+            ds.faces[f1].face_info.curves_in.insert(ci);
+            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.vertices_in.insert(v_start);
+            ds.faces[f1].face_info.vertices_in.insert(v_end);
+            ds.faces[f2].face_info.vertices_in.insert(v_start);
+            ds.faces[f2].face_info.vertices_in.insert(v_end);
+            ci
+        };
+
+        let extent = 20.0_f64;
+        let mut curve_indices = Vec::new();
+
+        match intersect_cylinder_cylinder(cyl1, cyl2) {
+            CylinderCylinderResult::NoIntersection | CylinderCylinderResult::Coaxial => return,
+
+            CylinderCylinderResult::General => {
+                // Fall back to numeric marching for skew/oblique cases.
+                self.intersect_ff_by_marching(f1, f2);
+                return;
+            }
+
+            CylinderCylinderResult::OneGeneratorLine(line) => {
+                let pca = line_pcurve_on_cylinder(&line, cyl1);
+                let pcb = line_pcurve_on_cylinder(&line, cyl2);
+                let (pca, pcb) = make_pcurves(pca, pcb);
+                let ci = add_line(self.ds, &line, [-extent, extent], pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
+
+            CylinderCylinderResult::TwoGeneratorLines(l1, l2) => {
+                let pca1 = line_pcurve_on_cylinder(&l1, cyl1);
+                let pcb1 = line_pcurve_on_cylinder(&l1, cyl2);
+                let (pca1, pcb1) = make_pcurves(pca1, pcb1);
+                let ci1 = add_line(self.ds, &l1, [-extent, extent], pca1, pcb1, f1, f2);
+
+                let pca2 = line_pcurve_on_cylinder(&l2, cyl1);
+                let pcb2 = line_pcurve_on_cylinder(&l2, cyl2);
+                let (pca2, pcb2) = make_pcurves(pca2, pcb2);
+                let ci2 = add_line(self.ds, &l2, [-extent, extent], pca2, pcb2, f1, f2);
+
+                curve_indices.push(ci1);
+                curve_indices.push(ci2);
+            }
+
+            CylinderCylinderResult::TwoCircles(c1, c2) => {
+                // Perpendicular Steinmetz equal-radii: circles in diagonal planes.
+                // PCurves for the cylinder surfaces use projection fallback since
+                // these circles are not latitude or generator lines.
+                let pca1 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(c1),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl1),
+                );
+                let pcb1 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(c1),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl2),
+                );
+                let (pca1, pcb1) = make_pcurves(pca1, pcb1);
+                let ci1 = add_circle(self.ds, &c1, pca1, pcb1, f1, f2);
+
+                let pca2 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(c2),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl1),
+                );
+                let pcb2 = fallback_pcurve_by_projection(
+                    &Curve3::Circle(c2),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl2),
+                );
+                let (pca2, pcb2) = make_pcurves(pca2, pcb2);
+                let ci2 = add_circle(self.ds, &c2, pca2, pcb2, f1, f2);
+
+                curve_indices.push(ci1);
+                curve_indices.push(ci2);
+            }
+
+            CylinderCylinderResult::TwoEllipses(e1, e2) => {
+                // Perpendicular Steinmetz unequal-radii.
+                // Each ellipse lies in a plane; use ellipse_pcurve_on_plane for the
+                // plane PCurve and fallback for the cylinder PCurve.
+                let plane1 = rcad_kernel::geom::Plane {
+                    origin: e1.center,
+                    normal: e1.normal,
+                };
+                let plane2 = rcad_kernel::geom::Plane {
+                    origin: e2.center,
+                    normal: e2.normal,
+                };
+
+                let pca1 = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(e1),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl1),
+                );
+                let pcb1 = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(e1),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl2),
+                );
+                let (pca1, pcb1) = make_pcurves(pca1, pcb1);
+                let ci1 = add_ellipse(self.ds, &e1, pca1, pcb1, f1, f2);
+
+                let pca2 = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(e2),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl1),
+                );
+                let pcb2 = fallback_pcurve_by_projection(
+                    &Curve3::Ellipse(e2),
+                    &[0.0, TAU],
+                    &Surface3::Cylinder(*cyl2),
+                );
+                let (pca2, pcb2) = make_pcurves(pca2, pcb2);
+                let ci2 = add_ellipse(self.ds, &e2, pca2, pcb2, f1, f2);
+
+                curve_indices.push(ci1);
+                curve_indices.push(ci2);
+
+                let _ = (plane1, plane2); // suppress warnings
+            }
+        }
+
+        if !curve_indices.is_empty() {
+            self.ds.interferences.push(Interference::FaceFace {
+                f1,
+                f2,
+                curves: curve_indices,
+                points: vec![],
+            });
         }
     }
 
