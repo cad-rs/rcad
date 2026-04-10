@@ -892,6 +892,103 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
     }
 }
 
+// ── Analytic curve derivative helpers ────────────────────────────────────────
+
+/// Analytic tangent for a rational B-Spline curve (NURBS) using the quotient rule.
+///
+/// The derivative of C(t) = A(t)/W(t) is:
+///   C'(t) = (A'(t) − W'(t)·C(t)) / W(t)
+///
+/// A'(t) and W'(t) are degree-(p−1) B-Splines with control points:
+///   A'_i = p · (w_{i+1}·P_{i+1} − w_i·P_i) / (t_{i+p+1} − t_{i+1})
+///   W'_i = p · (w_{i+1} − w_i)              / (t_{i+p+1} − t_{i+1})
+///
+/// Returns the unnormalised derivative vector (caller normalises if needed).
+fn bspline_tangent_analytic(
+    degree: usize,
+    knots: &[f64],
+    points: &[DVec3],
+    weights: &[f64],
+    t: f64,
+) -> DVec3 {
+    let n = points.len();
+    if n < 2 || degree == 0 {
+        return DVec3::ZERO;
+    }
+
+    let p = degree as f64;
+    let m = n - 1; // number of derivative control points
+
+    let mut a_prime: Vec<DVec3> = Vec::with_capacity(m);
+    let mut w_prime: Vec<DVec3> = Vec::with_capacity(m); // scalar stored in .x
+    for i in 0..m {
+        let denom = knots[i + degree + 1] - knots[i + 1];
+        if denom.abs() < 1e-15 {
+            a_prime.push(DVec3::ZERO);
+            w_prime.push(DVec3::ZERO);
+        } else {
+            let s = p / denom;
+            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
+            w_prime.push(DVec3::new(s * (weights[i + 1] - weights[i]), 0.0, 0.0));
+        }
+    }
+
+    let deriv_knots = &knots[1..knots.len() - 1];
+    let unit = vec![1.0f64; m];
+
+    // A'(t): non-rational B-Spline of degree p-1
+    let a_prime_t = de_boor(degree - 1, deriv_knots, &a_prime, &unit, t);
+    // W'(t): scalar B-Spline of degree p-1 (embedded in .x)
+    let w_prime_t = de_boor(degree - 1, deriv_knots, &w_prime, &unit, t).x;
+
+    // W(t) and C(t) from the homogeneous evaluation
+    let h = de_boor_homo(degree, knots, points, weights, t);
+    let w_t = h[3];
+    if w_t.abs() < 1e-15 {
+        return DVec3::ZERO;
+    }
+    let c_t = DVec3::new(h[0] / w_t, h[1] / w_t, h[2] / w_t);
+
+    (a_prime_t - w_prime_t * c_t) / w_t
+}
+
+/// Analytic tangent for a rational Bezier curve using the quotient rule.
+///
+/// The derivative of a degree-n Bezier is a degree-(n−1) Bezier with:
+///   A'_i = n·(w_{i+1}·P_{i+1} − w_i·P_i)
+///   W'_i = n·(w_{i+1} − w_i)
+fn bezier_tangent_analytic(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
+    let n = points.len();
+    if n < 2 {
+        return DVec3::ZERO;
+    }
+    let deg = (n - 1) as f64;
+
+    let mut a_prime: Vec<DVec3> = Vec::with_capacity(n - 1);
+    let mut w_prime: Vec<DVec3> = Vec::with_capacity(n - 1);
+    for i in 0..n - 1 {
+        a_prime.push(deg * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
+        w_prime.push(DVec3::new(deg * (weights[i + 1] - weights[i]), 0.0, 0.0));
+    }
+
+    let unit = vec![1.0f64; n - 1];
+    let a_prime_t = de_casteljau_3d(&a_prime, &unit, t);
+    let w_prime_t = de_casteljau_3d(&w_prime, &unit, t).x;
+
+    // W(t): evaluate weights as scalar Bezier (embed in .x with unit weights)
+    let w_pts: Vec<DVec3> = weights.iter().map(|&w| DVec3::new(w, 0.0, 0.0)).collect();
+    let w_unit = vec![1.0f64; n]; // n elements to match w_pts
+    let w_t = de_casteljau_3d(&w_pts, &w_unit, t).x;
+    if w_t.abs() < 1e-15 {
+        return DVec3::ZERO;
+    }
+
+    // C(t) from the standard rational evaluation
+    let c_t = de_casteljau_3d(points, weights, t);
+
+    (a_prime_t - w_prime_t * c_t) / w_t
+}
+
 impl CurveEval for BSplineCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         de_boor(
@@ -903,15 +1000,8 @@ impl CurveEval for BSplineCurve3 {
         )
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        // Central difference approximation
-        let eps = (self.default_domain()[1] - self.default_domain()[0]) * 1e-6;
-        let t0 = self.default_domain()[0];
-        let t1 = self.default_domain()[1];
-        let t_lo = (t - eps).max(t0);
-        let t_hi = (t + eps).min(t1);
-        let dp = self.point_at(t_hi) - self.point_at(t_lo);
-        let len = dp.length();
-        if len < 1e-15 { DVec3::X } else { dp / len }
+        bspline_tangent_analytic(self.degree, &self.knots, &self.control_points, &self.weights, t)
+            .normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
@@ -1113,12 +1203,7 @@ impl CurveEval for BezierCurve3 {
         de_casteljau_3d(&self.control_points, &self.weights, t)
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        let eps = 1e-6;
-        let t_lo = (t - eps).max(0.0);
-        let t_hi = (t + eps).min(1.0);
-        let dp = self.point_at(t_hi) - self.point_at(t_lo);
-        let len = dp.length();
-        if len < 1e-15 { DVec3::X } else { dp / len }
+        bezier_tangent_analytic(&self.control_points, &self.weights, t).normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 1.0]
@@ -1354,6 +1439,62 @@ mod eval_tests {
                 let tube_center = t.center + t.major_radius * (u.cos() * x_ax + u.sin() * y_ax);
                 assert!((p - tube_center).length() - 1.0 < 1e-9, "u={u} v={v}");
             }
+        }
+    }
+
+    // ── Analytic derivative tests ─────────────────────────────────────────────
+
+    /// Quadratic Bezier: P0=(0,0,0), P1=(0.5,1,0), P2=(1,0,0), unit weights.
+    /// Analytic tangent at t=0 should be (0.5,1,0).normalize() = (1,2,0)/√5.
+    #[test]
+    fn bezier_tangent_at_endpoint_analytic() {
+        let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
+        let wts = vec![1.0, 1.0, 1.0];
+        let c = BezierCurve3 { control_points: pts, weights: wts };
+        let tan = c.tangent_at(0.0);
+        let expected = DVec3::new(1.0, 2.0, 0.0).normalize();
+        assert!((tan - expected).length() < 1e-10, "tan={tan:?} expected={expected:?}");
+    }
+
+    /// Quadratic Bezier tangent at t=1 should be (1,-2,0)/√5.
+    #[test]
+    fn bezier_tangent_at_end_analytic() {
+        let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
+        let wts = vec![1.0, 1.0, 1.0];
+        let c = BezierCurve3 { control_points: pts, weights: wts };
+        let tan = c.tangent_at(1.0);
+        let expected = DVec3::new(1.0, -2.0, 0.0).normalize();
+        assert!((tan - expected).length() < 1e-10, "tan={tan:?} expected={expected:?}");
+    }
+
+    /// Degree-1 B-Spline (polyline): tangent should be constant along each segment.
+    #[test]
+    fn bspline_degree1_tangent_is_segment_direction() {
+        // Two-segment polyline: (0,0,0)→(1,0,0)→(1,1,0)
+        let pts = vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)];
+        let wts = vec![1.0, 1.0, 1.0];
+        let knots = vec![0.0, 0.0, 0.5, 1.0, 1.0];
+        let c = BSplineCurve3 { degree: 1, knots, control_points: pts, weights: wts };
+        let tan0 = c.tangent_at(0.1);
+        assert!((tan0 - DVec3::X).length() < 1e-10, "first segment should be +X, got {tan0:?}");
+        let tan1 = c.tangent_at(0.9);
+        assert!((tan1 - DVec3::Y).length() < 1e-10, "second segment should be +Y, got {tan1:?}");
+    }
+
+    /// Degree-2 B-Spline circle arc: tangent should be perpendicular to radius.
+    #[test]
+    fn bspline_circle_tangent_perpendicular_to_radius() {
+        // Use circle_to_bspline to get an exact NURBS circle, then check tangents.
+        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+        let c = crate::nurbs_convert::circle_to_bspline(&circle);
+        for &t in &[0.0, 0.5, 1.0, 1.5, 2.0] {
+            let pt = c.point_at(t);
+            let tan = c.tangent_at(t);
+            // Tangent must be perpendicular to the radius vector
+            let dot = pt.normalize_or_zero().dot(tan);
+            assert!(dot.abs() < 1e-8, "t={t}: radius·tangent={dot} (should be 0)");
+            // Tangent must be a unit vector
+            assert!((tan.length() - 1.0).abs() < 1e-10, "t={t}: |tan|={}", tan.length());
         }
     }
 }
