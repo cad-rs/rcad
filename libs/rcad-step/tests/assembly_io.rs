@@ -101,8 +101,42 @@ fn single_part_step_returns_one_component() {
     );
 }
 
-/// Full affine transform (rotation): write_assembly bakes DAffine3 rotation.
-/// Verify the STEP string round-trip completes without panic.
+/// Two boxes at different positions: after write+read each component should
+/// contain only its own vertices (not the other component's geometry).
+#[test]
+fn assembly_components_have_isolated_geometry() {
+    let comp_a = AssemblyComponent::new("box_at_origin", make_box(DVec3::ZERO));
+    let comp_b = AssemblyComponent::new(
+        "box_at_10",
+        make_box(DVec3::new(10.0, 0.0, 0.0)),
+    );
+
+    let step = write_assembly("isolation_test", &[comp_a, comp_b]);
+    let components = read_assembly(&step).expect("read_assembly failed");
+    assert_eq!(components.len(), 2);
+
+    // Find each component by name
+    let a = components.iter().find(|c| c.name == "box_at_origin").expect("box_at_origin missing");
+    let b = components.iter().find(|c| c.name == "box_at_10").expect("box_at_10 missing");
+
+    // box_at_origin: all vertices should have x in [0, 1]
+    for v in &a.brep.vertices {
+        assert!(
+            v.point.x >= -0.01 && v.point.x <= 1.01,
+            "box_at_origin vertex x={} out of [0,1]",
+            v.point.x
+        );
+    }
+
+    // box_at_10: all vertices should have x in [10, 11]
+    for v in &b.brep.vertices {
+        assert!(
+            v.point.x >= 9.99 && v.point.x <= 11.01,
+            "box_at_10 vertex x={} out of [10,11]",
+            v.point.x
+        );
+    }
+}
 #[test]
 fn assembly_with_rotation_no_panic() {
     use std::f64::consts::FRAC_PI_4;

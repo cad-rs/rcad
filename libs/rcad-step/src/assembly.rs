@@ -20,6 +20,8 @@
 //! entities. This maximises compatibility with STEP readers that do not support
 //! AP214 transformation entities.
 
+use std::collections::{HashMap, HashSet};
+
 use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::appearance::StepColor;
@@ -308,14 +310,13 @@ fn write_assembly_step(
 ///
 /// 1. Scan the DATA section for `NEXT_ASSEMBLY_USAGE_OCCURRENCE` (NAUO) entities
 ///    to build a parent→child component map.
-/// 2. Identify leaf `PRODUCT_DEFINITION` IDs (those that appear as *child* in a
-///    NAUO but not as *parent*).
-/// 3. For each leaf, extract its name from the associated `PRODUCT` entity and
-///    parse its geometry via [`crate::StepReader::parse_string`] — but since the
-///    whole-file reader returns a merged BRep, we use a simpler single-pass
-///    approach: just parse the entire STEP as a single BRep (which merges all
-///    geometry) and return one `AssemblyComponent` per detected PRODUCT that has
-///    geometry.
+/// 2. For each NAUO child `PRODUCT_DEFINITION`, trace the chain:
+///    `PRODUCT_DEFINITION` → `PRODUCT_DEFINITION_SHAPE` →
+///    `SHAPE_DEFINITION_REPRESENTATION` → `SHAPE_REPRESENTATION`.
+/// 3. BFS-collect all entity IDs reachable from that shape representation
+///    (geometry, surfaces, curves, vertices, units, context, …).
+/// 4. Build a self-contained sub-STEP string for each component and parse it
+///    with [`crate::StepReader`] to obtain an isolated [`BRep`].
 ///
 /// ## Fallback
 ///
@@ -323,32 +324,21 @@ fn write_assembly_step(
 /// a single-element list containing the full parsed BRep with `transform =
 /// IDENTITY`.
 ///
-/// ## Limitations
-///
-/// The current implementation **does not** re-split the merged BRep back into
-/// per-component geometries.  It returns one `AssemblyComponent` per
-/// named-PRODUCT with the **complete** merged geometry.  This is appropriate for
-/// applications that only need component metadata (names, count, transform) or
-/// that will use the merged shape directly.
-///
-/// A future improvement would parse the sub-shape associations to isolate each
-/// component's geometry.
+/// If a component's shape representation chain cannot be resolved (e.g. a
+/// third-party file with non-standard structure), that component falls back to
+/// the full merged BRep.
 pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
-    // 1. Parse entity lines into a simple map: id -> entity body string.
     let entity_map = parse_entity_map(step);
+    let reverse_map = build_reverse_map(&entity_map);
 
-    // 2. Collect NEXT_ASSEMBLY_USAGE_OCCURRENCE entries to find component names.
-    //    NAUO format: NEXT_ASSEMBLY_USAGE_OCCURRENCE('seq','name','desc',#parent,#child,$)
-    //    We collect: child_prod_def_id -> component name
-    let mut nauo_children: Vec<(u64 /* child PD id */, String /* name */)> = Vec::new();
+    // Collect NAUO children: child PRODUCT_DEFINITION id + relation name
+    let mut nauo_children: Vec<(u64, String)> = Vec::new();
     let mut has_nauo = false;
 
     for (_id, body) in &entity_map {
         if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
             has_nauo = true;
-            // Parse: ('seq_id','relation_name','desc',#parent_pd,#child_pd,$)
             if let Some(args) = parse_args(rest) {
-                // args[3] = #parent_pd  args[4] = #child_pd
                 let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
                 let relation_name = unquote(args.get(1).copied().unwrap_or(""));
                 if child_pd > 0 {
@@ -358,43 +348,36 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
         }
     }
 
-    // 3. Resolve PRODUCT_DEFINITION -> PRODUCT name for each NAUO child.
-    //    PRODUCT_DEFINITION('','',#formation,#ctx)
-    //    PRODUCT_DEFINITION_FORMATION('','',#product)
-    //    PRODUCT('id','name','desc',(#ctx))
-    let component_names: Vec<String> = if has_nauo {
-        nauo_children
-            .iter()
-            .map(|(pd_id, nauo_name)| {
-                // Try to resolve PD -> formation -> product -> name
-                if let Some(prod_name) = resolve_product_name(*pd_id, &entity_map) {
-                    prod_name
-                } else {
-                    nauo_name.clone()
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    // 4. Parse the whole STEP as a single BRep.
-    let brep = crate::StepReader::parse_string(step)?;
-
-    if !has_nauo || component_names.is_empty() {
-        // Plain single-part STEP — return as single component.
-        // Try to get the PRODUCT name.
+    if !has_nauo || nauo_children.is_empty() {
+        let brep = crate::StepReader::parse_string(step)?;
         let name = find_root_product_name(&entity_map).unwrap_or_else(|| "part".to_string());
         return Ok(vec![AssemblyComponent::new(name, brep)]);
     }
 
-    // 5. For each named component, return an AssemblyComponent with the merged
-    //    BRep and identity transform (the geometry is already baked).
-    //    We clone the BRep once per component (limitation: geometry is shared).
-    let components = component_names
-        .into_iter()
-        .map(|name| AssemblyComponent::new(name, brep.clone()))
-        .collect();
+    // Parse the whole STEP once as a fallback for components whose geometry
+    // cannot be isolated (e.g. third-party files with unusual structure).
+    let merged_brep = crate::StepReader::parse_string(step)?;
+
+    let mut components = Vec::new();
+    for (pd_id, nauo_name) in &nauo_children {
+        let name = resolve_product_name(*pd_id, &entity_map)
+            .unwrap_or_else(|| nauo_name.clone());
+
+        let brep = if let Some(sr_id) =
+            find_shape_rep_for_pd(*pd_id, &entity_map, &reverse_map)
+        {
+            // BFS-collect all entities reachable from this component's shape
+            // representation, then build a self-contained sub-STEP string.
+            let reachable = collect_reachable(sr_id, &entity_map);
+            let comp_step = build_component_step(&entity_map, &reachable);
+            crate::StepReader::parse_string(&comp_step)
+                .unwrap_or_else(|_| merged_brep.clone())
+        } else {
+            merged_brep.clone()
+        };
+
+        components.push(AssemblyComponent::new(name, brep));
+    }
 
     Ok(components)
 }
@@ -402,6 +385,127 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal parsing helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Extract all `#N` reference IDs from a STEP entity body string.
+fn extract_refs(body: &str) -> Vec<u64> {
+    let mut refs = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > start {
+                if let Ok(n) = body[start..i].parse::<u64>() {
+                    refs.push(n);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    refs
+}
+
+/// Build a reverse-reference map: referenced_id → list of entity IDs that
+/// contain a `#referenced_id` in their body.
+fn build_reverse_map(map: &HashMap<u64, String>) -> HashMap<u64, Vec<u64>> {
+    let mut reverse: HashMap<u64, Vec<u64>> = HashMap::new();
+    for (&id, body) in map {
+        for ref_id in extract_refs(body) {
+            reverse.entry(ref_id).or_default().push(id);
+        }
+    }
+    reverse
+}
+
+/// BFS from `start_id`, following all `#N` references, and return the set of
+/// all reachable entity IDs (including `start_id` itself).
+fn collect_reachable(start_id: u64, map: &HashMap<u64, String>) -> HashSet<u64> {
+    let mut visited: HashSet<u64> = HashSet::new();
+    let mut queue = vec![start_id];
+    while let Some(id) = queue.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        if let Some(body) = map.get(&id) {
+            for ref_id in extract_refs(body) {
+                if !visited.contains(&ref_id) {
+                    queue.push(ref_id);
+                }
+            }
+        }
+    }
+    visited
+}
+
+/// Trace `PRODUCT_DEFINITION` → `PRODUCT_DEFINITION_SHAPE` →
+/// `SHAPE_DEFINITION_REPRESENTATION` → shape representation ID.
+///
+/// Returns the shape representation entity ID, or `None` if the chain cannot
+/// be resolved (e.g. the file uses a non-standard structure).
+fn find_shape_rep_for_pd(
+    pd_id: u64,
+    map: &HashMap<u64, String>,
+    reverse_map: &HashMap<u64, Vec<u64>>,
+) -> Option<u64> {
+    // Find PRODUCT_DEFINITION_SHAPE entities that reference pd_id
+    let referencing = reverse_map.get(&pd_id)?;
+    for &pds_id in referencing {
+        let body = map.get(&pds_id)?;
+        if !body.starts_with("PRODUCT_DEFINITION_SHAPE(") {
+            continue;
+        }
+        // Find SHAPE_DEFINITION_REPRESENTATION entities that reference pds_id
+        if let Some(referencing_pds) = reverse_map.get(&pds_id) {
+            for &sdr_id in referencing_pds {
+                if let Some(sdr_body) = map.get(&sdr_id) {
+                    if let Some(args_str) =
+                        sdr_body.strip_prefix("SHAPE_DEFINITION_REPRESENTATION(")
+                    {
+                        if let Some(args) = parse_args(args_str) {
+                            let sr_id = parse_ref(args.get(1).copied().unwrap_or(""));
+                            if sr_id > 0 {
+                                return Some(sr_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Build a self-contained STEP string containing only the entities in
+/// `reachable`, using their original IDs from `map`.
+fn build_component_step(map: &HashMap<u64, String>, reachable: &HashSet<u64>) -> String {
+    let mut out = String::new();
+    out.push_str("ISO-10303-21;\n");
+    out.push_str("HEADER;\n");
+    out.push_str("FILE_DESCRIPTION(('RCAD component'),'2;1');\n");
+    out.push_str(
+        "FILE_NAME('component.step','2026-04-11T00:00:00',(''),(''),'RCAD','RCAD','');\n",
+    );
+    out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
+    out.push_str("ENDSEC;\n");
+    out.push_str("DATA;\n");
+
+    let mut ids: Vec<u64> = reachable.iter().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        if let Some(body) = map.get(&id) {
+            out.push_str(&format!("#{}={};\n", id, body));
+        }
+    }
+
+    out.push_str("ENDSEC;\n");
+    out.push_str("END-ISO-10303-21;\n");
+    out
+}
 
 /// Build a map from entity ID → entity body (the part after `#id=` and before `;`).
 fn parse_entity_map(step: &str) -> std::collections::HashMap<u64, String> {
