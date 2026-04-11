@@ -160,6 +160,155 @@ fn translate_brep(brep: &mut BRep, offset: DVec3) {
     }
 }
 
+fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep {
+    let n = plane_normal.normalize();
+    let mirror_point = |p: DVec3| -> DVec3 {
+        let d = (p - plane_origin).dot(n);
+        p - n * (2.0 * d)
+    };
+    let mirror_vec = |v: DVec3| -> DVec3 {
+        // Reflect direction: v - 2*(v·n)*n
+        v - n * (2.0 * v.dot(n))
+    };
+
+    let mut out = BRep::new();
+
+    // Mirror vertices
+    for vertex in &brep.vertices {
+        out.vertices.push(rcad_kernel::topology::Vertex {
+            point: mirror_point(vertex.point),
+        });
+    }
+
+    // Mirror curves
+    for curve in &brep.geom.curves {
+        out.geom.curves.push(match curve {
+            Curve3::Line(l) => Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: mirror_point(l.origin),
+                direction: mirror_vec(l.direction),
+            }),
+            Curve3::Circle(c) => Curve3::Circle(rcad_kernel::geom::Circle3 {
+                center: mirror_point(c.center),
+                normal: mirror_vec(c.normal),
+                radius: c.radius,
+            }),
+            Curve3::Ellipse(e) => Curve3::Ellipse(rcad_kernel::geom::Ellipse3 {
+                center: mirror_point(e.center),
+                normal: mirror_vec(e.normal),
+                major_dir: mirror_vec(e.major_dir),
+                major_radius: e.major_radius,
+                minor_radius: e.minor_radius,
+            }),
+            Curve3::Hyperbola(h) => Curve3::Hyperbola(rcad_kernel::geom::Hyperbola3 {
+                center: mirror_point(h.center),
+                normal: mirror_vec(h.normal),
+                major_dir: mirror_vec(h.major_dir),
+                semi_major: h.semi_major,
+                semi_minor: h.semi_minor,
+            }),
+            Curve3::BSpline(b) => {
+                let mut nb = b.clone();
+                for cp in &mut nb.control_points {
+                    *cp = mirror_point(*cp);
+                }
+                Curve3::BSpline(nb)
+            }
+            Curve3::Bezier(b) => {
+                let mut nb = b.clone();
+                for cp in &mut nb.control_points {
+                    *cp = mirror_point(*cp);
+                }
+                Curve3::Bezier(nb)
+            }
+            _ => curve.clone(),
+        });
+    }
+
+    // Mirror surfaces
+    for surface in &brep.geom.surfaces {
+        out.geom.surfaces.push(match surface {
+            Surface3::Plane(p) => Surface3::Plane(rcad_kernel::geom::Plane {
+                origin: mirror_point(p.origin),
+                normal: mirror_vec(p.normal),
+            }),
+            Surface3::Cylinder(c) => Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+                origin: mirror_point(c.origin),
+                axis: mirror_vec(c.axis),
+                radius: c.radius,
+            }),
+            Surface3::Sphere(s) => Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
+                center: mirror_point(s.center),
+                axis: mirror_vec(s.axis),
+                radius: s.radius,
+            }),
+            Surface3::Cone(c) => Surface3::Cone(rcad_kernel::geom::ConicalSurface {
+                apex: mirror_point(c.apex),
+                axis: mirror_vec(c.axis),
+                radius: c.radius,
+                half_angle_rad: c.half_angle_rad,
+            }),
+            Surface3::Torus(t) => Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+                center: mirror_point(t.center),
+                axis: mirror_vec(t.axis),
+                major_radius: t.major_radius,
+                minor_radius: t.minor_radius,
+            }),
+            Surface3::BSpline(b) => {
+                let mut nb = b.clone();
+                for row in &mut nb.control_points {
+                    for cp in row {
+                        *cp = mirror_point(*cp);
+                    }
+                }
+                Surface3::BSpline(nb)
+            }
+            _ => surface.clone(),
+        });
+    }
+
+    // Mirror edges (vertex indices are 1:1 mapped)
+    for e in &brep.edges {
+        out.edges.push(rcad_kernel::topology::Edge {
+            start: e.start,
+            end: e.end,
+        });
+    }
+    out.geom.edge_curve = brep.geom.edge_curve.clone();
+    out.geom.edge_curve_range = brep.geom.edge_curve_range.clone();
+    out.geom.edge_degenerated = brep.geom.edge_degenerated.clone();
+
+    // Mirror faces — flip normal (mirror reverses orientation)
+    for solid in &brep.solids {
+        let mut shell = rcad_kernel::topology::Shell { faces: Vec::new() };
+        for face in &solid.shells[0].faces {
+            let wire_edges: Vec<rcad_kernel::topology::WireEdge> = face
+                .outer_wire
+                .edges
+                .iter()
+                .map(|we| rcad_kernel::topology::WireEdge {
+                    idx: we.idx,
+                    forward: !we.forward, // flip orientation for mirror
+                })
+                .collect();
+            shell.faces.push(rcad_kernel::topology::Face {
+                outer_wire: rcad_kernel::topology::Wire { edges: wire_edges },
+                inner_wires: face.inner_wires.clone(),
+                normal: mirror_vec(face.normal),
+                // Flip triangle winding order to maintain outward normals after mirror
+                triangles: face.triangles.iter().map(|[i, j, k]| [*i, *k, *j]).collect(),
+            });
+        }
+        out.solids.push(rcad_kernel::topology::Solid {
+            shells: vec![shell],
+        });
+    }
+
+    // Mirror face_surface references
+    out.geom.face_surface = brep.geom.face_surface.clone();
+
+    out
+}
+
 fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, z_axis: DVec3) {
     let xform_point = |p: DVec3| -> DVec3 { origin + x_axis * p.x + y_axis * p.y + z_axis * p.z };
     let xform_vec =
@@ -324,6 +473,65 @@ mod tests {
                 assert_eq!(plane.normal, DVec3::Z);
             }
             other => panic!("expected plane surface, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mirror_box_across_xy_plane() {
+        let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // Populate geometry manually (geom_populate lives in rcad-algorithms)
+        use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+        for edge in &brep.edges {
+            let p0 = brep.vertices[edge.start].point;
+            let p1 = brep.vertices[edge.end].point;
+            let delta = p1 - p0;
+            let len = delta.length();
+            let dir = if len > 1e-12 { delta / len } else { DVec3::X };
+            let curve_idx = brep.geom.curves.len();
+            brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
+            brep.geom.edge_curve.push(Some(curve_idx));
+            brep.geom.edge_curve_range.push(Some([0.0, len]));
+            brep.geom.edge_degenerated.push(false);
+        }
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let origin = face.outer_wire.edges.first()
+                        .and_then(|we| brep.edges.get(we.idx))
+                        .map(|e| brep.vertices[e.start].point)
+                        .unwrap_or(DVec3::ZERO);
+                    let surf_idx = brep.geom.surfaces.len();
+                    brep.geom.surfaces.push(Surface3::Plane(Plane { origin, normal: face.normal }));
+                    let face_idx = brep.geom.face_surface.len();
+                    brep.geom.face_surface.push(Some(surf_idx));
+                }
+            }
+        }
+        let v_orig = rcad_kernel::properties::volume(&brep);
+
+        let mirrored = do_mirror_brep(&brep, DVec3::ZERO, DVec3::Z);
+        let v_mirrored = rcad_kernel::properties::volume(&mirrored);
+
+        // Debug: check face triangles
+        for (fi, face) in mirrored.solids[0].shells[0].faces.iter().enumerate() {
+            eprintln!("mirrored face {fi}: normal={:?} tris={}", face.normal, face.triangles.len());
+            for tri in &face.triangles {
+                let a = mirrored.vertices[tri[0]].point;
+                let b = mirrored.vertices[tri[1]].point;
+                let c = mirrored.vertices[tri[2]].point;
+                let gn = (b - a).cross(c - a);
+                eprintln!("  tri: gn={gn:?}");
+            }
+        }
+
+        assert!(
+            (v_mirrored - v_orig).abs() < 0.01,
+            "mirror should preserve volume: {v_orig} vs {v_mirrored}"
+        );
+
+        for (i, v) in brep.vertices.iter().enumerate() {
+            let mv = &mirrored.vertices[i];
+            assert!((mv.point.z - (-v.point.z)).abs() < 1e-9, "vertex {i} z should be negated");
         }
     }
 }

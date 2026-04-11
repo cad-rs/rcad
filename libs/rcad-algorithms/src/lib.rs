@@ -15,6 +15,7 @@ pub mod section;
 pub mod thicken;
 pub mod tolerance;
 pub mod triangulate;
+pub mod array;
 
 pub use bvh::{Aabb, Bvh, BvhStats};
 
@@ -38,6 +39,10 @@ pub use inttools::{
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 pub use thicken::{ThickeningResult, thicken_shell};
 pub use triangulate::{SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface};
+pub use array::{
+    LinearPatternParams, CircularPatternParams, PatternError,
+    linear_pattern, circular_pattern,
+};
 
 /// Perform a boolean operation on two BReps.
 ///

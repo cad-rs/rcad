@@ -1,6 +1,6 @@
 use super::{
-    BuildError, basis_from_axis_ref, basis_from_x_y, transform_brep, translate_brep,
-    validate_point, validate_positive,
+    BuildError, basis_from_axis_ref, basis_from_x_y, do_mirror_brep, normalize_vector,
+    transform_brep, translate_brep, validate_point, validate_positive,
 };
 use glam::DVec3;
 use rcad_kernel::{BRep, PrimitiveSolid};
@@ -184,4 +184,14 @@ pub fn make_torus_brep(
     minor_radius: f64,
 ) -> Result<BRep, BuildError> {
     torus_brep(center, axis, ref_dir, major_radius, minor_radius)
+}
+
+/// Mirror a BRep across a plane defined by `origin` and `normal`.
+///
+/// The mirrored BRep has inverted face normals and reversed wire orientations
+/// to maintain consistent outward-facing normals.
+pub fn mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<BRep, BuildError> {
+    let _ = validate_point("plane_origin", plane_origin)?;
+    let n = normalize_vector("plane_normal", plane_normal)?;
+    Ok(do_mirror_brep(brep, plane_origin, n))
 }

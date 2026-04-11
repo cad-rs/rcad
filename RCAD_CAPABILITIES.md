@@ -345,6 +345,10 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 |------|-----|
 | 面法向偏移 | `offset_surface(face, dist)` → `OffsetSurface` |
 | 壳体偏移 | `offset_shell(brep, dist)` |
+| 薄壁实体 | `thick_solid_with_removed_faces(brep, thickness, removed_faces)` → `Result<BRep>` |
+
+薄壁实体支持：移除指定面后向内/外偏移，自动生成侧面连接面和三角封闭面。
+包含自交检测：当 `thickness > min_distance / 2` 时标记 `self_intersection: true`。
 
 ---
 
