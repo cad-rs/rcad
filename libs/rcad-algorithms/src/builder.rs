@@ -67,6 +67,9 @@ pub struct SubFace {
     /// `tessellate_curved_face` uses the correct sub-domain instead of the full
     /// surface domain.
     pub uv_domain: Option<[f64; 4]>,
+    /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
+    /// representing a closed trim curve that forms a hole in the face.
+    pub inner_wires: Vec<Vec<DVec3>>,
 }
 
 impl SubFace {
@@ -127,7 +130,7 @@ impl SubFace {
     }
 }
 
-type FaceEntry = (Vec<usize>, Vec<[usize; 3]>, DVec3, Surface3, Option<[f64; 4]>);
+type FaceEntry = (Vec<usize>, Vec<Vec<usize>>, Vec<[usize; 3]>, DVec3, Surface3, Option<[f64; 4]>);
 
 /// Builds result BRep, deduplicating vertices and edges.
 struct ResultBuilder {
@@ -184,10 +187,10 @@ impl ResultBuilder {
     fn emit_face_with_origin(&mut self, sub: &SubFace, flip: bool, origin: FaceOrigin) {
         let normal = if flip { -sub.normal } else { sub.normal };
 
-        // Add vertices
+        // Add vertices for outer boundary
         let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
 
-        // Add edges
+        // Add edges for outer boundary
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
@@ -195,7 +198,7 @@ impl ResultBuilder {
             edge_indices.push(ei);
         }
 
-        // Triangulate
+        // Triangulate outer boundary
         let mut tris = triangulate_polygon(&sub.boundary, normal);
         // Remap triangle indices from local (0..n) to result vertex indices
         for tri in &mut tris {
@@ -204,8 +207,28 @@ impl ResultBuilder {
             }
         }
 
+        // Handle inner wires (holes) — only create wire topology, NOT triangles.
+        // The face triangulation covers only the outer boundary; inner wires are
+        // stored as topological holes and will be tesselled separately if needed.
+        let mut inner_wire_edges: Vec<Vec<usize>> = Vec::new();
+        for wire_pts in &sub.inner_wires {
+            if wire_pts.len() < 3 {
+                continue;
+            }
+            // Add vertices for this inner wire
+            let wire_verts: Vec<usize> = wire_pts.iter().map(|&p| self.add_vertex(p)).collect();
+            // Add edges
+            let mut wire_edges = Vec::new();
+            for i in 0..wire_verts.len() {
+                let j = (i + 1) % wire_verts.len();
+                let ei = self.add_edge(wire_verts[i], wire_verts[j]);
+                wire_edges.push(ei);
+            }
+            inner_wire_edges.push(wire_edges);
+        }
+
         self.faces
-            .push((edge_indices, tris, normal, sub.surface.clone(), sub.uv_domain));
+            .push((edge_indices, inner_wire_edges, tris, normal, sub.surface.clone(), sub.uv_domain));
         self.face_origins.push(origin);
     }
 
@@ -225,13 +248,19 @@ impl ResultBuilder {
         let mut geom = rcad_kernel::GeomStore::default();
         let mut faces = Vec::new();
 
-        for (edge_indices, triangles, normal, surface, uv_domain) in self.faces {
+        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain) in self.faces {
             let wire = Wire {
                 edges: edge_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
             };
+            let inner_wires: Vec<Wire> = inner_wire_edges
+                .into_iter()
+                .map(|wire_edge_idxs| Wire {
+                    edges: wire_edge_idxs.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
+                })
+                .collect();
             faces.push(Face {
                 outer_wire: wire,
-                inner_wires: vec![],
+                inner_wires,
                 normal,
                 triangles,
             });
@@ -488,6 +517,7 @@ impl<'a> BooleanBuilder<'a> {
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
+                inner_wires: vec![],
             }];
         }
 
@@ -512,6 +542,7 @@ impl<'a> BooleanBuilder<'a> {
                     uv_centroid: None,
                     sample_override: None,
                     uv_domain: None,
+                    inner_wires: vec![],
                 }]
             }
         }
@@ -656,6 +687,7 @@ impl<'a> BooleanBuilder<'a> {
                     uv_centroid: None,
                     sample_override,
                     uv_domain: None,
+                    inner_wires: vec![],
                 }
             })
             .collect()
@@ -713,6 +745,7 @@ impl<'a> BooleanBuilder<'a> {
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
+                inner_wires: vec![],
             }];
         }
 
@@ -731,6 +764,7 @@ impl<'a> BooleanBuilder<'a> {
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
+                inner_wires: vec![],
             }];
         }
 
@@ -827,6 +861,7 @@ impl<'a> BooleanBuilder<'a> {
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
+                inner_wires: vec![],
             })
             .collect()
     }
@@ -992,6 +1027,32 @@ impl<'a> BooleanBuilder<'a> {
                     }
                     _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
                 };
+
+                // Detect inner wires: trim polylines that are closed loops
+                // fully contained within this UV polygon.
+                let inner_wires: Vec<Vec<DVec3>> = trim_polylines
+                    .iter()
+                    .filter(|trim| {
+                        if trim.len() < 3 {
+                            return false;
+                        }
+                        // Check if closed (first and last point coincide)
+                        let first = trim[0];
+                        let last = trim[trim.len() - 1];
+                        if (first - last).length_squared() > 1e-10 {
+                            return false;
+                        }
+                        // Check if centroid is inside this UV polygon
+                        let centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
+                        point_in_polygon_2d(&uv_poly, centroid)
+                    })
+                    .map(|trim| {
+                        trim.iter()
+                            .map(|uv| surface.point_at(uv.x, uv.y))
+                            .collect()
+                    })
+                    .collect();
+
                 // For curved surfaces, compute the actual surface normal at the centroid UV
                 let sub_normal = {
                     let computed = surface.normal_at(centroid_uv.x, centroid_uv.y);
@@ -1009,6 +1070,7 @@ impl<'a> BooleanBuilder<'a> {
                     uv_centroid: Some(centroid_uv),
                     sample_override: None,
                     uv_domain,
+                    inner_wires,
                 }
             })
             .collect()

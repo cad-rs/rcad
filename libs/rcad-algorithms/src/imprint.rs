@@ -188,6 +188,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
         }];
     }
 
@@ -211,6 +212,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 uv_centroid: None,
                 sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
             }]
         }
     }
@@ -246,6 +248,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
         }];
     }
 
@@ -283,6 +286,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
                 uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
             }
         })
         .collect()
@@ -670,6 +674,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 uv_centroid: Some(centroid_uv),
                 sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
             }
         })
         .collect()
@@ -713,6 +718,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
         }];
     }
 
@@ -731,6 +737,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
         }];
     }
 
@@ -823,6 +830,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
+            inner_wires: vec![],
         })
         .collect()
 }

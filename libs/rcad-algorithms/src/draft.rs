@@ -72,7 +72,7 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
     let tan_angle = params.draft_angle.tan();
 
     // ── Step 1: compute new vertex positions ─────────────────────────
-    let new_pts: Vec<DVec3> = brep.vertices.iter().enumerate().map(|(i, v)| {
+    let new_pts: Vec<DVec3> = brep.vertices.iter().map(|v| {
         // Signed distance from vertex to neutral plane along pull direction
         let h = (v.point - neutral).dot(pull);
         // Draft displacement: h * tan(angle) in the pull direction
@@ -114,7 +114,7 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
 
     // Copy edges with new curves
     let mut emap: Vec<usize> = Vec::new();
-    for (ei, e) in brep.edges.iter().enumerate() {
+    for e in brep.edges.iter() {
         let vs = vmap[e.start];
         let ve = vmap[e.end];
         let dir = (out.vertices[ve].point - out.vertices[vs].point).normalize_or(DVec3::X);
