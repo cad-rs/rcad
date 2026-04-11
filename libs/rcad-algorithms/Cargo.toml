@@ -15,3 +15,7 @@ rcad-modeling = { path = "../rcad-modeling" }
 [[bench]]
 name = "boolean"
 harness = false
+
+[[bench]]
+name = "hlr_mesh_bvh"
+harness = false

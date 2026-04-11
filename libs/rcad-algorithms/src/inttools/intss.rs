@@ -1292,7 +1292,7 @@ mod tests {
                 }
             })
             .collect();
-        radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        radii.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         assert_eq!(radii.len(), 2, "expected 2 Circle3 results");
         assert!(

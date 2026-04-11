@@ -34,6 +34,7 @@ pub use inttools::{
     intersect_surfaces_with_density,
 };
 pub use section::{SectionCurve, section, section_curves, section_polylines};
+pub use triangulate::{SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface};
 
 /// Perform a boolean operation on two BReps.
 ///

@@ -1,4 +1,5 @@
 use glam::DVec3;
+use rcad_kernel::BRep;
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 /// 曲面高质量三角化结果。
@@ -360,6 +361,211 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
     !(has_neg && has_pos)
 }
 
+/// Tessellate all faces of a BRep in-place, writing triangle indices into
+/// `face.triangles`.
+///
+/// Analogous to OCCT `BRepMesh_IncrementalMesh`.
+///
+/// For each face:
+/// - If the face has an associated `Surface3` in `brep.geom`, the surface is
+///   sampled adaptively using `triangulate_surface` with the given `params`.
+///   The resulting world-space vertices are appended to `brep.vertices` and
+///   the triangle indices are stored in `face.triangles`.
+/// - Faces without a surface entry fall back to fan-triangulation of the
+///   outer wire vertices (same as the existing rendering path).
+///
+/// Existing `face.triangles` are cleared and replaced.
+pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
+    let mut face_flat_idx = 0usize;
+
+    for solid_idx in 0..brep.solids.len() {
+        for shell_idx in 0..brep.solids[solid_idx].shells.len() {
+            let n_faces = brep.solids[solid_idx].shells[shell_idx].faces.len();
+            for face_idx in 0..n_faces {
+                // Resolve surface and UV domain.
+                let surf_and_domain: Option<(Surface3, [f64; 4])> = brep
+                    .geom
+                    .face_surface
+                    .get(face_flat_idx)
+                    .and_then(|o| *o)
+                    .and_then(|si| brep.geom.surfaces.get(si).cloned())
+                    .map(|surf| {
+                        let domain = brep
+                            .geom
+                            .face_surface_range
+                            .get(face_flat_idx)
+                            .and_then(|o| *o)
+                            .unwrap_or_else(|| surf.default_domain());
+                        (surf, domain)
+                    });
+
+                brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                    .triangles
+                    .clear();
+
+                if let Some((surf, domain)) = surf_and_domain {
+                    let [u0, u1, v0, v1] = domain;
+
+                    // Clamp infinite domains (e.g. cylinder v-range) using
+                    // vertex projections.
+                    let (u0, u1, v0, v1) = clamp_domain_to_vertices(
+                        brep, face_flat_idx, &surf, u0, u1, v0, v1,
+                    );
+
+                    if (u1 - u0).abs() < 1e-10 || (v1 - v0).abs() < 1e-10 {
+                        face_flat_idx += 1;
+                        continue;
+                    }
+
+                    let mesh = triangulate_surface(
+                        &surf,
+                        [u0, u1],
+                        [v0, v1],
+                        params,
+                    );
+
+                    if mesh.triangles.is_empty() {
+                        face_flat_idx += 1;
+                        continue;
+                    }
+
+                    // Append new vertices and remap triangle indices.
+                    let base = brep.vertices.len();
+                    for &pt in &mesh.vertices {
+                        brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
+                    }
+                    let tris: Vec<[usize; 3]> = mesh
+                        .triangles
+                        .iter()
+                        .map(|&[a, b, c]| [base + a, base + b, base + c])
+                        .collect();
+                    brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                        .triangles = tris;
+                } else {
+                    // Fallback: fan-triangulate outer wire vertices.
+                    let wire_pts: Vec<usize> = brep.solids[solid_idx].shells[shell_idx]
+                        .faces[face_idx]
+                        .outer_wire
+                        .edges
+                        .iter()
+                        .filter_map(|we| {
+                            brep.edges.get(we.idx).map(|e| {
+                                if we.forward { e.start } else { e.end }
+                            })
+                        })
+                        .collect();
+
+                    if wire_pts.len() >= 3 {
+                        let tris: Vec<[usize; 3]> = (1..wire_pts.len() - 1)
+                            .map(|i| [wire_pts[0], wire_pts[i], wire_pts[i + 1]])
+                            .collect();
+                        brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                            .triangles = tris;
+                    }
+                }
+
+                face_flat_idx += 1;
+            }
+        }
+    }
+}
+
+/// Clamp a potentially infinite UV domain to the range spanned by the face's
+/// wire vertices projected onto the surface parameters.
+fn clamp_domain_to_vertices(
+    brep: &BRep,
+    face_flat_idx: usize,
+    surf: &Surface3,
+    u0: f64, u1: f64, v0: f64, v1: f64,
+) -> (f64, f64, f64, f64) {
+
+    // Only clamp axes that are infinite.
+    let need_u = !u0.is_finite() || !u1.is_finite();
+    let need_v = !v0.is_finite() || !v1.is_finite();
+    if !need_u && !need_v {
+        return (u0, u1, v0, v1);
+    }
+
+    // Collect wire vertices for this face.
+    let face = brep
+        .solids
+        .iter()
+        .flat_map(|s| s.shells.iter())
+        .flat_map(|sh| sh.faces.iter())
+        .nth(face_flat_idx);
+
+    let Some(face) = face else {
+        return (u0, u1, v0, v1);
+    };
+
+    let pts: Vec<DVec3> = face
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            brep.edges.get(we.idx).and_then(|e| {
+                let vi = if we.forward { e.start } else { e.end };
+                brep.vertices.get(vi).map(|v| v.point)
+            })
+        })
+        .collect();
+
+    if pts.is_empty() {
+        return (u0, u1, v0, v1);
+    }
+
+    match surf {
+        Surface3::Plane(plane) => {
+            // Project vertices onto the plane's local UV frame.
+            use rcad_kernel::geom::any_perpendicular;
+            let u_ax = any_perpendicular(plane.normal);
+            let v_ax = plane.normal.cross(u_ax).normalize_or_zero();
+            let us: Vec<f64> = pts.iter().map(|&p| (p - plane.origin).dot(u_ax)).collect();
+            let vs: Vec<f64> = pts.iter().map(|&p| (p - plane.origin).dot(v_ax)).collect();
+            let pu0 = us.iter().cloned().fold(f64::INFINITY, f64::min);
+            let pu1 = us.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let pv0 = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let pv1 = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mu = (pu1 - pu0).abs() * 0.05 + 1e-6;
+            let mv = (pv1 - pv0).abs() * 0.05 + 1e-6;
+            (pu0 - mu, pu1 + mu, pv0 - mv, pv1 + mv)
+        }
+        Surface3::Cylinder(cyl) => {
+            let eff_v0 = if v0.is_finite() { v0 } else {
+                pts.iter().map(|&p| (p - cyl.origin).dot(cyl.axis))
+                    .fold(f64::INFINITY, f64::min)
+            };
+            let eff_v1 = if v1.is_finite() { v1 } else {
+                pts.iter().map(|&p| (p - cyl.origin).dot(cyl.axis))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            let eff_u0 = if u0.is_finite() { u0 } else { 0.0 };
+            let eff_u1 = if u1.is_finite() { u1 } else { 2.0 * std::f64::consts::PI };
+            (eff_u0, eff_u1, eff_v0, eff_v1)
+        }
+        Surface3::Cone(con) => {
+            let eff_v0 = if v0.is_finite() { v0 } else {
+                pts.iter().map(|&p| (p - con.apex).dot(con.axis))
+                    .fold(f64::INFINITY, f64::min).max(0.0)
+            };
+            let eff_v1 = if v1.is_finite() { v1 } else {
+                pts.iter().map(|&p| (p - con.apex).dot(con.axis))
+                    .fold(f64::NEG_INFINITY, f64::max).max(0.0)
+            };
+            let eff_u0 = if u0.is_finite() { u0 } else { 0.0 };
+            let eff_u1 = if u1.is_finite() { u1 } else { 2.0 * std::f64::consts::PI };
+            (eff_u0, eff_u1, eff_v0, eff_v1)
+        }
+        _ => {
+            let eff_u0 = if u0.is_finite() { u0 } else { -10.0 };
+            let eff_u1 = if u1.is_finite() { u1 } else { 10.0 };
+            let eff_v0 = if v0.is_finite() { v0 } else { -10.0 };
+            let eff_v1 = if v1.is_finite() { v1 } else { 10.0 };
+            (eff_u0, eff_u1, eff_v0, eff_v1)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +663,85 @@ mod tests {
         ];
         let tris = triangulate_polygon(&verts, DVec3::Z);
         assert_eq!(tris.len(), 2);
+    }
+
+    /// mesh_brep on a box primitive should fill face.triangles for all 6 faces.
+    #[test]
+    fn mesh_brep_box_fills_triangles() {
+        use rcad_kernel::BRep;
+        use rcad_kernel::geom::PrimitiveSolid;
+        use crate::geom_populate::populate_box_geom;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+        populate_box_geom(&mut brep);
+
+        let params = TessellationParams::default();
+        mesh_brep(&mut brep, &params);
+
+        let faces = &brep.solids[0].shells[0].faces;
+        assert_eq!(faces.len(), 6, "box should have 6 faces");
+        for (i, face) in faces.iter().enumerate() {
+            assert!(
+                !face.triangles.is_empty(),
+                "face {i} should have triangles after mesh_brep"
+            );
+            // All triangle indices must be valid vertex indices.
+            for &[a, b, c] in &face.triangles {
+                assert!(a < brep.vertices.len(), "face {i}: vertex index {a} out of bounds");
+                assert!(b < brep.vertices.len(), "face {i}: vertex index {b} out of bounds");
+                assert!(c < brep.vertices.len(), "face {i}: vertex index {c} out of bounds");
+            }
+        }
+    }
+
+    /// mesh_brep on a sphere should produce a dense mesh (many triangles per face).
+    #[test]
+    fn mesh_brep_sphere_produces_dense_mesh() {
+        use rcad_kernel::BRep;
+        use rcad_kernel::geom::PrimitiveSolid;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        let params = TessellationParams {
+            chord_tolerance: 0.05,
+            ..TessellationParams::default()
+        };
+        mesh_brep(&mut brep, &params);
+
+        let total_tris: usize = brep.solids[0].shells[0].faces
+            .iter()
+            .map(|f| f.triangles.len())
+            .sum();
+        assert!(
+            total_tris >= 8,
+            "sphere mesh should have at least 8 triangles, got {total_tris}"
+        );
+    }
+
+    /// mesh_brep on a cylinder should produce triangles for all faces.
+    #[test]
+    fn mesh_brep_cylinder_all_faces_have_triangles() {
+        use rcad_kernel::BRep;
+        use rcad_kernel::geom::PrimitiveSolid;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let params = TessellationParams::default();
+        mesh_brep(&mut brep, &params);
+
+        let faces = &brep.solids[0].shells[0].faces;
+        for (i, face) in faces.iter().enumerate() {
+            assert!(
+                !face.triangles.is_empty(),
+                "cylinder face {i} should have triangles"
+            );
+        }
     }
 }

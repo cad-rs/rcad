@@ -789,17 +789,10 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 | OBJ（网格） | `RWObj` | `ObjReader` / `ObjWriter` | ✅ |
 | GDS-II | — | — | ❌ |
 
-### 目前不支持的 OCCT 功能（低优先或尚未规划）
+### 目前不支持的 OCCT 功能
 
 | 功能 | OCCT 类 | 备注 | 状态 |
 |------|---------|------|------|
-| B-Rep 修复/清理 | `ShapeFix_*` | `merge_close_vertices` / `repair` 已实现 | ✅ |
-| NURBS 互操作 | `GeomConvert` | `curve_to_bspline` / `surface_to_bspline` 已实现 | ✅ |
-| 曲线裁剪/延伸 | `GeomAPI_ExtendCurveToPoint` | `trim_curve` / `extend_curve_*` 已实现 | ✅ |
-| 曲面裁剪/延伸 | `Geom_RectangularTrimmedSurface` | `trim_surface` / `extend_bspline_surface` 已实现 | ✅ |
-| 装配体/实例化 | `XCAFDoc_ShapeTool` | 平坦装配体 + 嵌套树形装配体 STEP 往返 | ✅ |
-| 参数化约束求解 | `GCS`, Sketcher | `rcad-constraints` 2D 草图，16 种约束类型 | ✅ |
-| FEM 网格生成 | `BRepMesh_IncrementalMesh` | 仅渲染用三角化 | ❌ |
 | 体网格 (TetGen) | — | 独立集成 | ❌ |
 
 ---
@@ -914,4 +907,4 @@ Sketch::to_solid_brep(height: f64) -> Option<BRep>
 
 ---
 
-*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种）*
+*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种；P1: `mesh_brep` FEM 质量网格生成等价于 `BRepMesh_IncrementalMesh`；P1: 消除 `intss.rs` 中 NaN panic；已移除"目前不支持的 OCCT 功能"表中已完成项）*
