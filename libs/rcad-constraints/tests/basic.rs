@@ -344,3 +344,69 @@ fn circle_circle_external_tangent() {
     let dist = (dx * dx + dy * dy).sqrt();
     assert_near(dist, p1[2] + p2[2], "external tangency: dist = r1 + r2");
 }
+
+/// ArcArcTangent (external): two arcs become externally tangent.
+#[test]
+fn arc_arc_external_tangent() {
+    use rcad_constraints::constraint::Constraint::ArcArcTangent;
+    let mut sk = Sketch::new();
+    let a1 = sk.add_arc(0.0, 0.0, 2.0, 0.0, std::f64::consts::PI);
+    sk.fix_entity(a1);
+    // a2 starts at (8, 0) with r=1. Fix cy and r; let cx move.
+    let a2 = sk.add_arc(8.0, 0.0, 1.0, 0.0, std::f64::consts::PI);
+    let a2_params = sk.entities[a2].param_start;
+    sk.fix_param(a2_params + 1); // fix cy
+    sk.fix_param(a2_params + 2); // fix r
+    sk.add_constraint(ArcArcTangent { a1, a2, external: true });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(a1);
+    let p2 = sk.entity_params(a2);
+    let dx = p2[0] - p1[0];
+    let dy = p2[1] - p1[1];
+    let dist = (dx * dx + dy * dy).sqrt();
+    assert_near(dist, p1[2] + p2[2], "arc external tangency: dist = r1 + r2");
+}
+
+/// Symmetric: two points are mirror images across a horizontal line.
+#[test]
+fn symmetric_across_line() {
+    use rcad_constraints::constraint::Constraint::Symmetric;
+    let mut sk = Sketch::new();
+    // Mirror line: y=2 (horizontal)
+    let mirror = sk.add_line(-5.0, 2.0, 5.0, 2.0);
+    sk.fix_entity(mirror);
+    // p1 fixed at (3, 0); p2 free — should end up at (3, 4)
+    let p1 = sk.add_point(3.0, 0.0);
+    sk.add_constraint(Constraint::fix_point(p1, 3.0, 0.0));
+    let p2 = sk.add_point(3.0, 1.0); // wrong y, should move to 4
+    // Fix x of p2 so only y is free
+    let p2_x = sk.entities[p2].param_start;
+    sk.fix_param(p2_x);
+    sk.add_constraint(Symmetric {
+        p1: PointRef::Point(p1),
+        p2: PointRef::Point(p2),
+        line: mirror,
+    });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let c2 = sk.point_coords(PointRef::Point(p2));
+    assert_near(c2.x, 3.0, "symmetric x");
+    assert_near(c2.y, 4.0, "symmetric y (mirror of y=0 across y=2)");
+}
+
+/// to_solid_brep: a square sketch extruded to height 2 should produce 6 faces.
+#[test]
+fn sketch_to_solid_brep_square() {
+    let mut sk = Sketch::new();
+    // Unit square: 4 lines forming a closed polygon
+    sk.add_line(0.0, 0.0, 1.0, 0.0);
+    sk.add_line(1.0, 0.0, 1.0, 1.0);
+    sk.add_line(1.0, 1.0, 0.0, 1.0);
+    sk.add_line(0.0, 1.0, 0.0, 0.0);
+    sk.solve();
+
+    let solid = sk.to_solid_brep(2.0).expect("to_solid_brep should succeed for a closed square");
+    let n_faces = solid.solids[0].shells[0].faces.len();
+    assert_eq!(n_faces, 6, "extruded square should have 6 faces, got {n_faces}");
+}

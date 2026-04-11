@@ -118,6 +118,100 @@ impl Sketch {
 
         brep
     }
+
+    /// Extrude the sketch's closed line polygon into a solid [`BRep`].
+    ///
+    /// The sketch must contain at least 3 `Line` entities that form a closed
+    /// polygon (each line's endpoint connects to the next line's start point).
+    /// The polygon is extruded along `+Z` by `height`.
+    ///
+    /// Returns `None` if the sketch has fewer than 3 line entities or if the
+    /// lines cannot be chained into a closed polygon.
+    pub fn to_solid_brep(&self, height: f64) -> Option<BRep> {
+        use rcad_kernel::geom::{Plane, Surface3};
+        use rcad_kernel::topology::WireEdge;
+        use rcad_modeling::{extrude, make_edge, make_face, make_wire};
+
+        // Collect all line endpoints.
+        let lines: Vec<(DVec3, DVec3)> = self
+            .entities
+            .iter()
+            .filter(|e| e.kind == EntityKind::Line)
+            .map(|e| {
+                let p = &self.params[e.param_start..e.param_start + 4];
+                (DVec3::new(p[0], p[1], 0.0), DVec3::new(p[2], p[3], 0.0))
+            })
+            .collect();
+
+        if lines.len() < 3 {
+            return None;
+        }
+
+        // Chain lines into an ordered polygon.
+        let mut ordered: Vec<DVec3> = Vec::with_capacity(lines.len());
+        let mut remaining = lines.clone();
+
+        let first = remaining.remove(0);
+        ordered.push(first.0);
+        let mut current_end = first.1;
+
+        while !remaining.is_empty() {
+            const EPS2: f64 = 1e-12;
+            let idx = remaining
+                .iter()
+                .position(|(s, _)| (*s - current_end).length_squared() < EPS2)
+                .or_else(|| {
+                    remaining
+                        .iter()
+                        .position(|(_, e)| (*e - current_end).length_squared() < EPS2)
+                })?;
+
+            let (s, e) = remaining.remove(idx);
+            let (s, e) = if (s - current_end).length_squared() < 1e-12 {
+                (s, e)
+            } else {
+                (e, s)
+            };
+            ordered.push(s);
+            current_end = e;
+        }
+
+        // Verify closure.
+        if (current_end - ordered[0]).length_squared() > 1e-12 {
+            return None;
+        }
+
+        let n = ordered.len();
+        if n < 3 {
+            return None;
+        }
+
+        // Build a profile BRep with a planar face.
+        let mut profile = BRep::new();
+        let vis: Vec<usize> = ordered
+            .iter()
+            .map(|&p| {
+                let idx = profile.vertices.len();
+                profile.vertices.push(Vertex { point: p });
+                idx
+            })
+            .collect();
+
+        let mut wire_edges = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let dir = (ordered[j] - ordered[i]).normalize_or_zero();
+            let len = (ordered[j] - ordered[i]).length();
+            let curve = Curve3::Line(Line3 { origin: ordered[i], direction: dir });
+            let eidx = make_edge(&mut profile, curve, 0.0, len, vis[i], vis[j]).ok()?;
+            wire_edges.push(WireEdge { idx: eidx, forward: true });
+        }
+
+        let surface = Surface3::Plane(Plane { origin: ordered[0], normal: DVec3::Z });
+        make_face(&mut profile, surface, make_wire(wire_edges), vec![]).ok()?;
+
+        extrude(&profile, 0, DVec3::Z, height).ok()
+    }
 }
 
 /// Ensure all parallel geom-store arrays are at least `edge_idx + 1` long,

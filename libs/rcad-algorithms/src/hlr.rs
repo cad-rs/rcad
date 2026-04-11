@@ -338,6 +338,79 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
                     });
                 }
 
+                Surface3::Cone(con) => {
+                    // Silhouette of a cone: two generators from the apex.
+                    // Project view direction onto the plane perpendicular to the axis.
+                    let d_perp = view_dir - view_dir.dot(con.axis) * con.axis;
+                    if d_perp.length_squared() < 1e-10 {
+                        // Viewing along the axis — no silhouette lines.
+                        face_idx += 1;
+                        continue;
+                    }
+                    let sil_dir = con.axis.cross(d_perp).normalize_or_zero();
+
+                    // Determine v range (slant distance from apex).
+                    let (v0_eff, v1_eff) = if v0.is_finite() && v1.is_finite() {
+                        (v0, v1)
+                    } else {
+                        let mut lo = f64::INFINITY;
+                        let mut hi = f64::NEG_INFINITY;
+                        for vert in &brep.vertices {
+                            let proj = (vert.point - con.apex).dot(con.axis);
+                            lo = lo.min(proj);
+                            hi = hi.max(proj);
+                        }
+                        if lo.is_finite() && hi.is_finite() {
+                            (lo.max(0.0), hi.max(0.0))
+                        } else {
+                            face_idx += 1;
+                            continue;
+                        }
+                    };
+
+                    let tan_a = con.half_angle_rad.tan();
+                    for &sign in &[1.0_f64, -1.0] {
+                        let p0 = con.apex + v0_eff * con.axis + v0_eff * tan_a * sil_dir * sign;
+                        let p1 = con.apex + v1_eff * con.axis + v1_eff * tan_a * sil_dir * sign;
+                        if (p1 - p0).length_squared() > 1e-12 {
+                            curves.push(SilhouetteCurve {
+                                world_pts: vec![p0, p1],
+                                curve_hint: None,
+                                dense: false,
+                            });
+                        }
+                    }
+                }
+
+                Surface3::Torus(tor) => {
+                    // Silhouette of a torus: for each azimuth u, the silhouette v satisfies
+                    //   normal(u,v) · view_dir = 0
+                    //   cos(v)*(radial(u)·d) + sin(v)*(axis·d) = 0
+                    //   v = atan2(-(radial(u)·d), axis·d)
+                    // This gives two silhouette curves (v and v+π).
+                    let x_ax = any_perpendicular(tor.axis);
+                    let y_ax = tor.axis.cross(x_ax).normalize_or_zero();
+                    let axis_dot = tor.axis.dot(view_dir);
+                    const N: usize = 64;
+                    for &offset in &[0.0_f64, std::f64::consts::PI] {
+                        let pts: Vec<DVec3> = (0..N)
+                            .map(|i| {
+                                let u = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
+                                let radial = u.cos() * x_ax + u.sin() * y_ax;
+                                let radial_dot = radial.dot(view_dir);
+                                let v = (-radial_dot).atan2(axis_dot) + offset;
+                                let tube_center = tor.center + tor.major_radius * radial;
+                                tube_center + tor.minor_radius * (v.cos() * radial + v.sin() * tor.axis)
+                            })
+                            .collect();
+                        curves.push(SilhouetteCurve {
+                            world_pts: pts,
+                            curve_hint: None,
+                            dense: true,
+                        });
+                    }
+                }
+
                 _ => {}
             }
 
@@ -813,6 +886,44 @@ mod tests {
         assert!(
             !result.segments.is_empty(),
             "sphere HLR should produce silhouette segments"
+        );
+    }
+
+    /// Cone viewed from the side should produce two silhouette lines from the apex.
+    #[test]
+    fn cone_hlr_has_silhouette_segments() {
+        use rcad_kernel::geom::PrimitiveSolid;
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Cone {
+            base_radius: 1.0,
+            height: 2.0,
+        });
+        // View from the right (perpendicular to cone axis) → two silhouette generators.
+        let camera = HlrCamera::right(10.0);
+        let result = hlr(&brep, &camera, 8);
+        assert!(
+            !result.segments.is_empty(),
+            "cone HLR should produce segments"
+        );
+        assert!(
+            result.segments.len() >= 2,
+            "cone should have at least 2 silhouette segments, got {}",
+            result.segments.len()
+        );
+    }
+
+    /// Torus HLR should produce silhouette segments.
+    #[test]
+    fn torus_hlr_has_silhouette_segments() {
+        use rcad_kernel::geom::PrimitiveSolid;
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+        let camera = HlrCamera::front(20.0);
+        let result = hlr(&brep, &camera, 8);
+        assert!(
+            !result.segments.is_empty(),
+            "torus HLR should produce silhouette segments"
         );
     }
 }

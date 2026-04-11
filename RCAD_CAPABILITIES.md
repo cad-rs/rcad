@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase T 完成
+> 版本：2026-04 · Phase P3 完成
 
 ---
 
@@ -15,6 +15,7 @@
 7. [渲染与可视化](#7-渲染与可视化)
 8. [精度与容差](#8-精度与容差)
 9. [与 OCCT 的功能对照](#9-与-occt-的功能对照)
+10. [草图约束](#10-草图约束rcad-constraints)
 
 ---
 
@@ -35,12 +36,15 @@ RCAD 是一个用 Rust 实现的参数化实体建模内核，目标是在工程
 **Workspace 结构**
 
 ```
-rcad-kernel        几何类型、拓扑、BRep、变换、投影、曲率
+rcad-kernel        几何类型、拓扑、BRep、变换、投影、曲率、形状属性
 rcad-modeling      建模 API：扫掠、圆角、偏移、历史树
-rcad-algorithms    布尔运算、面印记、截面、HLR、IntSS
-rcad-step          STEP AP203/AP214 读写
+rcad-algorithms    布尔运算、面印记、截面、HLR、IntSS、BRep 检查
+rcad-step          STEP AP203/AP214 读写、装配体 IO
 rcad-render        wgpu 渲染、拾取、HLR 描边
-rcad-scene         创建命令状态机（Box/Sphere 流程）
+rcad-scene         创建命令状态机、装配体管理
+rcad-constraints   2D 草图约束求解、草图 → BRep
+apps/creator-egui  egui 桌面应用
+apps/creator-iced  iced 桌面应用
 ```
 
 ---
@@ -143,7 +147,10 @@ BezierCurve2  — 二维 Bezier
 
 ```rust
 intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection
+intersect_surfaces_with_density(s1, s2, density: usize) -> SurfaceSurfaceIntersection
 ```
+
+`density` 控制数值 marching 网格分辨率（默认 48），对高曲率曲面可适当增大。
 
 解析对：
 
@@ -189,6 +196,21 @@ intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection
 
 ---
 
+### 2.9 形状属性（`properties`）
+
+类比 OCCT `BRepGProp`。优先使用已有三角面片；无三角化时退化为 64×64 UV 网格采样（曲面体体积误差 < 0.1%），最终回退到外线框顶点扇形三角化。
+
+| 功能 | API | 说明 |
+|------|-----|------|
+| 表面积 | `surface_area(brep: &BRep) → f64` | 所有面三角面积之和 |
+| 体积 | `volume(brep: &BRep) → f64` | 有符号四面体法 |
+| 质心 | `centroid(brep: &BRep) → DVec3` | 体积加权质心 |
+| 惯性张量 | `inertia_tensor(brep: &BRep) → InertiaTensor` | `{ ixx, iyy, izz, ixy, ixz, iyz }` + `to_matrix()` |
+
+---
+
+## 3. 拓扑结构
+
 ### BRep 数据模型
 
 ```
@@ -211,6 +233,8 @@ BRep
        ├── face_surface: Vec<Option<usize>>
        ├── edge_pcurves: Vec<Vec<PCurve>>
        ├── edge_curve_range: Vec<Option<[f64;2]>>
+       ├── face_surface_range: Vec<Option<[f64;4]>>
+       ├── edge_degenerated: Vec<bool>
        ├── vertex/edge/face_tolerance: Vec<f64>
        └── edge_same_parameter: Vec<bool>
 ```
@@ -227,6 +251,43 @@ brep.transformed(mat: DAffine3) -> BRep     // 返回新实例，原 BRep 不变
 ```
 
 变换覆盖所有顶点坐标及曲线/曲面的解析几何参数（origin、axis、控制点等）。`TrimmedSurface` 的参数域不受影响（参数空间坐标）。
+
+---
+
+### 拓扑查询（`topo_query`）
+
+类比 OCCT `TopExp_Explorer` 和 `TopExp::MapShapesAndAncestors`：
+
+| 功能 | API |
+|------|-----|
+| 边的邻接面 | `edge_adjacent_faces(brep, edge_idx) → Vec<usize>` |
+| 面的所有边 | `face_edges(brep, face_idx) → Vec<usize>` |
+| 顶点的邻接边 | `vertex_adjacent_edges(brep, vertex_idx) → Vec<usize>` |
+| 面数 | `face_count(brep) → usize` |
+| 边数 | `edge_count(brep) → usize` |
+| 顶点数 | `vertex_count(brep) → usize` |
+| 退化边判断 | `is_degenerate_edge(brep, edge_idx) → bool` |
+
+所有函数对空 BRep 安全（返回 0 或空 Vec）。
+
+---
+
+### 外观属性（`appearance`）
+
+类比 OCCT `XCAFDoc_ColorTool`，颜色与几何拓扑解耦存储：
+
+```rust
+pub struct Color { pub r: f64, pub g: f64, pub b: f64 }
+
+pub struct StepColor {
+    pub solid_color: Option<Color>,   // 实体级默认色
+    pub face_colors: Vec<FaceColor>,  // 面级覆盖
+}
+```
+
+内置预设色：`RED / GREEN / BLUE / YELLOW / CYAN / MAGENTA / WHITE / GRAY / SILVER / GOLD / ORANGE / BLACK`
+
+`StepColor::color_for_face(face_index)` 优先返回面级覆盖，回退到实体级默认色。
 
 ---
 
@@ -265,6 +326,7 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 | 等距圆角 | `fillet(brep, edge_indices, radius)` |
 | 等距倒角 | `chamfer(brep, edge_indices, dist)` |
 | 批量圆角 | `fillet_edges(brep, [(edge_idx, radius), ...])` |
+| 顶点混合圆角 | `corner_blend(brep, vertex_idx, radius)` |
 
 ---
 
@@ -313,6 +375,7 @@ repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport)
 ```rust
 boolean_op(BooleanOpType::{Union|Intersection|Difference}, &a, &b) -> Result<BRep>
 boolean_op_with_history(op, &a, &b) -> Result<(BRep, BooleanHistory)>
+boolean_op_par(op, &a, &b) -> Result<(BRep, BooleanHistory)>   // Rayon 并行版本
 ```
 
 **实现架构（OCCT BOPAlgo 风格）：**
@@ -409,17 +472,86 @@ sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
 ### 5.9 消隐线渲染（HLR）
 
 ```rust
-hlr(brep: &BRep, camera: &HlrCamera) -> HlrResult
-hlr_to_svg(result: &HlrResult, width, height) -> String
+hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult
+hlr_to_svg(result: &HlrResult, scale: f64, margin: f64) -> String
 ```
 
 投影所有边，分类为可见/遮挡，输出 SVG 线框图。
+
+**相机预设：**
+
+```rust
+HlrCamera::isometric(distance)   // 等轴测（+X+Y+Z 方向）
+HlrCamera::front(distance)       // 正视图（沿 +Y 看，up = +Z）
+HlrCamera::top(distance)         // 俯视图（沿 -Z 看）
+HlrCamera::right(distance)       // 右视图（沿 -X 看，up = +Z）
+```
+
+**解析轮廓线（silhouette）：**
+
+| 曲面类型 | 轮廓线生成方式 |
+|---------|--------------|
+| `CylindricalSurface` | 两条平行于轴的直线（解析，视方向垂直于轴时有效）|
+| `SphericalSurface` | 垂直于视方向的大圆（64 段密集折线）|
+| `ConicalSurface` | 从顶点出发的两条母线（解析）|
+| `ToroidalSurface` | 两条轮廓曲线（每条 64 段，按 `normal·view=0` 数值求解 v 角）|
+
+**`HlrResult` 输出：**
+
+```rust
+result.visible()   // 可见线段迭代器
+result.hidden()    // 遮挡线段迭代器
+// 每个 HlrSegment 含 start/end (DVec2)、visible (bool)、curve_hint (Option<CurveHint>)
+```
+
+`CurveHint::Circle` 使 SVG 导出器输出 `<path>` 弧线而非折线。
 
 ---
 
 ### 5.10 曲面-曲面交线（IntSS）
 
 见 [2.6 节](#26-曲面-曲面交线intersect_surfaces)。
+
+---
+
+### 5.11 BRep 检查（`brep_check`）
+
+类比 OCCT `BRepCheck_Analyzer`，只读检查，不修改 BRep：
+
+```rust
+check(brep: &BRep) -> CheckResult { issues: Vec<CheckIssue> }
+```
+
+| 检查项 | `CheckIssue` 变体 | 说明 |
+|--------|-----------------|------|
+| 线框闭合性 | `OpenWire { solid, shell, face, wire_pos }` | 相邻边端点不连续 |
+| 面法向有效性 | `ZeroNormal { solid, shell, face }` | 法向量为零向量 |
+| 退化面 | `DegenerateFace { solid, shell, face }` | 外线框边数 < 3 |
+| 边索引越界 | `InvalidEdgeIndex { solid, shell, face, edge_idx }` | WireEdge 引用越界 |
+| 顶点索引越界 | `InvalidVertexIndex { edge, vertex_idx }` | 边引用顶点越界 |
+
+`CheckResult::is_valid()` 当 `issues` 为空时返回 `true`。
+
+---
+
+### 5.12 曲线-曲面交点（`curve_surface`）
+
+解析求交，类比 OCCT `IntCurvesFace_ShapeIntersector`：
+
+```rust
+pub struct CurveSurfaceHit {
+    pub point: DVec3,
+    pub curve_param: f64,   // 交点在曲线上的参数值
+}
+```
+
+| 组合 | API |
+|------|-----|
+| Line × Cylinder | `intersect_line_cylinder(line, t_range, cyl) → Vec<CurveSurfaceHit>` |
+| Line × Sphere | `intersect_line_sphere(line, t_range, sphere) → Vec<CurveSurfaceHit>` |
+| Line × Cone | `intersect_line_cone(line, t_range, cone) → Vec<CurveSurfaceHit>` |
+
+每个函数返回参数域 `t_range` 内所有交点（0–2 个），按 `curve_param` 升序排列。
 
 ---
 
@@ -502,6 +634,46 @@ IgesWriter::write_file(&brep, path) -> Result<usize>
 
 ---
 
+### 装配体 IO（`rcad-step assembly`）
+
+类比 OCCT `XCAFDoc_ShapeTool`，支持平坦装配体和嵌套树形装配体的 STEP 往返。
+
+**平坦装配体（`AssemblyComponent`）：**
+
+```rust
+// 写出
+let comp_a = AssemblyComponent::new("part_a", brep_a)
+    .with_translation(DVec3::new(10.0, 0.0, 0.0));
+let step_str = write_assembly("my_asm", &[comp_a, comp_b]);
+
+// 读回（每个组件几何独立隔离）
+let components: Vec<AssemblyComponent> = read_assembly(&step_str)?;
+// components[i].name, components[i].brep
+```
+
+**嵌套树形装配体（`AssemblyNode`）：**
+
+```rust
+// 构建树
+let leaf_a = AssemblyNode::leaf("part_a", brep_a);
+let leaf_b = AssemblyNode::leaf("part_b", brep_b);
+let sub    = AssemblyNode::branch("sub_asm", vec![leaf_a, leaf_b]);
+let root   = AssemblyNode::branch("root_asm", vec![sub, leaf_c]);
+
+// 写出（递归生成 NAUO 层级）
+let step_str = write_assembly_tree("root_asm", &root);
+
+// 读回（保留树结构）
+let tree: AssemblyNode = read_assembly_tree(&step_str)?;
+// tree.name, tree.children, tree.brep (叶节点有 Some(BRep)，分支节点为 None)
+```
+
+`AssemblyNode` 支持 `.with_transform(DAffine3)` / `.with_translation(DVec3)` / `.with_color(Color)`。
+
+STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_REPRESENTATION`，层级关系通过 `NEXT_ASSEMBLY_USAGE_OCCURRENCE` 表达。读取时通过 BFS 从各组件的 `SHAPE_REPRESENTATION` 出发收集可达实体，实现几何隔离。
+
+---
+
 ## 7. 渲染与可视化
 
 ### 渲染管线（wgpu）
@@ -579,6 +751,7 @@ IgesWriter::write_file(&brep, path) -> Result<usize>
 | 变截面扫掠 | `BRepOffsetAPI_MakePipeShell` | `sweep_variable` | ✅ |
 | 等距圆角 | `BRepFilletAPI_MakeFillet` | `fillet` | ✅ |
 | 等距倒角 | `BRepFilletAPI_MakeChamfer` | `chamfer` | ✅ |
+| 顶点混合圆角 | `ChFi3d_Builder` | `corner_blend` | ✅ |
 | 布尔 Union | `BRepAlgoAPI_Fuse` | `boolean_op(Union, ...)` | ✅ 平面体；曲面体部分 |
 | 布尔 Intersection | `BRepAlgoAPI_Common` | `boolean_op(Intersection, ...)` | ✅ 平面体；曲面体部分 |
 | 布尔 Difference | `BRepAlgoAPI_Cut` | `boolean_op(Difference, ...)` | ✅ 平面体；曲面体部分 |
@@ -601,6 +774,10 @@ IgesWriter::write_file(&brep, path) -> Result<usize>
 | 间隙/重叠检测 | — | `detect_gaps_overlaps` | ✅ |
 | 颜色属性（读） | `XCAFDoc_ColorTool` | `parse_string_with_color` | ✅ |
 | 颜色属性（写） | `XCAFDoc_ColorTool` | `write_string_colored` | ✅ |
+| 体积/表面积/质心/惯性 | `BRepGProp` | `volume / surface_area / centroid / inertia_tensor` | ✅ |
+| 拓扑查询 | `TopExp_Explorer` | `edge_adjacent_faces / face_edges / vertex_adjacent_edges` | ✅ |
+| BRep 有效性检查 | `BRepCheck_Analyzer` | `check` | ✅ |
+| 曲线-曲面交点 | `IntCurvesFace_ShapeIntersector` | `intersect_line_cylinder/sphere/cone` | ✅ 解析 |
 
 ### 数据交换
 
@@ -620,11 +797,121 @@ IgesWriter::write_file(&brep, path) -> Result<usize>
 | NURBS 互操作 | `GeomConvert` | `curve_to_bspline` / `surface_to_bspline` 已实现 | ✅ |
 | 曲线裁剪/延伸 | `GeomAPI_ExtendCurveToPoint` | `trim_curve` / `extend_curve_*` 已实现 | ✅ |
 | 曲面裁剪/延伸 | `Geom_RectangularTrimmedSurface` | `trim_surface` / `extend_bspline_surface` 已实现 | ✅ |
-| 装配体/实例化 | `XCAFDoc_ShapeTool` | 无场景图 | ❌ |
-| 参数化约束求解 | `GCS`, Sketcher | 独立模块 | ❌ |
+| 装配体/实例化 | `XCAFDoc_ShapeTool` | 平坦装配体 + 嵌套树形装配体 STEP 往返 | ✅ |
+| 参数化约束求解 | `GCS`, Sketcher | `rcad-constraints` 2D 草图，16 种约束类型 | ✅ |
 | FEM 网格生成 | `BRepMesh_IncrementalMesh` | 仅渲染用三角化 | ❌ |
 | 体网格 (TetGen) | — | 独立集成 | ❌ |
 
 ---
 
-*文档更新于 2026-04-09（UV 缝合修复、rcad-scene/rcad-modeling/rcad-kernel 集成测试新增、Clippy 清理完成）*
+## 10. 草图约束（`rcad-constraints`）
+
+2D 参数化草图约束求解器，类比 OCCT `GCS` / FreeCAD Sketcher。
+
+### 实体与草图 API
+
+```rust
+Sketch::new() -> Self
+Sketch::add_point(x, y) -> EntityId
+Sketch::add_line(x1, y1, x2, y2) -> EntityId
+Sketch::add_circle(cx, cy, r) -> EntityId
+Sketch::add_arc(cx, cy, r, start_angle, end_angle) -> EntityId
+Sketch::fix_param(param_idx)       // 锁定单个参数
+Sketch::fix_entity(id)             // 锁定实体全部参数
+Sketch::add_constraint(c: Constraint)
+Sketch::dof() -> i64               // 当前自由度数（0 = 完全约束）
+Sketch::solve() -> SolveResult     // Newton-Raphson 非线性迭代求解
+```
+
+访问求解后的几何：
+
+```rust
+Sketch::point(id) -> PointRef
+Sketch::line_start(id) / line_end(id) -> PointRef
+Sketch::center(id) -> PointRef
+Sketch::point_coords(p: PointRef) -> DVec2
+Sketch::entity_params(id) -> &[f64]
+```
+
+### 约束类型
+
+**点约束（2 方程）：**
+
+| 约束 | 构造 | 说明 |
+|------|------|------|
+| `Fixed` | `Constraint::fix_point(point, x, y)` | 固定点坐标 |
+| `Coincident` | `Constraint::coincident(p1, p2)` | 两点重合 |
+
+**距离/长度（1 方程）：**
+
+| 约束 | 构造 | 说明 |
+|------|------|------|
+| `PointDistance` | `Constraint::point_distance(p1, p2, d)` | 两点欧氏距离 |
+| `LineLength` | `LineLength { line, length }` | 线段长度 |
+
+**线方向（1 方程）：**
+
+| 约束 | 说明 |
+|------|------|
+| `Horizontal(line)` | y1 == y2 |
+| `Vertical(line)` | x1 == x2 |
+
+**线-线关系（1 方程）：**
+
+| 约束 | 说明 |
+|------|------|
+| `Parallel(l1, l2)` | 方向向量叉积 = 0 |
+| `Perpendicular(l1, l2)` | 方向向量点积 = 0 |
+| `EqualLength(l1, l2)` | 长度平方差 = 0 |
+| `Angle { l1, l2, angle_rad }` | 两线夹角 |
+
+**圆/弧约束（1 方程）：**
+
+| 约束 | 说明 |
+|------|------|
+| `Radius { circle, radius }` | 固定半径 |
+| `EqualRadius(c1, c2)` | 两圆/弧半径相等 |
+| `PointOnCircle { point, circle }` | 点在圆上 |
+| `Tangent { circle, line }` | 圆与直线相切 |
+| `CircleCircleTangent { c1, c2, external }` | 两圆外切（`external=true`）或内切 |
+| `ArcArcTangent { a1, a2, external }` | 两弧外切或内切（与圆-圆相切同残差）|
+
+**点-线关系（1 方程）：**
+
+| 约束 | 说明 |
+|------|------|
+| `PointOnLine { point, line }` | 点在直线（无限延伸）上 |
+
+**对称（2 方程）：**
+
+| 约束 | 说明 |
+|------|------|
+| `Symmetric { p1, p2, line }` | p1、p2 关于 line 对称（中点在线上 + 连线垂直于线）|
+
+### 求解器
+
+Newton-Raphson 迭代，数值 Jacobian（有限差分），固定参数通过掩码跳过。
+
+```rust
+pub struct SolveResult {
+    pub converged: bool,
+    pub residual: f64,   // 最终残差 L2 范数
+    pub iterations: u32,
+}
+```
+
+### 草图 → BRep
+
+```rust
+// 线框 BRep（所有实体 → 边，无面）
+Sketch::to_wire_brep() -> BRep
+
+// 实体 BRep（闭合线段多边形 → 拉伸实体）
+Sketch::to_solid_brep(height: f64) -> Option<BRep>
+```
+
+`to_solid_brep` 自动将草图中的 `Line` 实体链接成闭合多边形，构建平面轮廓面，沿 `+Z` 方向拉伸 `height`，返回含 6 个面（底/顶/4 侧）的实体 BRep（矩形轮廓）。多边形顶点按端点连接自动排序，不要求输入顺序。
+
+---
+
+*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种）*

@@ -67,6 +67,18 @@ pub enum Constraint {
 
     /// Circle radius equals a fixed value. (1 equation)
     Radius { circle: EntityId, radius: f64 },
+
+    /// Two arcs (or arc and circle) are tangent. (1 equation)
+    ///
+    /// Uses the same residual as `CircleCircleTangent` — arcs share the same
+    /// center/radius parameter layout as circles.
+    ArcArcTangent { a1: EntityId, a2: EntityId, external: bool },
+
+    /// Two points are symmetric about a line. (2 equations)
+    ///
+    /// The midpoint of p1–p2 lies on the line, and the segment p1–p2 is
+    /// perpendicular to the line direction.
+    Symmetric { p1: PointRef, p2: PointRef, line: EntityId },
 }
 
 impl Constraint {
@@ -89,7 +101,7 @@ impl Constraint {
     /// Number of scalar equations this constraint contributes.
     pub fn equation_count(&self) -> usize {
         match self {
-            Constraint::Coincident(..) | Constraint::Fixed { .. } => 2,
+            Constraint::Coincident(..) | Constraint::Fixed { .. } | Constraint::Symmetric { .. } => 2,
             _ => 1,
         }
     }
@@ -274,6 +286,49 @@ impl Constraint {
                     // Internal tangency: dist = |r1 - r2|
                     out[0] = dist - (r1 - r2).abs();
                 }
+            }
+
+            // ── ArcArcTangent ─────────────────────────────────────────────────
+            Constraint::ArcArcTangent { a1, a2, external } => {
+                let e1 = &entities[*a1];
+                let e2 = &entities[*a2];
+                let cx1 = params[e1.param(0)];
+                let cy1 = params[e1.param(1)];
+                let r1 = params[e1.param(2)];
+                let cx2 = params[e2.param(0)];
+                let cy2 = params[e2.param(1)];
+                let r2 = params[e2.param(2)];
+                let dx = cx2 - cx1;
+                let dy = cy2 - cy1;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if *external {
+                    out[0] = dist - (r1 + r2);
+                } else {
+                    out[0] = dist - (r1 - r2).abs();
+                }
+            }
+
+            // ── Symmetric ─────────────────────────────────────────────────────
+            Constraint::Symmetric { p1, p2, line } => {
+                let (x1, y1) = p1.param_indices(entities);
+                let (x2, y2) = p2.param_indices(entities);
+                let el = &entities[*line];
+                let lx1 = params[el.param(0)];
+                let ly1 = params[el.param(1)];
+                let lx2 = params[el.param(2)];
+                let ly2 = params[el.param(3)];
+                let ldx = lx2 - lx1;
+                let ldy = ly2 - ly1;
+                let len = (ldx * ldx + ldy * ldy).sqrt().max(1e-10);
+                // Midpoint of p1–p2
+                let mx = (params[x1] + params[x2]) * 0.5;
+                let my = (params[y1] + params[y2]) * 0.5;
+                // Eq 1: midpoint lies on the line (cross product = 0)
+                out[0] = ((lx2 - lx1) * (my - ly1) - (ly2 - ly1) * (mx - lx1)) / len;
+                // Eq 2: segment p1–p2 is perpendicular to line direction (dot = 0)
+                let sdx = params[x2] - params[x1];
+                let sdy = params[y2] - params[y1];
+                out[1] = (sdx * ldx + sdy * ldy) / len;
             }
         }
         true
