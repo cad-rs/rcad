@@ -248,3 +248,99 @@ fn to_wire_brep_circle() {
     assert_eq!(brep.edges.len(), 1);
     assert_eq!(brep.geom.curves.len(), 1);
 }
+
+// ─── additional constraint tests ─────────────────────────────────────────────
+
+/// Angle constraint: two lines meet at a 90° angle.
+#[test]
+fn angle_between_lines() {
+    use std::f64::consts::FRAC_PI_2;
+    let mut sk = Sketch::new();
+    let l1 = sk.add_line(0.0, 0.0, 2.0, 0.0);
+    let l2 = sk.add_line(0.0, 0.0, 1.5, 1.5);
+    sk.fix_entity(l1);
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l2), 0.0, 0.0));
+    sk.add_constraint(Angle { l1, l2, angle_rad: FRAC_PI_2 });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(l1);
+    let p2 = sk.entity_params(l2);
+    let dot = (p1[2] - p1[0]) * (p2[2] - p2[0]) + (p1[3] - p1[1]) * (p2[3] - p2[1]);
+    assert_near(dot, 0.0, "90° angle => dot product = 0");
+}
+
+/// EqualRadius: two circles end up with the same radius.
+#[test]
+fn equal_radius_circles() {
+    let mut sk = Sketch::new();
+    let c1 = sk.add_circle(0.0, 0.0, 3.0);
+    let c2 = sk.add_circle(5.0, 0.0, 1.0);
+    sk.fix_entity(c1);
+    sk.add_constraint(Constraint::fix_point(PointRef::Center(c2), 5.0, 0.0));
+    sk.add_constraint(EqualRadius(c1, c2));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(c1);
+    let p2 = sk.entity_params(c2);
+    assert_near(p1[2], p2[2], "equal radius");
+}
+
+/// PointOnLine: a free point is pulled onto a fixed line.
+#[test]
+fn point_on_line_constraint() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(0.0, 0.0, 4.0, 0.0);
+    sk.fix_entity(l);
+    let p = sk.add_point(2.0, 3.0);
+    let px_idx = sk.entities[p].param_start;
+    sk.fix_param(px_idx);
+    sk.add_constraint(PointOnLine { point: PointRef::Point(p), line: l });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let coords = sk.point_coords(PointRef::Point(p));
+    assert_near(coords.y, 0.0, "point y should be 0 (on horizontal line)");
+}
+
+/// Tangent (circle-line): circle with fixed radius moves so it is tangent to
+/// a horizontal line at y=0.  The center y-coordinate should converge to r.
+#[test]
+fn circle_tangent_to_line() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(-5.0, 0.0, 5.0, 0.0);
+    sk.fix_entity(l);
+    // Circle at (0, 2), radius 1.  Fix x and radius; let y move to satisfy tangency.
+    let c = sk.add_circle(0.0, 2.0, 1.0);
+    let c_params = sk.entities[c].param_start;
+    sk.fix_param(c_params);     // fix cx
+    sk.fix_param(c_params + 2); // fix r
+    sk.add_constraint(Tangent { circle: c, line: l });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p = sk.entity_params(c);
+    // dist(center, line y=0) = |cy| = r = 1
+    assert_near(p[1].abs(), p[2], "|center y| should equal radius for tangency");
+}
+
+/// CircleCircleTangent (external): c2 slides along X until externally tangent
+/// to c1 (r1=2, r2=1 → expected dist = 3).
+#[test]
+fn circle_circle_external_tangent() {
+    use rcad_constraints::constraint::Constraint::CircleCircleTangent;
+    let mut sk = Sketch::new();
+    let c1 = sk.add_circle(0.0, 0.0, 2.0);
+    sk.fix_entity(c1);
+    // c2 starts at (6, 0) with r=1.  Fix y and r; let x move.
+    let c2 = sk.add_circle(6.0, 0.0, 1.0);
+    let c2_params = sk.entities[c2].param_start;
+    sk.fix_param(c2_params + 1); // fix cy
+    sk.fix_param(c2_params + 2); // fix r
+    sk.add_constraint(CircleCircleTangent { c1, c2, external: true });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(c1);
+    let p2 = sk.entity_params(c2);
+    let dx = p2[0] - p1[0];
+    let dy = p2[1] - p1[1];
+    let dist = (dx * dx + dy * dy).sqrt();
+    assert_near(dist, p1[2] + p2[2], "external tangency: dist = r1 + r2");
+}

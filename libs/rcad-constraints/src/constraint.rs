@@ -57,6 +57,14 @@ pub enum Constraint {
     /// A circle is tangent to a line. (1 equation)
     Tangent { circle: EntityId, line: EntityId },
 
+    /// Two circles are externally or internally tangent. (1 equation)
+    ///
+    /// External tangency: dist(c1, c2) = r1 + r2.
+    /// Internal tangency: dist(c1, c2) = |r1 - r2|.
+    /// The solver finds whichever solution is closest to the initial guess.
+    /// Use `external: true` for external tangency, `false` for internal.
+    CircleCircleTangent { c1: EntityId, c2: EntityId, external: bool },
+
     /// Circle radius equals a fixed value. (1 equation)
     Radius { circle: EntityId, radius: f64 },
 }
@@ -244,6 +252,28 @@ impl Constraint {
                 // dist(center, line) - r = 0
                 let num = (cx - x1) * dy - (cy - y1) * dx;
                 out[0] = num / len - r;
+            }
+
+            // ── CircleCircleTangent ───────────────────────────────────────────
+            Constraint::CircleCircleTangent { c1, c2, external } => {
+                let e1 = &entities[*c1];
+                let e2 = &entities[*c2];
+                let cx1 = params[e1.param(0)];
+                let cy1 = params[e1.param(1)];
+                let r1 = params[e1.param(2)];
+                let cx2 = params[e2.param(0)];
+                let cy2 = params[e2.param(1)];
+                let r2 = params[e2.param(2)];
+                let dx = cx2 - cx1;
+                let dy = cy2 - cy1;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if *external {
+                    // External tangency: dist = r1 + r2
+                    out[0] = dist - (r1 + r2);
+                } else {
+                    // Internal tangency: dist = |r1 - r2|
+                    out[0] = dist - (r1 - r2).abs();
+                }
             }
         }
         true
