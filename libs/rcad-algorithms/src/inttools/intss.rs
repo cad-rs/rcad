@@ -11,8 +11,9 @@
 //! | Sphere × Sphere | Circle (intersection plane ⊥ line-of-centres) |
 //! | Sphere × Cylinder | Circle (axis ⊥ case) / Numeric |
 //! | Cylinder × Cylinder | Ellipse (axes ∥), numeric otherwise |
-//! | Cylinder × Cone | Numeric |
+//! | Cylinder × Cone | Circle (coaxial) / Numeric |
 //! | Sphere × Cone | Circle (apex-centred case) / Numeric |
+//! | Cone × Cone | Circle (coaxial) / Numeric |
 //! | Everything else | Numeric polylines via marching |
 //!
 //! Analogous to OCCT `GeomAPI_IntSS`.
@@ -24,6 +25,8 @@ use rcad_kernel::geom::{
 };
 
 use crate::inttools::{
+    cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
+    cone_cone::{ConeConeResult, intersect_cone_cone},
     pcurve_derive::{
         circle_pcurve_on_cylinder, circle_pcurve_on_plane, circle_pcurve_on_sphere,
         ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
@@ -34,7 +37,7 @@ use crate::inttools::{
     plane_plane::{PlanePlaneResult, intersect_plane_plane},
     plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
 };
-use crate::tolerance::{TOLERANCE_ABS, vectors_parallel};
+use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public result types
@@ -118,11 +121,26 @@ pub fn intersect_surfaces_with_density(
         (Sphere(s1), Sphere(s2)) => sphere_x_sphere(s1, s2),
         (Sphere(s), Cylinder(c)) | (Cylinder(c), Sphere(s)) => sphere_x_cylinder(s, c),
         (Sphere(s), Cone(c)) | (Cone(c), Sphere(s)) => sphere_x_cone(s, c),
+        (Sphere(s), Torus(t)) | (Torus(t), Sphere(s)) => torus_x_sphere(t, s),
 
         // ── Cylinder × Cylinder ───────────────────────────────────────────
         (Cylinder(c1), Cylinder(c2)) => cylinder_x_cylinder(c1, c2),
 
-        // ── Cylinder × Cone and Cone × Cone fall through to numeric ───────
+        // ── Cylinder × Cone ───────────────────────────────────────────────
+        (Cylinder(c), Cone(k)) | (Cone(k), Cylinder(c)) => cylinder_x_cone(c, k),
+
+        // ── Cone × Cone ───────────────────────────────────────────────────
+        (Cone(k1), Cone(k2)) => cone_x_cone(k1, k2),
+
+        // ── Torus × Cylinder ──────────────────────────────────────────────
+        (Torus(t), Cylinder(c)) | (Cylinder(c), Torus(t)) => torus_x_cylinder(t, c),
+
+        // ── Torus × Cone ──────────────────────────────────────────────────
+        (Torus(t), Cone(k)) | (Cone(k), Torus(t)) => torus_x_cone(t, k),
+
+        // ── Torus × Torus ─────────────────────────────────────────────────
+        (Torus(t1), Torus(t2)) => torus_x_torus(t1, t2),
+
         // ── All others → numeric marching ─────────────────────────────────
         _ => numeric_intss_with_density(s1, s2, grid_n),
     }
@@ -627,6 +645,94 @@ fn cylinder_x_cylinder(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Cylinder × Cone
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Cylinder-cone intersection.
+///
+/// Analytic case: coaxial axes → single circle.
+/// General case → numerical marching.
+fn cylinder_x_cone(
+    cyl: &CylindricalSurface,
+    cone: &ConicalSurface,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let mut out = SurfaceSurfaceIntersection::default();
+    match intersect_cylinder_cone(cyl, cone) {
+        CylinderConeResult::NoIntersection => {}
+        CylinderConeResult::CoaxialCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cylinder(*cyl),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cone(*cone),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        CylinderConeResult::General => {
+            return numeric_intss(&Surface3::Cylinder(*cyl), &Surface3::Cone(*cone));
+        }
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Cone × Cone
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Cone-cone intersection.
+///
+/// Analytic case: coaxial cones → circle (or point if touching at apex).
+/// General case → numerical marching.
+fn cone_x_cone(
+    k1: &ConicalSurface,
+    k2: &ConicalSurface,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let mut out = SurfaceSurfaceIntersection::default();
+    match intersect_cone_cone(k1, k2) {
+        ConeConeResult::NoIntersection => {}
+        ConeConeResult::Coaxial => {} // identical cones — infinite overlap
+        ConeConeResult::CoaxialCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cone(*k1),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cone(*k2),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        ConeConeResult::CoaxialPoint(pt) => {
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Point(pt),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
+        }
+        ConeConeResult::General => {
+            return numeric_intss(&Surface3::Cone(*k1), &Surface3::Cone(*k2));
+        }
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Torus × Plane
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -779,6 +885,452 @@ fn pcurve_for_torus_circle(
             origin: uv_pts[0],
             direction: glam::DVec2::X,
         }))
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Torus × Sphere
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Torus-sphere intersection.
+///
+/// **Analytic case — sphere centre on torus axis**:
+///   By rotational symmetry, the intersection consists of circles at heights
+///   where the sphere's cross-section radius equals the torus tube's cross-section.
+///   Solve `(d_perp - R)² + h² = r²` (torus) and `d_perp² + h² = R_s²` (sphere)
+///   via root-finding on `f(z) = torus_radius(z) - sphere_radius(z)`.
+///
+/// **All other cases** fall back to numerical marching.
+fn torus_x_sphere(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    sphere: &SphericalSurface,
+) -> SurfaceSurfaceIntersection {
+    let axis = torus.axis.normalize();
+
+    // Project sphere center onto torus axis
+    let t = (sphere.center - torus.center).dot(axis);
+    let foot = torus.center + axis * t;
+    let d_perp = (sphere.center - foot).length();
+
+    // Analytic case: sphere center on torus axis
+    if d_perp < TOLERANCE_ABS {
+        return torus_x_sphere_on_axis(torus, sphere, axis);
+    }
+
+    numeric_intss(&Surface3::Torus(*torus), &Surface3::Sphere(*sphere))
+}
+
+#[allow(non_snake_case)]
+fn torus_x_sphere_on_axis(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    sphere: &SphericalSurface,
+    axis: DVec3,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let R = torus.major_radius;
+    let r = torus.minor_radius;
+    let R_s = sphere.radius;
+
+    // In the plane through the axis: torus is a circle of radius r centered at (R, 0),
+    // sphere is a circle of radius R_s centered at (0, z_s) where z_s is sphere center's
+    // axial offset from torus center.
+    // Actually in local coords: torus tube centerline is at distance R from axis,
+    // tube radius = r. Sphere center is on axis at height z_s from torus center.
+    let z_s = (sphere.center - torus.center).dot(axis);
+
+    // Find intersection of two circles in the (ρ, z) half-plane:
+    // Torus tube circle: (ρ - R)² + (z - 0)² = r²  (tube center at (R, 0))
+    // Sphere cross-section: ρ² + (z - z_s)² = R_s²  (sphere center at (0, z_s))
+    //
+    // We need to find (ρ, z) where both are satisfied, with ρ > 0.
+    // From sphere: ρ² = R_s² - (z - z_s)²
+    // Substitute into torus: (sqrt(R_s² - (z-z_s)²) - R)² + z² = r²
+    //
+    // Sample z and find sign changes of f(z) = torus_residual(z).
+    let mut out = SurfaceSurfaceIntersection::default();
+    let n = 128usize;
+    let z_lo = z_s - R_s;
+    let z_hi = z_s + R_s;
+    let mut prev_f = f64::NAN;
+    let mut prev_z = 0.0f64;
+
+    for i in 0..=n {
+        let z = z_lo + (z_hi - z_lo) * i as f64 / n as f64;
+        let dz_sphere = z - z_s;
+        let rho_s_sq = R_s * R_s - dz_sphere * dz_sphere;
+        if rho_s_sq < 0.0 {
+            prev_f = f64::NAN;
+            prev_z = z;
+            continue;
+        }
+        let rho_s = rho_s_sq.sqrt();
+        // Residual: distance from (rho_s, z) to torus tube circle center (R, 0)
+        let f = (rho_s - R).powi(2) + z * z - r * r;
+
+        if !prev_f.is_nan() && prev_f * f < 0.0 {
+            let mut lo = prev_z;
+            let mut hi = z;
+            for _ in 0..64 {
+                let mid = (lo + hi) * 0.5;
+                let dm = mid - z_s;
+                let rm = (R_s * R_s - dm * dm).max(0.0).sqrt();
+                let fm = (rm - R).powi(2) + mid * mid - r * r;
+                let flo = ((R_s * R_s - (lo - z_s).powi(2)).max(0.0).sqrt() - R).powi(2) + lo * lo - r * r;
+                if fm * flo < 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            let z_sol = (lo + hi) * 0.5;
+            let dz = z_sol - z_s;
+            let rho_sol = (R_s * R_s - dz * dz).max(0.0).sqrt();
+            if rho_sol > TOLERANCE_ABS {
+                let center = torus.center + axis * z_sol;
+                let circle = Circle3 {
+                    center,
+                    normal: axis,
+                    radius: rho_sol,
+                };
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circle),
+                    &[0.0, TAU],
+                    &Surface3::Torus(*torus),
+                );
+                let pcb = circle_pcurve_on_sphere(&circle, sphere);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circle),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        prev_f = f;
+        prev_z = z;
+    }
+
+    if out.curves.is_empty() {
+        numeric_intss(&Surface3::Torus(*torus), &Surface3::Sphere(*sphere))
+    } else {
+        out
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Torus × Cylinder
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Torus-cylinder intersection.
+///
+/// **Analytic case — cylinder axis = torus axis (coaxial)**:
+///   Intersection consists of circles at heights where the torus tube
+///   cross-section meets the cylinder radius. Solve `(R_cyl - R)² + h² = r²`.
+///
+/// **All other cases** fall back to numerical marching.
+fn torus_x_cylinder(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    cyl: &CylindricalSurface,
+) -> SurfaceSurfaceIntersection {
+    let t_axis = torus.axis.normalize();
+    let c_axis = cyl.axis.normalize();
+    let cross = t_axis.cross(c_axis);
+    let sin_angle = cross.length();
+
+    let delta = cyl.origin - torus.center;
+    let d_perp = (delta - t_axis * delta.dot(t_axis)).length();
+
+    // Coaxial: same axis line
+    if sin_angle < TOLERANCE_ANG && d_perp < TOLERANCE_ABS {
+        return torus_x_cylinder_coaxial(torus, cyl, t_axis);
+    }
+
+    numeric_intss(&Surface3::Torus(*torus), &Surface3::Cylinder(*cyl))
+}
+
+#[allow(non_snake_case)]
+fn torus_x_cylinder_coaxial(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    cyl: &CylindricalSurface,
+    axis: DVec3,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let R = torus.major_radius;
+    let r = torus.minor_radius;
+    let r_cyl = cyl.radius;
+
+    // In the (ρ, z) plane: torus tube is circle of radius r at (R, 0).
+    // Cylinder is vertical line at ρ = r_cyl.
+    // Intersection: (r_cyl - R)² + h² = r²  ⟹  h = ±sqrt(r² - (r_cyl - R)²)
+    let dr = r_cyl - R;
+    let h_sq = r * r - dr * dr;
+
+    let mut out = SurfaceSurfaceIntersection::default();
+    if h_sq < -TOLERANCE_ABS {
+        return out; // cylinder outside torus tube
+    }
+
+    let h = h_sq.max(0.0).sqrt();
+    let heights = if h.abs() < TOLERANCE_ABS {
+        vec![0.0f64]
+    } else {
+        vec![-h, h]
+    };
+
+    for &hz in &heights {
+        let center = cyl.origin + axis * hz;
+        let circle = Circle3 {
+            center,
+            normal: axis,
+            radius: r_cyl,
+        };
+        let pca = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, TAU],
+            &Surface3::Torus(*torus),
+        );
+        let pcb = circle_pcurve_on_cylinder(&circle, cyl);
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Circle(circle),
+            pcurve_on_a: Some(pca),
+            pcurve_on_b: Some(pcb),
+        });
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Torus × Cone
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Torus-cone intersection.
+///
+/// **Analytic case — cone apex on torus axis, cone axis = torus axis**:
+///   By rotational symmetry, intersections are circles. Solve
+///   torus tube equation vs cone surface in the (ρ, z) half-plane.
+///
+/// **All other cases** fall back to numerical marching.
+fn torus_x_cone(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    cone: &ConicalSurface,
+) -> SurfaceSurfaceIntersection {
+    let t_axis = torus.axis.normalize();
+    let c_axis = cone.axis.normalize();
+    let cross = t_axis.cross(c_axis);
+    let sin_angle = cross.length();
+
+    // Project cone apex onto torus axis
+    let t = (cone.apex - torus.center).dot(t_axis);
+    let foot = torus.center + t_axis * t;
+    let d_apex = (cone.apex - foot).length();
+
+    // Coaxial: same axis line
+    if sin_angle < TOLERANCE_ANG && d_apex < TOLERANCE_ABS {
+        return torus_x_cone_coaxial(torus, cone, t_axis);
+    }
+
+    numeric_intss(&Surface3::Torus(*torus), &Surface3::Cone(*cone))
+}
+
+#[allow(non_snake_case)]
+fn torus_x_cone_coaxial(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    cone: &ConicalSurface,
+    axis: DVec3,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let R = torus.major_radius;
+    let r = torus.minor_radius;
+    let ta = cone.half_angle_rad.tan();
+    let z_apex = (cone.apex - torus.center).dot(axis);
+
+    // Torus tube in (ρ, z): (ρ - R)² + z² = r²  (tube center at (R, 0))
+    // Cone in (ρ, z): ρ = (z - z_apex) * ta  (for z > z_apex on nappe)
+    // Substitute: ((z-z_apex)*ta - R)² + z² = r²
+    // Quadratic in z: (ta²+1)z² - 2*ta*(z_apex*ta+R)*z + (z_apex*ta+R)² - r² = 0
+    let a_q = ta * ta + 1.0;
+    let b_q = -2.0 * ta * (z_apex * ta + R);
+    let c_q = (z_apex * ta + R).powi(2) - r * r;
+
+    let disc = b_q * b_q - 4.0 * a_q * c_q;
+    let mut out = SurfaceSurfaceIntersection::default();
+
+    if disc < 0.0 {
+        return out; // no real solutions
+    }
+
+    let sqrt_disc = disc.max(0.0).sqrt();
+    for &sign in &[-1.0f64, 1.0f64] {
+        let z_sol = (-b_q + sign * sqrt_disc) / (2.0 * a_q);
+        let rho_sol = (z_sol - z_apex) * ta;
+        if rho_sol < TOLERANCE_ABS {
+            continue; // not on cone nappe
+        }
+
+        let center = torus.center + axis * z_sol;
+        let circle = Circle3 {
+            center,
+            normal: axis,
+            radius: rho_sol,
+        };
+        let pca = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, TAU],
+            &Surface3::Torus(*torus),
+        );
+        let pcb = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, TAU],
+            &Surface3::Cone(*cone),
+        );
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Circle(circle),
+            pcurve_on_a: Some(pca),
+            pcurve_on_b: Some(pcb),
+        });
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Torus × Torus
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Torus-torus intersection.
+///
+/// **Analytic case — coaxial tori (same axis line)**:
+///   By rotational symmetry, intersections are circles at heights where
+///   the torus tube circles (in the ρ-z half-plane) meet.
+///
+/// **All other cases** fall back to numerical marching.
+fn torus_x_torus(
+    t1: &rcad_kernel::geom::ToroidalSurface,
+    t2: &rcad_kernel::geom::ToroidalSurface,
+) -> SurfaceSurfaceIntersection {
+    let a1 = t1.axis.normalize();
+    let a2 = t2.axis.normalize();
+    let cross = a1.cross(a2);
+    let sin_angle = cross.length();
+
+    // Project t2 center onto t1 axis
+    let delta = t2.center - t1.center;
+    let d_perp = (delta - a1 * delta.dot(a1)).length();
+
+    // Coaxial
+    if sin_angle < TOLERANCE_ANG && d_perp < TOLERANCE_ABS {
+        return torus_x_torus_coaxial(t1, t2, a1);
+    }
+
+    numeric_intss(&Surface3::Torus(*t1), &Surface3::Torus(*t2))
+}
+
+#[allow(non_snake_case)]
+fn torus_x_torus_coaxial(
+    t1: &rcad_kernel::geom::ToroidalSurface,
+    t2: &rcad_kernel::geom::ToroidalSurface,
+    axis: DVec3,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let R1 = t1.major_radius;
+    let r1 = t1.minor_radius;
+    let R2 = t2.major_radius;
+    let r2 = t2.minor_radius;
+    let dz_centers = (t2.center - t1.center).dot(axis);
+
+    // Two circles in (ρ, z) plane:
+    // Circle 1: (ρ - R1)² + (z - 0)² = r1²   (center at (R1, 0))
+    // Circle 2: (ρ - R2)² + (z - dz)² = r2²  (center at (R2, dz))
+    // Solve for intersection of two circles.
+    // Let u = ρ, v = z. Then:
+    //   (u-R1)² + v² = r1²
+    //   (u-R2)² + (v-dz)² = r2²
+    //
+    // Expand both:
+    //   u² - 2R1*u + R1² + v² = r1²
+    //   u² - 2R2*u + R2² + v² - 2*dz*v + dz² = r2²
+    //
+    // Subtract: -2(R1-R2)*u + R1²-R2² + 2*dz*v - dz² = r1²-r2²
+    //   v = (r1²-r2² + 2(R1-R2)*u + dz² - R1²+R2²) / (2*dz)  [if dz ≠ 0]
+    //
+    // If dz = 0: circles are concentric in (ρ, z) → no intersection unless r1=r2 and R1=R2.
+    let mut out = SurfaceSurfaceIntersection::default();
+
+    if dz_centers.abs() < TOLERANCE_ABS {
+        // Concentric tori: intersection only if tubes touch
+        // Distance between tube centers in (ρ,z) plane is |R1-R2|
+        let d_tube = (R1 - R2).abs();
+        if (d_tube - (r1 + r2)).abs() < TOLERANCE_ABS {
+            // Tubes touch at one circle at z=0, ρ = midpoint
+            let rho = (R1 + R2) / 2.0;
+            let center = t1.center;
+            let circle = Circle3 {
+                center,
+                normal: axis,
+                radius: rho,
+            };
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circle),
+                &[0.0, TAU],
+                &Surface3::Torus(*t1),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circle),
+                &[0.0, TAU],
+                &Surface3::Torus(*t2),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circle),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        return out;
+    }
+
+    // Linear relation: v = A*u + B
+    let A = (R1 - R2) / dz_centers;
+    let B = (r1 * r1 - r2 * r2 + dz_centers * dz_centers - R1 * R1 + R2 * R2) / (2.0 * dz_centers);
+
+    // Substitute into circle 1: (u-R1)² + (A*u+B)² = r1²
+    // (1+A²)*u² + (-2R1 + 2AB)*u + (R1² + B² - r1²) = 0
+    let a_q = 1.0 + A * A;
+    let b_q = -2.0 * R1 + 2.0 * A * B;
+    let c_q = R1 * R1 + B * B - r1 * r1;
+
+    let disc = b_q * b_q - 4.0 * a_q * c_q;
+    if disc < 0.0 {
+        return out;
+    }
+
+    let sqrt_disc = disc.max(0.0).sqrt();
+    for &sign in &[-1.0f64, 1.0f64] {
+        let u = (-b_q + sign * sqrt_disc) / (2.0 * a_q);
+        let v = A * u + B;
+        if u < TOLERANCE_ABS {
+            continue; // ρ must be positive
+        }
+
+        let center = t1.center + axis * v;
+        let circle = Circle3 {
+            center,
+            normal: axis,
+            radius: u,
+        };
+        let pca = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, TAU],
+            &Surface3::Torus(*t1),
+        );
+        let pcb = fallback_pcurve_by_projection(
+            &Curve3::Circle(circle),
+            &[0.0, TAU],
+            &Surface3::Torus(*t2),
+        );
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Circle(circle),
+            pcurve_on_a: Some(pca),
+            pcurve_on_b: Some(pcb),
+        });
+    }
+    out
 }
 
 
@@ -1107,7 +1659,7 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
 mod tests {
     use super::*;
     use glam::DVec3;
-    use rcad_kernel::geom::{CylindricalSurface, Plane, SphericalSurface};
+    use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface};
 
     #[test]
     fn plane_plane_parallel() {
@@ -1305,6 +1857,241 @@ mod tests {
             "outer circle radius should be 6, got {}",
             radii[1]
         );
+    }
+
+    #[test]
+    fn cylinder_cone_coaxial_gives_circle() {
+        // Cylinder: r=2, axis Z, origin (0,0,0)
+        // Cone: apex (0,0,0), axis Z, half_angle=45° → tan=1
+        // Coaxial → circle at h = 0 + 2/1 = 2, radius = 2
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0, // not used by the intersection logic
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&cyl, &cone);
+        assert_eq!(r.curves.len(), 1, "coaxial cylinder-cone should give one circle");
+        if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
+            assert!((c.center.z - 2.0).abs() < 1e-6, "circle center.z={}", c.center.z);
+            assert!((c.radius - 2.0).abs() < 1e-6, "circle radius={}", c.radius);
+        } else {
+            panic!("expected Circle, got {:?}", r.curves[0].curve_3d);
+        }
+    }
+
+    #[test]
+    fn cone_cone_coaxial_gives_circle() {
+        // Cone1: apex (0,0,2), axis Z, 45° (tan=1)
+        // Cone2: apex (0,0,0), axis Z, 30° (tan=1/√3)
+        // Coaxial → circle at h = √3+1 ≈ 2.732 from cone1 apex
+        let k1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, 2.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+        let k2 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 30.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&k1, &k2);
+        assert_eq!(r.curves.len(), 1, "coaxial cones should give one circle");
+        if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
+            let expected_r = 3_f64.sqrt() + 1.0;
+            assert!(
+                (c.radius - expected_r).abs() < 1e-6,
+                "circle radius={}, expected {}",
+                c.radius,
+                expected_r
+            );
+        } else {
+            panic!("expected Circle, got {:?}", r.curves[0].curve_3d);
+        }
+    }
+
+    #[test]
+    fn cone_cone_same_apex_gives_point() {
+        // Same apex, different half-angles → CoaxialPoint
+        let k1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+        let k2 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 30.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&k1, &k2);
+        assert_eq!(r.curves.len(), 1, "coaxial same-apex cones should give one point");
+        assert!(matches!(&r.curves[0].curve_3d, SurfaceCurve::Point(_)));
+    }
+
+    #[test]
+    fn cylinder_cone_skew_falls_back_to_numeric() {
+        // Cylinder: axis Z; Cone: axis X — skew axes → General → numeric
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.5, 0.0, 0.0),
+            axis: DVec3::X,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&cyl, &cone);
+        // Should find something via numeric marching
+        assert!(!r.is_empty(), "skew cylinder-cone should have numeric intersection");
+    }
+
+    #[test]
+    fn torus_sphere_on_axis_gives_circles() {
+        // Torus: axis=Z, center=origin, R=5, r=2.
+        // Sphere: center at origin (on torus axis), radius=5.
+        // The torus tube is at (ρ-5)² + z² = 4; sphere is ρ² + z² = 25.
+        // Substituting: ρ² + 4 - (ρ-5)² = 25 → 10ρ - 21 = 25 → ρ = 4.6.
+        // z² = 25 - 4.6² = 3.84 → z = ±1.96 → two circles.
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 2.0,
+        });
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+        });
+
+        let r = intersect_surfaces(&torus, &sphere);
+        assert_eq!(
+            r.curves.len(),
+            2,
+            "torus ∩ sphere should give 2 circles, got {}",
+            r.curves.len()
+        );
+        for c in &r.curves {
+            assert!(matches!(&c.curve_3d, SurfaceCurve::Circle(_)));
+        }
+    }
+
+    #[test]
+    fn torus_cylinder_coaxial_gives_circles() {
+        // Torus: axis=Z, R=5, r=1.
+        // Cylinder: axis=Z, radius=5 (cuts torus tube at centerline).
+        // (5-5)² + h² = 1² → h = ±1 → two circles.
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
+        });
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 5.0,
+        });
+
+        let r = intersect_surfaces(&torus, &cyl);
+        assert_eq!(
+            r.curves.len(),
+            2,
+            "torus ∩ coaxial cylinder should give 2 circles, got {}",
+            r.curves.len()
+        );
+        for c in &r.curves {
+            if let SurfaceCurve::Circle(circ) = &c.curve_3d {
+                assert!((circ.radius - 5.0).abs() < 1e-6);
+            } else {
+                panic!("expected Circle");
+            }
+        }
+    }
+
+    #[test]
+    fn torus_cone_coaxial_gives_circle() {
+        // Torus: axis=Z, R=5, r=4 (large tube).
+        // Cone: apex=origin, axis=Z, 45° (ρ=z).
+        // Substituting ρ=z into (ρ-5)²+z²=16:
+        //   2z² - 10z + 9 = 0 → z = (10±√28)/4 → {3.82, 1.18} → two circles.
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 4.0,
+        });
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, -3.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&torus, &cone);
+        assert!(!r.is_empty(), "torus ∩ coaxial cone should have intersection");
+        assert!(matches!(&r.curves[0].curve_3d, SurfaceCurve::Circle(_)));
+    }
+
+    #[test]
+    fn torus_torus_coaxial_gives_circles() {
+        // Torus1: axis=Z, R=5, r=1, center=origin.
+        // Torus2: axis=Z, R=5, r=1.5, center=(0,0,0.5).
+        // Coaxial, offset → circles where tube circles intersect in (ρ,z) plane.
+        let t1 = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
+        });
+        let t2 = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::new(0.0, 0.0, 0.5),
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.5,
+        });
+
+        let r = intersect_surfaces(&t1, &t2);
+        // Should find at least one circle
+        assert!(!r.is_empty(), "coaxial tori should have intersection curves");
+        for c in &r.curves {
+            assert!(matches!(&c.curve_3d, SurfaceCurve::Circle(_)));
+        }
+    }
+
+    #[test]
+    fn torus_skew_cylinder_falls_back_to_numeric() {
+        // Torus: axis=Z; Cylinder: axis=X — not coaxial → numeric
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 1.0,
+        });
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(5.0, 0.0, 0.0),
+            axis: DVec3::X,
+            radius: 0.5,
+        });
+
+        let r = intersect_surfaces(&torus, &cyl);
+        // Numeric marching should find something
+        assert!(!r.is_empty(), "skew torus-cylinder should have numeric intersection");
     }
 }
 

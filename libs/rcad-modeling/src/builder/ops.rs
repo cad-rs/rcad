@@ -2,6 +2,8 @@
 //!
 //! Corresponds to OCCT `BRepPrimAPI_MakePrism` and `BRepPrimAPI_MakeRevol`.
 
+use std::collections::HashMap;
+
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Line3, Plane, Surface3};
@@ -9,6 +11,58 @@ use rcad_kernel::topology::{Vertex, WireEdge};
 
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 use crate::builder::{BuildError, normalize_vector};
+
+// ── History types ─────────────────────────────────────────────────────────────
+
+/// Tracks which result faces came from the profile (caps) and which were
+/// generated (lateral swept faces).
+///
+/// Analogous to OCCT `BRepPrimAPI_MakePrism::Generated()`.
+#[derive(Debug, Clone)]
+pub struct SweepHistory {
+    /// Result face indices that are the bottom cap (copied from the profile).
+    pub bottom_cap: Vec<usize>,
+    /// Result face indices that are the top cap (translated/rotated copy).
+    pub top_cap: Vec<usize>,
+    /// Result face indices that are lateral swept faces.
+    /// `lateral_faces[i]` corresponds to the i-th edge of the profile boundary.
+    pub lateral_faces: Vec<usize>,
+    /// Mapping from profile edge index to the generated lateral face index.
+    pub profile_edge_to_lateral: HashMap<usize, usize>,
+}
+
+impl SweepHistory {
+    /// All result face indices tracked by this history.
+    pub fn all_faces(&self) -> impl Iterator<Item = usize> + '_ {
+        self.bottom_cap
+            .iter()
+            .chain(&self.top_cap)
+            .chain(&self.lateral_faces)
+            .copied()
+    }
+}
+
+/// Tracks which result faces came from which loft cross-section or were
+/// generated as lateral ruled surfaces.
+#[derive(Debug, Clone)]
+pub struct LoftHistory {
+    /// Result face index for the bottom cap (profile[0]).
+    pub bottom_cap: usize,
+    /// Result face index for the top cap (profile[last]).
+    pub top_cap: usize,
+    /// Lateral face indices. `lateral_faces[sec * n + i]` corresponds to
+    /// the i-th edge of the profile between section `sec` and `sec+1`.
+    pub lateral_faces: Vec<usize>,
+}
+
+impl LoftHistory {
+    /// All result face indices tracked by this history.
+    pub fn all_faces(&self) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(self.bottom_cap)
+            .chain(std::iter::once(self.top_cap))
+            .chain(self.lateral_faces.iter().copied())
+    }
+}
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -73,6 +127,19 @@ pub fn extrude(
     direction: DVec3,
     distance: f64,
 ) -> Result<BRep, BuildError> {
+    extrude_with_history(profile, face_idx, direction, distance).map(|(brep, _)| brep)
+}
+
+/// Extrude a profile face and return history mapping face origins.
+///
+/// See [`extrude`] for geometry details. The returned [`SweepHistory`]
+/// tracks which result faces are bottom cap, top cap, and lateral faces.
+pub fn extrude_with_history(
+    profile: &BRep,
+    face_idx: usize,
+    direction: DVec3,
+    distance: f64,
+) -> Result<(BRep, SweepHistory), BuildError> {
     let dir = normalize_vector("direction", direction)?;
     if distance <= 0.0 {
         return Err(BuildError::NonPositiveValue("distance"));
@@ -123,7 +190,7 @@ pub fn extrude(
         .collect();
 
     // Build bottom cap (inward normal = -dir)
-    let _bot_face = {
+    let bot_face = {
         let mut wire_edges = Vec::new();
         for i in 0..n {
             let j = (i + 1) % n;
@@ -149,7 +216,7 @@ pub fn extrude(
     };
 
     // Build top cap (outward normal = +dir)
-    let _top_face = {
+    let top_face = {
         let mut wire_edges = Vec::new();
         for i in 0..n {
             let j = (i + 1) % n;
@@ -174,6 +241,8 @@ pub fn extrude(
     };
 
     // Build lateral faces: one quad per profile edge
+    let mut lateral_faces = Vec::with_capacity(n);
+    let mut profile_edge_to_lateral = HashMap::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
 
@@ -265,11 +334,19 @@ pub fn extrude(
             origin: a,
             normal: lat_normal,
         });
-        make_face(&mut result, surface, wire, vec![])?;
+        let face_idx = make_face(&mut result, surface, wire, vec![])?;
+        lateral_faces.push(face_idx);
+        profile_edge_to_lateral.insert(i, face_idx);
     }
 
-    // All faces are in solids[0].shells[0] already from make_face calls
-    Ok(result)
+    let history = SweepHistory {
+        bottom_cap: vec![bot_face],
+        top_cap: vec![top_face],
+        lateral_faces,
+        profile_edge_to_lateral,
+    };
+
+    Ok((result, history))
 }
 
 // ── Revolution ────────────────────────────────────────────────────────────────
@@ -291,6 +368,21 @@ pub fn revolve(
     axis_dir: DVec3,
     angle: f64,
 ) -> Result<BRep, BuildError> {
+    revolve_with_history(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep)
+}
+
+/// Revolve a profile face around an axis and return history mapping face origins.
+///
+/// See [`revolve`] for geometry details. The returned [`SweepHistory`]
+/// tracks which result faces are bottom cap, top cap, and lateral faces.
+/// For a full revolution (≈ 2π), `bottom_cap` and `top_cap` are empty.
+pub fn revolve_with_history(
+    profile: &BRep,
+    face_idx: usize,
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+    angle: f64,
+) -> Result<(BRep, SweepHistory), BuildError> {
     let dir = normalize_vector("axis_dir", axis_dir)?;
     if angle <= 0.0 {
         return Err(BuildError::NonPositiveValue("angle"));
@@ -352,10 +444,12 @@ pub fn revolve(
     };
 
     // Create cap faces (bottom = original profile, top = rotated) for partial revolution
+    let mut bottom_cap = Vec::new();
+    let mut top_cap = Vec::new();
     if !full_revolution {
         // Bottom cap: original profile
         let bot_pts_ref = &profile_pts;
-        let _bot_face = {
+        let bot_face = {
             let mut wire_edges = Vec::new();
             for i in 0..n {
                 let j = (i + 1) % n;
@@ -385,10 +479,11 @@ pub fn revolve(
             });
             make_face(&mut result, surface, make_wire(wire_edges), vec![])?
         };
+        bottom_cap.push(bot_face);
 
         // Top cap: rotated profile
         let top_pts_ref = &rot_pts;
-        let _top_face = {
+        let top_face = {
             let mut wire_edges = Vec::new();
             for i in 0..n {
                 let j = (i + 1) % n;
@@ -418,9 +513,12 @@ pub fn revolve(
             });
             make_face(&mut result, surface, make_wire(wire_edges), vec![])?
         };
+        top_cap.push(top_face);
     }
 
     // Create lateral swept faces for each profile edge
+    let mut lateral_faces = Vec::with_capacity(n);
+    let mut profile_edge_to_lateral = HashMap::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
 
@@ -515,10 +613,19 @@ pub fn revolve(
             origin: p0,
             normal: lat_normal,
         });
-        make_face(&mut result, surface, wire, vec![])?;
+        let face_idx = make_face(&mut result, surface, wire, vec![])?;
+        lateral_faces.push(face_idx);
+        profile_edge_to_lateral.insert(i, face_idx);
     }
 
-    Ok(result)
+    let history = SweepHistory {
+        bottom_cap,
+        top_cap,
+        lateral_faces,
+        profile_edge_to_lateral,
+    };
+
+    Ok((result, history))
 }
 
 // ── Loft (multi-profile) ──────────────────────────────────────────────────────
@@ -533,6 +640,14 @@ pub fn revolve(
 /// # Errors
 /// - `BuildError::DegenerateGeometry` if fewer than 2 profiles, or vertex counts differ, or fewer than 3 vertices per profile.
 pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
+    loft_with_history(profiles).map(|(brep, _)| brep)
+}
+
+/// Connect N cross-section profiles and return history mapping face origins.
+///
+/// See [`loft`] for geometry details. The returned [`LoftHistory`]
+/// tracks which result faces are bottom cap, top cap, and lateral faces.
+pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory), BuildError> {
     if profiles.len() < 2 {
         return Err(BuildError::DegenerateGeometry(
             "loft requires at least 2 profiles",
@@ -582,7 +697,7 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
         .collect();
 
     // Bottom cap (profile[0]) — normal pointing away from profile[1]
-    {
+    let bot_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[0];
         for i in 0..n {
@@ -615,11 +730,11 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
             origin: pts[0],
             normal: bot_normal,
         });
-        make_face(&mut result, surface, make_wire(wire_edges), vec![])?;
-    }
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?
+    };
 
     // Top cap (profile[last]) — normal pointing away from profile[last-1]
-    {
+    let top_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[s - 1];
         for i in 0..n {
@@ -651,10 +766,11 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
             origin: pts[0],
             normal: top_normal,
         });
-        make_face(&mut result, surface, make_wire(wire_edges), vec![])?;
-    }
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?
+    };
 
     // Lateral quad faces between consecutive sections
+    let mut lateral_faces = Vec::new();
     for sec in 0..s - 1 {
         let pts_bot = &profiles[sec];
         let pts_top = &profiles[sec + 1];
@@ -730,7 +846,7 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
                     forward: true,
                 },
             ]);
-            make_face(
+            let face_idx = make_face(
                 &mut result,
                 Surface3::Plane(Plane {
                     origin: a,
@@ -739,10 +855,17 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
                 wire,
                 vec![],
             )?;
+            lateral_faces.push(face_idx);
         }
     }
 
-    Ok(result)
+    let history = LoftHistory {
+        bottom_cap: bot_face,
+        top_cap: top_face,
+        lateral_faces,
+    };
+
+    Ok((result, history))
 }
 
 // ── Pipe Sweep ────────────────────────────────────────────────────────────────

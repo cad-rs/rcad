@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase P3 完成
+> 版本：2026-04 · Phase P3 完成（含扫掠/圆角历史追踪）
 
 ---
 
@@ -42,7 +42,7 @@ rcad-algorithms    布尔运算、面印记、截面、HLR、IntSS、BRep 检查
 rcad-step          STEP AP203/AP214 读写、装配体 IO
 rcad-render        wgpu 渲染、拾取、HLR 描边
 rcad-scene         创建命令状态机、装配体管理
-rcad-constraints   2D 草图约束求解、草图 → BRep
+rcad-constraints   2D/3D 草图约束求解、草图 → BRep
 apps/creator-egui  egui 桌面应用
 apps/creator-iced  iced 桌面应用
 ```
@@ -312,10 +312,13 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 | 操作 | API | 说明 |
 |------|-----|------|
 | 拉伸 | `extrude(profile, dir, dist)` | 轮廓沿方向线性拉伸 |
+| 拉伸（历史） | `extrude_with_history(...)` | 返回 `SweepHistory`（bottom_cap / top_cap / lateral_faces / profile_edge_to_lateral）|
 | 旋转 | `revolve(profile, axis, angle)` | 轮廓绕轴旋转 |
+| 旋转（历史） | `revolve_with_history(...)` | 返回 `SweepHistory`（全旋转时 cap 为空）|
 | 管道扫掠 | `sweep_pipe(profile, spine)` | 轮廓沿脊线路径扫掠 |
 | 放样 | `loft(profiles)` | 多截面放样 |
-| 变截面扫掠 | `sweep_variable(profiles, spine)` | 截面沿路径线性插值缩放 |
+| 放样（历史） | `loft_with_history(...)` | 返回 `LoftHistory`（bottom_cap / top_cap / lateral_faces）|
+| 变截面扫掠 | `sweep_pipe_variable(profiles, spine)` | 截面沿路径线性插值缩放 |
 
 ---
 
@@ -324,9 +327,15 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 | 操作 | API |
 |------|-----|
 | 等距圆角 | `fillet(brep, edge_indices, radius)` |
+| 等距圆角（历史） | `fillet_edge_with_history(brep, edge_idx, radius)` → `(BRep, FilletHistory)` |
 | 等距倒角 | `chamfer(brep, edge_indices, dist)` |
+| 等距倒角（历史） | `chamfer_edge_with_history(brep, edge_idx, dist)` → `(BRep, FilletHistory)` |
 | 批量圆角 | `fillet_edges(brep, [(edge_idx, radius), ...])` |
+| 批量圆角（历史） | `fillet_edges_with_history(...)` → `(BRep, MultiFilletHistory)` |
 | 顶点混合圆角 | `corner_blend(brep, vertex_idx, radius)` |
+| 顶点混合（历史） | `corner_blend_with_history(...)` → `(BRep, CornerBlendHistory)` |
+
+`FilletHistory` 包含 `modified_faces`（被修剪的原始面）、`fillet_face`（新生成的圆角/倒角面）、`closing_faces`（端点处的三角封闭面）。
 
 ---
 
@@ -349,6 +358,29 @@ let (result, history) = boolean_op_with_history(op, &a, &b)?;
 ```
 
 `FaceOrigin` 可用于将结果面映射回原始输入面，支持参数化重建。
+
+扫掠操作同样支持历史追踪：
+
+```rust
+// 拉伸历史
+let (brep, hist) = extrude_with_history(&profile, face, dir, dist)?;
+// hist.bottom_cap    → 底面索引
+// hist.top_cap       → 顶面索引
+// hist.lateral_faces → 侧面索引（按轮廓边顺序）
+// hist.profile_edge_to_lateral → 轮廓边 → 侧面映射
+
+// 放样历史
+let (brep, hist) = loft_with_history(&profiles)?;
+// hist.bottom_cap    → 底面
+// hist.top_cap       → 顶面
+// hist.lateral_faces → 侧面（按 section × edge 顺序）
+
+// 圆角/倒角历史
+let (brep, hist) = fillet_edge_with_history(&brep, edge_idx, radius)?;
+// hist.modified_faces → 被修剪的原始面
+// hist.fillet_face    → 新生成的圆角面
+// hist.closing_faces  → 端点三角封闭面
+```
 
 ---
 
@@ -745,12 +777,17 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 |------|------|------|------|
 | 基本体 | `BRepPrimAPI_Make*` | `BRep::from_primitive` | ✅ |
 | 拉伸 | `BRepPrimAPI_MakePrism` | `extrude` | ✅ |
+| 拉伸历史 | `BRepPrimAPI_MakePrism::Generated()` | `extrude_with_history` | ✅ |
 | 旋转 | `BRepPrimAPI_MakeRevol` | `revolve` | ✅ |
+| 旋转历史 | `BRepPrimAPI_MakeRevol::Generated()` | `revolve_with_history` | ✅ |
 | 管道扫掠 | `BRepOffsetAPI_MakePipe` | `sweep_pipe` | ✅ |
 | 放样 | `BRepOffsetAPI_ThruSections` | `loft` | ✅ |
-| 变截面扫掠 | `BRepOffsetAPI_MakePipeShell` | `sweep_variable` | ✅ |
+| 放样历史 | — | `loft_with_history` | ✅ |
+| 变截面扫掠 | `BRepOffsetAPI_MakePipeShell` | `sweep_pipe_variable` | ✅ |
 | 等距圆角 | `BRepFilletAPI_MakeFillet` | `fillet` | ✅ |
+| 圆角历史 | `BRepFilletAPI_MakeFillet::Modified()` | `fillet_edge_with_history` | ✅ |
 | 等距倒角 | `BRepFilletAPI_MakeChamfer` | `chamfer` | ✅ |
+| 倒角历史 | `BRepFilletAPI_MakeChamfer::Modified()` | `chamfer_edge_with_history` | ✅ |
 | 顶点混合圆角 | `ChFi3d_Builder` | `corner_blend` | ✅ |
 | 布尔 Union | `BRepAlgoAPI_Fuse` | `boolean_op(Union, ...)` | ✅ 平面体；曲面体部分 |
 | 布尔 Intersection | `BRepAlgoAPI_Common` | `boolean_op(Intersection, ...)` | ✅ 平面体；曲面体部分 |
@@ -907,4 +944,54 @@ Sketch::to_solid_brep(height: f64) -> Option<BRep>
 
 ---
 
-*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种；P1: `mesh_brep` FEM 质量网格生成等价于 `BRepMesh_IncrementalMesh`；P1: 消除 `intss.rs` 中 NaN panic；已移除"目前不支持的 OCCT 功能"表中已完成项）*
+## 11. 3D 草图约束（`rcad-constraints::space3d`）
+
+3D 参数化空间约束求解器，类比 2D 草图约束但操作于三维空间。
+
+### 实体类型
+
+| 实体 | 参数 | 说明 |
+|------|------|------|
+| `SpacePoint` | 3 (x, y, z) | 空间点 |
+| `SpaceLine` | 6 (x0, y0, z0, x1, y1, z1) | 空间线段 |
+| `Plane` | 4 (nx, ny, nz, d) | 平面（法向 + 距离）|
+| `Sphere` | 4 (cx, cy, cz, r) | 球面 |
+
+### 约束类型
+
+| 约束 | 方程数 | 说明 |
+|------|--------|------|
+| `Fixed { point, x, y, z }` | 3 | 固定点坐标 |
+| `Coincident(p1, p2)` | 3 | 两点重合 |
+| `PointDistance { p1, p2, distance }` | 1 | 两点距离 |
+| `PointOnLine { point, line }` | 2 | 点在直线上 |
+| `PointOnPlane { point, plane }` | 1 | 点在平面上 |
+| `LineParallelLine(l1, l2)` | 2 | 两线平行 |
+| `LinePerpendicularLine(l1, l2)` | 1 | 两线垂直 |
+| `LineLength { line, length }` | 1 | 线段长度 |
+| `PlaneNormal { plane }` | 2 | 法向单位化 |
+| `PlaneParallel(p1, p2)` | 2 | 两平面平行 |
+| `PlaneAngle { p1, p2, angle }` | 1 | 两平面夹角 |
+| `SphereRadius { sphere, radius }` | 1 | 球面半径 |
+| `SphereTangent { s1, s2, external }` | 1 | 两球相切 |
+| `SphereSphereAngle { s1, s2, angle }` | 1 | 两球心连线方向约束 |
+
+### 求解器 API
+
+```rust
+SpaceSketch::new() -> Self
+SpaceSketch::add_point(x, y, z) -> SpaceEntityId
+SpaceSketch::add_line(x0, y0, z0, x1, y1, z1) -> SpaceEntityId
+SpaceSketch::add_plane(nx, ny, nz, d) -> SpaceEntityId
+SpaceSketch::add_sphere(cx, cy, cz, r) -> SpaceEntityId
+SpaceSketch::add_constraint(c: SpaceConstraint)
+SpaceSketch::fix_param(param_idx)
+SpaceSketch::fix_entity(id)
+SpaceSketch::solve() -> SpaceSolveResult
+```
+
+求解器使用 Newton-Raphson 迭代 + Tikhonov 正则化（处理欠约束系统），数值 Jacobian（中心有限差分）。
+
+---
+
+*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种；§11 新增 3D 空间约束求解器；§4.2-4.3 扫掠/圆角操作新增 `*_with_history` 变体，支持面来源追踪；P1: `mesh_brep` FEM 质量网格生成等价于 `BRepMesh_IncrementalMesh`；P1: 消除 `intss.rs` 中 NaN panic；已移除"目前不支持的 OCCT 功能"表中已完成项）*

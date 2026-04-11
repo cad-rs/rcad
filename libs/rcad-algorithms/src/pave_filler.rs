@@ -404,6 +404,26 @@ impl<'a> PaveFiller<'a> {
                 let (cone1, cone2) = (*cone1, *cone2);
                 self.intersect_cone_cone_faces(f1, f2, &cone1, &cone2);
             }
+            // ── Torus × * ─────────────────────────────────────────────────
+            (Surface3::Plane(pl), Surface3::Torus(tor))
+            | (Surface3::Torus(tor), Surface3::Plane(pl)) => {
+                self.intersect_torus_plane_faces(f1, f2, tor, pl);
+            }
+            (Surface3::Sphere(sph), Surface3::Torus(tor))
+            | (Surface3::Torus(tor), Surface3::Sphere(sph)) => {
+                self.intersect_torus_sphere_faces(f1, f2, tor, sph);
+            }
+            (Surface3::Cylinder(cyl), Surface3::Torus(tor))
+            | (Surface3::Torus(tor), Surface3::Cylinder(cyl)) => {
+                self.intersect_torus_cylinder_faces(f1, f2, tor, cyl);
+            }
+            (Surface3::Cone(cone), Surface3::Torus(tor))
+            | (Surface3::Torus(tor), Surface3::Cone(cone)) => {
+                self.intersect_torus_cone_faces(f1, f2, tor, cone);
+            }
+            (Surface3::Torus(tor1), Surface3::Torus(tor2)) => {
+                self.intersect_torus_torus_faces(f1, f2, tor1, tor2);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -1490,6 +1510,299 @@ impl<'a> PaveFiller<'a> {
                 });
             }
         }
+    }
+
+    // ── Torus intersection helpers ─────────────────────────────────────────────
+
+    /// Generic helper: call `intersect_surfaces` and wire all results into the DS.
+    /// `torus_is_f1` controls pcurve ordering.
+    fn register_torus_intersection(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        s1: &Surface3,
+        s2: &Surface3,
+        torus_is_f1: bool,
+    ) {
+        use inttools::intss::{intersect_surfaces, SurfaceCurve};
+        use inttools::pcurve_derive::polyline_pcurve_by_projection;
+
+        let result = intersect_surfaces(s1, s2);
+        if result.is_empty() {
+            return;
+        }
+
+        for sir in &result.curves {
+            match &sir.curve_3d {
+                SurfaceCurve::Circle(circle) => {
+                    let pts = sample_circle_arc(circle, 0.0, std::f64::consts::TAU, 32);
+                    if pts.len() < 2 {
+                        continue;
+                    }
+                    let v_start = self.ds.add_vertex(pts[0]);
+                    let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+
+                    let (pca, pcb) = if let (Some(a), Some(b)) = (&sir.pcurve_on_a, &sir.pcurve_on_b) {
+                        if torus_is_f1 {
+                            (Some(a.clone()), Some(b.clone()))
+                        } else {
+                            (Some(b.clone()), Some(a.clone()))
+                        }
+                    } else {
+                        (None, None)
+                    };
+
+                    let curve_idx = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Circle(*circle),
+                        polyline: vec![],
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, std::f64::consts::TAU],
+                        pcurve_on_a: pca,
+                        pcurve_on_b: pcb,
+                    });
+
+                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: vec![curve_idx],
+                        points: vec![],
+                    });
+                }
+                SurfaceCurve::Polyline(pts) => {
+                    if pts.len() < 2 {
+                        continue;
+                    }
+                    let v_start = self.ds.add_vertex(pts[0]);
+                    let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+
+                    let arc_len: f64 = pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                    let dir = (pts[pts.len() - 1] - pts[0]).normalize_or_zero();
+
+                    let (pca, pcb) = if let (Some(a), Some(b)) = (&sir.pcurve_on_a, &sir.pcurve_on_b) {
+                        if torus_is_f1 {
+                            (Some(a.clone()), Some(b.clone()))
+                        } else {
+                            (Some(b.clone()), Some(a.clone()))
+                        }
+                    } else {
+                        (
+                            polyline_pcurve_by_projection(pts, s1),
+                            polyline_pcurve_by_projection(pts, s2),
+                        )
+                    };
+
+                    let curve_idx = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Line(Line3 {
+                            origin: pts[0],
+                            direction: if dir.length_squared() > 0.5 { dir } else { DVec3::X },
+                        }),
+                        polyline: pts.clone(),
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, arc_len.max(1e-10)],
+                        pcurve_on_a: pca,
+                        pcurve_on_b: pcb,
+                    });
+
+                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: vec![curve_idx],
+                        points: vec![],
+                    });
+                }
+                SurfaceCurve::Ellipse(ellipse) => {
+                    let pts = sample_circle_arc(
+                        &Circle3 {
+                            center: ellipse.center,
+                            normal: ellipse.normal,
+                            radius: ellipse.major_radius,
+                        },
+                        0.0,
+                        std::f64::consts::TAU,
+                        32,
+                    );
+                    if pts.len() < 2 {
+                        continue;
+                    }
+                    let v_start = self.ds.add_vertex(pts[0]);
+                    let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+
+                    let (pca, pcb) = if let (Some(a), Some(b)) = (&sir.pcurve_on_a, &sir.pcurve_on_b) {
+                        if torus_is_f1 {
+                            (Some(a.clone()), Some(b.clone()))
+                        } else {
+                            (Some(b.clone()), Some(a.clone()))
+                        }
+                    } else {
+                        (None, None)
+                    };
+
+                    let curve_idx = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Ellipse(*ellipse),
+                        polyline: vec![],
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, std::f64::consts::TAU],
+                        pcurve_on_a: pca,
+                        pcurve_on_b: pcb,
+                    });
+
+                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: vec![curve_idx],
+                        points: vec![],
+                    });
+                }
+                SurfaceCurve::Line(line) => {
+                    let pts = self.ds.face_boundary_points(f1);
+                    let pts2 = self.ds.face_boundary_points(f2);
+                    let bbox1_min = pts.iter().fold(DVec3::INFINITY, |a, &b| a.min(b));
+                    let bbox1_max = pts.iter().fold(DVec3::NEG_INFINITY, |a, &b| a.max(b));
+                    let bbox2_min = pts2.iter().fold(DVec3::INFINITY, |a, &b| a.min(b));
+                    let bbox2_max = pts2.iter().fold(DVec3::NEG_INFINITY, |a, &b| a.max(b));
+
+                    let lo = bbox1_min.min(bbox2_min);
+                    let hi = bbox1_max.max(bbox2_max);
+                    let extent = (hi - lo).length() * 0.5 + 1.0;
+
+                    let p_start = line.origin + line.direction * (-extent);
+                    let p_end = line.origin + line.direction * extent;
+
+                    let v_start = self.ds.add_vertex(p_start);
+                    let v_end = self.ds.add_vertex(p_end);
+
+                    let (pca, pcb) = if let (Some(a), Some(b)) = (&sir.pcurve_on_a, &sir.pcurve_on_b) {
+                        if torus_is_f1 {
+                            (Some(a.clone()), Some(b.clone()))
+                        } else {
+                            (Some(b.clone()), Some(a.clone()))
+                        }
+                    } else {
+                        (None, None)
+                    };
+
+                    let curve_idx = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Line(*line),
+                        polyline: vec![p_start, p_end],
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [-extent, extent],
+                        pcurve_on_a: pca,
+                        pcurve_on_b: pcb,
+                    });
+
+                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: vec![curve_idx],
+                        points: vec![],
+                    });
+                }
+                SurfaceCurve::Point(_) | SurfaceCurve::Parabola(_) | SurfaceCurve::Hyperbola(_) => {
+                    // Skip degenerate / unsupported curve types for now
+                }
+            }
+        }
+    }
+
+    fn intersect_torus_plane_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        torus: &ToroidalSurface,
+        plane: &Plane,
+    ) {
+        let torus_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Torus(_));
+        let s1 = Surface3::Torus(*torus);
+        let s2 = Surface3::Plane(*plane);
+        self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
+    }
+
+    fn intersect_torus_sphere_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        torus: &ToroidalSurface,
+        sphere: &SphericalSurface,
+    ) {
+        let torus_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Torus(_));
+        let s1 = Surface3::Torus(*torus);
+        let s2 = Surface3::Sphere(*sphere);
+        self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
+    }
+
+    fn intersect_torus_cylinder_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        torus: &ToroidalSurface,
+        cylinder: &CylindricalSurface,
+    ) {
+        let torus_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Torus(_));
+        let s1 = Surface3::Torus(*torus);
+        let s2 = Surface3::Cylinder(*cylinder);
+        self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
+    }
+
+    fn intersect_torus_cone_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        torus: &ToroidalSurface,
+        cone: &ConicalSurface,
+    ) {
+        let torus_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Torus(_));
+        let s1 = Surface3::Torus(*torus);
+        let s2 = Surface3::Cone(*cone);
+        self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
+    }
+
+    fn intersect_torus_torus_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        torus1: &ToroidalSurface,
+        torus2: &ToroidalSurface,
+    ) {
+        let torus_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Torus(_));
+        let s1 = Surface3::Torus(*torus1);
+        let s2 = Surface3::Torus(*torus2);
+        self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
     /// For curved×curved face pairs, use numeric_intss_with_density (sign-change

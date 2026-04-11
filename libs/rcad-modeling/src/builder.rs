@@ -14,6 +14,8 @@ mod surface;
 pub use brep_builder::*;
 pub use curve::*;
 pub use fillet::{chamfer_edge, corner_blend, fillet_edge, fillet_edges};
+pub use fillet::{chamfer_edge_with_history, fillet_edge_with_history, fillet_edges_with_history, corner_blend_with_history};
+pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory};
 pub use ops::*;
 pub use solid::*;
 pub use surface::*;

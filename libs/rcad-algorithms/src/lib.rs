@@ -4,6 +4,7 @@ pub mod brep_repair;
 pub mod builder;
 pub mod bvh;
 pub mod classify;
+pub mod draft;
 pub mod geom_populate;
 pub mod history;
 pub mod hlr;
@@ -11,6 +12,7 @@ pub mod imprint;
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
+pub mod thicken;
 pub mod tolerance;
 pub mod triangulate;
 
@@ -25,7 +27,7 @@ pub use brep_repair::{
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, FaceOrigin};
-pub use hlr::{HlrCamera, HlrResult, HlrSegment, hlr, hlr_to_svg};
+pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
 };
@@ -34,6 +36,7 @@ pub use inttools::{
     intersect_surfaces_with_density,
 };
 pub use section::{SectionCurve, section, section_curves, section_polylines};
+pub use thicken::{ThickeningResult, thicken_shell};
 pub use triangulate::{SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface};
 
 /// Perform a boolean operation on two BReps.

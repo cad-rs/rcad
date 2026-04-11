@@ -988,8 +988,6 @@ impl<'a> BooleanBuilder<'a> {
 
                 let boundary: Vec<DVec3> = match &surface {
                     Surface3::Sphere(_) => {
-                        // Sphere poles: v=0 and v=π are degenerate (all u map to one point).
-                        // Skip UV corners at v < ε or v > π-ε and supplement with trim points.
                         sphere_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
                     }
                     _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
@@ -1049,7 +1047,7 @@ impl<'a> BooleanBuilder<'a> {
 /// Strategy:
 /// 1. Map each UV corner that is NOT near a pole to a 3D point normally.
 /// 2. Supplement with intersection-curve (trim) 3D points that lie within
-///    or near the boundary of this UV sub-polygon.
+///    or very near the boundary of this UV sub-polygon.
 /// 3. Deduplicate and return at least 3 distinct 3D points.
 fn sphere_subface_boundary_3d(
     uv_poly: &[DVec2],

@@ -21,7 +21,7 @@
 //! The result is a set of `HlrSegment`s — 2D projected line segments labeled
 //! visible or hidden.
 
-use glam::{DMat4, DVec2, DVec3, DVec4};
+use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
 use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
 use rcad_kernel::{BRep, SurfaceEval};
 
@@ -619,6 +619,199 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     result
 }
 
+/// Per-component HLR result for assembly HLR.
+#[derive(Debug, Clone, Default)]
+pub struct ComponentHlr {
+    /// Component name (from the assembly).
+    pub name: String,
+    /// HLR segments for this component.
+    pub segments: Vec<HlrSegment>,
+}
+
+/// Output of assembly HLR — one `ComponentHlr` per leaf BRep.
+#[derive(Debug, Clone, Default)]
+pub struct AssemblyHlrResult {
+    pub components: Vec<ComponentHlr>,
+}
+
+impl AssemblyHlrResult {
+    /// Return all visible segments across all components.
+    pub fn visible_segments(&self) -> impl Iterator<Item = (&ComponentHlr, &HlrSegment)> {
+        self.components.iter().flat_map(|c| {
+            c.segments.iter().filter(|s| s.visible).map(move |s| (c, s))
+        })
+    }
+
+    /// Return all hidden segments across all components.
+    pub fn hidden_segments(&self) -> impl Iterator<Item = (&ComponentHlr, &HlrSegment)> {
+        self.components.iter().flat_map(|c| {
+            c.segments.iter().filter(|s| !s.visible).map(move |s| (c, s))
+        })
+    }
+}
+
+/// Transform a BRep's vertices by an affine transform.
+/// Returns a new BRep with transformed vertex positions.
+fn transform_brep(brep: &BRep, transform: &DAffine3) -> BRep {
+    let mut out = brep.clone();
+    for v in &mut out.vertices {
+        v.point = transform.transform_point3(v.point);
+    }
+    out
+}
+
+/// Perform hidden-line removal on an assembly of BReps.
+///
+/// Each component's geometry is transformed to world space, then all triangles
+/// are merged into a single occlusion buffer. Each component's edges are
+/// tested against the global occlusion buffer, so components correctly
+/// occlude each other.
+///
+/// Returns one `ComponentHlr` per leaf component.
+pub fn hlr_assembly(
+    components: &[(BRep, DAffine3, String)],
+    camera: &HlrCamera,
+    samples: usize,
+) -> AssemblyHlrResult {
+    let view = look_at(camera.eye, camera.target, camera.up);
+    let samples = samples.max(2);
+
+    // Transform all BRePs to world space and collect a unified triangle pool.
+    let world_breps: Vec<BRep> = components
+        .iter()
+        .map(|(brep, xf, _)| transform_brep(brep, xf))
+        .collect();
+
+    let mut all_triangles: Vec<[DVec3; 3]> = Vec::new();
+    for wb in &world_breps {
+        all_triangles.extend(collect_triangles(wb));
+    }
+
+    let view_dir = (camera.target - camera.eye).normalize_or_zero();
+    let mut result = AssemblyHlrResult::default();
+
+    for (wb, (_, _, name)) in world_breps.iter().zip(components.iter()) {
+        let mut comp_result = HlrResult::default();
+
+        // ── Wire edges ────────────────────────────────────────────────────
+        let mut edge_indices: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        for solid in &wb.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    for we in &face.outer_wire.edges {
+                        edge_indices.insert(we.idx);
+                    }
+                    for inner in &face.inner_wires {
+                        for we in &inner.edges {
+                            edge_indices.insert(we.idx);
+                        }
+                    }
+                }
+            }
+        }
+        for i in 0..wb.edges.len() {
+            edge_indices.insert(i);
+        }
+
+        for &edge_idx in &edge_indices {
+            let Some(edge) = wb.edges.get(edge_idx) else { continue };
+            let Some(v_start) = wb.vertices.get(edge.start) else { continue };
+            let Some(v_end) = wb.vertices.get(edge.end) else { continue };
+
+            let p0 = v_start.point;
+            let p1 = v_end.point;
+
+            let edge_curve = wb
+                .geom
+                .edge_curve
+                .get(edge_idx)
+                .and_then(|&ci| ci)
+                .and_then(|ci| wb.geom.curves.get(ci));
+
+            let circle_info: Option<Circle3> = edge_curve.and_then(|c| {
+                if let rcad_kernel::geom::Curve3::Circle(circ) = c { Some(*circ) } else { None }
+            });
+
+            let is_other_curve = edge_curve
+                .map_or(false, |c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
+                && circle_info.is_none();
+
+            let edge_samples = if circle_info.is_some() || is_other_curve {
+                64.max(samples)
+            } else {
+                samples
+            };
+
+            let world_pts: Vec<DVec3> = if let Some(circ) = &circle_info {
+                let [t0, t1] = wb
+                    .geom
+                    .edge_curve_range
+                    .get(edge_idx)
+                    .and_then(|r| *r)
+                    .unwrap_or_else(|| circ.default_domain());
+                (0..edge_samples)
+                    .map(|i| {
+                        let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
+                        circ.point_at(t)
+                    })
+                    .collect()
+            } else if let Some(curve) = edge_curve.filter(|_| is_other_curve) {
+                let [t0, t1] = wb
+                    .geom
+                    .edge_curve_range
+                    .get(edge_idx)
+                    .and_then(|r| *r)
+                    .unwrap_or_else(|| curve.default_domain());
+                (0..edge_samples)
+                    .map(|i| {
+                        let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
+                        curve.point_at(t)
+                    })
+                    .collect()
+            } else {
+                if (p1 - p0).length_squared() < 1e-12 {
+                    continue;
+                }
+                (0..edge_samples)
+                    .map(|i| {
+                        let t = i as f64 / (edge_samples - 1) as f64;
+                        p0 + (p1 - p0) * t
+                    })
+                    .collect()
+            };
+
+            let screen_pts_for_hint: Vec<DVec2> =
+                world_pts.iter().map(|&wp| project(wp, &view).0).collect();
+            let curve_hint: Option<CurveHint> = if let Some(circ) = &circle_info {
+                let (center_2d, _) = project(circ.center, &view);
+                let r = screen_pts_for_hint
+                    .iter()
+                    .map(|p| (*p - center_2d).length())
+                    .fold(0.0_f64, f64::max);
+                Some(CurveHint::Circle { center: center_2d, radius: r })
+            } else if is_other_curve {
+                Some(CurveHint::Other)
+            } else {
+                None
+            };
+
+            process_world_pts(&world_pts, curve_hint, false, camera, &view, &all_triangles, &mut comp_result);
+        }
+
+        // ── Analytic silhouette curves ────────────────────────────────────
+        for sil in compute_silhouettes(wb, view_dir) {
+            process_world_pts(&sil.world_pts, sil.curve_hint, sil.dense, camera, &view, &all_triangles, &mut comp_result);
+        }
+
+        result.components.push(ComponentHlr {
+            name: name.clone(),
+            segments: comp_result.segments,
+        });
+    }
+
+    result
+}
+
 /// Render HLR result as a simple SVG string.
 ///
 /// Visible edges are drawn solid black; hidden edges are dashed gray.
@@ -925,5 +1118,117 @@ mod tests {
             !result.segments.is_empty(),
             "torus HLR should produce silhouette segments"
         );
+    }
+
+    // ── Assembly HLR tests ─────────────────────────────────────────────────────
+
+    /// Two boxes side by side — both should produce segments.
+    #[test]
+    fn hlr_assembly_two_boxes() {
+        let box1 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        let box2 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+
+        let components = vec![
+            (box1, DAffine3::from_translation(DVec3::new(-2.0, 0.0, 0.0)), "box_left".to_string()),
+            (box2, DAffine3::from_translation(DVec3::new(2.0, 0.0, 0.0)), "box_right".to_string()),
+        ];
+
+        let camera = HlrCamera::isometric(10.0);
+        let result = hlr_assembly(&components, &camera, 8);
+
+        assert_eq!(result.components.len(), 2, "should have 2 component results");
+        assert!(result.components.iter().all(|c| !c.segments.is_empty()),
+            "each component should produce segments");
+    }
+
+    /// Small box behind a large box — the small box should be partially hidden.
+    #[test]
+    fn hlr_assembly_occlusion() {
+        let big = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 3.0, height: 3.0, depth: 3.0,
+        });
+        let small = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 0.5, height: 0.5, depth: 0.5,
+        });
+
+        // Front camera looks along +Y from (0, -10, 0).
+        // Place small box at +Y behind the big box so it's occluded.
+        let components = vec![
+            (big, DAffine3::IDENTITY, "big".to_string()),
+            (small, DAffine3::from_translation(DVec3::new(0.0, 3.0, 0.0)), "small_behind".to_string()),
+        ];
+
+        let camera = HlrCamera::front(10.0);
+        let result = hlr_assembly(&components, &camera, 8);
+
+        assert_eq!(result.components.len(), 2);
+        // The small box behind the big one should have mostly hidden segments
+        let small_comp = result.components.iter().find(|c| c.name == "small_behind").unwrap();
+        let hidden = small_comp.segments.iter().filter(|s| !s.visible).count();
+        let visible = small_comp.segments.iter().filter(|s| s.visible).count();
+        assert!(hidden > visible,
+            "small box behind big one should have more hidden than visible segments; hidden={hidden}, visible={visible}");
+    }
+
+    /// Assembly with a single component should match single-BRep HLR.
+    #[test]
+    fn hlr_assembly_single_matches_hlr() {
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        let camera = HlrCamera::isometric(5.0);
+
+        let single_hlr = hlr(&brep, &camera, 8);
+        let assembly_result = hlr_assembly(
+            &[(brep.clone(), DAffine3::IDENTITY, "box".to_string())],
+            &camera, 8,
+        );
+
+        assert_eq!(assembly_result.components.len(), 1);
+        let asm_segs = &assembly_result.components[0].segments;
+        // Segment counts should be similar (same geometry, same algorithm)
+        assert!(asm_segs.len() >= single_hlr.segments.len() - 2,
+            "assembly HLR should produce similar segment count");
+        assert!(asm_segs.len() <= single_hlr.segments.len() + 2,
+            "assembly HLR should produce similar segment count");
+    }
+
+    /// Stacked boxes — top box visible, bottom box partially occluded.
+    #[test]
+    fn hlr_assembly_stacked_boxes() {
+        let bottom = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0, height: 1.0, depth: 2.0,
+        });
+        let top = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+
+        let components = vec![
+            (bottom, DAffine3::from_translation(DVec3::new(0.0, 0.0, 0.0)), "bottom".to_string()),
+            (top, DAffine3::from_translation(DVec3::new(0.0, 0.0, 1.5)), "top".to_string()),
+        ];
+
+        let camera = HlrCamera::isometric(10.0);
+        let result = hlr_assembly(&components, &camera, 8);
+
+        assert_eq!(result.components.len(), 2);
+        // Both boxes should have some visible segments
+        for comp in &result.components {
+            let vis = comp.segments.iter().filter(|s| s.visible).count();
+            assert!(vis > 0, "{} should have visible segments", comp.name);
+        }
+    }
+
+    /// Empty assembly should return empty result.
+    #[test]
+    fn hlr_assembly_empty() {
+        let components: Vec<(BRep, DAffine3, String)> = vec![];
+        let camera = HlrCamera::isometric(5.0);
+        let result = hlr_assembly(&components, &camera, 8);
+        assert!(result.components.is_empty());
     }
 }

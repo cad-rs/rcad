@@ -31,6 +31,7 @@ pub mod entity;
 pub mod sketch;
 pub mod solver;
 pub mod to_brep;
+pub mod space3d;
 
 pub use sketch::Sketch;
 pub use entity::{EntityId, EntityKind};
