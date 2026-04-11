@@ -1022,8 +1022,8 @@ impl<'a> BooleanBuilder<'a> {
                 };
 
                 let boundary: Vec<DVec3> = match &surface {
-                    Surface3::Sphere(_) => {
-                        sphere_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                    Surface3::Sphere(_) | Surface3::Cone(_) => {
+                        curved_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
                     }
                     _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
                 };
@@ -1100,68 +1100,80 @@ impl<'a> BooleanBuilder<'a> {
     }
 }
 
-/// Build a 3D boundary polygon for a sphere sub-face given its UV polygon.
+/// Compute a robust 3D boundary for a curved sub-face given its UV polygon
+/// and trim polylines.
 ///
-/// The sphere has singularities at v=0 (north pole) and v=π (south pole):
-/// `point_at(u, 0)` and `point_at(u, π)` both return a single point regardless
-/// of u, so UV polygon corners near the poles map to degenerate 3D vertices.
+/// Unlike `sphere_subface_boundary_3d` which only evaluates UV corners, this
+/// function samples each UV edge into N points. This prevents degenerate
+/// polygons when multiple corners collapse at a surface singularity (sphere
+/// poles, cone apex).
 ///
-/// Strategy:
-/// 1. Map each UV corner that is NOT near a pole to a 3D point normally.
-/// 2. Supplement with intersection-curve (trim) 3D points that lie within
-///    or very near the boundary of this UV sub-polygon.
-/// 3. Deduplicate and return at least 3 distinct 3D points.
-fn sphere_subface_boundary_3d(
+/// Algorithm:
+/// 1. Subdivide each UV edge into N samples, evaluate via surface.point_at
+/// 2. Consecutive dedup: collapse runs of points near a singularity
+/// 3. If < 3 points remain, supplement with trim polyline 3D points
+/// 4. Global dedup, return
+fn curved_subface_boundary_3d(
     uv_poly: &[DVec2],
     trim_polylines_uv: &[Vec<DVec2>],
     surface: &Surface3,
 ) -> Vec<DVec3> {
-    use std::f64::consts::PI;
-    const POLE_EPSILON: f64 = 0.05; // ~3° from pole
+    const EDGE_SAMPLES: usize = 8;
 
     let mut pts: Vec<DVec3> = Vec::new();
 
-    // 1. Map non-degenerate UV corners to 3D
-    for uv in uv_poly {
-        let v = uv.y;
-        if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+    // 1. Sample each UV edge and evaluate 3D positions
+    let n = uv_poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = uv_poly[i];
+        let b = uv_poly[j];
+        for k in 0..EDGE_SAMPLES {
+            let t = k as f64 / EDGE_SAMPLES as f64;
+            let uv = DVec2::new(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
             pts.push(surface.point_at(uv.x, uv.y));
-        }
-        // At poles, collapse to a single well-defined 3D point
-        else if v <= POLE_EPSILON {
-            pts.push(surface.point_at(0.0, 0.0)); // north pole
-        } else {
-            pts.push(surface.point_at(0.0, PI)); // south pole
         }
     }
 
-    // 2. Add trim polyline 3D points.
-    //    Include trim UV points that are inside the sub-polygon OR very close to its boundary.
-    //    This captures the intersection circle that forms the actual edge of the sub-face.
-    for trim_uv in trim_polylines_uv {
-        // Sample up to every-other trim point to avoid excessive density
-        for (idx, uv) in trim_uv.iter().enumerate() {
-            if idx % 2 != 0 { continue; } // sparse sampling
-            let v = uv.y;
-            if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+    // 2. Consecutive deduplication — collapse runs of pole/apex samples
+    let mut deduped: Vec<DVec3> = Vec::new();
+    for p in &pts {
+        if deduped.is_empty() || (*p - deduped[deduped.len() - 1]).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS {
+            deduped.push(*p);
+        }
+    }
+    // Close the loop: remove last point if it equals the first
+    if deduped.len() > 1 && (deduped[0] - deduped[deduped.len() - 1]).length_squared() < TOLERANCE_ABS * TOLERANCE_ABS {
+        deduped.pop();
+    }
+
+    // 3. If still degenerate, supplement with trim polyline 3D points
+    if deduped.len() < 3 {
+        for trim_uv in trim_polylines_uv {
+            if trim_uv.len() < 2 {
+                continue;
+            }
+            for uv in trim_uv {
                 let p3 = surface.point_at(uv.x, uv.y);
-                // Include if inside or very near the boundary of the sub-polygon
                 if point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1) {
-                    pts.push(p3);
+                    // Only add if not already in deduped
+                    if deduped.iter().all(|q| (p3 - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+                        deduped.push(p3);
+                    }
                 }
             }
         }
     }
 
-    // 3. Deduplicate (merge points within TOLERANCE_ABS)
-    let mut deduped: Vec<DVec3> = Vec::new();
-    for p in &pts {
-        if deduped.iter().all(|q: &DVec3| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
-            deduped.push(*p);
+    // 4. Final global dedup
+    let mut result: Vec<DVec3> = Vec::new();
+    for p in &deduped {
+        if result.iter().all(|q| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+            result.push(*p);
         }
     }
 
-    deduped
+    result
 }
 
 /// Check if a 2D point is within `margin` of any edge of a polygon.

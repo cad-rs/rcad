@@ -565,9 +565,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sphere-sphere boolean volume not yet correct: intersection faces cancel \
-                in divergence-theorem sum (net≈0) and union result is topologically \
-                incomplete (2 faces instead of expected composite); tracked as P0-B"]
+    #[ignore = "sphere-sphere union produces empty volume: intersection faces cancel in \
+                divergence-theorem sum and union result is topologically incomplete \
+                (2 faces instead of expected composite); requires composite face assembly"]
     fn volume_conservation_spheres() {
         // V(A∪B) ≈ V(A) + V(B) - V(A∩B), error < 5%
         let a = make_sphere_brep(DVec3::new(-0.5, 0.0, 0.0), 1.0).unwrap();
@@ -762,6 +762,28 @@ mod tests {
         // tracked separately).
         let v = rcad_kernel::properties::volume(&brep);
         assert!(v > 0.0, "intersection volume should be positive, got {v}");
+    }
+
+    #[test]
+    fn curved_subface_boundary_3d_sphere_pole_produces_enough_points() {
+        // Verify that a sphere boolean with a cone produces a valid result.
+        // The cone has an apex singularity that previously caused degenerate
+        // sub-face boundaries.
+        let a = make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
+        let b = make_cone_brep(DVec3::new(0.0, 0.0, -1.0), DVec3::Z, DVec3::X, 1.5, 3.0).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "sphere-cone boolean (apex singularity) failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+        let v = rcad_kernel::properties::volume(&brep);
+        assert!(v > 0.0, "difference volume should be positive, got {v}");
     }
 
 }

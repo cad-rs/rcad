@@ -653,8 +653,8 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
 
             let boundary: Vec<DVec3> = match &surface {
-                Surface3::Sphere(_) => {
-                    sphere_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                Surface3::Sphere(_) | Surface3::Cone(_) => {
+                    curved_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
                 }
                 _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
             };
@@ -857,53 +857,70 @@ fn find_pcurve_for_face(
     None
 }
 
-// Build a 3D boundary polygon for a sphere sub-face given its UV polygon.
-fn sphere_subface_boundary_3d(
+/// Compute a robust 3D boundary for a curved sub-face given its UV polygon
+/// and trim polylines. Samples UV edges to avoid degenerate polygons at
+/// surface singularities (sphere poles, cone apex).
+fn curved_subface_boundary_3d(
     uv_poly: &[DVec2],
     trim_polylines_uv: &[Vec<DVec2>],
     surface: &Surface3,
 ) -> Vec<DVec3> {
-    use std::f64::consts::PI;
     use crate::tolerance::TOLERANCE_ABS;
-    const POLE_EPSILON: f64 = 0.05;
+    const EDGE_SAMPLES: usize = 8;
 
     let mut pts: Vec<DVec3> = Vec::new();
 
-    // Map non-degenerate UV corners to 3D
-    for uv in uv_poly {
-        let v = uv.y;
-        if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+    // 1. Sample each UV edge and evaluate 3D positions
+    let n = uv_poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = uv_poly[i];
+        let b = uv_poly[j];
+        for k in 0..EDGE_SAMPLES {
+            let t = k as f64 / EDGE_SAMPLES as f64;
+            let uv = DVec2::new(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
             pts.push(surface.point_at(uv.x, uv.y));
-        } else if v <= POLE_EPSILON {
-            pts.push(surface.point_at(0.0, 0.0)); // north pole
-        } else {
-            pts.push(surface.point_at(0.0, PI)); // south pole
         }
     }
 
-    // Add trim polyline 3D points
-    for trim_uv in trim_polylines_uv {
-        for (idx, uv) in trim_uv.iter().enumerate() {
-            if idx % 2 != 0 { continue; }
-            let v = uv.y;
-            if v > POLE_EPSILON && v < PI - POLE_EPSILON {
+    // 2. Consecutive deduplication — collapse runs of pole/apex samples
+    let mut deduped: Vec<DVec3> = Vec::new();
+    for p in &pts {
+        if deduped.is_empty() || (*p - deduped[deduped.len() - 1]).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS {
+            deduped.push(*p);
+        }
+    }
+    // Close the loop: remove last point if it equals the first
+    if deduped.len() > 1 && (deduped[0] - deduped[deduped.len() - 1]).length_squared() < TOLERANCE_ABS * TOLERANCE_ABS {
+        deduped.pop();
+    }
+
+    // 3. If still degenerate, supplement with trim polyline 3D points
+    if deduped.len() < 3 {
+        for trim_uv in trim_polylines_uv {
+            if trim_uv.len() < 2 {
+                continue;
+            }
+            for uv in trim_uv {
                 let p3 = surface.point_at(uv.x, uv.y);
                 if point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1) {
-                    pts.push(p3);
+                    if deduped.iter().all(|q| (p3 - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+                        deduped.push(p3);
+                    }
                 }
             }
         }
     }
 
-    // Deduplicate
-    let mut deduped: Vec<DVec3> = Vec::new();
-    for p in &pts {
-        if deduped.iter().all(|q: &DVec3| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
-            deduped.push(*p);
+    // 4. Final global dedup
+    let mut result: Vec<DVec3> = Vec::new();
+    for p in &deduped {
+        if result.iter().all(|q| (*p - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+            result.push(*p);
         }
     }
 
-    deduped
+    result
 }
 
 // Check if a 2D point is within margin of any edge of a polygon.
