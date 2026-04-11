@@ -84,8 +84,386 @@ impl AssemblyComponent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Write
+// AssemblyNode — tree-structured assembly
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// A node in a hierarchical assembly tree.
+///
+/// - **Leaf** nodes carry a `BRep` geometry (and optional transform/color).
+/// - **Branch** nodes carry child nodes and no geometry of their own.
+///
+/// Use [`write_assembly_tree`] / [`read_assembly_tree`] to round-trip the tree
+/// through STEP.
+#[derive(Clone)]
+pub struct AssemblyNode {
+    /// Human-readable name for this node.
+    pub name: String,
+    /// Geometry for leaf nodes; `None` for branch (sub-assembly) nodes.
+    pub brep: Option<BRep>,
+    /// Full affine transform applied before writing (baked into coordinates).
+    pub transform: DAffine3,
+    /// Optional color for leaf nodes.
+    pub color: Option<rcad_kernel::appearance::Color>,
+    /// Child nodes (empty for leaf nodes).
+    pub children: Vec<AssemblyNode>,
+}
+
+impl AssemblyNode {
+    /// Create a leaf node (part with geometry).
+    pub fn leaf(name: impl Into<String>, brep: BRep) -> Self {
+        Self {
+            name: name.into(),
+            brep: Some(brep),
+            transform: DAffine3::IDENTITY,
+            color: None,
+            children: Vec::new(),
+        }
+    }
+
+    /// Create a branch node (sub-assembly with children, no geometry).
+    pub fn branch(name: impl Into<String>, children: Vec<AssemblyNode>) -> Self {
+        Self {
+            name: name.into(),
+            brep: None,
+            transform: DAffine3::IDENTITY,
+            color: None,
+            children,
+        }
+    }
+
+    /// Set a transform (baked into coordinates on write).
+    pub fn with_transform(mut self, t: DAffine3) -> Self {
+        self.transform = t;
+        self
+    }
+
+    /// Set a translation transform.
+    pub fn with_translation(mut self, t: DVec3) -> Self {
+        self.transform = DAffine3::from_translation(t);
+        self
+    }
+
+    /// Set a color.
+    pub fn with_color(mut self, color: rcad_kernel::appearance::Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+/// Write a hierarchical assembly tree to a STEP string.
+///
+/// The tree is flattened into STEP `PRODUCT` / `PRODUCT_DEFINITION` /
+/// `NEXT_ASSEMBLY_USAGE_OCCURRENCE` entities.  Transforms are baked into
+/// vertex coordinates.
+pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
+    // Flatten the tree into a list of (parent_name, child_component) pairs
+    // by recursively collecting all NAUO relationships.
+    let mut records: Vec<String> = Vec::new();
+    let mut next_id: u64 = 1;
+
+    macro_rules! push {
+        ($body:expr) => {{
+            let id = next_id;
+            next_id += 1;
+            records.push(format!("#{}={};", id, $body));
+            id
+        }};
+    }
+
+    // Shared context entities (same as write_assembly_step)
+    let app_ctx = push!("APPLICATION_CONTEXT('automotive_design')".to_string());
+    push!(format!(
+        "APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{})",
+        app_ctx
+    ));
+    let prod_ctx = push!(format!(
+        "PRODUCT_CONTEXT('part definition',#{},'mechanical')",
+        app_ctx
+    ));
+    let def_ctx = push!(format!(
+        "PRODUCT_DEFINITION_CONTEXT('part definition',#{},'design')",
+        app_ctx
+    ));
+    let len_unit = push!("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )".to_string());
+    let rad_unit = push!("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string());
+    let meas = push!(format!(
+        "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})",
+        rad_unit
+    ));
+    let dim_exp = push!("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
+    let deg_unit = push!(format!(
+        "( CONVERSION_BASED_UNIT('DEGREE',#{}) NAMED_UNIT(#{}) PLANE_ANGLE_UNIT() )",
+        meas, dim_exp
+    ));
+    let sol_unit =
+        push!("( NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.) )".to_string());
+    let uncert = push!(format!(
+        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-6),#{},'distance_accuracy_value','confusion accuracy')",
+        len_unit
+    ));
+    let geom_ctx = push!(format!(
+        "( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{})) GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{})) REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') )",
+        uncert, len_unit, deg_unit, sol_unit
+    ));
+
+    // Recursively emit nodes; returns the PRODUCT_DEFINITION id for the node.
+    fn emit_node(
+        node: &AssemblyNode,
+        records: &mut Vec<String>,
+        next_id: &mut u64,
+        prod_ctx: u64,
+        def_ctx: u64,
+        geom_ctx: u64,
+        nauo_seq: &mut usize,
+    ) -> u64 {
+        // Apply transform to a cloned BRep if needed.
+        let baked_brep: Option<BRep> = node.brep.as_ref().map(|b| {
+            let mut b2 = b.clone();
+            if node.transform != DAffine3::IDENTITY {
+                b2.apply_transform(node.transform);
+            }
+            b2
+        });
+
+        // Emit geometry for leaf nodes.
+        let shape_rep_id: Option<u64> = if let Some(brep) = &baked_brep {
+            let colors = node.color.map(|c| StepColor::new().with_solid_color(c));
+            let comp_step = if let Some(sc) = &colors {
+                StepWriter::write_string_colored(brep, sc)
+            } else {
+                StepWriter::write_string(
+                    brep,
+                    ExportSelection { selected_faces: &[], selected_edges: &[] },
+                )
+            };
+            let comp_records = extract_data_records(&comp_step);
+            let id_offset = *next_id - 1;
+            let comp_max_id = comp_records.iter().map(|(id, _)| *id).max().unwrap_or(1);
+            let sr_id = comp_max_id + id_offset;
+            for (orig_id, body) in &comp_records {
+                let new_id = orig_id + id_offset;
+                let renumbered_body = renumber_refs(body, id_offset);
+                records.push(format!("#{}={};", new_id, renumbered_body));
+            }
+            *next_id = sr_id + 1;
+            Some(sr_id)
+        } else {
+            None
+        };
+
+        // Emit PRODUCT / PRODUCT_DEFINITION for this node.
+        let prod = push_record(records, next_id, format!(
+            "PRODUCT('{}','{}','',( #{} ))",
+            node.name, node.name, prod_ctx
+        ));
+        let formation = push_record(records, next_id, format!("PRODUCT_DEFINITION_FORMATION('','',#{})", prod));
+        let pd = push_record(records, next_id, format!(
+            "PRODUCT_DEFINITION('','',#{},#{})",
+            formation, def_ctx
+        ));
+        let pds = push_record(records, next_id, format!("PRODUCT_DEFINITION_SHAPE('','',#{})", pd));
+
+        if let Some(sr) = shape_rep_id {
+            push_record(records, next_id, format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, sr));
+        } else {
+            // Branch node: emit an empty shape representation.
+            let empty_sr = push_record(records, next_id, format!(
+                "SHAPE_REPRESENTATION('{}',( #{} ),#{})",
+                node.name, geom_ctx, geom_ctx
+            ));
+            push_record(records, next_id, format!("SHAPE_DEFINITION_REPRESENTATION(#{},#{})", pds, empty_sr));
+        }
+
+        // Recursively emit children and link via NAUO.
+        for child in &node.children {
+            let child_pd = emit_node(
+                child, records, next_id, prod_ctx, def_ctx, geom_ctx, nauo_seq,
+            );
+            *nauo_seq += 1;
+            let nauo = push_record(records, next_id, format!(
+                "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','{}','',#{},#{},$)",
+                nauo_seq, child.name, pd, child_pd
+            ));
+            push_record(records, next_id, format!(
+                "PRODUCT_DEFINITION_SHAPE('Acme','occurrence shape',#{})",
+                nauo
+            ));
+        }
+
+        pd
+    }
+
+    let mut nauo_seq = 0usize;
+
+    // Emit the root node (which may itself be a branch).
+    emit_node(
+        root,
+        &mut records,
+        &mut next_id,
+        prod_ctx,
+        def_ctx,
+        geom_ctx,
+        &mut nauo_seq,
+    );
+
+    // Build output
+    use std::fmt::Write as FmtWrite;
+    let mut out = String::new();
+    out.push_str("ISO-10303-21;\n");
+    out.push_str("HEADER;\n");
+    let _ = writeln!(
+        out,
+        "FILE_DESCRIPTION(('RCAD assembly tree: {}'),'2;1');",
+        root_name
+    );
+    out.push_str(
+        "FILE_NAME('rcad_assembly.step','2026-04-11T00:00:00',(''),(''),'RCAD','RCAD','');\n",
+    );
+    out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
+    out.push_str("ENDSEC;\n");
+    out.push_str("DATA;\n");
+    for record in &records {
+        out.push_str(record);
+        out.push('\n');
+    }
+    out.push_str("ENDSEC;\n");
+    out.push_str("END-ISO-10303-21;\n");
+    out
+}
+
+/// Parse a STEP string into a hierarchical [`AssemblyNode`] tree.
+///
+/// The tree mirrors the `NEXT_ASSEMBLY_USAGE_OCCURRENCE` hierarchy in the file.
+/// Leaf nodes carry isolated `BRep` geometry (via the same BFS approach as
+/// [`read_assembly`]).  Branch nodes have `brep = None` and carry children.
+///
+/// Falls back to a single leaf node for plain single-part STEP files.
+pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
+    let entity_map = parse_entity_map(step);
+    let reverse_map = build_reverse_map(&entity_map);
+
+    // Build parent→children map from NAUO entities.
+    // NAUO: ('seq','name','desc',#parent_pd,#child_pd,$)
+    let mut children_of: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
+    let mut all_child_pds: HashSet<u64> = HashSet::new();
+
+    for (_id, body) in &entity_map {
+        if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
+            if let Some(args) = parse_args(rest) {
+                let parent_pd = parse_ref(args.get(3).copied().unwrap_or(""));
+                let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
+                let rel_name = unquote(args.get(1).copied().unwrap_or(""));
+                if parent_pd > 0 && child_pd > 0 {
+                    children_of
+                        .entry(parent_pd)
+                        .or_default()
+                        .push((child_pd, rel_name));
+                    all_child_pds.insert(child_pd);
+                }
+            }
+        }
+    }
+
+    // Find root PD(s): PDs that appear in NAUOs (as parent or child) but are
+    // never a NAUO child.  This excludes PDs embedded in inlined geometry STEP
+    // strings, which are not connected to any NAUO.
+    let nauo_pds: HashSet<u64> = children_of
+        .iter()
+        .flat_map(|(&parent, children)| {
+            std::iter::once(parent).chain(children.iter().map(|(child, _)| *child))
+        })
+        .collect();
+
+    let root_pds: Vec<u64> = nauo_pds
+        .iter()
+        .copied()
+        .filter(|id| !all_child_pds.contains(id))
+        .collect();
+
+    if root_pds.is_empty() || children_of.is_empty() {
+        // Plain single-part STEP.
+        let brep = crate::StepReader::parse_string(step)?;
+        let name = find_root_product_name(&entity_map).unwrap_or_else(|| "part".to_string());
+        return Ok(AssemblyNode::leaf(name, brep));
+    }
+
+    // Parse the whole STEP once as fallback for nodes whose geometry can't be isolated.
+    let merged_brep = crate::StepReader::parse_string(step)?;
+
+    // Recursively build the tree.
+    fn build_node(
+        pd_id: u64,
+        entity_map: &HashMap<u64, String>,
+        reverse_map: &HashMap<u64, Vec<u64>>,
+        children_of: &HashMap<u64, Vec<(u64, String)>>,
+        merged_brep: &BRep,
+        step: &str,
+    ) -> AssemblyNode {
+        let name = resolve_product_name(pd_id, entity_map)
+            .unwrap_or_else(|| format!("node_{}", pd_id));
+
+        let child_entries = children_of.get(&pd_id);
+
+        if let Some(entries) = child_entries {
+            // Branch node: recurse into children.
+            let children: Vec<AssemblyNode> = entries
+                .iter()
+                .map(|(child_pd, _)| {
+                    build_node(
+                        *child_pd,
+                        entity_map,
+                        reverse_map,
+                        children_of,
+                        merged_brep,
+                        step,
+                    )
+                })
+                .collect();
+            AssemblyNode::branch(name, children)
+        } else {
+            // Leaf node: isolate geometry.
+            let brep =
+                if let Some(sr_id) = find_shape_rep_for_pd(pd_id, entity_map, reverse_map) {
+                    let reachable = collect_reachable(sr_id, entity_map);
+                    let comp_step = build_component_step(entity_map, &reachable);
+                    crate::StepReader::parse_string(&comp_step)
+                        .unwrap_or_else(|_| merged_brep.clone())
+                } else {
+                    merged_brep.clone()
+                };
+            AssemblyNode::leaf(name, brep)
+        }
+    }
+
+    // If there are multiple roots (unusual), wrap them in a synthetic root.
+    if root_pds.len() == 1 {
+        Ok(build_node(
+            root_pds[0],
+            &entity_map,
+            &reverse_map,
+            &children_of,
+            &merged_brep,
+            step,
+        ))
+    } else {
+        let children: Vec<AssemblyNode> = root_pds
+            .iter()
+            .map(|&pd| {
+                build_node(
+                    pd,
+                    &entity_map,
+                    &reverse_map,
+                    &children_of,
+                    &merged_brep,
+                    step,
+                )
+            })
+            .collect();
+        Ok(AssemblyNode::branch("root".to_string(), children))
+    }
+}
+
+
 
 /// Write a multi-component STEP assembly.
 ///
