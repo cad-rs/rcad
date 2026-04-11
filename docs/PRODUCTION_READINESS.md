@@ -13,7 +13,7 @@
 | P0-B | Fix `volume_conservation_spheres` boolean test | 🔶 **PAUSED** (marked `#[ignore]`) |
 | P0-C | Expand boolean operation test coverage | ✅ **DONE** |
 
-**Workspace test status:** 354 passed · 0 failed · 1 ignored  
+**Workspace test status:** 426 passed · 0 failed · 1 ignored  
 (The 1 ignored test is `volume_conservation_spheres`, intentionally deferred — see P0-B.)
 
 ---
@@ -172,16 +172,27 @@ divergence-theorem sum (net≈0) and union result is topologically incomplete
 - New `draft.rs` module with `DraftParams`, `DraftError`, `draft_solid`
 - Tests: `draft_box_positive_angle_increases_volume`, `draft_neutral_plane_vertices_unchanged`
 
+### Phase 5: Mirror & Array Operations (completed in current commit)
+- Added `mirror_brep` in `rcad-modeling/src/builder/solid.rs` — reflect BRep across arbitrary plane
+  - Transforms all analytic surfaces (Plane, Sphere, Cylinder, Cone, Torus, BSpline, LinearExtrusion, Revolution, Offset, Trimmed)
+  - Reflects all curve types (Line, Circle, Ellipse, Hyperbola, BSpline, Bezier)
+  - Flips triangle winding order and reflects face normals for correct outward orientation
+- Added `array.rs` module in `rcad-algorithms` with pattern operations:
+  - `linear_pattern`: repeat copies along direction with uniform spacing
+  - `circular_pattern`: rotate copies around axis with uniform angular spacing
+  - Proper vertex/edge/face index remapping, triangle offset, and normal rotation
+- Tests: `linear_pattern_count_1_returns_original`, `linear_pattern_count_3_produces_3x_volume`, `linear_pattern_invalid_spacing_returns_error`, `linear_pattern_zero_direction_returns_error`, `linear_pattern_zero_count_returns_error`, `circular_pattern_count_4_produces_4x_volume`, `circular_pattern_half_turn_produces_2x_volume`, `circular_pattern_invalid_angle_returns_error`, `circular_pattern_angle_too_large_returns_error`, `mirror_box_across_xy_plane`
+
 ---
 
 ## Test Count Summary (post-audit)
 
 | Crate | Tests |
 |-------|-------|
-| rcad-algorithms (lib + integration) | 216 |
+| rcad-algorithms (lib + integration) | 226 |
 | rcad-kernel | 100 |
 | rcad-step | 12 |
-| rcad-modeling | 25 + 15 |
+| rcad-modeling | 26 + 15 |
 | rcad-render | 4 |
 | Others | 45 |
-| **Total** | **417 passing, 0 failing, 1 ignored** |
+| **Total** | **428 passing, 0 failing, 1 ignored** |

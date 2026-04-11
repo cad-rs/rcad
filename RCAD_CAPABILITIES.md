@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase P3 完成（含扫掠/圆角历史追踪）
+> 版本：2026-04 · Phase P5 完成（镜像 + 阵列/环形阵列）
 
 ---
 
@@ -352,7 +352,20 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 
 ---
 
-### 4.5 操作历史
+### 4.5 变换操作
+
+| 操作 | API |
+|------|-----|
+| 镜像 | `mirror_brep(brep, plane_origin, plane_normal)` |
+| 线性阵列 | `linear_pattern(brep, LinearPatternParams { direction, count, spacing })` |
+| 环形阵列 | `circular_pattern(brep, CircularPatternParams { axis_origin, axis_direction, count, total_angle })` |
+
+镜像反射所有顶点/曲线/曲面，翻转三角形绕序和面法向以保持正确的外向法线。
+阵列操作将多个副本合并为单一 BRep，每个副本为独立 Solid。
+
+---
+
+### 4.6 操作历史
 
 每次布尔运算可附带历史追踪：
 
@@ -586,6 +599,35 @@ pub struct CurveSurfaceHit {
 | Line × Cylinder | `intersect_line_cylinder(line, t_range, cyl) → Vec<CurveSurfaceHit>` |
 | Line × Sphere | `intersect_line_sphere(line, t_range, sphere) → Vec<CurveSurfaceHit>` |
 | Line × Cone | `intersect_line_cone(line, t_range, cone) → Vec<CurveSurfaceHit>` |
+
+---
+
+### 5.13 阵列与镜像（`array` + `mirror_brep`）
+
+类比 OCCT `BRepBuilderAPI_Transform` + 特征阵列：
+
+```rust
+// 镜像：沿任意平面反射
+pub fn mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<BRep, BuildError>
+
+// 线性阵列：沿方向重复
+pub fn linear_pattern(brep: &BRep, params: &LinearPatternParams) -> Result<BRep, PatternError>
+
+// 环形阵列：绕轴旋转重复
+pub fn circular_pattern(brep: &BRep, params: &CircularPatternParams) -> Result<BRep, PatternError>
+```
+
+| 操作 | 参数 | 说明 | OCCT 等价 |
+|------|------|------|-----------|
+| 镜像 | `plane_origin`, `plane_normal` | 反射所有顶点/曲线/曲面，翻转三角形绕序和面法向 | `BRepBuilderAPI_Transform` (mirror) |
+| 线性阵列 | `direction`, `count`, `spacing` | 沿方向均匀复制，含原始 | `BRepFeat_MakeLinearForm` |
+| 环形阵列 | `axis_origin`, `axis_direction`, `count`, `total_angle` | 绕轴旋转均匀复制 | `BRepFeat_MakeRevol` |
+
+**几何变换覆盖：**
+- 顶点：`mirror_point` / `DMat4::transform_point3`
+- 曲线：Line, Circle, Ellipse, Hyperbola, BSpline, Bezier 全部变换
+- 曲面：Plane, Sphere, Cylinder, Cone, Torus, BSpline, LinearExtrusion, Revolution, Offset, Trimmed 全部变换
+- 三角形：镜像翻转绕序 `[i,j,k] → [i,k,j]`，阵列偏移顶点索引
 
 每个函数返回参数域 `t_range` 内所有交点（0–2 个），按 `curve_param` 升序排列。
 
