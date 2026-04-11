@@ -3,11 +3,14 @@
 //! Projects a BRep's edges onto a view plane and classifies each edge segment
 //! as **visible** or **hidden** by testing against the silhouette of all faces.
 //!
+//! Analytic silhouette curves are generated for curved surfaces (cylinder,
+//! sphere) and processed through the same visibility pipeline as wire edges.
+//!
 //! Analogous to OCCT `HLRBRep_Algo` / `HLRBRep_HLRToShape`.
 //!
 //! # Algorithm
 //!
-//! For each edge:
+//! For each edge (and silhouette curve):
 //! 1. Project both endpoints onto the screen plane.
 //! 2. Sample `N` points along the edge in 3D.
 //! 3. For each sample, cast a ray from that point toward the camera.
@@ -19,8 +22,8 @@
 //! visible or hidden.
 
 use glam::{DMat4, DVec2, DVec3, DVec4};
-use rcad_kernel::geom::{Circle3, CurveEval};
-use rcad_kernel::BRep;
+use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
+use rcad_kernel::{BRep, SurfaceEval};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -224,6 +227,196 @@ fn is_occluded(point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: 
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// ── Silhouette generation ─────────────────────────────────────────────────────
+
+/// Internal: one silhouette curve to process through the HLR pipeline.
+struct SilhouetteCurve {
+    /// World-space sample points (at least 2).
+    world_pts: Vec<DVec3>,
+    /// Optional curve hint for SVG output.
+    curve_hint: Option<CurveHint>,
+    /// If true, emit one segment per consecutive point pair instead of merging
+    /// runs.  Used for dense polyline approximations (e.g. sphere silhouette).
+    dense: bool,
+}
+
+/// Generate analytic silhouette curves for curved surfaces in `brep`.
+///
+/// Handles:
+/// - **Cylinder**: two lines parallel to the axis at the silhouette angles.
+/// - **Sphere**: a 64-point polyline approximating the great circle perpendicular
+///   to the view direction.
+fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
+    let mut curves: Vec<SilhouetteCurve> = Vec::new();
+
+    if brep.solids.is_empty() {
+        return curves;
+    }
+
+    let mut face_idx = 0usize;
+    for shell in &brep.solids[0].shells {
+        for _face in &shell.faces {
+            let surf_idx = match brep.geom.face_surface.get(face_idx).and_then(|o| *o) {
+                Some(idx) => idx,
+                None => {
+                    face_idx += 1;
+                    continue;
+                }
+            };
+            let surface = &brep.geom.surfaces[surf_idx];
+
+            let domain = match brep.geom.face_surface_range.get(face_idx).and_then(|o| *o) {
+                Some(r) => r,
+                None => surface.default_domain(),
+            };
+            let [_u0, _u1, v0, v1] = domain;
+
+            match surface {
+                Surface3::Cylinder(cyl) => {
+                    // Project view direction onto the plane perpendicular to the axis.
+                    let d_perp = view_dir - view_dir.dot(cyl.axis) * cyl.axis;
+                    if d_perp.length_squared() < 1e-10 {
+                        // Viewing along the axis — no silhouette lines.
+                        face_idx += 1;
+                        continue;
+                    }
+                    // Direction from axis to silhouette (perpendicular to both axis and d_perp).
+                    let sil_dir = cyl.axis.cross(d_perp).normalize_or_zero();
+
+                    // Resolve v range (height along axis).
+                    // face_surface_range may be absent; fall back to vertex projections.
+                    let (v0_eff, v1_eff) = if v0.is_finite() && v1.is_finite() {
+                        (v0, v1)
+                    } else {
+                        let mut lo = f64::INFINITY;
+                        let mut hi = f64::NEG_INFINITY;
+                        for vert in &brep.vertices {
+                            let proj = (vert.point - cyl.origin).dot(cyl.axis);
+                            lo = lo.min(proj);
+                            hi = hi.max(proj);
+                        }
+                        if lo.is_finite() && hi.is_finite() {
+                            (lo, hi)
+                        } else {
+                            face_idx += 1;
+                            continue;
+                        }
+                    };
+
+                    for &sign in &[1.0_f64, -1.0] {
+                        let offset = sil_dir * sign * cyl.radius;
+                        let p0 = cyl.origin + v0_eff * cyl.axis + offset;
+                        let p1 = cyl.origin + v1_eff * cyl.axis + offset;
+                        curves.push(SilhouetteCurve {
+                            world_pts: vec![p0, p1],
+                            curve_hint: None,
+                            dense: false,
+                        });
+                    }
+                }
+
+                Surface3::Sphere(sph) => {
+                    // Silhouette is the great circle perpendicular to view_dir.
+                    let x_ax = any_perpendicular(view_dir);
+                    let y_ax = view_dir.cross(x_ax).normalize_or_zero();
+                    const N: usize = 64;
+                    // Use 0..N (open) so first ≠ last; the SVG arc hint closes the circle.
+                    let pts: Vec<DVec3> = (0..N)
+                        .map(|i| {
+                            let t = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
+                            sph.center + sph.radius * (t.cos() * x_ax + t.sin() * y_ax)
+                        })
+                        .collect();
+                    // CurveHint will be computed after projection in process_world_pts;
+                    // pass None here and let the caller set it if needed.
+                    // For the sphere silhouette we emit individual consecutive segments
+                    // so that the polyline is rendered correctly.
+                    curves.push(SilhouetteCurve {
+                        world_pts: pts,
+                        curve_hint: None,
+                        dense: true,
+                    });
+                }
+
+                _ => {}
+            }
+
+            face_idx += 1;
+        }
+    }
+
+    curves
+}
+
+/// Process a list of world-space sample points through the HLR visibility
+/// pipeline and append resulting segments to `result`.
+///
+/// When `dense` is true, one segment is emitted per consecutive point pair
+/// (useful for polyline approximations of curved silhouettes).
+fn process_world_pts(
+    world_pts: &[DVec3],
+    curve_hint: Option<CurveHint>,
+    dense: bool,
+    camera: &HlrCamera,
+    view: &DMat4,
+    triangles: &[[DVec3; 3]],
+    result: &mut HlrResult,
+) {
+    if world_pts.len() < 2 {
+        return;
+    }
+    let n = world_pts.len();
+
+    let sample_vis: Vec<bool> = world_pts
+        .iter()
+        .map(|&wp| {
+            let dist = (camera.eye - wp).length();
+            !is_occluded(wp, camera.eye, triangles, dist)
+        })
+        .collect();
+
+    let screen_pts: Vec<DVec2> = world_pts.iter().map(|&wp| project(wp, view).0).collect();
+
+    if dense {
+        // Emit one segment per consecutive pair (preserves polyline shape).
+        for i in 0..n - 1 {
+            let seg = HlrSegment {
+                start: screen_pts[i],
+                end: screen_pts[i + 1],
+                visible: sample_vis[i],
+                curve_hint: curve_hint.clone(),
+            };
+            if (seg.end - seg.start).length_squared() > 1e-16 {
+                result.segments.push(seg);
+            }
+        }
+        return;
+    }
+
+    let mut seg_start = 0usize;
+    for i in 1..n {
+        let changed = sample_vis[i] != sample_vis[seg_start];
+        let last = i == n - 1;
+        if changed || last {
+            let end_idx = if last && !changed { i } else { i - 1 };
+            let seg = HlrSegment {
+                start: screen_pts[seg_start],
+                end: screen_pts[end_idx],
+                visible: sample_vis[seg_start],
+                curve_hint: curve_hint.clone(),
+            };
+            if (seg.end - seg.start).length_squared() > 1e-16 {
+                result.segments.push(seg);
+            }
+            if changed {
+                seg_start = i;
+            }
+        }
+    }
+}
+
+
+
 /// Perform hidden-line removal on a BRep from the given camera position.
 ///
 /// Returns 2D projected segments labeled visible/hidden.
@@ -234,6 +427,8 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     let triangles = collect_triangles(brep);
     let samples = samples.max(2);
     let mut result = HlrResult::default();
+
+    // ── Wire edges ────────────────────────────────────────────────────────────
 
     // Collect all unique edges from all faces + standalone edges
     let mut edge_indices: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -256,20 +451,13 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     }
 
     for &edge_idx in &edge_indices {
-        let Some(edge) = brep.edges.get(edge_idx) else {
-            continue;
-        };
-        let Some(v_start) = brep.vertices.get(edge.start) else {
-            continue;
-        };
-        let Some(v_end) = brep.vertices.get(edge.end) else {
-            continue;
-        };
+        let Some(edge) = brep.edges.get(edge_idx) else { continue };
+        let Some(v_start) = brep.vertices.get(edge.start) else { continue };
+        let Some(v_end) = brep.vertices.get(edge.end) else { continue };
 
         let p0 = v_start.point;
         let p1 = v_end.point;
 
-        // Look up the edge's 3D curve (if any) for curved sampling.
         let edge_curve = brep
             .geom
             .edge_curve
@@ -277,29 +465,20 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
             .and_then(|&ci| ci)
             .and_then(|ci| brep.geom.curves.get(ci));
 
-        // Detect circle edges for analytic hint and higher sampling.
         let circle_info: Option<Circle3> = edge_curve.and_then(|c| {
-            if let rcad_kernel::geom::Curve3::Circle(circ) = c {
-                Some(*circ)
-            } else {
-                None
-            }
+            if let rcad_kernel::geom::Curve3::Circle(circ) = c { Some(*circ) } else { None }
         });
 
-        // Is this a non-straight curved edge (non-circle)? Use N=64 sampling.
-        let is_other_curve = edge_curve.map_or(false, |c| {
-            !matches!(c, rcad_kernel::geom::Curve3::Line(_))
-        }) && circle_info.is_none();
+        let is_other_curve = edge_curve
+            .map_or(false, |c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
+            && circle_info.is_none();
 
-        // Choose sample count: curved edges get 64, straight get caller-provided.
         let edge_samples = if circle_info.is_some() || is_other_curve {
             64.max(samples)
         } else {
             samples
         };
 
-        // Build world-space sample points.
-        // For circle/curved edges use CurveEval; for straight edges interpolate endpoints.
         let world_pts: Vec<DVec3> = if let Some(circ) = &circle_info {
             let [t0, t1] = brep
                 .geom
@@ -327,7 +506,6 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
                 })
                 .collect()
         } else {
-            // Straight or no curve: skip degenerate zero-length edges
             if (p1 - p0).length_squared() < 1e-12 {
                 continue;
             }
@@ -339,66 +517,30 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
                 .collect()
         };
 
-        if world_pts.len() < 2 {
-            continue;
-        }
-
-        // Sample the edge
-        let sample_vis: Vec<bool> = world_pts
-            .iter()
-            .map(|&world_pt| {
-                let dist = (camera.eye - world_pt).length();
-                !is_occluded(world_pt, camera.eye, &triangles, dist)
-            })
-            .collect();
-
-        // Build projected 2D points
-        let screen_pts: Vec<DVec2> = world_pts
-            .iter()
-            .map(|&world_pt| project(world_pt, &view).0)
-            .collect();
-
         // Compute curve_hint for circle edges
-        let base_curve_hint: Option<CurveHint> = if let Some(circ) = &circle_info {
+        let screen_pts_for_hint: Vec<DVec2> =
+            world_pts.iter().map(|&wp| project(wp, &view).0).collect();
+        let curve_hint: Option<CurveHint> = if let Some(circ) = &circle_info {
             let (center_2d, _) = project(circ.center, &view);
-            // Approximate projected radius from screen_pts
-            let r = screen_pts
+            let r = screen_pts_for_hint
                 .iter()
                 .map(|p| (*p - center_2d).length())
                 .fold(0.0_f64, f64::max);
-            Some(CurveHint::Circle {
-                center: center_2d,
-                radius: r,
-            })
+            Some(CurveHint::Circle { center: center_2d, radius: r })
         } else if is_other_curve {
             Some(CurveHint::Other)
         } else {
             None
         };
 
-        let n = world_pts.len();
-        // Merge consecutive same-visibility samples into segments
-        let mut seg_start = 0usize;
-        for i in 1..n {
-            let changed = sample_vis[i] != sample_vis[seg_start];
-            let last = i == n - 1;
-            if changed || last {
-                let end_idx = if last && !changed { i } else { i - 1 };
-                let seg = HlrSegment {
-                    start: screen_pts[seg_start],
-                    end: screen_pts[end_idx],
-                    visible: sample_vis[seg_start],
-                    curve_hint: base_curve_hint.clone(),
-                };
-                // Skip degenerate (zero-length) segments
-                if (seg.end - seg.start).length_squared() > 1e-16 {
-                    result.segments.push(seg);
-                }
-                if changed {
-                    seg_start = i;
-                }
-            }
-        }
+        process_world_pts(&world_pts, curve_hint, false, camera, &view, &triangles, &mut result);
+    }
+
+    // ── Analytic silhouette curves ────────────────────────────────────────────
+
+    let view_dir = (camera.target - camera.eye).normalize_or_zero();
+    for sil in compute_silhouettes(brep, view_dir) {
+        process_world_pts(&sil.world_pts, sil.curve_hint, sil.dense, camera, &view, &triangles, &mut result);
     }
 
     result
@@ -634,6 +776,43 @@ mod tests {
         assert!(
             svg.contains("<path") || result.segments.is_empty(),
             "circle edge SVG should contain <path> arc elements"
+        );
+    }
+
+    /// Cylinder viewed from the side should produce silhouette line segments
+    /// in addition to the wire edges.
+    #[test]
+    fn cylinder_hlr_has_silhouette_segments() {
+        use rcad_kernel::geom::PrimitiveSolid;
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        // The cylinder axis is +Y.  Use the right-side camera (looking along -X)
+        // so the view direction is perpendicular to the axis → two silhouette lines.
+        let camera = HlrCamera::right(10.0);
+        let result = hlr(&brep, &camera, 8);
+        assert!(
+            !result.segments.is_empty(),
+            "cylinder HLR should produce segments"
+        );
+        assert!(
+            result.segments.len() >= 2,
+            "cylinder should have at least 2 silhouette segments, got {}",
+            result.segments.len()
+        );
+    }
+
+    /// Sphere HLR should produce silhouette segments (the great circle).
+    #[test]
+    fn sphere_hlr_has_silhouette_segments() {
+        use rcad_kernel::geom::PrimitiveSolid;
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let camera = HlrCamera::front(10.0);
+        let result = hlr(&brep, &camera, 8);
+        assert!(
+            !result.segments.is_empty(),
+            "sphere HLR should produce silhouette segments"
         );
     }
 }
