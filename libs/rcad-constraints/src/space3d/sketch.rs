@@ -7,6 +7,19 @@ use crate::space3d::constraint::SpaceConstraint;
 use crate::space3d::entity::{SpaceEntity, SpaceEntityId, SpaceEntityKind};
 use crate::space3d::solver::{SpaceSolveResult, solve_space};
 
+/// Detailed DOF analysis result for 3D sketches.
+#[derive(Debug, Clone)]
+pub struct SpaceDofReport {
+    /// Number of free (non-fixed) parameters.
+    pub free_params: usize,
+    /// Total number of constraint equations.
+    pub equations: usize,
+    /// Net degrees of freedom = free_params - equations.
+    pub dof: i64,
+    /// Indices of free parameters in the sketch's parameter vector.
+    pub free_param_indices: Vec<usize>,
+}
+
 /// A 3D geometric constraint sketch.
 ///
 /// Holds a flat parameter vector and a list of 3D entities and constraints.
@@ -86,6 +99,18 @@ impl SpaceSketch {
         id
     }
 
+    /// Add a cylinder entity with axis point (cx,cy,cz), axis direction (ax,ay,az), and radius r.
+    pub fn add_cylinder(&mut self, cx: f64, cy: f64, cz: f64, ax: f64, ay: f64, az: f64, r: f64) -> SpaceEntityId {
+        let id = self.entities.len();
+        let param_start = self.params.len();
+        for &v in &[cx, cy, cz, ax, ay, az, r] {
+            self.params.push(v);
+            self.fixed.push(false);
+        }
+        self.entities.push(SpaceEntity::new(SpaceEntityKind::Cylinder, param_start));
+        id
+    }
+
     /// Add a constraint.
     pub fn add_constraint(&mut self, constraint: SpaceConstraint) {
         self.constraints.push(constraint);
@@ -143,5 +168,27 @@ impl SpaceSketch {
     /// Run the Newton-Raphson solver on this sketch.
     pub fn solve(&mut self) -> SpaceSolveResult {
         solve_space(&mut self.params, &self.fixed, &self.entities, &self.constraints)
+    }
+
+    /// Degrees of freedom = (free parameters) − (constraint equations).
+    pub fn dof(&self) -> i64 {
+        let free = self.fixed.iter().filter(|&&f| !f).count() as i64;
+        let eqs: i64 = self.constraints.iter().map(|c| c.equation_count() as i64).sum();
+        free - eqs
+    }
+
+    /// Detailed DOF analysis.
+    pub fn dof_analysis(&self) -> SpaceDofReport {
+        let free_param_indices: Vec<usize> = (0..self.params.len())
+            .filter(|&i| !self.fixed[i])
+            .collect();
+        let free = free_param_indices.len() as i64;
+        let eqs: i64 = self.constraints.iter().map(|c| c.equation_count() as i64).sum();
+        SpaceDofReport {
+            free_params: free_param_indices.len(),
+            equations: eqs as usize,
+            dof: free - eqs,
+            free_param_indices,
+        }
     }
 }

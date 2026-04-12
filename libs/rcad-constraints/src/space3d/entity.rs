@@ -9,6 +9,7 @@
 //! | SpaceLine  | [0]=x1, [1]=y1, [2]=z1, [3]=x2, [4]=y2, [5]=z2       |
 //! | Plane      | [0]=nx, [1]=ny, [2]=nz, [3]=d (distance from origin)  |
 //! | Sphere     | [0]=cx, [1]=cy, [2]=cz, [3]=r                          |
+//! | Cylinder   | [0..3]=axis point, [3..6]=axis direction, [6]=radius  |
 
 /// Index into the entity list of a [`SpaceSketch`].
 pub type SpaceEntityId = usize;
@@ -20,6 +21,7 @@ pub enum SpaceEntityKind {
     SpaceLine,
     Plane,
     Sphere,
+    Cylinder,
 }
 
 impl SpaceEntityKind {
@@ -30,6 +32,7 @@ impl SpaceEntityKind {
             SpaceEntityKind::SpaceLine => 6,
             SpaceEntityKind::Plane => 4,
             SpaceEntityKind::Sphere => 4,
+            SpaceEntityKind::Cylinder => 7,
         }
     }
 }

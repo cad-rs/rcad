@@ -6,6 +6,7 @@
 //! many equations the constraint contributes.
 
 use crate::entity::{Entity, EntityId, PointRef};
+use crate::solver::SOLVER_NORM_TOL;
 
 /// A geometric constraint between sketch entities.
 #[derive(Debug, Clone)]
@@ -79,6 +80,16 @@ pub enum Constraint {
     /// The midpoint of p1–p2 lies on the line, and the segment p1–p2 is
     /// perpendicular to the line direction.
     Symmetric { p1: PointRef, p2: PointRef, line: EntityId },
+
+    // ── Circle / arc relations ────────────────────────────────────────────────
+    /// Two Circle/Arc entities share the same center. (2 equations)
+    Concentric(EntityId, EntityId),
+
+    /// A point is the midpoint of a Line segment. (2 equations)
+    Midpoint { point: PointRef, line: EntityId },
+
+    /// Circle/Arc diameter equals a fixed value. (1 equation)
+    Diameter { circle: EntityId, diameter: f64 },
 }
 
 impl Constraint {
@@ -101,7 +112,8 @@ impl Constraint {
     /// Number of scalar equations this constraint contributes.
     pub fn equation_count(&self) -> usize {
         match self {
-            Constraint::Coincident(..) | Constraint::Fixed { .. } | Constraint::Symmetric { .. } => 2,
+            Constraint::Coincident(..) | Constraint::Fixed { .. } | Constraint::Symmetric { .. }
+            | Constraint::Concentric(..) | Constraint::Midpoint { .. } => 2,
             _ => 1,
         }
     }
@@ -243,7 +255,7 @@ impl Constraint {
                 let x2 = params[el.param(2)];
                 let y2 = params[el.param(3)];
                 // Normalize by line length to improve conditioning.
-                let len = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(1e-10);
+                let len = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(SOLVER_NORM_TOL);
                 out[0] = ((x2 - x1) * (params[py] - y1) - (y2 - y1) * (params[px] - x1)) / len;
             }
 
@@ -260,7 +272,7 @@ impl Constraint {
                 let y2 = params[el.param(3)];
                 let dx = x2 - x1;
                 let dy = y2 - y1;
-                let len = (dx * dx + dy * dy).sqrt().max(1e-10);
+                let len = (dx * dx + dy * dy).sqrt().max(SOLVER_NORM_TOL);
                 // dist(center, line) - r = 0
                 let num = (cx - x1) * dy - (cy - y1) * dx;
                 out[0] = num / len - r;
@@ -319,7 +331,7 @@ impl Constraint {
                 let ly2 = params[el.param(3)];
                 let ldx = lx2 - lx1;
                 let ldy = ly2 - ly1;
-                let len = (ldx * ldx + ldy * ldy).sqrt().max(1e-10);
+                let len = (ldx * ldx + ldy * ldy).sqrt().max(SOLVER_NORM_TOL);
                 // Midpoint of p1–p2
                 let mx = (params[x1] + params[x2]) * 0.5;
                 let my = (params[y1] + params[y2]) * 0.5;
@@ -329,6 +341,30 @@ impl Constraint {
                 let sdx = params[x2] - params[x1];
                 let sdy = params[y2] - params[y1];
                 out[1] = (sdx * ldx + sdy * ldy) / len;
+            }
+
+            // ── Concentric ────────────────────────────────────────────────────
+            Constraint::Concentric(c1, c2) => {
+                let e1 = &entities[*c1];
+                let e2 = &entities[*c2];
+                out[0] = params[e1.param(0)] - params[e2.param(0)];
+                out[1] = params[e1.param(1)] - params[e2.param(1)];
+            }
+
+            // ── Midpoint ──────────────────────────────────────────────────────
+            Constraint::Midpoint { point, line } => {
+                let (px, py) = point.param_indices(entities);
+                let el = &entities[*line];
+                let mx = (params[el.param(0)] + params[el.param(2)]) * 0.5;
+                let my = (params[el.param(1)] + params[el.param(3)]) * 0.5;
+                out[0] = params[px] - mx;
+                out[1] = params[py] - my;
+            }
+
+            // ── Diameter ──────────────────────────────────────────────────────
+            Constraint::Diameter { circle, diameter } => {
+                let e = &entities[*circle];
+                out[0] = params[e.param(2)] - diameter / 2.0;
             }
         }
         true

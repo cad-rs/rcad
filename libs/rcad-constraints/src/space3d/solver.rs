@@ -15,6 +15,7 @@
 
 use crate::space3d::constraint::SpaceConstraint;
 use crate::space3d::entity::SpaceEntity;
+use crate::solver::{RESIDUAL_TOL, FD_H, LAMBDA, PIVOT_TOL};
 
 /// Result returned by [`crate::SpaceSketch::solve`].
 #[derive(Debug, Clone)]
@@ -28,13 +29,9 @@ pub struct SpaceSolveResult {
 }
 
 /// Convergence tolerance on the RMS constraint residual.
-pub const RESIDUAL_TOL: f64 = 1e-10;
+pub const RESIDUAL_TOL_3D: f64 = RESIDUAL_TOL;
 /// Maximum Newton iterations.
 const MAX_ITER: usize = 100;
-/// Step size for numerical Jacobian (central differences).
-const FD_H: f64 = 1e-7;
-/// Tikhonov regularisation coefficient.
-const LAMBDA: f64 = 1e-10;
 
 /// Run the Newton-Raphson solver for 3D constraints.
 ///
@@ -175,7 +172,7 @@ fn gaussian_elimination(a: &mut Vec<Vec<f64>>, b: &mut Vec<f64>) -> Option<Vec<f
         b.swap(col, pivot_row);
 
         let pivot = a[col][col];
-        if pivot.abs() < 1e-14 {
+        if pivot.abs() < PIVOT_TOL {
             return None;
         }
 

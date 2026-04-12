@@ -32,9 +32,13 @@ pub const RESIDUAL_TOL: f64 = 1e-10;
 /// Maximum Newton iterations.
 const MAX_ITER: usize = 100;
 /// Step size for numerical Jacobian (central differences).
-const FD_H: f64 = 1e-7;
+pub const FD_H: f64 = 1e-7;
 /// Tikhonov regularisation coefficient.
-const LAMBDA: f64 = 1e-10;
+pub const LAMBDA: f64 = 1e-10;
+/// Pivot threshold for Gaussian elimination.
+pub const PIVOT_TOL: f64 = 1e-14;
+/// Normalization guard threshold — prevents division by near-zero vectors.
+pub const SOLVER_NORM_TOL: f64 = 1e-10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry point

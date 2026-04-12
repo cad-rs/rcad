@@ -410,3 +410,99 @@ fn sketch_to_solid_brep_square() {
     let n_faces = solid.solids[0].shells[0].faces.len();
     assert_eq!(n_faces, 6, "extruded square should have 6 faces, got {n_faces}");
 }
+
+// ─── new constraint tests ─────────────────────────────────────────────────────
+
+/// Concentric: two circles share the same center.
+#[test]
+fn concentric_circles() {
+    let mut sk = Sketch::new();
+    let c1 = sk.add_circle(0.0, 0.0, 3.0);
+    sk.fix_entity(c1);
+    let c2 = sk.add_circle(5.0, 4.0, 1.0); // wrong center
+    sk.add_constraint(Constraint::Concentric(c1, c2));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(c1);
+    let p2 = sk.entity_params(c2);
+    assert_near(p1[0], p2[0], "concentric cx");
+    assert_near(p1[1], p2[1], "concentric cy");
+}
+
+/// Midpoint: a point is pulled to the midpoint of a line.
+#[test]
+fn midpoint_on_line() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(0.0, 0.0, 4.0, 2.0);
+    sk.fix_entity(l);
+    let p = sk.add_point(0.0, 0.0); // wrong position
+    sk.add_constraint(Constraint::Midpoint { point: PointRef::Point(p), line: l });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let coords = sk.point_coords(PointRef::Point(p));
+    assert_near(coords.x, 2.0, "midpoint x");
+    assert_near(coords.y, 1.0, "midpoint y");
+}
+
+/// Diameter: circle diameter constrained to a value.
+#[test]
+fn diameter_constraint() {
+    let mut sk = Sketch::new();
+    let c = sk.add_circle(0.0, 0.0, 1.0); // radius 1, want diameter 6 → radius 3
+    sk.add_constraint(Constraint::fix_point(PointRef::Center(c), 0.0, 0.0));
+    sk.add_constraint(Constraint::Diameter { circle: c, diameter: 6.0 });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p = sk.entity_params(c);
+    assert_near(p[2], 3.0, "radius should be diameter/2");
+}
+
+/// Rectangle with diagonal: 4 lines forming a rectangle + diagonal line.
+#[test]
+fn rectangle_with_diagonal() {
+    let mut sk = Sketch::new();
+    let l1 = sk.add_line(0.0, 0.0, 3.0, 0.0); // bottom
+    let l2 = sk.add_line(3.0, 0.0, 3.0, 2.0); // right
+    let l3 = sk.add_line(3.0, 2.0, 0.0, 2.0); // top
+    let l4 = sk.add_line(0.0, 2.0, 0.0, 0.0); // left
+    let d = sk.add_line(0.0, 0.0, 3.0, 2.0);  // diagonal
+    // Fix the rectangle
+    sk.fix_entity(l1);
+    // Coincident constraints for corners
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l1), PointRef::LineStart(l2)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l2), PointRef::LineStart(l3)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l3), PointRef::LineStart(l4)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l4), PointRef::LineStart(l1)));
+    // Diagonal connects l1 start to l3 start
+    sk.add_constraint(Constraint::coincident(PointRef::LineStart(d), PointRef::LineStart(l1)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(d), PointRef::LineStart(l3)));
+    // Opposite sides equal
+    sk.add_constraint(EqualLength(l1, l3));
+    sk.add_constraint(EqualLength(l2, l4));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+}
+
+/// Four-bar linkage: 4 connected lines, fix one bar, verify DOF.
+#[test]
+fn four_bar_linkage() {
+    let mut sk = Sketch::new();
+    let l1 = sk.add_line(0.0, 0.0, 4.0, 0.0); // ground (fixed)
+    let l2 = sk.add_line(0.0, 0.0, 1.5, 2.5); // left arm
+    let l3 = sk.add_line(1.5, 2.5, 5.5, 2.5); // coupler
+    let l4 = sk.add_line(5.5, 2.5, 4.0, 0.0); // right arm
+    sk.fix_entity(l1);
+    // Pin joints
+    sk.add_constraint(Constraint::coincident(PointRef::LineStart(l2), PointRef::LineStart(l1)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l2), PointRef::LineStart(l3)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l3), PointRef::LineStart(l4)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l4), PointRef::LineEnd(l1)));
+    // Fix lengths
+    sk.add_constraint(LineLength { line: l2, length: 3.0 });
+    sk.add_constraint(LineLength { line: l3, length: 4.0 });
+    sk.add_constraint(LineLength { line: l4, length: 3.0 });
+    // Four-bar has 1 DOF (input angle free)
+    assert_eq!(sk.dof(), 1, "four-bar should have 1 DOF");
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+}

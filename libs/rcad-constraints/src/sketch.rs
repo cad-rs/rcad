@@ -6,6 +6,19 @@ use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityId, EntityKind, PointRef};
 use crate::solver::{self, SolveResult};
 
+/// Detailed DOF analysis result.
+#[derive(Debug, Clone)]
+pub struct DofReport {
+    /// Number of free (non-fixed) parameters.
+    pub free_params: usize,
+    /// Total number of constraint equations.
+    pub equations: usize,
+    /// Net degrees of freedom = free_params - equations.
+    pub dof: i64,
+    /// Indices of free parameters in the sketch's parameter vector.
+    pub free_param_indices: Vec<usize>,
+}
+
 /// A 2D parametric sketch.
 ///
 /// Holds geometric entities (points, lines, circles, arcs) and constraints
@@ -109,6 +122,24 @@ impl Sketch {
         let free = self.fixed.iter().filter(|&&f| !f).count() as i64;
         let eqs: i64 = self.constraints.iter().map(|c| c.equation_count() as i64).sum();
         free - eqs
+    }
+
+    /// Detailed DOF analysis.
+    ///
+    /// Returns the number of free parameters, constraint equations,
+    /// the net DOF, and the indices of free parameters.
+    pub fn dof_analysis(&self) -> DofReport {
+        let free_param_indices: Vec<usize> = (0..self.params.len())
+            .filter(|&i| !self.fixed[i])
+            .collect();
+        let free = free_param_indices.len() as i64;
+        let eqs: i64 = self.constraints.iter().map(|c| c.equation_count() as i64).sum();
+        DofReport {
+            free_params: free_param_indices.len(),
+            equations: eqs as usize,
+            dof: free - eqs,
+            free_param_indices,
+        }
     }
 
     // ── Solver ────────────────────────────────────────────────────────────────

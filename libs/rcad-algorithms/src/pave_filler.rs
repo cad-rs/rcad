@@ -3,17 +3,39 @@ use rcad_kernel::geom::*;
 
 use crate::bopds::ds::*;
 use crate::bopds::pave::*;
+use crate::bvh::Bvh;
 use crate::inttools;
 use crate::tolerance::*;
+
+/// Minimum total face count before BVH acceleration is used.
+/// Below this threshold, brute-force O(n²) is faster due to BVH build overhead.
+const BVH_THRESHOLD: usize = 20;
 
 /// PaveFiller executes the six intersection passes (OCCT: BOPAlgo_PaveFiller).
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
+    bvh_a: Option<&'a Bvh>,
+    bvh_b: Option<&'a Bvh>,
 }
 
 impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
-        Self { ds }
+        Self { ds, bvh_a: None, bvh_b: None }
+    }
+
+    /// Create a PaveFiller with optional BVH acceleration for face-face intersection.
+    ///
+    /// `bvh_a` and `bvh_b` must be built from the same BReps that were used to
+    /// construct the DS. Face indices in the BVHs map directly to DS face indices
+    /// (A faces come first, then B faces).
+    pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
+        let total_faces = ds.faces.len();
+        let use_bvh = total_faces >= BVH_THRESHOLD;
+        Self {
+            ds,
+            bvh_a: if use_bvh { Some(bvh_a) } else { None },
+            bvh_b: if use_bvh { Some(bvh_b) } else { None },
+        }
     }
 
     /// Execute all intersection passes.
@@ -355,9 +377,41 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
-        for &af in &a_faces {
-            for &bf in &b_faces {
-                self.intersect_face_face(af, bf);
+        if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
+            // Build reverse maps: BRep face index → DS face index
+            let a_map: Vec<usize> = a_faces
+                .iter()
+                .map(|&dsi| self.ds.faces[dsi].source_face_idx)
+                .collect();
+            let b_map: Vec<usize> = b_faces
+                .iter()
+                .map(|&dsi| self.ds.faces[dsi].source_face_idx)
+                .collect();
+
+            // Forward maps: BRep face index → position in a_faces/b_faces
+            let mut a_rev = vec![usize::MAX; a_map.iter().copied().max().map(|m| m + 1).unwrap_or(0)];
+            for (pos, &brep_idx) in a_map.iter().enumerate() {
+                a_rev[brep_idx] = pos;
+            }
+            let mut b_rev = vec![usize::MAX; b_map.iter().copied().max().map(|m| m + 1).unwrap_or(0)];
+            for (pos, &brep_idx) in b_map.iter().enumerate() {
+                b_rev[brep_idx] = pos;
+            }
+
+            let candidates = Bvh::candidate_pairs(bvh_a, bvh_b);
+            for (fa_brep, fb_brep) in candidates {
+                if let (Some(ai), Some(bi)) = (a_rev.get(fa_brep).copied(), b_rev.get(fb_brep).copied()) {
+                    if ai < a_faces.len() && bi < b_faces.len() {
+                        self.intersect_face_face(a_faces[ai], b_faces[bi]);
+                    }
+                }
+            }
+        } else {
+            // Brute-force: all A-face × B-face pairs
+            for &af in &a_faces {
+                for &bf in &b_faces {
+                    self.intersect_face_face(af, bf);
+                }
             }
         }
     }

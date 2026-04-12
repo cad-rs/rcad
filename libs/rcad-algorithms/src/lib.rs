@@ -53,7 +53,11 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     let mut ds = bopds::ds::DS::new(a, b);
 
     // 2. Run PaveFiller — compute all interferences
-    let mut filler = pave_filler::PaveFiller::new(&mut ds);
+    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+    let mut filler = match (&bvh_a, &bvh_b) {
+        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
+        _ => pave_filler::PaveFiller::new(&mut ds),
+    };
     filler.perform();
 
     // 3. Run Builder — classify and assemble result
@@ -69,7 +73,11 @@ pub fn boolean_op_with_history(
     b: &BRep,
 ) -> Result<(BRep, BooleanHistory), BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
-    let mut filler = pave_filler::PaveFiller::new(&mut ds);
+    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+    let mut filler = match (&bvh_a, &bvh_b) {
+        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
+        _ => pave_filler::PaveFiller::new(&mut ds),
+    };
     filler.perform();
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build_with_history()
@@ -98,10 +106,24 @@ pub fn boolean_op_par(
     b: &BRep,
 ) -> Result<(BRep, BooleanHistory), BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
-    let mut filler = pave_filler::PaveFiller::new(&mut ds);
+    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+    let mut filler = match (&bvh_a, &bvh_b) {
+        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
+        _ => pave_filler::PaveFiller::new(&mut ds),
+    };
     filler.perform();
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build_with_history_par()
+}
+
+/// Build BVHs for both BReps if they have faces; returns None for empty BReps.
+fn build_optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
+    let has_faces_a = a.solids.first().and_then(|s| s.shells.first()).map_or(false, |sh| !sh.faces.is_empty());
+    let has_faces_b = b.solids.first().and_then(|s| s.shells.first()).map_or(false, |sh| !sh.faces.is_empty());
+    (
+        if has_faces_a { Some(bvh::Bvh::build(a)) } else { None },
+        if has_faces_b { Some(bvh::Bvh::build(b)) } else { None },
+    )
 }
 
 /// Union two BReps and return both the result and face origin history.

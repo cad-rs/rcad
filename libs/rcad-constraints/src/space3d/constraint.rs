@@ -6,6 +6,7 @@
 //! many equations the constraint contributes.
 
 use crate::space3d::entity::{SpaceEntity, SpaceEntityId, SpacePointRef};
+use crate::solver::SOLVER_NORM_TOL;
 
 /// A geometric constraint between 3D space entities.
 #[derive(Debug, Clone)]
@@ -91,6 +92,22 @@ pub enum SpaceConstraint {
     // ── Distance (entity to entity) ──────────────────────────────────────────
     /// Distance from a point to a plane equals `distance`. (1 equation)
     PointPlaneDistance { point: SpacePointRef, plane: SpaceEntityId, distance: f64 },
+
+    // ── Cylinder constraints ─────────────────────────────────────────────────
+    /// Two Cylinder/Sphere entities share the same center. (3 equations)
+    Concentric3D(SpaceEntityId, SpaceEntityId),
+
+    /// Cylinder radius equals a fixed value. (1 equation)
+    CylinderRadius { cylinder: SpaceEntityId, radius: f64 },
+
+    /// A point lies on a cylinder surface. (1 equation)
+    PointOnCylinder { point: SpacePointRef, cylinder: SpaceEntityId },
+
+    /// Two cylinders with parallel axes are tangent. (1 equation)
+    CylinderTangent { c1: SpaceEntityId, c2: SpaceEntityId, external: bool },
+
+    /// A plane is tangent to a sphere. (1 equation)
+    PlaneTangentToSphere { plane: SpaceEntityId, sphere: SpaceEntityId },
 }
 
 impl SpaceConstraint {
@@ -113,7 +130,8 @@ impl SpaceConstraint {
     /// Number of scalar equations this constraint contributes.
     pub fn equation_count(&self) -> usize {
         match self {
-            SpaceConstraint::Coincident(..) | SpaceConstraint::Fixed { .. } => 3,
+            SpaceConstraint::Coincident(..) | SpaceConstraint::Fixed { .. }
+            | SpaceConstraint::Concentric3D(..) => 3,
             SpaceConstraint::PointOnLine { .. } | SpaceConstraint::PlaneNormal { .. }
             | SpaceConstraint::PlaneParallel(..) | SpaceConstraint::LineInPlane { .. }
             | SpaceConstraint::LinePerpendicularPlane { .. } => 2,
@@ -178,7 +196,7 @@ impl SpaceConstraint {
                 let ldx = x2 - x1;
                 let ldy = y2 - y1;
                 let ldz = z2 - z1;
-                let len = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(1e-10);
+                let len = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(SOLVER_NORM_TOL);
                 // Cross product of (point - p1) with line direction = 0
                 let dx = params[px] - x1;
                 let dy = params[py] - y1;
@@ -218,8 +236,8 @@ impl SpaceConstraint {
                 let ldx = params[e.param(3)] - params[e.param(0)];
                 let ldy = params[e.param(4)] - params[e.param(1)];
                 let ldz = params[e.param(5)] - params[e.param(2)];
-                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(1e-10);
-                let len_d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(SOLVER_NORM_TOL);
+                let len_d = (dx * dx + dy * dy + dz * dz).sqrt().max(SOLVER_NORM_TOL);
                 // Cross product = 0 (normalized)
                 let ndx = dx / len_d;
                 let ndy = dy / len_d;
@@ -238,8 +256,8 @@ impl SpaceConstraint {
                 let dx2 = params[e2.param(3)] - params[e2.param(0)];
                 let dy2 = params[e2.param(4)] - params[e2.param(1)];
                 let dz2 = params[e2.param(5)] - params[e2.param(2)];
-                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(1e-10);
-                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(1e-10);
+                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(SOLVER_NORM_TOL);
                 // Cross product = 0 (normalized)
                 out[0] = (dy1 * dz2 - dz1 * dy2) / (len1 * len2);
                 out[1] = (dz1 * dx2 - dx1 * dz2) / (len1 * len2);
@@ -255,8 +273,8 @@ impl SpaceConstraint {
                 let dx2 = params[e2.param(3)] - params[e2.param(0)];
                 let dy2 = params[e2.param(4)] - params[e2.param(1)];
                 let dz2 = params[e2.param(5)] - params[e2.param(2)];
-                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(1e-10);
-                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(1e-10);
+                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(SOLVER_NORM_TOL);
                 // Dot product = 0 (normalized)
                 out[0] = (dx1 * dx2 + dy1 * dy2 + dz1 * dz2) / (len1 * len2);
             }
@@ -280,7 +298,7 @@ impl SpaceConstraint {
                 let enx = params[e.param(0)];
                 let eny = params[e.param(1)];
                 let enz = params[e.param(2)];
-                let len = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-10);
+                let len = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
                 let nnx = nx / len;
                 let nny = ny / len;
                 let nnz = nz / len;
@@ -299,8 +317,8 @@ impl SpaceConstraint {
                 let nx2 = params[e2.param(0)];
                 let ny2 = params[e2.param(1)];
                 let nz2 = params[e2.param(2)];
-                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(1e-10);
-                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(1e-10);
+                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(SOLVER_NORM_TOL);
                 // Cross product = 0 (normalized)
                 out[0] = (ny1 * nz2 - nz1 * ny2) / (len1 * len2);
                 out[1] = (nz1 * nx2 - nx1 * nz2) / (len1 * len2);
@@ -316,8 +334,8 @@ impl SpaceConstraint {
                 let nx2 = params[e2.param(0)];
                 let ny2 = params[e2.param(1)];
                 let nz2 = params[e2.param(2)];
-                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(1e-10);
-                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(1e-10);
+                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(SOLVER_NORM_TOL);
                 out[0] = (nx1 * nx2 + ny1 * ny2 + nz1 * nz2) / (len1 * len2);
             }
 
@@ -350,8 +368,8 @@ impl SpaceConstraint {
                 let nx = params[ep.param(0)];
                 let ny = params[ep.param(1)];
                 let nz = params[ep.param(2)];
-                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(1e-10);
-                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-10);
+                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(SOLVER_NORM_TOL);
+                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
                 // Cross product of line direction and plane normal = 0
                 out[0] = (ldy * nz - ldz * ny) / (len_l * len_n);
                 out[1] = (ldz * nx - ldx * nz) / (len_l * len_n);
@@ -367,8 +385,8 @@ impl SpaceConstraint {
                 let nx = params[ep.param(0)];
                 let ny = params[ep.param(1)];
                 let nz = params[ep.param(2)];
-                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(1e-10);
-                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-10);
+                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(SOLVER_NORM_TOL);
+                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
                 // Dot product = 0 (line direction perpendicular to plane normal)
                 out[0] = (ldx * nx + ldy * ny + ldz * nz) / (len_l * len_n);
             }
@@ -419,8 +437,8 @@ impl SpaceConstraint {
                 let dx2 = params[e2.param(3)] - params[e2.param(0)];
                 let dy2 = params[e2.param(4)] - params[e2.param(1)];
                 let dz2 = params[e2.param(5)] - params[e2.param(2)];
-                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(1e-10);
-                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(1e-10);
+                let len1 = (dx1 * dx1 + dy1 * dy1 + dz1 * dz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (dx2 * dx2 + dy2 * dy2 + dz2 * dz2).sqrt().max(SOLVER_NORM_TOL);
                 let dot = (dx1 * dx2 + dy1 * dy2 + dz1 * dz2) / (len1 * len2);
                 // cos(angle) - dot = 0
                 out[0] = angle_rad.cos() - dot.clamp(-1.0, 1.0);
@@ -436,8 +454,8 @@ impl SpaceConstraint {
                 let nx2 = params[e2.param(0)];
                 let ny2 = params[e2.param(1)];
                 let nz2 = params[e2.param(2)];
-                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(1e-10);
-                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(1e-10);
+                let len1 = (nx1 * nx1 + ny1 * ny1 + nz1 * nz1).sqrt().max(SOLVER_NORM_TOL);
+                let len2 = (nx2 * nx2 + ny2 * ny2 + nz2 * nz2).sqrt().max(SOLVER_NORM_TOL);
                 let dot = (nx1 * nx2 + ny1 * ny2 + nz1 * nz2) / (len1 * len2);
                 out[0] = angle_rad.cos() - dot.clamp(-1.0, 1.0);
             }
@@ -452,8 +470,8 @@ impl SpaceConstraint {
                 let nx = params[ep.param(0)];
                 let ny = params[ep.param(1)];
                 let nz = params[ep.param(2)];
-                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(1e-10);
-                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-10);
+                let len_l = (ldx * ldx + ldy * ldy + ldz * ldz).sqrt().max(SOLVER_NORM_TOL);
+                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
                 // Angle between line and plane: sin(angle) = |dir·n| / (|dir|*|n|)
                 let sin_val = (ldx * nx + ldy * ny + ldz * nz).abs() / (len_l * len_n);
                 out[0] = angle_rad.sin() - sin_val.clamp(0.0, 1.0);
@@ -467,9 +485,110 @@ impl SpaceConstraint {
                 let ny = params[ep.param(1)];
                 let nz = params[ep.param(2)];
                 let d = params[ep.param(3)];
-                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-10);
+                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
                 let num = (nx * params[px] + ny * params[py] + nz * params[pz] - d).abs();
                 out[0] = num / len_n - distance;
+            }
+
+            // ── Concentric3D ─────────────────────────────────────────────────
+            SpaceConstraint::Concentric3D(e1, e2) => {
+                let a = &entities[*e1];
+                let b = &entities[*e2];
+                out[0] = params[a.param(0)] - params[b.param(0)];
+                out[1] = params[a.param(1)] - params[b.param(1)];
+                out[2] = params[a.param(2)] - params[b.param(2)];
+            }
+
+            // ── CylinderRadius ───────────────────────────────────────────────
+            SpaceConstraint::CylinderRadius { cylinder, radius } => {
+                let e = &entities[*cylinder];
+                out[0] = params[e.param(6)] - radius;
+            }
+
+            // ── PointOnCylinder ──────────────────────────────────────────────
+            SpaceConstraint::PointOnCylinder { point, cylinder } => {
+                let (px, py, pz) = point.param_indices(entities);
+                let ec = &entities[*cylinder];
+                let cx = params[ec.param(0)];
+                let cy = params[ec.param(1)];
+                let cz = params[ec.param(2)];
+                let ax = params[ec.param(3)];
+                let ay = params[ec.param(4)];
+                let az = params[ec.param(5)];
+                let r = params[ec.param(6)];
+                let len_a = (ax * ax + ay * ay + az * az).sqrt().max(SOLVER_NORM_TOL);
+                let nax = ax / len_a;
+                let nay = ay / len_a;
+                let naz = az / len_a;
+                // Vector from axis point to point
+                let vx = params[px] - cx;
+                let vy = params[py] - cy;
+                let vz = params[pz] - cz;
+                // Project onto axis
+                let proj = vx * nax + vy * nay + vz * naz;
+                // Perpendicular component
+                let perp_x = vx - proj * nax;
+                let perp_y = vy - proj * nay;
+                let perp_z = vz - proj * naz;
+                let dist = (perp_x * perp_x + perp_y * perp_y + perp_z * perp_z).sqrt();
+                out[0] = dist - r;
+            }
+
+            // ── CylinderTangent ──────────────────────────────────────────────
+            SpaceConstraint::CylinderTangent { c1, c2, external } => {
+                let e1 = &entities[*c1];
+                let e2 = &entities[*c2];
+                let cx1 = params[e1.param(0)];
+                let cy1 = params[e1.param(1)];
+                let cz1 = params[e1.param(2)];
+                let ax1 = params[e1.param(3)];
+                let ay1 = params[e1.param(4)];
+                let az1 = params[e1.param(5)];
+                let r1 = params[e1.param(6)];
+                let cx2 = params[e2.param(0)];
+                let cy2 = params[e2.param(1)];
+                let cz2 = params[e2.param(2)];
+                let _ax2 = params[e2.param(3)];
+                let _ay2 = params[e2.param(4)];
+                let _az2 = params[e2.param(5)];
+                let r2 = params[e2.param(6)];
+                // Normalize axis 1
+                let len_a1 = (ax1 * ax1 + ay1 * ay1 + az1 * az1).sqrt().max(SOLVER_NORM_TOL);
+                let nax1 = ax1 / len_a1;
+                let nay1 = ay1 / len_a1;
+                let naz1 = az1 / len_a1;
+                // Vector between axis points
+                let dx = cx2 - cx1;
+                let dy = cy2 - cy1;
+                let dz = cz2 - cz1;
+                // Perpendicular distance from c2 axis point to c1 axis line
+                let proj = dx * nax1 + dy * nay1 + dz * naz1;
+                let perp_x = dx - proj * nax1;
+                let perp_y = dy - proj * nay1;
+                let perp_z = dz - proj * naz1;
+                let perp_dist = (perp_x * perp_x + perp_y * perp_y + perp_z * perp_z).sqrt();
+                if *external {
+                    out[0] = perp_dist - (r1 + r2);
+                } else {
+                    out[0] = perp_dist - (r1 - r2).abs();
+                }
+            }
+
+            // ── PlaneTangentToSphere ─────────────────────────────────────────
+            SpaceConstraint::PlaneTangentToSphere { plane, sphere } => {
+                let ep = &entities[*plane];
+                let nx = params[ep.param(0)];
+                let ny = params[ep.param(1)];
+                let nz = params[ep.param(2)];
+                let d = params[ep.param(3)];
+                let es = &entities[*sphere];
+                let cx = params[es.param(0)];
+                let cy = params[es.param(1)];
+                let cz = params[es.param(2)];
+                let r = params[es.param(3)];
+                let len_n = (nx * nx + ny * ny + nz * nz).sqrt().max(SOLVER_NORM_TOL);
+                let dist = (nx * cx + ny * cy + nz * cz - d).abs() / len_n;
+                out[0] = dist - r;
             }
         }
         true
