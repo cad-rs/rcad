@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase P5 完成（镜像 + 阵列/环形阵列）
+> 版本：2026-04 · Phase P5 完成（镜像 + 阵列/环形阵列），容差统一 + BVH 加速布尔运算
 
 ---
 
@@ -437,6 +437,11 @@ PaveFiller::perform()  六趟求交：VV → VE → EE → VF → EF → FF
 BooleanBuilder::build() 光线法分类 → 子面分割 → 组装结果 BRep
 ```
 
+**BVH 加速：**
+- `PaveFiller::with_bvh()` 接受预构建的 BVH 树，FF pass 使用 `Bvh::candidate_pairs()` 预筛选可能相交的面对，避免 O(n²) 暴力遍历
+- 面数 < 20 时自动回退到暴力遍历（BVH 构建开销大于收益）
+- `boolean_op` / `boolean_op_with_history` / `boolean_op_par` 默认启用 BVH 加速
+
 **当前能力：**
 - 纯平面体（长方体等）：完整 Union/Intersection/Difference，多场景测试通过
 - 曲面体（球/柱/锥）：FF pass 解析 + marching，面分类支持曲面，子面分割仍在改善中
@@ -782,11 +787,18 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 | `APPROXIMATION` (`rcad-kernel`) | `1e-4` | 曲面近似容差（OCCT `Precision::Approximation()`）|
 | `TOLERANCE_ABS` (`rcad-algorithms`) | `1e-7` | 算法层点重合判断，与 `CONFUSION` 对齐 |
 | `TOLERANCE_ANG` (`rcad-algorithms`) | `1e-9` | 算法层平行向量判断；比 `ANGULAR` 宽松，容许交叉计算中的浮点积累误差 |
+| `SOLVER_RESIDUAL_TOL` (`rcad-constraints`) | `1e-10` | 约束求解器 RMS 残差收敛阈值 |
+| `SOLVER_FD_H` (`rcad-constraints`) | `1e-7` | 数值 Jacobian 中心差分步长 |
+| `SOLVER_LAMBDA` (`rcad-constraints`) | `1e-10` | Tikhonov 正则化系数（处理欠约束系统）|
+| `SOLVER_PIVOT_TOL` (`rcad-constraints`) | `1e-14` | 高斯消元主元阈值 |
+| `SOLVER_NORM_TOL` (`rcad-constraints`) | `1e-10` | 归一化保护阈值（防止除以零）|
 | `vertex_tolerance` | per-vertex | 从 STEP `UNCERTAINTY_MEASURE_WITH_UNIT` 读取 |
 | `edge_tolerance` | per-edge | 同上 |
 | `face_tolerance` | per-face | 同上 |
 | `edge_same_parameter` | bool | PCurve 与 3D 曲线的参数一致性标记 |
 | `edge_same_range` | bool | 参数域一致性标记 |
+
+> 约束求解器常量在 2D/3D 求解器间共享，避免硬编码导致的不一致。
 
 ---
 
@@ -1002,6 +1014,7 @@ Sketch::to_solid_brep(height: f64) -> Option<BRep>
 | `SpaceLine` | 6 (x0, y0, z0, x1, y1, z1) | 空间线段 |
 | `Plane` | 4 (nx, ny, nz, d) | 平面（法向 + 距离）|
 | `Sphere` | 4 (cx, cy, cz, r) | 球面 |
+| `Cylinder` | 7 (ox, oy, oz, ax, ay, az, r) | 圆柱面（原点 + 轴 + 半径）|
 
 ### 约束类型
 
@@ -1017,7 +1030,18 @@ Sketch::to_solid_brep(height: f64) -> Option<BRep>
 | `LineLength { line, length }` | 1 | 线段长度 |
 | `PlaneNormal { plane }` | 2 | 法向单位化 |
 | `PlaneParallel(p1, p2)` | 2 | 两平面平行 |
+| `PlanePerpendicular(p1, p2)` | 1 | 两平面垂直 |
 | `PlaneAngle { p1, p2, angle }` | 1 | 两平面夹角 |
+| `LineParallelPlane(line, plane)` | 1 | 线平行于平面 |
+| `LinePerpendicularPlane(line, plane)` | 2 | 线垂直于平面 |
+| `AngleLineLine { l1, l2, angle }` | 1 | 线-线夹角 |
+| `AnglePlanePlane { p1, p2, angle }` | 1 | 面-面夹角 |
+| `AngleLinePlane { line, plane, angle }` | 1 | 线-面夹角 |
+| `PointPlaneDistance { point, plane, distance }` | 1 | 点到平面距离 |
+| `PointOnCylinder { point, cylinder }` | 1 | 点在圆柱面上 |
+| `CylinderRadius { cylinder, radius }` | 1 | 圆柱半径 |
+| `CylinderTangent { c1, c2 }` | 1 | 两圆柱相切 |
+| `PlaneTangentToSphere { plane, sphere }` | 1 | 平面与球相切 |
 | `SphereRadius { sphere, radius }` | 1 | 球面半径 |
 | `SphereTangent { s1, s2, external }` | 1 | 两球相切 |
 | `SphereSphereAngle { s1, s2, angle }` | 1 | 两球心连线方向约束 |
@@ -1040,4 +1064,4 @@ SpaceSketch::solve() -> SpaceSolveResult
 
 ---
 
-*文档更新于 2026-04-11（P3 更新：§5.9 HLR 解析轮廓线新增锥面/环面；§6 装配体 IO 重写，新增嵌套树形装配体 `AssemblyNode` / `write_assembly_tree` / `read_assembly_tree`；§10 草图约束全面扩充，新增 `ArcArcTangent`、`Symmetric`、`to_solid_brep` 拉伸，约束类型从 3 种扩展到 16 种；§11 新增 3D 空间约束求解器；§4.2-4.3 扫掠/圆角操作新增 `*_with_history` 变体，支持面来源追踪；P1: `mesh_brep` FEM 质量网格生成等价于 `BRepMesh_IncrementalMesh`；P1: 消除 `intss.rs` 中 NaN panic；已移除"目前不支持的 OCCT 功能"表中已完成项）*
+*文档更新于 2026-04-12（容差统一：约束求解器硬编码常量 → 共享常量 SOLVER_RESIDUAL_TOL/SOLVER_FD_H/SOLVER_LAMBDA/SOLVER_PIVOT_TOL/SOLVER_NORM_TOL，2D/3D 求解器共用；BVH 加速布尔运算：PaveFiller::with_bvh() 使用 candidate_pairs() 预筛选面对，<20 面自动回退暴力遍历；3D 约束扩展：新增 Cylinder/PlanePerpendicular/LineParallelPlane/LinePerpendicularPlane/AngleLineLine/AnglePlanePlane/AngleLinePlane/PointPlaneDistance/PointOnCylinder/CylinderRadius/CylinderTangent/PlaneTangentToSphere 等约束类型）*
