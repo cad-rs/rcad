@@ -149,7 +149,7 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use rcad_kernel::PrimitiveSolid;
-    use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep};
+    use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};
 
     fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
@@ -811,6 +811,170 @@ mod tests {
         );
         let v = rcad_kernel::properties::volume(&brep);
         assert!(v > 0.0, "difference volume should be positive, got {v}");
+    }
+
+    // ─── Torus Boolean Tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn boolean_box_torus_difference() {
+        // Box minus a torus: the torus sits partially inside the box.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 6.0, 6.0, 6.0).unwrap();
+        // Torus centered at (3,3,3), axis Z, major=1.5, minor=0.5
+        let b = make_torus_brep(DVec3::new(3.0, 3.0, 3.0), DVec3::Z, DVec3::X, 1.5, 0.5).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "box-torus difference failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+    }
+
+    #[test]
+    fn boolean_torus_torus_intersection() {
+        // Two interlocking tori (like a chain link).
+        // Torus A: XY plane, centered at origin
+        let a = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
+        // Torus B: XZ plane, centered at origin (perpendicular)
+        let b = make_torus_brep(DVec3::ZERO, DVec3::Y, DVec3::X, 2.0, 0.5).unwrap();
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        // May succeed or return DegenerateResult; must not panic.
+        match result {
+            Ok(brep) => {
+                assert!(
+                    !brep.solids.is_empty() && !brep.solids[0].shells[0].faces.is_empty(),
+                    "torus-torus intersection produced an empty result"
+                );
+            }
+            Err(BooleanError::DegenerateResult) => {
+                // Acceptable for complex curved intersections.
+            }
+            Err(e) => {
+                panic!("torus-torus intersection failed unexpectedly: {e:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn boolean_cylinder_torus_difference() {
+        // Cylinder passing through a torus hole.
+        let a = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.8).unwrap();
+        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -3.0), DVec3::Z, DVec3::X, 0.3, 6.0).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "cylinder-torus difference failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+    }
+
+    // ─── Coplanar Face Boolean Tests ──────────────────────────────────────────
+
+    #[test]
+    fn boolean_coplanar_flush_union() {
+        // Two boxes sharing a coplanar face (flush side-by-side).
+        // The union should merge the coplanar faces.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(
+            result.is_ok(),
+            "coplanar flush union failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(!brep.solids[0].shells[0].faces.is_empty());
+    }
+
+    #[test]
+    fn boolean_coplanar_partial_overlap() {
+        // Two boxes with partially overlapping coplanar faces.
+        // A: [0,2]x[0,2]x[0,2], B: [1,3]x[0,2]x[0,2]
+        // The shared face at x=1 (A) / x=1 (B) partially overlaps.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(
+            result.is_ok(),
+            "coplanar partial overlap union failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(!brep.solids[0].shells[0].faces.is_empty());
+    }
+
+    #[test]
+    fn boolean_coplanar_difference() {
+        // Subtract a box that shares a coplanar face with the target.
+        // A: [0,4]x[0,4]x[0,4], B: [0,2]x[0,4]x[0,4]
+        // The face at x=0 is coplanar and coincident.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 4.0, 4.0).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok(),
+            "coplanar difference failed: {:?}",
+            result.err()
+        );
+        let brep = result.unwrap();
+        assert!(!brep.solids[0].shells[0].faces.is_empty());
+    }
+
+    // ─── Tangent Contact Boolean Tests ────────────────────────────────────────
+
+    #[test]
+    fn boolean_tangent_sphere_sphere() {
+        // Two spheres touching at exactly one point (external tangent).
+        // d = r1 + r2 = 1 + 1 = 2
+        let a = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = make_sphere_brep(DVec3::new(2.0, 0.0, 0.0), 1.0).unwrap();
+        // Intersection should be empty (single point).
+        let _inter = boolean_op(BooleanOpType::Intersection, &a, &b);
+        // Union should succeed (two touching spheres).
+        let union_result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(
+            union_result.is_ok() || matches!(union_result, Err(BooleanError::DegenerateResult)),
+            "tangent sphere union should not crash: {:?}",
+            union_result.err()
+        );
+    }
+
+    #[test]
+    fn boolean_tangent_sphere_plane() {
+        // Sphere touching a box face tangentially.
+        // Sphere at (0,0,1) with r=1 touches the XY plane at origin.
+        let a = make_box_brep(DVec3::new(-2.0, -2.0, -1.0), DVec3::X, DVec3::Y, 4.0, 4.0, 2.0).unwrap();
+        let b = make_sphere_brep(DVec3::new(0.0, 0.0, 1.0), 1.0).unwrap();
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(
+            result.is_ok() || matches!(result, Err(BooleanError::DegenerateResult)),
+            "tangent sphere-plane union should not crash: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn boolean_tangent_cylinder_sphere() {
+        // Cylinder tangent to a sphere (cylinder radius + offset = sphere radius).
+        // Sphere at origin, r=2. Cylinder along Z axis, offset by 2 in X, r=0.
+        // Actually: cylinder at x=2, r=1, sphere at origin r=3 → tangent at (3,0,0).
+        let a = make_sphere_brep(DVec3::ZERO, 3.0).unwrap();
+        let b = make_cylinder_brep(DVec3::new(2.0, 0.0, -2.0), DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        assert!(
+            result.is_ok() || matches!(result, Err(BooleanError::DegenerateResult)),
+            "tangent cylinder-sphere difference should not crash: {:?}",
+            result.err()
+        );
     }
 
 }

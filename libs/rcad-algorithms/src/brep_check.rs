@@ -14,6 +14,10 @@
 //!   `brep.edges`.
 //! - **C5 Vertex index validity**: each edge's start/end indices must be within
 //!   bounds of `brep.vertices`.
+//! - **C6 Manifold topology**: each edge must be shared by exactly 2 faces
+//!   (for closed manifold solids).
+//! - **C7 Wire self-intersection**: a wire's edges must not share vertices
+//!   except at consecutive junctions (no figure-8 or self-touching wires).
 
 use glam::DVec3;
 use rcad_kernel::BRep;
@@ -52,6 +56,17 @@ pub enum CheckIssue {
     },
     /// An edge references a vertex index that is out of bounds.
     InvalidVertexIndex { edge: usize, vertex_idx: usize },
+    /// An edge is shared by more or fewer than 2 faces (non-manifold).
+    NonManifoldEdge { edge_idx: usize, face_count: usize },
+    /// A wire has self-intersecting topology: a vertex appears more than
+    /// twice (once as start, once as end) in the same wire.
+    SelfIntersectingWire {
+        solid: usize,
+        shell: usize,
+        face: usize,
+        wire_idx: usize,
+        vertex: usize,
+    },
 }
 
 impl std::fmt::Display for CheckIssue {
@@ -84,6 +99,19 @@ impl std::fmt::Display for CheckIssue {
             CheckIssue::InvalidVertexIndex { edge, vertex_idx } => {
                 write!(f, "InvalidVertexIndex: edge={edge} vertex={vertex_idx}")
             }
+            CheckIssue::NonManifoldEdge { edge_idx, face_count } => {
+                write!(f, "NonManifoldEdge: edge={edge_idx} shared by {face_count} faces (expected 2)")
+            }
+            CheckIssue::SelfIntersectingWire {
+                solid,
+                shell,
+                face,
+                wire_idx,
+                vertex,
+            } => write!(
+                f,
+                "SelfIntersectingWire: solid={solid} shell={shell} face={face} wire={wire_idx} vertex={vertex}"
+            ),
         }
     }
 }
@@ -121,6 +149,38 @@ pub fn check(brep: &BRep) -> CheckResult {
             issues.push(CheckIssue::InvalidVertexIndex {
                 edge: eidx,
                 vertex_idx: edge.end,
+            });
+        }
+    }
+
+    // C6: manifold check — each edge must be shared by exactly 2 faces.
+    // Count how many faces reference each edge across all solids/shells/faces.
+    let mut edge_face_count: Vec<usize> = vec![0; n_edges];
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                // Count edges in outer wire
+                for we in &face.outer_wire.edges {
+                    if we.idx < n_edges {
+                        edge_face_count[we.idx] += 1;
+                    }
+                }
+                // Count edges in inner wires
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        if we.idx < n_edges {
+                            edge_face_count[we.idx] += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (eidx, &count) in edge_face_count.iter().enumerate() {
+        if count != 2 {
+            issues.push(CheckIssue::NonManifoldEdge {
+                edge_idx: eidx,
+                face_count: count,
             });
         }
     }
@@ -197,11 +257,120 @@ pub fn check(brep: &BRep) -> CheckResult {
                         }
                     }
                 }
+
+                // C7: wire self-intersection — each vertex should appear at most
+                // twice in the wire (once as start of an edge, once as end of another).
+                check_wire_self_intersection(
+                    &wire_verts,
+                    &brep.vertices,
+                    si, shi, fi, 0, // outer wire index = 0
+                    &mut issues,
+                );
+
+                // Check inner wires too
+                for (wi, inner_wire) in face.inner_wires.iter().enumerate() {
+                    if inner_wire.edges.len() < 2 {
+                        continue; // too few edges to self-intersect
+                    }
+                    let mut inner_verts: Vec<(usize, usize)> = Vec::new();
+                    let mut inner_valid = true;
+                    for we in &inner_wire.edges {
+                        if we.idx >= n_edges {
+                            issues.push(CheckIssue::InvalidEdgeIndex {
+                                solid: si,
+                                shell: shi,
+                                face: fi,
+                                edge_idx: we.idx,
+                            });
+                            inner_valid = false;
+                        } else {
+                            let edge = &brep.edges[we.idx];
+                            let (sv, ev) = if we.forward {
+                                (edge.start, edge.end)
+                            } else {
+                                (edge.end, edge.start)
+                            };
+                            inner_verts.push((sv, ev));
+                        }
+                    }
+                    if !inner_valid {
+                        continue;
+                    }
+
+                    // Inner wire closure check
+                    let n_inner = inner_verts.len();
+                    for i in 0..n_inner {
+                        let next = (i + 1) % n_inner;
+                        let end_v = inner_verts[i].1;
+                        let start_v = inner_verts[next].0;
+                        if end_v != start_v {
+                            let end_pt = brep.vertices[end_v].point;
+                            let start_pt = brep.vertices[start_v].point;
+                            if (end_pt - start_pt).length() > 1e-6 {
+                                issues.push(CheckIssue::OpenWire {
+                                    solid: si,
+                                    shell: shi,
+                                    face: fi,
+                                    wire_pos: i,
+                                });
+                            }
+                        }
+                    }
+
+                    // Inner wire self-intersection
+                    check_wire_self_intersection(
+                        &inner_verts,
+                        &brep.vertices,
+                        si, shi, fi,
+                        wi + 1, // inner wire indices start after outer
+                        &mut issues,
+                    );
+                }
             }
         }
     }
 
     CheckResult { issues }
+}
+
+/// Check a single wire for self-intersecting topology.
+///
+/// A valid wire wire should have each vertex appear at most twice across
+/// all edge endpoints: once as the start of some edge and once as the end
+/// of another edge. If a vertex appears 3+ times, the wire self-intersects.
+fn check_wire_self_intersection(
+    wire_verts: &[(usize, usize)],
+    vertices: &[rcad_kernel::topology::Vertex],
+    solid: usize,
+    shell: usize,
+    face: usize,
+    wire_idx: usize,
+    issues: &mut Vec<CheckIssue>,
+) {
+    use std::collections::HashMap;
+    let mut vertex_count: HashMap<usize, usize> = HashMap::new();
+    for &(sv, ev) in wire_verts {
+        *vertex_count.entry(sv).or_insert(0) += 1;
+        *vertex_count.entry(ev).or_insert(0) += 1;
+    }
+    // In a closed wire, each vertex should appear exactly twice (once as start,
+    // once as end). Allow tolerance for vertices at the same position.
+    for (&vidx, &count) in &vertex_count {
+        if count > 2 {
+            // Check if it's actually a geometric self-intersection (different
+            // positions) or just the same vertex referenced multiple times
+            // (which could be valid for some topologies).
+            if vidx < vertices.len() {
+                issues.push(CheckIssue::SelfIntersectingWire {
+                    solid,
+                    shell,
+                    face,
+                    wire_idx,
+                    vertex: vidx,
+                });
+            }
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -398,6 +567,186 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, CheckIssue::InvalidVertexIndex { .. })),
             "expected InvalidVertexIndex issue"
+        );
+    }
+
+    #[test]
+    fn non_manifold_edge_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        // Build a BRep where an edge is shared by 3 faces (non-manifold)
+        let mut brep = BRep::new();
+        // 4 vertices forming a square
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 1.0) });
+
+        // 5 edges: 4 forming a square + 1 vertical
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0: bottom
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1: right
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2: top
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3: left
+        brep.edges.push(Edge { start: 0, end: 4 }); // e4: vertical
+
+        // 3 faces sharing edge e4 (vertical edge) — non-manifold
+        // Face 1: uses e4
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(4), WireEdge::fwd(0), WireEdge::rev(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        // Face 2: uses e4
+        let face2 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(4), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        // Face 3: uses e4 again — this makes e4 shared by 3 faces
+        let face3 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(4), WireEdge::fwd(3), WireEdge::rev(0)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_Z,
+            triangles: vec![],
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face1, face2, face3] }],
+        });
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::NonManifoldEdge { edge_idx: 4, .. })),
+            "expected NonManifoldEdge for edge 4, issues: {:?}",
+            result.issues
+        );
+    }
+
+    #[test]
+    fn self_intersecting_wire_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        // Build a BRep with a figure-8 wire: vertex 0 appears 3 times
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // v0 — center, appears 3x
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // v1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // v2
+        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // v3
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, -1.0, 0.0) }); // v4
+
+        // Figure-8: v0→v1→v2→v0→v3→v4→v0 (v0 appears 3 times as start/end)
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0: v0→v1
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1: v1→v2
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2: v2→v0
+        brep.edges.push(Edge { start: 0, end: 3 }); // e3: v0→v3
+        brep.edges.push(Edge { start: 3, end: 4 }); // e4: v3→v4
+        brep.edges.push(Edge { start: 4, end: 0 }); // e5: v4→v0
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::fwd(0),
+                    WireEdge::fwd(1),
+                    WireEdge::fwd(2),
+                    WireEdge::fwd(3),
+                    WireEdge::fwd(4),
+                    WireEdge::fwd(5),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::SelfIntersectingWire { .. })),
+            "expected SelfIntersectingWire issue, issues: {:?}",
+            result.issues
+        );
+    }
+
+    #[test]
+    fn inner_wire_open_is_detected() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        // Build a BRep with an open inner wire (hole that doesn't close)
+        let mut brep = BRep::new();
+        // Outer wire: triangle
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(3.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.5, 3.0, 0.0) });
+        // Inner wire vertices (don't close: v3→v4→v5, but v5≠v3)
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.5, 0.5, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+        // Inner wire edges (open: e3: v3→v4, e4: v4→v5, e5: v5→v3 would close but we skip)
+        brep.edges.push(Edge { start: 3, end: 4 }); // e3
+        brep.edges.push(Edge { start: 4, end: 5 }); // e4
+        // Intentionally missing: edge from v5 back to v3
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![Wire {
+                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)], // open: v5≠v3
+            }],
+            normal: DVec3::Z,
+            triangles: vec![],
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let result = check(&brep);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| matches!(i, CheckIssue::OpenWire { .. })),
+            "expected OpenWire for inner wire, issues: {:?}",
+            result.issues
+        );
+    }
+
+    #[test]
+    fn valid_box_passes_all_new_checks() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let result = check(&brep);
+        assert!(
+            result.is_valid(),
+            "unit box should pass all checks including manifold and self-intersection; issues: {:?}",
+            result.issues
         );
     }
 }
