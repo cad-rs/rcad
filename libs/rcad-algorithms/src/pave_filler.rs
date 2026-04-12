@@ -329,7 +329,11 @@ impl<'a> PaveFiller<'a> {
                     .map(|h| (h.point, h.curve_param))
                     .collect()
             }
-            _ => vec![],
+            _ => {
+                // Numeric fallback: sample the curve, find sign changes of the
+                // surface implicit function. Works for any Curve3 × Surface3 pair.
+                intersect_edge_face_numeric(&edge_curve, &face_surface, edge_t_range)
+            }
         };
 
         for (point, edge_param) in hits {
@@ -377,31 +381,27 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
-        if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
-            // Build reverse maps: BRep face index → DS face index
-            let a_map: Vec<usize> = a_faces
-                .iter()
-                .map(|&dsi| self.ds.faces[dsi].source_face_idx)
-                .collect();
-            let b_map: Vec<usize> = b_faces
-                .iter()
-                .map(|&dsi| self.ds.faces[dsi].source_face_idx)
-                .collect();
+        if a_faces.is_empty() || b_faces.is_empty() {
+            return;
+        }
 
-            // Forward maps: BRep face index → position in a_faces/b_faces
-            let mut a_rev = vec![usize::MAX; a_map.iter().copied().max().map(|m| m + 1).unwrap_or(0)];
-            for (pos, &brep_idx) in a_map.iter().enumerate() {
-                a_rev[brep_idx] = pos;
+        if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
+            // Build reverse maps: BRep face index → position in a_faces/b_faces
+            let a_max_idx = a_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
+            let b_max_idx = b_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
+            let mut a_rev = vec![usize::MAX; a_max_idx + 1];
+            for (pos, &dsi) in a_faces.iter().enumerate() {
+                a_rev[self.ds.faces[dsi].source_face_idx] = pos;
             }
-            let mut b_rev = vec![usize::MAX; b_map.iter().copied().max().map(|m| m + 1).unwrap_or(0)];
-            for (pos, &brep_idx) in b_map.iter().enumerate() {
-                b_rev[brep_idx] = pos;
+            let mut b_rev = vec![usize::MAX; b_max_idx + 1];
+            for (pos, &dsi) in b_faces.iter().enumerate() {
+                b_rev[self.ds.faces[dsi].source_face_idx] = pos;
             }
 
             let candidates = Bvh::candidate_pairs(bvh_a, bvh_b);
             for (fa_brep, fb_brep) in candidates {
-                if let (Some(ai), Some(bi)) = (a_rev.get(fa_brep).copied(), b_rev.get(fb_brep).copied()) {
-                    if ai < a_faces.len() && bi < b_faces.len() {
+                if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep)) {
+                    if ai != usize::MAX && bi != usize::MAX {
                         self.intersect_face_face(a_faces[ai], b_faces[bi]);
                     }
                 }
@@ -2128,7 +2128,9 @@ impl<'a> PaveFiller<'a> {
             Surface3::Torus(torus) => inttools::marching::sample_torus(torus, n1, n2),
             Surface3::Plane(plane) => sample_plane(plane, 5.0, n1),
             Surface3::Cone(cone) => sample_cone(cone, 0.01, 5.0, n1, n2),
-            _ => vec![],
+            // Generic fallback: sample via surface.default_domain() UV grid.
+            // Works for BSpline, Bezier, Offset, Revolution, Trimmed, LinearExtrusion.
+            _ => sample_surface_generic(surface, n1, n2),
         }
     }
 
@@ -2194,8 +2196,8 @@ impl<'a> PaveFiller<'a> {
                 pts
             }
             _ => {
-                // Fallback: flat list
-                self.generate_surface_samples(surface, n_u, n_v)
+                // Fallback: generic UV-grid sampling for BSpline, Bezier, Offset, etc.
+                sample_surface_generic(surface, n_u, n_v)
             }
         }
     }
@@ -2427,4 +2429,101 @@ fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
     let cz = boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::min)
         ..(boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::max) + 1e-9);
     cx.contains(&pt.x) && cy.contains(&pt.y) && cz.contains(&pt.z)
+}
+
+/// Generic UV-grid sampling for any surface type via `SurfaceEval::default_domain()`.
+/// Works for BSpline, Bezier, Offset, Revolution, Trimmed, LinearExtrusion.
+fn sample_surface_generic(surface: &Surface3, n_u: usize, n_v: usize) -> Vec<DVec3> {
+    use rcad_kernel::geom::SurfaceEval;
+    let [u0, u1, v0, v1] = surface.default_domain();
+    let mut pts = Vec::with_capacity(n_u * n_v);
+    for iu in 0..n_u {
+        for iv in 0..n_v {
+            let u = u0 + (u1 - u0) * iu as f64 / (n_u - 1).max(1) as f64;
+            let v = v0 + (v1 - v0) * iv as f64 / (n_v - 1).max(1) as f64;
+            let p = surface.point_at(u, v);
+            if p.is_finite() {
+                pts.push(p);
+            }
+        }
+    }
+    pts
+}
+
+/// Numeric edge-face intersection: sample the curve, find sign changes of the
+/// surface implicit function, then refine via bisection.
+///
+/// Used as fallback for unsupported curve×surface combinations (Ellipse,
+/// Hyperbola, Parabola, BSpline, Bezier, OffsetCurve × any surface).
+fn intersect_edge_face_numeric(
+    curve: &Curve3,
+    surface: &Surface3,
+    t_range: [f64; 2],
+) -> Vec<(DVec3, f64)> {
+    use rcad_kernel::CurveEval;
+    const N_SAMPLES: usize = 64;
+    const MAX_BISECT: usize = 30;
+
+    let [t0, t1] = t_range;
+    let mut values = Vec::with_capacity(N_SAMPLES + 1);
+    let mut points = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let t = t0 + (t1 - t0) * i as f64 / N_SAMPLES as f64;
+        let p = curve.point_at(t);
+        if !p.is_finite() {
+            values.push(f64::NAN);
+            points.push(p);
+            continue;
+        }
+        values.push(inttools::marching::surface_implicit(surface, p));
+        points.push(p);
+    }
+
+    let mut hits = Vec::new();
+    for i in 0..N_SAMPLES {
+        let va = values[i];
+        let vb = values[i + 1];
+        if va.is_nan() || vb.is_nan() {
+            continue;
+        }
+        if va * vb > 0.0 {
+            continue;
+        }
+        // Bisection refinement
+        let mut ta = t0 + (t1 - t0) * i as f64 / N_SAMPLES as f64;
+        let mut tb = t0 + (t1 - t0) * (i + 1) as f64 / N_SAMPLES as f64;
+        let mut fa = va;
+        let mut fb = vb;
+        for _ in 0..MAX_BISECT {
+            let tm = (ta + tb) * 0.5;
+            let pm = curve.point_at(tm);
+            if !pm.is_finite() {
+                break;
+            }
+            let fm = inttools::marching::surface_implicit(surface, pm);
+            if fm.abs() < 1e-12 {
+                hits.push((pm, tm));
+                break;
+            }
+            if (tb - ta).abs() < 1e-12 {
+                hits.push((pm, tm));
+                break;
+            }
+            if fa * fm < 0.0 {
+                tb = tm;
+                fb = fm;
+            } else {
+                ta = tm;
+                fa = fm;
+            }
+        }
+        // If bisection didn't converge well, use midpoint
+        let tm = (ta + tb) * 0.5;
+        let pm = curve.point_at(tm);
+        if pm.is_finite() && !hits.iter().any(|(_, t)| (t - tm).abs() < 1e-6) {
+            hits.push((pm, tm));
+        }
+    }
+    hits
 }

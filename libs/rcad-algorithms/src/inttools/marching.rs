@@ -34,7 +34,7 @@ fn closest_uv_coarse(surface: &Surface3, point: DVec3) -> (f64, f64) {
 }
 
 /// Evaluate the implicit function F(P) for a surface: F=0 on surface.
-fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
+pub fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
     match surface {
         Surface3::Plane(p) => (point - p.origin).dot(p.normal),
         Surface3::Cylinder(c) => {

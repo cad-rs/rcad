@@ -69,9 +69,10 @@ pub fn repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport) {
 
 /// Merge vertices that are within `tolerance` of each other.
 ///
-/// Uses a union-find approach: for each pair of vertices closer than
-/// `tolerance`, they are merged into the vertex with the smaller index.
-/// All edges and wires are remapped accordingly.
+/// Uses spatial hashing for O(n) average performance on large models,
+/// falling back to brute-force for small vertex counts.
+/// For each pair of vertices closer than `tolerance`, they are merged into
+/// the vertex with the smaller index. All edges and wires are remapped.
 ///
 /// Returns the repaired BRep and the number of vertices merged.
 ///
@@ -104,11 +105,46 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     }
 
     let tol2 = tolerance * tolerance;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
-            if d2 <= tol2 {
-                union(&mut parent, i, j);
+
+    // Use spatial hashing for large models, brute-force for small ones.
+    // Spatial hashing: bucket size = tolerance, check 27 neighbor cells.
+    const SPATIAL_HASH_THRESHOLD: usize = 500;
+    if n >= SPATIAL_HASH_THRESHOLD {
+        let mut grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+            std::collections::HashMap::with_capacity(n);
+        for i in 0..n {
+            let p = brep.vertices[i].point;
+            let cell = (
+                (p.x / tolerance).floor() as i32,
+                (p.y / tolerance).floor() as i32,
+                (p.z / tolerance).floor() as i32,
+            );
+            // Check 27 neighbor cells (including self)
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let neighbor = (cell.0 + dx, cell.1 + dy, cell.2 + dz);
+                        if let Some(bucket) = grid.get(&neighbor) {
+                            for &j in bucket {
+                                let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+                                if d2 <= tol2 {
+                                    union(&mut parent, i, j);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            grid.entry(cell).or_default().push(i);
+        }
+    } else {
+        // Brute-force O(n²) — fast enough for small models
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+                if d2 <= tol2 {
+                    union(&mut parent, i, j);
+                }
             }
         }
     }

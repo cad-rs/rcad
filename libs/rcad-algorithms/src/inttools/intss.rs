@@ -1384,7 +1384,9 @@ fn numeric_intss_impl(
 
     // Clamp infinite domains. For cylinders the v-domain is [-∞, +∞]; we use
     // a range large enough to cover any practical intersection geometry.
-    const DOMAIN_CLAMP: f64 = 10.0;
+    // Use 100 units as default — covers most mechanical parts. For larger
+    // parts, the caller should pass explicit domain overrides.
+    const DOMAIN_CLAMP: f64 = 100.0;
     let clamp_dom = |[u0, u1, v0, v1]: [f64; 4]| -> [f64; 4] {
         [
             if u0.is_finite() { u0 } else { -DOMAIN_CLAMP },
@@ -1403,12 +1405,22 @@ fn numeric_intss_impl(
         for j in 0..n2 {
             let u = u2_0 + (u2_1 - u2_0) * i as f64 / (n2 - 1).max(1) as f64;
             let v = v2_0 + (v2_1 - v2_0) * j as f64 / (n2 - 1).max(1) as f64;
-            s2_pts.push(s2.point_at(u, v));
+            let p = s2.point_at(u, v);
+            if p.is_finite() {
+                s2_pts.push(p);
+            }
         }
+    }
+
+    if s2_pts.is_empty() {
+        return SurfaceSurfaceIntersection::default();
     }
 
     // Approximate distance from 3D point to s2 surface via closest sample
     let approx_dist_to_s2 = |p: DVec3| -> f64 {
+        if !p.is_finite() {
+            return f64::INFINITY;
+        }
         s2_pts
             .iter()
             .map(|q| (*q - p).length())
@@ -1434,6 +1446,11 @@ fn numeric_intss_impl(
             let u = u1_0 + (u1_1 - u1_0) * i as f64 / n as f64;
             let v = v1_0 + (v1_1 - v1_0) * j as f64 / n as f64;
             let p = s1.point_at(u, v);
+            if !p.is_finite() {
+                pts.push(DVec3::ZERO);
+                dist.push(f64::INFINITY);
+                continue;
+            }
             pts.push(p);
             dist.push(approx_dist_to_s2(p));
         }
