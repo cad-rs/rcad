@@ -68,6 +68,26 @@ pub fn intersect_cylinder_cylinder(
     cyl1: &CylindricalSurface,
     cyl2: &CylindricalSurface,
 ) -> CylinderCylinderResult {
+    intersect_cylinder_cylinder_with_eps(cyl1, cyl2, TOLERANCE_ABS, TOLERANCE_ANG)
+}
+
+/// Compute cylinder-cylinder intersection with additional fuzzy tolerance.
+pub fn intersect_cylinder_cylinder_with_tolerance(
+    cyl1: &CylindricalSurface,
+    cyl2: &CylindricalSurface,
+    fuzzy_tol: f64,
+) -> CylinderCylinderResult {
+    let linear_tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
+    let angular_tol = TOLERANCE_ANG + fuzzy_tol.max(0.0);
+    intersect_cylinder_cylinder_with_eps(cyl1, cyl2, linear_tol, angular_tol)
+}
+
+fn intersect_cylinder_cylinder_with_eps(
+    cyl1: &CylindricalSurface,
+    cyl2: &CylindricalSurface,
+    linear_tol: f64,
+    angular_tol: f64,
+) -> CylinderCylinderResult {
     let a1 = cyl1.axis.normalize();
     let a2 = cyl2.axis.normalize();
 
@@ -75,14 +95,14 @@ pub fn intersect_cylinder_cylinder(
     let sin_angle = cross.length(); // |sin θ|
 
     // ── Parallel axes ────────────────────────────────────────────────────────
-    if sin_angle < TOLERANCE_ANG {
-        return intersect_parallel_cylinders(cyl1, cyl2, a1);
+    if sin_angle < angular_tol {
+        return intersect_parallel_cylinders(cyl1, cyl2, a1, linear_tol);
     }
 
     // ── Perpendicular axes ────────────────────────────────────────────────────
     let cos_angle = a1.dot(a2).abs();
-    if cos_angle < TOLERANCE_ANG {
-        return intersect_perpendicular_cylinders(cyl1, cyl2, a1, a2);
+    if cos_angle < angular_tol {
+        return intersect_perpendicular_cylinders(cyl1, cyl2, a1, a2, linear_tol);
     }
 
     // ── General skew / oblique ────────────────────────────────────────────────
@@ -97,6 +117,7 @@ fn intersect_parallel_cylinders(
     cyl1: &CylindricalSurface,
     cyl2: &CylindricalSurface,
     axis: DVec3,
+    linear_tol: f64,
 ) -> CylinderCylinderResult {
     let r1 = cyl1.radius;
     let r2 = cyl2.radius;
@@ -107,8 +128,8 @@ fn intersect_parallel_cylinders(
     let d = delta_perp.length();
 
     // Coaxial check
-    if d < TOLERANCE_ABS {
-        if (r1 - r2).abs() < TOLERANCE_ABS {
+    if d < linear_tol {
+        if (r1 - r2).abs() < linear_tol {
             return CylinderCylinderResult::Coaxial;
         }
         // One inside the other along the same axis
@@ -118,10 +139,10 @@ fn intersect_parallel_cylinders(
     let sum = r1 + r2;
     let diff = (r1 - r2).abs();
 
-    if d > sum + TOLERANCE_ABS {
+    if d > sum + linear_tol {
         return CylinderCylinderResult::NoIntersection;
     }
-    if d < diff - TOLERANCE_ABS {
+    if d < diff - linear_tol {
         // One cylinder fully inside the other
         return CylinderCylinderResult::NoIntersection;
     }
@@ -130,7 +151,7 @@ fn intersect_parallel_cylinders(
     let dir_perp = delta_perp.normalize();
 
     // External tangent
-    if (d - sum).abs() < TOLERANCE_ABS {
+    if (d - sum).abs() < linear_tol {
         let point = cyl1.origin + dir_perp * r1;
         return CylinderCylinderResult::OneGeneratorLine(Line3 {
             origin: point,
@@ -138,7 +159,7 @@ fn intersect_parallel_cylinders(
         });
     }
     // Internal tangent
-    if (d - diff).abs() < TOLERANCE_ABS {
+    if (d - diff).abs() < linear_tol {
         // The tangent line is on the side of the smaller cylinder that is
         // closest to the larger cylinder's axis.
         let point = if r1 >= r2 {
@@ -187,6 +208,7 @@ fn intersect_perpendicular_cylinders(
     cyl2: &CylindricalSurface,
     a1: DVec3,
     a2: DVec3,
+    linear_tol: f64,
 ) -> CylinderCylinderResult {
     let r1 = cyl1.radius;
     let r2 = cyl2.radius;
@@ -214,13 +236,13 @@ fn intersect_perpendicular_cylinders(
     // Perpendicular distance between axes
     let dist = (closest1 - closest2).length();
 
-    if dist > r1 + r2 + TOLERANCE_ABS {
+    if dist > r1 + r2 + linear_tol {
         return CylinderCylinderResult::NoIntersection;
     }
 
     // For the Steinmetz case the axes must actually cross (dist ≈ 0).
     // For dist > 0 the analytic form is much harder; fall back to marching.
-    if dist > TOLERANCE_ABS * 10.0 {
+    if dist > linear_tol * 10.0 {
         return CylinderCylinderResult::General;
     }
 
@@ -230,7 +252,7 @@ fn intersect_perpendicular_cylinders(
     // Third axis = a1 × a2  (normal to both, the "viewing" direction)
     let _a3 = a1.cross(a2).normalize();
 
-    if (r1 - r2).abs() < TOLERANCE_ABS {
+    if (r1 - r2).abs() < linear_tol {
         // Equal radii: the Steinmetz intersection is two circles in planes
         // at ±45° between the two axes (actually the intersection lies in
         // planes whose normals are a1±a2, but the curves ARE circles for
@@ -384,6 +406,22 @@ mod tests {
         assert!(matches!(
             intersect_cylinder_cylinder(&c1, &c2),
             CylinderCylinderResult::General
+        ));
+    }
+
+    #[test]
+    fn fuzzy_tolerance_recovers_near_tangent_parallel_case() {
+        let c1 = cyl(DVec3::ZERO, DVec3::Z, 1.0);
+        let c2 = cyl(DVec3::new(2.0 + 3.0e-7, 0.0, 0.0), DVec3::Z, 1.0);
+
+        assert!(matches!(
+            intersect_cylinder_cylinder(&c1, &c2),
+            CylinderCylinderResult::NoIntersection
+        ));
+
+        assert!(matches!(
+            intersect_cylinder_cylinder_with_tolerance(&c1, &c2, 4.0e-7),
+            CylinderCylinderResult::OneGeneratorLine(_)
         ));
     }
 }

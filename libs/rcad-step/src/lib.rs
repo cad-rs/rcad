@@ -1,4 +1,5 @@
 use rcad_kernel::appearance::{Color, StepColor};
+use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::{
@@ -14,7 +15,11 @@ pub mod iges;
 pub mod obj_writer;
 pub mod writer;
 
-pub use assembly::{AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree, write_assembly, write_assembly_tree};
+pub use assembly::{
+    AssemblyComponent, AssemblyNode, AssemblyNodeHealingReport, read_assembly,
+    read_assembly_tree, read_assembly_tree_with_healing, read_assembly_with_healing,
+    write_assembly, write_assembly_tree,
+};
 pub use iges::{IgesError, IgesReader, IgesWriter};
 pub use obj_writer::{ObjError, ObjReader, ObjWriter, write_obj};
 pub use writer::{ExportSelection, StepWriter};
@@ -222,6 +227,25 @@ impl StepReader {
         }
         let entities = parse_entities(content)?;
         build_brep_from_parsed(&entities)
+    }
+
+    /// Parse a STEP string and run rcad-algorithms healing pipeline.
+    pub fn parse_string_with_healing(
+        content: &str,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport), StepError> {
+        let brep = Self::parse_string(content)?;
+        let (healed, report) = analyze_and_heal(&brep, options);
+        Ok((healed, report))
+    }
+
+    /// Read a STEP file and run rcad-algorithms healing pipeline.
+    pub fn read_file_with_healing<P: AsRef<Path>>(
+        path: P,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport), StepError> {
+        let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_healing(&content, options)
     }
 
     /// Parse a STEP file, returning both the BRep and an optional color map.
@@ -2993,6 +3017,7 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rcad_algorithms::HealingMode;
 
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
     const BOX_STEP: &str = include_str!("../../../assets/box.step");
@@ -3103,6 +3128,35 @@ mod tests {
     fn parses_box_example() {
         let brep = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
         assert!(!brep.vertices.is_empty());
+    }
+
+    #[test]
+    fn parse_box_with_healing_analyze_only_reports_clean() {
+        let (brep, report) = StepReader::parse_string_with_healing(
+            BOX_STEP,
+            HealingOptions {
+                mode: HealingMode::AnalyzeOnly,
+                ..HealingOptions::default()
+            },
+        )
+        .expect("box.step parse+healing should succeed");
+
+        assert!(!brep.vertices.is_empty());
+        assert!(report.initial.is_valid());
+        assert!(report.final_result.is_valid());
+        assert!(report.passes.is_empty());
+    }
+
+    #[test]
+    fn parse_hfss_with_healing_returns_report() {
+        let (brep, report) = StepReader::parse_string_with_healing(
+            HFSS_STEP,
+            HealingOptions::default(),
+        )
+        .expect("hfss.step parse+healing should succeed");
+
+        assert!(!brep.vertices.is_empty());
+        assert!(report.initial_issue_count() >= report.final_issue_count());
     }
 
     #[test]

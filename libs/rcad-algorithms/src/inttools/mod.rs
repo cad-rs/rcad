@@ -16,5 +16,5 @@ pub mod vertex_ops;
 
 pub use intss::{
     SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
-    intersect_surfaces_with_density,
+    intersect_surfaces_with_density, intersect_surfaces_with_tolerance,
 };

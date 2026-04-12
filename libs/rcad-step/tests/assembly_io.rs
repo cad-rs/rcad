@@ -2,7 +2,12 @@
 
 use glam::{DAffine3, DVec3};
 use rcad_modeling::make_box_brep;
-use rcad_step::{AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree, write_assembly, write_assembly_tree};
+use rcad_algorithms::{HealingMode, HealingOptions};
+use rcad_step::{
+    AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree,
+    read_assembly_tree_with_healing, read_assembly_with_healing, write_assembly,
+    write_assembly_tree,
+};
 
 fn make_box(origin: DVec3) -> rcad_kernel::BRep {
     let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
@@ -155,6 +160,26 @@ fn assembly_with_rotation_no_panic() {
     assert_eq!(components.len(), 1);
 }
 
+#[test]
+fn read_assembly_with_healing_reports_per_component() {
+    let comp_a = AssemblyComponent::new("box_a", make_box(DVec3::ZERO));
+    let comp_b = AssemblyComponent::new("box_b", make_box(DVec3::new(5.0, 0.0, 0.0)));
+
+    let step = write_assembly("heal_asm", &[comp_a, comp_b]);
+    let (components, reports) = read_assembly_with_healing(
+        &step,
+        HealingOptions {
+            mode: HealingMode::AnalyzeOnly,
+            ..HealingOptions::default()
+        },
+    )
+    .expect("read_assembly_with_healing failed");
+
+    assert_eq!(components.len(), 2);
+    assert_eq!(reports.len(), 2);
+    assert!(reports.iter().all(|r| r.initial.is_valid() && r.final_result.is_valid()));
+}
+
 // ─── nested assembly tree tests ───────────────────────────────────────────────
 
 /// Write a two-level nested assembly tree and verify the STEP structure.
@@ -231,5 +256,39 @@ fn nested_tree_leaf_geometry_is_isolated() {
     for v in &brep_b.vertices {
         assert!(v.point.x >= 9.99 && v.point.x <= 11.01,
             "box_at_10 vertex x={} out of [10,11]", v.point.x);
+    }
+}
+
+#[test]
+fn read_assembly_tree_with_healing_reports_leaf_nodes() {
+    let leaf_a = AssemblyNode::leaf("part_a", make_box(DVec3::ZERO));
+    let leaf_b = AssemblyNode::leaf("part_b", make_box(DVec3::new(3.0, 0.0, 0.0)));
+    let sub = AssemblyNode::branch("sub_asm", vec![leaf_a, leaf_b]);
+    let leaf_c = AssemblyNode::leaf("part_c", make_box(DVec3::new(7.0, 0.0, 0.0)));
+    let root = AssemblyNode::branch("root_asm", vec![sub, leaf_c]);
+
+    let step = write_assembly_tree("root_asm", &root);
+    let (tree, reports) = read_assembly_tree_with_healing(
+        &step,
+        HealingOptions {
+            mode: HealingMode::AnalyzeOnly,
+            ..HealingOptions::default()
+        },
+    )
+    .expect("read_assembly_tree_with_healing failed");
+
+    assert_eq!(tree.name, "root_asm");
+    assert_eq!(reports.len(), 3, "expected one report per leaf node");
+
+    let report_names: Vec<&str> = reports.iter().map(|r| r.name.as_str()).collect();
+    assert!(report_names.contains(&"part_a"));
+    assert!(report_names.contains(&"part_b"));
+    assert!(report_names.contains(&"part_c"));
+
+    for report in &reports {
+        assert!(
+            report.report.initial.is_valid() && report.report.final_result.is_valid(),
+            "healing report should remain valid for clean geometry"
+        );
     }
 }

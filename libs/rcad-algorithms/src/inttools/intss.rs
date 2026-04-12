@@ -26,7 +26,8 @@ use rcad_kernel::geom::{
 
 use crate::inttools::{
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
-    cone_cone::{ConeConeResult, intersect_cone_cone},
+    cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance},
+    cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     pcurve_derive::{
         circle_pcurve_on_cylinder, circle_pcurve_on_plane, circle_pcurve_on_sphere,
         ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
@@ -94,6 +95,31 @@ impl SurfaceSurfaceIntersection {
 /// polylines for unsupported surface-type combinations.
 pub fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
     intersect_surfaces_with_density(s1, s2, 48)
+}
+
+/// Like [`intersect_surfaces`] but allows fuzzy geometric tolerance routing for
+/// selected analytic cases.
+///
+/// Currently this applies to `Cone × Cone` near-coaxial handling. Other pairs
+/// keep existing behavior.
+pub fn intersect_surfaces_with_tolerance(
+    s1: &Surface3,
+    s2: &Surface3,
+    fuzzy_tol: f64,
+) -> SurfaceSurfaceIntersection {
+    if fuzzy_tol <= 0.0 {
+        return intersect_surfaces(s1, s2);
+    }
+
+    match (s1, s2) {
+        (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+            cylinder_x_cylinder_with_tolerance(c1, c2, fuzzy_tol)
+        }
+        (Surface3::Cone(k1), Surface3::Cone(k2)) => {
+            cone_x_cone_with_tolerance(k1, k2, fuzzy_tol)
+        }
+        _ => intersect_surfaces(s1, s2),
+    }
 }
 
 /// Like [`intersect_surfaces`] but lets the caller specify the grid density `n`
@@ -644,6 +670,76 @@ fn cylinder_x_cylinder(
     numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2))
 }
 
+fn cylinder_x_cylinder_with_tolerance(
+    c1: &CylindricalSurface,
+    c2: &CylindricalSurface,
+    fuzzy_tol: f64,
+) -> SurfaceSurfaceIntersection {
+    cylinder_x_cylinder_from_result(
+        c1,
+        c2,
+        intersect_cylinder_cylinder_with_tolerance(c1, c2, fuzzy_tol),
+    )
+}
+
+fn cylinder_x_cylinder_from_result(
+    c1: &CylindricalSurface,
+    c2: &CylindricalSurface,
+    cc: CylinderCylinderResult,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let mut out = SurfaceSurfaceIntersection::default();
+    match cc {
+        CylinderCylinderResult::NoIntersection | CylinderCylinderResult::Coaxial => {}
+        CylinderCylinderResult::OneGeneratorLine(line) => {
+            let pca = line_pcurve_on_cylinder(&line, c1);
+            let pcb = line_pcurve_on_cylinder(&line, c2);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Line(line),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        CylinderCylinderResult::TwoGeneratorLines(line1, line2) => {
+            for line in [line1, line2] {
+                let pca = line_pcurve_on_cylinder(&line, c1);
+                let pcb = line_pcurve_on_cylinder(&line, c2);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Line(line),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        CylinderCylinderResult::TwoEllipses(e1, e2) => {
+            for e in [e1, e2] {
+                let pca = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &Surface3::Cylinder(*c1));
+                let pcb = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &Surface3::Cylinder(*c2));
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Ellipse(e),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        CylinderCylinderResult::TwoCircles(circ1, circ2) => {
+            for circ in [circ1, circ2] {
+                let pca = fallback_pcurve_by_projection(&Curve3::Circle(circ), &[0.0, TAU], &Surface3::Cylinder(*c1));
+                let pcb = fallback_pcurve_by_projection(&Curve3::Circle(circ), &[0.0, TAU], &Surface3::Cylinder(*c2));
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circ),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        CylinderCylinderResult::General => {
+            return numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2));
+        }
+    }
+    out
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Cylinder × Cone
 // ──────────────────────────────────────────────────────────────────────────────
@@ -696,9 +792,29 @@ fn cone_x_cone(
     k1: &ConicalSurface,
     k2: &ConicalSurface,
 ) -> SurfaceSurfaceIntersection {
+    cone_x_cone_from_result(k1, k2, intersect_cone_cone(k1, k2))
+}
+
+fn cone_x_cone_with_tolerance(
+    k1: &ConicalSurface,
+    k2: &ConicalSurface,
+    fuzzy_tol: f64,
+) -> SurfaceSurfaceIntersection {
+    cone_x_cone_from_result(
+        k1,
+        k2,
+        intersect_cone_cone_with_tolerance(k1, k2, fuzzy_tol),
+    )
+}
+
+fn cone_x_cone_from_result(
+    k1: &ConicalSurface,
+    k2: &ConicalSurface,
+    cc: ConeConeResult,
+) -> SurfaceSurfaceIntersection {
     use std::f64::consts::TAU;
     let mut out = SurfaceSurfaceIntersection::default();
-    match intersect_cone_cone(k1, k2) {
+    match cc {
         ConeConeResult::NoIntersection => {}
         ConeConeResult::Coaxial => {} // identical cones — infinite overlap
         ConeConeResult::CoaxialCircle(circ) => {
@@ -1782,6 +1898,31 @@ mod tests {
     }
 
     #[test]
+    fn cylinder_cylinder_fuzzy_tolerance_recovers_near_tangent_line() {
+        let c1 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        let c2 = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(2.0 + 3.0e-7, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+
+        let strict = intersect_surfaces(&c1, &c2);
+        let fuzzy = intersect_surfaces_with_tolerance(&c1, &c2, 4.0e-7);
+
+        assert!(strict.is_empty(), "strict mode should be disjoint");
+        assert_eq!(
+            fuzzy.curves.len(),
+            1,
+            "fuzzy tolerance should recover tangent generator line"
+        );
+        assert!(matches!(fuzzy.curves[0].curve_3d, SurfaceCurve::Line(_)));
+    }
+
+    #[test]
     fn plane_sphere_great_circle() {
         let p = Surface3::Plane(Plane {
             origin: DVec3::ZERO,
@@ -1955,6 +2096,46 @@ mod tests {
         let r = intersect_surfaces(&k1, &k2);
         assert_eq!(r.curves.len(), 1, "coaxial same-apex cones should give one point");
         assert!(matches!(&r.curves[0].curve_3d, SurfaceCurve::Point(_)));
+    }
+
+    #[test]
+    fn cone_cone_fuzzy_tolerance_recovers_near_coaxial_circle() {
+        // Slightly offset apex in X puts cones outside strict coaxial tolerance.
+        // Fuzzy tolerance should recover the coaxial analytic circle branch.
+        let k1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, 2.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+        let k2 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(2.5e-7, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 30.0_f64.to_radians(),
+        });
+
+        let strict = intersect_surfaces(&k1, &k2);
+        let fuzzy = intersect_surfaces_with_tolerance(&k1, &k2, 2.0e-7);
+
+        assert!(!fuzzy.is_empty(), "fuzzy result should not be empty");
+        assert!(
+            fuzzy
+                .curves
+                .iter()
+                .any(|c| matches!(c.curve_3d, SurfaceCurve::Circle(_) | SurfaceCurve::Point(_))),
+            "fuzzy tolerance should recover analytic cone-cone result"
+        );
+
+        // In strict mode this near-coaxial case should not be classified as an
+        // analytic coaxial intersection.
+        assert!(
+            !strict
+                .curves
+                .iter()
+                .any(|c| matches!(c.curve_3d, SurfaceCurve::Circle(_) | SurfaceCurve::Point(_))),
+            "strict mode unexpectedly produced coaxial analytic result"
+        );
     }
 
     #[test]

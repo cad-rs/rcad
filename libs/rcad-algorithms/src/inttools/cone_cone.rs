@@ -169,6 +169,66 @@ fn intersect_parallel_cones(
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Compute cone-cone intersection with fuzzy tolerance for near-coaxial cases.
+pub fn intersect_cone_cone_with_tolerance(
+    cone1: &ConicalSurface,
+    cone2: &ConicalSurface,
+    fuzzy_tol: f64,
+) -> ConeConeResult {
+    let tol = TOLERANCE_ABS + fuzzy_tol;
+    let a1 = cone1.axis.normalize();
+    let a2 = cone2.axis.normalize();
+
+    let cross = a1.cross(a2);
+    let sin_angle = cross.length();
+
+    // ── Parallel axes (with fuzzy tolerance for near-coaxial detection) ────
+    if sin_angle < TOLERANCE_ANG {
+        let delta = cone2.apex - cone1.apex;
+        let delta_along = delta.dot(a1);
+        let delta_perp = delta - a1 * delta_along;
+        let d_perp = delta_perp.length();
+
+        let beta1 = cone1.half_angle_rad;
+        let beta2 = cone2.half_angle_rad;
+        let tan1 = beta1.tan();
+        let tan2 = beta2.tan();
+
+        // ── Coaxial (with fuzzy tolerance) ────────────────────────────────
+        if d_perp < tol {
+            // Check for identical geometry
+            if (cone2.apex - cone1.apex).length() < tol
+                && (beta1 - beta2).abs() < TOLERANCE_ANG
+            {
+                return ConeConeResult::Coaxial;
+            }
+
+            if (tan1 - tan2).abs() < 1e-12 {
+                return ConeConeResult::NoIntersection;
+            }
+
+            let h = -delta_along * tan2 / (tan1 - tan2);
+
+            if h < -tol || (h - delta_along) < -tol {
+                if h.abs() < tol {
+                    return ConeConeResult::CoaxialPoint(cone1.apex);
+                }
+                return ConeConeResult::NoIntersection;
+            }
+
+            let radius = h * tan1;
+            if radius < tol {
+                return ConeConeResult::CoaxialPoint(cone1.apex + a1 * h);
+            }
+
+            let center = cone1.apex + a1 * h;
+            return ConeConeResult::CoaxialCircle(Circle3 { center, normal: a1, radius });
+        }
+    }
+
+    ConeConeResult::General
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

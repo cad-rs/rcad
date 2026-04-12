@@ -23,6 +23,7 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::{DAffine3, DVec3};
+use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
 use rcad_kernel::BRep;
 use rcad_kernel::appearance::StepColor;
 
@@ -758,6 +759,76 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
     }
 
     Ok(components)
+}
+
+/// Parse STEP assembly and run healing pipeline on each component BRep.
+///
+/// Returns healed components plus one healing report per component in order.
+pub fn read_assembly_with_healing(
+    step: &str,
+    options: HealingOptions,
+) -> Result<(Vec<AssemblyComponent>, Vec<HealingReport>), StepError> {
+    let mut components = read_assembly(step)?;
+    let mut reports = Vec::with_capacity(components.len());
+
+    for component in &mut components {
+        let (healed, report) = analyze_and_heal(&component.brep, options);
+        component.brep = healed;
+        reports.push(report);
+    }
+
+    Ok((components, reports))
+}
+
+/// Healing report for a tree node with geometry.
+#[derive(Debug, Clone)]
+pub struct AssemblyNodeHealingReport {
+    /// Child-index path from tree root to this node.
+    pub path: Vec<usize>,
+    /// Node name snapshot for easier diagnostics.
+    pub name: String,
+    /// Healing analysis/repair report for this node's geometry.
+    pub report: HealingReport,
+}
+
+/// Parse hierarchical STEP assembly and run healing on each geometric node.
+///
+/// Returns healed tree plus one report for each node that carries geometry
+/// (`node.brep.is_some()`), in depth-first traversal order.
+pub fn read_assembly_tree_with_healing(
+    step: &str,
+    options: HealingOptions,
+) -> Result<(AssemblyNode, Vec<AssemblyNodeHealingReport>), StepError> {
+    let mut root = read_assembly_tree(step)?;
+    let mut reports = Vec::new();
+
+    fn heal_node(
+        node: &mut AssemblyNode,
+        path: &mut Vec<usize>,
+        options: HealingOptions,
+        reports: &mut Vec<AssemblyNodeHealingReport>,
+    ) {
+        if let Some(brep) = node.brep.take() {
+            let (healed, report) = analyze_and_heal(&brep, options);
+            node.brep = Some(healed);
+            reports.push(AssemblyNodeHealingReport {
+                path: path.clone(),
+                name: node.name.clone(),
+                report,
+            });
+        }
+
+        for (idx, child) in node.children.iter_mut().enumerate() {
+            path.push(idx);
+            heal_node(child, path, options, reports);
+            path.pop();
+        }
+    }
+
+    let mut path = Vec::new();
+    heal_node(&mut root, &mut path, options, &mut reports);
+
+    Ok((root, reports))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

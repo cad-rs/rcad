@@ -246,7 +246,6 @@ impl<'a> PaveFiller<'a> {
                         vertex: vi,
                         face: fi,
                     });
-                    self.ds.faces[fi].face_info.vertices_on.insert(vi);
                 }
             }
         }
