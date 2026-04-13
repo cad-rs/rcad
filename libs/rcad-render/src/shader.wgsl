@@ -18,17 +18,23 @@ var<uniform> material: MaterialUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
+    // Per-vertex smooth normal.  For meshes without normals (grid, axes,
+    // selection highlights) this is left as (0,0,0) and the fragment shader
+    // falls back to the screen-space derivative (flat shading).
+    @location(1) normal: vec3<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
+    @location(1) world_normal: vec3<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     out.world_position = in.position;
+    out.world_normal = in.normal;
     out.clip_position = camera.view_proj * vec4<f32>(in.position, 1.0);
     return out;
 }
@@ -39,7 +45,16 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(material.color.xyz, material.color.w);
     }
 
-    var normal = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
+    // Use interpolated vertex normal for smooth (Phong) shading when available;
+    // fall back to the screen-space derivative (flat shading) for meshes that
+    // were uploaded without per-vertex normals.
+    var normal: vec3<f32>;
+    let vn_len = length(in.world_normal);
+    if (vn_len > 0.1) {
+        normal = normalize(in.world_normal);
+    } else {
+        normal = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
+    }
     if (!front_facing) {
         normal = -normal;
     }

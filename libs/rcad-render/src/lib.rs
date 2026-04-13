@@ -265,6 +265,10 @@ pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
     pub line_indices: Vec<u32>,
+    /// Per-vertex smooth normals (same length as `vertices`).  When empty the
+    /// renderer uploads zero normals, which triggers the flat-shading fallback
+    /// in the fragment shader.
+    pub normals: Vec<[f32; 3]>,
 }
 
 #[repr(C)]
@@ -316,6 +320,7 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
         vertices,
         indices,
         line_indices: Vec::new(),
+        normals: Vec::new(),
     })
 }
 
@@ -345,6 +350,7 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         vertices,
         indices,
         line_indices: Vec::new(),
+        normals: Vec::new(),
     })
 }
 
@@ -362,21 +368,27 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     }
 
     let mut vertices = Vec::with_capacity(total_vertices);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(total_vertices);
     let mut indices = Vec::with_capacity(total_indices);
     let mut line_indices = Vec::with_capacity(total_line_indices);
     let mut vertex_offset = 0u32;
 
     for mesh in meshes {
         vertices.extend_from_slice(&mesh.vertices);
+        normals.extend_from_slice(&mesh.normals);
         indices.extend(mesh.indices.iter().map(|index| index + vertex_offset));
         line_indices.extend(mesh.line_indices.iter().map(|index| index + vertex_offset));
         vertex_offset += mesh.vertices.len() as u32;
     }
 
+    // If only some meshes had normals fill missing entries with zero.
+    normals.resize(vertices.len(), [0.0, 0.0, 0.0]);
+
     Some(Mesh {
         vertices,
         indices,
         line_indices,
+        normals,
     })
 }
 
@@ -390,6 +402,7 @@ impl Tessellator {
             .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
             .collect();
 
+        let n_verts = flat_verts.len();
         let mut indices: Vec<u32> = Vec::new();
         let mut line_indices: Vec<u32> = Vec::with_capacity(brep.edges.len() * 2);
 
@@ -404,6 +417,42 @@ impl Tessellator {
                 }
             }
         }
+
+        // ── Per-vertex smooth normal computation (area-weighted face normal avg) ──
+        let mut normal_accum = vec![[0.0f64; 3]; n_verts];
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    for tri in &face.triangles {
+                        let a = brep.vertices[tri[0]].point;
+                        let b = brep.vertices[tri[1]].point;
+                        let c = brep.vertices[tri[2]].point;
+                        let e1 = b - a;
+                        let e2 = c - a;
+                        // Area-weighted face normal (magnitude = 2× triangle area)
+                        let fn_ = e1.cross(e2);
+                        for &vi in tri.iter() {
+                            if vi < n_verts {
+                                normal_accum[vi][0] += fn_.x;
+                                normal_accum[vi][1] += fn_.y;
+                                normal_accum[vi][2] += fn_.z;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let normals: Vec<[f32; 3]> = normal_accum
+            .iter()
+            .map(|n| {
+                let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                if len < 1e-15 {
+                    [0.0, 0.0, 0.0]
+                } else {
+                    [(n[0] / len) as f32, (n[1] / len) as f32, (n[2] / len) as f32]
+                }
+            })
+            .collect();
 
         let mut seam_edges: std::collections::HashSet<usize> =
             seam_edge_candidates(brep).into_iter().collect();
@@ -445,6 +494,7 @@ impl Tessellator {
             vertices: flat_verts,
             indices,
             line_indices,
+            normals,
         }
     }
 
@@ -845,6 +895,20 @@ struct GridBuffers {
     minor_index_count: u32,
 }
 
+/// Interleave vertex positions and normals into a flat `Vec<[f32; 6]>` for GPU upload.
+/// If `normals` is empty or a different length, zero normals are used (triggers flat-shading fallback in shader).
+fn interleave_verts_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
+    let has_normals = normals.len() == vertices.len();
+    vertices
+        .iter()
+        .enumerate()
+        .map(|(i, &[px, py, pz])| {
+            let [nx, ny, nz] = if has_normals { normals[i] } else { [0.0, 0.0, 0.0] };
+            [px, py, pz, nx, ny, nz]
+        })
+        .collect()
+}
+
 /// Build a grid on the XZ plane (Y=0). Returns (vertices, major_line_indices, minor_line_indices).
 fn build_grid_mesh(
     extent: f32,
@@ -985,9 +1049,12 @@ impl WgpuRenderer {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    // Each vertex is [px, py, pz, nx, ny, nz] = 6 × f32 = 24 bytes.
+                    // The normal component (location 1) is zero for meshes that
+                    // do not carry smooth normals (grid, axes, highlights).
+                    array_stride: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
                 }],
             },
             fragment: Some(wgpu::FragmentState {
@@ -1232,10 +1299,11 @@ impl WgpuRenderer {
         });
 
         let (grid_verts, grid_major_idx, grid_minor_idx) = build_grid_mesh(5.0, 1.0, 0.2);
+        let grid_verts_padded: Vec<[f32; 6]> = grid_verts.iter().map(|&[x, y, z]| [x, y, z, 0.0, 0.0, 0.0]).collect();
         let grid = GridBuffers {
             vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Grid Vertex Buffer"),
-                contents: bytemuck::cast_slice(&grid_verts),
+                contents: bytemuck::cast_slice(&grid_verts_padded),
                 usage: wgpu::BufferUsages::VERTEX,
             }),
             major_index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1284,10 +1352,11 @@ impl WgpuRenderer {
             axes_material_bind_groups_vec.push(bg);
 
             let (verts, tri_idx, line_idx) = build_axis_arrow_mesh(axis_dirs[i], 1.0, 0.03, 0.1, 8);
+            let verts_padded: Vec<[f32; 6]> = verts.iter().map(|&[x, y, z]| [x, y, z, 0.0, 0.0, 0.0]).collect();
 
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("Axis {} Vertex Buffer", axis_names[i])),
-                contents: bytemuck::cast_slice(&verts),
+                contents: bytemuck::cast_slice(&verts_padded),
                 usage: wgpu::BufferUsages::VERTEX,
             });
             let tri_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1415,10 +1484,11 @@ impl WgpuRenderer {
     }
 
     pub fn upload_mesh(&self, device: &wgpu::Device, mesh: &Mesh) {
+        let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
         *self.vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh.vertices),
+                contents: bytemuck::cast_slice(&interleaved),
                 usage: wgpu::BufferUsages::VERTEX,
             },
         ));
@@ -1455,10 +1525,11 @@ impl WgpuRenderer {
         edge_mesh: Option<&Mesh>,
     ) {
         if let Some(mesh) = face_mesh {
+            let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
             *self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Face Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&mesh.vertices),
+                    contents: bytemuck::cast_slice(&interleaved),
                     usage: wgpu::BufferUsages::VERTEX,
                 },
             ));
@@ -1477,10 +1548,11 @@ impl WgpuRenderer {
         }
 
         if let Some(mesh) = edge_mesh {
+            let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
             *self.highlight_edge_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Edge Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&mesh.vertices),
+                    contents: bytemuck::cast_slice(&interleaved),
                     usage: wgpu::BufferUsages::VERTEX,
                 },
             ));
