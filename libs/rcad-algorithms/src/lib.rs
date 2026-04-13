@@ -713,7 +713,17 @@ pub fn boolean_op_with_options(
     };
 
     if options.run_healing {
-        let (healed, heal_report) = analyze_and_heal(&out, options.healing);
+        let mut healing_options = options.healing;
+        // If boolean make-connected is enabled, allow healing to use the same
+        // connectivity rebuild policy when repair passes stall.
+        if options.run_make_connected {
+            healing_options.run_make_connected_on_stall = true;
+            healing_options.make_connected_tolerance = options.make_connected_tolerance;
+            healing_options.make_connected_max_passes = options.make_connected_max_passes;
+            healing_options.make_connected_tolerance_growth = options.make_connected_tolerance_growth;
+            healing_options.make_connected_tolerance_cap = options.make_connected_tolerance_cap;
+        }
+        let (healed, heal_report) = analyze_and_heal(&out, healing_options);
         out = healed;
         report.healed = true;
         report.healing_report = Some(heal_report);

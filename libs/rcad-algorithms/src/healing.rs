@@ -6,7 +6,7 @@
 use rcad_kernel::BRep;
 
 use crate::brep_check::{CheckIssue, CheckResult, check};
-use crate::brep_repair::{RepairReport, repair};
+use crate::brep_repair::{MakeConnectedReport, RepairReport, make_connected_iterative_with_growth_cap, repair};
 use crate::tolerance::TOLERANCE_ABS;
 
 /// Healing execution mode.
@@ -27,6 +27,17 @@ pub struct HealingOptions {
     pub max_passes: usize,
     /// Execution mode for the pipeline.
     pub mode: HealingMode,
+    /// When a repair pass makes no progress while issues remain, run a
+    /// MakeConnected-style connectivity rebuild pass.
+    pub run_make_connected_on_stall: bool,
+    /// Base tolerance used by make-connected fallback passes.
+    pub make_connected_tolerance: f64,
+    /// Maximum number of iterative make-connected passes.
+    pub make_connected_max_passes: usize,
+    /// Per-pass tolerance growth factor for make-connected fallback.
+    pub make_connected_tolerance_growth: f64,
+    /// Upper cap for make-connected tolerance growth.
+    pub make_connected_tolerance_cap: f64,
 }
 
 impl Default for HealingOptions {
@@ -35,6 +46,11 @@ impl Default for HealingOptions {
             tolerance: TOLERANCE_ABS,
             max_passes: 2,
             mode: HealingMode::AnalyzeAndRepair,
+            run_make_connected_on_stall: false,
+            make_connected_tolerance: TOLERANCE_ABS,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.5,
+            make_connected_tolerance_cap: TOLERANCE_ABS * 1000.0,
         }
     }
 }
@@ -91,6 +107,8 @@ pub struct HealingReport {
     pub final_result: CheckResult,
     /// Per-pass repair reports.
     pub passes: Vec<RepairReport>,
+    /// MakeConnected fallback reports executed when repair stalls.
+    pub make_connected_passes: Vec<MakeConnectedReport>,
     /// Structured issue counters before healing.
     pub initial_stats: HealingIssueStats,
     /// Structured issue counters after healing.
@@ -104,6 +122,7 @@ pub struct HealingReport {
 pub enum HealingStage {
     InitialCheck,
     RepairPass,
+    MakeConnectedPass,
     FinalCheck,
 }
 
@@ -156,6 +175,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 initial: initial.clone(),
                 final_result: initial,
                 passes: Vec::new(),
+                make_connected_passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
                 stages: vec![HealingStageReport {
@@ -174,6 +194,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 initial: initial.clone(),
                 final_result: initial,
                 passes: Vec::new(),
+                make_connected_passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
                 stages: vec![HealingStageReport {
@@ -187,6 +208,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
 
     let mut current = brep.clone();
     let mut passes = Vec::new();
+    let mut make_connected_passes = Vec::new();
     let mut stages = vec![HealingStageReport {
         stage: HealingStage::InitialCheck,
         pass_index: None,
@@ -200,7 +222,9 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         let no_changes = rep.vertices_merged == 0
             && rep.degenerate_faces_removed == 0
             && rep.normals_recomputed == 0
-            && rep.wires_fixed == 0;
+            && rep.wires_fixed == 0
+            && rep.same_range_fixed == 0
+            && rep.same_parameter_fixed == 0;
         passes.push(rep);
 
         let chk = check(&current);
@@ -209,7 +233,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             pass_index: Some(pass_idx),
             issue_count: chk.issues.len(),
         });
-        if chk.is_valid() || no_changes {
+        if chk.is_valid() {
             let final_stats = HealingIssueStats::from_check_result(&chk);
             stages.push(HealingStageReport {
                 stage: HealingStage::FinalCheck,
@@ -222,6 +246,70 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                     initial,
                     final_result: chk,
                     passes,
+                    make_connected_passes,
+                    initial_stats,
+                    final_stats,
+                    stages,
+                },
+            );
+        }
+
+        if no_changes && options.run_make_connected_on_stall {
+            let (reconnected, mc_report) = make_connected_iterative_with_growth_cap(
+                &current,
+                options.make_connected_tolerance,
+                options.make_connected_max_passes,
+                options.make_connected_tolerance_growth,
+                options.make_connected_tolerance_cap,
+            );
+            current = reconnected;
+            let mc_no_changes = mc_report.vertices_merged == 0 && mc_report.small_edges_removed == 0;
+            make_connected_passes.push(mc_report);
+
+            let chk = check(&current);
+            stages.push(HealingStageReport {
+                stage: HealingStage::MakeConnectedPass,
+                pass_index: Some(pass_idx),
+                issue_count: chk.issues.len(),
+            });
+
+            if chk.is_valid() || mc_no_changes {
+                let final_stats = HealingIssueStats::from_check_result(&chk);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::FinalCheck,
+                    pass_index: None,
+                    issue_count: chk.issues.len(),
+                });
+                return (
+                    current,
+                    HealingReport {
+                        initial,
+                        final_result: chk,
+                        passes,
+                        make_connected_passes,
+                        initial_stats,
+                        final_stats,
+                        stages,
+                    },
+                );
+            }
+            continue;
+        }
+
+        if no_changes {
+            let final_stats = HealingIssueStats::from_check_result(&chk);
+            stages.push(HealingStageReport {
+                stage: HealingStage::FinalCheck,
+                pass_index: None,
+                issue_count: chk.issues.len(),
+            });
+            return (
+                current,
+                HealingReport {
+                    initial,
+                    final_result: chk,
+                    passes,
+                    make_connected_passes,
                     initial_stats,
                     final_stats,
                     stages,
@@ -243,6 +331,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             initial,
             final_result,
             passes,
+            make_connected_passes,
             initial_stats,
             final_stats,
             stages,
@@ -280,6 +369,7 @@ mod tests {
         assert!(report.initial.is_valid());
         assert!(report.final_result.is_valid());
         assert!(report.passes.is_empty());
+        assert!(report.make_connected_passes.is_empty());
         assert!(!report.stages.is_empty());
         assert_eq!(out.vertices.len(), b.vertices.len());
         assert_eq!(out.edges.len(), b.edges.len());
@@ -321,6 +411,43 @@ mod tests {
         assert!(report.initial_issue_count() >= 1);
         assert_eq!(report.initial_issue_count(), report.final_issue_count());
         assert!(report.passes.is_empty());
+        assert!(report.make_connected_passes.is_empty());
         assert_eq!(out.solids[0].shells[0].faces[0].normal, DVec3::ZERO);
+    }
+
+    #[test]
+    fn healing_make_connected_fallback_reporting_is_consistent() {
+        let mut b = unit_box();
+
+        // Keep at least one checker issue that standard repair does not heal.
+        b.solids[0].shells[0].faces[0].outer_wire.edges[0].idx = usize::MAX;
+        // Add near-duplicate vertices that can be merged only by the fallback
+        // tolerance (repair tolerance intentionally set much tighter).
+        b.vertices[1].point = b.vertices[0].point + DVec3::new(1.0e-6, 0.0, 0.0);
+
+        let (_out, report) = analyze_and_heal(
+            &b,
+            HealingOptions {
+                tolerance: 1.0e-12,
+                max_passes: 1,
+                run_make_connected_on_stall: true,
+                make_connected_tolerance: 1.0e-4,
+                make_connected_max_passes: 2,
+                make_connected_tolerance_growth: 1.0,
+                make_connected_tolerance_cap: 1.0e-4,
+                ..HealingOptions::default()
+            },
+        );
+
+        // Depending on how much progress the regular repair pass can make,
+        // make-connected fallback may or may not be needed. If it ran, stage
+        // and report vectors must stay in sync.
+        let mc_stage_count = report
+            .stages
+            .iter()
+            .filter(|s| matches!(s.stage, HealingStage::MakeConnectedPass))
+            .count();
+        assert_eq!(mc_stage_count, report.make_connected_passes.len());
+        assert!(report.make_connected_passes.len() <= 1);
     }
 }

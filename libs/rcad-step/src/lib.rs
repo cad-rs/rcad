@@ -4347,6 +4347,7 @@ END-ISO-10303-21;
                 mode: HealingMode::AnalyzeAndRepair,
                 tolerance: 1e-6,
                 max_passes: 2,
+                ..HealingOptions::default()
             },
         )
         .expect("stream healing parse should succeed");
