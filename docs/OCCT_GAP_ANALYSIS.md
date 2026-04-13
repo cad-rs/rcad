@@ -8,7 +8,7 @@ This document turns the current RCAD capability inventory into an OCCT-oriented 
 
 The key conclusion is:
 
-RCAD has made substantial progress since the last revision. P3–P7 work has added same-domain face unification (plane/cylinder/torus/sphere), tolerance propagation, shell and wire diagnostics, SplitShape and rib/slot baselines, AP242 metadata chain parsing (PROPERTY_DEFINITION_REPRESENTATION + DIMENSIONAL_LOCATION/SIZE + GEOMETRIC_TOLERANCE), a baseline read-only BRepGraph traversal API, and Gordon surface transfinite interpolation support. However, OCCT 8.0.0 (currently at rc5, release imminent) has itself leapt forward significantly -- it introduces an entirely new graph-based topology representation (BRepGraph, 49 000+ lines), a production-grade Gordon framework, a fully redesigned geometry evaluation architecture, the TKHelix toolkit, and defeaturing + connected-shape APIs. The production gap is narrowing but OCCT's target is moving.
+RCAD has made substantial progress since the last revision. P3–P7 work has added same-domain face unification Phase 1 (plane/cylinder/cone/torus/sphere) and Phase 2 (topological + geometric double-validation with UV-region/edge-continuity checks), tolerance propagation, shell and wire diagnostics, SplitShape and rib/slot baselines, AP242 metadata chain parsing (PROPERTY_DEFINITION_REPRESENTATION + DIMENSIONAL_LOCATION/SIZE + GEOMETRIC_TOLERANCE), a baseline read-only BRepGraph traversal API, and Gordon surface transfinite interpolation support. However, OCCT 8.0.0 (currently at rc5, release imminent) has itself leapt forward significantly -- it introduces an entirely new graph-based topology representation (BRepGraph, 49 000+ lines), a production-grade Gordon framework, a fully redesigned geometry evaluation architecture, the TKHelix toolkit, and defeaturing + connected-shape APIs. The production gap is narrowing but OCCT's target is moving.
 
 RCAD still trails OCCT most in:
 
@@ -53,7 +53,7 @@ RCAD still trails OCCT most in:
 
 - **Boolean robustness** on curved solids and near-coincident geometry remains the largest practical gap. Splitter/CellsBuilder/fuzzy tolerance are now baseline-present (including adaptive retry escalation), and MakeConnected-style cleanup now has iterative growth-aware baseline passes with tolerance-cap safety plus scoped mode with semantic seed strategies (short-edge / near-duplicate / tolerance-tagged / multi-PCurve / topology-seam-candidates / hybrid); defeaturing and richer connectivity rebuilding semantics are still absent.
 - **BRepGraph depth**: OCCT 8.0.0 ships an extensive graph-based BRep API (49 000+ lines) with history tracking, mutation guards, deduplication, and validation. RCAD now has a baseline topology graph with history events, checked and rollback-capable mutation entrypoints, and validate/compact/dedup primitives, but still lacks full mutation guard semantics and rich persistent naming.
-- **Healing pipeline depth**: same-domain unification baseline is present, but ShapeProcess-style staged repair chains and broader ShapeFix coverage remain missing.
+- **Healing pipeline depth**: same-domain unification now has Phase 1 baseline (plane/cylinder/cone/torus/sphere) and Phase 2 double-validation (topological edge-continuity + geometric UV-region checks), but ShapeProcess-style staged repair chains and broader ShapeFix coverage remain missing.
 - **Exchange**: STEP AP242 write is present and AP242 read has baseline GDT/DimTol metadata extraction, but complete AP242 read, kinematics, and FEA entities are still not covered.
 - **Geometry evaluation breadth**: OCCT 8.0.0 adds helicoid, spiral, ellipsoid, and parametric curve evaluation classes not present in RCAD.
 - **Gordon surface robustness**: N×M transfinite interpolation baseline exists in RCAD, but OCCT's GeomFill_Gordon remains richer and more production-tuned.
@@ -260,13 +260,13 @@ Target: imported and modeled solids through boolean workflows with much better r
 
 | Deliverable | Effort | Status |
 |---|---|---|
-| **Same-domain face unification** | Medium | **Done (baseline plane/cylinder/torus/sphere)** |
+| **Same-domain face unification** | Medium | **Done (baseline plane/cylinder/cone/torus/sphere)** |
 | Internal-face removal after fuse | Small | Partial (baseline cleanup path present) |
 | Splitter API (object/tool split) | Medium | **Done (baseline split-first API)** |
 | Fuzzy tolerance option | Small | **Done (boolean/split options + adaptive retry policy baseline)** |
 | CellsBuilder (split-cell graph) | Large | **Done (baseline expression evaluator)** |
 | MakeConnected baseline pass | Medium | **Done (iterative + growth-aware + tolerance-capped merge-near vertices + small-edge cleanup; global+scoped modes with semantic short/near-dup/tolerance-tagged/multi-PCurve/topology-seam/hybrid seeds, plus history-informed seed-edge preference with low-coverage heuristic augmentation and scoped seed source/count metadata + stable edge-label reporting)** |
-| Defeaturing pass | Large | Not started |
+| Defeaturing pass | Large | Done (baseline: cylindrical feature detection + boolean fill/remove and small-face identification) |
 | Full history to edges and solids | Medium | **Done (DS a_vertex_count/a_edge_count boundary tracking; annotate_history_from_ds position-matches result vertices/edges to DS origin ranges; populates BooleanHistory.vertex_origins and edge_origins in both sequential and parallel build paths; VertexOrigin: FromA/FromB/Intersection; EdgeOrigin: FromA/FromB/Generated/SplitFromA/SplitFromB)** |
 
 ### P4 Remaining: Industrial Healing Pipeline
@@ -377,14 +377,14 @@ Assuming 1 developer working full-time on kernel work:
 | General fuse split-first core | P3 - High | Not started |
 | Splitter API | P3 - High | Not started |
 | Fuzzy / glue boolean options | P3 - High | Not started |
-| **Result simplification: same-domain unification** | **P3 - High** | **Not started (highest impact)** |
-| Result simplification: internal face removal | P3 - Medium | Not started |
+| **Result simplification: same-domain unification** | **P3 - High** | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological+UV validation)** |
+| Result simplification: internal face removal | P3 - Medium | Done (Phase 1: threshold-based + same-domain checks; Phase 2: topological true-duplicate detection) |
 | CellsBuilder (split-cell graph) | P3 - Medium | **✅ Done (baseline)** |
-| Defeaturing pass | P3 - Medium | Not started |
+| Defeaturing pass | P3 - Medium | Done (baseline: cylindrical feature detection + boolean fill/remove and small-face identification) |
 | Richer history graph (edges, solids) | P3 - Medium | Not started |
 | ~~SameParameter / SameRange repair~~ | ~~P4 - High~~ | **✅ SameParameter done (P4)** |
 | SameRange repair | P4 - High | **✅ Done (scan+repair)** |
-| ShapeUpgrade_UnifySameDomain equivalent | P4 - High | Not started |
+| ShapeUpgrade_UnifySameDomain equivalent | P4 - High | Done (Phase 1 baseline: plane/cylinder/cone/torus/sphere; Phase 2 topological guards) |
 | Face-on-surface consistency checker | P4 - Medium | **✅ Done (diagnose_face_surface_consistency)** |
 | ~~Shell / manifoldness analyzer~~ | ~~P4 - Medium~~ | **✅ Done (P4)** |
 | Wire gap / self-intersection analyzer | P4 - Medium | **✅ Done (analyze_wire_issues)** |

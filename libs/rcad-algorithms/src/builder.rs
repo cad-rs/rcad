@@ -386,11 +386,24 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
 pub struct BooleanBuilder<'a> {
     ds: &'a DS,
     op: BooleanOpType,
+    use_glue: bool,
+    glue_tolerance: f64,
 }
 
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
-        Self { ds, op }
+        Self {
+            ds,
+            op,
+            use_glue: false,
+            glue_tolerance: TOLERANCE_ABS,
+        }
+    }
+
+    pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
+        self.use_glue = enable;
+        self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
+        self
     }
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
@@ -417,7 +430,9 @@ impl<'a> BooleanBuilder<'a> {
 
                 let keep = match self.op {
                     BooleanOpType::Union => {
-                        class == Classification::Out || class == Classification::On
+                        let glued_on =
+                            self.use_glue && class == Classification::On && self.is_glued_face(fi, &b_faces);
+                        class == Classification::Out || (class == Classification::On && !glued_on)
                     }
                     BooleanOpType::Intersection => {
                         class == Classification::In || class == Classification::On
@@ -786,6 +801,108 @@ impl<'a> BooleanBuilder<'a> {
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
             .collect()
+    }
+
+    fn is_glued_face(&self, fi: usize, others: &[usize]) -> bool {
+        others
+            .iter()
+            .any(|&fj| self.faces_form_glued_pair(fi, fj))
+    }
+
+    fn faces_form_glued_pair(&self, f1: usize, f2: usize) -> bool {
+        let a = &self.ds.faces[f1];
+        let b = &self.ds.faces[f2];
+        if a.origin == b.origin {
+            return false;
+        }
+        if !self.surfaces_glue_compatible(&a.surface, &b.surface) {
+            return false;
+        }
+        let na_len2 = a.normal.length_squared();
+        let nb_len2 = b.normal.length_squared();
+        if na_len2 <= TOLERANCE_ABS || nb_len2 <= TOLERANCE_ABS {
+            return false;
+        }
+        let na = a.normal / na_len2.sqrt();
+        let nb = b.normal / nb_len2.sqrt();
+        if na.dot(nb) > -0.99 {
+            return false;
+        }
+        self.boundaries_fully_overlap(f1, f2)
+    }
+
+    fn surfaces_glue_compatible(&self, s1: &Surface3, s2: &Surface3) -> bool {
+        let tol = self.glue_tolerance;
+        let axis_parallel = |a: DVec3, b: DVec3| {
+            let la = a.length();
+            let lb = b.length();
+            if la <= TOLERANCE_ABS || lb <= TOLERANCE_ABS {
+                return false;
+            }
+            (a / la).dot(b / lb).abs() >= 0.999
+        };
+
+        match (s1, s2) {
+            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                if !axis_parallel(p1.normal, p2.normal) {
+                    return false;
+                }
+                let n = p1.normal.normalize_or_zero();
+                (p2.origin - p1.origin).dot(n).abs() <= tol * 2.0
+            }
+            (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+                (s1.center - s2.center).length() <= tol * 2.0
+                    && (s1.radius - s2.radius).abs() <= tol
+            }
+            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                if !axis_parallel(c1.axis, c2.axis) {
+                    return false;
+                }
+                let axis = c1.axis.normalize_or_zero();
+                (c2.origin - c1.origin).cross(axis).length() <= tol * 2.0
+                    && (c1.radius - c2.radius).abs() <= tol
+            }
+            (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                axis_parallel(c1.axis, c2.axis)
+                    && (c1.apex - c2.apex).length() <= tol * 2.0
+                    && (c1.radius - c2.radius).abs() <= tol
+                    && (c1.half_angle_rad - c2.half_angle_rad).abs() <= tol
+            }
+            (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+                axis_parallel(t1.axis, t2.axis)
+                    && (t1.center - t2.center).length() <= tol * 2.0
+                    && (t1.major_radius - t2.major_radius).abs() <= tol
+                    && (t1.minor_radius - t2.minor_radius).abs() <= tol
+            }
+            _ => false,
+        }
+    }
+
+    fn boundaries_fully_overlap(&self, f1: usize, f2: usize) -> bool {
+        let pts1 = self.ds.face_boundary_points(f1);
+        let pts2 = self.ds.face_boundary_points(f2);
+        if pts1.len() < 3 || pts2.len() < 3 || pts1.len() != pts2.len() {
+            return false;
+        }
+        let tol = self.glue_tolerance;
+        let mut used = vec![false; pts2.len()];
+        for p1 in &pts1 {
+            let mut found = false;
+            for (j, p2) in pts2.iter().enumerate() {
+                if used[j] {
+                    continue;
+                }
+                if (*p1 - *p2).length() <= tol {
+                    used[j] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+        true
     }
 
     /// Split a curved face (Cylinder, Sphere, Cone, Torus) by intersection polylines.

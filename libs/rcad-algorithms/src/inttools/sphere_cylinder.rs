@@ -85,6 +85,19 @@ pub fn intersect_sphere_cylinder(
     sphere: &SphericalSurface,
     cyl: &CylindricalSurface,
 ) -> SphereCylinderResult {
+    intersect_sphere_cylinder_with_tolerance(sphere, cyl, 0.0)
+}
+
+/// Compute sphere-cylinder intersection with additional fuzzy tolerance.
+///
+/// This relaxes axis-aligned and distance early-out checks by `fuzzy_tol` so
+/// near-coincident cases can still classify into analytic branches.
+pub fn intersect_sphere_cylinder_with_tolerance(
+    sphere: &SphericalSurface,
+    cyl: &CylindricalSurface,
+    fuzzy_tol: f64,
+) -> SphereCylinderResult {
+    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
     let axis = cyl.axis.normalize();
     let d = sphere.center - cyl.origin;
     let d_along = d.dot(axis);
@@ -95,17 +108,17 @@ pub fn intersect_sphere_cylinder(
     let big_r = sphere.radius;
 
     // ── Axis-aligned case ─────────────────────────────────────────────────────
-    if d_perp < TOLERANCE_ABS * 10.0 {
+    if d_perp < tol * 10.0 {
         // Sphere centre is on (or extremely close to) the cylinder axis.
         let disc = big_r * big_r - r * r;
 
-        if disc < -TOLERANCE_ABS {
+        if disc < -tol {
             return SphereCylinderResult::NoIntersection;
         }
 
         let h_c = d_along;
 
-        if disc.abs() < TOLERANCE_ABS {
+        if disc.abs() < tol {
             let center = cyl.origin + axis * h_c;
             return SphereCylinderResult::TangentCircle(Circle3 {
                 center,
@@ -140,11 +153,11 @@ pub fn intersect_sphere_cylinder(
     //       but only when the sphere is smaller than the cylinder radius + offset
     //
     // Case (a): closest radial approach of sphere to axis exceeds cylinder radius.
-    if d_perp - big_r > r + TOLERANCE_ABS {
+    if d_perp - big_r > r + tol {
         return SphereCylinderResult::NoIntersection;
     }
     // Case (b): sphere is fully enclosed inside the cylinder laterally.
-    if d_perp + big_r < r - TOLERANCE_ABS {
+    if d_perp + big_r < r - tol {
         return SphereCylinderResult::NoIntersection;
     }
 

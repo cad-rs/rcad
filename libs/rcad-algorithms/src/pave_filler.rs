@@ -16,11 +16,19 @@ pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
     bvh_a: Option<&'a Bvh>,
     bvh_b: Option<&'a Bvh>,
+    use_glue: bool,
+    glue_tolerance: f64,
 }
 
 impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
-        Self { ds, bvh_a: None, bvh_b: None }
+        Self {
+            ds,
+            bvh_a: None,
+            bvh_b: None,
+            use_glue: false,
+            glue_tolerance: TOLERANCE_ABS,
+        }
     }
 
     /// Create a PaveFiller with optional BVH acceleration for face-face intersection.
@@ -35,7 +43,15 @@ impl<'a> PaveFiller<'a> {
             ds,
             bvh_a: if use_bvh { Some(bvh_a) } else { None },
             bvh_b: if use_bvh { Some(bvh_b) } else { None },
+            use_glue: false,
+            glue_tolerance: TOLERANCE_ABS,
         }
+    }
+
+    /// Configure shared-face glue detection for the face-face pass.
+    pub fn configure_glue(&mut self, enable: bool, tolerance: f64) {
+        self.use_glue = enable;
+        self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
     }
 
     /// Effective tolerance for coincidence tests in all passes.
@@ -412,7 +428,12 @@ impl<'a> PaveFiller<'a> {
             for (fa_brep, fb_brep) in candidates {
                 if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep)) {
                     if ai != usize::MAX && bi != usize::MAX {
-                        self.intersect_face_face(a_faces[ai], b_faces[bi]);
+                        let af = a_faces[ai];
+                        let bf = b_faces[bi];
+                        if self.should_skip_glued_face_pair(af, bf) {
+                            continue;
+                        }
+                        self.intersect_face_face(af, bf);
                     }
                 }
             }
@@ -420,10 +441,113 @@ impl<'a> PaveFiller<'a> {
             // Brute-force: all A-face × B-face pairs
             for &af in &a_faces {
                 for &bf in &b_faces {
+                    if self.should_skip_glued_face_pair(af, bf) {
+                        continue;
+                    }
                     self.intersect_face_face(af, bf);
                 }
             }
         }
+    }
+
+    fn should_skip_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+        let face1 = &self.ds.faces[f1];
+        let face2 = &self.ds.faces[f2];
+        if face1.origin == face2.origin {
+            return false;
+        }
+        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
+            return false;
+        }
+
+        let n1_len2 = face1.normal.length_squared();
+        let n2_len2 = face2.normal.length_squared();
+        if n1_len2 <= TOLERANCE_ABS || n2_len2 <= TOLERANCE_ABS {
+            return false;
+        }
+        let n1 = face1.normal / n1_len2.sqrt();
+        let n2 = face2.normal / n2_len2.sqrt();
+        if n1.dot(n2) > -0.99 {
+            return false;
+        }
+
+        self.boundaries_fully_overlap(f1, f2)
+    }
+
+    fn surfaces_glue_compatible(&self, s1: &Surface3, s2: &Surface3) -> bool {
+        let tol = self.glue_tolerance;
+        let axis_parallel = |a: DVec3, b: DVec3| {
+            let la = a.length();
+            let lb = b.length();
+            if la <= TOLERANCE_ABS || lb <= TOLERANCE_ABS {
+                return false;
+            }
+            (a / la).dot(b / lb).abs() >= 0.999
+        };
+        match (s1, s2) {
+            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                if !axis_parallel(p1.normal, p2.normal) {
+                    return false;
+                }
+                let n = p1.normal.normalize_or_zero();
+                (p2.origin - p1.origin).dot(n).abs() <= tol * 2.0
+            }
+            (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+                (s1.center - s2.center).length() <= tol * 2.0
+                    && (s1.radius - s2.radius).abs() <= tol
+            }
+            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                if !axis_parallel(c1.axis, c2.axis) {
+                    return false;
+                }
+                let a = c1.axis.normalize_or_zero();
+                (c2.origin - c1.origin).cross(a).length() <= tol * 2.0
+                    && (c1.radius - c2.radius).abs() <= tol
+            }
+            (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                axis_parallel(c1.axis, c2.axis)
+                    && (c1.apex - c2.apex).length() <= tol * 2.0
+                    && (c1.radius - c2.radius).abs() <= tol
+                    && (c1.half_angle_rad - c2.half_angle_rad).abs() <= tol
+            }
+            (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+                axis_parallel(t1.axis, t2.axis)
+                    && (t1.center - t2.center).length() <= tol * 2.0
+                    && (t1.major_radius - t2.major_radius).abs() <= tol
+                    && (t1.minor_radius - t2.minor_radius).abs() <= tol
+            }
+            _ => false,
+        }
+    }
+
+    fn boundaries_fully_overlap(&self, f1: usize, f2: usize) -> bool {
+        let pts1 = self.ds.face_boundary_points(f1);
+        let pts2 = self.ds.face_boundary_points(f2);
+        if pts1.len() < 3 || pts2.len() < 3 || pts1.len() != pts2.len() {
+            return false;
+        }
+        let tol = self.glue_tolerance;
+        let mut used = vec![false; pts2.len()];
+        for p1 in &pts1 {
+            let mut found = false;
+            for (j, p2) in pts2.iter().enumerate() {
+                if used[j] {
+                    continue;
+                }
+                if (*p1 - *p2).length() <= tol {
+                    used[j] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+        true
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {

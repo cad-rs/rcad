@@ -118,6 +118,10 @@ pub fn intersect_surfaces_with_tolerance(
         (Surface3::Cone(k1), Surface3::Cone(k2)) => {
             cone_x_cone_with_tolerance(k1, k2, fuzzy_tol)
         }
+        (Surface3::Sphere(s), Surface3::Cylinder(c))
+        | (Surface3::Cylinder(c), Surface3::Sphere(s)) => {
+            sphere_x_cylinder_with_tolerance(s, c, fuzzy_tol)
+        }
         _ => intersect_surfaces(s1, s2),
     }
 }
@@ -438,6 +442,15 @@ fn sphere_x_sphere(s1: &SphericalSurface, s2: &SphericalSurface) -> SurfaceSurfa
 /// two parallel circles (or one if tangent).
 /// All other cases fall back to numerical marching.
 fn sphere_x_cylinder(s: &SphericalSurface, c: &CylindricalSurface) -> SurfaceSurfaceIntersection {
+    sphere_x_cylinder_with_tolerance(s, c, 0.0)
+}
+
+fn sphere_x_cylinder_with_tolerance(
+    s: &SphericalSurface,
+    c: &CylindricalSurface,
+    fuzzy_tol: f64,
+) -> SurfaceSurfaceIntersection {
+    let tol = TOLERANCE_ABS + fuzzy_tol.max(0.0);
     // Project sphere centre onto cylinder axis
     let t = (s.center - c.origin).dot(c.axis);
     let foot = c.origin + c.axis * t;
@@ -447,10 +460,10 @@ fn sphere_x_cylinder(s: &SphericalSurface, c: &CylindricalSurface) -> SurfaceSur
     // circles at heights where r_sphere(z)² = R_cylinder²
     // r_sphere(z)² = R² - (z - z_c)² where z_c is the axial position of sphere center
     // Solve: R² - z² = r_cyl²  (in local frame with sphere center as origin along axis)
-    if d_perp < TOLERANCE_ABS {
+    if d_perp < tol {
         // Sphere centre on axis — analytic circles
         let dz_sq = s.radius * s.radius - c.radius * c.radius;
-        if dz_sq < -TOLERANCE_ABS {
+        if dz_sq < -tol {
             // Sphere smaller than cylinder — no intersection if dz_sq < 0
             // Actually: sphere radius < cylinder radius means sphere inside cyl,
             // could still intersect if large enough. Recheck:
@@ -459,7 +472,7 @@ fn sphere_x_cylinder(s: &SphericalSurface, c: &CylindricalSurface) -> SurfaceSur
             return SurfaceSurfaceIntersection::default();
         }
         let mut out = SurfaceSurfaceIntersection::default();
-        if dz_sq.abs() < TOLERANCE_ABS {
+        if dz_sq.abs() < tol {
             // Tangent — single circle at sphere center height
             let circle = Circle3 {
                 center: s.center,
@@ -2136,6 +2149,34 @@ mod tests {
                 .any(|c| matches!(c.curve_3d, SurfaceCurve::Circle(_) | SurfaceCurve::Point(_))),
             "strict mode unexpectedly produced coaxial analytic result"
         );
+    }
+
+    #[test]
+    fn sphere_cylinder_fuzzy_tolerance_recovers_near_axis_case() {
+        // Sphere center is slightly off-axis: strict mode takes numeric fallback,
+        // fuzzy mode should recover analytic circle branch.
+        let sph = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(2.0e-5, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 3.0,
+        });
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+
+        let strict = intersect_surfaces(&sph, &cyl);
+        let fuzzy = intersect_surfaces_with_tolerance(&sph, &cyl, 2.0e-5);
+
+        assert!(
+            fuzzy
+                .curves
+                .iter()
+                .any(|c| matches!(c.curve_3d, SurfaceCurve::Circle(_))),
+            "fuzzy mode should recover analytic sphere-cylinder circle"
+        );
+        assert!(fuzzy.curves.len() >= strict.curves.len());
     }
 
     #[test]
