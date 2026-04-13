@@ -76,7 +76,7 @@ RCAD still trails OCCT most in:
 | Feature library | Prism + draft prism + revolution + cylindrical hole + rib/slot + SplitShape baseline | TKFeat (boss/pocket/rib/hole) | Medium | Expand feature constraints and robustness |
 | Boolean framework | Fuse/Cut/Common/Section + imprint + splitter/cells + MakerVolume baseline + adaptive fuzzy retry + iterative/growth-aware/capped make-connected cleanup (global+scoped, semantic seeds incl. tolerance-tagged + multi-PCurve + topology seam candidates, with history-informed seed-edge preference plus low-coverage heuristic augmentation, and seed source/count metadata + stable edge labels reporting) | TKBO | High | glue/deeper scoped connectivity rebuilding semantics, deeper failure recovery |
 | Post-op simplification | Small-edge cleanup + same-domain unification baseline | ShapeUpgrade_UnifySameDomain, BOPAlgo cleanup | Medium-High | Internal-face removal and richer same-domain criteria |
-| Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) + staged healing with issue-driven pre-make-connected, iterative parametric consistency pass, and make-connected-on-stall fallback | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, ShapeProcess, tolerance rules |
+| Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) + staged healing with issue-driven pre-make-connected, iterative parametric consistency pass, make-connected-on-stall fallback, and ShapeProcess-like operator chain baseline | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, deeper ShapeProcess semantics, tolerance rules |
 | Topology history | Face/edge/vertex/shell/solid origin tracking + baseline persistent-name propagation from boolean history + graph-native mutation event log (`BRepGraphHistory`) | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Deepen graph-native history semantics and richer persistent naming semantics |
 | STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
 | STEP exchange: read | Basic import + expanded AP242 metadata-chain baseline (PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair) | TKDESTEP + STEPCAFControl_Reader | High | Full semantic AP242 read and FEA entities |
@@ -152,7 +152,7 @@ OCCT's TKShHealing comprises 10 packages. After P3–P4, RCAD has improved from 
 | ShapeAnalysis_Wire | Wire gap, self-intersection, area | **Partial (gap/self-intersection report present)** |
 | ShapeUpgrade_UnifySameDomain | Merge co-planar/co-cylindrical faces | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological guards)** |
 | ShapeCustom | BSpline restriction, convert to indirect | Missing |
-| ShapeProcess | Batch pipeline with operator chain | Missing |
+| ShapeProcess | Batch pipeline with operator chain | Partial (`run_healing_operator_chain` baseline with MakeConnected / ParametricConsistency / Repair / StopIfClean operators) |
 
 ### What RCAD should add next (ordered by impact)
 
@@ -338,7 +338,7 @@ Answering the question: **how far is RCAD from being production-grade?**
 | Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
 | Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
-| Healing pipeline | **50%** | 80% | staged reports + tolerance propagation baseline added; deep ShapeProcess semantics pending | Improved |
+| Healing pipeline | **54%** | 80% | staged reports + tolerance propagation + ShapeProcess-like operator chain baseline; deep semantics pending | Improved |
 | Feature library | **70%** | 80% | Advanced constraints and robustness hardening | **+35% (P5+)** |
 | Document / XCAF | **43%** | 75% | GDT, DimTol, full persistent naming propagation | **+13% (P6 + propagate_through_remap / identity_map / iter)** |
 | STEP exchange depth | 68% | 80% | AP242 metadata-chain read + metadata-entity write baseline; full AP242 read/write depth pending | Improved |
@@ -352,7 +352,7 @@ Assuming 1 developer working full-time on kernel work:
 | Phase | Focus | Calendar estimate | Status |
 |---|---|---|---|
 | P3 remaining | defeaturing robustness + deeper make-connected/glue hardening | 1-2 months | In progress |
-| P4 remaining | ShapeProcess-grade healing semantics and tolerance policy hardening | 1-2 months | In progress |
+| P4 remaining | ShapeProcess-grade healing semantics and tolerance policy hardening (operator-chain baseline landed) | 1-2 months | In progress |
 | P5 remaining | feature constraints/variants and robustness hardening | 1-2 months | In progress |
 | P6 remaining | AP242 semantic read depth + broader XCAF-style document semantics | 2-3 months | Partial |
 | P7 remaining | persistent history/naming semantics (mutation guard + Builder/Tool now **done**) | 1-2 months | In progress |

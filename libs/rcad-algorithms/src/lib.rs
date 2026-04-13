@@ -59,9 +59,9 @@ pub use brep_repair::{
     propagate_tolerances, propagate_tolerances_post_boolean,
 };
 pub use healing::{
-    HealingIssueStats, HealingMode, HealingOptions, HealingReport, HealingStage,
-    HealingStageReport, MakeConnectedPrepassMode, ParametricConsistencyReport,
-    analyze_and_heal, heal,
+    HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
+    HealingStage, HealingStageReport, MakeConnectedPrepassMode,
+    ParametricConsistencyReport, analyze_and_heal, heal, run_healing_operator_chain,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{

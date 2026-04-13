@@ -149,10 +149,25 @@ pub struct HealingReport {
 pub enum HealingStage {
     InitialCheck,
     PreMakeConnected,
+    OperatorChainStep,
     ParametricConsistencyPass,
     RepairPass,
     MakeConnectedPass,
     FinalCheck,
+}
+
+/// ShapeProcess-like healing operators that can be composed into a custom
+/// batch pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealingOperator {
+    /// MakeConnected-style connectivity rebuild pass.
+    MakeConnected,
+    /// SameRange/SameParameter consistency pass.
+    ParametricConsistency,
+    /// General repair pass (`repair`).
+    Repair,
+    /// Stop pipeline execution if the current shape is checker-clean.
+    StopIfClean,
 }
 
 /// Report for one SameRange/SameParameter consistency pass.
@@ -513,6 +528,133 @@ pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
     analyze_and_heal(brep, HealingOptions::default())
 }
 
+/// Execute a ShapeProcess-like custom operator chain.
+///
+/// This is a configurable alternative to [`analyze_and_heal`] for callers that
+/// need explicit control over pass ordering.
+pub fn run_healing_operator_chain(
+    brep: &BRep,
+    options: HealingOptions,
+    operators: &[HealingOperator],
+) -> (BRep, HealingReport) {
+    let initial = check(brep);
+    let initial_stats = HealingIssueStats::from_check_result(&initial);
+    let mut current = brep.clone();
+
+    let mut passes = Vec::new();
+    let mut parametric_passes = Vec::new();
+    let mut make_connected_passes = Vec::new();
+    let mut stages = vec![HealingStageReport {
+        stage: HealingStage::InitialCheck,
+        pass_index: None,
+        issue_count: initial.issues.len(),
+    }];
+
+    if matches!(options.mode, HealingMode::AnalyzeOnly) || initial.is_valid() {
+        let final_result = check(&current);
+        let final_stats = HealingIssueStats::from_check_result(&final_result);
+        stages.push(HealingStageReport {
+            stage: HealingStage::FinalCheck,
+            pass_index: None,
+            issue_count: final_result.issues.len(),
+        });
+        return (
+            current,
+            HealingReport {
+                initial,
+                final_result,
+                passes,
+                parametric_passes,
+                make_connected_passes,
+                initial_stats,
+                final_stats,
+                stages,
+            },
+        );
+    }
+
+    for (op_idx, op) in operators.iter().enumerate() {
+        match op {
+            HealingOperator::MakeConnected => {
+                let (next, mc_report) = make_connected_iterative_with_growth_cap(
+                    &current,
+                    options.make_connected_tolerance,
+                    options.make_connected_max_passes,
+                    options.make_connected_tolerance_growth,
+                    options.make_connected_tolerance_cap,
+                );
+                current = next;
+                make_connected_passes.push(mc_report);
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::MakeConnectedPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+            }
+            HealingOperator::ParametricConsistency => {
+                let (next, same_range_fixed) = fix_same_range_with_scan(&current, options.tolerance);
+                let (next, same_parameter_fixed) = fix_same_parameter_with_scan(&next, options.tolerance);
+                current = next;
+                parametric_passes.push(ParametricConsistencyReport {
+                    same_range_fixed,
+                    same_parameter_fixed,
+                });
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::ParametricConsistencyPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+            }
+            HealingOperator::Repair => {
+                let (next, rep) = repair(&current, options.tolerance);
+                current = next;
+                passes.push(rep);
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::RepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+            }
+            HealingOperator::StopIfClean => {
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::OperatorChainStep,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                if chk.is_valid() {
+                    break;
+                }
+            }
+        }
+    }
+
+    let final_result = check(&current);
+    let final_stats = HealingIssueStats::from_check_result(&final_result);
+    stages.push(HealingStageReport {
+        stage: HealingStage::FinalCheck,
+        pass_index: None,
+        issue_count: final_result.issues.len(),
+    });
+
+    (
+        current,
+        HealingReport {
+            initial,
+            final_result,
+            passes,
+            parametric_passes,
+            make_connected_passes,
+            initial_stats,
+            final_stats,
+            stages,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use glam::DVec3;
@@ -689,5 +831,51 @@ mod tests {
                 .any(|s| matches!(s.stage, HealingStage::PreMakeConnected))
         );
         assert!(!report.make_connected_passes.is_empty());
+    }
+
+    #[test]
+    fn operator_chain_runs_repair_and_parametric_passes() {
+        let mut b = unit_box();
+        b.solids[0].shells[0].faces[0].normal = DVec3::ZERO;
+        if b.geom.edge_same_parameter.len() < b.edges.len() {
+            b.geom.edge_same_parameter.resize(b.edges.len(), true);
+        }
+        b.geom.edge_same_parameter[0] = false;
+
+        let (_out, report) = run_healing_operator_chain(
+            &b,
+            HealingOptions::default(),
+            &[
+                HealingOperator::ParametricConsistency,
+                HealingOperator::Repair,
+                HealingOperator::StopIfClean,
+            ],
+        );
+
+        assert!(!report.parametric_passes.is_empty());
+        assert!(!report.passes.is_empty());
+        assert!(
+            report.stages.iter().any(|s| matches!(s.stage, HealingStage::OperatorChainStep))
+        );
+    }
+
+    #[test]
+    fn operator_chain_stop_if_clean_short_circuits_following_steps() {
+        let mut b = unit_box();
+        b.solids[0].shells[0].faces[0].normal = DVec3::ZERO;
+
+        let (_out, report) = run_healing_operator_chain(
+            &b,
+            HealingOptions::default(),
+            &[
+                HealingOperator::Repair,
+                HealingOperator::StopIfClean,
+                HealingOperator::MakeConnected,
+            ],
+        );
+
+        // Repair should clean this case; stop-if-clean should prevent make-connected.
+        assert!(report.make_connected_passes.is_empty());
+        assert!(report.final_result.is_valid());
     }
 }
