@@ -424,7 +424,7 @@ Assuming 1 developer working full-time on kernel work:
 | Task | Priority | Status |
 |---|---|---|
 | AP242 full read (import) | P6 - High | Not started |
-| GDT / DimTol read and write | P6 - Medium | **Partial (DIMENSIONAL_LOCATION / DIMENSIONAL_SIZE / GEOMETRIC_TOLERANCE baseline + DATUM read/write metadata support)** |
+| GDT / DimTol read and write | P6 - Medium | **Partial (DIMENSIONAL_LOCATION / DIMENSIONAL_SIZE / GEOMETRIC_TOLERANCE baseline + DATUM + GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE read/write metadata support)** |
 | ~~Material / layer read and write~~ | ~~P6 - Low~~ | **✅ Done (P6)** |
 | STEP general property export (arbitrary metadata) | P6 - Low | **Partial (`GENERAL_PROPERTY` + `PROPERTY_DEFINITION` baseline; deeper chains pending)** |
 | Stream-based read/write (DE_Wrapper style) | P6 - Low | **Done (`StepReader::parse_reader*` + `StepWriter::write_to*` stream APIs over `Read`/`Write`, with stream round-trip tests)** |

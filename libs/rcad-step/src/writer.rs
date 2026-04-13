@@ -2,6 +2,7 @@ use rcad_kernel::appearance::{Color, StepColor};
 use crate::StepGeneralProperty;
 use crate::{
     StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+    StepGeometricToleranceWithDatumReference,
     StepPropertyDefinitionRepr,
 };
 
@@ -35,6 +36,7 @@ pub struct StepAp242Metadata {
     pub dimensional_locations: Vec<StepDimensionalLocation>,
     pub dimensional_sizes: Vec<StepDimensionalSize>,
     pub geometric_tolerances: Vec<StepGeometricTolerance>,
+    pub geometric_tolerances_with_datum_references: Vec<StepGeometricToleranceWithDatumReference>,
     pub datums: Vec<StepDatum>,
 }
 
@@ -1759,6 +1761,17 @@ impl Part21Writer {
                 name, desc, val, shape
             ));
         }
+        for tol in &metadata.geometric_tolerances_with_datum_references {
+            let name = opt_step_string(tol.name.as_deref());
+            let desc = opt_step_string(tol.description.as_deref());
+            let val = opt_ref_token(tol.value_entity_id);
+            let shape = opt_ref_token(tol.shape_aspect_id);
+            let datum = opt_ref_token(tol.datum_system_id);
+            self.push(format!(
+                "GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE({},{},{},{},{})",
+                name, desc, val, shape, datum
+            ));
+        }
         for datum in &metadata.datums {
             let name = opt_step_string(datum.name.as_deref());
             let desc = opt_step_string(datum.description.as_deref());
@@ -1983,6 +1996,7 @@ mod tests {
     use super::*;
     use crate::{
         StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+        StepGeometricToleranceWithDatumReference,
         StepPropertyDefinitionRepr, StepReader,
     };
     use glam::DVec3;
@@ -2070,6 +2084,16 @@ mod tests {
                 value_entity_id: Some(50),
                 shape_aspect_id: Some(60),
             }],
+            geometric_tolerances_with_datum_references: vec![
+                StepGeometricToleranceWithDatumReference {
+                    entity_id: 0,
+                    name: Some("position".into()),
+                    description: Some("gtol_datum".into()),
+                    value_entity_id: Some(51),
+                    shape_aspect_id: Some(61),
+                    datum_system_id: Some(71),
+                },
+            ],
             datums: vec![StepDatum {
                 entity_id: 0,
                 name: Some("A".into()),
@@ -2092,6 +2116,9 @@ mod tests {
         assert!(step.contains("DIMENSIONAL_LOCATION('d_loc','desc',#30,#31)"));
         assert!(step.contains("DIMENSIONAL_SIZE('d_size',$,#40)"));
         assert!(step.contains("GEOMETRIC_TOLERANCE('flatness','gtol',#50,#60)"));
+        assert!(step.contains(
+            "GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE('position','gtol_datum',#51,#61,#71)"
+        ));
         assert!(step.contains("DATUM('A','primary',#70)"));
     }
 
@@ -2125,6 +2152,16 @@ mod tests {
                 value_entity_id: Some(66),
                 shape_aspect_id: Some(77),
             }],
+            geometric_tolerances_with_datum_references: vec![
+                StepGeometricToleranceWithDatumReference {
+                    entity_id: 0,
+                    name: Some("perpendicularity".into()),
+                    description: Some("tol_datum".into()),
+                    value_entity_id: Some(67),
+                    shape_aspect_id: Some(78),
+                    datum_system_id: Some(89),
+                },
+            ],
             datums: vec![StepDatum {
                 entity_id: 0,
                 name: Some("B".into()),
@@ -2150,6 +2187,7 @@ mod tests {
         assert_eq!(doc_meta.dimensional_locations.len(), 1);
         assert_eq!(doc_meta.dimensional_sizes.len(), 1);
         assert_eq!(doc_meta.geometric_tolerances.len(), 1);
+        assert_eq!(doc_meta.geometric_tolerances_with_datum_references.len(), 1);
         assert_eq!(doc_meta.datums.len(), 1);
     }
 

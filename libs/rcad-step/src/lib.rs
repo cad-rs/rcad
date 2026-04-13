@@ -269,6 +269,8 @@ pub struct StepDocumentMetadata {
     pub dimensional_sizes: Vec<StepDimensionalSize>,
     /// GDT geometric tolerances (GEOMETRIC_TOLERANCE entities).
     pub geometric_tolerances: Vec<StepGeometricTolerance>,
+    /// GDT geometric tolerances with datum references.
+    pub geometric_tolerances_with_datum_references: Vec<StepGeometricToleranceWithDatumReference>,
     /// DATUM entries (AP242 datum system baseline).
     pub datums: Vec<StepDatum>,
 }
@@ -308,6 +310,18 @@ pub struct StepGeometricTolerance {
     pub description: Option<String>,
     pub value_entity_id: Option<u64>,
     pub shape_aspect_id: Option<u64>,
+}
+
+/// A geometric tolerance entry referencing a datum system
+/// (AP242 GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepGeometricToleranceWithDatumReference {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub value_entity_id: Option<u64>,
+    pub shape_aspect_id: Option<u64>,
+    pub datum_system_id: Option<u64>,
 }
 
 /// A datum entry (AP242 DATUM).
@@ -592,6 +606,41 @@ fn extract_geometric_tolerances(content: &str) -> Vec<StepGeometricTolerance> {
     out
 }
 
+fn extract_geometric_tolerances_with_datum_references(
+    content: &str,
+) -> Vec<StepGeometricToleranceWithDatumReference> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        out.push(StepGeometricToleranceWithDatumReference {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            datum_system_id,
+        });
+    }
+    out
+}
+
 fn extract_datums(content: &str) -> Vec<StepDatum> {
     let Ok(data) = extract_data_section(content) else {
         return Vec::new();
@@ -740,6 +789,8 @@ impl StepReader {
             dimensional_locations: extract_dimensional_locations(content),
             dimensional_sizes: extract_dimensional_sizes(content),
             geometric_tolerances: extract_geometric_tolerances(content),
+            geometric_tolerances_with_datum_references:
+                extract_geometric_tolerances_with_datum_references(content),
             datums: extract_datums(content),
         };
 
@@ -4130,6 +4181,18 @@ END-ISO-10303-21;
     }
 
     #[test]
+    fn extract_geometric_tolerance_with_datum_reference_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#9=GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE('positional','',#50,#60,#70);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_geometric_tolerances_with_datum_references(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 9);
+        assert_eq!(tols[0].name.as_deref(), Some("positional"));
+        assert_eq!(tols[0].value_entity_id, Some(50));
+        assert_eq!(tols[0].shape_aspect_id, Some(60));
+        assert_eq!(tols[0].datum_system_id, Some(70));
+    }
+
+    #[test]
     fn parse_reader_matches_parse_string() {
         let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
         let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
@@ -4156,6 +4219,10 @@ END-ISO-10303-21;
         assert_eq!(a_md.dimensional_locations.len(), b_md.dimensional_locations.len());
         assert_eq!(a_md.dimensional_sizes.len(), b_md.dimensional_sizes.len());
         assert_eq!(a_md.geometric_tolerances.len(), b_md.geometric_tolerances.len());
+        assert_eq!(
+            a_md.geometric_tolerances_with_datum_references.len(),
+            b_md.geometric_tolerances_with_datum_references.len()
+        );
         assert_eq!(a_md.datums.len(), b_md.datums.len());
     }
 
