@@ -60,7 +60,8 @@ pub use brep_repair::{
 };
 pub use healing::{
     HealingIssueStats, HealingMode, HealingOptions, HealingReport, HealingStage,
-    HealingStageReport, MakeConnectedPrepassMode, analyze_and_heal, heal,
+    HealingStageReport, MakeConnectedPrepassMode, ParametricConsistencyReport,
+    analyze_and_heal, heal,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{

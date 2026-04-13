@@ -5,8 +5,11 @@
 
 use rcad_kernel::BRep;
 
-use crate::brep_check::{CheckIssue, CheckResult, check};
-use crate::brep_repair::{MakeConnectedReport, RepairReport, make_connected_iterative_with_growth_cap, repair};
+use crate::brep_check::{CheckIssue, CheckResult, check, diagnose_same_parameter, diagnose_same_range};
+use crate::brep_repair::{
+    MakeConnectedReport, RepairReport, fix_same_parameter_with_scan,
+    fix_same_range_with_scan, make_connected_iterative_with_growth_cap, repair,
+};
 use crate::tolerance::TOLERANCE_ABS;
 
 /// Healing execution mode.
@@ -122,6 +125,8 @@ pub struct HealingReport {
     pub final_result: CheckResult,
     /// Per-pass repair reports.
     pub passes: Vec<RepairReport>,
+    /// Parametric consistency passes (SameRange/SameParameter scan+fix).
+    pub parametric_passes: Vec<ParametricConsistencyReport>,
     /// MakeConnected fallback reports executed when repair stalls.
     pub make_connected_passes: Vec<MakeConnectedReport>,
     /// Structured issue counters before healing.
@@ -137,9 +142,17 @@ pub struct HealingReport {
 pub enum HealingStage {
     InitialCheck,
     PreMakeConnected,
+    ParametricConsistencyPass,
     RepairPass,
     MakeConnectedPass,
     FinalCheck,
+}
+
+/// Report for one SameRange/SameParameter consistency pass.
+#[derive(Debug, Clone, Default)]
+pub struct ParametricConsistencyReport {
+    pub same_range_fixed: usize,
+    pub same_parameter_fixed: usize,
 }
 
 /// Per-stage issue metrics.
@@ -191,6 +204,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 initial: initial.clone(),
                 final_result: initial,
                 passes: Vec::new(),
+                parametric_passes: Vec::new(),
                 make_connected_passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
@@ -210,6 +224,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 initial: initial.clone(),
                 final_result: initial,
                 passes: Vec::new(),
+                parametric_passes: Vec::new(),
                 make_connected_passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
@@ -224,6 +239,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
 
     let mut current = brep.clone();
     let mut passes = Vec::new();
+    let mut parametric_passes = Vec::new();
     let mut make_connected_passes = Vec::new();
     let mut stages = vec![HealingStageReport {
         stage: HealingStage::InitialCheck,
@@ -268,6 +284,46 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                     initial,
                     final_result: chk,
                     passes,
+                    parametric_passes,
+                    make_connected_passes,
+                    initial_stats,
+                    final_stats,
+                    stages,
+                },
+            );
+        }
+    }
+
+    if has_parametric_issues(&current, options.tolerance) {
+        let (next, same_range_fixed) = fix_same_range_with_scan(&current, options.tolerance);
+        let (next, same_parameter_fixed) =
+            fix_same_parameter_with_scan(&next, options.tolerance);
+        current = next;
+        parametric_passes.push(ParametricConsistencyReport {
+            same_range_fixed,
+            same_parameter_fixed,
+        });
+
+        let chk = check(&current);
+        stages.push(HealingStageReport {
+            stage: HealingStage::ParametricConsistencyPass,
+            pass_index: None,
+            issue_count: chk.issues.len(),
+        });
+        if chk.is_valid() {
+            let final_stats = HealingIssueStats::from_check_result(&chk);
+            stages.push(HealingStageReport {
+                stage: HealingStage::FinalCheck,
+                pass_index: None,
+                issue_count: chk.issues.len(),
+            });
+            return (
+                current,
+                HealingReport {
+                    initial,
+                    final_result: chk,
+                    passes,
+                    parametric_passes,
                     make_connected_passes,
                     initial_stats,
                     final_stats,
@@ -307,6 +363,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                     initial,
                     final_result: chk,
                     passes,
+                    parametric_passes,
                     make_connected_passes,
                     initial_stats,
                     final_stats,
@@ -347,6 +404,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                         initial,
                         final_result: chk,
                         passes,
+                        parametric_passes,
                         make_connected_passes,
                         initial_stats,
                         final_stats,
@@ -370,6 +428,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                     initial,
                     final_result: chk,
                     passes,
+                    parametric_passes,
                     make_connected_passes,
                     initial_stats,
                     final_stats,
@@ -392,6 +451,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             initial,
             final_result,
             passes,
+            parametric_passes,
             make_connected_passes,
             initial_stats,
             final_stats,
@@ -410,6 +470,11 @@ fn has_connectivity_stress_issues(result: &CheckResult) -> bool {
                 | CheckIssue::GeometricSelfIntersection { .. }
         )
     })
+}
+
+fn has_parametric_issues(brep: &BRep, tolerance: f64) -> bool {
+    !diagnose_same_range(brep, tolerance).is_clean()
+        || !diagnose_same_parameter(brep, tolerance).is_clean()
 }
 
 /// Convenience wrapper using default options.
@@ -442,6 +507,7 @@ mod tests {
         assert!(report.initial.is_valid());
         assert!(report.final_result.is_valid());
         assert!(report.passes.is_empty());
+        assert!(report.parametric_passes.is_empty());
         assert!(report.make_connected_passes.is_empty());
         assert!(!report.stages.is_empty());
         assert_eq!(out.vertices.len(), b.vertices.len());
@@ -484,6 +550,7 @@ mod tests {
         assert!(report.initial_issue_count() >= 1);
         assert_eq!(report.initial_issue_count(), report.final_issue_count());
         assert!(report.passes.is_empty());
+        assert!(report.parametric_passes.is_empty());
         assert!(report.make_connected_passes.is_empty());
         assert_eq!(out.solids[0].shells[0].faces[0].normal, DVec3::ZERO);
     }
@@ -522,6 +589,28 @@ mod tests {
             .count();
         assert_eq!(mc_stage_count, report.make_connected_passes.len());
         assert!(report.make_connected_passes.len() <= 1);
+    }
+
+    #[test]
+    fn healing_parametric_consistency_pass_is_reported_when_enabled_by_data() {
+        let mut b = unit_box();
+
+        // Make one edge obviously suspect for SameRange/SameParameter scans.
+        if b.geom.edge_same_parameter.len() < b.edges.len() {
+            b.geom.edge_same_parameter.resize(b.edges.len(), true);
+        }
+        b.geom.edge_same_parameter[0] = false;
+        if b.geom.edge_curve_range.len() < b.edges.len() {
+            b.geom.edge_curve_range.resize(b.edges.len(), Some([0.0, 1.0]));
+        }
+        b.geom.edge_curve_range[0] = Some([0.0, 1.0]);
+
+        let (_out, report) = analyze_and_heal(&b, HealingOptions::default());
+        let saw_param_stage = report
+            .stages
+            .iter()
+            .any(|s| matches!(s.stage, HealingStage::ParametricConsistencyPass));
+        assert_eq!(saw_param_stage, !report.parametric_passes.is_empty());
     }
 
     #[test]
