@@ -21,6 +21,7 @@ pub enum StepProtocol {
 }
 use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
 use std::collections::{BTreeSet, HashMap};
+use std::io::Write;
 
 pub struct ExportSelection<'a> {
     pub selected_faces: &'a [usize],
@@ -116,6 +117,53 @@ impl StepWriter {
             None,
         );
         writer.finish()
+    }
+
+    /// Stream-based export variant that writes UTF-8 STEP content into any sink.
+    pub fn write_to<W: Write>(
+        sink: &mut W,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+    ) -> std::io::Result<()> {
+        let step = Self::write_string(brep, selection);
+        sink.write_all(step.as_bytes())
+    }
+
+    /// Stream-based export with explicit protocol selection.
+    pub fn write_to_with_protocol<W: Write>(
+        sink: &mut W,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        protocol: StepProtocol,
+    ) -> std::io::Result<()> {
+        let step = Self::write_string_with_protocol(brep, selection, protocol);
+        sink.write_all(step.as_bytes())
+    }
+
+    /// Stream-based export with generic metadata properties.
+    pub fn write_to_with_properties<W: Write>(
+        sink: &mut W,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        properties: &[StepGeneralProperty],
+        protocol: StepProtocol,
+    ) -> std::io::Result<()> {
+        let step = Self::write_string_with_properties(brep, selection, properties, protocol);
+        sink.write_all(step.as_bytes())
+    }
+
+    /// Stream-based export with AP242 metadata entities.
+    pub fn write_to_with_ap242_metadata<W: Write>(
+        sink: &mut W,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        properties: &[StepGeneralProperty],
+        metadata: &StepAp242Metadata,
+        protocol: StepProtocol,
+    ) -> std::io::Result<()> {
+        let step =
+            Self::write_string_with_ap242_metadata(brep, selection, properties, metadata, protocol);
+        sink.write_all(step.as_bytes())
     }
 }
 
@@ -1932,6 +1980,7 @@ mod tests {
     };
     use glam::DVec3;
     use rcad_modeling::make_box_brep;
+    use std::io::Cursor;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
 
     #[test]
@@ -2098,6 +2147,28 @@ mod tests {
         let reparsed = StepReader::parse_string(&step).expect("edge-only export should parse");
         assert!(reparsed.solids.is_empty());
         assert_eq!(reparsed.edges.len(), 2);
+    }
+
+    #[test]
+    fn stream_write_then_stream_read_roundtrip() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
+            .expect("test box should be valid");
+
+        let mut buf = Vec::<u8>::new();
+        StepWriter::write_to(
+            &mut buf,
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        )
+        .expect("stream write should succeed");
+
+        let reparsed =
+            StepReader::parse_reader(Cursor::new(buf)).expect("stream read should parse");
+        assert!(!reparsed.edges.is_empty());
+        assert!(!reparsed.solids.is_empty());
     }
 
     #[test]

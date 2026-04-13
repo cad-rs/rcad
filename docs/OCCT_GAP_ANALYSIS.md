@@ -427,7 +427,7 @@ Assuming 1 developer working full-time on kernel work:
 | GDT / DimTol read and write | P6 - Medium | Not started |
 | ~~Material / layer read and write~~ | ~~P6 - Low~~ | **✅ Done (P6)** |
 | STEP general property export (arbitrary metadata) | P6 - Low | **Partial (`GENERAL_PROPERTY` + `PROPERTY_DEFINITION` baseline; deeper chains pending)** |
-| Stream-based read/write (DE_Wrapper style) | P6 - Low | Not started |
+| Stream-based read/write (DE_Wrapper style) | P6 - Low | **Done (`StepReader::parse_reader*` + `StepWriter::write_to*` stream APIs over `Read`/`Write`, with stream round-trip tests)** |
 | Kinematics read | P6 - Low | Not started |
 | Import healing pipeline integration | P4 - Medium | **Done (staged healing report + JSON wiring)** |
 | Stronger PCurve / tolerance validation on export | P4 - Medium | **Done (`validate_export_readiness` in rcad-step: PCurve index-bounds + cardinality + missing-PCurve + tolerance-floor checks; `ExportReadinessReport` with `summary()`)** |

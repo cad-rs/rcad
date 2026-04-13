@@ -8,6 +8,7 @@ use rcad_kernel::{
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::Read;
 use std::path::Path;
 
 pub mod assembly;
@@ -612,6 +613,52 @@ fn extract_nth_string_arg(args: &str, n: usize) -> Option<String> {
 }
 
 impl StepReader {
+    /// Parse STEP content from any UTF-8 reader.
+    ///
+    /// This provides DE_Wrapper-style stream input without requiring a temp file.
+    pub fn parse_reader<R: Read>(mut reader: R) -> Result<BRep, StepError> {
+        let mut content = String::new();
+        reader
+            .read_to_string(&mut content)
+            .map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string(&content)
+    }
+
+    /// Parse STEP content from any UTF-8 reader and extract document metadata.
+    pub fn parse_reader_with_metadata<R: Read>(
+        mut reader: R,
+    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+        let mut content = String::new();
+        reader
+            .read_to_string(&mut content)
+            .map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_metadata(&content)
+    }
+
+    /// Parse STEP content from a reader and run healing pipeline.
+    pub fn parse_reader_with_healing<R: Read>(
+        mut reader: R,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport), StepError> {
+        let mut content = String::new();
+        reader
+            .read_to_string(&mut content)
+            .map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_healing(&content, options)
+    }
+
+    /// Parse STEP content from a reader, run healing, and produce JSON diagnostics.
+    pub fn parse_reader_with_healing_report_json<R: Read>(
+        mut reader: R,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport, String), StepError> {
+        let mut content = String::new();
+        reader
+            .read_to_string(&mut content)
+            .map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_healing_report_json(&content, options)
+    }
+
     pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string(&content)
@@ -3692,6 +3739,7 @@ pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
 mod tests {
     use super::*;
     use rcad_algorithms::HealingMode;
+    use std::io::Cursor;
 
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
     const BOX_STEP: &str = include_str!("../../../assets/box.step");
@@ -4027,6 +4075,50 @@ END-ISO-10303-21;
         assert_eq!(tols[0].name.as_deref(), Some("flatness"));
         assert_eq!(tols[0].value_entity_id, Some(50));
         assert_eq!(tols[0].shape_aspect_id, Some(60));
+    }
+
+    #[test]
+    fn parse_reader_matches_parse_string() {
+        let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
+        let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
+            .expect("box.step stream parse should succeed");
+        assert_eq!(a.vertices.len(), b.vertices.len());
+        assert_eq!(a.edges.len(), b.edges.len());
+        assert_eq!(a.solids.len(), b.solids.len());
+    }
+
+    #[test]
+    fn parse_reader_with_metadata_matches_string_variant() {
+        let (_a_brep, a_md) =
+            StepReader::parse_string_with_metadata(BOX_STEP).expect("string metadata parse should succeed");
+        let (_b_brep, b_md) = StepReader::parse_reader_with_metadata(Cursor::new(BOX_STEP.as_bytes()))
+            .expect("stream metadata parse should succeed");
+
+        assert_eq!(a_md.file_schema, b_md.file_schema);
+        assert_eq!(a_md.protocol_hint as u8, b_md.protocol_hint as u8);
+        assert_eq!(a_md.materials.len(), b_md.materials.len());
+        assert_eq!(a_md.layers.len(), b_md.layers.len());
+        assert_eq!(a_md.general_properties.len(), b_md.general_properties.len());
+        assert_eq!(a_md.property_definitions.len(), b_md.property_definitions.len());
+        assert_eq!(a_md.property_definition_representations.len(), b_md.property_definition_representations.len());
+        assert_eq!(a_md.dimensional_locations.len(), b_md.dimensional_locations.len());
+        assert_eq!(a_md.dimensional_sizes.len(), b_md.dimensional_sizes.len());
+        assert_eq!(a_md.geometric_tolerances.len(), b_md.geometric_tolerances.len());
+    }
+
+    #[test]
+    fn parse_reader_with_healing_report_json_returns_schema() {
+        let (_brep, _report, json) = StepReader::parse_reader_with_healing_report_json(
+            Cursor::new(HFSS_STEP.as_bytes()),
+            HealingOptions {
+                mode: HealingMode::AnalyzeAndRepair,
+                tolerance: 1e-6,
+                max_passes: 2,
+            },
+        )
+        .expect("stream healing parse should succeed");
+
+        assert!(json.contains("\"schema\": \"step.import.healing.v1\""));
     }
 
     // ── validate_export_readiness tests ──────────────────────────────────────
