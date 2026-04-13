@@ -119,7 +119,7 @@ pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{Curve2dEval, CurveEval, SurfaceEval, any_perpendicular};
-pub use geom::{CircularHelix3, Hyperbola3, Parabola3};
+pub use geom::{CircularHelix3, Hyperbola3, Parabola3, SineWave3};
 pub use geom::{OffsetCurve3, OffsetSurface};
 pub use properties::{InertiaTensor, centroid, inertia_tensor, surface_area, volume};
 pub use tolerance::{
@@ -1076,6 +1076,11 @@ impl BRep {
                     h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
                     h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
                 }
+                Curve3::SineWave(s) => {
+                    s.origin = mat.transform_point3(s.origin);
+                    s.baseline_dir = mat.transform_vector3(s.baseline_dir).normalize_or_zero();
+                    s.amplitude_dir = mat.transform_vector3(s.amplitude_dir).normalize_or_zero();
+                }
             }
         }
         for c in &mut self.geom.curves {
@@ -1189,6 +1194,11 @@ impl BRep {
                     h.origin = mat.transform_point3(h.origin);
                     h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
                     h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
+                }
+                geom::Curve3::SineWave(s) => {
+                    s.origin = mat.transform_point3(s.origin);
+                    s.baseline_dir = mat.transform_vector3(s.baseline_dir).normalize_or_zero();
+                    s.amplitude_dir = mat.transform_vector3(s.amplitude_dir).normalize_or_zero();
                 }
             }
         }

@@ -103,6 +103,26 @@ pub struct CircularHelix3 {
     pub pitch: f64,
 }
 
+/// A 3D sine-wave curve traveling along a baseline direction with amplitude
+/// in a perpendicular `amplitude_dir`.
+///
+/// Parameterization:
+/// `P(t) = origin + t * baseline_dir + amplitude * sin(frequency * t + phase) * amplitude_dir`
+///
+/// `baseline_dir` and `amplitude_dir` should be orthogonal unit vectors.
+/// Analogous to OCCT `GeomEval_SineWaveCurve`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SineWave3 {
+    pub origin: Point3,
+    /// Unit direction along which the parameter `t` advances.
+    pub baseline_dir: Vec3,
+    /// Unit direction of the sine-wave displacement (orthogonal to `baseline_dir`).
+    pub amplitude_dir: Vec3,
+    pub amplitude: f64,
+    pub frequency: f64,
+    pub phase: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
@@ -114,6 +134,7 @@ pub enum Curve3 {
     Hyperbola(Hyperbola3), // Phase S
     Parabola(Parabola3),   // Phase S
     CircularHelix(CircularHelix3), // Phase P7
+    SineWave(SineWave3),   // Phase P7
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -433,6 +454,7 @@ pub enum Curve2d {
     CircleInvolute(CircleInvolute2d), // Phase P7
     ArchimedeanSpiral(ArchimedeanSpiral2d), // Phase P7
     LogarithmicSpiral(LogarithmicSpiral2d), // Phase P7
+    SineWave(SineWave2d), // Phase P7
     BSpline(BSplineCurve2),
     Bezier(BezierCurve2), // Phase M
 }
@@ -593,6 +615,23 @@ impl CurveEval for CircularHelix3 {
     }
 }
 
+impl CurveEval for SineWave3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        self.origin
+            + t * self.baseline_dir
+            + self.amplitude * (self.frequency * t + self.phase).sin() * self.amplitude_dir
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let v = self.baseline_dir
+            + self.amplitude * self.frequency * (self.frequency * t + self.phase).cos()
+                * self.amplitude_dir;
+        v.normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [-1e4, 1e4]
+    }
+}
+
 impl CurveEval for Curve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         match self {
@@ -605,6 +644,7 @@ impl CurveEval for Curve3 {
             Curve3::Hyperbola(c) => c.point_at(t),
             Curve3::Parabola(c) => c.point_at(t),
             Curve3::CircularHelix(c) => c.point_at(t),
+            Curve3::SineWave(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -618,6 +658,7 @@ impl CurveEval for Curve3 {
             Curve3::Hyperbola(c) => c.tangent_at(t),
             Curve3::Parabola(c) => c.tangent_at(t),
             Curve3::CircularHelix(c) => c.tangent_at(t),
+            Curve3::SineWave(c) => c.tangent_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -631,6 +672,7 @@ impl CurveEval for Curve3 {
             Curve3::Hyperbola(c) => c.default_domain(),
             Curve3::Parabola(c) => c.default_domain(),
             Curve3::CircularHelix(c) => c.default_domain(),
+            Curve3::SineWave(c) => c.default_domain(),
         }
     }
 }
@@ -1353,6 +1395,7 @@ impl Curve2dEval for Curve2d {
             Curve2d::CircleInvolute(c) => c.point_at(t),
             Curve2d::ArchimedeanSpiral(c) => c.point_at(t),
             Curve2d::LogarithmicSpiral(c) => c.point_at(t),
+            Curve2d::SineWave(c) => c.point_at(t),
             Curve2d::BSpline(c) => c.point_at(t),
             Curve2d::Bezier(c) => c.point_at(t),
         }
@@ -1413,6 +1456,57 @@ mod tests {
         assert!((p0.x - 0.0).abs() < 1e-12);
         assert!((p0.y - 0.0).abs() < 1e-12);
         assert!((p90.y - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn curve2d_sine_wave_variant_dispatches_evaluator() {
+        let c = Curve2d::SineWave(SineWave2d {
+            amplitude: 1.5,
+            frequency: 2.0,
+            phase: 0.25,
+        });
+        let t = 0.3;
+        let p = c.point_at(t);
+        let expected_y = 1.5 * (2.0 * t + 0.25).sin();
+        assert!((p.x - t).abs() < 1e-12);
+        assert!((p.y - expected_y).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sine_wave3_origin_phase_zero_evaluates_at_zero_offset() {
+        let c = SineWave3 {
+            origin: DVec3::ZERO,
+            baseline_dir: DVec3::X,
+            amplitude_dir: DVec3::Y,
+            amplitude: 3.0,
+            frequency: 1.0,
+            phase: 0.0,
+        };
+        // At t=0, sin(0)=0 → point should be at origin.
+        let p = c.point_at(0.0);
+        assert!(p.length() < 1e-12, "phase-zero at t=0 should be at origin: {p:?}");
+        // At t=pi/2, sin(pi/2)=1 → y should equal amplitude.
+        let p2 = c.point_at(std::f64::consts::FRAC_PI_2);
+        assert!((p2.y - 3.0).abs() < 1e-9, "y at t=pi/2 should be amplitude=3: {p2:?}");
+    }
+
+    #[test]
+    fn curve3_sine_wave_variant_dispatches_evaluator() {
+        let c = Curve3::SineWave(SineWave3 {
+            origin: DVec3::ZERO,
+            baseline_dir: DVec3::X,
+            amplitude_dir: DVec3::Y,
+            amplitude: 1.0,
+            frequency: 2.0,
+            phase: 0.0,
+        });
+        let t = 0.5;
+        let p = c.point_at(t);
+        let expected = DVec3::new(0.5, (2.0_f64 * t).sin(), 0.0);
+        assert!((p - expected).length() < 1e-12);
+        // Tangent should be non-zero
+        let tan = c.tangent_at(t);
+        assert!(tan.length() > 0.9, "tangent should be roughly unit-length: {tan:?}");
     }
 }
 

@@ -3,7 +3,7 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_modeling::make_box_brep;
 use rcad_render::{
-    Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
+    Camera, Mesh, SelectionMode, SelectionState, TessellationOptions, Tessellator, WgpuRenderer,
     build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
 use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
@@ -31,7 +31,7 @@ impl RCadApp {
             rcad_step::StepReader::parse_string(SAMPLE_STEP)
         };
 
-        let brep = match parse_result {
+        let mut brep = match parse_result {
             Ok(brep) => {
                 eprintln!(
                     "[rcad-step][egui] parsed STEP: vertices={}, edges={}, solids={}",
@@ -47,7 +47,8 @@ impl RCadApp {
                     .expect("default fallback box should be valid")
             }
         };
-        let mesh = Tessellator::tessellate(&brep);
+        let tess_opts = TessellationOptions::default();
+        let mesh = Tessellator::tessellate_with_options(&mut brep, &tess_opts);
 
         // Initialize wgpu renderer
         let mut has_renderer = false;
@@ -558,7 +559,8 @@ impl RCadApp {
             viewport,
         ) {
             append_brep(&mut self.brep, new_brep);
-            self.mesh = Tessellator::tessellate(&self.brep);
+            let tess_opts = TessellationOptions::default();
+            self.mesh = Tessellator::tessellate_with_options(&mut self.brep, &tess_opts);
         }
     }
 
@@ -575,7 +577,8 @@ impl RCadApp {
     fn commit_active_command(&mut self) {
         if let Some(new_brep) = self.creation.confirm_active_command(&self.camera) {
             append_brep(&mut self.brep, new_brep);
-            self.mesh = Tessellator::tessellate(&self.brep);
+            let tess_opts = TessellationOptions::default();
+            self.mesh = Tessellator::tessellate_with_options(&mut self.brep, &tess_opts);
         }
     }
 }

@@ -1862,16 +1862,26 @@ fn build_face(
     }
     dedup_consecutive(&mut polygon);
 
-    let triangles = if polygon.len() >= 3 {
-        triangulate_fan(&polygon)
-    } else if sampled_loop_points.len() >= 3
-        && bound_ids
-            .surface
-            .map(|sid| parsed.planes.contains_key(&sid))
-            .unwrap_or(true)
-    {
+    let face_surface = bound_ids.surface;
+    let is_planar_face = face_surface
+        .map(|sid| parsed.planes.contains_key(&sid))
+        .unwrap_or(true);
+
+    let triangles = if sampled_loop_points.len() >= 3 && is_planar_face {
         triangulate_point_loop(vertices, &sampled_loop_points)
-    } else if let Some(surface_ref) = bound_ids.surface {
+    } else if let Some(surface_ref) = face_surface
+        && !parsed.planes.contains_key(&surface_ref)
+    {
+        triangulate_surface_fallback(
+            parsed,
+            surface_ref,
+            vertices,
+            &face_vertex_indices,
+            has_seam,
+        )
+    } else if polygon.len() >= 3 {
+        triangulate_fan(&polygon)
+    } else if let Some(surface_ref) = face_surface {
         triangulate_surface_fallback(
             parsed,
             surface_ref,
@@ -1992,15 +2002,21 @@ fn sample_oriented_edge_points(
     let end = vertex_point_from_ref(parsed, end_id)?;
 
     let mut points = if let Some(curve_id) = curve_ref {
-        if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&curve_id) {
+        let actual_curve_id = if let Some(&(inner_ref, _, _)) = parsed.surface_curves.get(&curve_id) {
+            inner_ref
+        } else {
+            curve_id
+        };
+
+        if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&actual_curve_id) {
             sample_trimmed_curve_geom(parsed, underlying_ref, t0, t1)
-        } else if let Some((placement_ref, radius)) = parsed.circles.get(&curve_id) {
+        } else if let Some((placement_ref, radius)) = parsed.circles.get(&actual_curve_id) {
             sample_circle_edge(parsed, *placement_ref, *radius, start, end)?
-        } else if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_id) {
+        } else if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&actual_curve_id) {
             sample_ellipse_edge(parsed, *placement_ref, *major, *minor, start, end)?
-        } else if let Some(points) = sample_spline_curve(parsed, curve_id, None) {
+        } else if let Some(points) = sample_spline_curve(parsed, actual_curve_id, None) {
             points
-        } else if let Some(control_refs) = parsed.b_spline_curves.get(&curve_id) {
+        } else if let Some(control_refs) = parsed.b_spline_curves.get(&actual_curve_id) {
             sample_bspline_polyline(parsed, control_refs)
         } else {
             vec![start, end]

@@ -60,7 +60,7 @@ pub fn curve_to_bspline(curve: &Curve3, n_samples: usize) -> BSplineCurve3 {
         Curve3::Ellipse(e) => ellipse_to_bspline(e),
         Curve3::BSpline(b) => b.clone(),
         Curve3::Bezier(b) => bezier_curve_to_bspline(b),
-        Curve3::Offset(_) | Curve3::Hyperbola(_) | Curve3::Parabola(_) | Curve3::CircularHelix(_) => {
+        Curve3::Offset(_) | Curve3::Hyperbola(_) | Curve3::Parabola(_) | Curve3::CircularHelix(_) | Curve3::SineWave(_) => {
             sample_curve_to_bspline(curve, n_samples)
         }
     }

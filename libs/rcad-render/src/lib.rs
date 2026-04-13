@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, BRepGraph, seam_edge_candidates};
+use rcad_kernel::{BRep, BRepGraph, Curve3, CurveEval, any_perpendicular, seam_edge_candidates};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
@@ -333,18 +333,30 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         return None;
     }
 
-    let mut indices = Vec::with_capacity(edge_indices.len() * 2);
-    for &edge_index in edge_indices {
-        let edge = brep.edges.get(edge_index)?;
-        indices.push(edge.start as u32);
-        indices.push(edge.end as u32);
-    }
-
-    let vertices: Vec<[f32; 3]> = brep
+    let mut vertices: Vec<[f32; 3]> = brep
         .vertices
         .iter()
         .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
         .collect();
+    let mut dummy_normals: Vec<[f32; 3]> = vec![[0.0; 3]; vertices.len()];
+    let mut indices: Vec<u32> = Vec::with_capacity(edge_indices.len() * 2);
+    for &edge_index in edge_indices {
+        let edge = brep.edges.get(edge_index)?;
+        if let Some(pts) = sample_edge_curve_points(brep, edge_index) {
+            let base = vertices.len() as u32;
+            let n = pts.len();
+            dummy_normals.extend(std::iter::repeat([0.0f32; 3]).take(n));
+            for i in 0..(n - 1) as u32 {
+                indices.push(base + i);
+                indices.push(base + i + 1);
+            }
+            vertices.extend_from_slice(&pts);
+        } else {
+            indices.push(edge.start as u32);
+            indices.push(edge.end as u32);
+        }
+    }
+    drop(dummy_normals);
 
     Some(Mesh {
         vertices,
@@ -392,11 +404,107 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     })
 }
 
+/// Sample the analytic curve of a BRep edge into a sequence of `[f32; 3]` points
+/// (including both endpoints). Returns `None` for straight lines or missing geometry,
+/// signalling the caller to fall back to a single-chord segment.
+fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]>> {
+    let ci = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v)?;
+    let curve = brep.geom.curves.get(ci)?;
+    let mut range = brep
+        .geom
+        .edge_curve_range
+        .get(edge_idx)
+        .and_then(|v| *v)
+        .or_else(|| match curve {
+            Curve3::Circle(_) | Curve3::Ellipse(_) => Some([0.0, 2.0 * std::f64::consts::PI]),
+            _ => None,
+        })?;
+    let edge = brep.edges.get(edge_idx)?;
+    let p_start = brep.vertices.get(edge.start)?.point;
+    let p_end = brep.vertices.get(edge.end)?.point;
+
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let wrap_2pi = |t: f64| -> f64 {
+        let mut out = t % two_pi;
+        if out < 0.0 {
+            out += two_pi;
+        }
+        out
+    };
+
+    // Some imported periodic edges carry a full [0, 2π] range even when the
+    // topological edge is only an arc. Rebuild a trimmed range from endpoints.
+    match curve {
+        Curve3::Circle(c) => {
+            if (range[1] - range[0]).abs() >= two_pi * 0.999 {
+                let x_ax = any_perpendicular(c.normal);
+                let y_ax = c.normal.cross(x_ax);
+                let v0 = p_start - c.center;
+                let v1 = p_end - c.center;
+                let t0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                let t1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                let mut dt = t1 - t0;
+                if dt > std::f64::consts::PI {
+                    dt -= two_pi;
+                } else if dt < -std::f64::consts::PI {
+                    dt += two_pi;
+                }
+                range = [t0, t0 + dt];
+            }
+        }
+        Curve3::Ellipse(e) => {
+            if (range[1] - range[0]).abs() >= two_pi * 0.999 {
+                let x_ax = e.major_dir.normalize();
+                let y_ax = e.normal.cross(x_ax).normalize();
+                let v0 = p_start - e.center;
+                let v1 = p_end - e.center;
+                let t0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                let t1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                let mut dt = t1 - t0;
+                if dt > std::f64::consts::PI {
+                    dt -= two_pi;
+                } else if dt < -std::f64::consts::PI {
+                    dt += two_pi;
+                }
+                range = [t0, t0 + dt];
+            }
+        }
+        _ => {}
+    }
+
+    // Straight lines render fine as a single chord — skip sampling.
+    if matches!(curve, Curve3::Line(_)) {
+        return None;
+    }
+    let t1 = range[0];
+    let t2 = range[1];
+    let span = (t2 - t1).abs();
+    if span < 1e-12 {
+        return None;
+    }
+    let n_segs: usize = match curve {
+        Curve3::Circle(_) => {
+            let segs = (span / (2.0 * std::f64::consts::PI) * 64.0).ceil() as usize;
+            segs.clamp(2, 64)
+        }
+        Curve3::Ellipse(_) => 32,
+        _ => 24,
+    };
+    let pts: Vec<[f32; 3]> = (0..=n_segs)
+        .map(|i| {
+            let t = t1 + (t2 - t1) * (i as f64 / n_segs as f64);
+            let p = curve.point_at(t);
+            [p.x as f32, p.y as f32, p.z as f32]
+        })
+        .collect();
+    Some(pts)
+}
+
 pub struct Tessellator;
 
 impl Tessellator {
     pub fn tessellate(brep: &BRep) -> Mesh {
-        let flat_verts: Vec<[f32; 3]> = brep
+        let mut flat_verts: Vec<[f32; 3]> = brep
             .vertices
             .iter()
             .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
@@ -442,7 +550,7 @@ impl Tessellator {
                 }
             }
         }
-        let normals: Vec<[f32; 3]> = normal_accum
+        let mut normals: Vec<[f32; 3]> = normal_accum
             .iter()
             .map(|n| {
                 let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
@@ -486,8 +594,19 @@ impl Tessellator {
                 // Do not draw periodic seam edges in wireframe overlays.
                 continue;
             }
-            line_indices.push(edge.start as u32);
-            line_indices.push(edge.end as u32);
+            if let Some(pts) = sample_edge_curve_points(brep, edge_idx) {
+                let base = flat_verts.len() as u32;
+                let n = pts.len();
+                normals.extend(std::iter::repeat([0.0f32; 3]).take(n));
+                for i in 0..(n - 1) as u32 {
+                    line_indices.push(base + i);
+                    line_indices.push(base + i + 1);
+                }
+                flat_verts.extend_from_slice(&pts);
+            } else {
+                line_indices.push(edge.start as u32);
+                line_indices.push(edge.end as u32);
+            }
         }
 
         Mesh {

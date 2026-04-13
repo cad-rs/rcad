@@ -1,6 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{Surface3, SurfaceEval};
+use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 
 /// 曲面高质量三角化结果。
 #[derive(Debug, Clone)]
@@ -288,6 +288,150 @@ fn local_basis(normal: DVec3) -> (DVec3, DVec3) {
     (u, v)
 }
 
+/// Build an ordered 3D polygon from a wire.
+///
+/// Curved edges are sampled using their analytic 3D curve + edge range.
+/// Straight or missing-geometry edges contribute only their end vertex.
+fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+    let mut pts: Vec<DVec3> = Vec::new();
+    let two_pi = 2.0 * std::f64::consts::PI;
+
+    for we in &wire.edges {
+        let Some(edge) = brep.edges.get(we.idx) else {
+            continue;
+        };
+
+        let start_idx = if we.forward { edge.start } else { edge.end };
+        let end_idx = if we.forward { edge.end } else { edge.start };
+
+        let p_start = match brep.vertices.get(start_idx) {
+            Some(v) => v.point,
+            None => continue,
+        };
+        let p_end = match brep.vertices.get(end_idx) {
+            Some(v) => v.point,
+            None => continue,
+        };
+
+        let mut sampled = false;
+        if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v) {
+            if let Some(curve) = brep.geom.curves.get(ci) {
+                if !matches!(curve, Curve3::Line(_)) {
+                    let Some([r0, r1]) = brep
+                        .geom
+                        .edge_curve_range
+                        .get(we.idx)
+                        .and_then(|v| *v)
+                        .or_else(|| match curve {
+                            Curve3::Circle(_) | Curve3::Ellipse(_) => {
+                                Some([0.0, 2.0 * std::f64::consts::PI])
+                            }
+                            _ => None,
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let mut t0 = r0;
+                    let mut t1 = r1;
+                    if !we.forward {
+                        std::mem::swap(&mut t0, &mut t1);
+                    }
+
+                    // Repair clearly wrong full-period range on circular/elliptic edges.
+                    match curve {
+                        Curve3::Circle(c) => {
+                            let wrap_2pi = |t: f64| -> f64 {
+                                let mut out = t % two_pi;
+                                if out < 0.0 {
+                                    out += two_pi;
+                                }
+                                out
+                            };
+                            if (t1 - t0).abs() >= two_pi * 0.999 {
+                                let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
+                                let y_ax = c.normal.cross(x_ax);
+                                let v0 = p_start - c.center;
+                                let v1 = p_end - c.center;
+                                let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                                let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                                let mut dt = a1 - a0;
+                                if dt > std::f64::consts::PI {
+                                    dt -= two_pi;
+                                } else if dt < -std::f64::consts::PI {
+                                    dt += two_pi;
+                                }
+                                t0 = a0;
+                                t1 = a0 + dt;
+                            }
+                        }
+                        Curve3::Ellipse(e) => {
+                            let wrap_2pi = |t: f64| -> f64 {
+                                let mut out = t % two_pi;
+                                if out < 0.0 {
+                                    out += two_pi;
+                                }
+                                out
+                            };
+                            if (t1 - t0).abs() >= two_pi * 0.999 {
+                                let x_ax = e.major_dir.normalize();
+                                let y_ax = e.normal.cross(x_ax).normalize();
+                                let v0 = p_start - e.center;
+                                let v1 = p_end - e.center;
+                                let a0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                                let a1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                                let mut dt = a1 - a0;
+                                if dt > std::f64::consts::PI {
+                                    dt -= two_pi;
+                                } else if dt < -std::f64::consts::PI {
+                                    dt += two_pi;
+                                }
+                                t0 = a0;
+                                t1 = a0 + dt;
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    let span = (t1 - t0).abs();
+                    if span > 1e-12 {
+                        let n_segs = match curve {
+                            Curve3::Circle(_) => {
+                                let segs = (span / (2.0 * std::f64::consts::PI) * 64.0).ceil() as usize;
+                                segs.clamp(4, 64)
+                            }
+                            Curve3::Ellipse(_) => 24,
+                            _ => 16,
+                        };
+                        for i in 0..=n_segs {
+                            if !pts.is_empty() && i == 0 {
+                                continue;
+                            }
+                            let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
+                            pts.push(curve.point_at(t));
+                        }
+                        sampled = true;
+                    }
+                }
+            }
+        }
+
+        if !sampled {
+            if pts.is_empty() {
+                pts.push(p_start);
+            }
+            pts.push(p_end);
+        }
+    }
+
+    // Drop duplicated closing point if present.
+    if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length() < 1e-9 {
+        pts.pop();
+    }
+
+    pts
+}
+
 fn ear_clip(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
     let n = pts.len();
     let mut indices: Vec<usize> = (0..n).collect();
@@ -475,25 +619,24 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                     brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
                         .triangles = tris;
                 } else {
-                    // Fallback: fan-triangulate outer wire vertices.
-                    let wire_pts: Vec<usize> = brep.solids[solid_idx].shells[shell_idx]
-                        .faces[face_idx]
-                        .outer_wire
-                        .edges
-                        .iter()
-                        .filter_map(|we| {
-                            brep.edges.get(we.idx).map(|e| {
-                                if we.forward { e.start } else { e.end }
-                            })
-                        })
-                        .collect();
-
-                    if wire_pts.len() >= 3 {
-                        let tris: Vec<[usize; 3]> = (1..wire_pts.len() - 1)
-                            .map(|i| [wire_pts[0], wire_pts[i], wire_pts[i + 1]])
-                            .collect();
-                        brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
-                            .triangles = tris;
+                    // Fallback for faces without bound surface:
+                    // sample curved outer-wire edges into a polygon then ear-clip.
+                    let face_ref = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
+                    let poly_pts = sample_wire_polygon_points(brep, &face_ref.outer_wire);
+                    if poly_pts.len() >= 3 {
+                        let local_tris = triangulate_polygon(&poly_pts, face_ref.normal);
+                        if !local_tris.is_empty() {
+                            let base = brep.vertices.len();
+                            for &pt in &poly_pts {
+                                brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
+                            }
+                            let tris: Vec<[usize; 3]> = local_tris
+                                .iter()
+                                .map(|&[a, b, c]| [base + a, base + b, base + c])
+                                .collect();
+                            brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                                .triangles = tris;
+                        }
                     }
                 }
 
@@ -780,5 +923,58 @@ mod tests {
                 "cylinder face {i} should have triangles"
             );
         }
+    }
+
+    #[test]
+    fn mesh_brep_fallback_triangulates_semicircle_wire_face() {
+        use std::f64::consts::PI;
+        use rcad_kernel::BRep;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+        use rcad_kernel::geom::{Circle3, Curve3, CurveEval};
+
+        let circle = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        };
+        let p0 = circle.point_at(0.0);
+        let p1 = circle.point_at(PI);
+
+        // Two-edge closed wire: semicircular arc + diameter chord.
+        let mut brep = BRep {
+            vertices: vec![Vertex { point: p0 }, Vertex { point: p1 }],
+            edges: vec![
+                Edge { start: 0, end: 1 },
+                Edge { start: 1, end: 0 },
+            ],
+            solids: vec![Solid {
+                shells: vec![Shell {
+                    faces: vec![Face {
+                        outer_wire: Wire {
+                            edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
+                        },
+                        inner_wires: vec![],
+                        normal: DVec3::Z,
+                        triangles: vec![],
+                        mesh_dirty: true,
+                    }],
+                }],
+            }],
+            geom: rcad_kernel::GeomStore {
+                curves: vec![Curve3::Circle(circle)],
+                edge_curve: vec![Some(0), None],
+                edge_curve_range: vec![Some([0.0, PI]), None],
+                face_surface: vec![None],
+                ..Default::default()
+            },
+        };
+
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let tris = &brep.solids[0].shells[0].faces[0].triangles;
+        assert!(
+            tris.len() > 1,
+            "semicircle fallback should produce multiple triangles, got {}",
+            tris.len()
+        );
     }
 }

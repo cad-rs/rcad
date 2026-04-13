@@ -943,6 +943,14 @@ impl Part21Writer {
                 let vec = self.vector("pc_vec", dir, 1e-9);
                 self.line("pcurve_line", p, vec)
             }
+            Some(Curve2d::SineWave(_)) => {
+                // Sine-wave PCurve: no dedicated STEP 2D sine-wave writer yet.
+                // Fall back to a degenerate line placeholder (valid STEP).
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
             Some(Curve2d::Bezier(_)) => {
                 // Bezier PCurve: fall back to degenerate line (no Bezier 2D STEP writer yet)
                 let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
@@ -1053,6 +1061,19 @@ impl Part21Writer {
             }
             Curve3::CircularHelix(_) => {
                 // No dedicated helix STEP writer yet; export a tiny line fallback.
+                let p0 = self.cartesian_point("edge_origin", start_point);
+                let delta = [
+                    end_point[0] - start_point[0],
+                    end_point[1] - start_point[1],
+                    end_point[2] - start_point[2],
+                ];
+                let magnitude = vector_length(delta).max(1e-9);
+                let direction = self.direction("edge_dir", normalize(delta));
+                let vector = self.vector("edge_vec", direction, magnitude);
+                self.line("edge_line", p0, vector)
+            }
+            Curve3::SineWave(_) => {
+                // No dedicated STEP sine-wave writer yet; export a straight line fallback.
                 let p0 = self.cartesian_point("edge_origin", start_point);
                 let delta = [
                     end_point[0] - start_point[0],

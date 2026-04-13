@@ -47,7 +47,7 @@ RCAD still trails OCCT most in:
 - **P4**: SameParameter and SameRange diagnosis+repair; shell manifold / open-edge analyzer (`analyze_shell_topology`); wire gap/self-intersection report (`analyze_wire_issues`).
 - **P5**: Prism, draft prism, and revolution feature operations.
 - **P6**: STEP material/layer extraction, GENERAL_PROPERTY extraction and export API, AP242 metadata-chain expansion (DATUM / DATUM_SYSTEM / kinematic pair entities) with read/write baselines.
-- **P7 (partial)**: Circular helix, circle involute, Archimedean spiral, logarithmic spiral evaluators.
+- **P7 (partial)**: Circular helix, circle involute, Archimedean/logarithmic spiral, 2D and 3D sine-wave evaluators.
 
 ### Areas where RCAD is still behind OCCT
 
@@ -229,7 +229,7 @@ OCCT 8.0.0 introduces `GeomEval` / `Geom2dEval` evaluation classes that extend t
 | New OCCT type | Description | RCAD status |
 |---|---|---|
 | `GeomEval_CircularHelixCurve` | Circular helix curve (TKHelix) | **Present (P7 partial)** |
-| `GeomEval_SineWaveCurve` / `Geom2dEval_SineWaveCurve` | Sine wave along a baseline | Missing |
+| `GeomEval_SineWaveCurve` / `Geom2dEval_SineWaveCurve` | Sine wave along a baseline | **Present (P7: 2D + 3D evaluators)** |
 | `Geom2dEval_ArchimedeanSpiralCurve` | Archimedean spiral | **Present (P7 partial)** |
 | `Geom2dEval_LogarithmicSpiralCurve` | Logarithmic spiral | **Present (P7 partial)** |
 | `Geom2dEval_CircleInvoluteCurve` | Circle involute (gear tooth profile) | **Present (P7 partial)** |
@@ -339,7 +339,7 @@ Answering the question: **how far is RCAD from being production-grade?**
 | Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
 | Healing pipeline | **50%** | 80% | staged reports + tolerance propagation baseline added; deep ShapeProcess semantics pending | Improved |
-| Feature library | **35%** | 60% | SplitShape, rib/slot | **+35% (P5+)** |
+| Feature library | **70%** | 80% | Advanced constraints and robustness hardening | **+35% (P5+)** |
 | Document / XCAF | **43%** | 75% | GDT, DimTol, full persistent naming propagation | **+13% (P6 + propagate_through_remap / identity_map / iter)** |
 | STEP exchange depth | 68% | 80% | AP242 metadata-chain read + metadata-entity write baseline; full AP242 read/write depth pending | Improved |
 | Meshing controls | 40% | 75% | Tunable deflection, incremental update | Unchanged |
@@ -351,21 +351,21 @@ Assuming 1 developer working full-time on kernel work:
 
 | Phase | Focus | Calendar estimate | Status |
 |---|---|---|---|
-| P3 remaining | defeaturing + deeper make-connected/glue hardening | 2 months | In progress |
-| P4 remaining | ShapeUpgrade, face consistency, tolerance propagation | 1-2 months | In progress |
-| P5 remaining | SplitShape, rib/slot | 1-2 months | In progress |
-| P6 remaining | GDT write, AP242 full read | 2-3 months | Partial |
-| P7 | Graph topology + Gordon surface | 2-3 months | In progress |
+| P3 remaining | defeaturing robustness + deeper make-connected/glue hardening | 1-2 months | In progress |
+| P4 remaining | ShapeProcess-grade healing semantics and tolerance policy hardening | 1-2 months | In progress |
+| P5 remaining | feature constraints/variants and robustness hardening | 1-2 months | In progress |
+| P6 remaining | AP242 semantic read depth + broader XCAF-style document semantics | 2-3 months | Partial |
+| P7 remaining | graph mutation guards + persistent history/naming semantics | 2-3 months | In progress |
 | Hardening, edge cases, test coverage | Ongoing | +2 months across all phases | Ongoing |
 
-**Total to reach credible production baseline: approximately 8–12 months** (revised down from 9–13 due to delivered P4/P5/P7 partial items; still bounded by same-domain unification, AP242 read depth, and Gordon/BRepGraph scope).
+**Total to reach credible production baseline: approximately 7–11 months** (revised down as P3-P7 baseline items are now largely landed; still bounded by AP242 semantic depth, healing-pipeline depth, and persistent-history semantics).
 
 ### What would most accelerate the timeline
 
-1. **Defeaturing baseline** (P3) -- highest remaining ROI in boolean robustness cleanup.
-2. **Deeper make-connected + glue policies** (P3) -- next big reduction in near-coincident failure fallout.
-3. **AP242 full read depth** (P6) -- biggest exchange blocker for production interoperability.
-4. **BRepGraph persistent-history semantics** (P7) -- needed for long-term history-driven workflows.
+1. **Defeaturing robustness hardening** (P3) -- highest remaining ROI in boolean cleanup quality.
+2. **Deeper make-connected + glue policies** (P3) -- biggest reduction in near-coincident failure fallout.
+3. **AP242 semantic read depth** (P6) -- largest interoperability blocker for production import workflows.
+4. **BRepGraph persistent-history semantics** (P7) -- foundation for stable history-driven editing and naming.
 
 ## Module-Level Task Breakdown
 
