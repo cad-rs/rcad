@@ -1,11 +1,33 @@
-use rcad_kernel::BRep;
+use rcad_kernel::{BRep, BRepGraph};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
-/// Tessellation quality options for `[`Tessellator::tessellate_with_options`]`.
+/// Tessellation quality options for [`Tessellator::tessellate_with_options`].
 ///
-/// Re-exported from `[`rcad_algorithms::TessellationParams`]`.
+/// Re-exported from [`rcad_algorithms::TessellationParams`].
 pub type TessellationOptions = TessellationParams;
+
+/// Edited topology/geometry entities used to drive incremental mesh invalidation.
+///
+/// Indices are optional and may be mixed: if both vertices and edges are listed,
+/// all adjacent faces of either set will be invalidated.
+#[derive(Debug, Clone, Default)]
+pub struct EditedModelDelta {
+    /// Modified vertex indices in `BRep.vertices`.
+    pub modified_vertices: Vec<usize>,
+    /// Modified edge indices in `BRep.edges`.
+    pub modified_edges: Vec<usize>,
+    /// Modified flattened face indices (solid/shell/face traversal order).
+    pub modified_faces: Vec<usize>,
+}
+
+impl EditedModelDelta {
+    pub fn is_empty(&self) -> bool {
+        self.modified_vertices.is_empty()
+            && self.modified_edges.is_empty()
+            && self.modified_faces.is_empty()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionMode {
@@ -395,15 +417,83 @@ impl Tessellator {
         }
     }
 
-    /// Re-tessellate dirty faces using the given quality options, then build a GPU `[`Mesh`]`.
+    /// Re-tessellate dirty faces using the given quality options, then build a GPU [`Mesh`].
     ///
-    /// Calls `[`rcad_algorithms::mesh_brep`]` to recompute triangles for any face whose
-    /// `mesh_dirty` flag is set, then delegates to `[`Tessellator::tessellate`]`.
+    /// Calls [`rcad_algorithms::mesh_brep`] to recompute triangles for any face whose
+    /// `mesh_dirty` flag is set, then delegates to [`Tessellator::tessellate`].
     ///
     /// Analogous to `BRepMesh_IncrementalMesh` with explicit deflection/angular arguments in OCCT.
     pub fn tessellate_with_options(brep: &mut BRep, options: &TessellationOptions) -> Mesh {
         mesh_brep(brep, options);
         Self::tessellate(brep)
+    }
+
+    /// Incrementally invalidate mesh cache for faces affected by edited entities.
+    ///
+    /// Returns the number of faces that were newly marked dirty.
+    pub fn invalidate_cache_for_edits(brep: &mut BRep, edits: &EditedModelDelta) -> usize {
+        if edits.is_empty() {
+            return 0;
+        }
+
+        let graph = BRepGraph::from_brep(brep);
+        let face_count: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        if face_count == 0 {
+            return 0;
+        }
+
+        let mut dirty_faces = vec![false; face_count];
+
+        for &fi in &edits.modified_faces {
+            if fi < face_count {
+                dirty_faces[fi] = true;
+            }
+        }
+        for &ei in &edits.modified_edges {
+            for &fi in graph.edge_adjacent_faces(ei) {
+                if fi < face_count {
+                    dirty_faces[fi] = true;
+                }
+            }
+        }
+        for &vi in &edits.modified_vertices {
+            for &fi in graph.vertex_adjacent_faces(vi) {
+                if fi < face_count {
+                    dirty_faces[fi] = true;
+                }
+            }
+        }
+
+        let mut newly_marked = 0usize;
+        let mut flat_fi = 0usize;
+        for solid in &mut brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    if dirty_faces[flat_fi] && !face.mesh_dirty {
+                        face.mesh_dirty = true;
+                        newly_marked += 1;
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+
+        newly_marked
+    }
+
+    /// Convenience helper: invalidate affected faces from edit delta, then tessellate.
+    pub fn tessellate_after_edits(
+        brep: &mut BRep,
+        edits: &EditedModelDelta,
+        options: &TessellationOptions,
+    ) -> Mesh {
+        Self::invalidate_cache_for_edits(brep, edits);
+        Self::tessellate_with_options(brep, options)
     }
 }
 

@@ -437,7 +437,7 @@ Assuming 1 developer working full-time on kernel work:
 | Task | Priority | Status |
 |---|---|---|
 | Tunable meshing deflection / angular tolerances | P3 - Medium | **Done (`TessellationOptions = TessellationParams` re-export + `Tessellator::tessellate_with_options` in rcad-render; wires `mesh_brep` with chord/angle params to GPU mesh builder)** |
-| Incremental cache invalidation for edited models | P2.1 followup - Medium | Not started |
+| Incremental cache invalidation for edited models | P2.1 followup - Medium | **Done (`EditedModelDelta` + `Tessellator::invalidate_cache_for_edits` + `tessellate_after_edits`; adjacency-driven face invalidation via `BRepGraph` for vertex/edge/face edits)** |
 | Better HLR on curved geometry | P2.2 followup - Low | Not started |
 
 ## Recommended Non-Goals for Now
