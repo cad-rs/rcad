@@ -97,6 +97,25 @@ pub struct BRepGraph {
     face_dirty: Vec<bool>,
 }
 
+/// Non-manifold topology summary derived from edge-face adjacency.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NonManifoldSummary {
+    /// Edge indices with exactly one adjacent face.
+    pub boundary_edges: Vec<usize>,
+    /// Edge indices with zero adjacent faces.
+    pub orphan_edges: Vec<usize>,
+    /// Edge indices with more than two adjacent faces.
+    pub multi_face_edges: Vec<usize>,
+    /// Vertex indices touched by at least one multi-face edge.
+    pub non_manifold_vertices: Vec<usize>,
+}
+
+impl NonManifoldSummary {
+    pub fn is_clean(&self) -> bool {
+        self.boundary_edges.is_empty() && self.orphan_edges.is_empty() && self.multi_face_edges.is_empty()
+    }
+}
+
 impl BRepGraph {
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -285,6 +304,60 @@ impl BRepGraph {
             .filter(|(_, adj)| adj.len() != 2)
             .map(|(ei, _)| ei)
             .collect()
+    }
+
+    /// Edge indices with exactly one adjacent face.
+    pub fn boundary_edges(&self) -> Vec<usize> {
+        self.edge_to_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, adj)| adj.len() == 1)
+            .map(|(ei, _)| ei)
+            .collect()
+    }
+
+    /// Edge indices with zero adjacent faces.
+    pub fn orphan_edges(&self) -> Vec<usize> {
+        self.edge_to_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, adj)| adj.is_empty())
+            .map(|(ei, _)| ei)
+            .collect()
+    }
+
+    /// Edge indices with more than two adjacent faces.
+    pub fn multi_face_edges(&self) -> Vec<usize> {
+        self.edge_to_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, adj)| adj.len() > 2)
+            .map(|(ei, _)| ei)
+            .collect()
+    }
+
+    /// Vertex indices touched by multi-face edges (>2 adjacent faces).
+    pub fn non_manifold_vertices(&self) -> Vec<usize> {
+        let mut verts = HashSet::new();
+        for ei in self.multi_face_edges() {
+            if let Some((vs, ve)) = self.edge_endpoints(ei) {
+                verts.insert(vs);
+                verts.insert(ve);
+            }
+        }
+        let mut out: Vec<usize> = verts.into_iter().collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Combined non-manifold summary report.
+    pub fn non_manifold_summary(&self) -> NonManifoldSummary {
+        NonManifoldSummary {
+            boundary_edges: self.boundary_edges(),
+            orphan_edges: self.orphan_edges(),
+            multi_face_edges: self.multi_face_edges(),
+            non_manifold_vertices: self.non_manifold_vertices(),
+        }
     }
 
     /// Returns vertex indices that are referenced by a number of edges other
@@ -538,7 +611,11 @@ impl Iterator for DfsEdgesFromVertex<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BRep, geom::PrimitiveSolid};
+    use crate::{
+        BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge,
+        geom::PrimitiveSolid,
+    };
+    use glam::DVec3;
 
     fn unit_box() -> BRep {
         BRep::from_primitive(PrimitiveSolid::Box {
@@ -546,6 +623,78 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         })
+    }
+
+    /// Build a minimal non-manifold BRep where edge 0 is shared by 3 faces.
+    fn non_manifold_tripod() -> BRep {
+        let vertices = vec![
+            Vertex { point: DVec3::new(0.0, 0.0, 0.0) }, // 0
+            Vertex { point: DVec3::new(1.0, 0.0, 0.0) }, // 1
+            Vertex { point: DVec3::new(0.0, 1.0, 0.0) }, // 2
+            Vertex { point: DVec3::new(0.0, 0.0, 1.0) }, // 3
+            Vertex { point: DVec3::new(0.0, -1.0, 0.0) }, // 4
+        ];
+        // Edge 0 is the shared spine. Other edges are unique per triangle face.
+        let edges = vec![
+            Edge { start: 0, end: 1 }, // shared by 3 faces
+            Edge { start: 1, end: 2 },
+            Edge { start: 2, end: 0 },
+            Edge { start: 1, end: 3 },
+            Edge { start: 3, end: 0 },
+            Edge { start: 1, end: 4 },
+            Edge { start: 4, end: 0 },
+        ];
+
+        let f0 = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::new(0, true),
+                    WireEdge::new(1, true),
+                    WireEdge::new(2, true),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::new(0, true),
+                    WireEdge::new(3, true),
+                    WireEdge::new(4, true),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Y,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f2 = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::new(0, true),
+                    WireEdge::new(5, true),
+                    WireEdge::new(6, true),
+                ],
+            },
+            inner_wires: vec![],
+            normal: -DVec3::Y,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        BRep {
+            vertices,
+            edges,
+            solids: vec![Solid {
+                shells: vec![Shell {
+                    faces: vec![f0, f1, f2],
+                }],
+            }],
+            geom: Default::default(),
+        }
     }
 
     // ── Construction & counts ─────────────────────────────────────────────────
@@ -633,6 +782,35 @@ mod tests {
         assert!(g.is_closed(), "unit box should be closed");
         assert!(g.non_manifold_edges().is_empty(), "no non-manifold edges");
         assert!(g.low_valence_vertices().is_empty(), "no low-valence vertices");
+
+        let summary = g.non_manifold_summary();
+        assert!(summary.is_clean());
+        assert!(summary.boundary_edges.is_empty());
+        assert!(summary.orphan_edges.is_empty());
+        assert!(summary.multi_face_edges.is_empty());
+        assert!(summary.non_manifold_vertices.is_empty());
+    }
+
+    #[test]
+    fn detects_multi_face_non_manifold_edge() {
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+
+        assert!(!g.is_manifold(), "tripod should be non-manifold");
+        assert!(!g.is_closed(), "tripod has boundary edges on each side face");
+
+        let multi = g.multi_face_edges();
+        assert_eq!(multi, vec![0], "edge 0 should be the only multi-face edge");
+        assert_eq!(g.boundary_edges(), vec![1, 2, 3, 4, 5, 6]);
+        assert!(g.orphan_edges().is_empty(), "no orphan edges expected");
+
+        let verts = g.non_manifold_vertices();
+        assert_eq!(verts, vec![0, 1], "shared edge endpoints should be non-manifold vertices");
+
+        let summary = g.non_manifold_summary();
+        assert!(!summary.is_clean());
+        assert_eq!(summary.multi_face_edges, vec![0]);
+        assert_eq!(summary.non_manifold_vertices, vec![0, 1]);
     }
 
     // ── Dirty / modification tracking ─────────────────────────────────────────

@@ -401,7 +401,7 @@ Assuming 1 developer working full-time on kernel work:
 | Task | Priority | Status |
 |---|---|---|
 | Compound / CompSolid topology | P6 - Medium | Done (baseline: `Compound` + `CompSolid` structs in topology.rs; add/iter API) |
-| Non-manifold topology support | P3 - Low | Not started |
+| Non-manifold topology support | P3 - Low | **Partial (`BRepGraph` non-manifold summary baseline: boundary/orphan/multi-face edge classification + non-manifold vertex detection/reporting)** |
 | Persistent naming hooks | P6 - Medium | **Partial (rcad-kernel `PersistentNamingHooks` baseline: stable label↔topology binding, validation/cleanup against BRep, deterministic default labels)** |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
