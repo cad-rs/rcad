@@ -65,7 +65,8 @@ pub use healing::{
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{
-    BooleanHistory, EdgeOrigin, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin,
+    BooleanHistory, BooleanNamingPropagationReport, EdgeOrigin, FaceOrigin, ShellOrigin,
+    SolidOrigin, VertexOrigin,
 };
 pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
 pub use imprint::{

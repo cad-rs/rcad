@@ -77,7 +77,7 @@ RCAD still trails OCCT most in:
 | Boolean framework | Fuse/Cut/Common/Section + imprint + splitter/cells + MakerVolume baseline + adaptive fuzzy retry + iterative/growth-aware/capped make-connected cleanup (global+scoped, semantic seeds incl. tolerance-tagged + multi-PCurve + topology seam candidates, with history-informed seed-edge preference plus low-coverage heuristic augmentation, and seed source/count metadata + stable edge labels reporting) | TKBO | High | glue/deeper scoped connectivity rebuilding semantics, deeper failure recovery |
 | Post-op simplification | Small-edge cleanup + same-domain unification baseline | ShapeUpgrade_UnifySameDomain, BOPAlgo cleanup | Medium-High | Internal-face removal and richer same-domain criteria |
 | Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) + staged healing with issue-driven pre-make-connected, iterative parametric consistency pass, and make-connected-on-stall fallback | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, ShapeProcess, tolerance rules |
-| Topology history | Face-level history | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Extend to edges/vertices; persistent naming; BRepGraph history |
+| Topology history | Face/edge/vertex/shell/solid origin tracking + baseline persistent-name propagation from boolean history | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Add graph-native history objects and richer persistent naming semantics |
 | STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
 | STEP exchange: read | Basic import + expanded AP242 metadata-chain baseline (PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair) | TKDESTEP + STEPCAFControl_Reader | High | Full semantic AP242 read and FEA entities |
 | IGES exchange | Mesh bridge only | TKDEIGES | High | Add analytic/B-Rep IGES or document as non-goal |
@@ -301,7 +301,7 @@ Target: XCAF-comparable document model; AP242 GDT and kinematics round-trip.
 | GDT / DimTol write | Medium | **Done (baseline AP242 metadata entities write path, including datum-reference entities)** |
 | AP242 read (full import) | Large | **Done (baseline metadata-chain scope: PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair extraction)** |
 | Kinematics read | Large | **Done (baseline metadata extraction for kinematic pair entities)** |
-| Persistent naming in history | Large | Not started |
+| Persistent naming in history | Large | Partial (`BooleanHistory::propagate_persistent_naming` baseline bridge to `PersistentNamingHooks`) |
 | STEP general property export (string metadata) | Small | **Done (baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION`)** |
 
 ### P7 (NEW): Graph Topology and Evaluation Breadth
