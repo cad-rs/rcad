@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, BRepGraph};
+use rcad_kernel::{BRep, BRepGraph, seam_edge_candidates};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
@@ -405,7 +405,38 @@ impl Tessellator {
             }
         }
 
-        for edge in &brep.edges {
+        let mut seam_edges: std::collections::HashSet<usize> =
+            seam_edge_candidates(brep).into_iter().collect();
+
+        // Some closed periodic faces (notably primitive spheres) represent the
+        // seam by repeating the same edge index in the face wire.
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let mut counts: std::collections::HashMap<usize, usize> =
+                        std::collections::HashMap::new();
+                    for we in &face.outer_wire.edges {
+                        *counts.entry(we.idx).or_insert(0) += 1;
+                    }
+                    for wire in &face.inner_wires {
+                        for we in &wire.edges {
+                            *counts.entry(we.idx).or_insert(0) += 1;
+                        }
+                    }
+                    for (edge_idx, count) in counts {
+                        if count > 1 {
+                            seam_edges.insert(edge_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (edge_idx, edge) in brep.edges.iter().enumerate() {
+            if seam_edges.contains(&edge_idx) {
+                // Do not draw periodic seam edges in wireframe overlays.
+                continue;
+            }
             line_indices.push(edge.start as u32);
             line_indices.push(edge.end as u32);
         }
@@ -494,6 +525,33 @@ impl Tessellator {
     ) -> Mesh {
         Self::invalidate_cache_for_edits(brep, edits);
         Self::tessellate_with_options(brep, options)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Tessellator;
+    use rcad_kernel::{BRep, PrimitiveSolid};
+
+    #[test]
+    fn tessellate_sphere_hides_seam_edges_in_line_indices() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let mesh = Tessellator::tessellate(&brep);
+        assert!(
+            mesh.line_indices.is_empty(),
+            "full sphere should not render seam wireframe edge"
+        );
+    }
+
+    #[test]
+    fn tessellate_box_keeps_regular_edges_in_line_indices() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let mesh = Tessellator::tessellate(&brep);
+        assert_eq!(mesh.line_indices.len(), brep.edges.len() * 2);
     }
 }
 
