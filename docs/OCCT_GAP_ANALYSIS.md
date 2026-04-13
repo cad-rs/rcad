@@ -52,7 +52,7 @@ RCAD still trails OCCT most in:
 ### Areas where RCAD is still behind OCCT
 
 - **Boolean robustness** on curved solids and near-coincident geometry remains the largest practical gap. Splitter/CellsBuilder/fuzzy tolerance are now baseline-present (including adaptive retry escalation), and MakeConnected-style cleanup now has iterative growth-aware baseline passes with tolerance-cap safety plus scoped mode with semantic seed strategies (short-edge / near-duplicate / tolerance-tagged / multi-PCurve / topology-seam-candidates / hybrid), plus issue-driven pre-make-connected and healing-stall fallback integration in the boolean pipeline; defeaturing and richer connectivity rebuilding semantics are still absent.
-- **BRepGraph depth**: OCCT 8.0.0 ships an extensive graph-based BRep API (49 000+ lines) with history tracking, mutation guards, deduplication, and validation. RCAD now has a baseline topology graph with history events, checked and rollback-capable mutation entrypoints, and validate/compact/dedup primitives, but still lacks full mutation guard semantics and rich persistent naming.
+- **BRepGraph depth**: OCCT 8.0.0 ships an extensive graph-based BRep API (49 000+ lines) with history tracking, mutation guards, deduplication, and validation. RCAD now has a baseline topology graph with history events, a full RAII `BRepGraphMutGuard` (checkpoint/commit/rollback/validate), `validate_invariants`, and compact/dedup primitives. The remaining gap is rich persistent-history naming.
 - **Healing pipeline depth**: same-domain unification now has Phase 1 baseline (plane/cylinder/cone/torus/sphere) and Phase 2 double-validation (topological edge-continuity + geometric UV-region checks); healing orchestration now includes issue-driven pre-make-connected, SameRange/SameParameter parametric consistency prepass with iterative reconciliation, plus stalled fallback, but broader ShapeFix/ShapeProcess coverage remains missing.
 - **Exchange**: STEP AP242 write is present and AP242 read now covers an expanded metadata baseline (GDT/DimTol + DATUM / DATUM_SYSTEM + kinematic pair entities), but full semantic AP242 import and FEA entities are still not covered.
 - **Geometry evaluation breadth**: OCCT 8.0.0 adds helicoid, spiral, ellipsoid, and parametric curve evaluation classes not present in RCAD.
@@ -69,7 +69,7 @@ RCAD still trails OCCT most in:
 | Gordon / N×M surface fill | Baseline transfinite Gordon support | GeomFill_Gordon (8.0) | Medium | Improve robustness and continuity controls |
 | Point cloud analysis | Missing | PointSetLib (8.0) -- PCA, inertia, dimensionality | Low | Low priority; add if needed for import QC |
 | Core B-Rep model | Vertex/Edge/Wire/Face/Shell/Solid | TKBRep | Medium | Add Compound, CompSolid, non-manifold support |
-| Graph-based topology layer | Baseline traversal + history events + checked/rollback mutation + validate/compact/dedup primitives | BRepGraph (8.0, 49k lines) -- history, mutation, dedup, validate | Medium-High | Add scoped mutation guards, richer history semantics, persistent naming |
+| Graph-based topology layer | Baseline traversal + history events + **RAII mutation guard (`BRepGraphMutGuard`)** + checkpoint/rollback + `validate_invariants` + validate/compact/dedup primitives | BRepGraph (8.0, 49k lines) -- history, mutation, dedup, validate | Medium | Add richer persistent-history semantics and persistent naming |
 | Primitive and sweep modeling | Good breadth (extrude/revolve/loft/sweep) | TKPrim + TKOffset | Low | Edge cases; N-sided fill, normal projection |
 | Fillet / chamfer | Variable-radius fillet, chamfer | TKFillet | Medium | Angle-mode chamfer, 2-D fillet API, corner cases |
 | Thicken / draft / offset | Present | TKOffset BRepOffset | Medium | Shell offset (MakeOffsetShape), evolved surface |
@@ -104,7 +104,7 @@ Key capabilities of BRepGraph that RCAD does not have:
 | `BRepGraph_Builder` | Construct graphs programmatically (no TopoDS needed) |
 | `BRepGraph_Tool` | Geometry access analogous to `BRep_Tool`, but over graph nodes |
 
-**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, checked/rollback mutation entrypoints, and validate/compact/dedup primitives, but still lacks full scoped mutation-guard semantics and richer persistent-history semantics.
+**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, a full RAII `BRepGraphMutGuard` (commit/rollback/checkpoint/validate_invariants), and compact/dedup primitives. The remaining gap is richer persistent-history semantics and stable persistent naming.
 
 **Recommended direction**: Design a lightweight graph topology wrapper (`rcad-kernel` or new `rcad-graph` crate) that maps existing `BRep` topology to a history-capable graph. This can start as read-only traversal and grow to support mutation.
 
@@ -235,7 +235,7 @@ OCCT 8.0.0 introduces `GeomEval` / `Geom2dEval` evaluation classes that extend t
 | `Geom2dEval_CircleInvoluteCurve` | Circle involute (gear tooth profile) | **Present (P7 partial)** |
 | `GeomEval_TBezierSurface` / `AHTBezierSurface` | Parametric generalized Bezier surfaces | Missing |
 | `GeomFill_Gordon` | N×M transfinite surface from curve network | **Present (baseline)** |
-| `ExtremaPC` | Point-to-curve extrema with per-type dispatch | Partial (basic projection) |
+| `ExtremaPC` | Point-to-curve extrema with per-type dispatch | **Partial → improved** (analytic O(1) dispatch for Line/Circle/Ellipse; Newton-Raphson fallback for all other curve types; 11 unit tests) |
 
 The gear-tooth involute curve is particularly important for mechanical design. Gordon surface and helix are the others most likely to be demanded by RCAD users in production scenarios.
 
@@ -334,7 +334,7 @@ Answering the question: **how far is RCAD from being production-grade?**
 |---|---|---|---|---|
 | Geometry kernel | 92% | 95% | Minor gaps (advanced surface families and robustness) | Improved |
 | B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | **+3% (non-manifold repair hints)** |
-| Graph topology layer | **25%** | 50% | baseline read-only graph + validate/history event tracking; mutation/history depth pending | **+5% (edge_valence, repair_hints, ManifoldRepairHints)** |
+| Graph topology layer | **38%** | 50% | RAII MutGuard + checkpoint/rollback/validate done; persistent-history naming still pending | **+13% (BRepGraphMutGuard + BRepGraphCheckpoint + validate_invariants + ExtremaPC analytic dispatch)** |
 | Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
 | Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
@@ -355,7 +355,7 @@ Assuming 1 developer working full-time on kernel work:
 | P4 remaining | ShapeProcess-grade healing semantics and tolerance policy hardening | 1-2 months | In progress |
 | P5 remaining | feature constraints/variants and robustness hardening | 1-2 months | In progress |
 | P6 remaining | AP242 semantic read depth + broader XCAF-style document semantics | 2-3 months | Partial |
-| P7 remaining | graph mutation guards + persistent history/naming semantics | 2-3 months | In progress |
+| P7 remaining | persistent history/naming semantics (mutation guard now **done**) | 1-2 months | In progress |
 | Hardening, edge cases, test coverage | Ongoing | +2 months across all phases | Ongoing |
 
 **Total to reach credible production baseline: approximately 7–11 months** (revised down as P3-P7 baseline items are now largely landed; still bounded by AP242 semantic depth, healing-pipeline depth, and persistent-history semantics).
@@ -405,7 +405,7 @@ Assuming 1 developer working full-time on kernel work:
 | Persistent naming hooks | P6 - Medium | **Done (`PersistentNamingHooks::propagate_through_remap` + `propagate_face_remap` + `identity_map` + `iter`; empty-map = passthrough semantics; 5 propagation tests)** |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
-| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported)** |
+| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported; `BRepGraphMutGuard` RAII + `BRepGraphCheckpoint` + `validate_invariants`; 14 new mutation-guard tests)** |
 
 ### libs/rcad-modeling
 
@@ -463,7 +463,7 @@ The three areas that dominate the remaining production gap, in order:
 
 1. **Boolean robustness and result simplification hardening** -- splitter/fuzzy/same-domain baselines exist; robustness and defeaturing remain the biggest gap.
 2. **Healing depth** -- staged pipeline exists, but ShapeProcess-like coverage and richer repair semantics remain.
-3. **BRepGraph / graph topology depth** -- read-only traversal+validation baseline is in place; mutation/history/compaction are still required for advanced workflows.
+3. **BRepGraph / graph topology depth** -- RAII mutation guard (`BRepGraphMutGuard`), checkpoint/rollback, and `validate_invariants` are now in place; persistent-history naming and compaction semantics remain.
 
 At the current trajectory, RCAD can become a credible industrial CAD kernel with **8–12 months of focused kernel work**, assuming the priority order above and one dedicated developer. If BRepGraph and Gordon/eval-breadth work are deferred to a later phase, the immediate production baseline can be reached in roughly **5–7 months** (same-domain unification + healing pipeline completion + AP242 read depth).
 

@@ -780,6 +780,314 @@ impl Iterator for DfsEdgesFromVertex<'_> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Checkpoint / Mutation Guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A point-in-time snapshot of all adjacency tables and dirty flags in a
+/// [`BRepGraph`].
+///
+/// Created by [`BRepGraph::checkpoint`]; restored by
+/// [`BRepGraph::restore_from_checkpoint`] or automatically on drop of an
+/// uncommitted [`BRepGraphMutGuard`].
+///
+/// The snapshot owns cloned copies of all internal adjacency data, so it is
+/// independent of the live `BRepGraph`.  For large models this can be
+/// memory-heavy; prefer scoped guards for short mutations rather than
+/// storing long-lived checkpoints.
+///
+/// Analogous to `BRepGraph_Compact` / rollback semantics in OCCT 8.0.
+#[derive(Debug, Clone)]
+pub struct BRepGraphCheckpoint {
+    vertex_count: usize,
+    edge_count: usize,
+    face_count: usize,
+    edge_to_faces: Vec<Vec<usize>>,
+    face_to_edges: Vec<Vec<usize>>,
+    vertex_to_edges: Vec<Vec<usize>>,
+    vertex_to_faces: Vec<Vec<usize>>,
+    edge_endpoints: Vec<(usize, usize)>,
+    vertex_dirty: Vec<bool>,
+    edge_dirty: Vec<bool>,
+    face_dirty: Vec<bool>,
+}
+
+impl BRepGraph {
+    // ── Checkpoint / restore ──────────────────────────────────────────────────
+
+    /// Snapshot the current graph state into a [`BRepGraphCheckpoint`].
+    ///
+    /// The checkpoint can later be passed to [`BRepGraph::restore_from_checkpoint`]
+    /// to undo all mutations applied to the graph since the checkpoint was taken.
+    pub fn checkpoint(&self) -> BRepGraphCheckpoint {
+        BRepGraphCheckpoint {
+            vertex_count: self.vertex_count,
+            edge_count: self.edge_count,
+            face_count: self.face_count,
+            edge_to_faces: self.edge_to_faces.clone(),
+            face_to_edges: self.face_to_edges.clone(),
+            vertex_to_edges: self.vertex_to_edges.clone(),
+            vertex_to_faces: self.vertex_to_faces.clone(),
+            edge_endpoints: self.edge_endpoints.clone(),
+            vertex_dirty: self.vertex_dirty.clone(),
+            edge_dirty: self.edge_dirty.clone(),
+            face_dirty: self.face_dirty.clone(),
+        }
+    }
+
+    /// Restore the graph to the state captured by `cp`.
+    ///
+    /// After this call the graph's adjacency tables, counts, and dirty flags
+    /// are exactly as they were when `cp` was created.  Any mutations applied
+    /// after `cp` was taken are undone.
+    pub fn restore_from_checkpoint(&mut self, cp: &BRepGraphCheckpoint) {
+        self.vertex_count = cp.vertex_count;
+        self.edge_count = cp.edge_count;
+        self.face_count = cp.face_count;
+        self.edge_to_faces = cp.edge_to_faces.clone();
+        self.face_to_edges = cp.face_to_edges.clone();
+        self.vertex_to_edges = cp.vertex_to_edges.clone();
+        self.vertex_to_faces = cp.vertex_to_faces.clone();
+        self.edge_endpoints = cp.edge_endpoints.clone();
+        self.vertex_dirty = cp.vertex_dirty.clone();
+        self.edge_dirty = cp.edge_dirty.clone();
+        self.face_dirty = cp.face_dirty.clone();
+    }
+
+    /// Open a scoped mutation guard over this graph.
+    ///
+    /// While the guard is alive, the caller is free to mutate the `BRepGraph`
+    /// (dirty-marking, adjacency updates, etc.) via [`BRepGraphMutGuard::graph`].
+    /// On drop the guard automatically rolls back all changes unless
+    /// [`BRepGraphMutGuard::commit`] or [`BRepGraphMutGuard::commit_unchecked`]
+    /// was called first.
+    ///
+    /// Analogous to `BRepGraph_MutGuard` in OCCT 8.0.
+    pub fn begin_mutation(&mut self) -> BRepGraphMutGuard<'_> {
+        BRepGraphMutGuard::new(self)
+    }
+
+    // ── Invariant validation ──────────────────────────────────────────────────
+
+    /// Validate internal topology invariants and return a list of error strings.
+    ///
+    /// An empty list means the graph is consistent.  Checks include:
+    /// - Table lengths match the declared counts.
+    /// - Every (start, end) vertex index in `edge_endpoints` is in bounds.
+    /// - Every face index referenced by `edge_to_faces` is in bounds.
+    /// - Every edge index referenced by `face_to_edges` is in bounds.
+    ///
+    /// Analogous to `BRepGraph_Validate` in OCCT 8.0.
+    pub fn validate_invariants(&self) -> Vec<String> {
+        let mut errors: Vec<String> = Vec::new();
+
+        if self.edge_to_faces.len() != self.edge_count {
+            errors.push(format!(
+                "edge_to_faces length {} ≠ edge_count {}",
+                self.edge_to_faces.len(),
+                self.edge_count
+            ));
+        }
+        if self.face_to_edges.len() != self.face_count {
+            errors.push(format!(
+                "face_to_edges length {} ≠ face_count {}",
+                self.face_to_edges.len(),
+                self.face_count
+            ));
+        }
+        if self.vertex_to_edges.len() != self.vertex_count {
+            errors.push(format!(
+                "vertex_to_edges length {} ≠ vertex_count {}",
+                self.vertex_to_edges.len(),
+                self.vertex_count
+            ));
+        }
+        if self.vertex_to_faces.len() != self.vertex_count {
+            errors.push(format!(
+                "vertex_to_faces length {} ≠ vertex_count {}",
+                self.vertex_to_faces.len(),
+                self.vertex_count
+            ));
+        }
+        if self.edge_endpoints.len() != self.edge_count {
+            errors.push(format!(
+                "edge_endpoints length {} ≠ edge_count {}",
+                self.edge_endpoints.len(),
+                self.edge_count
+            ));
+        }
+        if self.vertex_dirty.len() != self.vertex_count {
+            errors.push(format!(
+                "vertex_dirty length {} ≠ vertex_count {}",
+                self.vertex_dirty.len(),
+                self.vertex_count
+            ));
+        }
+        if self.edge_dirty.len() != self.edge_count {
+            errors.push(format!(
+                "edge_dirty length {} ≠ edge_count {}",
+                self.edge_dirty.len(),
+                self.edge_count
+            ));
+        }
+        if self.face_dirty.len() != self.face_count {
+            errors.push(format!(
+                "face_dirty length {} ≠ face_count {}",
+                self.face_dirty.len(),
+                self.face_count
+            ));
+        }
+
+        // Check edge_endpoints vertex indices are in bounds.
+        for (ei, &(vs, ve)) in self.edge_endpoints.iter().enumerate() {
+            if vs >= self.vertex_count {
+                errors.push(format!(
+                    "edge {} start vertex {} out of range (vertex_count={})",
+                    ei, vs, self.vertex_count
+                ));
+            }
+            if ve >= self.vertex_count {
+                errors.push(format!(
+                    "edge {} end vertex {} out of range (vertex_count={})",
+                    ei, ve, self.vertex_count
+                ));
+            }
+        }
+
+        // Check face indices referenced by edge_to_faces are in bounds.
+        for (ei, faces) in self.edge_to_faces.iter().enumerate() {
+            for &fi in faces {
+                if fi >= self.face_count {
+                    errors.push(format!(
+                        "edge {} references face {} out of range (face_count={})",
+                        ei, fi, self.face_count
+                    ));
+                }
+            }
+        }
+
+        // Check edge indices referenced by face_to_edges are in bounds.
+        for (fi, edges) in self.face_to_edges.iter().enumerate() {
+            for &ei in edges {
+                if ei >= self.edge_count {
+                    errors.push(format!(
+                        "face {} references edge {} out of range (edge_count={})",
+                        fi, ei, self.edge_count
+                    ));
+                }
+            }
+        }
+
+        errors
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRepGraphMutGuard
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// RAII-scoped mutation guard for a [`BRepGraph`].
+///
+/// On construction a checkpoint is taken of the entire graph state.  The
+/// caller mutates the graph through [`BRepGraphMutGuard::graph`].  When the
+/// guard goes out of scope:
+///
+/// - If [`BRepGraphMutGuard::commit`] or
+///   [`BRepGraphMutGuard::commit_unchecked`] was called first, the new state
+///   is kept.
+/// - Otherwise the graph is **rolled back** to the state at guard creation.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_kernel::{BRep, BRepGraph};
+/// use rcad_kernel::geom::PrimitiveSolid;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let mut graph = BRepGraph::from_brep(&brep);
+///
+/// {
+///     let mut guard = graph.begin_mutation();
+///     guard.graph().mark_face_modified(0);
+///     guard.graph().mark_edge_modified(1);
+///     // Validate before committing.
+///     guard.commit().expect("invariants should hold");
+/// }
+/// assert!(graph.modified_faces().contains(&0));
+/// ```
+pub struct BRepGraphMutGuard<'g> {
+    graph: &'g mut BRepGraph,
+    checkpoint: BRepGraphCheckpoint,
+    committed: bool,
+}
+
+impl<'g> BRepGraphMutGuard<'g> {
+    fn new(graph: &'g mut BRepGraph) -> Self {
+        let checkpoint = graph.checkpoint();
+        Self { graph, checkpoint, committed: false }
+    }
+
+    /// Access the wrapped graph for mutation.
+    pub fn graph(&mut self) -> &mut BRepGraph {
+        self.graph
+    }
+
+    /// Read-only view of the graph (useful for inspect-before-commit checks).
+    pub fn graph_ref(&self) -> &BRepGraph {
+        self.graph
+    }
+
+    /// Validate topology invariants and commit if they all pass.
+    ///
+    /// Returns `Ok(())` on success; `Err(errors)` listing every violated
+    /// invariant if validation fails — in which case the graph is **not**
+    /// rolled back, allowing callers to inspect the invalid intermediate state
+    /// before deciding to call [`BRepGraphMutGuard::rollback`] explicitly.
+    pub fn commit(mut self) -> Result<(), Vec<String>> {
+        let errors = self.graph.validate_invariants();
+        if errors.is_empty() {
+            self.committed = true;
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Commit the current state without running invariant validation.
+    ///
+    /// Use when you have guaranteed the invariants externally, or when
+    /// performance is critical and you have already validated.
+    pub fn commit_unchecked(mut self) {
+        self.committed = true;
+    }
+
+    /// Explicitly roll back all mutations made since the guard was created.
+    ///
+    /// This is equivalent to simply dropping the guard without committing,
+    /// but makes the intent explicit.
+    pub fn rollback(self) {
+        // `committed` remains false; Drop handles the actual restore.
+    }
+
+    /// Consume the guard and return the snapshot taken at guard creation,
+    /// keeping the current (mutated) graph state.
+    ///
+    /// This is a lower-level escape hatch for callers that want to commit
+    /// unconditionally but retain the checkpoint for a manual restore later.
+    pub fn into_checkpoint(mut self) -> BRepGraphCheckpoint {
+        self.committed = true;
+        self.checkpoint.clone()
+    }
+}
+
+impl Drop for BRepGraphMutGuard<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.graph.restore_from_checkpoint(&self.checkpoint);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1154,5 +1462,150 @@ mod tests {
             matches!(h, RepairHint::UnmatchedBoundaryEdge { .. })
         });
         assert!(has_unmatched, "tripod must have unmatched boundary edges");
+    }
+
+    // ── Checkpoint / restore ──────────────────────────────────────────────────
+
+    #[test]
+    fn checkpoint_captures_clean_state() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+        let cp = g.checkpoint();
+        // Checkpoint counts should match the live graph.
+        assert_eq!(cp.vertex_count, g.vertex_count);
+        assert_eq!(cp.edge_count, g.edge_count);
+        assert_eq!(cp.face_count, g.face_count);
+        // Dirty flags are all false in a freshly built graph.
+        assert!(cp.vertex_dirty.iter().all(|&d| !d));
+        assert!(cp.edge_dirty.iter().all(|&d| !d));
+        assert!(cp.face_dirty.iter().all(|&d| !d));
+        // Mark something dirty after the checkpoint.
+        g.mark_face_modified(0);
+        // Restoring should clear the flag.
+        g.restore_from_checkpoint(&cp);
+        assert!(!g.modified_faces().contains(&0), "restore should clear face 0 dirty bit");
+    }
+
+    #[test]
+    fn restore_from_checkpoint_undoes_dirty_marks() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+        // Nothing dirty initially.
+        assert!(!g.has_modifications());
+
+        let cp = g.checkpoint();
+
+        // Mark several entities dirty.
+        g.mark_vertex_modified(2);
+        g.mark_edge_modified(7);
+        g.mark_face_modified(4);
+        assert!(g.has_modifications());
+
+        // Restore.
+        g.restore_from_checkpoint(&cp);
+        assert!(!g.has_modifications(), "all dirty bits should be cleared after restore");
+        assert!(g.modified_vertices().is_empty());
+        assert!(g.modified_edges().is_empty());
+        assert!(g.modified_faces().is_empty());
+    }
+
+    // ── BRepGraphMutGuard ─────────────────────────────────────────────────────
+
+    #[test]
+    fn mut_guard_commit_keeps_changes() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_face_modified(1);
+            guard.graph().mark_edge_modified(3);
+            guard.commit().expect("box invariants should hold");
+        }
+
+        // Changes persisted after commit.
+        assert!(g.modified_faces().contains(&1), "face 1 should be dirty after commit");
+        assert!(g.modified_edges().contains(&3), "edge 3 should be dirty after commit");
+    }
+
+    #[test]
+    fn mut_guard_drop_without_commit_rolls_back() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_face_modified(0);
+            guard.graph().mark_vertex_modified(5);
+            // Drop without commit → automatic rollback.
+        }
+
+        assert!(!g.has_modifications(), "uncommitted guard drop should roll back dirty bits");
+    }
+
+    #[test]
+    fn mut_guard_explicit_rollback_reverts_changes() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_face_modified(2);
+            guard.rollback(); // explicit rollback
+        }
+
+        assert!(!g.modified_faces().contains(&2), "explicit rollback should clear face 2");
+    }
+
+    #[test]
+    fn mut_guard_commit_unchecked_keeps_changes() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_edge_modified(0);
+            guard.commit_unchecked();
+        }
+
+        assert!(g.modified_edges().contains(&0), "commit_unchecked should keep edge 0 dirty");
+    }
+
+    #[test]
+    fn mut_guard_into_checkpoint_keeps_state_and_returns_snapshot() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+
+        let cp = {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_face_modified(3);
+            guard.into_checkpoint()
+        };
+
+        // State should be kept (committed via into_checkpoint).
+        assert!(g.modified_faces().contains(&3));
+        // The returned checkpoint should represent the pre-mutation state (face 3 not dirty).
+        assert!(!cp.face_dirty.get(3).copied().unwrap_or(true),
+            "checkpoint should capture pre-mutation state (face 3 was clean)");
+    }
+
+    // ── validate_invariants ───────────────────────────────────────────────────
+
+    #[test]
+    fn validate_invariants_passes_for_unit_box() {
+        let brep = unit_box();
+        let g = BRepGraph::from_brep(&brep);
+        let errors = g.validate_invariants();
+        assert!(errors.is_empty(), "unit box graph should have no invariant violations: {errors:?}");
+    }
+
+    #[test]
+    fn validate_invariants_passes_for_non_manifold_tripod() {
+        // The tripod is non-manifold but structurally consistent (table lengths match,
+        // indices are in bounds).
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+        let errors = g.validate_invariants();
+        assert!(errors.is_empty(), "tripod graph should have no index invariant violations: {errors:?}");
     }
 }

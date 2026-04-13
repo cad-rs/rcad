@@ -72,6 +72,165 @@ pub struct SurfaceProjection {
 /// assert!((result.point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
 /// ```
 pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) -> CurveProjection {
+    // ── Analytic fast paths ───────────────────────────────────────────────────
+    // Analogous to OCCT `ExtremaPC` per-type dispatch.
+
+    match curve {
+        Curve3::Line(l) => {
+            // Closest point on an infinite line: project query onto line direction.
+            let dir_sq = l.direction.dot(l.direction);
+            if dir_sq < 1e-20 {
+                // Degenerate line — return origin.
+                let pt = l.origin;
+                return CurveProjection {
+                    point: pt,
+                    param: 0.0,
+                    distance: (pt - query).length(),
+                };
+            }
+            let t = (query - l.origin).dot(l.direction) / dir_sq;
+            let [t0, t1] = curve.default_domain();
+            let t_clamped = if t0.is_finite() && t1.is_finite() {
+                t.clamp(t0, t1)
+            } else {
+                t
+            };
+            let pt = l.origin + t_clamped * l.direction;
+            return CurveProjection {
+                point: pt,
+                param: t_clamped,
+                distance: (pt - query).length(),
+            };
+        }
+
+        Curve3::Circle(circ) => {
+            // Closest point on a circle: project query onto circle plane,
+            // compute the angle, then evaluate.
+            // The circle is parametrized as P(t) = center + cos(t)*x_ax + sin(t)*y_ax.
+            let x_ax = crate::geom::any_perpendicular(circ.normal);
+            let y_ax = circ.normal.cross(x_ax).normalize_or_zero();
+            // Project query onto the circle plane.
+            let q_in_plane = query - query.dot(circ.normal) * circ.normal
+                + circ.center.dot(circ.normal) * circ.normal;
+            let local = q_in_plane - circ.center;
+            let a = local.dot(x_ax);
+            let b = local.dot(y_ax);
+            // Handle the degenerate case (query on the axis).
+            let t_raw = if a.abs() < 1e-15 && b.abs() < 1e-15 {
+                0.0_f64
+            } else {
+                b.atan2(a)
+            };
+            let [t0, t1] = curve.default_domain();
+            // Wrap t_raw into [t0, t1] for partial arcs.
+            let t = if t1 - t0 >= std::f64::consts::TAU - 1e-9 {
+                // Full circle — no clamping needed.
+                t_raw
+            } else {
+                // Clamp and check the two nearest full-circle candidates.
+                let candidates = [
+                    t_raw,
+                    t_raw + std::f64::consts::TAU,
+                    t_raw - std::f64::consts::TAU,
+                    t0,
+                    t1,
+                ];
+                candidates
+                    .iter()
+                    .filter(|&&tc| tc >= t0 - 1e-12 && tc <= t1 + 1e-12)
+                    .map(|&tc| tc.clamp(t0, t1))
+                    .min_by(|&a, &b| {
+                        let da = (circ.point_at(a) - query).length();
+                        let db = (circ.point_at(b) - query).length();
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(t_raw.clamp(t0, t1))
+            };
+            let pt = circ.point_at(t);
+            return CurveProjection {
+                point: pt,
+                param: t,
+                distance: (pt - query).length(),
+            };
+        }
+
+        Curve3::Ellipse(ell) => {
+            // Closest point on an ellipse: project query onto ellipse plane,
+            // decompose into (a, b) components, use atan2 for initial angle
+            // estimate, then refine with a few Newton steps.
+            let minor_dir = ell.normal.cross(ell.major_dir).normalize_or_zero();
+            // Project query onto the ellipse plane.
+            let q_in_plane = query - query.dot(ell.normal) * ell.normal
+                + ell.center.dot(ell.normal) * ell.normal;
+            let local = q_in_plane - ell.center;
+            let a = local.dot(ell.major_dir);
+            let b = local.dot(minor_dir);
+            // Normalized angle that would locate the closest point on a unit circle.
+            let t_init = if a.abs() < 1e-15 && b.abs() < 1e-15 {
+                0.0_f64
+            } else {
+                (b / ell.minor_radius).atan2(a / ell.major_radius)
+            };
+            let [t0, t1] = curve.default_domain();
+            let t_init_clamped = if t1 - t0 >= std::f64::consts::TAU - 1e-9 {
+                t_init
+            } else {
+                // Try all canonical equivalent angles.
+                let candidates = [
+                    t_init,
+                    t_init + std::f64::consts::TAU,
+                    t_init - std::f64::consts::TAU,
+                    t0,
+                    t1,
+                ];
+                candidates
+                    .iter()
+                    .filter(|&&tc| tc >= t0 - 1e-12 && tc <= t1 + 1e-12)
+                    .map(|&tc| tc.clamp(t0, t1))
+                    .min_by(|&a, &b| {
+                        let da = (ell.point_at(a) - query).length();
+                        let db = (ell.point_at(b) - query).length();
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(t_init.clamp(t0, t1))
+            };
+            // Refine with Newton steps (at most 10 iterations).
+            let dt = 1e-7;
+            let clamp = |t: f64| {
+                if t1 - t0 >= std::f64::consts::TAU - 1e-9 { t } else { t.clamp(t0, t1) }
+            };
+            let mut best_t = t_init_clamped;
+            let mut best_dist = (ell.point_at(best_t) - query).length();
+            for _ in 0..10 {
+                let p = ell.point_at(best_t);
+                let diff = p - query;
+                let tangent = (ell.point_at(best_t + dt) - ell.point_at(best_t - dt)) / (2.0 * dt);
+                let tang_sq = tangent.dot(tangent);
+                if tang_sq < 1e-20 { break; }
+                let curv = (ell.point_at(best_t + 2.0 * dt) - 2.0 * p
+                    + ell.point_at(best_t - 2.0 * dt)) / (dt * dt);
+                let denom = tang_sq + diff.dot(curv);
+                let delta = diff.dot(tangent) / if denom.abs() > 1e-20 { denom } else { tang_sq };
+                let new_t = clamp(best_t - delta);
+                let new_dist = (ell.point_at(new_t) - query).length();
+                if new_dist < best_dist {
+                    best_dist = new_dist;
+                    best_t = new_t;
+                }
+                if delta.abs() < 1e-11 { break; }
+            }
+            let pt = ell.point_at(best_t);
+            return CurveProjection {
+                point: pt,
+                param: best_t,
+                distance: (pt - query).length(),
+            };
+        }
+
+        _ => {}
+    }
+
+    // ── Numerical fallback for all other curve types ───────────────────────────
     let [t0_raw, t1_raw] = curve.default_domain();
     let n = n_samples.max(4);
 
@@ -79,10 +238,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
     // centered on the closest parameter analytically (dot product for lines).
     let (t0, t1) = if t0_raw.is_infinite() || t1_raw.is_infinite() {
         // Use the analytical projection for the domain center estimate
-        let t_center = match curve {
-            Curve3::Line(l) => (query - l.origin).dot(l.direction),
-            _ => 0.0,
-        };
+        let t_center = 0.0; // non-line types; 0 is a safe fallback
         let span = 100.0_f64; // generous range around t_center
         (t_center - span, t_center + span)
     } else {
@@ -497,6 +653,87 @@ mod tests {
             r.point
         );
         assert!((r.distance - 4.0).abs() < 1e-4, "distance={}", r.distance);
+    }
+
+    #[test]
+    fn project_onto_ellipse_curve_analytic() {
+        // Ellipse centered at origin in XY plane, semi-axes 3 and 1.
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+        // Query point along +X beyond the ellipse → nearest should be (3, 0, 0).
+        let q = DVec3::new(5.0, 0.0, 0.0);
+        let r = closest_point_on_curve(&ellipse, q, 64);
+        assert!(
+            (r.point - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
+            "expected (3,0,0) got {}",
+            r.point
+        );
+        assert!((r.distance - 2.0).abs() < 1e-5, "distance={}", r.distance);
+    }
+
+    #[test]
+    fn project_onto_ellipse_curve_off_plane() {
+        // Query lifted off the ellipse plane — projection should still land on ellipse.
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            major_dir: DVec3::X,
+            major_radius: 2.0,
+            minor_radius: 1.0,
+        });
+        // Query at (2, 0, 5) → closest in-plane point is (2, 0, 0).
+        let q = DVec3::new(2.0, 0.0, 5.0);
+        let r = closest_point_on_curve(&ellipse, q, 64);
+        assert!(r.point.z.abs() < 1e-5, "z should be ~0, got {}", r.point.z);
+        assert!(
+            (r.point - DVec3::new(2.0, 0.0, 0.0)).length() < 1e-5,
+            "expected (2,0,0) got {}",
+            r.point
+        );
+    }
+
+    #[test]
+    fn project_onto_line_curve_oblique() {
+        // Line along (1,1,0)/sqrt(2), query off axis → test 3-D dot product.
+        let dir = DVec3::new(1.0, 1.0, 0.0).normalize();
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: dir,
+        });
+        let q = DVec3::new(0.0, 1.0, 2.0);
+        let r = closest_point_on_curve(&line, q, 32);
+        // t = q·dir = 0*0.707 + 1*0.707 + 0 = 0.707, point = t*dir
+        let t = q.dot(dir);
+        let expected = dir * t;
+        assert!(
+            (r.point - expected).length() < 1e-9,
+            "expected {:?} got {}",
+            expected,
+            r.point
+        );
+    }
+
+    #[test]
+    fn project_onto_partial_circle_arc() {
+        // Arc from 0 to π/2 (first quadrant).
+        let arc = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        });
+        // For a full circle, query at (-2, 0, 0) should give t = π, point = (-1, 0, 0).
+        let q = DVec3::new(-2.0, 0.0, 0.0);
+        let r = closest_point_on_curve(&arc, q, 64);
+        assert!(
+            (r.point - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-6,
+            "expected (-1,0,0) got {}",
+            r.point
+        );
     }
 
     #[test]
