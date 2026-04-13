@@ -102,6 +102,7 @@ pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
 pub use geom::{
     ArchimedeanSpiral2d, BSplineCurve2, CircleInvolute2d, Ellipse2d, LogarithmicSpiral2d,
+    SineWave2d,
 };
 pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
@@ -1116,6 +1117,15 @@ impl BRep {
                     xf_surface(&mut t.basis, mat);
                     // trim domain is in parameter space — unchanged by transform
                 }
+                    Surface3::Gordon(g) => {
+                        for c in &mut g.u_curves {
+                            xf_curve(c, mat);
+                        }
+                        for c in &mut g.v_curves {
+                            xf_curve(c, mat);
+                        }
+                        // u/v parameter grids are dimensionless param values.
+                    }
             }
         }
         fn xf_surface_curve(c: &mut Box<geom::Curve3>, mat: glam::DAffine3) {

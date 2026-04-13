@@ -126,6 +126,10 @@ pub struct DS {
     /// When set to a value larger than `TOLERANCE_ABS`, approximate
     /// near-miss intersections (analogous to OCCT `BOPAlgo_Options::SetFuzzyValue`).
     pub fuzzy_tol: f64,
+    /// Number of vertices loaded from shape A (first shape). Shape A DS vertex indices are 0..a_vertex_count.
+    pub a_vertex_count: usize,
+    /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count.
+    pub a_edge_count: usize,
 }
 
 impl DS {
@@ -146,9 +150,13 @@ impl DS {
             interferences: Vec::new(),
             intersection_curves: Vec::new(),
             fuzzy_tol: tol,
+            a_vertex_count: 0,
+            a_edge_count: 0,
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
+        ds.a_vertex_count = ds.vertices.len();
+        ds.a_edge_count = ds.edges.len();
         ds.load_brep(b, ShapeOrigin::ShapeB);
         ds.compute_uv_boundaries();
 

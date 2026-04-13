@@ -1,5 +1,9 @@
 use rcad_kernel::appearance::{Color, StepColor};
 use crate::StepGeneralProperty;
+use crate::{
+    StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+    StepPropertyDefinitionRepr,
+};
 
 /// Selects which STEP application protocol to use when writing a file.
 ///
@@ -21,6 +25,15 @@ use std::collections::{BTreeSet, HashMap};
 pub struct ExportSelection<'a> {
     pub selected_faces: &'a [usize],
     pub selected_edges: &'a [usize],
+}
+
+/// Optional AP242 metadata entities to be written alongside geometry.
+#[derive(Debug, Clone, Default)]
+pub struct StepAp242Metadata {
+    pub property_definition_representations: Vec<StepPropertyDefinitionRepr>,
+    pub dimensional_locations: Vec<StepDimensionalLocation>,
+    pub dimensional_sizes: Vec<StepDimensionalSize>,
+    pub geometric_tolerances: Vec<StepGeometricTolerance>,
 }
 
 pub struct StepWriter;
@@ -45,7 +58,7 @@ impl StepWriter {
         protocol: StepProtocol,
     ) -> String {
         let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None, &[]);
+        writer.write_brep(brep, selection, None, &[], None);
         writer.finish()
     }
 
@@ -59,7 +72,20 @@ impl StepWriter {
         protocol: StepProtocol,
     ) -> String {
         let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None, properties);
+        writer.write_brep(brep, selection, None, properties, None);
+        writer.finish()
+    }
+
+    /// Export with generic properties plus AP242 metadata entities.
+    pub fn write_string_with_ap242_metadata(
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        properties: &[StepGeneralProperty],
+        metadata: &StepAp242Metadata,
+        protocol: StepProtocol,
+    ) -> String {
+        let mut writer = Part21Writer::new_with_protocol(protocol);
+        writer.write_brep(brep, selection, None, properties, Some(metadata));
         writer.finish()
     }
 
@@ -87,6 +113,7 @@ impl StepWriter {
             },
             Some(colors),
             &[],
+            None,
         );
         writer.finish()
     }
@@ -149,12 +176,18 @@ impl Part21Writer {
         selection: ExportSelection<'_>,
         colors: Option<&StepColor>,
         properties: &[StepGeneralProperty],
+        ap242_metadata: Option<&StepAp242Metadata>,
     ) {
         // Optional general metadata properties.
         for prop in properties {
             let desc = prop.description.as_deref().unwrap_or("");
             let gp = self.general_property(&prop.name, desc);
             self.property_definition(&prop.name, desc, gp);
+        }
+        if matches!(self.protocol, StepProtocol::Ap242) {
+            if let Some(meta) = ap242_metadata {
+                self.write_ap242_metadata(meta);
+            }
         }
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
@@ -595,7 +628,8 @@ impl Part21Writer {
             Some(Surface3::LinearExtrusion(_))
             | Some(Surface3::Revolution(_))
             | Some(Surface3::Bezier(_))
-            | Some(Surface3::Offset(_)) => {
+                | Some(Surface3::Offset(_))
+                | Some(Surface3::Gordon(_)) => {
                 // Swept/Bezier/Offset surfaces: fall back to plane (no direct STEP writer yet)
                 self.plane("face_plane", fallback_placement)
             }
@@ -1644,6 +1678,40 @@ impl Part21Writer {
         ))
     }
 
+    fn write_ap242_metadata(&mut self, metadata: &StepAp242Metadata) {
+        for pdr in &metadata.property_definition_representations {
+            let pd = opt_ref_token(pdr.property_definition_id);
+            let rep = opt_ref_token(pdr.representation_id);
+            self.push(format!("PROPERTY_DEFINITION_REPRESENTATION({},{})", pd, rep));
+        }
+        for loc in &metadata.dimensional_locations {
+            let name = opt_step_string(loc.name.as_deref());
+            let desc = opt_step_string(loc.description.as_deref());
+            let from_id = opt_ref_token(loc.from_entity_id);
+            let to_id = opt_ref_token(loc.to_entity_id);
+            self.push(format!(
+                "DIMENSIONAL_LOCATION({},{},{},{})",
+                name, desc, from_id, to_id
+            ));
+        }
+        for size in &metadata.dimensional_sizes {
+            let name = opt_step_string(size.name.as_deref());
+            let desc = opt_step_string(size.description.as_deref());
+            let shape = opt_ref_token(size.shape_aspect_id);
+            self.push(format!("DIMENSIONAL_SIZE({},{},{})", name, desc, shape));
+        }
+        for tol in &metadata.geometric_tolerances {
+            let name = opt_step_string(tol.name.as_deref());
+            let desc = opt_step_string(tol.description.as_deref());
+            let val = opt_ref_token(tol.value_entity_id);
+            let shape = opt_ref_token(tol.shape_aspect_id);
+            self.push(format!(
+                "GEOMETRIC_TOLERANCE({},{},{},{})",
+                name, desc, val, shape
+            ));
+        }
+    }
+
     fn push(&mut self, body: String) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -1654,6 +1722,16 @@ impl Part21Writer {
 
 fn escape_step_string(s: &str) -> String {
     s.replace('\'', "''")
+}
+
+fn opt_ref_token(v: Option<u64>) -> String {
+    v.map(|id| format!("#{}", id))
+        .unwrap_or_else(|| "$".to_string())
+}
+
+fn opt_step_string(s: Option<&str>) -> String {
+    s.map(|v| format!("'{}'", escape_step_string(v)))
+        .unwrap_or_else(|| "$".to_string())
 }
 
 #[derive(Clone, Copy)]
@@ -1819,7 +1897,8 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::LinearExtrusion(_)
         | Surface3::Revolution(_)
         | Surface3::Bezier(_)
-        | Surface3::Offset(_) => None,
+            | Surface3::Offset(_)
+            | Surface3::Gordon(_) => None,
         Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
     }
 }
@@ -1847,7 +1926,10 @@ fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StepReader;
+    use crate::{
+        StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+        StepPropertyDefinitionRepr, StepReader,
+    };
     use glam::DVec3;
     use rcad_modeling::make_box_brep;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
@@ -1900,6 +1982,105 @@ mod tests {
         assert!(step.contains("GENERAL_PROPERTY('Revision','A',$)"));
         assert!(step.contains("PROPERTY_DEFINITION('PartNumber','PN-001',#"));
         assert!(step.contains("PROPERTY_DEFINITION('Revision','A',#"));
+    }
+
+    #[test]
+    fn exports_ap242_metadata_entities_when_provided() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            property_definition_representations: vec![StepPropertyDefinitionRepr {
+                entity_id: 0,
+                property_definition_id: Some(10),
+                representation_id: Some(20),
+            }],
+            dimensional_locations: vec![StepDimensionalLocation {
+                entity_id: 0,
+                name: Some("d_loc".into()),
+                description: Some("desc".into()),
+                from_entity_id: Some(30),
+                to_entity_id: Some(31),
+            }],
+            dimensional_sizes: vec![StepDimensionalSize {
+                entity_id: 0,
+                name: Some("d_size".into()),
+                description: None,
+                shape_aspect_id: Some(40),
+            }],
+            geometric_tolerances: vec![StepGeometricTolerance {
+                entity_id: 0,
+                name: Some("flatness".into()),
+                description: Some("gtol".into()),
+                value_entity_id: Some(50),
+                shape_aspect_id: Some(60),
+            }],
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+
+        assert!(step.contains("PROPERTY_DEFINITION_REPRESENTATION(#10,#20)"));
+        assert!(step.contains("DIMENSIONAL_LOCATION('d_loc','desc',#30,#31)"));
+        assert!(step.contains("DIMENSIONAL_SIZE('d_size',$,#40)"));
+        assert!(step.contains("GEOMETRIC_TOLERANCE('flatness','gtol',#50,#60)"));
+    }
+
+    #[test]
+    fn ap242_metadata_write_read_roundtrip_smoke() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            property_definition_representations: vec![StepPropertyDefinitionRepr {
+                entity_id: 0,
+                property_definition_id: Some(11),
+                representation_id: Some(22),
+            }],
+            dimensional_locations: vec![StepDimensionalLocation {
+                entity_id: 0,
+                name: Some("L1".into()),
+                description: Some("loc".into()),
+                from_entity_id: Some(33),
+                to_entity_id: Some(44),
+            }],
+            dimensional_sizes: vec![StepDimensionalSize {
+                entity_id: 0,
+                name: Some("S1".into()),
+                description: Some("size".into()),
+                shape_aspect_id: Some(55),
+            }],
+            geometric_tolerances: vec![StepGeometricTolerance {
+                entity_id: 0,
+                name: Some("parallelism".into()),
+                description: Some("tol".into()),
+                value_entity_id: Some(66),
+                shape_aspect_id: Some(77),
+            }],
+        };
+
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+
+        let (_parsed_brep, doc_meta) =
+            StepReader::parse_string_with_metadata(&step).expect("AP242 metadata STEP should parse");
+        assert_eq!(doc_meta.property_definition_representations.len(), 1);
+        assert_eq!(doc_meta.dimensional_locations.len(), 1);
+        assert_eq!(doc_meta.dimensional_sizes.len(), 1);
+        assert_eq!(doc_meta.geometric_tolerances.len(), 1);
     }
 
     #[test]

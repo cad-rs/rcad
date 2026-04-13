@@ -11,7 +11,12 @@ pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
-pub use features::{FeatureError, make_cylindrical_hole, make_draft_prism, make_prism, make_revolution};
+pub mod brep_graph;
+pub use features::{
+    FeatureError, SplitShapeError,
+    make_cylindrical_hole, make_draft_prism, make_prism, make_revolution,
+    make_linear_rib, make_revolution_rib, split_face_by_wire,
+};
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -35,12 +40,18 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     WireAnalysisReport, WireIssueReport, analyze_wire_issues,
 };
 pub use brep_repair::{
-    RepairReport, fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
+    MakeConnectedReport, RepairReport, ToleranceFlowDirection,
+    fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
     merge_close_vertices, recompute_face_normals, remove_degenerate_faces, repair,
-    remove_small_edges, fix_same_range_with_scan,
+    remove_small_edges, fix_same_range_with_scan, make_connected_baseline,
+    make_connected_iterative, make_connected_iterative_with_growth,
+    make_connected_iterative_with_growth_cap,
+    make_connected_iterative_scoped_with_growth_cap,
+    propagate_tolerances, propagate_tolerances_post_boolean,
 };
 pub use healing::{
-    HealingIssueStats, HealingMode, HealingOptions, HealingReport, analyze_and_heal, heal,
+    HealingIssueStats, HealingMode, HealingOptions, HealingReport, HealingStage,
+    HealingStageReport, analyze_and_heal, heal,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin};
@@ -60,6 +71,10 @@ pub use array::{
     linear_pattern, circular_pattern,
 };
 pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
+pub use brep_graph::{
+    NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent, TopoGraphValidationIssue,
+    TopoNode,
+};
 
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +125,24 @@ pub struct SimplifyReport {
 }
 
 /// Options for boolean execution pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeConnectedScopeSeedMode {
+    ShortEdges,
+    NearDuplicateVertices,
+    ToleranceTaggedEdges,
+    MultiPcurveEdges,
+    TopologySeamCandidates,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeConnectedScopeSeedSource {
+    Heuristic,
+    History,
+    HistoryAugmentedHeuristic,
+}
+
+/// Options for boolean execution pipeline.
 #[derive(Debug, Clone, Copy)]
 pub struct BooleanOptions {
     /// Use BVH acceleration during pave filling when possible.
@@ -124,6 +157,27 @@ pub struct BooleanOptions {
     pub simplify: SimplifyOptions,
     /// Include origin history and stable per-face labels in report.
     pub include_history: bool,
+    /// Run baseline connectivity rebuilding (MakeConnected-style) after boolean.
+    pub run_make_connected: bool,
+    /// Tolerance used by connectivity rebuilding.
+    pub make_connected_tolerance: f64,
+    /// Maximum number of iterative make-connected passes.
+    pub make_connected_max_passes: usize,
+    /// Per-pass tolerance growth factor for iterative make-connected.
+    pub make_connected_tolerance_growth: f64,
+    /// Upper bound for make-connected tolerance growth.
+    pub make_connected_tolerance_cap: f64,
+    /// Enable scoped make-connected mode (local region only).
+    pub make_connected_scoped: bool,
+    /// Seed edge length threshold used to derive local scope vertices.
+    pub make_connected_scope_seed_length: f64,
+    /// Seed derivation strategy for scoped mode.
+    pub make_connected_scope_seed_mode: MakeConnectedScopeSeedMode,
+    /// Minimum history-seed edge count before skipping heuristic augmentation.
+    ///
+    /// In scoped mode, if history-derived seed edges are fewer than this value,
+    /// heuristic seed edges are unioned in to improve local coverage.
+    pub make_connected_scope_min_history_edges: usize,
     /// Fuzzy tolerance for near-miss interference detection (analogous to
     /// `BOPAlgo_Options::SetFuzzyValue`).
     ///
@@ -141,6 +195,15 @@ impl Default for BooleanOptions {
             run_simplify: false,
             simplify: SimplifyOptions::default(),
             include_history: false,
+            run_make_connected: false,
+            make_connected_tolerance: tolerance::TOLERANCE_ABS,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
+            make_connected_scoped: false,
+            make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+            make_connected_scope_min_history_edges: 2,
             fuzzy_tol: 0.0,
         }
     }
@@ -157,8 +220,139 @@ pub struct BooleanExecutionReport {
     pub healing_report: Option<HealingReport>,
     pub simplified: bool,
     pub simplify_report: Option<SimplifyReport>,
+    pub made_connected: bool,
+    pub make_connected_report: Option<MakeConnectedReport>,
+    /// Seed mode used for scoped make-connected, if scoped mode was enabled.
+    pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
+    /// Seed source used in scoped mode.
+    pub make_connected_scope_seed_source: Option<MakeConnectedScopeSeedSource>,
+    /// Number of history-derived seed edges before union.
+    pub make_connected_scope_history_seed_edge_count: usize,
+    /// Number of heuristic-derived seed edges before union.
+    pub make_connected_scope_heuristic_seed_edge_count: usize,
+    /// Seed vertices used for scoped make-connected.
+    pub make_connected_scope_seed_vertices: Vec<usize>,
+    /// Seed edges used for scoped make-connected.
+    pub make_connected_scope_seed_edges: Vec<usize>,
+    /// Stable labels for scoped seed edges (orientation-insensitive).
+    pub make_connected_scope_seed_edge_labels: Vec<String>,
     pub history_faces: usize,
     pub persistent_face_labels: Vec<String>,
+    /// Number of retry attempts performed before success.
+    pub retry_count: usize,
+    /// Fuzzy tolerance value that produced the final result.
+    pub effective_fuzzy_tol: f64,
+}
+
+/// Robust boolean retry controls.
+#[derive(Debug, Clone)]
+pub struct BooleanRobustOptions {
+    /// Base execution options for each attempt.
+    pub base: BooleanOptions,
+    /// Additional fuzzy tolerance values to try when an attempt fails.
+    pub fuzzy_retry_ladder: Vec<f64>,
+}
+
+/// Retry classes used by adaptive robust-boolean retry policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanRetryClass {
+    /// Input is structurally invalid for retry (e.g. empty input).
+    FatalInput,
+    /// Missing geometry payload cannot be fixed by fuzzy escalation.
+    IncompleteData,
+    /// Topology degeneracy may be resolved by increased fuzzy tolerance.
+    DegenerateTopology,
+    /// Numeric instability often needs stronger fuzzy escalation first.
+    NumericalInstability,
+}
+
+impl Default for BooleanRobustOptions {
+    fn default() -> Self {
+        Self {
+            base: BooleanOptions::default(),
+            fuzzy_retry_ladder: vec![
+                tolerance::TOLERANCE_ABS * 10.0,
+                tolerance::TOLERANCE_ABS * 100.0,
+                tolerance::TOLERANCE_ABS * 1000.0,
+            ],
+        }
+    }
+}
+
+/// Build ordered fuzzy values for robust retry.
+///
+/// First element is always the initial fuzzy value (clamped to >= 0).
+/// Ladder values <= 0 are skipped; duplicates (within epsilon) are removed.
+pub fn boolean_retry_fuzzy_values(initial: f64, ladder: &[f64]) -> Vec<f64> {
+    let mut values = vec![initial.max(0.0)];
+    for &v in ladder {
+        if v <= 0.0 {
+            continue;
+        }
+        if !values.iter().any(|e| (*e - v).abs() <= 1e-15) {
+            values.push(v);
+        }
+    }
+    values
+}
+
+/// Classify boolean execution failures for adaptive retry policies.
+pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
+    match err {
+        BooleanError::EmptyInput => BooleanRetryClass::FatalInput,
+        BooleanError::MissingGeometry(_) => BooleanRetryClass::IncompleteData,
+        BooleanError::DegenerateResult => BooleanRetryClass::DegenerateTopology,
+        BooleanError::NumericalFailure(_) => BooleanRetryClass::NumericalInstability,
+        BooleanError::EmptyCollection(_) => BooleanRetryClass::DegenerateTopology,
+    }
+}
+
+/// Build next fuzzy values based on the last failure type.
+///
+/// Returned values are positive, deduplicated, and ordered from smaller to
+/// larger escalation.
+pub fn boolean_retry_ladder_for_error(
+    attempted_fuzzy: f64,
+    ladder: &[f64],
+    err: &BooleanError,
+) -> Vec<f64> {
+    let class = classify_boolean_retry(err);
+    let mut out: Vec<f64> = Vec::new();
+    let mut push_unique = |v: f64| {
+        if v <= 0.0 {
+            return;
+        }
+        if !out.iter().any(|e| (*e - v).abs() <= 1e-15) {
+            out.push(v);
+        }
+    };
+
+    match class {
+        BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => {}
+        BooleanRetryClass::DegenerateTopology => {
+            for &v in ladder {
+                if v > attempted_fuzzy {
+                    push_unique(v);
+                }
+            }
+        }
+        BooleanRetryClass::NumericalInstability => {
+            let baseline = if attempted_fuzzy > 0.0 {
+                attempted_fuzzy
+            } else {
+                tolerance::TOLERANCE_ABS
+            };
+            push_unique(baseline * 10.0);
+            push_unique(baseline * 100.0);
+            for &v in ladder {
+                if v > attempted_fuzzy {
+                    push_unique(v);
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// Options for split-first workflows.
@@ -466,6 +660,62 @@ pub fn boolean_op_with_options(
         report.healing_report = Some(heal_report);
     }
 
+    if options.run_make_connected {
+        let (connected, connected_report) = if options.make_connected_scoped {
+            let seed = options
+                .make_connected_scope_seed_length
+                .max(options.make_connected_tolerance);
+            let (mut scope_seed_edges, history_seed_edges, heuristic_seed_edges, seed_source) =
+                select_scoped_seed_edges(
+                    &out,
+                    history_opt.as_ref(),
+                    seed,
+                    options.make_connected_scope_seed_mode,
+                    options.make_connected_scope_min_history_edges,
+                );
+            let mut scope_vertices = make_connected_seed_vertices(
+                &out,
+                seed,
+                options.make_connected_scope_seed_mode,
+            );
+            scope_vertices.extend(make_connected_seed_vertices_from_edge_ids(
+                &out,
+                &scope_seed_edges,
+            ));
+            scope_vertices.sort_unstable();
+            scope_vertices.dedup();
+            scope_seed_edges.sort_unstable();
+            scope_seed_edges.dedup();
+            report.make_connected_scope_seed_mode = Some(options.make_connected_scope_seed_mode);
+            report.make_connected_scope_seed_source = Some(seed_source);
+            report.make_connected_scope_history_seed_edge_count = history_seed_edges;
+            report.make_connected_scope_heuristic_seed_edge_count = heuristic_seed_edges;
+            report.make_connected_scope_seed_vertices = scope_vertices.clone();
+            report.make_connected_scope_seed_edge_labels =
+                make_connected_seed_edge_labels(&out, &scope_seed_edges);
+            report.make_connected_scope_seed_edges = scope_seed_edges;
+            make_connected_iterative_scoped_with_growth_cap(
+                &out,
+                &scope_vertices,
+                options.make_connected_tolerance,
+                options.make_connected_max_passes,
+                options.make_connected_tolerance_growth,
+                options.make_connected_tolerance_cap,
+            )
+        } else {
+            make_connected_iterative_with_growth_cap(
+                &out,
+                options.make_connected_tolerance,
+                options.make_connected_max_passes,
+                options.make_connected_tolerance_growth,
+                options.make_connected_tolerance_cap,
+            )
+        };
+        out = connected;
+        report.made_connected = true;
+        report.make_connected_report = Some(connected_report);
+    }
+
     if options.run_simplify {
         let (simplified, simp_report) = simplify_brep_post_ops(&out, options.simplify);
         out = simplified;
@@ -474,12 +724,66 @@ pub fn boolean_op_with_options(
     }
 
     report.output_faces = face_count_of(&out);
+    report.effective_fuzzy_tol = options.fuzzy_tol.max(0.0);
     if let Some(history) = history_opt {
         report.history_faces = history.len();
         report.persistent_face_labels = persistent_face_labels_from_history(&history);
     }
 
     Ok((out, report))
+}
+
+/// Robust boolean operation with automatic fuzzy-tolerance retries.
+///
+/// Attempts run in this order:
+/// 1. `options.base.fuzzy_tol`
+/// 2. each value in `options.fuzzy_retry_ladder`
+///
+/// The first successful attempt is returned, with retry metadata in
+/// [`BooleanExecutionReport`].
+pub fn boolean_op_robust(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    options: BooleanRobustOptions,
+) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+    let mut pending = std::collections::VecDeque::new();
+    pending.push_back(options.base.fuzzy_tol.max(0.0));
+    let mut tried: Vec<f64> = Vec::new();
+    let mut last_err: Option<BooleanError> = None;
+
+    while let Some(fuzzy) = pending.pop_front() {
+        if tried.iter().any(|v| (*v - fuzzy).abs() <= 1e-15) {
+            continue;
+        }
+        tried.push(fuzzy);
+
+        let mut attempt_options = options.base;
+        attempt_options.fuzzy_tol = fuzzy;
+        match boolean_op_with_options(op, a, b, attempt_options) {
+            Ok((brep, mut report)) => {
+                report.retry_count = tried.len().saturating_sub(1);
+                report.effective_fuzzy_tol = fuzzy;
+                return Ok((brep, report));
+            }
+            Err(err) => {
+                for candidate in boolean_retry_ladder_for_error(
+                    fuzzy,
+                    &options.fuzzy_retry_ladder,
+                    &err,
+                ) {
+                    let seen = tried.iter().any(|v| (*v - candidate).abs() <= 1e-15)
+                        || pending.iter().any(|v| (*v - candidate).abs() <= 1e-15);
+                    if !seen {
+                        pending.push_back(candidate);
+                    }
+                }
+                last_err = Some(err);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or(BooleanError::DegenerateResult))
 }
 
 /// Run post-operation simplification passes on a BRep.
@@ -912,6 +1216,370 @@ fn has_faces(brep: &BRep) -> bool {
         .map_or(false, |sh| !sh.faces.is_empty())
 }
 
+fn make_connected_seed_vertices_from_short_edges(brep: &BRep, seed_length: f64) -> Vec<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
+    for e in &brep.edges {
+        if e.start >= brep.vertices.len() || e.end >= brep.vertices.len() {
+            continue;
+        }
+        let ps = brep.vertices[e.start].point;
+        let pe = brep.vertices[e.end].point;
+        if (pe - ps).length() <= threshold {
+            out.insert(e.start);
+            out.insert(e.end);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn make_connected_seed_vertices_from_near_duplicates(
+    brep: &BRep,
+    seed_length: f64,
+) -> Vec<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
+    let threshold2 = threshold * threshold;
+    for i in 0..brep.vertices.len() {
+        for j in (i + 1)..brep.vertices.len() {
+            let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+            if d2 <= threshold2 {
+                out.insert(i);
+                out.insert(j);
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn make_connected_seed_vertices_from_tolerance_tagged_edges(
+    brep: &BRep,
+    tolerance_threshold: f64,
+) -> Vec<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    let threshold = tolerance_threshold.max(tolerance::TOLERANCE_ABS);
+    for (ei, e) in brep.edges.iter().enumerate() {
+        let edge_tol = brep
+            .geom
+            .edge_tolerance
+            .get(ei)
+            .copied()
+            .unwrap_or(tolerance::TOLERANCE_ABS);
+        if edge_tol >= threshold {
+            out.insert(e.start);
+            out.insert(e.end);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    for (ei, e) in brep.edges.iter().enumerate() {
+        if brep
+            .geom
+            .edge_pcurves
+            .get(ei)
+            .map(|pcs| pcs.len() >= 2)
+            .unwrap_or(false)
+        {
+            out.insert(e.start);
+            out.insert(e.end);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    for ei in rcad_kernel::seam_edge_candidates(brep) {
+        if let Some(e) = brep.edges.get(ei) {
+            out.insert(e.start);
+            out.insert(e.end);
+        }
+    }
+    out.into_iter().collect()
+}
+
+fn make_connected_seed_edges_from_short_edges(brep: &BRep, seed_length: f64) -> Vec<usize> {
+    let mut out = Vec::new();
+    let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
+    for (ei, e) in brep.edges.iter().enumerate() {
+        if e.start >= brep.vertices.len() || e.end >= brep.vertices.len() {
+            continue;
+        }
+        let ps = brep.vertices[e.start].point;
+        let pe = brep.vertices[e.end].point;
+        if (pe - ps).length() <= threshold {
+            out.push(ei);
+        }
+    }
+    out
+}
+
+fn make_connected_seed_edges_from_near_duplicates(brep: &BRep, seed_length: f64) -> Vec<usize> {
+    let dup_vertices: std::collections::HashSet<usize> =
+        make_connected_seed_vertices_from_near_duplicates(brep, seed_length)
+            .into_iter()
+            .collect();
+    brep.edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| dup_vertices.contains(&e.start) || dup_vertices.contains(&e.end))
+        .map(|(ei, _)| ei)
+        .collect()
+}
+
+fn make_connected_seed_edges_from_tolerance_tagged_edges(
+    brep: &BRep,
+    tolerance_threshold: f64,
+) -> Vec<usize> {
+    let threshold = tolerance_threshold.max(tolerance::TOLERANCE_ABS);
+    brep.edges
+        .iter()
+        .enumerate()
+        .filter(|(ei, _)| {
+            brep.geom
+                .edge_tolerance
+                .get(*ei)
+                .copied()
+                .unwrap_or(tolerance::TOLERANCE_ABS)
+                >= threshold
+        })
+        .map(|(ei, _)| ei)
+        .collect()
+}
+
+fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> {
+    brep.edges
+        .iter()
+        .enumerate()
+        .filter(|(ei, _)| {
+            brep.geom
+                .edge_pcurves
+                .get(*ei)
+                .map(|pcs| pcs.len() >= 2)
+                .unwrap_or(false)
+        })
+        .map(|(ei, _)| ei)
+        .collect()
+}
+
+fn make_connected_seed_edges_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
+    rcad_kernel::seam_edge_candidates(brep)
+}
+
+fn make_connected_seed_edges(
+    brep: &BRep,
+    seed_length: f64,
+    mode: MakeConnectedScopeSeedMode,
+) -> Vec<usize> {
+    match mode {
+        MakeConnectedScopeSeedMode::ShortEdges => {
+            make_connected_seed_edges_from_short_edges(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::NearDuplicateVertices => {
+            make_connected_seed_edges_from_near_duplicates(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::ToleranceTaggedEdges => {
+            make_connected_seed_edges_from_tolerance_tagged_edges(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::MultiPcurveEdges => {
+            make_connected_seed_edges_from_multi_pcurve_edges(brep)
+        }
+        MakeConnectedScopeSeedMode::TopologySeamCandidates => {
+            make_connected_seed_edges_from_topology_seam_candidates(brep)
+        }
+        MakeConnectedScopeSeedMode::Hybrid => {
+            let mut set = std::collections::BTreeSet::new();
+            for ei in make_connected_seed_edges_from_short_edges(brep, seed_length) {
+                set.insert(ei);
+            }
+            for ei in make_connected_seed_edges_from_near_duplicates(brep, seed_length) {
+                set.insert(ei);
+            }
+            for ei in make_connected_seed_edges_from_tolerance_tagged_edges(brep, seed_length) {
+                set.insert(ei);
+            }
+            for ei in make_connected_seed_edges_from_multi_pcurve_edges(brep) {
+                set.insert(ei);
+            }
+            for ei in make_connected_seed_edges_from_topology_seam_candidates(brep) {
+                set.insert(ei);
+            }
+            set.into_iter().collect()
+        }
+    }
+}
+
+fn make_connected_seed_vertices_from_edge_ids(brep: &BRep, edge_ids: &[usize]) -> Vec<usize> {
+    let mut set = std::collections::BTreeSet::new();
+    for &ei in edge_ids {
+        if let Some(e) = brep.edges.get(ei) {
+            set.insert(e.start);
+            set.insert(e.end);
+        }
+    }
+    set.into_iter().collect()
+}
+
+fn select_scoped_seed_edges(
+    brep: &BRep,
+    history: Option<&BooleanHistory>,
+    seed_length: f64,
+    mode: MakeConnectedScopeSeedMode,
+    min_history_edges: usize,
+) -> (Vec<usize>, usize, usize, MakeConnectedScopeSeedSource) {
+    let history_seed_edges = history
+        .map(|h| make_connected_seed_edges_from_boolean_history(brep, h))
+        .unwrap_or_default();
+    let heuristic_seed_edges = make_connected_seed_edges(brep, seed_length, mode);
+
+    if history_seed_edges.is_empty() {
+        return (
+            heuristic_seed_edges.clone(),
+            0,
+            heuristic_seed_edges.len(),
+            MakeConnectedScopeSeedSource::Heuristic,
+        );
+    }
+
+    if history_seed_edges.len() < min_history_edges {
+        let mut set = std::collections::BTreeSet::new();
+        for ei in &history_seed_edges {
+            set.insert(*ei);
+        }
+        for ei in &heuristic_seed_edges {
+            set.insert(*ei);
+        }
+        return (
+            set.into_iter().collect(),
+            history_seed_edges.len(),
+            heuristic_seed_edges.len(),
+            MakeConnectedScopeSeedSource::HistoryAugmentedHeuristic,
+        );
+    }
+
+    (
+        history_seed_edges.clone(),
+        history_seed_edges.len(),
+        heuristic_seed_edges.len(),
+        MakeConnectedScopeSeedSource::History,
+    )
+}
+
+fn make_connected_seed_edges_from_boolean_history(
+    brep: &BRep,
+    history: &BooleanHistory,
+) -> Vec<usize> {
+    let mut seed_edges = std::collections::BTreeSet::new();
+
+    // If edge history is available, prefer boundary-like generated/split edges.
+    for (ei, origin) in history.edge_origins.iter().enumerate() {
+        if ei >= brep.edges.len() {
+            break;
+        }
+        if matches!(origin, EdgeOrigin::Generated | EdgeOrigin::SplitFromA(_) | EdgeOrigin::SplitFromB(_)) {
+            seed_edges.insert(ei);
+        }
+    }
+
+    // Fallback semantic extraction from face history: edges adjacent to both A and B faces
+    // are strong candidates for boolean interface cleanup.
+    for ei in 0..brep.edges.len() {
+        let adjacent = rcad_kernel::edge_adjacent_faces(brep, ei);
+        if adjacent.is_empty() {
+            continue;
+        }
+        let mut has_a = false;
+        let mut has_b = false;
+        let mut has_generated = false;
+        for fi in adjacent {
+            if fi >= history.face_origins.len() {
+                continue;
+            }
+            match history.face_origins[fi] {
+                FaceOrigin::FromA(_) => has_a = true,
+                FaceOrigin::FromB(_) => has_b = true,
+                FaceOrigin::Generated => has_generated = true,
+            }
+        }
+        if has_generated || (has_a && has_b) {
+            seed_edges.insert(ei);
+        }
+    }
+
+    seed_edges.into_iter().collect()
+}
+
+fn make_connected_seed_edge_labels(brep: &BRep, edge_ids: &[usize]) -> Vec<String> {
+    edge_ids
+        .iter()
+        .map(|&ei| match brep.edges.get(ei) {
+            Some(e) => {
+                let pa = brep.vertices.get(e.start).map(|v| v.point);
+                let pb = brep.vertices.get(e.end).map(|v| v.point);
+                match (pa, pb) {
+                    (Some(a), Some(b)) => {
+                        let a_label = format!("{:.9},{:.9},{:.9}", a.x, a.y, a.z);
+                        let b_label = format!("{:.9},{:.9},{:.9}", b.x, b.y, b.z);
+                        if a_label <= b_label {
+                            format!("edge.{ei}.{a_label}->{b_label}")
+                        } else {
+                            format!("edge.{ei}.{b_label}->{a_label}")
+                        }
+                    }
+                    _ => format!("edge.{ei}.invalid-vertex"),
+                }
+            }
+            None => format!("edge.{ei}.invalid-edge"),
+        })
+        .collect()
+}
+
+fn make_connected_seed_vertices(
+    brep: &BRep,
+    seed_length: f64,
+    mode: MakeConnectedScopeSeedMode,
+) -> Vec<usize> {
+    match mode {
+        MakeConnectedScopeSeedMode::ShortEdges => {
+            make_connected_seed_vertices_from_short_edges(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::NearDuplicateVertices => {
+            make_connected_seed_vertices_from_near_duplicates(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::ToleranceTaggedEdges => {
+            make_connected_seed_vertices_from_tolerance_tagged_edges(brep, seed_length)
+        }
+        MakeConnectedScopeSeedMode::MultiPcurveEdges => {
+            make_connected_seed_vertices_from_multi_pcurve_edges(brep)
+        }
+        MakeConnectedScopeSeedMode::TopologySeamCandidates => {
+            make_connected_seed_vertices_from_topology_seam_candidates(brep)
+        }
+        MakeConnectedScopeSeedMode::Hybrid => {
+            let mut set = std::collections::BTreeSet::new();
+            for v in make_connected_seed_vertices_from_short_edges(brep, seed_length) {
+                set.insert(v);
+            }
+            for v in make_connected_seed_vertices_from_near_duplicates(brep, seed_length) {
+                set.insert(v);
+            }
+            for v in make_connected_seed_vertices_from_tolerance_tagged_edges(brep, seed_length) {
+                set.insert(v);
+            }
+            for v in make_connected_seed_vertices_from_multi_pcurve_edges(brep) {
+                set.insert(v);
+            }
+            for v in make_connected_seed_vertices_from_topology_seam_candidates(brep) {
+                set.insert(v);
+            }
+            set.into_iter().collect()
+        }
+    }
+}
+
 /// Create stable per-face labels from boolean history.
 pub fn persistent_face_labels_from_history(history: &BooleanHistory) -> Vec<String> {
     history
@@ -1178,17 +1846,18 @@ pub fn general_fuse_par_detailed(
 /// faces that originally belonged to the same input plane are often split into
 /// multiple adjacent coplanar fragments. This function merges them back.
 ///
-/// Only **planar** faces are currently unified. Non-planar faces are left
-/// unchanged. The topology is simplified by removing internal shared edges
-/// between coplanar face pairs.
+/// Unifies adjacent faces that lie on the same underlying surface domain:
+/// **planar, cylindrical, toroidal, and spherical** faces are all handled.
+/// The topology is simplified by removing internal shared edges between
+/// same-domain face pairs.
 ///
 /// Returns the simplified BRep and the number of face merges performed.
 ///
 /// # Algorithm
 /// Performs iterated passes: in each pass, the first eligible pair of adjacent
-/// coplanar faces sharing a single shell edge is merged. Passes repeat until
+/// same-domain faces sharing a single shell edge is merged. Passes repeat until
 /// no more merges are possible. This is O(faces² × passes) but correct for all
-/// plane-topology inputs produced by the boolean kernel.
+/// surface-topology inputs produced by the boolean kernel.
 pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
     let mut out = brep.clone();
     let mut total_merges = 0usize;
@@ -1204,8 +1873,10 @@ pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
     (out, total_merges)
 }
 
-/// Attempt one merge of two adjacent coplanar faces in `brep`. Returns `true`
+/// Attempt one merge of two adjacent same-domain faces in `brep`. Returns `true`
 /// if a merge was performed (mutating `brep` in place).
+///
+/// Handles planar, cylindrical, toroidal, and spherical surface pairs.
 fn unify_one_merge_pass(brep: &mut BRep) -> bool {
     use std::collections::HashMap;
 
@@ -1222,38 +1893,96 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
         idx + fi
     }
 
-    fn planes_match_by_geom_store(
+    /// Returns `(same_domain, is_planar)`:
+    /// - `(Some(true), _)`  → surfaces are the same domain; proceed to merge.
+    /// - `(Some(false), _)` → different domains; skip.
+    /// - `(None, _)`        → no surface data; caller should fall back to
+    ///                        normal-direction heuristic.
+    fn surfaces_are_same_domain(
         brep: &BRep,
         si: usize,
         shi: usize,
         fi1: usize,
         fi2: usize,
-    ) -> Option<bool> {
+    ) -> (Option<bool>, bool) {
+        const ANG_TOL: f64 = 1e-6;
+        const LIN_TOL: f64 = 1e-6;
+
         let ff1 = flat_face_index_of(brep, si, shi, fi1);
         let ff2 = flat_face_index_of(brep, si, shi, fi2);
-        let sid1 = brep.geom.face_surface.get(ff1).and_then(|v| *v)?;
-        let sid2 = brep.geom.face_surface.get(ff2).and_then(|v| *v)?;
-        let s1 = brep.geom.surfaces.get(sid1)?;
-        let s2 = brep.geom.surfaces.get(sid2)?;
-        let (p1, p2) = match (s1, s2) {
-            (rcad_kernel::geom::Surface3::Plane(a), rcad_kernel::geom::Surface3::Plane(b)) => {
-                (a, b)
-            }
-            _ => return Some(false),
+        let sid1 = match brep.geom.face_surface.get(ff1).and_then(|v| *v) {
+            Some(id) => id,
+            None => return (None, true),
+        };
+        let sid2 = match brep.geom.face_surface.get(ff2).and_then(|v| *v) {
+            Some(id) => id,
+            None => return (None, true),
+        };
+        let s1 = match brep.geom.surfaces.get(sid1) {
+            Some(s) => s,
+            None => return (None, true),
+        };
+        let s2 = match brep.geom.surfaces.get(sid2) {
+            Some(s) => s,
+            None => return (None, true),
         };
 
-        let n1 = p1.normal.normalize_or_zero();
-        let n2 = p2.normal.normalize_or_zero();
-        if n1.length_squared() <= 1e-24 || n2.length_squared() <= 1e-24 {
-            return Some(false);
+        use rcad_kernel::geom::Surface3;
+        match (s1, s2) {
+            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                let n1 = p1.normal.normalize_or_zero();
+                let n2 = p2.normal.normalize_or_zero();
+                if n1.length_squared() <= 1e-24 || n2.length_squared() <= 1e-24 {
+                    return (Some(false), true);
+                }
+                let cross = n1.cross(n2).length();
+                let dot = n1.dot(n2);
+                if cross > ANG_TOL || dot < 0.0 {
+                    return (Some(false), true);
+                }
+                let d = (p2.origin - p1.origin).dot(n1).abs();
+                (Some(d <= LIN_TOL), true)
+            }
+            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                // Same radius?
+                if (c1.radius - c2.radius).abs() > LIN_TOL {
+                    return (Some(false), false);
+                }
+                // Same axis direction?
+                let a1 = c1.axis.normalize_or_zero();
+                let a2 = c2.axis.normalize_or_zero();
+                if a1.cross(a2).length() > ANG_TOL {
+                    return (Some(false), false);
+                }
+                // Same axis line: point-to-line distance for c2.origin onto c1's axis.
+                let d = (c2.origin - c1.origin).cross(a1).length();
+                (Some(d <= LIN_TOL), false)
+            }
+            (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+                if (t1.major_radius - t2.major_radius).abs() > LIN_TOL {
+                    return (Some(false), false);
+                }
+                if (t1.minor_radius - t2.minor_radius).abs() > LIN_TOL {
+                    return (Some(false), false);
+                }
+                let a1 = t1.axis.normalize_or_zero();
+                let a2 = t2.axis.normalize_or_zero();
+                if a1.cross(a2).length() > ANG_TOL {
+                    return (Some(false), false);
+                }
+                let dc = (t1.center - t2.center).length();
+                (Some(dc <= LIN_TOL), false)
+            }
+            (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+                if (s1.radius - s2.radius).abs() > LIN_TOL {
+                    return (Some(false), false);
+                }
+                let dc = (s1.center - s2.center).length();
+                (Some(dc <= LIN_TOL), false)
+            }
+            // Mismatched types are never same-domain.
+            _ => (Some(false), false),
         }
-        let cross = n1.cross(n2).length();
-        let dot = n1.dot(n2);
-        if cross > 1e-6 || dot < 0.0 {
-            return Some(false);
-        }
-        let d = (p2.origin - p1.origin).dot(n1).abs();
-        Some(d <= 1e-6)
     }
 
     for si in 0..brep.solids.len() {
@@ -1273,7 +2002,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 }
             }
 
-            // Find the first internal edge shared by exactly 2 coplanar faces.
+            // Find the first internal edge shared by exactly 2 same-domain faces.
             for (edge_idx, face_refs) in &edge_to_faces {
                 if face_refs.len() != 2 {
                     continue;
@@ -1286,36 +2015,53 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 let face1_normal = brep.solids[si].shells[shi].faces[fi1].normal;
                 let face2_normal = brep.solids[si].shells[shi].faces[fi2].normal;
 
-                if let Some(planes_match) = planes_match_by_geom_store(brep, si, shi, fi1, fi2) {
-                    if !planes_match {
-                        continue;
-                    }
-                }
-
-                // Only merge planar faces (same surface geometry).
-                // Verify by checking if GeomStore surfaces are both planar.
-                // As a proxy: both normals must be (anti-)parallel.
-                let cross = face1_normal.cross(face2_normal).length();
-                let dot = face1_normal.dot(face2_normal);
-                // normals parallel (same orientation) within angular tolerance
-                if cross > 1e-6 || dot < 0.0 {
-                    continue;
-                }
-
-                // Check same plane: get one vertex from each face and compare
-                // distances to the shared plane defined by face1_normal.
                 let get_face_pt = |fi: usize| -> Option<glam::DVec3> {
                     let we = brep.solids[si].shells[shi].faces[fi].outer_wire.edges.first()?;
                     let edge = brep.edges.get(we.idx)?;
                     let v_idx = if we.forward { edge.start } else { edge.end };
                     brep.vertices.get(v_idx).map(|v| v.point)
                 };
-                let Some(pt1) = get_face_pt(fi1) else { continue };
-                let Some(pt2) = get_face_pt(fi2) else { continue };
 
-                let n = face1_normal.normalize();
-                if (pt2 - pt1).dot(n).abs() > 1e-6 {
-                    continue; // Different planes
+                let (same_domain, is_planar) =
+                    surfaces_are_same_domain(brep, si, shi, fi1, fi2);
+
+                let should_merge = match same_domain {
+                    Some(false) => false,
+                    Some(true) => {
+                        // For planar faces add a vertex–plane distance sanity check.
+                        if is_planar {
+                            let n = face1_normal.normalize();
+                            if let (Some(pt1), Some(pt2)) =
+                                (get_face_pt(fi1), get_face_pt(fi2))
+                            {
+                                (pt2 - pt1).dot(n).abs() <= 1e-6
+                            } else {
+                                false
+                            }
+                        } else {
+                            // For curved surfaces the geom-store check is sufficient.
+                            true
+                        }
+                    }
+                    None => {
+                        // No surface data: fall back to per-face normal heuristic.
+                        let cross = face1_normal.cross(face2_normal).length();
+                        let dot = face1_normal.dot(face2_normal);
+                        if cross > 1e-6 || dot < 0.0 {
+                            false
+                        } else if let (Some(pt1), Some(pt2)) =
+                            (get_face_pt(fi1), get_face_pt(fi2))
+                        {
+                            let n = face1_normal.normalize();
+                            (pt2 - pt1).dot(n).abs() <= 1e-6
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if !should_merge {
+                    continue;
                 }
 
                 // Merge wire: splice Face2 edges into Face1 at the position of the shared edge.
@@ -1329,7 +2075,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     let mut all_inner = inner1;
                     all_inner.extend(inner2);
 
-                    // Build merged face.
+                    // Build merged face (mesh_dirty=true; normal reused from face1).
                     let merged_face = rcad_kernel::topology::Face {
                         outer_wire: rcad_kernel::topology::Wire {
                             edges: merged_wire_edges,
@@ -1342,6 +2088,14 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
 
                     // Replace fi1 with merged face, remove fi2.
                     let (keep_idx, remove_idx) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
+                    // Update face_surface mapping: keep keep_idx's surface id.
+                    let kept_flat = flat_face_index_of(brep, si, shi, keep_idx);
+                    let remove_flat = flat_face_index_of(brep, si, shi, remove_idx);
+                    // Remove the higher-indexed face surface entry to keep the vector consistent.
+                    if brep.geom.face_surface.len() > remove_flat {
+                        brep.geom.face_surface.remove(remove_flat);
+                    }
+                    let _ = kept_flat; // already correct after removal
                     brep.solids[si].shells[shi].faces[keep_idx] = merged_face;
                     brep.solids[si].shells[shi].faces.remove(remove_idx);
                     return true;
@@ -1773,6 +2527,78 @@ mod tests {
     }
 
     #[test]
+    fn boolean_retry_fuzzy_values_dedup_and_skip_non_positive() {
+        let vals = boolean_retry_fuzzy_values(0.0, &[0.0, -1.0, 1e-6, 1e-6, 1e-5]);
+        assert_eq!(vals, vec![0.0, 1e-6, 1e-5]);
+    }
+
+    #[test]
+    fn boolean_retry_ladder_for_error_stops_on_fatal_input() {
+        let vals = boolean_retry_ladder_for_error(0.0, &[1e-6, 1e-5], &BooleanError::EmptyInput);
+        assert!(vals.is_empty());
+    }
+
+    #[test]
+    fn boolean_retry_ladder_for_error_uses_ladder_for_degenerate() {
+        let vals = boolean_retry_ladder_for_error(
+            1e-6,
+            &[1e-6, 1e-5, 1e-4],
+            &BooleanError::DegenerateResult,
+        );
+        assert_eq!(vals, vec![1e-5, 1e-4]);
+    }
+
+    #[test]
+    fn boolean_retry_ladder_for_error_escalates_for_numerical_failure() {
+        let vals = boolean_retry_ladder_for_error(
+            1e-6,
+            &[1e-5],
+            &BooleanError::NumericalFailure("test"),
+        );
+        assert_eq!(vals.len(), 2);
+        assert!((vals[0] - 1e-5).abs() <= 1e-15);
+        assert!((vals[1] - 1e-4).abs() <= 1e-14);
+    }
+
+    #[test]
+    fn boolean_op_robust_reports_retry_metadata() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (out, report) = boolean_op_robust(
+            BooleanOpType::Union,
+            &a,
+            &b,
+            BooleanRobustOptions {
+                base: BooleanOptions {
+                    use_bvh: true,
+                    run_healing: false,
+                    healing: HealingOptions::default(),
+                    run_simplify: false,
+                    simplify: SimplifyOptions::default(),
+                    include_history: false,
+                    run_make_connected: false,
+                    make_connected_tolerance: tolerance::TOLERANCE_ABS,
+                    make_connected_max_passes: 3,
+                    make_connected_tolerance_growth: 1.0,
+                    make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
+                    make_connected_scoped: false,
+                    make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+                    make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+                    make_connected_scope_min_history_edges: 2,
+                    fuzzy_tol: 0.0,
+                },
+                fuzzy_retry_ladder: vec![1e-6, 1e-5],
+            },
+        )
+        .expect("robust union should succeed");
+
+        assert!(face_count(&out) > 0);
+        assert!(report.retry_count <= 2);
+        assert!(report.effective_fuzzy_tol >= 0.0);
+    }
+
+    #[test]
     fn split_objects_with_tools_reports_each_object() {
         let object_a = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let object_b = box_at(4.0, 0.0, 0.0, 2.0, 2.0, 2.0);
@@ -2044,6 +2870,82 @@ mod tests {
             4,
             "merged face should be quadrilateral"
         );
+    }
+
+    /// Two cylindrical faces on the same cylinder sharing one edge should merge.
+    #[test]
+    fn unify_same_domain_faces_merges_two_cylindrical_adjacent_faces() {
+        use rcad_kernel::geom::{CylindricalSurface, Surface3};
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+        use rcad_kernel::GeomStore;
+
+        // Cylinder: axis = Z, origin = (0,0,0), radius = 1.0.
+        // Build two half-cylindrical faces that share a vertical seam edge along Z.
+        //
+        //  v0=(1,0,0)  v1=(1,0,1)   ← front half arc top/bottom
+        //  v2=(-1,0,0) v3=(-1,0,1)  ← back half arc
+        //
+        // Face A (front half, 0° to 180°): v0→v1→v3→v2 sharing seam edge e1(v1,v3)
+        // Actually let's keep it simple: two quad faces sharing one vertical edge.
+
+        let mut brep = BRep::new();
+        // Vertices: two columns at phi=0 and phi=pi
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 1.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 1.0) }); // 3
+
+        // Curved edges (approximated as straight for topology purposes).
+        brep.edges.push(Edge { start: 0, end: 2 }); // e0: bottom arc (v0→v2)
+        brep.edges.push(Edge { start: 1, end: 3 }); // e1: top arc (v1→v3) [shared]
+        brep.edges.push(Edge { start: 0, end: 1 }); // e2: seam left (v0→v1)
+        brep.edges.push(Edge { start: 2, end: 3 }); // e3: seam right (v2→v3)
+
+        let surf_id = 0usize;
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+
+        // Face A: e0(fwd) + e3(fwd) + e1(rev) + e2(rev)
+        let fa = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::fwd(0),
+                    WireEdge::fwd(3),
+                    WireEdge::rev(1),
+                    WireEdge::rev(2),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::X,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        // Face B: bottom arc (rev e0) + seam e2(fwd) + e1(fwd) + seam e3(rev)
+        let fb = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::rev(0),
+                    WireEdge::fwd(2),
+                    WireEdge::fwd(1),
+                    WireEdge::rev(3),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_X,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![fa, fb] }],
+        });
+
+        // Register cylinder surface in GeomStore.
+        brep.geom.surfaces.push(Surface3::Cylinder(cyl));
+        brep.geom.face_surface = vec![Some(surf_id), Some(surf_id)];
+
+        let (out, merges) = unify_same_domain_faces(&brep);
+        assert_eq!(merges, 1, "expected one cylindrical merge pass");
+        assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two cyl halves should merge");
     }
 
     #[test]
@@ -2875,6 +3777,15 @@ mod tests {
             use_bvh: true,
             run_healing: true,
             healing: HealingOptions::default(),
+            run_make_connected: true,
+            make_connected_tolerance: tolerance::TOLERANCE_ABS,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
+            make_connected_scoped: false,
+            make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+            make_connected_scope_min_history_edges: 2,
             run_simplify: true,
             simplify: SimplifyOptions::default(),
             include_history: true,
@@ -2887,7 +3798,24 @@ mod tests {
         assert!(report.used_bvh);
         assert!(report.healed);
         assert!(report.simplified);
+        assert!(report.made_connected);
         assert!(report.healing_report.is_some());
+        assert!(report.make_connected_report.is_some());
+        assert!(report
+            .make_connected_report
+            .as_ref()
+            .map(|r| r.passes_run >= 1)
+            .unwrap_or(false));
+        assert!(report
+            .make_connected_report
+            .as_ref()
+            .map(|r| r.final_tolerance >= tolerance::TOLERANCE_ABS)
+            .unwrap_or(false));
+        assert!(report
+            .make_connected_report
+            .as_ref()
+            .map(|r| !r.tolerance_cap_applied || r.final_tolerance <= options.make_connected_tolerance_cap)
+            .unwrap_or(false));
         assert!(report.simplify_report.is_some());
         assert_eq!(report.output_faces, face_count(&result));
         assert_eq!(report.history_faces, report.persistent_face_labels.len());
@@ -2897,6 +3825,385 @@ mod tests {
                 .iter()
                 .all(|label| label.starts_with("face."))
         );
+    }
+
+    #[test]
+    fn boolean_options_make_connected_scoped_mode_runs() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let options = BooleanOptions {
+            use_bvh: true,
+            run_healing: false,
+            healing: HealingOptions::default(),
+            run_make_connected: true,
+            make_connected_tolerance: tolerance::TOLERANCE_ABS,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 2.0,
+            make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 100.0,
+            make_connected_scoped: true,
+            make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+            make_connected_scope_min_history_edges: 2,
+            run_simplify: false,
+            simplify: SimplifyOptions::default(),
+            include_history: false,
+            fuzzy_tol: 0.0,
+        };
+
+        let (_result, report) = boolean_op_with_options(BooleanOpType::Union, &a, &b, options)
+            .expect("boolean_op_with_options scoped make-connected should succeed");
+
+        assert!(report.made_connected);
+        assert!(report.make_connected_report.is_some());
+        assert!(report
+            .make_connected_report
+            .as_ref()
+            .map(|r| r.passes_run >= 1)
+            .unwrap_or(false));
+        assert_eq!(
+            report.make_connected_scope_seed_mode,
+            Some(MakeConnectedScopeSeedMode::Hybrid)
+        );
+        assert_eq!(
+            report.make_connected_scope_seed_source,
+            Some(MakeConnectedScopeSeedSource::Heuristic)
+        );
+        assert_eq!(report.make_connected_scope_history_seed_edge_count, 0);
+        assert_eq!(
+            report.make_connected_scope_heuristic_seed_edge_count,
+            report.make_connected_scope_seed_edges.len()
+        );
+        assert_eq!(
+            report.make_connected_scope_seed_edge_labels.len(),
+            report.make_connected_scope_seed_edges.len()
+        );
+    }
+
+    #[test]
+    fn make_connected_seed_edge_labels_are_orientation_insensitive() {
+        use rcad_kernel::topology::Edge;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 0 }); // e1 reversed
+
+        let labels = make_connected_seed_edge_labels(&brep, &[0, 1]);
+        assert_eq!(labels.len(), 2);
+        assert!(labels[0].contains("0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"));
+        assert!(labels[1].contains("0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"));
+    }
+
+    #[test]
+    fn make_connected_scope_seed_modes_cover_short_and_near_duplicate_cases() {
+        use rcad_kernel::topology::Edge;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1e-8, 0.0, 0.0) }); // 1 near-dup of 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(11.0, 0.0, 0.0) }); // 3
+        brep.edges.push(Edge { start: 2, end: 3 }); // no short edge around 0/1
+
+        let short_only = make_connected_seed_vertices(
+            &brep,
+            1e-6,
+            MakeConnectedScopeSeedMode::ShortEdges,
+        );
+        let near_dup = make_connected_seed_vertices(
+            &brep,
+            1e-6,
+            MakeConnectedScopeSeedMode::NearDuplicateVertices,
+        );
+        let hybrid = make_connected_seed_vertices(
+            &brep,
+            1e-6,
+            MakeConnectedScopeSeedMode::Hybrid,
+        );
+
+        assert!(short_only.is_empty());
+        assert!(near_dup.contains(&0) && near_dup.contains(&1));
+        assert!(hybrid.contains(&0) && hybrid.contains(&1));
+    }
+
+    #[test]
+    fn make_connected_scope_seed_mode_tolerance_tagged_edges_uses_edge_tolerance() {
+        use rcad_kernel::topology::Edge;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+
+        brep.geom.edge_tolerance = vec![tolerance::TOLERANCE_ABS, tolerance::TOLERANCE_ABS * 50.0];
+
+        let tagged = make_connected_seed_vertices(
+            &brep,
+            tolerance::TOLERANCE_ABS * 10.0,
+            MakeConnectedScopeSeedMode::ToleranceTaggedEdges,
+        );
+
+        assert!(!tagged.contains(&0));
+        assert!(tagged.contains(&1));
+        assert!(tagged.contains(&2));
+    }
+
+    #[test]
+    fn make_connected_scope_seed_mode_multi_pcurve_edges_uses_pcurve_multiplicity() {
+        use rcad_kernel::{PCurve, topology::Edge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+
+        brep.geom.edge_pcurves = vec![
+            vec![PCurve {
+                surface_idx: 0,
+                curve2d_idx: 0,
+            }],
+            vec![
+                PCurve {
+                    surface_idx: 0,
+                    curve2d_idx: 0,
+                },
+                PCurve {
+                    surface_idx: 1,
+                    curve2d_idx: 1,
+                },
+            ],
+        ];
+
+        let seeds = make_connected_seed_vertices(
+            &brep,
+            tolerance::TOLERANCE_ABS,
+            MakeConnectedScopeSeedMode::MultiPcurveEdges,
+        );
+
+        assert!(!seeds.contains(&0));
+        assert!(seeds.contains(&1));
+        assert!(seeds.contains(&2));
+    }
+
+    #[test]
+    fn make_connected_scope_seed_mode_topology_seam_candidates_uses_topology_query() {
+        use rcad_kernel::topology::Edge;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 1 same point
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 2
+        brep.edges.push(Edge { start: 0, end: 1 }); // seam candidate (same point)
+        brep.edges.push(Edge { start: 1, end: 2 }); // normal edge
+        brep.geom.edge_degenerated = vec![false, false];
+
+        let seeds = make_connected_seed_vertices(
+            &brep,
+            tolerance::TOLERANCE_ABS,
+            MakeConnectedScopeSeedMode::TopologySeamCandidates,
+        );
+
+        assert!(seeds.contains(&0));
+        assert!(seeds.contains(&1));
+        assert!(!seeds.contains(&2));
+    }
+
+    #[test]
+    fn make_connected_seed_edges_for_multi_pcurve_mode_returns_edge_ids() {
+        use rcad_kernel::{PCurve, topology::Edge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+
+        brep.geom.edge_pcurves = vec![
+            vec![PCurve {
+                surface_idx: 0,
+                curve2d_idx: 0,
+            }],
+            vec![
+                PCurve {
+                    surface_idx: 0,
+                    curve2d_idx: 0,
+                },
+                PCurve {
+                    surface_idx: 1,
+                    curve2d_idx: 1,
+                },
+            ],
+        ];
+
+        let edges = make_connected_seed_edges(
+            &brep,
+            tolerance::TOLERANCE_ABS,
+            MakeConnectedScopeSeedMode::MultiPcurveEdges,
+        );
+        assert_eq!(edges, vec![1]);
+    }
+
+    #[test]
+    fn make_connected_seed_edges_from_boolean_history_prefers_a_b_interface_edges() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0 shared by f0 and f1
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1 f0 only
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2 f0 only
+        brep.edges.push(Edge { start: 1, end: 3 }); // e3 f1 only
+        brep.edges.push(Edge { start: 3, end: 0 }); // e4 f1 only
+
+        let f0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(0), WireEdge::fwd(3), WireEdge::fwd(4)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![f0, f1] }],
+        });
+
+        let history = BooleanHistory {
+            face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+            edge_origins: vec![],
+            vertex_origins: vec![],
+        };
+
+        let seeds = make_connected_seed_edges_from_boolean_history(&brep, &history);
+        assert_eq!(seeds, vec![0]);
+    }
+
+    #[test]
+    fn select_scoped_seed_edges_uses_history_then_augments_when_below_threshold() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1e-9, 0.0, 0.0) }); // 1 near-dup of 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+
+        brep.edges.push(Edge { start: 0, end: 2 }); // e0 history interface edge
+        brep.edges.push(Edge { start: 0, end: 1 }); // e1 heuristic short edge
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+
+        let f0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(0), WireEdge::fwd(1)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![f0, f1] }],
+        });
+
+        let history = BooleanHistory {
+            face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+            edge_origins: vec![],
+            vertex_origins: vec![],
+        };
+
+        let (seed_edges, history_count, heuristic_count, source) = select_scoped_seed_edges(
+            &brep,
+            Some(&history),
+            1e-6,
+            MakeConnectedScopeSeedMode::ShortEdges,
+            2,
+        );
+
+        assert_eq!(source, MakeConnectedScopeSeedSource::HistoryAugmentedHeuristic);
+        assert_eq!(history_count, 1);
+        assert!(heuristic_count >= 1);
+        assert!(seed_edges.contains(&0));
+        assert!(seed_edges.contains(&1));
+    }
+
+    #[test]
+    fn boolean_history_vertex_origins_populated_after_box_box_union() {
+        // Two boxes overlapping in X: A=[0..2], B=[1..3]. Shared region x∈[1,2].
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (brep, history) =
+            boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
+        // vertex_origins vec must be in sync with the result BRep
+        assert_eq!(
+            history.vertex_origins.len(),
+            brep.vertices.len(),
+            "vertex_origins length mismatch"
+        );
+        let has_from_a = history
+            .vertex_origins
+            .iter()
+            .any(|o| matches!(o, VertexOrigin::FromA(_)));
+        let has_from_b = history
+            .vertex_origins
+            .iter()
+            .any(|o| matches!(o, VertexOrigin::FromB(_)));
+        assert!(has_from_a, "expected at least one VertexOrigin::FromA after box-box union");
+        assert!(has_from_b, "expected at least one VertexOrigin::FromB after box-box union");
+    }
+
+    #[test]
+    fn boolean_history_edge_origins_populated_after_box_box_union() {
+        // Same geometry as the vertex test above.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (brep, history) =
+            boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
+        // edge_origins vec must be in sync with the result BRep
+        assert_eq!(
+            history.edge_origins.len(),
+            brep.edges.len(),
+            "edge_origins length mismatch"
+        );
+        let has_from_a = history
+            .edge_origins
+            .iter()
+            .any(|o| matches!(o, EdgeOrigin::FromA(_)));
+        let has_from_b = history
+            .edge_origins
+            .iter()
+            .any(|o| matches!(o, EdgeOrigin::FromB(_)));
+        assert!(has_from_a, "expected at least one EdgeOrigin::FromA after box-box union");
+        assert!(has_from_b, "expected at least one EdgeOrigin::FromB after box-box union");
     }
 
 }

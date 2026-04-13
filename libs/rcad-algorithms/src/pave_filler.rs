@@ -2226,6 +2226,7 @@ impl<'a> PaveFiller<'a> {
             | Surface3::Bezier(_)
             | Surface3::Offset(_)
             | Surface3::Trimmed(_) => 1.0,
+                | Surface3::Gordon(_) => 1.0,
         };
         let size2 = match s2 {
             Surface3::Sphere(s) => s.radius,
@@ -2239,6 +2240,7 @@ impl<'a> PaveFiller<'a> {
             | Surface3::Bezier(_)
             | Surface3::Offset(_)
             | Surface3::Trimmed(_) => 1.0,
+                | Surface3::Gordon(_) => 1.0,
         };
         size1.min(size2) * 0.1
     }

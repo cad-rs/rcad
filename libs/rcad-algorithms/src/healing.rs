@@ -95,6 +95,26 @@ pub struct HealingReport {
     pub initial_stats: HealingIssueStats,
     /// Structured issue counters after healing.
     pub final_stats: HealingIssueStats,
+    /// Stage-by-stage issue counts for analyze/repair pipeline.
+    pub stages: Vec<HealingStageReport>,
+}
+
+/// Stage marker for healing pipeline reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealingStage {
+    InitialCheck,
+    RepairPass,
+    FinalCheck,
+}
+
+/// Per-stage issue metrics.
+#[derive(Debug, Clone)]
+pub struct HealingStageReport {
+    pub stage: HealingStage,
+    /// Zero-based pass index for `RepairPass`; `None` for checks.
+    pub pass_index: Option<usize>,
+    /// Checker issue count observed at this stage.
+    pub issue_count: usize,
 }
 
 impl HealingReport {
@@ -129,6 +149,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
     if matches!(options.mode, HealingMode::AnalyzeOnly) {
+        let initial_issue_count = initial_stats.total();
         return (
             brep.clone(),
             HealingReport {
@@ -137,6 +158,11 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
+                stages: vec![HealingStageReport {
+                    stage: HealingStage::InitialCheck,
+                    pass_index: None,
+                    issue_count: initial_issue_count,
+                }],
             },
         );
     }
@@ -150,15 +176,25 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 passes: Vec::new(),
                 initial_stats: initial_stats.clone(),
                 final_stats: initial_stats,
+                stages: vec![HealingStageReport {
+                    stage: HealingStage::InitialCheck,
+                    pass_index: None,
+                    issue_count: 0,
+                }],
             },
         );
     }
 
     let mut current = brep.clone();
     let mut passes = Vec::new();
+    let mut stages = vec![HealingStageReport {
+        stage: HealingStage::InitialCheck,
+        pass_index: None,
+        issue_count: initial.issues.len(),
+    }];
     let pass_count = options.max_passes.max(1);
 
-    for _ in 0..pass_count {
+    for pass_idx in 0..pass_count {
         let (next, rep) = repair(&current, options.tolerance);
         current = next;
         let no_changes = rep.vertices_merged == 0
@@ -168,8 +204,18 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         passes.push(rep);
 
         let chk = check(&current);
+        stages.push(HealingStageReport {
+            stage: HealingStage::RepairPass,
+            pass_index: Some(pass_idx),
+            issue_count: chk.issues.len(),
+        });
         if chk.is_valid() || no_changes {
             let final_stats = HealingIssueStats::from_check_result(&chk);
+            stages.push(HealingStageReport {
+                stage: HealingStage::FinalCheck,
+                pass_index: None,
+                issue_count: chk.issues.len(),
+            });
             return (
                 current,
                 HealingReport {
@@ -178,6 +224,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                     passes,
                     initial_stats,
                     final_stats,
+                    stages,
                 },
             );
         }
@@ -185,6 +232,11 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
 
     let final_result = check(&current);
     let final_stats = HealingIssueStats::from_check_result(&final_result);
+    stages.push(HealingStageReport {
+        stage: HealingStage::FinalCheck,
+        pass_index: None,
+        issue_count: final_result.issues.len(),
+    });
     (
         current,
         HealingReport {
@@ -193,6 +245,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             passes,
             initial_stats,
             final_stats,
+            stages,
         },
     )
 }
@@ -227,6 +280,7 @@ mod tests {
         assert!(report.initial.is_valid());
         assert!(report.final_result.is_valid());
         assert!(report.passes.is_empty());
+        assert!(!report.stages.is_empty());
         assert_eq!(out.vertices.len(), b.vertices.len());
         assert_eq!(out.edges.len(), b.edges.len());
     }
@@ -242,6 +296,12 @@ mod tests {
         assert!(report.initial_stats.zero_normal >= 1);
         assert_eq!(report.initial_stats.total(), report.initial_issue_count());
         assert_eq!(report.final_stats.total(), report.final_issue_count());
+        assert!(
+            report
+                .stages
+                .iter()
+                .any(|s| matches!(s.stage, HealingStage::FinalCheck))
+        );
         assert!(!out.solids[0].shells[0].faces[0].normal.abs_diff_eq(DVec3::ZERO, 0.0));
     }
 

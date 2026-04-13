@@ -19,6 +19,7 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::brep_check::{diagnose_same_parameter, diagnose_same_range};
+use crate::tolerance::TOLERANCE_ABS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -39,6 +40,23 @@ pub struct RepairReport {
     pub same_range_fixed: usize,
     /// Number of edges whose SameParameter flag was repaired.
     pub same_parameter_fixed: usize,
+}
+
+/// Summary of baseline connectivity rebuilding pass.
+#[derive(Debug, Clone, Default)]
+pub struct MakeConnectedReport {
+    /// Number of merged near-coincident vertices.
+    pub vertices_merged: usize,
+    /// Number of tiny/degenerate edges removed after merging.
+    pub small_edges_removed: usize,
+    /// Number of make-connected passes that were executed.
+    pub passes_run: usize,
+    /// Whether the pass sequence converged before reaching `max_passes`.
+    pub converged: bool,
+    /// Effective tolerance used in the final executed pass.
+    pub final_tolerance: f64,
+    /// Whether tolerance growth was clamped by the configured cap.
+    pub tolerance_cap_applied: bool,
 }
 
 impl std::fmt::Display for RepairReport {
@@ -76,6 +94,387 @@ pub fn repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport) {
     let (b, n) = fix_same_parameter(&b, tolerance);
     report.same_parameter_fixed += n;
     (b, report)
+}
+
+/// Baseline "MakeConnected"-style cleanup.
+///
+/// This pass snaps near-coincident vertices and removes tiny/degenerate edges
+/// to improve topological connectivity before downstream operations.
+pub fn make_connected_baseline(brep: &BRep, tolerance: f64) -> (BRep, MakeConnectedReport) {
+    make_connected_iterative(brep, tolerance, 1)
+}
+
+/// Iterative baseline "MakeConnected"-style cleanup.
+///
+/// Runs repeated merge/small-edge cleanup passes until convergence or until
+/// `max_passes` is reached.
+pub fn make_connected_iterative(
+    brep: &BRep,
+    tolerance: f64,
+    max_passes: usize,
+) -> (BRep, MakeConnectedReport) {
+    make_connected_iterative_with_growth(brep, tolerance, max_passes, 1.0)
+}
+
+/// Iterative baseline "MakeConnected" cleanup with per-pass tolerance growth.
+///
+/// `tolerance_growth` values <= 1.0 keep fixed tolerance across passes.
+pub fn make_connected_iterative_with_growth(
+    brep: &BRep,
+    tolerance: f64,
+    max_passes: usize,
+    tolerance_growth: f64,
+) -> (BRep, MakeConnectedReport) {
+    make_connected_iterative_with_growth_cap(
+        brep,
+        tolerance,
+        max_passes,
+        tolerance_growth,
+        f64::INFINITY,
+    )
+}
+
+/// Iterative baseline "MakeConnected" cleanup with per-pass tolerance growth
+/// and an optional upper cap for safety.
+pub fn make_connected_iterative_with_growth_cap(
+    brep: &BRep,
+    tolerance: f64,
+    max_passes: usize,
+    tolerance_growth: f64,
+    tolerance_cap: f64,
+) -> (BRep, MakeConnectedReport) {
+    let tol = tolerance.max(TOLERANCE_ABS);
+    let pass_limit = max_passes.max(1);
+    let growth = if tolerance_growth > 1.0 {
+        tolerance_growth
+    } else {
+        1.0
+    };
+    let tol_cap = tolerance_cap.max(tol);
+    let mut out = brep.clone();
+    let mut report = MakeConnectedReport::default();
+
+    for pass_idx in 0..pass_limit {
+        let grown_tol = tol * growth.powi(pass_idx as i32);
+        let pass_tol = grown_tol.min(tol_cap);
+        let (b, merged) = merge_close_vertices(&out, pass_tol);
+        let (b, removed) = remove_small_edges(&b, pass_tol);
+        out = b;
+
+        report.vertices_merged += merged;
+        report.small_edges_removed += removed;
+        report.passes_run = pass_idx + 1;
+        report.final_tolerance = pass_tol;
+        if grown_tol > tol_cap {
+            report.tolerance_cap_applied = true;
+        }
+
+        if merged == 0 && removed == 0 {
+            report.converged = true;
+            break;
+        }
+    }
+
+    (out, report)
+}
+
+/// Scoped iterative make-connected cleanup limited to a local vertex region.
+///
+/// Only short-edge removal and near-vertex merges touching `scope_vertices`
+/// are applied, allowing localized connectivity fixes.
+pub fn make_connected_iterative_scoped_with_growth_cap(
+    brep: &BRep,
+    scope_vertices: &[usize],
+    tolerance: f64,
+    max_passes: usize,
+    tolerance_growth: f64,
+    tolerance_cap: f64,
+) -> (BRep, MakeConnectedReport) {
+    let tol = tolerance.max(TOLERANCE_ABS);
+    let pass_limit = max_passes.max(1);
+    let growth = if tolerance_growth > 1.0 {
+        tolerance_growth
+    } else {
+        1.0
+    };
+    let tol_cap = tolerance_cap.max(tol);
+
+    let mut scope_set: std::collections::HashSet<usize> = scope_vertices.iter().copied().collect();
+    let mut out = brep.clone();
+    let mut report = MakeConnectedReport::default();
+
+    if scope_set.is_empty() {
+        report.passes_run = 1;
+        report.converged = true;
+        report.final_tolerance = tol;
+        return (out, report);
+    }
+
+    for pass_idx in 0..pass_limit {
+        let grown_tol = tol * growth.powi(pass_idx as i32);
+        let pass_tol = grown_tol.min(tol_cap);
+
+        let (b, merged, remap) = merge_close_vertices_scoped(&out, pass_tol, &scope_set);
+        let mapped_scope: std::collections::HashSet<usize> = scope_set
+            .iter()
+            .filter_map(|v| remap.get(v).copied())
+            .collect();
+        let (b, removed, remap_scope) = remove_small_edges_scoped(&b, pass_tol, &mapped_scope);
+        let next_scope: std::collections::HashSet<usize> = mapped_scope
+            .iter()
+            .filter_map(|v| remap_scope.get(v).copied())
+            .collect();
+
+        out = b;
+        scope_set = next_scope;
+
+        report.vertices_merged += merged;
+        report.small_edges_removed += removed;
+        report.passes_run = pass_idx + 1;
+        report.final_tolerance = pass_tol;
+        if grown_tol > tol_cap {
+            report.tolerance_cap_applied = true;
+        }
+
+        if merged == 0 && removed == 0 {
+            report.converged = true;
+            break;
+        }
+    }
+
+    (out, report)
+}
+
+fn merge_close_vertices_scoped(
+    brep: &BRep,
+    tolerance: f64,
+    scope_vertices: &std::collections::HashSet<usize>,
+) -> (BRep, usize, std::collections::HashMap<usize, usize>) {
+    let n = brep.vertices.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let ra = find(parent, a);
+        let rb = find(parent, b);
+        if ra != rb {
+            if ra < rb {
+                parent[rb] = ra;
+            } else {
+                parent[ra] = rb;
+            }
+        }
+    }
+
+    let tol2 = tolerance * tolerance;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if !(scope_vertices.contains(&i) || scope_vertices.contains(&j)) {
+                continue;
+            }
+            let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+            if d2 <= tol2 {
+                union(&mut parent, i, j);
+            }
+        }
+    }
+
+    for i in 0..n {
+        parent[i] = find(&mut parent, i);
+    }
+
+    let merged = (0..n).filter(|&i| parent[i] != i).count();
+    let mut identity_map: std::collections::HashMap<usize, usize> =
+        (0..n).map(|i| (i, i)).collect();
+    if merged == 0 {
+        return (brep.clone(), 0, identity_map);
+    }
+
+    let mut new_vertices = Vec::new();
+    let mut remap = vec![0usize; n];
+    let mut seen: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for i in 0..n {
+        let rep = parent[i];
+        if let Some(&new_idx) = seen.get(&rep) {
+            remap[i] = new_idx;
+        } else {
+            let new_idx = new_vertices.len();
+            new_vertices.push(brep.vertices[rep]);
+            seen.insert(rep, new_idx);
+            remap[i] = new_idx;
+        }
+    }
+
+    let new_edges: Vec<Edge> = brep
+        .edges
+        .iter()
+        .map(|e| Edge {
+            start: remap[e.start],
+            end: remap[e.end],
+        })
+        .collect();
+
+    let new_solids = brep
+        .solids
+        .iter()
+        .map(|solid| Solid {
+            shells: solid
+                .shells
+                .iter()
+                .map(|shell| Shell {
+                    faces: shell
+                        .faces
+                        .iter()
+                        .map(|face| Face {
+                            outer_wire: face.outer_wire.clone(),
+                            inner_wires: face.inner_wires.clone(),
+                            normal: face.normal,
+                            triangles: face.triangles.clone(),
+                            mesh_dirty: true,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    let mut result = brep.clone();
+    result.vertices = new_vertices;
+    result.edges = new_edges;
+    result.solids = new_solids;
+
+    identity_map.clear();
+    for (old, newv) in remap.into_iter().enumerate() {
+        identity_map.insert(old, newv);
+    }
+    (result, merged, identity_map)
+}
+
+fn remove_small_edges_scoped(
+    brep: &BRep,
+    min_length: f64,
+    scope_vertices: &std::collections::HashSet<usize>,
+) -> (BRep, usize, std::collections::HashMap<usize, usize>) {
+    let mut out = brep.clone();
+    let mut total_removed = 0usize;
+    let mut remap_track: Vec<usize> = (0..brep.vertices.len()).collect();
+
+    loop {
+        let edge_count = out.edges.len();
+        let mut removed_edge: Option<usize> = None;
+
+        for ei in 0..edge_count {
+            let edge = &out.edges[ei];
+            let start = edge.start;
+            let end = edge.end;
+            if !(scope_vertices.contains(&start) || scope_vertices.contains(&end)) {
+                continue;
+            }
+
+            let is_degenerate = start == end;
+            let is_short = if is_degenerate {
+                true
+            } else {
+                let ps = out.vertices[start].point;
+                let pe = out.vertices[end].point;
+                (pe - ps).length() < min_length
+            };
+
+            if is_short {
+                removed_edge = Some(ei);
+                break;
+            }
+        }
+
+        let Some(ei) = removed_edge else { break };
+        let edge = out.edges[ei];
+        let is_loop = edge.start == edge.end;
+        let keep_vi = edge.start.min(edge.end);
+        let drop_vi = edge.start.max(edge.end);
+
+        let remap_vertex = |vi: usize| -> usize {
+            if vi == drop_vi {
+                keep_vi
+            } else if vi > drop_vi {
+                vi - 1
+            } else {
+                vi
+            }
+        };
+
+        if !is_loop {
+            out.vertices.remove(drop_vi);
+            if out.geom.vertex_tolerance.len() > drop_vi
+                && drop_vi != out.geom.vertex_tolerance.len()
+            {
+                out.geom.vertex_tolerance.remove(drop_vi);
+            }
+            for r in &mut remap_track {
+                if *r == drop_vi {
+                    *r = keep_vi;
+                } else if *r > drop_vi {
+                    *r -= 1;
+                }
+            }
+        }
+
+        for e in &mut out.edges {
+            e.start = remap_vertex(e.start);
+            e.end = remap_vertex(e.end);
+        }
+
+        out.edges.remove(ei);
+        macro_rules! rm {
+            ($vec:expr) => {
+                if ei < $vec.len() {
+                    $vec.remove(ei);
+                }
+            };
+        }
+        rm!(out.geom.edge_curve);
+        rm!(out.geom.edge_curve_range);
+        rm!(out.geom.edge_degenerated);
+        rm!(out.geom.edge_pcurves);
+        rm!(out.geom.edge_same_parameter);
+        rm!(out.geom.edge_same_range);
+        rm!(out.geom.edge_tolerance);
+
+        let remap_edge = |we_idx: usize| -> usize {
+            if we_idx > ei { we_idx - 1 } else { we_idx }
+        };
+        for solid in &mut out.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    let filter_remap = |wire: &mut Wire| {
+                        wire.edges.retain(|we| we.idx != ei);
+                        for we in &mut wire.edges {
+                            we.idx = remap_edge(we.idx);
+                        }
+                    };
+                    filter_remap(&mut face.outer_wire);
+                    for iw in &mut face.inner_wires {
+                        filter_remap(iw);
+                    }
+                }
+            }
+        }
+
+        total_removed += 1;
+    }
+
+    let mut remap_map = std::collections::HashMap::new();
+    for (old, newv) in remap_track.into_iter().enumerate() {
+        remap_map.insert(old, newv);
+    }
+
+    (out, total_removed, remap_map)
 }
 
 /// Repair SameRange consistency by aligning PCurve ranges with the 3D edge range.
@@ -838,6 +1237,186 @@ pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
     (out, total_removed)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tolerance propagation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Propagation direction for per-entity tolerance in a post-operation BRep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToleranceFlowDirection {
+    /// Vertex → edge → face (bottom-up, for newly assembled results).
+    BottomUp,
+    /// Face → edge → vertex (top-down, for degraded imports).
+    TopDown,
+}
+
+/// Propagate per-entity tolerances throughout a BRep after a boolean, sew, or
+/// import operation.
+///
+/// Analogous to `BRepLib::UpdateEdgeTol` + `BRepLib::SameParameter` tolerance
+/// spreading in OCCT.
+///
+/// # Bottom-up (default after boolean operations)
+///
+/// 1. Fill missing `vertex_tolerance` slots with `tolerance_floor`.
+/// 2. For each edge: `edge_tol = max(edge_tol, vtx_tol(start), vtx_tol(end))`.
+/// 3. For each face: `face_tol = max(face_tol, max(wire edge tolerances))`.
+///
+/// # Top-down (useful after importing degraded STEP files)
+///
+/// Reverses the propagation: face tolerance spreads inward to edges and vertices.
+///
+/// # Arguments
+///
+/// - `brep`: input shape.
+/// - `tolerance_floor`: minimum tolerance assigned to entities without an entry
+///   (typically `CONFUSION` = 1e-7).
+/// - `direction`: propagation direction.
+pub fn propagate_tolerances(
+    brep: &BRep,
+    tolerance_floor: f64,
+    direction: ToleranceFlowDirection,
+) -> BRep {
+    use crate::tolerance::TOLERANCE_ABS;
+    let floor = tolerance_floor.max(TOLERANCE_ABS);
+    let mut out = brep.clone();
+
+    let n_verts = out.vertices.len();
+    let n_edges = out.edges.len();
+
+    // Count total faces (flattened order).
+    let n_faces: usize = out.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+
+    // Ensure arrays are sized.
+    if out.geom.vertex_tolerance.len() < n_verts {
+        out.geom.vertex_tolerance.resize(n_verts, floor);
+    }
+    if out.geom.edge_tolerance.len() < n_edges {
+        out.geom.edge_tolerance.resize(n_edges, floor);
+    }
+    if out.geom.face_tolerance.len() < n_faces {
+        out.geom.face_tolerance.resize(n_faces, floor);
+    }
+
+    match direction {
+        ToleranceFlowDirection::BottomUp => {
+            // Step 1: ensure vertices have at least floor tolerance.
+            for vtol in &mut out.geom.vertex_tolerance {
+                if *vtol < floor {
+                    *vtol = floor;
+                }
+            }
+            // Step 2: propagate vertex → edge.
+            for ei in 0..n_edges {
+                let st = out.edges[ei].start;
+                let en = out.edges[ei].end;
+                let vtol_s = out.geom.vertex_tolerance.get(st).copied().unwrap_or(floor);
+                let vtol_e = out.geom.vertex_tolerance.get(en).copied().unwrap_or(floor);
+                let cur = out.geom.edge_tolerance[ei];
+                out.geom.edge_tolerance[ei] = cur.max(vtol_s).max(vtol_e).max(floor);
+            }
+            // Step 3: propagate edge → face.
+            let mut flat_fi = 0usize;
+            for si in 0..out.solids.len() {
+                for shi in 0..out.solids[si].shells.len() {
+                    for fi in 0..out.solids[si].shells[shi].faces.len() {
+                        let face = &out.solids[si].shells[shi].faces[fi];
+                        let mut max_etol: f64 = out.geom.face_tolerance[flat_fi];
+                        for we in &face.outer_wire.edges {
+                            let etol = out.geom.edge_tolerance.get(we.idx).copied().unwrap_or(floor);
+                            max_etol = max_etol.max(etol);
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                let etol = out.geom.edge_tolerance.get(we.idx).copied().unwrap_or(floor);
+                                max_etol = max_etol.max(etol);
+                            }
+                        }
+                        out.geom.face_tolerance[flat_fi] = max_etol.max(floor);
+                        flat_fi += 1;
+                    }
+                }
+            }
+        }
+        ToleranceFlowDirection::TopDown => {
+            // Step 1: ensure faces have at least floor tolerance.
+            for ftol in &mut out.geom.face_tolerance {
+                if *ftol < floor {
+                    *ftol = floor;
+                }
+            }
+            // Step 2: propagate face → edge.
+            let mut flat_fi = 0usize;
+            for si in 0..out.solids.len() {
+                for shi in 0..out.solids[si].shells.len() {
+                    for fi in 0..out.solids[si].shells[shi].faces.len() {
+                        let face = &out.solids[si].shells[shi].faces[fi];
+                        let ftol = out.geom.face_tolerance[flat_fi];
+                        for we in &face.outer_wire.edges {
+                            if let Some(etol) = out.geom.edge_tolerance.get_mut(we.idx) {
+                                *etol = etol.max(ftol);
+                            }
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                if let Some(etol) = out.geom.edge_tolerance.get_mut(we.idx) {
+                                    *etol = etol.max(ftol);
+                                }
+                            }
+                        }
+                        flat_fi += 1;
+                    }
+                }
+            }
+            // Step 3: propagate edge → vertex.
+            for ei in 0..n_edges {
+                let etol = out.geom.edge_tolerance[ei];
+                let st = out.edges[ei].start;
+                let en = out.edges[ei].end;
+                if let Some(vtol) = out.geom.vertex_tolerance.get_mut(st) {
+                    *vtol = vtol.max(etol);
+                }
+                if let Some(vtol) = out.geom.vertex_tolerance.get_mut(en) {
+                    *vtol = vtol.max(etol);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Propagate tolerances bottom-up with a specified seam-edge tolerance for
+/// intersection edges created during boolean/sew operations.
+///
+/// `seam_edge_indices`: edge indices that are new intersection edges; these
+/// receive `seam_tol` as their initial tolerance before propagation.
+pub fn propagate_tolerances_post_boolean(
+    brep: &BRep,
+    seam_edge_indices: &[usize],
+    seam_tol: f64,
+    floor: f64,
+) -> BRep {
+    let floor = floor.max(crate::tolerance::TOLERANCE_ABS);
+    let seam_tol = seam_tol.max(floor);
+
+    let mut out = brep.clone();
+    let n_edges = out.edges.len();
+    if out.geom.edge_tolerance.len() < n_edges {
+        out.geom.edge_tolerance.resize(n_edges, floor);
+    }
+    // Stamp all seam edges with seam_tol.
+    for &ei in seam_edge_indices {
+        if ei < out.geom.edge_tolerance.len() {
+            out.geom.edge_tolerance[ei] = out.geom.edge_tolerance[ei].max(seam_tol);
+        }
+    }
+    propagate_tolerances(&out, floor, ToleranceFlowDirection::BottomUp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,6 +1466,204 @@ mod tests {
         let (fixed, removed) = remove_small_edges(&brep, 1e-7);
         assert_eq!(removed, 0, "unit box edges are not short");
         assert_eq!(fixed.edges.len(), brep.edges.len());
+    }
+
+    #[test]
+    fn make_connected_baseline_merges_and_removes_tiny_edges() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 3 near-dup of 0
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+        brep.edges.push(Edge { start: 0, end: 3 }); // e3 tiny edge to be removed
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (fixed, report) = make_connected_baseline(&brep, 1e-6);
+        assert!(report.vertices_merged >= 1);
+        assert!(report.small_edges_removed >= 1);
+        assert_eq!(report.passes_run, 1);
+        assert!(fixed.vertices.len() < brep.vertices.len());
+        assert!(fixed.edges.len() < brep.edges.len());
+    }
+
+    #[test]
+    fn make_connected_iterative_reports_convergence() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 3 dup of 0
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 }); // tiny edge
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (_fixed, report) = make_connected_iterative(&brep, 1e-6, 4);
+        assert!(report.vertices_merged >= 1);
+        assert!(report.small_edges_removed >= 1);
+        assert!(report.converged);
+        assert!(report.passes_run >= 2);
+        assert!(report.final_tolerance >= 1e-6);
+    }
+
+    #[test]
+    fn make_connected_iterative_with_growth_increases_final_tolerance() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 3 dup of 0
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 }); // tiny edge
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (_fixed, report) = make_connected_iterative_with_growth(&brep, 1e-6, 4, 2.0);
+        assert!(report.passes_run >= 2);
+        assert!(report.final_tolerance > 1e-6);
+    }
+
+    #[test]
+    fn make_connected_iterative_with_growth_cap_clamps_tolerance() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 3 dup of 0
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 }); // tiny edge
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (_fixed, report) = make_connected_iterative_with_growth_cap(
+            &brep,
+            1e-6,
+            4,
+            10.0,
+            2e-6,
+        );
+        assert!(report.passes_run >= 2);
+        assert!(report.tolerance_cap_applied);
+        assert!((report.final_tolerance - 2e-6).abs() <= 1e-15);
+    }
+
+    #[test]
+    fn make_connected_scoped_only_affects_seed_region() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 3 (dup near region A)
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 4
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 1.0, 0.0) }); // 5
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 6 (dup near region B)
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 }); // tiny edge in scoped region
+        brep.edges.push(Edge { start: 4, end: 5 });
+        brep.edges.push(Edge { start: 5, end: 6 }); // unrelated region
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (scoped, report) = make_connected_iterative_scoped_with_growth_cap(
+            &brep,
+            &[0],
+            1e-6,
+            3,
+            1.0,
+            1e-4,
+        );
+
+        assert!(report.vertices_merged >= 1);
+        assert!(scoped.vertices.len() < brep.vertices.len());
+
+        // Vertex near unrelated region B should remain after scoped cleanup.
+        let has_far = scoped
+            .vertices
+            .iter()
+            .any(|v| (v.point - DVec3::new(10.0, 0.0, 0.0)).length() <= 1e-12);
+        assert!(has_far);
     }
 
     #[test]
@@ -1083,5 +1860,86 @@ mod tests {
             fixed.geom.curve2d_range[pc.curve2d_idx],
             Some([0.0, std::f64::consts::PI])
         );
+    }
+
+    #[test]
+    fn propagate_tolerances_bottom_up_fills_slots_and_propagates() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        // Simple triangle face: 3 verts, 3 edges.
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![Face {
+                    outer_wire: Wire {
+                        edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+                    },
+                    inner_wires: vec![],
+                    normal: DVec3::Z,
+                    triangles: vec![],
+                    mesh_dirty: true,
+                }],
+            }],
+        });
+
+        // Set vertex 0 with a large tolerance.
+        brep.geom.vertex_tolerance = vec![1e-3, 0.0, 0.0];
+
+        let out = propagate_tolerances(&brep, 1e-7, ToleranceFlowDirection::BottomUp);
+
+        // vertex_tolerance slots must be filled.
+        assert_eq!(out.geom.vertex_tolerance.len(), 3);
+        // Edge tolerances should be at least floor.
+        assert!(out.geom.edge_tolerance.len() >= 3);
+        // Edge 0 connects v0 (tol=1e-3) and v1 (tol=floor); must ≥ 1e-3.
+        assert!(out.geom.edge_tolerance[0] >= 1e-3);
+        // Face tolerance should be ≥ max edge tolerance.
+        assert!(out.geom.face_tolerance[0] >= out.geom.edge_tolerance[0]);
+    }
+
+    #[test]
+    fn propagate_tolerances_top_down_spreads_face_tol_to_vertices() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![Face {
+                    outer_wire: Wire {
+                        edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+                    },
+                    inner_wires: vec![],
+                    normal: DVec3::Z,
+                    triangles: vec![],
+                    mesh_dirty: true,
+                }],
+            }],
+        });
+        // Assign a large face tolerance.
+        brep.geom.face_tolerance = vec![5e-4];
+
+        let out = propagate_tolerances(&brep, 1e-7, ToleranceFlowDirection::TopDown);
+
+        // All edge tolerances should be ≥ face tolerance.
+        for etol in &out.geom.edge_tolerance {
+            assert!(*etol >= 5e-4);
+        }
+        // All vertex tolerances should be ≥ face tolerance after propagation.
+        for vtol in &out.geom.vertex_tolerance {
+            assert!(*vtol >= 5e-4);
+        }
     }
 }

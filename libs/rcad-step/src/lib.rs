@@ -1,4 +1,4 @@
-use rcad_kernel::appearance::{Color, StepColor};
+﻿use rcad_kernel::appearance::{Color, StepColor};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
@@ -23,7 +23,7 @@ pub use assembly::{
 };
 pub use iges::{IgesError, IgesReader, IgesWriter};
 pub use obj_writer::{ObjError, ObjReader, ObjWriter, write_obj};
-pub use writer::{ExportSelection, StepProtocol, StepWriter};
+pub use writer::{ExportSelection, StepAp242Metadata, StepProtocol, StepWriter};
 
 /// Errors that can occur when reading or parsing a STEP file.
 #[derive(Debug, Clone)]
@@ -109,51 +109,51 @@ struct ParsedStep {
     shell_based_surface_models: Vec<Vec<u64>>,
     trimmed_curves: HashMap<u64, (u64, f64, f64)>,
     geometric_curve_sets: Vec<Vec<u64>>,
-    /// SURFACE_CURVE: maps step id → (3d_curve_ref, pcurve_ref_list, same_parameter)
+    /// SURFACE_CURVE: maps step id 鈫?(3d_curve_ref, pcurve_ref_list, same_parameter)
     surface_curves: HashMap<u64, (u64, Vec<u64>, bool)>,
-    /// PCURVE: maps step id → (surface_ref, definitional_rep_ref)
+    /// PCURVE: maps step id 鈫?(surface_ref, definitional_rep_ref)
     pcurves: HashMap<u64, (u64, u64)>,
-    /// DEFINITIONAL_REPRESENTATION: maps step id → curve2d_ref
+    /// DEFINITIONAL_REPRESENTATION: maps step id 鈫?curve2d_ref
     definitional_reps: HashMap<u64, u64>,
     /// 2D cartesian points
     cartesian_points_2d: HashMap<u64, [f64; 2]>,
     /// 2D directions
     directions_2d: HashMap<u64, [f64; 2]>,
-    /// 2D axis2 placements: id → (location, ref_dir)
+    /// 2D axis2 placements: id 鈫?(location, ref_dir)
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
     b_spline_surfaces: HashMap<u64, BSplineSurfaceData>,
-    /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id → (profile_curve_ref, direction_ref)
+    /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id 鈫?(profile_curve_ref, direction_ref)
     linear_extrusions: HashMap<u64, (u64, u64)>,
-    /// SURFACE_OF_REVOLUTION: maps entity id → (profile_curve_ref, axis_placement_ref)
+    /// SURFACE_OF_REVOLUTION: maps entity id 鈫?(profile_curve_ref, axis_placement_ref)
     revolutions: HashMap<u64, (u64, u64)>,
-    /// RECTANGULAR_TRIMMED_SURFACE: maps entity id → (basis_surface_ref, [u1,u2,v1,v2])
+    /// RECTANGULAR_TRIMMED_SURFACE: maps entity id 鈫?(basis_surface_ref, [u1,u2,v1,v2])
     rectangular_trimmed_surfaces: HashMap<u64, (u64, [f64; 4])>,
-    /// HYPERBOLA: maps entity id → (axis2_placement_3d_ref, semi_major, semi_minor)
+    /// HYPERBOLA: maps entity id 鈫?(axis2_placement_3d_ref, semi_major, semi_minor)
     hyperbolas: HashMap<u64, (u64, f64, f64)>,
-    /// PARABOLA: maps entity id → (axis2_placement_3d_ref, focal_param)
+    /// PARABOLA: maps entity id 鈫?(axis2_placement_3d_ref, focal_param)
     parabolas: HashMap<u64, (u64, f64)>,
-    /// OFFSET_CURVE_3D: maps entity id → (basis_curve_ref, offset_distance, ref_dir_ref)
+    /// OFFSET_CURVE_3D: maps entity id 鈫?(basis_curve_ref, offset_distance, ref_dir_ref)
     offset_curves_3d: HashMap<u64, (u64, f64, u64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 
-    // ── Color / presentation chain ─────────────────────────────────────────
-    /// COLOUR_RGB: id → [r, g, b]
+    // 鈹€鈹€ Color / presentation chain 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    /// COLOUR_RGB: id 鈫?[r, g, b]
     colour_rgbs: HashMap<u64, [f64; 3]>,
-    /// FILL_AREA_STYLE_COLOUR: id → colour_rgb_id
+    /// FILL_AREA_STYLE_COLOUR: id 鈫?colour_rgb_id
     fill_area_style_colours: HashMap<u64, u64>,
-    /// FILL_AREA_STYLE: id → [fasc_id, ...]
+    /// FILL_AREA_STYLE: id 鈫?[fasc_id, ...]
     fill_area_styles: HashMap<u64, Vec<u64>>,
-    /// SURFACE_STYLE_FILL_AREA: id → fill_area_style_id
+    /// SURFACE_STYLE_FILL_AREA: id 鈫?fill_area_style_id
     surface_style_fill_areas: HashMap<u64, u64>,
-    /// SURFACE_SIDE_STYLE: id → [ssfa_id, ...]
+    /// SURFACE_SIDE_STYLE: id 鈫?[ssfa_id, ...]
     surface_side_styles: HashMap<u64, Vec<u64>>,
-    /// SURFACE_STYLE_USAGE: id → surface_side_style_id
+    /// SURFACE_STYLE_USAGE: id 鈫?surface_side_style_id
     surface_style_usages: HashMap<u64, u64>,
-    /// PRESENTATION_STYLE_ASSIGNMENT: id → [ssu_id, ...]
+    /// PRESENTATION_STYLE_ASSIGNMENT: id 鈫?[ssu_id, ...]
     presentation_style_assignments: HashMap<u64, Vec<u64>>,
-    /// STYLED_ITEM: id → (shape_step_id, [psa_id, ...])
+    /// STYLED_ITEM: id 鈫?(shape_step_id, [psa_id, ...])
     styled_items: HashMap<u64, (u64, Vec<u64>)>,
 }
 
@@ -260,6 +260,51 @@ pub struct StepDocumentMetadata {
     /// Property-definition chain entries, linked to referenced `GENERAL_PROPERTY`
     /// when resolvable.
     pub property_definitions: Vec<StepPropertyDefinition>,
+    /// PROPERTY_DEFINITION_REPRESENTATION linkages (AP242 extended metadata).
+    pub property_definition_representations: Vec<StepPropertyDefinitionRepr>,
+    /// GDT dimensional locations (DIMENSIONAL_LOCATION entities).
+    pub dimensional_locations: Vec<StepDimensionalLocation>,
+    /// GDT dimensional sizes (DIMENSIONAL_SIZE entities).
+    pub dimensional_sizes: Vec<StepDimensionalSize>,
+    /// GDT geometric tolerances (GEOMETRIC_TOLERANCE entities).
+    pub geometric_tolerances: Vec<StepGeometricTolerance>,
+}
+
+/// Linkage from PROPERTY_DEFINITION to a representation via PROPERTY_DEFINITION_REPRESENTATION.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepPropertyDefinitionRepr {
+    pub entity_id: u64,
+    pub property_definition_id: Option<u64>,
+    pub representation_id: Option<u64>,
+}
+
+/// A dimensional location (AP242 DIMENSIONAL_LOCATION).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDimensionalLocation {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub from_entity_id: Option<u64>,
+    pub to_entity_id: Option<u64>,
+}
+
+/// A dimensional size (AP242 DIMENSIONAL_SIZE).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDimensionalSize {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub shape_aspect_id: Option<u64>,
+}
+
+/// A geometric tolerance entry (AP242 GEOMETRIC_TOLERANCE).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepGeometricTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub value_entity_id: Option<u64>,
+    pub shape_aspect_id: Option<u64>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -469,6 +514,71 @@ fn extract_property_definitions(content: &str) -> Vec<StepPropertyDefinition> {
 }
 
 /// Extract the first single-quoted string argument from a STEP entity argument list.
+
+fn extract_property_definition_reprs(content: &str) -> Vec<StepPropertyDefinitionRepr> {
+    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
+        let Some((entity, args)) = parse_entity_body(body) else { continue; };
+        if !entity.eq_ignore_ascii_case("PROPERTY_DEFINITION_REPRESENTATION") { continue; }
+        let parts = split_top_level(args, ',');
+        let pd_id = parts.first().and_then(|p| parse_ref(p.trim()));
+        let rep_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        out.push(StepPropertyDefinitionRepr { entity_id: id, property_definition_id: pd_id, representation_id: rep_id });
+    }
+    out
+}
+
+fn extract_dimensional_locations(content: &str) -> Vec<StepDimensionalLocation> {
+    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
+        let Some((entity, args)) = parse_entity_body(body) else { continue; };
+        if !entity.eq_ignore_ascii_case("DIMENSIONAL_LOCATION") { continue; }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let from_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let to_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDimensionalLocation { entity_id: id, name, description, from_entity_id: from_id, to_entity_id: to_id });
+    }
+    out
+}
+
+fn extract_dimensional_sizes(content: &str) -> Vec<StepDimensionalSize> {
+    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
+        let Some((entity, args)) = parse_entity_body(body) else { continue; };
+        if !entity.eq_ignore_ascii_case("DIMENSIONAL_SIZE") { continue; }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let shape_aspect_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDimensionalSize { entity_id: id, name, description, shape_aspect_id });
+    }
+    out
+}
+
+fn extract_geometric_tolerances(content: &str) -> Vec<StepGeometricTolerance> {
+    let Ok(data) = extract_data_section(content) else { return Vec::new(); };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else { continue; };
+        let Some((entity, args)) = parse_entity_body(body) else { continue; };
+        if !entity.eq_ignore_ascii_case("GEOMETRIC_TOLERANCE") { continue; }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        out.push(StepGeometricTolerance { entity_id: id, name, description, value_entity_id, shape_aspect_id });
+    }
+    out
+}
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
     let rest = &args[q1 + 1..];
@@ -539,6 +649,10 @@ impl StepReader {
             layers: extract_layers(content),
             general_properties: extract_general_properties(content),
             property_definitions: extract_property_definitions(content),
+            property_definition_representations: extract_property_definition_reprs(content),
+            dimensional_locations: extract_dimensional_locations(content),
+            dimensional_sizes: extract_dimensional_sizes(content),
+            geometric_tolerances: extract_geometric_tolerances(content),
         };
 
         Ok((brep, metadata))
@@ -613,7 +727,7 @@ impl StepReader {
 
     /// Parse a STEP file, returning both the BRep and an optional color map.
     ///
-    /// Colors are extracted from the `STYLED_ITEM → COLOUR_RGB` chain.
+    /// Colors are extracted from the `STYLED_ITEM 鈫?COLOUR_RGB` chain.
     /// Returns `None` for color when the file has no color entities.
     pub fn read_file_with_color<P: AsRef<Path>>(
         path: P,
@@ -874,7 +988,7 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         });
                     }
                 }
-                // ── Color / presentation chain ─────────────────────────────────
+                // 鈹€鈹€ Color / presentation chain 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
                 "COLOUR_RGB" => {
                     // COLOUR_RGB('name', r, g, b)
                     if let Some(rgb) = parse_colour_rgb(args) {
@@ -936,7 +1050,7 @@ fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, StepError> {
     build_brep_with_face_map(parsed).map(|(brep, _)| brep)
 }
 
-/// Build BRep and return the STEP face-id → flat-face-index mapping used for color resolution.
+/// Build BRep and return the STEP face-id 鈫?flat-face-index mapping used for color resolution.
 fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, usize>), StepError> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
@@ -985,7 +1099,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
     let mut solids: Vec<Solid> = Vec::new();
     let mut geom = GeomStore::default();
-    // STEP face id → flat face index across all shells (for color resolution)
+    // STEP face id 鈫?flat face index across all shells (for color resolution)
     let mut face_id_map: HashMap<u64, usize> = HashMap::new();
     let mut flat_face_idx: usize = 0;
 
@@ -1077,15 +1191,15 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
                 if geom.edge_curve.len() <= idx {
                     geom.edge_curve.resize(idx + 1, None);
                 }
-                // No curve binding needed — already tessellated into polyline
+                // No curve binding needed 鈥?already tessellated into polyline
             }
         }
     }
 
-    // Populate edge_pcurves from SURFACE_CURVE → PCURVE → DEFINITIONAL_REPRESENTATION chains
+    // Populate edge_pcurves from SURFACE_CURVE 鈫?PCURVE 鈫?DEFINITIONAL_REPRESENTATION chains
     for (step_curve_id, (inner_3d_ref, pcurve_ids, same_param)) in &parsed.surface_curves {
         // Find which BRep edge this SURFACE_CURVE belongs to
-        // (edge_curves maps step EDGE_CURVE id → edge; the EDGE_CURVE's curve_ref points here)
+        // (edge_curves maps step EDGE_CURVE id 鈫?edge; the EDGE_CURVE's curve_ref points here)
         let edge_idx = edge_index_by_curve.get(step_curve_id).copied();
         // Also check if any edge_curve entry references this surface_curve indirectly
         let edge_idx = edge_idx.or_else(|| {
@@ -1187,7 +1301,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     Ok((brep, face_id_map))
 }
 
-/// Resolve STYLED_ITEM → COLOUR_RGB chains into a StepColor.
+/// Resolve STYLED_ITEM 鈫?COLOUR_RGB chains into a StepColor.
 /// Returns None if no color entities were found.
 fn resolve_step_color(parsed: &ParsedStep, face_id_map: &HashMap<u64, usize>) -> Option<StepColor> {
     if parsed.styled_items.is_empty() {
@@ -2044,7 +2158,7 @@ fn triangulate_toroidal_surface(
 /// Infer the angular (theta) range of boundary vertices projected onto a
 /// surface local frame (origin, u_dir, v_dir, axis).
 /// Returns (theta_min, theta_max) in radians.
-/// If `has_seam` is true, the face wraps the full period → returns (0, 2π).
+/// If `has_seam` is true, the face wraps the full period 鈫?returns (0, 2蟺).
 fn infer_angular_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -2104,7 +2218,7 @@ fn infer_angular_range(
 }
 
 /// Infer polar (phi) range for spherical surfaces from boundary vertices.
-/// Returns (phi_min, phi_max) in [0, π] (north-pole to south-pole).
+/// Returns (phi_min, phi_max) in [0, 蟺] (north-pole to south-pole).
 fn infer_polar_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -2582,7 +2696,7 @@ fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
 }
 
 fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
-    // Dereference SURFACE_CURVE — extract the wrapped 3D curve
+    // Dereference SURFACE_CURVE 鈥?extract the wrapped 3D curve
     let actual_ref = if let Some(&(inner_ref, _, _)) = parsed.surface_curves.get(&curve_ref) {
         inner_ref
     } else {
@@ -2730,7 +2844,7 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         let expanded_u = expand_knots(mults_u, knots_u);
         let expanded_v = expand_knots(mults_v, knots_v);
 
-        // ctrl_grid_raw is indexed [v][u] in STEP; BSplineSurface.control_points is [u][v] — transpose
+        // ctrl_grid_raw is indexed [v][u] in STEP; BSplineSurface.control_points is [u][v] 鈥?transpose
         let n_v = ctrl_grid_raw.len();
         let n_u = ctrl_grid_raw.first().map(|r| r.len()).unwrap_or(0);
         if n_u == 0 || n_v == 0 {
@@ -2826,7 +2940,7 @@ fn parse_uncertainty_measure(args: &str) -> Option<f64> {
 }
 
 /// Parse RECTANGULAR_TRIMMED_SURFACE args:
-/// `'name', #basis, u1, u2, v1, v2, .T., .T.` → `(basis_ref, [u1,u2,v1,v2])`.
+/// `'name', #basis, u1, u2, v1, v2, .T., .T.` 鈫?`(basis_ref, [u1,u2,v1,v2])`.
 fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
     // Extract the single # reference (basis surface)
     let refs = parse_ref_list(args);
@@ -2848,7 +2962,7 @@ fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
     }
 }
 
-/// Parse COLOUR_RGB args: `'name', r, g, b` → `[r, g, b]`.
+/// Parse COLOUR_RGB args: `'name', r, g, b` 鈫?`[r, g, b]`.
 fn parse_colour_rgb(args: &str) -> Option<[f64; 3]> {
     // Skip the optional name string, then parse three floats.
     let rest = if args.trim_start().starts_with('\'') {
@@ -2881,7 +2995,7 @@ fn parse_last_ref(args: &str) -> Option<u64> {
     parse_ref_list(args).into_iter().last()
 }
 
-/// Parse STYLED_ITEM args: `'name', (#psa,...), #shape` → `(shape_ref, [psa_refs])`.
+/// Parse STYLED_ITEM args: `'name', (#psa,...), #shape` 鈫?`(shape_ref, [psa_refs])`.
 ///
 /// The writer emits: `STYLED_ITEM('color',(#psa,),#face_id)`
 fn parse_styled_item(args: &str) -> Option<(u64, Vec<u64>)> {
@@ -2976,7 +3090,7 @@ fn parse_trimmed_curve(args: &str) -> Option<(u64, f64, f64)> {
 }
 
 fn parse_parameter_value(s: &str) -> Option<f64> {
-    // s looks like "(PARAMETER_VALUE(0.))" — find the float inside PARAMETER_VALUE(...)
+    // s looks like "(PARAMETER_VALUE(0.))" 鈥?find the float inside PARAMETER_VALUE(...)
     let cursor = s.to_uppercase();
     let pv_pos = cursor.find("PARAMETER_VALUE(")?;
     let after = &s[pv_pos + "PARAMETER_VALUE(".len()..];
@@ -3139,7 +3253,7 @@ fn parse_ref_list(input: &str) -> Vec<u64> {
     refs
 }
 
-/// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` → `[1.0, 2.0, 3.0]`.
+/// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` 鈫?`[1.0, 2.0, 3.0]`.
 fn parse_float_list(input: &str) -> Vec<f64> {
     let inner = input.trim().trim_start_matches('(').trim_end_matches(')');
     inner
@@ -3194,7 +3308,7 @@ fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
 }
 
 fn parse_cartesian_point_2d(args: &str) -> Option<[f64; 2]> {
-    // CARTESIAN_POINT('name', (x, y)) — only 2 coordinates
+    // CARTESIAN_POINT('name', (x, y)) 鈥?only 2 coordinates
     let inner = args.trim().trim_start_matches('(').trim_end_matches(')');
     let parts = split_top_level(inner, ',');
     if parts.len() != 3 {
@@ -3255,7 +3369,7 @@ fn parse_definitional_rep(args: &str) -> Option<u64> {
     if parts.len() < 2 {
         return None;
     }
-    // The second part is a list like (#14) — take the first element
+    // The second part is a list like (#14) 鈥?take the first element
     let refs = parse_ref_list(parts[1]);
     refs.into_iter().next()
 }
@@ -3264,7 +3378,7 @@ fn parse_definitional_rep(args: &str) -> Option<u64> {
 ///
 /// 2D curves live inside DEFINITIONAL_REPRESENTATION bodies. In the STEP file
 /// they use the same entity names (LINE, CIRCLE) but with 2-component coords.
-/// The reader stores them in the 3D maps (cartesian_points, circles, lines) —
+/// The reader stores them in the 3D maps (cartesian_points, circles, lines) 鈥?
 /// STEP parsers accept them there. We just need to down-convert to Curve2d.
 fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     if let Some((origin_ref, vector_ref)) = parsed.lines.get(&curve_ref) {
@@ -3675,7 +3789,7 @@ END-ISO-10303-21;
         // All should produce additional edges in the BRep.
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
 
-        // The b-spline alone has 7 control points → at least 6 edges
+        // The b-spline alone has 7 control points 鈫?at least 6 edges
         // The trimmed lines each contribute 1 edge (2 total)
         // The circle arc contributes 8+ edges
         // Total from curve sets: at least 16 edges beyond the face topology edges
@@ -3684,5 +3798,38 @@ END-ISO-10303-21;
             total_edges >= 20,
             "expected geometric curve set edges, got total edge count = {total_edges}"
         );
+    }
+
+    #[test]
+    fn extract_property_definition_reprs_parses_linkage() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#10=PROPERTY_DEFINITION('pd','',#20);\n#11=PROPERTY_DEFINITION_REPRESENTATION(#10,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let reprs = extract_property_definition_reprs(step);
+        assert_eq!(reprs.len(), 1);
+        assert_eq!(reprs[0].entity_id, 11);
+        assert_eq!(reprs[0].property_definition_id, Some(10));
+        assert_eq!(reprs[0].representation_id, Some(30));
+    }
+
+    #[test]
+    fn extract_dimensional_locations_parses_from_to() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#5=DIMENSIONAL_LOCATION('diameter','D',#100,#101);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let locs = extract_dimensional_locations(step);
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].entity_id, 5);
+        assert_eq!(locs[0].name.as_deref(), Some("diameter"));
+        assert_eq!(locs[0].description.as_deref(), Some("D"));
+        assert_eq!(locs[0].from_entity_id, Some(100));
+        assert_eq!(locs[0].to_entity_id, Some(101));
+    }
+
+    #[test]
+    fn extract_geometric_tolerances_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#7=GEOMETRIC_TOLERANCE('flatness','',#50,#60);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_geometric_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 7);
+        assert_eq!(tols[0].name.as_deref(), Some("flatness"));
+        assert_eq!(tols[0].value_entity_id, Some(50));
+        assert_eq!(tols[0].shape_aspect_id, Some(60));
     }
 }

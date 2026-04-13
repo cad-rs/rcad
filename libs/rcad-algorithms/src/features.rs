@@ -570,3 +570,253 @@ mod tests {
         assert!(matches!(err, FeatureError::InvalidInput(_)));
     }
 }
+
+// ─── SplitShape: split a face by a cutting wire ──────────────────────────────
+
+/// Error returned by [`split_face_by_wire`].
+#[derive(Debug)]
+pub enum SplitShapeError {
+    FaceNotFound,
+    CutPathTooShort,
+    CutVertexNotOnWire { vertex_idx: usize },
+    CutPathClosedLoop,
+    DegenerateResult,
+}
+
+impl std::fmt::Display for SplitShapeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FaceNotFound => write!(f, "face index out of range"),
+            Self::CutPathTooShort => write!(f, "cut path needs at least 2 vertices"),
+            Self::CutVertexNotOnWire { vertex_idx } => {
+                write!(f, "cut vertex {vertex_idx} is not on the face outer wire")
+            }
+            Self::CutPathClosedLoop => write!(f, "cut path start and end are the same wire vertex"),
+            Self::DegenerateResult => write!(f, "split produced a degenerate wire"),
+        }
+    }
+}
+
+impl std::error::Error for SplitShapeError {}
+
+/// Split a face by a cutting wire (path of vertex indices already in `brep.vertices`).
+///
+/// - `cut_path`: at least 2 vertex indices; first and last must appear as the
+///   *start* vertex of some edge in the face's outer wire.
+/// - New line edges are inserted for each segment of `cut_path`.
+/// - The face is replaced by two sub-faces.
+///
+/// Analogous to OCCT `BRepFeat_SplitShape`.
+pub fn split_face_by_wire(
+    brep: &mut BRep,
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    cut_path: &[usize],
+) -> Result<usize, SplitShapeError> {
+    if cut_path.len() < 2 {
+        return Err(SplitShapeError::CutPathTooShort);
+    }
+    if solid_idx >= brep.solids.len()
+        || shell_idx >= brep.solids[solid_idx].shells.len()
+        || face_idx >= brep.solids[solid_idx].shells[shell_idx].faces.len()
+    {
+        return Err(SplitShapeError::FaceNotFound);
+    }
+
+    let start_v = cut_path[0];
+    let end_v = *cut_path.last().unwrap();
+
+    let outer_edges = brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+        .outer_wire.edges.clone();
+
+    // Build ordered vertex sequence of the outer wire.
+    let wire_verts: Vec<usize> = outer_edges.iter().map(|we| {
+        let e = &brep.edges[we.idx];
+        if we.forward { e.start } else { e.end }
+    }).collect();
+
+    let pos_start = wire_verts.iter().position(|&v| v == start_v)
+        .ok_or(SplitShapeError::CutVertexNotOnWire { vertex_idx: start_v })?;
+    let pos_end = wire_verts.iter().position(|&v| v == end_v)
+        .ok_or(SplitShapeError::CutVertexNotOnWire { vertex_idx: end_v })?;
+    if pos_start == pos_end {
+        return Err(SplitShapeError::CutPathClosedLoop);
+    }
+
+    let n = outer_edges.len();
+
+    // Add line edges for the cut path segments.
+    let cut_edge_indices: Vec<usize> = cut_path.windows(2).map(|w| {
+        let (sv, ev) = (w[0], w[1]);
+        let ei = brep.edges.len();
+        let p0 = brep.vertices[sv].point;
+        let p1 = brep.vertices[ev].point;
+        let d = p1 - p0;
+        let len = d.length();
+        let dir = if len > 1e-30 { d / len } else { DVec3::X };
+        brep.edges.push(Edge { start: sv, end: ev });
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
+        brep.geom.edge_curve.push(Some(ci));
+        brep.geom.edge_curve_range.push(Some([0.0, len]));
+        brep.geom.edge_degenerated.push(false);
+        ei
+    }).collect();
+
+    // Half A: outer[pos_start..pos_end] + cut forward.
+    let half_a: Vec<WireEdge> = (0..(pos_end - pos_start))
+        .map(|i| outer_edges[(pos_start + i) % n]).collect();
+    let cut_fwd: Vec<WireEdge> = cut_edge_indices.iter().map(|&ei| WireEdge::fwd(ei)).collect();
+    let mut wire_a = half_a;
+    wire_a.extend_from_slice(&cut_fwd);
+
+    // Half B: outer[pos_end..] + outer[..pos_start] + cut reversed.
+    let half_b_len = n - (pos_end - pos_start);
+    let half_b: Vec<WireEdge> = (0..half_b_len)
+        .map(|i| outer_edges[(pos_end + i) % n]).collect();
+    let cut_rev: Vec<WireEdge> = cut_edge_indices.iter().rev().map(|&ei| WireEdge::rev(ei)).collect();
+    let mut wire_b = half_b;
+    wire_b.extend_from_slice(&cut_rev);
+
+    if wire_a.len() < 3 || wire_b.len() < 3 {
+        return Err(SplitShapeError::DegenerateResult);
+    }
+
+    let orig_normal = brep.solids[solid_idx].shells[shell_idx].faces[face_idx].normal;
+    let orig_inner = brep.solids[solid_idx].shells[shell_idx].faces[face_idx].inner_wires.clone();
+
+    let face_a = Face {
+        outer_wire: Wire { edges: wire_a },
+        inner_wires: orig_inner.clone(),
+        normal: orig_normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+    let face_b = Face {
+        outer_wire: Wire { edges: wire_b },
+        inner_wires: orig_inner,
+        normal: orig_normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+
+    // Update GeomStore face_surface flat index.
+    let flat_idx: usize = brep.solids[..solid_idx].iter()
+        .flat_map(|s| s.shells.iter()).map(|sh| sh.faces.len()).sum::<usize>()
+        + brep.solids[solid_idx].shells[..shell_idx].iter()
+            .map(|sh| sh.faces.len()).sum::<usize>()
+        + face_idx;
+    let orig_surf = brep.geom.face_surface.get(flat_idx).copied().flatten();
+    if flat_idx + 1 <= brep.geom.face_surface.len() {
+        brep.geom.face_surface.insert(flat_idx + 1, orig_surf);
+    }
+    if flat_idx + 1 <= brep.geom.face_tolerance.len() {
+        let ft = brep.geom.face_tolerance[flat_idx];
+        brep.geom.face_tolerance.insert(flat_idx + 1, ft);
+    }
+
+    brep.solids[solid_idx].shells[shell_idx].faces[face_idx] = face_a;
+    brep.solids[solid_idx].shells[shell_idx].faces.insert(face_idx + 1, face_b);
+    Ok(1)
+}
+
+// ─── Linear rib / slot ───────────────────────────────────────────────────────
+
+/// Create a linear rib (or slot) feature via prism boolean.
+///
+/// Analogous to OCCT `BRepFeat_MakeLinearForm`.
+pub fn make_linear_rib(
+    target: &BRep,
+    profile_verts: &[DVec3],
+    direction: DVec3,
+    depth: f64,
+    op: BooleanOpType,
+) -> Result<BRep, FeatureError> {
+    make_prism(target, profile_verts, direction, depth, op)
+}
+
+/// Create a revolution rib/slot feature via revolve boolean.
+///
+/// Analogous to OCCT `BRepFeat_MakeRevolutionForm`.
+pub fn make_revolution_rib(
+    target: &BRep,
+    profile_verts: &[DVec3],
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+    angle_rad: f64,
+    op: BooleanOpType,
+) -> Result<BRep, FeatureError> {
+    make_revolution(target, profile_verts, axis_origin, axis_dir, angle_rad, op)
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use glam::DVec3;
+    use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+    fn make_square_brep() -> BRep {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![Face {
+                    outer_wire: Wire {
+                        edges: vec![
+                            WireEdge::fwd(0), WireEdge::fwd(1),
+                            WireEdge::fwd(2), WireEdge::fwd(3),
+                        ],
+                    },
+                    inner_wires: vec![],
+                    normal: DVec3::Z,
+                    triangles: vec![],
+                    mesh_dirty: true,
+                }],
+            }],
+        });
+        brep
+    }
+
+    #[test]
+    fn split_face_by_wire_splits_square_into_two_triangles() {
+        let mut brep = make_square_brep();
+        // Cut from v0 (wire pos 0) to v2 (wire pos 2).
+        let result = split_face_by_wire(&mut brep, 0, 0, 0, &[0, 2]);
+        assert!(result.is_ok(), "split should succeed: {:?}", result);
+        let shell = &brep.solids[0].shells[0];
+        assert_eq!(shell.faces.len(), 2, "face should be split into 2");
+        for face in &shell.faces {
+            assert_eq!(face.outer_wire.edges.len(), 3, "each sub-face should be a triangle");
+        }
+    }
+
+    #[test]
+    fn split_face_by_wire_rejects_missing_vertex() {
+        let mut brep = make_square_brep();
+        let result = split_face_by_wire(&mut brep, 0, 0, 0, &[0, 99]);
+        assert!(matches!(result, Err(SplitShapeError::CutVertexNotOnWire { .. })));
+    }
+
+    #[test]
+    fn make_linear_rib_creates_boss() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0, height: 2.0, depth: 0.5,
+        });
+        let profile = vec![
+            DVec3::new(0.5, 0.0, 0.0),
+            DVec3::new(1.5, 0.0, 0.0),
+            DVec3::new(1.5, 0.0, 1.0),
+            DVec3::new(0.5, 0.0, 1.0),
+        ];
+        let result = make_linear_rib(&target, &profile, DVec3::Y, 0.2, BooleanOpType::Union);
+        assert!(result.is_ok(), "linear rib should succeed: {:?}", result);
+    }
+}

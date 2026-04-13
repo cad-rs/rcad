@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
@@ -46,7 +46,7 @@ pub struct BSplineCurve3 {
 /// Analogous to OCCT `Geom_BezierCurve`.
 ///
 /// Note: a Bezier curve of degree n is equivalent to a B-spline of degree n
-/// with knot vector `[0, …, 0, 1, …, 1]` (n+1 times each).
+/// with knot vector `[0, 鈥? 0, 1, 鈥? 1]` (n+1 times each).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BezierCurve3 {
     pub control_points: Vec<DVec3>,
@@ -57,10 +57,10 @@ pub struct BezierCurve3 {
 /// A 3D hyperbola defined by center, normal, semi-transverse axis `a`, and
 /// semi-conjugate axis `b`.  Parametric form:
 ///
-///   P(t) = center + a·cosh(t)·major_dir + b·sinh(t)·minor_dir
+///   P(t) = center + a路cosh(t)路major_dir + b路sinh(t)路minor_dir
 ///
-/// where `minor_dir = normal × major_dir`.  Domain is `(−∞, +∞)`;
-/// the principal branch (t ≥ 0) is on the `+major_dir` side.
+/// where `minor_dir = normal 脳 major_dir`.  Domain is `(鈭掆垶, +鈭?`;
+/// the principal branch (t 鈮?0) is on the `+major_dir` side.
 /// Analogous to OCCT `Geom_Hyperbola`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Hyperbola3 {
@@ -74,16 +74,16 @@ pub struct Hyperbola3 {
 /// A 3D parabola defined by its vertex, axis, and focal parameter `p`
 /// (where the focus is at distance `p/2` from the vertex along the axis).
 ///
-///   P(t) = vertex + (t²/(2p))·axis_dir + t·dir_perp
+///   P(t) = vertex + (t虏/(2p))路axis_dir + t路dir_perp
 ///
-/// where `dir_perp = normal × axis_dir` is the cross-axis direction.
-/// Domain is `(−∞, +∞)`.  Analogous to OCCT `Geom_Parabola`.
+/// where `dir_perp = normal 脳 axis_dir` is the cross-axis direction.
+/// Domain is `(鈭掆垶, +鈭?`.  Analogous to OCCT `Geom_Parabola`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Parabola3 {
     pub vertex: Point3,
     pub normal: Vec3,
     pub axis_dir: Vec3,   // direction from vertex toward focus
-    pub focal_param: f64, // p  (= 2 × focal_length)
+    pub focal_param: f64, // p  (= 2 脳 focal_length)
 }
 
 /// A circular helix curve around an axis.
@@ -169,7 +169,7 @@ pub struct BSplineSurface {
 
 /// A rational or non-rational Bezier surface (tensor-product bicubic patch).
 ///
-/// Evaluated by applying de Casteljau in u, then in v. Domain is `[0, 1] × [0, 1]`.
+/// Evaluated by applying de Casteljau in u, then in v. Domain is `[0, 1] 脳 [0, 1]`.
 /// Analogous to OCCT `Geom_BezierSurface`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BezierSurface {
@@ -181,7 +181,7 @@ pub struct BezierSurface {
 
 /// A curve offset from a base curve by a fixed distance in a reference plane.
 ///
-/// `S(t) = basis.point_at(t) + offset_distance * (tangent(t) × offset_dir).normalize()`
+/// `S(t) = basis.point_at(t) + offset_distance * (tangent(t) 脳 offset_dir).normalize()`
 ///
 /// Analogous to OCCT `Geom_OffsetCurve`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,7 +190,7 @@ pub struct OffsetCurve3 {
     /// Offset distance (positive = outward from the curve's "left" side).
     pub offset_distance: f64,
     /// Fixed reference direction (normal to the offset plane).
-    /// The offset direction at each point is `(tangent × offset_dir).normalize()`.
+    /// The offset direction at each point is `(tangent 脳 offset_dir).normalize()`.
     pub offset_dir: Vec3,
 }
 
@@ -207,8 +207,8 @@ pub struct OffsetSurface {
     pub offset_distance: f64,
 }
 
-/// A rectangular trimmed surface — a base surface restricted to the UV box
-/// `[u1, u2] × [v1, v2]`.
+/// A rectangular trimmed surface 鈥?a base surface restricted to the UV box
+/// `[u1, u2] 脳 [v1, v2]`.
 ///
 /// Evaluation delegates fully to the basis surface; only the reported domain
 /// changes. Analogous to OCCT `Geom_RectangularTrimmedSurface`.
@@ -265,6 +265,27 @@ pub enum Surface3 {
     Bezier(BezierSurface),                   // Phase M
     Offset(OffsetSurface),                   // Phase M
     Trimmed(TrimmedSurface),                 // Phase Q
+    Gordon(GordonSurface),                   // Phase R
+}
+
+/// A Gordon surface (transfinite interpolation surface) defined by two families of cross-curves.
+///
+/// - `u_curves[i]` is parameterised over `[0,1]` and lives at v = v_params[i].
+/// - `v_curves[j]` is parameterised over `[0,1]` and lives at u = u_params[j].
+///
+/// S(u,v) = sum_i L_v[i]*C_i(u) + sum_j L_u[j]*D_j(v) - sum_ij L_v[i]*L_u[j]*P_ij
+///
+/// Analogous to GeomFill_SectionGenerator / Gordon surface in OCCT.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GordonSurface {
+    /// Cross-section curves in the u-direction (iso-v lines), one per v_params entry.
+    pub u_curves: Vec<Curve3>,
+    /// v-parameter values corresponding to each u_curves[i] (monotone, in [0,1]).
+    pub v_params: Vec<f64>,
+    /// Cross-section curves in the v-direction (iso-u lines), one per u_params entry.
+    pub v_curves: Vec<Curve3>,
+    /// u-parameter values corresponding to each v_curves[j] (monotone, in [0,1]).
+    pub u_params: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -291,7 +312,7 @@ pub enum PrimitiveSolid {
     },
 }
 
-// ── 2D Geometry (parameter-space / PCurve types) ─────────────────────────────
+// 鈹€鈹€ 2D Geometry (parameter-space / PCurve types) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A line in 2D parameter space: point + direction.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -313,7 +334,7 @@ pub struct Circle2d {
 /// an elliptical path on the parameter domain of an adjacent surface.
 ///
 /// Parametric form: `center + major_dir * a*cos(t) + minor_dir * b*sin(t)`
-/// where `minor_dir = rotate_ccw_90(major_dir)`.  Default domain: `[0, 2π]`.
+/// where `minor_dir = rotate_ccw_90(major_dir)`.  Default domain: `[0, 2蟺]`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Ellipse2d {
     pub center: Point2,
@@ -361,6 +382,21 @@ pub struct LogarithmicSpiral2d {
     pub start_angle: f64,
 }
 
+/// A 2D sine-wave curve in parameter space.
+///
+/// Parametric form:
+/// `x(t) = t`
+/// `y(t) = amplitude * sin(frequency * t + phase)`
+///
+/// Useful for procedural sketching and for matching OCCT's sine-wave evaluator
+/// family in a lightweight form.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SineWave2d {
+    pub amplitude: f64,
+    pub frequency: f64,
+    pub phase: f64,
+}
+
 /// A non-uniform rational B-spline curve in 2D parameter space.
 ///
 /// Analogous to OCCT `Geom2d_BSplineCurve`. Used for PCurves: the image of
@@ -401,7 +437,7 @@ pub enum Curve2d {
     Bezier(BezierCurve2), // Phase M
 }
 
-// ── Geometric evaluation traits ──────────────────────────────────────────────
+// 鈹€鈹€ Geometric evaluation traits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Returns a vector perpendicular to `v`. Stable for any non-zero input.
 pub fn any_perpendicular(v: DVec3) -> DVec3 {
@@ -417,7 +453,7 @@ pub fn any_perpendicular(v: DVec3) -> DVec3 {
     v.cross(candidate).normalize()
 }
 
-/// Parametric evaluation of a 3D curve: `t → Point3`.
+/// Parametric evaluation of a 3D curve: `t 鈫?Point3`.
 ///
 /// Mirrors OCCT `Geom_Curve::Value(t)` / `D1(t)`.
 pub trait CurveEval {
@@ -426,11 +462,11 @@ pub trait CurveEval {
     /// Unit tangent vector at parameter `t`.
     fn tangent_at(&self, t: f64) -> DVec3;
     /// Natural parameter domain `[t_min, t_max]`.
-    /// Lines use `[NEG_INFINITY, INFINITY]`; circles/ellipses use `[0, 2π]`.
+    /// Lines use `[NEG_INFINITY, INFINITY]`; circles/ellipses use `[0, 2蟺]`.
     fn default_domain(&self) -> [f64; 2];
 }
 
-/// Parametric evaluation of a 3D surface: `(u, v) → Point3`.
+/// Parametric evaluation of a 3D surface: `(u, v) 鈫?Point3`.
 ///
 /// Mirrors OCCT `Geom_Surface::Value(u, v)`.
 pub trait SurfaceEval {
@@ -442,12 +478,12 @@ pub trait SurfaceEval {
     fn default_domain(&self) -> [f64; 4];
 }
 
-/// Parametric evaluation of a 2D curve (PCurve): `t → Point2`.
+/// Parametric evaluation of a 2D curve (PCurve): `t 鈫?Point2`.
 pub trait Curve2dEval {
     fn point_at(&self, t: f64) -> DVec2;
 }
 
-// ── CurveEval implementations ─────────────────────────────────────────────────
+// 鈹€鈹€ CurveEval implementations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 impl CurveEval for Line3 {
     fn point_at(&self, t: f64) -> DVec3 {
@@ -599,7 +635,7 @@ impl CurveEval for Curve3 {
     }
 }
 
-// ── SurfaceEval implementations ───────────────────────────────────────────────
+// 鈹€鈹€ SurfaceEval implementations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 impl SurfaceEval for Plane {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
@@ -621,7 +657,7 @@ impl SurfaceEval for Plane {
 }
 
 impl SurfaceEval for CylindricalSurface {
-    /// u = azimuth angle [0, 2π], v = height along axis.
+    /// u = azimuth angle [0, 2蟺], v = height along axis.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
@@ -638,7 +674,7 @@ impl SurfaceEval for CylindricalSurface {
 }
 
 impl SurfaceEval for SphericalSurface {
-    /// u = longitude [0, 2π], v = colatitude [0, π] (0 = north pole).
+    /// u = longitude [0, 2蟺], v = colatitude [0, 蟺] (0 = north pole).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
@@ -656,7 +692,7 @@ impl SurfaceEval for SphericalSurface {
 }
 
 impl SurfaceEval for ConicalSurface {
-    /// u = azimuth [0, 2π], v = distance along slant from apex (v ≥ 0).
+    /// u = azimuth [0, 2蟺], v = distance along slant from apex (v 鈮?0).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
@@ -676,7 +712,7 @@ impl SurfaceEval for ConicalSurface {
 }
 
 impl SurfaceEval for ToroidalSurface {
-    /// u = major angle [0, 2π], v = minor angle [0, 2π].
+    /// u = major angle [0, 2蟺], v = minor angle [0, 2蟺].
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
@@ -715,7 +751,7 @@ impl SurfaceEval for LinearExtrusionSurface {
 }
 
 impl SurfaceEval for RevolutionSurface {
-    /// u = azimuth angle [0, 2π], v = profile parameter.
+    /// u = azimuth angle [0, 2蟺], v = profile parameter.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let p = self.profile.point_at(v);
         let d = p - self.axis_origin;
@@ -765,6 +801,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Bezier(s) => s.point_at(u, v),
             Surface3::Offset(s) => s.point_at(u, v),
             Surface3::Trimmed(s) => s.point_at(u, v),
+            Surface3::Gordon(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -780,6 +817,7 @@ impl SurfaceEval for Surface3 {
             Surface3::Bezier(s) => s.normal_at(u, v),
             Surface3::Offset(s) => s.normal_at(u, v),
             Surface3::Trimmed(s) => s.normal_at(u, v),
+            Surface3::Gordon(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -795,11 +833,62 @@ impl SurfaceEval for Surface3 {
             Surface3::Bezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
+            Surface3::Gordon(s) => s.default_domain(),
         }
     }
 }
 
-// ── BSpline evaluation ────────────────────────────────────────────────────────
+/// Evaluate all Lagrange basis functions for the given nodes at t.
+fn lagrange_basis(nodes: &[f64], t: f64) -> Vec<f64> {
+    let n = nodes.len();
+    let mut basis = vec![1.0; n];
+    for i in 0..n {
+        for j in 0..n {
+            if i != j {
+                let denom = nodes[i] - nodes[j];
+                if denom.abs() > 1e-15 {
+                    basis[i] *= (t - nodes[j]) / denom;
+                } else {
+                    basis[i] = 0.0;
+                }
+            }
+        }
+    }
+    basis
+}
+
+impl SurfaceEval for GordonSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let n = self.u_curves.len();
+        let m = self.v_curves.len();
+        if n == 0 && m == 0 { return DVec3::ZERO; }
+        let lv = if n > 0 { lagrange_basis(&self.v_params, v) } else { vec![] };
+        let lu = if m > 0 { lagrange_basis(&self.u_params, u) } else { vec![] };
+        let mut s_u = DVec3::ZERO;
+        for i in 0..n { s_u += lv[i] * self.u_curves[i].point_at(u); }
+        let mut s_v = DVec3::ZERO;
+        for j in 0..m { s_v += lu[j] * self.v_curves[j].point_at(v); }
+        let mut s_t = DVec3::ZERO;
+        for i in 0..n {
+            for j in 0..m {
+                let p_ij = self.u_curves[i].point_at(self.u_params[j]);
+                s_t += lv[i] * lu[j] * p_ij;
+            }
+        }
+        s_u + s_v - s_t
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = self.point_at(u + eps, v) - self.point_at(u - eps, v);
+        let dv = self.point_at(u, v + eps) - self.point_at(u, v - eps);
+        let n = du.cross(dv);
+        let len = n.length();
+        if len < 1e-15 { DVec3::Z } else { n / len }
+    }
+    fn default_domain(&self) -> [f64; 4] { [0.0, 1.0, 0.0, 1.0] }
+}
+
+// 鈹€鈹€ BSpline evaluation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// De Boor's algorithm in homogeneous 4D space.
 /// Returns `[wx, wy, wz, w]` (not divided by w yet).
@@ -985,16 +1074,16 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
     }
 }
 
-// ── Analytic curve derivative helpers ────────────────────────────────────────
+// 鈹€鈹€ Analytic curve derivative helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Analytic tangent for a rational B-Spline curve (NURBS) using the quotient rule.
 ///
 /// The derivative of C(t) = A(t)/W(t) is:
-///   C'(t) = (A'(t) − W'(t)·C(t)) / W(t)
+///   C'(t) = (A'(t) 鈭?W'(t)路C(t)) / W(t)
 ///
-/// A'(t) and W'(t) are degree-(p−1) B-Splines with control points:
-///   A'_i = p · (w_{i+1}·P_{i+1} − w_i·P_i) / (t_{i+p+1} − t_{i+1})
-///   W'_i = p · (w_{i+1} − w_i)              / (t_{i+p+1} − t_{i+1})
+/// A'(t) and W'(t) are degree-(p鈭?) B-Splines with control points:
+///   A'_i = p 路 (w_{i+1}路P_{i+1} 鈭?w_i路P_i) / (t_{i+p+1} 鈭?t_{i+1})
+///   W'_i = p 路 (w_{i+1} 鈭?w_i)              / (t_{i+p+1} 鈭?t_{i+1})
 ///
 /// Returns the unnormalised derivative vector (caller normalises if needed).
 fn bspline_tangent_analytic(
@@ -1047,9 +1136,9 @@ fn bspline_tangent_analytic(
 
 /// Analytic tangent for a rational Bezier curve using the quotient rule.
 ///
-/// The derivative of a degree-n Bezier is a degree-(n−1) Bezier with:
-///   A'_i = n·(w_{i+1}·P_{i+1} − w_i·P_i)
-///   W'_i = n·(w_{i+1} − w_i)
+/// The derivative of a degree-n Bezier is a degree-(n鈭?) Bezier with:
+///   A'_i = n路(w_{i+1}路P_{i+1} 鈭?w_i路P_i)
+///   W'_i = n路(w_{i+1} 鈭?w_i)
 fn bezier_tangent_analytic(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
     let n = points.len();
     if n < 2 {
@@ -1110,7 +1199,7 @@ impl SurfaceEval for BSplineSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         // Tensor product rational evaluation (NURBS):
         // 1. For each v-column, evaluate the u-direction NURBS in homogeneous coords
-        //    → get (wx, wy, wz, w) for each column index.
+        //    鈫?get (wx, wy, wz, w) for each column index.
         // 2. Collect column weights and weighted positions.
         // 3. Run de Boor in v on the homogeneous results, then divide by weight.
         let n_u = self.control_points.len();
@@ -1121,7 +1210,7 @@ impl SurfaceEval for BSplineSurface {
         if n_v == 0 {
             return DVec3::ZERO;
         }
-        // Step 1: evaluate each v-column in the u direction → homogeneous 4-vector
+        // Step 1: evaluate each v-column in the u direction 鈫?homogeneous 4-vector
         let col_homo: Vec<[f64; 4]> = (0..n_v)
             .map(|j| {
                 let pts: Vec<DVec3> = (0..n_u).map(|i| self.control_points[i][j]).collect();
@@ -1183,7 +1272,7 @@ impl SurfaceEval for BSplineSurface {
     }
 }
 
-// ── Curve2dEval implementations ───────────────────────────────────────────────
+// 鈹€鈹€ Curve2dEval implementations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 impl Curve2dEval for Line2d {
     fn point_at(&self, t: f64) -> DVec2 {
@@ -1199,7 +1288,7 @@ impl Curve2dEval for Circle2d {
 
 impl Curve2dEval for Ellipse2d {
     fn point_at(&self, t: f64) -> DVec2 {
-        // minor_dir = rotate major_dir by 90° counter-clockwise
+        // minor_dir = rotate major_dir by 90掳 counter-clockwise
         let minor_dir = DVec2::new(-self.major_dir.y, self.major_dir.x);
         self.center
             + self.major_dir * (self.major_radius * t.cos())
@@ -1234,6 +1323,12 @@ impl Curve2dEval for LogarithmicSpiral2d {
         let r = self.a * (self.b * t).exp();
         let th = self.start_angle + t;
         self.center + DVec2::new(r * th.cos(), r * th.sin())
+    }
+}
+
+impl Curve2dEval for SineWave2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        DVec2::new(t, self.amplitude * (self.frequency * t + self.phase).sin())
     }
 }
 
@@ -1305,12 +1400,26 @@ mod tests {
         let p1 = s.point_at(2.0);
         assert!(p1.length() > p0.length() * 1.5, "log spiral should grow faster than linear at this sample");
     }
+
+    #[test]
+    fn sine_wave_samples_match_expected_values() {
+        let s = SineWave2d {
+            amplitude: 2.0,
+            frequency: 1.0,
+            phase: 0.0,
+        };
+        let p0 = s.point_at(0.0);
+        let p90 = s.point_at(std::f64::consts::FRAC_PI_2);
+        assert!((p0.x - 0.0).abs() < 1e-12);
+        assert!((p0.y - 0.0).abs() < 1e-12);
+        assert!((p90.y - 2.0).abs() < 1e-12);
+    }
 }
 
-// ── Bezier (de Casteljau) implementations ─────────────────────────────────────
+// 鈹€鈹€ Bezier (de Casteljau) implementations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// De Casteljau algorithm for rational Bezier curve evaluation in 3D.
-/// `t` ∈ [0, 1].
+/// `t` 鈭?[0, 1].
 fn de_casteljau_3d(points: &[DVec3], weights: &[f64], t: f64) -> DVec3 {
     let n = points.len();
     if n == 0 {
@@ -1419,7 +1528,7 @@ impl Curve2dEval for BezierCurve2 {
     }
 }
 
-// ── Offset Curve / Surface implementations ────────────────────────────────────
+// 鈹€鈹€ Offset Curve / Surface implementations 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 impl CurveEval for OffsetCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
@@ -1508,7 +1617,7 @@ mod eval_tests {
         };
         let p0 = c.point_at(0.0);
         let p90 = c.point_at(FRAC_PI_2);
-        // 90° rotation: p0 and p90 should be perpendicular from center
+        // 90掳 rotation: p0 and p90 should be perpendicular from center
         assert!((p0.dot(p90)).abs() < 1e-10);
         assert!((p90.length() - 1.0).abs() < 1e-10);
     }
@@ -1611,10 +1720,10 @@ mod eval_tests {
         }
     }
 
-    // ── Analytic derivative tests ─────────────────────────────────────────────
+    // 鈹€鈹€ Analytic derivative tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Quadratic Bezier: P0=(0,0,0), P1=(0.5,1,0), P2=(1,0,0), unit weights.
-    /// Analytic tangent at t=0 should be (0.5,1,0).normalize() = (1,2,0)/√5.
+    /// Analytic tangent at t=0 should be (0.5,1,0).normalize() = (1,2,0)/鈭?.
     #[test]
     fn bezier_tangent_at_endpoint_analytic() {
         let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
@@ -1625,7 +1734,7 @@ mod eval_tests {
         assert!((tan - expected).length() < 1e-10, "tan={tan:?} expected={expected:?}");
     }
 
-    /// Quadratic Bezier tangent at t=1 should be (1,-2,0)/√5.
+    /// Quadratic Bezier tangent at t=1 should be (1,-2,0)/鈭?.
     #[test]
     fn bezier_tangent_at_end_analytic() {
         let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
@@ -1639,7 +1748,7 @@ mod eval_tests {
     /// Degree-1 B-Spline (polyline): tangent should be constant along each segment.
     #[test]
     fn bspline_degree1_tangent_is_segment_direction() {
-        // Two-segment polyline: (0,0,0)→(1,0,0)→(1,1,0)
+        // Two-segment polyline: (0,0,0)鈫?1,0,0)鈫?1,1,0)
         let pts = vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)];
         let wts = vec![1.0, 1.0, 1.0];
         let knots = vec![0.0, 0.0, 0.5, 1.0, 1.0];
@@ -1661,9 +1770,30 @@ mod eval_tests {
             let tan = c.tangent_at(t);
             // Tangent must be perpendicular to the radius vector
             let dot = pt.normalize_or_zero().dot(tan);
-            assert!(dot.abs() < 1e-8, "t={t}: radius·tangent={dot} (should be 0)");
+            assert!(dot.abs() < 1e-8, "t={t}: radius路tangent={dot} (should be 0)");
             // Tangent must be a unit vector
             assert!((tan.length() - 1.0).abs() < 1e-10, "t={t}: |tan|={}", tan.length());
         }
+    }
+
+    #[test]
+    fn gordon_surface_interpolates_curve_network_at_nodes() {
+        let u0 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 0.0, 0.0), direction: DVec3::X });
+        let u1 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 1.0, 0.0), direction: DVec3::X });
+        let v0 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 0.0, 0.0), direction: DVec3::Y });
+        let v1 = Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 0.0), direction: DVec3::Y });
+
+        let s = GordonSurface {
+            u_curves: vec![u0, u1],
+            v_params: vec![0.0, 1.0],
+            v_curves: vec![v0, v1],
+            u_params: vec![0.0, 1.0],
+        };
+
+        assert!((s.point_at(0.0, 0.0) - DVec3::new(0.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((s.point_at(1.0, 0.0) - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((s.point_at(0.0, 1.0) - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-10);
+        assert!((s.point_at(1.0, 1.0) - DVec3::new(1.0, 1.0, 0.0)).length() < 1e-10);
+        assert!((s.point_at(0.5, 0.5) - DVec3::new(0.5, 0.5, 0.0)).length() < 1e-10);
     }
 }

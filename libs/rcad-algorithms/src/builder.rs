@@ -8,7 +8,7 @@ use rcad_kernel::topology::*;
 
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
-use crate::history::{BooleanHistory, FaceOrigin};
+use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin};
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 use crate::triangulate::triangulate_polygon;
@@ -306,7 +306,83 @@ fn hash_point(p: DVec3) -> u64 {
     h
 }
 
+/// Annotate a `BooleanHistory` with per-edge and per-vertex origins by
+/// matching result BRep positions against the DS vertex/edge pool.
+///
+/// Both `edge_origins` and `vertex_origins` are filled in-place.
+fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
+    // --- vertex origins ---
+    let n_result_verts = brep.vertices.len();
+    let mut vertex_origins: Vec<VertexOrigin> = Vec::with_capacity(n_result_verts);
+    // ds[0..a_vertex_count] = A vertices, ds[a_vertex_count..total] = B vertices,
+    // intersection vertices were added later (index >= a_vertex_count + b_vertex_count).
+    let a_vc = ds.a_vertex_count;
+    // Map result vertex index → DS vertex index (or usize::MAX if no match).
+    let mut result_to_ds: Vec<usize> = vec![usize::MAX; n_result_verts];
+
+    for (ri, rv) in brep.vertices.iter().enumerate() {
+        let pt = rv.point;
+        let mut best: Option<usize> = None;
+        for (di, dv) in ds.vertices.iter().enumerate() {
+            if (dv.point - pt).length_squared() < TOLERANCE_ABS * TOLERANCE_ABS * 4.0 {
+                best = Some(di);
+                break;
+            }
+        }
+        result_to_ds[ri] = best.unwrap_or(usize::MAX);
+        let origin = match best {
+            Some(di) if di < a_vc => VertexOrigin::FromA(di),
+            Some(di) => VertexOrigin::FromB(di - a_vc),
+            None => VertexOrigin::Intersection,
+        };
+        vertex_origins.push(origin);
+    }
+    history.vertex_origins = vertex_origins;
+
+    // --- edge origins ---
+    let n_result_edges = brep.edges.len();
+    let mut edge_origins: Vec<EdgeOrigin> = Vec::with_capacity(n_result_edges);
+    let a_ec = ds.a_edge_count;
+    let total_ds_edges = ds.edges.len();
+
+    for re in &brep.edges {
+        let ds_s = result_to_ds[re.start];
+        let ds_e = result_to_ds[re.end];
+
+        let origin = if ds_s == usize::MAX || ds_e == usize::MAX {
+            EdgeOrigin::Generated
+        } else if ds_s < a_vc && ds_e < a_vc {
+            // Both endpoints are A vertices — look for a DS edge in A range.
+            let found = (0..a_ec.min(total_ds_edges)).find(|&dei| {
+                let de = &ds.edges[dei];
+                (de.start_vertex == ds_s && de.end_vertex == ds_e)
+                    || (de.start_vertex == ds_e && de.end_vertex == ds_s)
+            });
+            match found {
+                Some(dei) => EdgeOrigin::FromA(dei),
+                None => EdgeOrigin::SplitFromA(ds_s.min(a_vc - 1)),
+            }
+        } else if ds_s >= a_vc && ds_e >= a_vc {
+            // Both endpoints are B vertices — look for a DS edge in B range.
+            let found = (a_ec..total_ds_edges).find(|&dei| {
+                let de = &ds.edges[dei];
+                (de.start_vertex == ds_s && de.end_vertex == ds_e)
+                    || (de.start_vertex == ds_e && de.end_vertex == ds_s)
+            });
+            match found {
+                Some(dei) => EdgeOrigin::FromB(dei - a_ec),
+                None => EdgeOrigin::SplitFromB(ds_s.min(ds.vertices.len().saturating_sub(1)) - a_vc),
+            }
+        } else {
+            EdgeOrigin::Generated
+        };
+        edge_origins.push(origin);
+    }
+    history.edge_origins = edge_origins;
+}
+
 /// Boolean result builder (OCCT: BOPAlgo_BOP).
+/// Tracks face splice origins and participates in `BooleanHistory`.
 pub struct BooleanBuilder<'a> {
     ds: &'a DS,
     op: BooleanOpType,
@@ -375,10 +451,13 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        let (brep, history) = result.build();
+        let (brep, mut history) = result.build();
         if brep.solids[0].shells[0].faces.is_empty() {
             return Err(BooleanError::DegenerateResult);
         }
+
+        // Annotate edge and vertex origins from the DS.
+        annotate_history_from_ds(&brep, &mut history, self.ds);
 
         // Debug-mode geometry integrity check.
         // Verifies that every face in the result has a non-zero normal vector.
@@ -485,10 +564,12 @@ impl<'a> BooleanBuilder<'a> {
             result.emit_face_with_origin(&sub, flip, origin);
         }
 
-        let (brep, history) = result.build();
+        let (brep, mut history) = result.build();
         if brep.solids[0].shells[0].faces.is_empty() {
             return Err(BooleanError::DegenerateResult);
         }
+
+        annotate_history_from_ds(&brep, &mut history, self.ds);
 
         #[cfg(debug_assertions)]
         for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
