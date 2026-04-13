@@ -311,7 +311,7 @@ These are new gaps opened by OCCT 8.0.0's architectural leaps.
 
 | Deliverable | Effort | Notes |
 |---|---|---|
-| Graph-based topology wrapper (`BRepGraph` equivalent) | Large | **Baseline read-only graph + validate/history events done; mutation/history depth pending** |
+| Graph-based topology wrapper (`BRepGraph` equivalent) | Large | **Done (O(1) adjacency, DFS/BFS traversal, dirty tracking in `brep_graph.rs`)** |
 | Circular helix curve (for spring/coil modeling) | Small | **Done (kernel + arc-length support)** |
 | Circle involute curve (gear tooth profiles) | Small | **Done (kernel)** |
 | Gordon surface (N×M transfinite fill) | Medium | **Done (baseline evaluator)** |
@@ -405,7 +405,7 @@ Assuming 1 developer working full-time on kernel work:
 | Persistent naming hooks | P6 - Medium | Not started |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Not started |
-| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Not started** |
+| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported)** |
 
 ### libs/rcad-modeling
 

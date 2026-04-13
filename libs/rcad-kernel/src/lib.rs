@@ -26,6 +26,12 @@ pub mod properties;
 /// Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
 pub mod topo_query;
 
+/// Cached graph-topology wrapper with O(1) adjacency, DFS/BFS traversal,
+/// and mutation-dirty tracking.
+///
+/// Analogous to OCCT `BRepGraph` module (new in OCCT 7.7+).
+pub mod brep_graph;
+
 /// Differential geometry: principal curvatures, Gaussian curvature, mean curvature.
 ///
 /// Analogous to OCCT `GeomLProp_SLProps`.
@@ -119,6 +125,7 @@ pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
+pub use brep_graph::{BRepGraph, BfsFaces, DfsFaces, DfsEdgesFromVertex};
 pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
