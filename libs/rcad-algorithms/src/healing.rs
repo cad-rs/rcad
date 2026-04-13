@@ -44,6 +44,11 @@ pub struct HealingOptions {
     pub mode: HealingMode,
     /// Control whether to run make-connected before normal repair passes.
     pub make_connected_prepass_mode: MakeConnectedPrepassMode,
+    /// Run SameRange/SameParameter scan+fix pass as a prepass.
+    pub run_parametric_consistency_prepass: bool,
+    /// Re-run parametric consistency pass after each repair iteration when
+    /// remaining issues still indicate parametric inconsistency.
+    pub run_parametric_consistency_iterative: bool,
     /// When a repair pass makes no progress while issues remain, run a
     /// MakeConnected-style connectivity rebuild pass.
     pub run_make_connected_on_stall: bool,
@@ -64,6 +69,8 @@ impl Default for HealingOptions {
             max_passes: 2,
             mode: HealingMode::AnalyzeAndRepair,
             make_connected_prepass_mode: MakeConnectedPrepassMode::Disabled,
+            run_parametric_consistency_prepass: true,
+            run_parametric_consistency_iterative: true,
             run_make_connected_on_stall: false,
             make_connected_tolerance: TOLERANCE_ABS,
             make_connected_max_passes: 3,
@@ -294,7 +301,9 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         }
     }
 
-    if has_parametric_issues(&current, options.tolerance) {
+    if options.run_parametric_consistency_prepass
+        && has_parametric_issues(&current, options.tolerance)
+    {
         let (next, same_range_fixed) = fix_same_range_with_scan(&current, options.tolerance);
         let (next, same_parameter_fixed) =
             fix_same_parameter_with_scan(&next, options.tolerance);
@@ -344,12 +353,34 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             && rep.same_parameter_fixed == 0;
         passes.push(rep);
 
-        let chk = check(&current);
+        let mut chk = check(&current);
         stages.push(HealingStageReport {
             stage: HealingStage::RepairPass,
             pass_index: Some(pass_idx),
             issue_count: chk.issues.len(),
         });
+
+        if options.run_parametric_consistency_iterative
+            && !chk.is_valid()
+            && has_parametric_issues(&current, options.tolerance)
+        {
+            let (next, same_range_fixed) = fix_same_range_with_scan(&current, options.tolerance);
+            let (next, same_parameter_fixed) =
+                fix_same_parameter_with_scan(&next, options.tolerance);
+            current = next;
+            parametric_passes.push(ParametricConsistencyReport {
+                same_range_fixed,
+                same_parameter_fixed,
+            });
+
+            chk = check(&current);
+            stages.push(HealingStageReport {
+                stage: HealingStage::ParametricConsistencyPass,
+                pass_index: Some(pass_idx),
+                issue_count: chk.issues.len(),
+            });
+        }
+
         if chk.is_valid() {
             let final_stats = HealingIssueStats::from_check_result(&chk);
             stages.push(HealingStageReport {
@@ -611,6 +642,26 @@ mod tests {
             .iter()
             .any(|s| matches!(s.stage, HealingStage::ParametricConsistencyPass));
         assert_eq!(saw_param_stage, !report.parametric_passes.is_empty());
+    }
+
+    #[test]
+    fn healing_can_disable_parametric_consistency_prepass() {
+        let mut b = unit_box();
+        if b.geom.edge_same_parameter.len() < b.edges.len() {
+            b.geom.edge_same_parameter.resize(b.edges.len(), true);
+        }
+        b.geom.edge_same_parameter[0] = false;
+
+        let (_out, report) = analyze_and_heal(
+            &b,
+            HealingOptions {
+                run_parametric_consistency_prepass: false,
+                run_parametric_consistency_iterative: false,
+                ..HealingOptions::default()
+            },
+        );
+
+        assert!(report.parametric_passes.is_empty());
     }
 
     #[test]
