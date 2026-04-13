@@ -938,6 +938,7 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
                             ]
                         })
                         .collect(),
+                    mesh_dirty: face.mesh_dirty,
                 });
             }
             new_shells.push(Shell { faces: new_faces });
