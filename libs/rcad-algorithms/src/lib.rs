@@ -2,6 +2,7 @@ pub mod bopds;
 pub mod brep_check;
 pub mod brep_repair;
 pub mod builder;
+pub mod features;
 pub mod bvh;
 pub mod classify;
 pub mod draft;
@@ -10,6 +11,7 @@ pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
+pub use features::{FeatureError, make_cylindrical_hole};
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -58,6 +60,10 @@ pub struct SimplifyOptions {
     pub recompute_normals: bool,
     pub remove_degenerate_faces: bool,
     pub fix_wire_orientation: bool,
+    /// Merge adjacent coplanar planar faces into larger faces.
+    pub unify_same_domain_faces: bool,
+    /// Remove redundant coplanar internal faces (mainly for union outputs).
+    pub remove_internal_faces: bool,
 }
 
 impl Default for SimplifyOptions {
@@ -68,6 +74,8 @@ impl Default for SimplifyOptions {
             recompute_normals: true,
             remove_degenerate_faces: true,
             fix_wire_orientation: true,
+            unify_same_domain_faces: true,
+            remove_internal_faces: true,
         }
     }
 }
@@ -79,6 +87,8 @@ pub struct SimplifyReport {
     pub degenerate_faces_removed: usize,
     pub normals_recomputed: usize,
     pub wires_fixed: usize,
+    pub same_domain_face_merges: usize,
+    pub internal_faces_removed: usize,
     pub issues_before: usize,
     pub issues_after: usize,
 }
@@ -484,6 +494,16 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
         let (next, n) = fix_wire_orientation(&out, options.merge_tolerance);
         out = next;
         report.wires_fixed = n;
+    }
+    if options.unify_same_domain_faces {
+        let (next, n) = unify_same_domain_faces(&out);
+        out = next;
+        report.same_domain_face_merges = n;
+    }
+    if options.remove_internal_faces {
+        let (next, n) = remove_internal_faces(&out);
+        out = next;
+        report.internal_faces_removed = n;
     }
 
     report.issues_after = check(&out).issues.len();
@@ -1166,7 +1186,6 @@ pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
 /// Attempt one merge of two adjacent coplanar faces in `brep`. Returns `true`
 /// if a merge was performed (mutating `brep` in place).
 fn unify_one_merge_pass(brep: &mut BRep) -> bool {
-    use rcad_kernel::geom::Surface3;
     use std::collections::HashMap;
 
     for si in 0..brep.solids.len() {
@@ -1853,6 +1872,38 @@ mod tests {
         .expect("boolean_op_simplified union should succeed");
 
         assert!(!out.solids.is_empty());
+        assert!(report.issues_before >= report.issues_after);
+    }
+
+    #[test]
+    fn simplify_brep_post_ops_runs_same_domain_and_internal_cleanup() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let raw = boolean_op(BooleanOpType::Union, &a, &b)
+            .expect("coplanar flush union should succeed before simplify");
+
+        let (baseline, _baseline_report) = simplify_brep_post_ops(
+            &raw,
+            SimplifyOptions {
+                unify_same_domain_faces: false,
+                remove_internal_faces: false,
+                ..SimplifyOptions::default()
+            },
+        );
+
+        let (cleaned, report) = simplify_brep_post_ops(
+            &raw,
+            SimplifyOptions {
+                unify_same_domain_faces: true,
+                remove_internal_faces: true,
+                ..SimplifyOptions::default()
+            },
+        );
+
+        assert!(
+            face_count_of(&cleaned) <= face_count_of(&baseline),
+            "cleanup-enabled simplify should not increase face count"
+        );
         assert!(report.issues_before >= report.issues_after);
     }
 

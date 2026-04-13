@@ -7,7 +7,7 @@ use rcad_kernel::{
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 pub mod assembly;
@@ -214,6 +214,73 @@ impl ParsedStep {
 
 pub struct StepReader;
 
+/// Stable JSON diagnostics payload for single-part STEP import healing.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepImportHealingJsonV1 {
+    pub schema: &'static str,
+    pub clean: bool,
+    pub initial_issue_count: usize,
+    pub final_issue_count: usize,
+    pub fixed_issue_count: usize,
+    pub issue_histogram: Vec<(String, usize)>,
+}
+
+/// Coarse protocol hint inferred from `FILE_SCHEMA`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum StepProtocolHint {
+    Ap203,
+    Ap214,
+    Ap242,
+    Unknown,
+}
+
+/// STEP document-level metadata extracted from file header and global entities.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDocumentMetadata {
+    /// Raw `FILE_SCHEMA` payload, e.g. `AUTOMOTIVE_DESIGN { ... 214 ... }`.
+    pub file_schema: Option<String>,
+    /// Coarse AP protocol hint derived from `file_schema`.
+    pub protocol_hint: StepProtocolHint,
+    /// `FILE_NAME` first field when available.
+    pub file_name: Option<String>,
+    /// Uncertainty value from `UNCERTAINTY_MEASURE_WITH_UNIT`, if present.
+    pub uncertainty_value: Option<f64>,
+}
+
+fn extract_file_schema(content: &str) -> Option<String> {
+    let key = "FILE_SCHEMA((";
+    let start = content.find(key)? + key.len();
+    let rest = &content[start..];
+    let end = rest.find("));")?;
+    Some(rest[..end].trim().trim_matches('\'').to_string())
+}
+
+fn extract_file_name(content: &str) -> Option<String> {
+    let key = "FILE_NAME(";
+    let start = content.find(key)? + key.len();
+    let rest = &content[start..];
+    let first_quote = rest.find('\'')?;
+    let rest = &rest[first_quote + 1..];
+    let end_quote = rest.find('\'')?;
+    Some(rest[..end_quote].to_string())
+}
+
+fn infer_protocol_hint(file_schema: Option<&str>) -> StepProtocolHint {
+    let Some(schema) = file_schema else {
+        return StepProtocolHint::Unknown;
+    };
+    let s = schema.to_ascii_uppercase();
+    if s.contains("242") {
+        StepProtocolHint::Ap242
+    } else if s.contains("214") {
+        StepProtocolHint::Ap214
+    } else if s.contains("203") {
+        StepProtocolHint::Ap203
+    } else {
+        StepProtocolHint::Unknown
+    }
+}
+
 impl StepReader {
     pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
@@ -230,6 +297,37 @@ impl StepReader {
         build_brep_from_parsed(&entities)
     }
 
+    /// Parse a STEP string and return BRep plus document-level metadata.
+    pub fn parse_string_with_metadata(
+        content: &str,
+    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+        if !content.contains("ISO-10303-21") {
+            return Err(StepError::InvalidFormat(
+                "missing ISO-10303-21 header".into(),
+            ));
+        }
+
+        let entities = parse_entities(content)?;
+        let brep = build_brep_from_parsed(&entities)?;
+        let file_schema = extract_file_schema(content);
+        let metadata = StepDocumentMetadata {
+            protocol_hint: infer_protocol_hint(file_schema.as_deref()),
+            file_name: extract_file_name(content),
+            file_schema,
+            uncertainty_value: entities.uncertainty_value,
+        };
+
+        Ok((brep, metadata))
+    }
+
+    /// Read STEP file and return BRep plus document-level metadata.
+    pub fn read_file_with_metadata<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+        let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_metadata(&content)
+    }
+
     /// Parse a STEP string and run rcad-algorithms healing pipeline.
     pub fn parse_string_with_healing(
         content: &str,
@@ -240,6 +338,33 @@ impl StepReader {
         Ok((healed, report))
     }
 
+    /// Parse a STEP string, run healing, and export stable JSON diagnostics.
+    pub fn parse_string_with_healing_report_json(
+        content: &str,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport, String), StepError> {
+        let (healed, report) = Self::parse_string_with_healing(content, options)?;
+
+        let mut issue_map: BTreeMap<String, usize> = BTreeMap::new();
+        for issue in &report.final_result.issues {
+            *issue_map.entry(issue.to_string()).or_insert(0) += 1;
+        }
+
+        let payload = StepImportHealingJsonV1 {
+            schema: "step.import.healing.v1",
+            clean: report.final_result.is_valid(),
+            initial_issue_count: report.initial_issue_count(),
+            final_issue_count: report.final_issue_count(),
+            fixed_issue_count: report.fixed_issue_count(),
+            issue_histogram: issue_map.into_iter().collect(),
+        };
+
+        let json = serde_json::to_string_pretty(&payload)
+            .map_err(|e| StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}")))?;
+
+        Ok((healed, report, json))
+    }
+
     /// Read a STEP file and run rcad-algorithms healing pipeline.
     pub fn read_file_with_healing<P: AsRef<Path>>(
         path: P,
@@ -247,6 +372,15 @@ impl StepReader {
     ) -> Result<(BRep, HealingReport), StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_healing(&content, options)
+    }
+
+    /// Read a STEP file, run healing, and export stable JSON diagnostics.
+    pub fn read_file_with_healing_report_json<P: AsRef<Path>>(
+        path: P,
+        options: HealingOptions,
+    ) -> Result<(BRep, HealingReport, String), StepError> {
+        let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
+        Self::parse_string_with_healing_report_json(&content, options)
     }
 
     /// Parse a STEP file, returning both the BRep and an optional color map.
@@ -3159,6 +3293,43 @@ mod tests {
 
         assert!(!brep.vertices.is_empty());
         assert!(report.initial_issue_count() >= report.final_issue_count());
+    }
+
+    #[test]
+    fn parse_hfss_with_healing_report_json_contains_schema_and_counts() {
+        let (brep, report, json) = StepReader::parse_string_with_healing_report_json(
+            HFSS_STEP,
+            HealingOptions::default(),
+        )
+        .expect("hfss.step parse+healing+json should succeed");
+
+        assert!(!brep.vertices.is_empty());
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("healing report json should parse");
+        assert_eq!(v["schema"], "step.import.healing.v1");
+        assert_eq!(
+            v["initial_issue_count"].as_u64().unwrap_or(0) as usize,
+            report.initial_issue_count()
+        );
+        assert_eq!(
+            v["final_issue_count"].as_u64().unwrap_or(0) as usize,
+            report.final_issue_count()
+        );
+        assert!(v["issue_histogram"].is_array());
+    }
+
+    #[test]
+    fn parse_box_with_metadata_extracts_schema_and_protocol_hint() {
+        let (brep, meta) = StepReader::parse_string_with_metadata(BOX_STEP)
+            .expect("box.step parse+metadata should succeed");
+
+        assert!(!brep.vertices.is_empty());
+        assert!(meta.file_schema.is_some(), "FILE_SCHEMA should be extracted");
+        assert!(
+            matches!(meta.protocol_hint, StepProtocolHint::Ap203 | StepProtocolHint::Ap214 | StepProtocolHint::Ap242 | StepProtocolHint::Unknown),
+            "protocol hint should be classified"
+        );
+        assert!(meta.file_name.is_some(), "FILE_NAME should be extracted");
     }
 
     #[test]
