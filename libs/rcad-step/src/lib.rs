@@ -1992,10 +1992,14 @@ fn sample_oriented_edge_points(
     let end = vertex_point_from_ref(parsed, end_id)?;
 
     let mut points = if let Some(curve_id) = curve_ref {
-        if let Some((placement_ref, radius)) = parsed.circles.get(&curve_id) {
+        if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&curve_id) {
+            sample_trimmed_curve_geom(parsed, underlying_ref, t0, t1)
+        } else if let Some((placement_ref, radius)) = parsed.circles.get(&curve_id) {
             sample_circle_edge(parsed, *placement_ref, *radius, start, end)?
         } else if let Some((placement_ref, major, minor)) = parsed.ellipses.get(&curve_id) {
             sample_ellipse_edge(parsed, *placement_ref, *major, *minor, start, end)?
+        } else if let Some(points) = sample_spline_curve(parsed, curve_id, None) {
+            points
         } else if let Some(control_refs) = parsed.b_spline_curves.get(&curve_id) {
             sample_bspline_polyline(parsed, control_refs)
         } else {
@@ -2004,6 +2008,13 @@ fn sample_oriented_edge_points(
     } else {
         vec![start, end]
     };
+
+    // Keep sampled geometry anchored to topological edge endpoints.
+    if !points.is_empty() {
+        points[0] = start;
+        let last = points.len() - 1;
+        points[last] = end;
+    }
 
     if !orientation {
         points.reverse();
@@ -2090,6 +2101,36 @@ fn sample_bspline_polyline(parsed: &ParsedStep, control_refs: &[u64]) -> Vec<gla
         }
     }
     points
+}
+
+fn sample_spline_curve(
+    parsed: &ParsedStep,
+    curve_ref: u64,
+    range: Option<[f64; 2]>,
+) -> Option<Vec<glam::DVec3>> {
+    let curve = resolve_curve(parsed, curve_ref)?;
+    if !matches!(curve, Curve3::BSpline(_) | Curve3::Bezier(_)) {
+        return None;
+    }
+
+    let [t0, t1] = range.unwrap_or_else(|| curve.default_domain());
+    if !t0.is_finite() || !t1.is_finite() {
+        return None;
+    }
+
+    let seg = 64usize;
+    let mut points = Vec::with_capacity(seg + 1);
+    if (t1 - t0).abs() < 1e-12 {
+        points.push(curve.point_at(t0));
+        return Some(points);
+    }
+
+    for i in 0..=seg {
+        let t = t0 + (t1 - t0) * (i as f64 / seg as f64);
+        points.push(curve.point_at(t));
+    }
+    dedup_consecutive_points(&mut points);
+    Some(points)
 }
 
 fn angle_on_basis(v: glam::DVec3, u: glam::DVec3, w: glam::DVec3) -> f64 {
@@ -3342,7 +3383,11 @@ fn sample_standalone_curve(parsed: &ParsedStep, curve_ref: u64) -> Vec<glam::DVe
     if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&curve_ref) {
         return sample_trimmed_curve_geom(parsed, underlying_ref, t0, t1);
     }
-    // Handle bare B_SPLINE_CURVE
+    // Handle B_SPLINE/BEZIER-like curves through parametric sampling.
+    if let Some(points) = sample_spline_curve(parsed, curve_ref, None) {
+        return points;
+    }
+    // Fallback for sparse B_SPLINE data: use control polyline only when full knot data is missing.
     if let Some(control_refs) = parsed.b_spline_curves.get(&curve_ref) {
         return sample_bspline_polyline(parsed, control_refs);
     }
@@ -3378,6 +3423,11 @@ fn sample_trimmed_curve_geom(
     if let Some(&(placement_ref, radius)) = parsed.circles.get(&curve_ref) {
         // CIRCLE: HFSS exports parameters in degrees (0..360 is full circle)
         return sample_standalone_circle(parsed, placement_ref, radius, t0, t1);
+    }
+
+    // Generic spline-style curves (B-spline, Bezier represented through B-spline data).
+    if let Some(points) = sample_spline_curve(parsed, curve_ref, Some([t0, t1])) {
+        return points;
     }
 
     Vec::new()
