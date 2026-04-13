@@ -150,12 +150,12 @@ impl Part21Writer {
         colors: Option<&StepColor>,
         properties: &[StepGeneralProperty],
     ) {
-
-                // Optional general metadata properties.
-                for prop in properties {
-                    let desc = prop.description.as_deref().unwrap_or("");
-                    self.general_property(&prop.name, desc);
-                }
+        // Optional general metadata properties.
+        for prop in properties {
+            let desc = prop.description.as_deref().unwrap_or("");
+            let gp = self.general_property(&prop.name, desc);
+            self.property_definition(&prop.name, desc, gp);
+        }
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
@@ -1635,6 +1635,15 @@ impl Part21Writer {
         ))
     }
 
+    fn property_definition(&mut self, name: &str, description: &str, reference: u64) -> u64 {
+        self.push(format!(
+            "PROPERTY_DEFINITION('{}','{}',#{})",
+            escape_step_string(name),
+            escape_step_string(description),
+            reference
+        ))
+    }
+
     fn push(&mut self, body: String) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -1889,6 +1898,8 @@ mod tests {
 
         assert!(step.contains("GENERAL_PROPERTY('PartNumber','PN-001',$)"));
         assert!(step.contains("GENERAL_PROPERTY('Revision','A',$)"));
+        assert!(step.contains("PROPERTY_DEFINITION('PartNumber','PN-001',#"));
+        assert!(step.contains("PROPERTY_DEFINITION('Revision','A',#"));
     }
 
     #[test]

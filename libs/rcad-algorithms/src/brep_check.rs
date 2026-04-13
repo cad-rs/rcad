@@ -630,6 +630,105 @@ impl SameRangeDiagnosis {
     }
 }
 
+/// A single edge-PCurve pair whose UV-evaluated surface endpoints do not match
+/// the edge's 3D curve endpoints.
+#[derive(Debug, Clone)]
+pub struct SuspectFaceSurfaceEdge {
+    pub edge_idx: usize,
+    pub pcurve_pos: usize,
+    pub surface_idx: usize,
+    pub start_gap: f64,
+    pub end_gap: f64,
+    pub max_gap: f64,
+}
+
+/// Report from [`diagnose_face_surface_consistency`].
+#[derive(Debug, Clone, Default)]
+pub struct FaceSurfaceConsistencyDiagnosis {
+    pub suspect_edges: Vec<SuspectFaceSurfaceEdge>,
+}
+
+impl FaceSurfaceConsistencyDiagnosis {
+    pub fn is_clean(&self) -> bool {
+        self.suspect_edges.is_empty()
+    }
+}
+
+/// Diagnose face-on-surface consistency via PCurves.
+///
+/// For each edge with a 3D curve range and attached PCurves, evaluates:
+/// - 3D endpoints `C3(t1), C3(t2)`
+/// - UV endpoints `C2(t1), C2(t2)`
+/// - Surface points `S(u1,v1), S(u2,v2)`
+///
+/// If the surface points deviate from the 3D edge endpoints beyond `tolerance`,
+/// the edge-PCurve pair is reported as inconsistent.
+pub fn diagnose_face_surface_consistency(
+    brep: &BRep,
+    tolerance: f64,
+) -> FaceSurfaceConsistencyDiagnosis {
+    use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
+
+    let mut suspect_edges = Vec::new();
+
+    for edge_idx in 0..brep.edges.len() {
+        let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) else {
+            continue;
+        };
+        let Some(curve3) = brep.geom.curves.get(curve_idx) else {
+            continue;
+        };
+        let Some(range3) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) else {
+            continue;
+        };
+        let Some(pcurves) = brep.geom.edge_pcurves.get(edge_idx) else {
+            continue;
+        };
+
+        for (pcurve_pos, pc) in pcurves.iter().enumerate() {
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else {
+                continue;
+            };
+            let Some(surface) = brep.geom.surfaces.get(pc.surface_idx) else {
+                continue;
+            };
+
+            let range2 = brep
+                .geom
+                .curve2d_range
+                .get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or(range3);
+
+            let p3_start = curve3.point_at(range3[0]);
+            let p3_end = curve3.point_at(range3[1]);
+
+            let uv_start = curve2d.point_at(range2[0]);
+            let uv_end = curve2d.point_at(range2[1]);
+
+            let ps_start = surface.point_at(uv_start.x, uv_start.y);
+            let ps_end = surface.point_at(uv_end.x, uv_end.y);
+
+            let start_gap = (ps_start - p3_start).length();
+            let end_gap = (ps_end - p3_end).length();
+            let max_gap = start_gap.max(end_gap);
+
+            if max_gap > tolerance {
+                suspect_edges.push(SuspectFaceSurfaceEdge {
+                    edge_idx,
+                    pcurve_pos,
+                    surface_idx: pc.surface_idx,
+                    start_gap,
+                    end_gap,
+                    max_gap,
+                });
+            }
+        }
+    }
+
+    FaceSurfaceConsistencyDiagnosis { suspect_edges }
+}
+
 /// Per-wire diagnostics for gap and self-intersection analysis.
 #[derive(Debug, Clone, Default)]
 pub struct WireIssueReport {
@@ -956,7 +1055,7 @@ pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
 mod tests {
     use super::*;
     use rcad_kernel::PrimitiveSolid;
-    use rcad_kernel::geom::{Curve3, Line3};
+    use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3};
 
     #[test]
     fn analyze_shell_topology_unit_box_is_closed_manifold() {
@@ -1054,6 +1153,38 @@ mod tests {
         assert!(!diagnosis.is_clean());
         assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
         assert!(diagnosis.suspect_edges[0].mismatched_pcurves >= 1);
+    }
+
+    #[test]
+    fn diagnose_face_surface_consistency_detects_mismatch() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        if brep.geom.edge_curve_range.is_empty()
+            || brep.geom.edge_pcurves.is_empty()
+            || brep.geom.edge_pcurves[0].is_empty()
+        {
+            return;
+        }
+
+        let pc = brep.geom.edge_pcurves[0][0];
+        if pc.curve2d_idx >= brep.geom.curve2ds.len() {
+            return;
+        }
+
+        // Force an obviously wrong UV mapping for one edge.
+        brep.geom.curve2ds[pc.curve2d_idx] = Curve2d::Line(Line2d {
+            origin: glam::DVec2::new(100.0, 100.0),
+            direction: glam::DVec2::X,
+        });
+        if brep.geom.curve2d_range.len() < brep.geom.curve2ds.len() {
+            brep.geom.curve2d_range.resize(brep.geom.curve2ds.len(), None);
+        }
+        brep.geom.curve2d_range[pc.curve2d_idx] = Some([0.0, 1.0]);
+
+        let diagnosis = diagnose_face_surface_consistency(&brep, 1e-6);
+        assert!(!diagnosis.is_clean());
+        assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
+        assert!(diagnosis.suspect_edges[0].max_gap > 1.0);
     }
 
     #[test]

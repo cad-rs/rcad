@@ -30,6 +30,7 @@ use rcad_kernel::BRep;
 pub use brep_check::{CheckIssue, CheckResult, check,
     SuspectEdge, SameParameterDiagnosis, diagnose_same_parameter,
     SuspectSameRangeEdge, SameRangeDiagnosis, diagnose_same_range,
+    SuspectFaceSurfaceEdge, FaceSurfaceConsistencyDiagnosis, diagnose_face_surface_consistency,
     ShellTopologyReport, analyze_shell_topology,
     WireAnalysisReport, WireIssueReport, analyze_wire_issues,
 };
@@ -1984,6 +1985,65 @@ mod tests {
             "cleanup-enabled simplify should not increase face count"
         );
         assert!(report.issues_before >= report.issues_after);
+    }
+
+    #[test]
+    fn unify_same_domain_faces_merges_two_coplanar_adjacent_faces() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2 shared diagonal
+        brep.edges.push(Edge { start: 2, end: 3 }); // e3
+        brep.edges.push(Edge { start: 3, end: 0 }); // e4
+
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f2 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(2), WireEdge::fwd(3), WireEdge::fwd(4)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![f1, f2],
+            }],
+        });
+
+        let (out, merges) = unify_same_domain_faces(&brep);
+        assert_eq!(merges, 1, "expected one merge pass");
+        assert_eq!(out.solids[0].shells[0].faces.len(), 1, "faces should merge");
+        assert_eq!(
+            out.solids[0].shells[0].faces[0].outer_wire.edges.len(),
+            4,
+            "merged face should be quadrilateral"
+        );
     }
 
     #[test]

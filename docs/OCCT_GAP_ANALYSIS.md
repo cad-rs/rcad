@@ -1,6 +1,6 @@
 ﻿# RCAD vs OCCT Gap Analysis
 
-Date: 2026-04-13 (revised against OCCT 7.9.3 stable / 8.0.0-rc5, incorporating P3–P6 completions)
+Date: 2026-04-13 (revised against OCCT 7.9.3 stable / 8.0.0-rc5, incorporating P3–P7 partial completions)
 
 ## Purpose
 
@@ -8,7 +8,7 @@ This document turns the current RCAD capability inventory into an OCCT-oriented 
 
 The key conclusion is:
 
-RCAD has made substantial progress since the last revision. P3–P6 work has added small-edge cleanup, SameParameter diagnosis and repair, shell manifold analysis, a prism feature, and STEP material/layer metadata. However, OCCT 8.0.0 (currently at rc5, release imminent) has itself leapt forward significantly -- it introduces an entirely new graph-based topology representation (BRepGraph, 49 000+ lines), a Gordon surface transfinite interpolation framework, a fully redesigned geometry evaluation architecture, the TKHelix toolkit, and defeaturing + connected-shape APIs. The production gap is narrowing but OCCT's target is moving.
+RCAD has made substantial progress since the last revision. P3–P7 partial work has added small-edge cleanup, SameParameter/SameRange diagnosis+repair, shell and wire diagnostics, draft prism + revolution features, STEP material/layer/general-property metadata plumbing, and new helix/involute/spiral curve evaluators. However, OCCT 8.0.0 (currently at rc5, release imminent) has itself leapt forward significantly -- it introduces an entirely new graph-based topology representation (BRepGraph, 49 000+ lines), a Gordon surface transfinite interpolation framework, a fully redesigned geometry evaluation architecture, the TKHelix toolkit, and defeaturing + connected-shape APIs. The production gap is narrowing but OCCT's target is moving.
 
 RCAD still trails OCCT most in:
 
@@ -44,9 +44,10 @@ RCAD still trails OCCT most in:
 - Curvature, sectioning, shape properties, projections.
 - mesh_dirty incremental mesh caching (P2.1).
 - **P3**: Small-edge / degenerate-edge cleanup integrated into `simplify_brep_post_ops`.
-- **P4**: SameParameter diagnosis (`diagnose_same_parameter`) and repair (`fix_same_parameter_with_scan`); shell manifold / open-edge analyzer (`analyze_shell_topology`).
-- **P5**: Polygon prism feature (`make_prism`) with boss and pocket operations.
-- **P6**: STEP material (density-aware) and layer metadata extraction.
+- **P4**: SameParameter and SameRange diagnosis+repair; shell manifold / open-edge analyzer (`analyze_shell_topology`); wire gap/self-intersection report (`analyze_wire_issues`).
+- **P5**: Prism, draft prism, and revolution feature operations.
+- **P6**: STEP material/layer extraction, GENERAL_PROPERTY extraction and export API.
+- **P7 (partial)**: Circular helix, circle involute, Archimedean spiral, logarithmic spiral evaluators.
 
 ### Areas where RCAD is still behind OCCT
 
@@ -72,12 +73,12 @@ RCAD still trails OCCT most in:
 | Primitive and sweep modeling | Good breadth (extrude/revolve/loft/sweep) | TKPrim + TKOffset | Low | Edge cases; N-sided fill, normal projection |
 | Fillet / chamfer | Variable-radius fillet, chamfer | TKFillet | Medium | Angle-mode chamfer, 2-D fillet API, corner cases |
 | Thicken / draft / offset | Present | TKOffset BRepOffset | Medium | Shell offset (MakeOffsetShape), evolved surface |
-| Feature library | Prism + cylindrical hole (P5) | TKFeat (boss/pocket/rib/hole) | Medium | Draft prism, revolution feature, rib/slot, SplitShape |
+| Feature library | Prism + draft prism + revolution + cylindrical hole | TKFeat (boss/pocket/rib/hole) | Medium | Rib/slot, SplitShape |
 | Boolean framework | Fuse/Cut/Common/Section + imprint | TKBO | High | CellsBuilder, Splitter, fuzzy, glue, defeaturing |
 | Post-op simplification | Small-edge cleanup (P3) | ShapeUpgrade_UnifySameDomain, BOPAlgo cleanup | High | Same-domain unification (highest impact), internal-face removal |
-| Healing and validation | SameParameter + shell analysis (P4) | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, SameRange, ShapeProcess |
+| Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, ShapeProcess, tolerance rules |
 | Topology history | Face-level history | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Extend to edges/vertices; persistent naming; BRepGraph history |
-| STEP exchange: write | AP214 + AP242 + material/layer (P6) | TKDESTEP STEPCAFControl | Medium | GDT write, STEP general property export, PCurve validation |
+| STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
 | STEP exchange: read | Basic import | TKDESTEP + STEPCAFControl_Reader | High | Full AP242 read, GDT, kinematics, FEA entities |
 | IGES exchange | Mesh bridge only | TKDEIGES | High | Add analytic/B-Rep IGES or document as non-goal |
 | Assembly / document model | Colors + shape tree + material + layer (P6 partial) | TKXCAF (XCAFDoc_*) | Medium | DimTol, GDT annotations, notes, persistent attributes |
@@ -145,11 +146,11 @@ OCCT's TKShHealing comprises 10 packages. After P3–P4, RCAD has improved from 
 |---|---|---|
 | ShapeFix_Face | Repair degenerated/invalid faces | Partial (brep_repair.rs) |
 | ShapeFix_Wire | Reorder wires, close gaps, remove degenerate edges | Partial |
-| ShapeFix_Edge | SameParameter, SameRange, degenerated edges | **SameParameter: Present (P4)**; SameRange: Missing |
+| ShapeFix_Edge | SameParameter, SameRange, degenerated edges | **SameParameter: Present (P4)**; **SameRange: Present (baseline scan+repair)** |
 | ShapeFix_Shell | Repair shell orientation, manifoldness | **Shell analyzer: Present (P4)**; fix: Missing |
 | ShapeFix_Solid | Solid closure, shell orientation | Missing |
 | ShapeAnalysis_Surface | UV consistency, surface bounds analysis | Missing |
-| ShapeAnalysis_Wire | Wire gap, self-intersection, area | Missing |
+| ShapeAnalysis_Wire | Wire gap, self-intersection, area | **Partial (gap/self-intersection report present)** |
 | ShapeUpgrade_UnifySameDomain | Merge co-planar/co-cylindrical faces | **Missing (critical for boolean results)** |
 | ShapeCustom | BSpline restriction, convert to indirect | Missing |
 | ShapeProcess | Batch pipeline with operator chain | Missing |
@@ -157,9 +158,9 @@ OCCT's TKShHealing comprises 10 packages. After P3–P4, RCAD has improved from 
 ### What RCAD should add next (ordered by impact)
 
 - **ShapeUpgrade_UnifySameDomain equivalent**: merges adjacent co-planar or co-cylindrical faces -- this alone cleans up most boolean result artifacts. Highest single-item impact.
-- SameRange repair: fix mismatched curve parameter ranges across edges.
-- Wire gap and self-intersection analysis.
-- Import healing pipeline: analyze → diagnose → heal → report on imported STEP data.
+- SameRange repair deepening: extend beyond baseline range alignment to richer edge/surface consistency.
+- Wire analysis deepening: add area/orientation/quality metrics and automatic fix strategies.
+- Import healing pipeline: promote current JSON diagnostics wiring to full staged analyze→diagnose→heal orchestration.
 - Tolerance propagation rules after boolean/split/sew operations.
 
 ## 3. Feature Library (gap: Medium, partially implemented)
@@ -208,7 +209,7 @@ For STEP AP242 round-trip:
 | Kinematics read/write | Missing |
 | FEA entity read | Missing |
 
-**Notable in OCCT 8.0.0**: STEP general properties export (`property_definition` entities for arbitrary string metadata) and stream-based DE_Wrapper read/write are new. RCAD does not have these.
+**Notable in OCCT 8.0.0**: STEP general properties export (`property_definition` entities for arbitrary string metadata) and stream-based DE_Wrapper read/write are new. RCAD now has baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION` read/write linkage, but still lacks deeper AP242 relationship coverage and DE_Wrapper-style stream APIs.
 
 ## 5. Post-Operation Simplification (gap: High, small-edge cleanup now present)
 
@@ -263,7 +264,7 @@ Target: imported and modeled solids through boolean workflows with much better r
 | Internal-face removal after fuse | Small | Not started |
 | Splitter API (object/tool split) | Medium | Not started |
 | Fuzzy tolerance option | Small | Not started |
-| CellsBuilder (split-cell graph) | Large | Not started |
+| CellsBuilder (split-cell graph) | Large | **Done (baseline expression evaluator)** |
 | Defeaturing pass | Large | Not started |
 | Full history to edges and solids | Medium | Not started |
 
@@ -275,7 +276,7 @@ Target: imported CAD data can be analyzed, repaired, and pushed into modeling/bo
 |---|---|---|
 | **ShapeUpgrade_UnifySameDomain equivalent** | Medium | **Not started (critical)** |
 | SameRange repair | Medium | **Done (baseline scan+repair)** |
-| Face-on-surface consistency checker | Medium | Not started |
+| Face-on-surface consistency checker | Medium | **Done (baseline diagnosis API)** |
 | Wire gap / self-intersection analyzer | Medium | **Done (wire report API)** |
 | Import analyze/heal/report pipeline | Medium | **Partial (healing JSON + wire stats)** |
 | Tolerance propagation after boolean/sew | Large | Not started |
@@ -301,7 +302,7 @@ Target: XCAF-comparable document model; AP242 GDT and kinematics round-trip.
 | AP242 read (full import) | Large | Not started |
 | Kinematics read | Large | Not started |
 | Persistent naming in history | Large | Not started |
-| STEP general property export (string metadata) | Small | Not started |
+| STEP general property export (string metadata) | Small | **Done (baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION`)** |
 
 ### P7 (NEW): Graph Topology and Evaluation Breadth
 
@@ -338,11 +339,11 @@ Answering the question: **how far is RCAD from being production-grade?**
 | Fillet / chamfer | 70% | 85% | Corner cases, angle-mode chamfer | Unchanged |
 | Boolean core | 55% | 85% | Fuzzy, splitter, cleanup, defeaturing | Unchanged |
 | Healing pipeline | **35%** | 80% | SameRange, ShapeUpgrade, wire analyzers | **+15% (P3–P4)** |
-| Feature library | **20%** | 60% | Draft prism, revolution, rib/slot | **+20% (P5)** |
+| Feature library | **35%** | 60% | SplitShape, rib/slot | **+35% (P5+)** |
 | Document / XCAF | **40%** | 75% | GDT, DimTol, persistent naming | **+10% (P6)** |
-| STEP exchange depth | 55% | 80% | AP242 full read, GDT round-trip | **+5% (P6)** |
+| STEP exchange depth | 60% | 80% | AP242 full read, GDT round-trip, property_definition chain | **+10% (P6)** |
 | Meshing controls | 40% | 75% | Tunable deflection, incremental update | Unchanged |
-| Geometry eval breadth | 70% | 85% | Helix, involute, Gordon; OCCT 8.0.0 raised the bar | **New gap** |
+| Geometry eval breadth | 78% | 85% | Gordon fill and advanced Eval surfaces; OCCT 8.0.0 raised the bar | **Improved (P7 partial)** |
 
 ### Estimated work remaining (revised)
 
@@ -357,7 +358,7 @@ Assuming 1 developer working full-time on kernel work:
 | P7 | Graph topology + Gordon surface | 2-3 months | In progress |
 | Hardening, edge cases, test coverage | Ongoing | +2 months across all phases | Ongoing |
 
-**Total to reach credible production baseline: approximately 9–13 months** (revised down ~2 months from the previous 11–15 estimate due to P3–P6 completions; adjusted up slightly for P7 scope opened by OCCT 8.0.0).
+**Total to reach credible production baseline: approximately 8–12 months** (revised down from 9–13 due to delivered P4/P5/P7 partial items; still bounded by same-domain unification, AP242 read depth, and Gordon/BRepGraph scope).
 
 ### What would most accelerate the timeline
 
@@ -377,12 +378,13 @@ Assuming 1 developer working full-time on kernel work:
 | Fuzzy / glue boolean options | P3 - High | Not started |
 | **Result simplification: same-domain unification** | **P3 - High** | **Not started (highest impact)** |
 | Result simplification: internal face removal | P3 - Medium | Not started |
-| CellsBuilder (split-cell graph) | P3 - Medium | Not started |
+| CellsBuilder (split-cell graph) | P3 - Medium | **✅ Done (baseline)** |
 | Defeaturing pass | P3 - Medium | Not started |
 | Richer history graph (edges, solids) | P3 - Medium | Not started |
 | ~~SameParameter / SameRange repair~~ | ~~P4 - High~~ | **✅ SameParameter done (P4)** |
 | SameRange repair | P4 - High | **✅ Done (scan+repair)** |
 | ShapeUpgrade_UnifySameDomain equivalent | P4 - High | Not started |
+| Face-on-surface consistency checker | P4 - Medium | **✅ Done (diagnose_face_surface_consistency)** |
 | ~~Shell / manifoldness analyzer~~ | ~~P4 - Medium~~ | **✅ Done (P4)** |
 | Wire gap / self-intersection analyzer | P4 - Medium | **✅ Done (analyze_wire_issues)** |
 | Import analyze/heal pipeline | P4 - Medium | **Partial (JSON diagnostics wired)** |
@@ -423,10 +425,10 @@ Assuming 1 developer working full-time on kernel work:
 | AP242 full read (import) | P6 - High | Not started |
 | GDT / DimTol read and write | P6 - Medium | Not started |
 | ~~Material / layer read and write~~ | ~~P6 - Low~~ | **✅ Done (P6)** |
-| STEP general property export (arbitrary metadata) | P6 - Low | Not started |
+| STEP general property export (arbitrary metadata) | P6 - Low | **Partial (`GENERAL_PROPERTY` + `PROPERTY_DEFINITION` baseline; deeper chains pending)** |
 | Stream-based read/write (DE_Wrapper style) | P6 - Low | Not started |
 | Kinematics read | P6 - Low | Not started |
-| Import healing pipeline integration | P4 - Medium | Not started |
+| Import healing pipeline integration | P4 - Medium | **Partial (healing report JSON + wire stats)** |
 | Stronger PCurve / tolerance validation on export | P4 - Medium | Not started |
 
 ### libs/rcad-render
@@ -462,5 +464,5 @@ The three areas that dominate the remaining production gap, in order:
 2. **Healing depth** -- SameRange repair and wire analysis complete the most critical path.
 3. **BRepGraph / graph topology** -- not blocking today, but will be required for history-based re-feature and persistent naming as applications grow.
 
-At the current trajectory, RCAD can become a credible industrial CAD kernel with **9–13 months of focused kernel work** (revised from 11–15 based on P3–P6 progress), assuming the priority order above and one dedicated developer. If BRepGraph and geometry evaluation breadth are deferred to a later phase, the immediate production baseline can be reached in roughly **6–8 months** (same-domain unification + healing pipeline + AP242 read).
+At the current trajectory, RCAD can become a credible industrial CAD kernel with **8–12 months of focused kernel work**, assuming the priority order above and one dedicated developer. If BRepGraph and Gordon/eval-breadth work are deferred to a later phase, the immediate production baseline can be reached in roughly **5–7 months** (same-domain unification + healing pipeline completion + AP242 read depth).
 

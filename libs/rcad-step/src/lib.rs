@@ -257,6 +257,9 @@ pub struct StepDocumentMetadata {
     pub layers: Vec<StepLayer>,
     /// General properties extracted from `GENERAL_PROPERTY` entities.
     pub general_properties: Vec<StepGeneralProperty>,
+    /// Property-definition chain entries, linked to referenced `GENERAL_PROPERTY`
+    /// when resolvable.
+    pub property_definitions: Vec<StepPropertyDefinition>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -288,6 +291,24 @@ pub struct StepGeneralProperty {
     pub name: String,
     /// Optional human-readable description when present.
     pub description: Option<String>,
+}
+
+/// A `PROPERTY_DEFINITION` entry with optional linkage to a referenced
+/// `GENERAL_PROPERTY`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepPropertyDefinition {
+    /// Entity id of `PROPERTY_DEFINITION`.
+    pub definition_id: u64,
+    /// Name field from `PROPERTY_DEFINITION(name, description, ...)`.
+    pub name: Option<String>,
+    /// Description field from `PROPERTY_DEFINITION(name, description, ...)`.
+    pub description: Option<String>,
+    /// Referenced entity id (typically `GENERAL_PROPERTY`) when present.
+    pub referenced_entity_id: Option<u64>,
+    /// Linked GENERAL_PROPERTY name when `referenced_entity_id` resolves.
+    pub general_property_name: Option<String>,
+    /// Linked GENERAL_PROPERTY description when resolvable.
+    pub general_property_description: Option<String>,
 }
 
 fn extract_file_schema(content: &str) -> Option<String> {
@@ -369,6 +390,84 @@ fn extract_general_properties(content: &str) -> Vec<StepGeneralProperty> {
     props
 }
 
+/// Extract `GENERAL_PROPERTY` entities keyed by their entity id.
+fn extract_general_properties_with_ids(content: &str) -> Vec<(u64, StepGeneralProperty)> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut props = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if entity.eq_ignore_ascii_case("GENERAL_PROPERTY") {
+            if let Some(name) = extract_nth_string_arg(args, 0) {
+                let description = extract_nth_string_arg(args, 1);
+                props.push((id, StepGeneralProperty { name, description }));
+            }
+        }
+    }
+
+    props
+}
+
+/// Extract `PROPERTY_DEFINITION` entities and link them to `GENERAL_PROPERTY`
+/// when the third argument references such an entity.
+fn extract_property_definitions(content: &str) -> Vec<StepPropertyDefinition> {
+    use std::collections::HashMap;
+
+    let general_by_id: HashMap<u64, StepGeneralProperty> =
+        extract_general_properties_with_ids(content).into_iter().collect();
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PROPERTY_DEFINITION") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        let name = parts.first().and_then(|_| extract_nth_string_arg(args, 0));
+        let description = parts.get(1).and_then(|_| extract_nth_string_arg(args, 1));
+        let referenced_entity_id = parts.get(2).and_then(|p| parse_ref(p));
+
+        let (general_property_name, general_property_description) =
+            if let Some(rid) = referenced_entity_id {
+                if let Some(prop) = general_by_id.get(&rid) {
+                    (Some(prop.name.clone()), prop.description.clone())
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
+        out.push(StepPropertyDefinition {
+            definition_id: id,
+            name,
+            description,
+            referenced_entity_id,
+            general_property_name,
+            general_property_description,
+        });
+    }
+
+    out
+}
+
 /// Extract the first single-quoted string argument from a STEP entity argument list.
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
@@ -439,6 +538,7 @@ impl StepReader {
             materials: extract_materials(content),
             layers: extract_layers(content),
             general_properties: extract_general_properties(content),
+            property_definitions: extract_property_definitions(content),
         };
 
         Ok((brep, metadata))
@@ -3465,6 +3565,7 @@ mod tests {
         let _ = &meta.materials;
         let _ = &meta.layers;
         let _ = &meta.general_properties;
+        let _ = &meta.property_definitions;
     }
 
     #[test]
@@ -3524,6 +3625,36 @@ END-ISO-10303-21;
         assert_eq!(props[0].description.as_deref(), Some("ERP key"));
         assert_eq!(props[1].name, "Revision");
         assert_eq!(props[1].description.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn extract_property_definitions_links_general_property_chain() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#21=GENERAL_PROPERTY('PartNumber','ERP key',$);
+#22=GENERAL_PROPERTY('Revision','A',$);
+#30=PROPERTY_DEFINITION('part number def','',#21);
+#31=PROPERTY_DEFINITION('revision def','',#22);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let defs = extract_property_definitions(step_fragment);
+        assert_eq!(defs.len(), 2);
+
+        assert_eq!(defs[0].definition_id, 30);
+        assert_eq!(defs[0].referenced_entity_id, Some(21));
+        assert_eq!(defs[0].general_property_name.as_deref(), Some("PartNumber"));
+        assert_eq!(defs[0].general_property_description.as_deref(), Some("ERP key"));
+
+        assert_eq!(defs[1].definition_id, 31);
+        assert_eq!(defs[1].referenced_entity_id, Some(22));
+        assert_eq!(defs[1].general_property_name.as_deref(), Some("Revision"));
+        assert_eq!(defs[1].general_property_description.as_deref(), Some("A"));
     }
 
     #[test]
