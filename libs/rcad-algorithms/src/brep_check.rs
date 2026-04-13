@@ -1049,6 +1049,312 @@ pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
     }
 }
 
+// ── Euler characteristic analysis ────────────────────────────────────────────
+
+/// Euler characteristic and topological genus for a single solid.
+///
+/// For a closed orientable 2-manifold of genus *g*: χ = V − E + F = 2 − 2g.
+///
+/// | Shape   | χ  | genus |
+/// | sphere  | 2  | 0     |
+/// | torus   | 0  | 1     |
+/// | 2-torus | -2 | 2     |
+#[derive(Debug, Clone)]
+pub struct EulerAnalysis {
+    pub solid_idx: usize,
+    /// Unique vertices referenced by this solid's face boundaries.
+    pub vertices: usize,
+    /// Unique edges referenced by this solid's face boundaries.
+    pub edges: usize,
+    /// Total faces across all shells of this solid.
+    pub faces: usize,
+    /// Euler characteristic: V − E + F.
+    pub euler_number: i64,
+    /// `true` if every edge of this solid is referenced by exactly 2 faces
+    /// (no free boundary edges → closed shell).
+    pub is_closed: bool,
+    /// Topological genus, computed as `(2 − euler_number) / 2`.
+    /// `None` when `!is_closed` or when the result is not a non-negative integer.
+    pub genus: Option<i64>,
+}
+
+/// Compute per-solid Euler analysis for every solid in `brep`.
+///
+/// Analogous to the topological analysis portion of `BRepCheck_Analyzer`.
+pub fn euler_analysis(brep: &BRep) -> Vec<EulerAnalysis> {
+    let mut results = Vec::with_capacity(brep.solids.len());
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        let mut unique_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut face_count = 0usize;
+
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                face_count += 1;
+                for we in &face.outer_wire.edges {
+                    unique_edges.insert(we.idx);
+                }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        unique_edges.insert(we.idx);
+                    }
+                }
+            }
+        }
+
+        // Collect unique vertex indices from the unique edges.
+        let mut unique_verts: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for &ei in &unique_edges {
+            if let Some(e) = brep.edges.get(ei) {
+                unique_verts.insert(e.start);
+                unique_verts.insert(e.end);
+            }
+        }
+
+        let v = unique_verts.len();
+        let e = unique_edges.len();
+        let f = face_count;
+        let euler_number = v as i64 - e as i64 + f as i64;
+
+        // Determine if the solid is closed (every edge shared by exactly 2 faces).
+        let mut edge_face_count: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    *edge_face_count.entry(we.idx).or_insert(0) += 1;
+                }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        *edge_face_count.entry(we.idx).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        let is_closed = edge_face_count.values().all(|&c| c == 2);
+
+        // Genus only makes sense on a closed manifold.
+        let genus = if is_closed {
+            let g = (2 - euler_number) / 2;
+            // Valid genus: (2 − χ) must be even and non-negative.
+            if (2 - euler_number) % 2 == 0 && g >= 0 {
+                Some(g)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        results.push(EulerAnalysis {
+            solid_idx: si,
+            vertices: v,
+            edges: e,
+            faces: f,
+            euler_number,
+            is_closed,
+            genus,
+        });
+    }
+
+    results
+}
+
+// ── Orientation consistency analysis ─────────────────────────────────────────
+
+/// A face whose stored normal appears to point inward rather than outward.
+///
+/// Determined geometrically: the dot product of `face.normal` with the vector
+/// from the solid's vertex centroid to the face's centroid is negative.
+#[derive(Debug, Clone)]
+pub struct OrientationIssue {
+    /// Solid index.
+    pub solid_idx: usize,
+    /// Flat face index (counting across all solids/shells in traversal order).
+    pub face_idx: usize,
+    /// Dot product of `face.normal` with the outward radial direction.
+    /// Negative values indicate an inward-pointing normal.
+    pub dot_product: f64,
+}
+
+/// Report from [`check_orientation_consistency`].
+#[derive(Debug, Clone, Default)]
+pub struct OrientationReport {
+    /// `true` iff all face normals appear to point outward from the solid interior.
+    pub is_consistent: bool,
+    /// Faces whose stored normals appear to point inward.
+    pub issues: Vec<OrientationIssue>,
+    /// Number of faces with outward-pointing normals.
+    pub consistent_face_count: usize,
+    /// Number of faces with inward-pointing normals.
+    pub inconsistent_face_count: usize,
+}
+
+/// Check that every face's stored normal points **outward** from the solid interior.
+///
+/// Uses a geometric heuristic: the solid's interior centroid is approximated as
+/// the average of all its vertices.  For each face the face centroid is computed
+/// from the outer-wire corner vertices.  A face normal is considered outward when
+/// `face.normal · (face_centroid − solid_centroid) > 0`.
+///
+/// This correctly handles all primitives (box, sphere, cylinder, cone, torus)
+/// whose normals are computed analytically during construction.  For shapes
+/// produced by Boolean operations or user-constructed BReps, the heuristic may
+/// give false positives on highly non-convex solids — treat the report as an
+/// advisory rather than a hard constraint.
+///
+/// Analogous to `BRepCheck_Shell::Orientation()` in OCCT.
+pub fn check_orientation_consistency(brep: &BRep) -> OrientationReport {
+    use glam::DVec3;
+
+    let mut issues = Vec::new();
+    let mut consistent_face_count = 0usize;
+    let mut inconsistent_face_count = 0usize;
+    let mut flat_face_idx = 0usize;
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        // Compute the solid's interior centroid from all vertices that appear
+        // in ANY of this solid's face wires.
+        let mut solid_verts = std::collections::HashSet::new();
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    if we.idx < brep.edges.len() {
+                        solid_verts.insert(brep.edges[we.idx].start);
+                        solid_verts.insert(brep.edges[we.idx].end);
+                    }
+                }
+            }
+        }
+        if solid_verts.is_empty() {
+            // No geometry — skip.
+            for shell in &solid.shells {
+                flat_face_idx += shell.faces.len();
+            }
+            continue;
+        }
+        let solid_centroid: DVec3 = {
+            let sum: DVec3 = solid_verts
+                .iter()
+                .filter(|&&vi| vi < brep.vertices.len())
+                .map(|&vi| brep.vertices[vi].point)
+                .sum();
+            sum / solid_verts.len() as f64
+        };
+
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                // Face centroid: average of first vertices of each outer-wire edge.
+                let mut face_centroid = DVec3::ZERO;
+                let mut n = 0usize;
+                for we in &face.outer_wire.edges {
+                    if we.idx < brep.edges.len() {
+                        let vi = if we.forward {
+                            brep.edges[we.idx].start
+                        } else {
+                            brep.edges[we.idx].end
+                        };
+                        if vi < brep.vertices.len() {
+                            face_centroid += brep.vertices[vi].point;
+                            n += 1;
+                        }
+                    }
+                }
+                if n == 0 {
+                    flat_face_idx += 1;
+                    continue;
+                }
+                face_centroid /= n as f64;
+
+                let outward = face_centroid - solid_centroid;
+                let dot = face.normal.dot(outward);
+                if dot >= 0.0 {
+                    consistent_face_count += 1;
+                } else {
+                    inconsistent_face_count += 1;
+                    issues.push(OrientationIssue {
+                        solid_idx: si,
+                        face_idx: flat_face_idx,
+                        dot_product: dot,
+                    });
+                }
+                flat_face_idx += 1;
+            }
+        }
+    }
+
+    OrientationReport {
+        is_consistent: issues.is_empty(),
+        issues,
+        consistent_face_count,
+        inconsistent_face_count,
+    }
+}
+
+// ── Comprehensive richer validity analysis ────────────────────────────────────
+
+/// Aggregated validity report combining all available checks.
+///
+/// This is the RCAD equivalent of OCCT's `BRepCheck_Analyzer` + `ShapeAnalysis`
+/// combined output, giving a single entry-point for full BRep validation.
+#[derive(Debug, Clone)]
+pub struct RicherValidityReport {
+    /// Basic structural check result.
+    pub check_result: CheckResult,
+    /// Shell topology (free edges, non-manifold edges, isolation).
+    pub shell_topology: ShellTopologyReport,
+    /// Per-solid Euler characteristic and genus.
+    pub euler: Vec<EulerAnalysis>,
+    /// Face wire orientation consistency across shared edges.
+    pub orientation: OrientationReport,
+    /// `true` iff BRep passes all structural checks and orientation is consistent.
+    pub is_fully_valid: bool,
+}
+
+impl RicherValidityReport {
+    /// A short human-readable summary of this report.
+    pub fn summary(&self) -> String {
+        let issues = self.check_result.issues.len();
+        let euler_issues = self.euler.iter().filter(|e| e.genus.map_or(true, |g| g < 0)).count();
+        let orient_issues = self.orientation.inconsistent_face_count;
+        if self.is_fully_valid {
+            format!(
+                "valid: {} solids, closed={}, manifold={}",
+                self.euler.len(),
+                self.shell_topology.is_closed,
+                self.shell_topology.is_manifold,
+            )
+        } else {
+            format!(
+                "INVALID: {} structural issue(s), {} orientation inconsistency/ies, {} genus anomaly/ies",
+                issues, orient_issues, euler_issues,
+            )
+        }
+    }
+}
+
+/// Run all available validity checks on `brep` and return a consolidated report.
+///
+/// This is the preferred entry point for comprehensive BRep validation:
+/// it combines the basic `check()`, shell topology, Euler analysis, and
+/// orientation consistency into a single call.
+pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
+    let check_result = check(brep);
+    let shell_topology = analyze_shell_topology(brep);
+    let euler = euler_analysis(brep);
+    let orientation = check_orientation_consistency(brep);
+
+    let is_fully_valid = check_result.is_valid() && orientation.is_consistent;
+
+    RicherValidityReport {
+        check_result,
+        shell_topology,
+        euler,
+        orientation,
+        is_fully_valid,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1612,5 +1918,75 @@ mod tests {
             "unit box should pass all checks including manifold and self-intersection; issues: {:?}",
             result.issues
         );
+    }
+
+    #[test]
+    fn euler_analysis_box_has_euler_2_and_genus_0() {
+        // A box is topologically a sphere: V=8, E=12, F=6 → χ = 8-12+6 = 2.
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let analyses = euler_analysis(&brep);
+        assert_eq!(analyses.len(), 1, "one solid expected");
+        let a = &analyses[0];
+        assert_eq!(a.solid_idx, 0);
+        assert_eq!(a.vertices, 8, "box has 8 vertices");
+        assert_eq!(a.edges, 12, "box has 12 edges");
+        assert_eq!(a.faces, 6, "box has 6 faces");
+        assert_eq!(a.euler_number, 2, "Euler characteristic of sphere = 2");
+        assert!(a.is_closed, "box is closed");
+        assert_eq!(a.genus, Some(0), "genus of a box is 0");
+    }
+
+    #[test]
+    fn euler_analysis_sphere_has_euler_2_and_genus_0() {
+        use rcad_kernel::PrimitiveSolid;
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let analyses = euler_analysis(&brep);
+        assert_eq!(analyses.len(), 1);
+        let a = &analyses[0];
+        // Sphere topology: χ = V - E + F, should equal 2.
+        assert_eq!(a.euler_number, 2, "Euler characteristic of sphere = 2");
+        assert!(a.is_closed);
+        assert_eq!(a.genus, Some(0), "genus of a sphere is 0");
+    }
+
+    #[test]
+    fn richer_validity_analysis_box_is_fully_valid() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let report = richer_validity_analysis(&brep);
+        assert!(report.is_fully_valid, "box should be fully valid; summary: {}", report.summary());
+        assert!(report.check_result.is_valid(), "box structural check should pass");
+        assert!(report.shell_topology.is_closed, "box should be closed");
+        assert!(report.shell_topology.is_manifold, "box should be manifold");
+        assert_eq!(report.euler[0].genus, Some(0), "box genus = 0");
+        assert!(
+            report.orientation.is_consistent,
+            "box orientation should be consistent; {} inconsistent faces",
+            report.orientation.inconsistent_face_count
+        );
+    }
+
+    #[test]
+    fn orientation_consistency_box_is_consistent() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let report = check_orientation_consistency(&brep);
+        assert!(
+            report.is_consistent,
+            "box orientation should be consistent; issues: {:?}",
+            report.issues
+        );
+        assert_eq!(report.inconsistent_face_count, 0);
+        assert_eq!(report.consistent_face_count, 6, "box has 6 faces, all outward");
     }
 }

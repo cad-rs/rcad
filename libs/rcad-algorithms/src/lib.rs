@@ -43,6 +43,9 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     SuspectFaceSurfaceEdge, FaceSurfaceConsistencyDiagnosis, diagnose_face_surface_consistency,
     ShellTopologyReport, analyze_shell_topology,
     WireAnalysisReport, WireIssueReport, analyze_wire_issues,
+    EulerAnalysis, euler_analysis,
+    OrientationIssue, OrientationReport, check_orientation_consistency,
+    RicherValidityReport, richer_validity_analysis,
 };
 pub use brep_repair::{
     MakeConnectedReport, RepairReport, ToleranceFlowDirection,

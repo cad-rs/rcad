@@ -394,7 +394,7 @@ Assuming 1 developer working full-time on kernel work:
 | ~~Feature prism / cylindrical hole~~ | ~~P5 - Medium~~ | **✅ Done (P5)** |
 | Draft prism feature | P5 - Medium | **✅ Done** |
 | Revolution feature | P5 - Medium | **✅ Done** |
-| Rib / slot feature | P5 - Low | Not started |
+| Rib / slot feature | P5 - Low | Done (baseline: make_linear_rib + make_revolution_rib via prism/revolve boolean) |
 
 ### libs/rcad-kernel
 
@@ -403,7 +403,7 @@ Assuming 1 developer working full-time on kernel work:
 | Compound / CompSolid topology | P6 - Medium | Not started |
 | Non-manifold topology support | P3 - Low | Not started |
 | Persistent naming hooks | P6 - Medium | Not started |
-| Richer validity analysis | P4 - Medium | Not started |
+| Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Not started |
 | **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Not started** |
 
