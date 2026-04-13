@@ -120,6 +120,11 @@ pub use properties::{InertiaTensor, centroid, inertia_tensor, surface_area, volu
 pub use tolerance::{
     ANGULAR, APPROXIMATION, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
     face_domain, face_tolerance, model_tolerance, vertex_tolerance,
+    resize_tolerance_arrays,
+    set_vertex_tolerance, update_vertex_tolerance,
+    set_edge_tolerance, update_edge_tolerance,
+    set_face_tolerance, update_face_tolerance,
+    finalize_tolerance_hierarchy,
 };
 pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,

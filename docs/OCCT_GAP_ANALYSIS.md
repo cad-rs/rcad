@@ -400,18 +400,18 @@ Assuming 1 developer working full-time on kernel work:
 
 | Task | Priority | Status |
 |---|---|---|
-| Compound / CompSolid topology | P6 - Medium | Not started |
+| Compound / CompSolid topology | P6 - Medium | Done (baseline: `Compound` + `CompSolid` structs in topology.rs; add/iter API) |
 | Non-manifold topology support | P3 - Low | Not started |
 | Persistent naming hooks | P6 - Medium | Not started |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
-| Tolerance propagation rules | P4 - High | Not started |
+| Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
 | **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported)** |
 
 ### libs/rcad-modeling
 
 | Task | Priority | Status |
 |---|---|---|
-| **N-sided surface fill -- Gordon N×M transfinite** | **P7 - Medium** | **Not started** |
+| **N-sided surface fill -- Gordon N×M transfinite** | **P7 - Medium** | **Done (baseline Gordon surface evaluator in rcad-kernel/rcad-modeling)** |
 | **Circle involute curve (gear tooth)** | **P7 - Medium** | **✅ Done** |
 | **Circular helix curve** | **P7 - Low** | **✅ Done** |
 | Normal projection of wire onto surface | P3 - Low | Not started |

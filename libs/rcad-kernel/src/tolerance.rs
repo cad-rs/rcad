@@ -141,7 +141,195 @@ pub fn edge_same_range(brep: &BRep, edge_idx: usize) -> bool {
         .unwrap_or(true)
 }
 
-// ── Tests ────────────────────────────────────────��────────────────────────────
+// ── Write / mutator API ───────────────────────────────────────────────────────
+//
+// These functions are the Rust equivalents of OCCT's
+// `BRep_Builder::UpdateVertex`, `BRep_Builder::UpdateEdge`, and
+// `BRep_Builder::UpdateFace`.  They extend the `GeomStore` tolerance arrays
+// on demand so callers do not need to pre-size them.
+
+/// Ensure all three tolerance arrays in `brep.geom` are sized to cover every
+/// entity currently in the `BRep`.  Newly extended slots are filled with
+/// `CONFUSION` (the global precision floor).
+///
+/// Analogous to the internal resize step inside `BRep_Builder::UpdateVertex`.
+pub fn resize_tolerance_arrays(brep: &mut BRep) {
+    let nv = brep.vertices.len();
+    let ne = brep.edges.len();
+    let nf: usize = brep.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+
+    if brep.geom.vertex_tolerance.len() < nv {
+        brep.geom.vertex_tolerance.resize(nv, CONFUSION);
+    }
+    if brep.geom.edge_tolerance.len() < ne {
+        brep.geom.edge_tolerance.resize(ne, CONFUSION);
+    }
+    if brep.geom.face_tolerance.len() < nf {
+        brep.geom.face_tolerance.resize(nf, CONFUSION);
+    }
+}
+
+/// Set the tolerance of vertex `vi` to exactly `tol`.
+///
+/// Extends the `vertex_tolerance` array if necessary.
+/// Clamps `tol` to `CONFUSION` minimum.
+///
+/// Analogous to `BRep_Builder::UpdateVertex(V, tol)` (absolute form).
+pub fn set_vertex_tolerance(brep: &mut BRep, vi: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.vertex_tolerance.len() <= vi {
+        brep.geom.vertex_tolerance.resize(vi + 1, CONFUSION);
+    }
+    brep.geom.vertex_tolerance[vi] = t;
+}
+
+/// Raise the tolerance of vertex `vi` to at least `tol`.
+///
+/// Uses `max(current, tol)` — never lowers an existing tolerance.
+/// Extends the array on demand.
+/// Analogous to `BRep_Builder::UpdateVertex(V, tol)` in OCCT.
+pub fn update_vertex_tolerance(brep: &mut BRep, vi: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.vertex_tolerance.len() <= vi {
+        brep.geom.vertex_tolerance.resize(vi + 1, CONFUSION);
+    }
+    let cur = &mut brep.geom.vertex_tolerance[vi];
+    if t > *cur {
+        *cur = t;
+    }
+}
+
+/// Set the tolerance of edge `ei` to exactly `tol`.
+///
+/// Extends the `edge_tolerance` array if necessary.
+/// Analogous to `BRep_Builder::UpdateEdge(E, tol)` (absolute form).
+pub fn set_edge_tolerance(brep: &mut BRep, ei: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.edge_tolerance.len() <= ei {
+        brep.geom.edge_tolerance.resize(ei + 1, CONFUSION);
+    }
+    brep.geom.edge_tolerance[ei] = t;
+}
+
+/// Raise the tolerance of edge `ei` to at least `tol`.
+///
+/// Uses `max(current, tol)` — never lowers.
+/// Analogous to `BRep_Builder::UpdateEdge(E, tol)` in OCCT.
+pub fn update_edge_tolerance(brep: &mut BRep, ei: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.edge_tolerance.len() <= ei {
+        brep.geom.edge_tolerance.resize(ei + 1, CONFUSION);
+    }
+    let cur = &mut brep.geom.edge_tolerance[ei];
+    if t > *cur {
+        *cur = t;
+    }
+}
+
+/// Set the tolerance of face `fi` (flat index) to exactly `tol`.
+///
+/// Extends the `face_tolerance` array if necessary.
+/// Analogous to `BRep_Builder::UpdateFace(F, tol)` (absolute form).
+pub fn set_face_tolerance(brep: &mut BRep, fi: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.face_tolerance.len() <= fi {
+        brep.geom.face_tolerance.resize(fi + 1, CONFUSION);
+    }
+    brep.geom.face_tolerance[fi] = t;
+}
+
+/// Raise the tolerance of face `fi` (flat index) to at least `tol`.
+///
+/// Uses `max(current, tol)` — never lowers.
+/// Analogous to `BRep_Builder::UpdateFace(F, tol)` in OCCT.
+pub fn update_face_tolerance(brep: &mut BRep, fi: usize, tol: f64) {
+    let t = tol.max(CONFUSION);
+    if brep.geom.face_tolerance.len() <= fi {
+        brep.geom.face_tolerance.resize(fi + 1, CONFUSION);
+    }
+    let cur = &mut brep.geom.face_tolerance[fi];
+    if t > *cur {
+        *cur = t;
+    }
+}
+
+/// Enforce the tolerance hierarchy **in-place**:
+///
+/// ```text
+///   vertex_tol ≥ edge_tol ≥ face_tol
+/// ```
+///
+/// Specifically:
+///
+/// 1. For each edge: `edge_tol = max(edge_tol, face_tol(all adjacent faces))`.
+/// 2. For each vertex: `vertex_tol = max(vertex_tol, edge_tol(all adjacent edges))`.
+///
+/// This ensures the "wider" entity (vertex) always carries at least as much
+/// tolerance as the narrower entities it bounds — the same invariant OCCT
+/// maintains via `BRepLib::UpdateEdgeTol` and `BRep_Builder::UpdateVertex`.
+///
+/// Call `resize_tolerance_arrays` first if the arrays may not be populated.
+pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
+    resize_tolerance_arrays(brep);
+
+    // Step 1: face → edge.
+    // Build edge → max(adjacent face tolerance).
+    let mut edge_from_face: Vec<f64> = vec![CONFUSION; brep.edges.len()];
+    let mut flat_fi = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let ftol = brep.geom.face_tolerance
+                    .get(flat_fi)
+                    .copied()
+                    .unwrap_or(CONFUSION);
+                for we in &face.outer_wire.edges {
+                    if we.idx < edge_from_face.len() {
+                        edge_from_face[we.idx] = edge_from_face[we.idx].max(ftol);
+                    }
+                }
+                for iw in &face.inner_wires {
+                    for we in &iw.edges {
+                        if we.idx < edge_from_face.len() {
+                            edge_from_face[we.idx] = edge_from_face[we.idx].max(ftol);
+                        }
+                    }
+                }
+                flat_fi += 1;
+            }
+        }
+    }
+    for (ei, &ftol) in edge_from_face.iter().enumerate() {
+        if let Some(etol) = brep.geom.edge_tolerance.get_mut(ei) {
+            if ftol > *etol {
+                *etol = ftol;
+            }
+        }
+    }
+
+    // Step 2: edge → vertex.
+    let ne = brep.edges.len();
+    for ei in 0..ne {
+        let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(CONFUSION);
+        let st = brep.edges[ei].start;
+        let en = brep.edges[ei].end;
+        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(st) {
+            if etol > *vtol {
+                *vtol = etol;
+            }
+        }
+        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(en) {
+            if etol > *vtol {
+                *vtol = etol;
+            }
+        }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -186,5 +374,136 @@ mod tests {
         let mut brep = BRep::new();
         brep.geom.vertex_tolerance = vec![0.0];
         assert_eq!(vertex_tolerance(&brep, 0), CONFUSION);
+    }
+
+    // ── Write API tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn set_vertex_tolerance_stores_value() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_vertex_tolerance(&mut brep, 0, 1e-4);
+        assert!((vertex_tolerance(&brep, 0) - 1e-4).abs() < 1e-20);
+    }
+
+    #[test]
+    fn update_vertex_tolerance_only_raises() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_vertex_tolerance(&mut brep, 0, 1e-4);
+        update_vertex_tolerance(&mut brep, 0, 1e-6); // lower — should not change
+        assert!((vertex_tolerance(&brep, 0) - 1e-4).abs() < 1e-20);
+        update_vertex_tolerance(&mut brep, 0, 1e-3); // higher — should update
+        assert!((vertex_tolerance(&brep, 0) - 1e-3).abs() < 1e-20);
+    }
+
+    #[test]
+    fn set_edge_tolerance_stores_value() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_edge_tolerance(&mut brep, 3, 5e-5);
+        assert!((edge_tolerance(&brep, 3) - 5e-5).abs() < 1e-20);
+    }
+
+    #[test]
+    fn update_edge_tolerance_only_raises() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_edge_tolerance(&mut brep, 2, 1e-5);
+        update_edge_tolerance(&mut brep, 2, 1e-8); // lower — no change
+        assert!((edge_tolerance(&brep, 2) - 1e-5).abs() < 1e-20);
+        update_edge_tolerance(&mut brep, 2, 2e-5); // higher — updates
+        assert!((edge_tolerance(&brep, 2) - 2e-5).abs() < 1e-20);
+    }
+
+    #[test]
+    fn set_face_tolerance_stores_value() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_face_tolerance(&mut brep, 0, 3e-5);
+        assert!((face_tolerance(&brep, 0) - 3e-5).abs() < 1e-20);
+    }
+
+    #[test]
+    fn out_of_range_set_extends_array() {
+        let mut brep = BRep::new(); // no entities
+        set_vertex_tolerance(&mut brep, 99, 1e-4);
+        assert_eq!(brep.geom.vertex_tolerance.len(), 100);
+        assert!((brep.geom.vertex_tolerance[99] - 1e-4).abs() < 1e-20);
+        // slots before 99 should be CONFUSION
+        assert_eq!(brep.geom.vertex_tolerance[0], CONFUSION);
+    }
+
+    #[test]
+    fn below_confusion_floor_clamped() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        set_vertex_tolerance(&mut brep, 0, 1e-15); // below CONFUSION = 1e-7
+        assert_eq!(vertex_tolerance(&brep, 0), CONFUSION);
+    }
+
+    #[test]
+    fn resize_tolerance_arrays_fills_missing_slots() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        // Arrays start empty for primitives.
+        assert!(brep.geom.vertex_tolerance.is_empty());
+        resize_tolerance_arrays(&mut brep);
+        assert_eq!(brep.geom.vertex_tolerance.len(), 8);
+        assert_eq!(brep.geom.edge_tolerance.len(), 12);
+        assert_eq!(brep.geom.face_tolerance.len(), 6);
+        // All filled with CONFUSION.
+        assert!(brep.geom.vertex_tolerance.iter().all(|&t| t == CONFUSION));
+    }
+
+    #[test]
+    fn finalize_tolerance_hierarchy_propagates_face_to_vertex() {
+        // Give face 0 a high tolerance; after finalization all its boundary verts/edges
+        // should carry at least that tolerance.
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        resize_tolerance_arrays(&mut brep);
+        set_face_tolerance(&mut brep, 0, 1e-4); // face 0 = front face
+        finalize_tolerance_hierarchy(&mut brep);
+
+        // All edge tolerances that belong to face 0 should be ≥ 1e-4.
+        // Box face 0 has edges 0,1,2,3 (from create_box).
+        for &ei in &[0usize, 1, 2, 3] {
+            assert!(
+                edge_tolerance(&brep, ei) >= 1e-4 - 1e-15,
+                "edge {ei} tol should be ≥ 1e-4, got {}",
+                edge_tolerance(&brep, ei)
+            );
+        }
+        // Vertices of those edges should be ≥ 1e-4 as well.
+        for vi in 0..4usize {
+            assert!(
+                vertex_tolerance(&brep, vi) >= 1e-4 - 1e-15,
+                "vertex {vi} tol should be ≥ 1e-4, got {}",
+                vertex_tolerance(&brep, vi)
+            );
+        }
+    }
+
+    #[test]
+    fn finalize_tolerance_hierarchy_never_lowers() {
+        // Vertices/edges with higher pre-existing tolerance must not be lowered.
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        resize_tolerance_arrays(&mut brep);
+        set_vertex_tolerance(&mut brep, 0, 1e-3); // very high vertex tol
+        set_face_tolerance(&mut brep, 0, 1e-6);   // lower face tol
+        finalize_tolerance_hierarchy(&mut brep);
+        // Vertex 0 must still be 1e-3.
+        assert!((vertex_tolerance(&brep, 0) - 1e-3).abs() < 1e-20);
     }
 }
