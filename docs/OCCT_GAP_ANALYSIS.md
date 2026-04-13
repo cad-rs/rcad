@@ -402,7 +402,7 @@ Assuming 1 developer working full-time on kernel work:
 |---|---|---|
 | Compound / CompSolid topology | P6 - Medium | Done (baseline: `Compound` + `CompSolid` structs in topology.rs; add/iter API) |
 | Non-manifold topology support | P3 - Low | Not started |
-| Persistent naming hooks | P6 - Medium | Not started |
+| Persistent naming hooks | P6 - Medium | **Partial (rcad-kernel `PersistentNamingHooks` baseline: stable label↔topology binding, validation/cleanup against BRep, deterministic default labels)** |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
 | **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported)** |

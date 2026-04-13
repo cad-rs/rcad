@@ -32,6 +32,11 @@ pub mod topo_query;
 /// Analogous to OCCT `BRepGraph` module (new in OCCT 7.7+).
 pub mod brep_graph;
 
+/// Persistent naming hooks for stable user-level topology labels.
+///
+/// Analogous to OCCT OCAF/TopoNaming-style name tables.
+pub mod naming;
+
 /// Differential geometry: principal curvatures, Gaussian curvature, mean curvature.
 ///
 /// Analogous to OCCT `GeomLProp_SLProps`.
@@ -131,6 +136,7 @@ pub use topo_query::{
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
 pub use brep_graph::{BRepGraph, BfsFaces, DfsFaces, DfsEdgesFromVertex};
+pub use naming::{PersistentNamingHooks, TopoEntityRef};
 pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
@@ -1238,6 +1244,13 @@ impl BRep {
             .flat_map(|s| s.shells.iter())
             .flat_map(|sh| sh.faces.iter())
             .any(|f| f.mesh_dirty)
+    }
+
+    /// Build a deterministic baseline persistent naming table for this BRep.
+    ///
+    /// Labels are generated as `v{idx}`, `e{idx}`, `f{idx}`, `s{idx}`.
+    pub fn persistent_naming_hooks(&self) -> PersistentNamingHooks {
+        PersistentNamingHooks::with_default_labels_for_brep(self)
     }
 }
 
