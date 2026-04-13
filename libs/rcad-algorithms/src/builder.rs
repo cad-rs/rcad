@@ -258,11 +258,13 @@ impl ResultBuilder {
                     edges: wire_edge_idxs.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
                 })
                 .collect();
+            let mesh_dirty = triangles.is_empty();
             faces.push(Face {
                 outer_wire: wire,
                 inner_wires,
                 normal,
                 triangles,
+                mesh_dirty,
             });
 
             let surf_idx = geom.surfaces.len();
@@ -273,6 +275,8 @@ impl ResultBuilder {
 
         let history = BooleanHistory {
             face_origins: self.face_origins,
+            edge_origins: Vec::new(),
+            vertex_origins: Vec::new(),
         };
 
         let brep = BRep {

@@ -110,6 +110,7 @@ impl ObjReader {
                 inner_wires: vec![],
                 normal,
                 triangles: vec![tri],
+                mesh_dirty: false,
             });
         }
 
@@ -236,6 +237,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![[0, 1, 2], [0, 2, 3]],
+            mesh_dirty: false,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -279,6 +281,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![], // no triangles
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],

@@ -9,12 +9,26 @@
 //!   - [`Assembly::to_brep`] — 合并为单一 BRep（调用 `BRep::transformed` + `append_brep`）。
 
 use std::sync::Arc;
+use std::collections::BTreeMap;
 
 use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
 use serde::{Deserialize, Serialize};
 
 use crate::append_brep;
+
+/// Semantic metadata carried by assembly/document nodes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AssemblyMetadata {
+    /// Optional display label.
+    pub display_name: Option<String>,
+    /// Optional layer tag.
+    pub layer: Option<String>,
+    /// Optional material tag.
+    pub material: Option<String>,
+    /// Free-form key-value attributes.
+    pub attributes: BTreeMap<String, String>,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 核心类型
@@ -34,6 +48,9 @@ pub struct AssemblyNode {
     pub transform: DAffine3,
     /// 节点内容：叶节点几何或子装配列表。
     pub content: NodeContent,
+    /// Semantic metadata for this node.
+    #[serde(default)]
+    pub metadata: AssemblyMetadata,
 }
 
 /// [`AssemblyNode`] 的内容类型。
@@ -72,6 +89,9 @@ pub struct Assembly {
     pub name: String,
     /// 顶层节点列表（可以是叶节点或子装配）。
     pub roots: Vec<AssemblyNode>,
+    /// Metadata for the whole assembly document.
+    #[serde(default)]
+    pub metadata: AssemblyMetadata,
     /// 下一个要分配的节点 ID。
     next_id: u64,
 }
@@ -88,6 +108,7 @@ impl AssemblyNode {
             name: name.into(),
             transform: DAffine3::IDENTITY,
             content: NodeContent::Leaf(brep),
+            metadata: AssemblyMetadata::default(),
         }
     }
 
@@ -103,6 +124,7 @@ impl AssemblyNode {
             name: name.into(),
             transform,
             content: NodeContent::Leaf(brep),
+            metadata: AssemblyMetadata::default(),
         }
     }
 
@@ -113,6 +135,7 @@ impl AssemblyNode {
             name: name.into(),
             transform: DAffine3::IDENTITY,
             content: NodeContent::Assembly(Vec::new()),
+            metadata: AssemblyMetadata::default(),
         }
     }
 
@@ -158,8 +181,24 @@ impl Assembly {
         Self {
             name: name.into(),
             roots: Vec::new(),
+            metadata: AssemblyMetadata::default(),
             next_id: 1,
         }
+    }
+
+    /// Attach or overwrite a document-level attribute.
+    pub fn set_attribute(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.metadata.attributes.insert(key.into(), value.into());
+    }
+
+    /// Set assembly-level layer tag.
+    pub fn set_layer(&mut self, layer: impl Into<String>) {
+        self.metadata.layer = Some(layer.into());
+    }
+
+    /// Set assembly-level material tag.
+    pub fn set_material(&mut self, material: impl Into<String>) {
+        self.metadata.material = Some(material.into());
     }
 
     // ── 内部 ID 分配 ─────────────────────────────────────────────────────────
@@ -277,5 +316,29 @@ impl Assembly {
         translation: DVec3,
     ) -> u64 {
         self.add_part_with_transform(name, brep, DAffine3::from_translation(translation))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assembly_metadata_setters_work() {
+        let mut asm = Assembly::new("m");
+        asm.set_layer("L1");
+        asm.set_material("Aluminum");
+        asm.set_attribute("owner", "team-a");
+
+        assert_eq!(asm.metadata.layer.as_deref(), Some("L1"));
+        assert_eq!(asm.metadata.material.as_deref(), Some("Aluminum"));
+        assert_eq!(asm.metadata.attributes.get("owner").map(String::as_str), Some("team-a"));
+    }
+
+    #[test]
+    fn node_metadata_defaults_empty() {
+        let node = AssemblyNode::new_assembly(1, "sub");
+        assert!(node.metadata.layer.is_none());
+        assert!(node.metadata.attributes.is_empty());
     }
 }

@@ -239,6 +239,7 @@ fn append_transformed_brep(
                     DVec3::new(rotated.x, rotated.y, rotated.z).normalize_or(face.normal)
                 },
                 triangles: face.triangles.iter().map(|[i, j, k]| [i + v_offset, j + v_offset, k + v_offset]).collect(),
+                mesh_dirty: face.mesh_dirty,
             });
         }
         target.solids.push(Solid {

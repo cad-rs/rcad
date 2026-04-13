@@ -219,6 +219,7 @@ impl IgesReader {
                 inner_wires: vec![],
                 normal,
                 triangles: tris,
+                mesh_dirty: false,
             });
         }
 
@@ -308,6 +309,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![[0, 1, 2]],
+                    mesh_dirty: false,
                 }],
             }],
         });

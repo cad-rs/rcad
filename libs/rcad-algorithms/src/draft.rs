@@ -152,6 +152,7 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
             inner_wires: face.inner_wires.clone(),
             normal: new_face_normals[fi],
             triangles,
+            mesh_dirty: face.mesh_dirty,
         });
 
         // Copy surface reference

@@ -12,7 +12,7 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{any_perpendicular, Circle3, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
+use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
 use rcad_kernel::topology::{Face, Vertex, WireEdge};
 
 use crate::builder::BuildError;
@@ -602,22 +602,39 @@ pub fn fillet_edge_with_history(
 }
 
 /// Fillet the edge at `edge_idx` with a variable radius that transitions
-/// from `start_radius` at the edge start vertex to `end_radius` at the edge
-/// end vertex.
+/// linearly from `start_radius` at the edge start vertex to `end_radius` at
+/// the edge end vertex.
 ///
-/// Uses the average radius for the fillet computation. A full implementation
-/// would subdivide the fillet face and adjust vertex positions to create a
-/// tapered profile.
+/// The two adjacent faces are trimmed with per-endpoint setbacks
+/// (`r / tan(β/2)`) so the blend vertices are geometrically accurate.
+/// When the two radii differ, the blend face uses a `ConicalSurface`; when
+/// they are equal it degenerates to a `CylindricalSurface` (identical to
+/// [`fillet_edge`]).
 ///
 /// # Errors
-/// Returns `BuildError::NonPositiveValue` if either radius is <= 0.
+/// Returns `BuildError::NonPositiveValue` if either radius is ≤ 0.
 /// Returns `BuildError::InvalidIndex` if `edge_idx` is out of bounds.
+/// Returns `BuildError::DegenerateGeometry` if the edge is not shared by
+/// exactly two planar faces or the setback direction is degenerate.
 pub fn fillet_edge_variable_radius(
     brep: &BRep,
     edge_idx: usize,
     start_radius: f64,
     end_radius: f64,
 ) -> Result<BRep, BuildError> {
+    fillet_edge_variable_radius_with_history(brep, edge_idx, start_radius, end_radius)
+        .map(|(brep, _)| brep)
+}
+
+/// Fillet an edge with a variable radius and return history.
+///
+/// See [`fillet_edge_variable_radius`] for geometry details.
+pub fn fillet_edge_variable_radius_with_history(
+    brep: &BRep,
+    edge_idx: usize,
+    start_radius: f64,
+    end_radius: f64,
+) -> Result<(BRep, FilletHistory), BuildError> {
     if start_radius <= 0.0 {
         return Err(BuildError::NonPositiveValue("start_radius"));
     }
@@ -628,9 +645,63 @@ pub fn fillet_edge_variable_radius(
         return Err(BuildError::InvalidIndex(edge_idx));
     }
 
-    // Use average radius for the fillet computation.
-    let avg_radius = (start_radius + end_radius) * 0.5;
-    fillet_edge(brep, edge_idx, avg_radius)
+    let (f0, f1) = find_adjacent_faces(brep, edge_idx).ok_or(BuildError::DegenerateGeometry(
+        "edge must be shared by exactly 2 faces",
+    ))?;
+
+    let s0 = setback_direction(brep, f0, edge_idx);
+    let s1 = setback_direction(brep, f1, edge_idx);
+    if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
+        return Err(BuildError::DegenerateGeometry(
+            "cannot compute setback direction",
+        ));
+    }
+
+    // Compute the dihedral half-angle shared by both endpoints.
+    let n0 = face_normal(brep, f0);
+    let n1 = face_normal(brep, f1);
+    let cos_angle = n0.dot(n1).clamp(-1.0, 1.0);
+    let convexity = classify_edge_convexity(brep, edge_idx, f0, f1);
+
+    let beta = match convexity {
+        EdgeConvexity::Convex => std::f64::consts::PI - cos_angle.acos(),
+        EdgeConvexity::Concave => cos_angle.acos(),
+    };
+    let half_beta = beta * 0.5;
+    let tan_half_beta = half_beta.tan().abs();
+
+    let sign = match convexity {
+        EdgeConvexity::Convex => 1.0,
+        EdgeConvexity::Concave => -1.0,
+    };
+
+    // Per-endpoint setbacks.
+    let setback_start = if tan_half_beta < 1e-10 {
+        start_radius
+    } else {
+        start_radius / tan_half_beta
+    };
+    let setback_end = if tan_half_beta < 1e-10 {
+        end_radius
+    } else {
+        end_radius / tan_half_beta
+    };
+
+    let edge = &brep.edges[edge_idx];
+    let p0 = brep.vertices[edge.start].point;
+    let p1 = brep.vertices[edge.end].point;
+
+    // Blend face vertices: setback computed independently at each endpoint.
+    let nv0a = p0 + sign * setback_start * s0; // face f0, at p0
+    let nv0b = p0 + sign * setback_start * s1; // face f1, at p0
+    let nv1a = p1 + sign * setback_end * s0;   // face f0, at p1
+    let nv1b = p1 + sign * setback_end * s1;   // face f1, at p1
+
+    rebuild_with_variable_fillet_verts_history(
+        brep, edge_idx, f0, f1,
+        nv0a, nv0b, nv1a, nv1b,
+        start_radius, end_radius,
+    )
 }
 /// Fillet multiple edges in a single call.
 /// `edges` is a list of `(edge_idx, radius)` pairs. Edges are sorted by
@@ -666,6 +737,159 @@ pub fn fillet_edges_with_history(
         history.edges.push(h);
     }
     Ok((current, history))
+}
+
+// ── Variable-radius fillet rebuild ───────────────────────────────────────────
+
+/// Rebuild the BRep replacing `edge_idx` with a variable-radius fillet face.
+///
+/// `nv0a/nv0b` are the setback vertices adjacent to the edge start (`p0`):
+///   - `nv0a` lies on face `f0`; `nv0b` lies on face `f1`.
+/// `nv1a/nv1b` are the corresponding vertices adjacent to the edge end (`p1`).
+///
+/// When `start_radius ≈ end_radius` a `CylindricalSurface` is used; otherwise
+/// a `ConicalSurface` whose apex is the extrapolated zero-radius point.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_with_variable_fillet_verts_history(
+    brep: &BRep,
+    edge_idx: usize,
+    f0: usize,
+    f1: usize,
+    nv0a: DVec3, // face f0 at p0
+    nv0b: DVec3, // face f1 at p0
+    nv1a: DVec3, // face f0 at p1
+    nv1b: DVec3, // face f1 at p1
+    start_radius: f64,
+    end_radius: f64,
+) -> Result<(BRep, FilletHistory), BuildError> {
+    let orig_edge = &brep.edges[edge_idx];
+    let v0_orig = orig_edge.start;
+    let v1_orig = orig_edge.end;
+
+    let mut dst = BRep::new();
+    copy_vertices_from(&mut dst, brep);
+
+    let nv0a_idx = push_vertex(&mut dst, nv0a);
+    let nv0b_idx = push_vertex(&mut dst, nv0b);
+    let nv1a_idx = push_vertex(&mut dst, nv1a);
+    let nv1b_idx = push_vertex(&mut dst, nv1b);
+
+    let shell = &brep.solids[0].shells[0];
+    let n_faces = shell.faces.len();
+
+    let mut modified_faces = Vec::new();
+    for fi in 0..n_faces {
+        let face = &shell.faces[fi];
+        if fi == f0 {
+            let remap = build_remap(brep, face, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
+            let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+            modified_faces.push(new_fi);
+        } else if fi == f1 {
+            let remap = build_remap(brep, face, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
+            let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+            modified_faces.push(new_fi);
+        } else {
+            let remap: Vec<usize> = (0..brep.vertices.len()).collect();
+            copy_face_remapped(&mut dst, brep, face, &remap)?;
+        }
+    }
+
+    // Blend face surface: cone when radii differ, cylinder when equal.
+    let p_orig0 = brep.vertices[v0_orig].point;
+    let p_orig1 = brep.vertices[v1_orig].point;
+    let edge_vec = p_orig1 - p_orig0;
+    let edge_len = edge_vec.length();
+    let edge_dir = edge_vec.normalize_or_zero();
+
+    let blend_surf = if (start_radius - end_radius).abs() < 1e-10 * (start_radius + end_radius + 1.0) {
+        // Degenerate to cylinder (same as fillet_edge).
+        Surface3::Cylinder(CylindricalSurface {
+            origin: p_orig0,
+            axis: edge_dir,
+            radius: start_radius,
+        })
+    } else {
+        // Compute cone apex: extrapolate to the point where radius = 0.
+        // If r0 < r1: radius increases toward p1, apex is behind p0.
+        //   apex = p0 - (r0 / (r1 - r0)) * L * edge_dir
+        // If r0 > r1: radius increases toward p0, apex is past p1.
+        //   apex = p1 + (r1 / (r0 - r1)) * L * (-edge_dir)
+        //        = p1 - (r1 / (r0 - r1)) * L * edge_dir
+        let (apex, axis, half_angle) = if end_radius > start_radius {
+            let d = start_radius * edge_len / (end_radius - start_radius);
+            let apex = p_orig0 - d * edge_dir;
+            let half_angle = ((end_radius - start_radius) / edge_len).atan();
+            (apex, edge_dir, half_angle)
+        } else {
+            let d = end_radius * edge_len / (start_radius - end_radius);
+            let apex = p_orig1 + d * edge_dir;
+            let half_angle = ((start_radius - end_radius) / edge_len).atan();
+            (apex, -edge_dir, half_angle)
+        };
+        Surface3::Cone(ConicalSurface {
+            apex,
+            axis,
+            radius: 0.0, // radius at the apex
+            half_angle_rad: half_angle,
+        })
+    };
+
+    // Fillet face: nv0a → nv1a → nv1b → nv0b (quad, wound to match face normals).
+    let fillet_face = {
+        let ea = add_line_edge(&mut dst, nv0a_idx, nv1a_idx)?;
+        let eb = add_line_edge(&mut dst, nv1a_idx, nv1b_idx)?;
+        let ec = add_line_edge(&mut dst, nv1b_idx, nv0b_idx)?;
+        let ed = add_line_edge(&mut dst, nv0b_idx, nv0a_idx)?;
+        let wire = make_wire(vec![
+            WireEdge::fwd(ea),
+            WireEdge::fwd(eb),
+            WireEdge::fwd(ec),
+            WireEdge::fwd(ed),
+        ]);
+        make_face(&mut dst, blend_surf, wire, vec![])?
+    };
+
+    // Closing triangle at v0_orig (start): v0_orig → nv0a → nv0b.
+    let closing0 = {
+        let v0 = v0_orig;
+        let v1 = nv0a_idx;
+        let v2 = nv0b_idx;
+        let p0 = dst.vertices[v0].point;
+        let p1_c = dst.vertices[v1].point;
+        let p2 = dst.vertices[v2].point;
+        let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
+        let surf = Surface3::Plane(Plane { origin: p0, normal: n });
+        let e01 = add_line_edge(&mut dst, v0, v1)?;
+        let e12 = add_line_edge(&mut dst, v1, v2)?;
+        let e20 = add_line_edge(&mut dst, v2, v0)?;
+        let wire = make_wire(vec![WireEdge::fwd(e01), WireEdge::fwd(e12), WireEdge::fwd(e20)]);
+        make_face(&mut dst, surf, wire, vec![])?
+    };
+
+    // Closing triangle at v1_orig (end): v1_orig → nv1b → nv1a.
+    let closing1 = {
+        let v0 = v1_orig;
+        let v1 = nv1b_idx;
+        let v2 = nv1a_idx;
+        let p0 = dst.vertices[v0].point;
+        let p1_c = dst.vertices[v1].point;
+        let p2 = dst.vertices[v2].point;
+        let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
+        let surf = Surface3::Plane(Plane { origin: p0, normal: n });
+        let e01 = add_line_edge(&mut dst, v0, v1)?;
+        let e12 = add_line_edge(&mut dst, v1, v2)?;
+        let e20 = add_line_edge(&mut dst, v2, v0)?;
+        let wire = make_wire(vec![WireEdge::fwd(e01), WireEdge::fwd(e12), WireEdge::fwd(e20)]);
+        make_face(&mut dst, surf, wire, vec![])?
+    };
+
+    let history = FilletHistory {
+        modified_faces,
+        fillet_face,
+        closing_faces: vec![closing0, closing1],
+    };
+
+    Ok((dst, history))
 }
 
 // ── Shared rebuild core ───────────────────────────────────────────────────────
@@ -1413,6 +1637,7 @@ mod tests {
                 inner_wires: vec![],
                 normal,
                 triangles: vec![],
+                mesh_dirty: true,
             });
             let si = brep.geom.surfaces.len();
             brep.geom.surfaces.push(Surface3::Plane(Plane { origin: pts[verts[0]], normal }));

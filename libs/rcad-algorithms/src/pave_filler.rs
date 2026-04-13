@@ -38,6 +38,14 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// Effective tolerance for coincidence tests in all passes.
+    ///
+    /// Returns the DS `fuzzy_tol` (already clamped to ≥ `TOLERANCE_ABS`).
+    #[inline]
+    fn tol(&self) -> f64 {
+        self.ds.fuzzy_tol
+    }
+
     /// Execute all intersection passes.
     pub fn perform(&mut self) {
         self.perform_vv();
@@ -71,7 +79,9 @@ impl<'a> PaveFiller<'a> {
 
         for &ai in &a_verts {
             for &bi in &b_verts {
-                if points_coincide(self.ds.vertices[ai].point, self.ds.vertices[bi].point) {
+                let tol = self.tol();
+                let dist = (self.ds.vertices[ai].point - self.ds.vertices[bi].point).length();
+                if dist <= tol {
                     self.ds.interferences.push(Interference::VertexVertex {
                         v1: ai,
                         v2: bi,
@@ -241,7 +251,7 @@ impl<'a> PaveFiller<'a> {
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
                     rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
-                if proj.distance < TOLERANCE_ABS {
+                if proj.distance < self.tol() {
                     self.ds.interferences.push(Interference::VertexFace {
                         vertex: vi,
                         face: fi,
@@ -352,8 +362,9 @@ impl<'a> PaveFiller<'a> {
             // Skip if point is an edge endpoint
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
-            if points_coincide(point, self.ds.vertices[sv].point)
-                || points_coincide(point, self.ds.vertices[ev].point)
+            let tol = self.tol();
+            if (point - self.ds.vertices[sv].point).length() <= tol
+                || (point - self.ds.vertices[ev].point).length() <= tol
             {
                 continue;
             }

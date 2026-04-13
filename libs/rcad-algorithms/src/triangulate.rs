@@ -11,6 +11,25 @@ pub struct SurfaceMesh {
     pub triangles: Vec<[usize; 3]>,
     /// 每个顶点的法向量。
     pub normals: Vec<DVec3>,
+    /// When `true` the mesh data is out of date with respect to the source
+    /// geometry and must be recomputed before use.
+    ///
+    /// `triangulate_surface` always returns a clean mesh (`dirty = false`).
+    /// Callers that cache a `SurfaceMesh` should call [`SurfaceMesh::invalidate`]
+    /// whenever the source geometry changes.
+    pub dirty: bool,
+}
+
+impl SurfaceMesh {
+    /// Mark this mesh as stale.  The next render or query should recompute it.
+    pub fn invalidate(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Returns `true` if the mesh data is up-to-date with the source geometry.
+    pub fn is_clean(&self) -> bool {
+        !self.dirty
+    }
 }
 
 /// 曲面三角化参数。
@@ -89,7 +108,7 @@ pub fn triangulate_surface(
         }
     }
 
-    SurfaceMesh { vertices, triangles, normals }
+    SurfaceMesh { vertices, triangles, normals, dirty: false }
 }
 
 /// 最大递归深度（防止无限细分）。
@@ -374,7 +393,12 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
 /// - Faces without a surface entry fall back to fan-triangulation of the
 ///   outer wire vertices (same as the existing rendering path).
 ///
-/// Existing `face.triangles` are cleared and replaced.
+/// Faces whose [`Face::mesh_dirty`] flag is `false` (clean) are **skipped**
+/// unless their `triangles` is empty — allowing incremental updates when only
+/// part of the model changes.  To force a full retessellation call
+/// [`BRep::invalidate_mesh`] first.
+///
+/// After tessellating a face its `mesh_dirty` flag is set to `false`.
 pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
     let mut face_flat_idx = 0usize;
 
@@ -382,6 +406,15 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
         for shell_idx in 0..brep.solids[solid_idx].shells.len() {
             let n_faces = brep.solids[solid_idx].shells[shell_idx].faces.len();
             for face_idx in 0..n_faces {
+                // Skip faces whose cached triangulation is still valid.
+                {
+                    let face = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
+                    if face.mesh_is_clean() {
+                        face_flat_idx += 1;
+                        continue;
+                    }
+                }
+
                 // Resolve surface and UV domain.
                 let surf_and_domain: Option<(Surface3, [f64; 4])> = brep
                     .geom
@@ -463,6 +496,10 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                             .triangles = tris;
                     }
                 }
+
+                // Mark the face mesh as clean.
+                brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                    .mesh_dirty = false;
 
                 face_flat_idx += 1;
             }

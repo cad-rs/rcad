@@ -102,6 +102,7 @@ pub fn make_face(
         inner_wires,
         normal,
         triangles: Vec::new(),
+        mesh_dirty: true,
     });
 
     // Align face_surface vec

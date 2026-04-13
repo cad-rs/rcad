@@ -5,6 +5,7 @@ use rcad_modeling::make_box_brep;
 use rcad_algorithms::{HealingMode, HealingOptions};
 use rcad_step::{
     AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree,
+    read_assembly_with_healing_report_json,
     read_assembly_tree_with_healing, read_assembly_with_healing, write_assembly,
     write_assembly_tree,
 };
@@ -178,6 +179,31 @@ fn read_assembly_with_healing_reports_per_component() {
     assert_eq!(components.len(), 2);
     assert_eq!(reports.len(), 2);
     assert!(reports.iter().all(|r| r.initial.is_valid() && r.final_result.is_valid()));
+}
+
+#[test]
+fn read_assembly_with_healing_report_json_has_stable_schema() {
+    let comp_a = AssemblyComponent::new("box_a", make_box(DVec3::ZERO));
+    let comp_b = AssemblyComponent::new("box_b", make_box(DVec3::new(5.0, 0.0, 0.0)));
+
+    let step = write_assembly("heal_json_asm", &[comp_a, comp_b]);
+    let (components, reports, json) = read_assembly_with_healing_report_json(
+        &step,
+        HealingOptions {
+            mode: HealingMode::AnalyzeOnly,
+            ..HealingOptions::default()
+        },
+    )
+    .expect("read_assembly_with_healing_report_json failed");
+
+    assert_eq!(components.len(), 2);
+    assert_eq!(reports.len(), 2);
+
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid report json");
+    assert_eq!(parsed["schema"], "step.assembly.import.healing.v1");
+    assert_eq!(parsed["component_count"], 2);
+    assert_eq!(parsed["clean_components"], 2);
+    assert_eq!(parsed["failed_components"], 0);
 }
 
 // ─── nested assembly tree tests ───────────────────────────────────────────────

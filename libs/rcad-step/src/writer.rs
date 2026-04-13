@@ -1,4 +1,19 @@
 use rcad_kernel::appearance::{Color, StepColor};
+
+/// Selects which STEP application protocol to use when writing a file.
+///
+/// | Variant | `FILE_SCHEMA` token | Typical use |
+/// |---------|---------------------|-------------|
+/// | `Ap214` | `AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }` | Legacy automotive/CAD interchange |
+/// | `Ap242` | `AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 242 1 1 4 }` | Modern MBD/PMI-aware interchange |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StepProtocol {
+    /// ISO 10303-214 "Automotive Design" (default for backward compatibility).
+    #[default]
+    Ap214,
+    /// ISO 10303-242 "Managed Model Based 3D Engineering".
+    Ap242,
+}
 use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
 use std::collections::{BTreeSet, HashMap};
 
@@ -16,7 +31,19 @@ struct FaceExportResult {
 
 impl StepWriter {
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
-        let mut writer = Part21Writer::new();
+        Self::write_string_with_protocol(brep, selection, StepProtocol::Ap214)
+    }
+
+    /// Export using the specified STEP application protocol.
+    ///
+    /// Writes the appropriate `FILE_SCHEMA` and `APPLICATION_PROTOCOL_DEFINITION`
+    /// for the chosen protocol.
+    pub fn write_string_with_protocol(
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        protocol: StepProtocol,
+    ) -> String {
+        let mut writer = Part21Writer::new_with_protocol(protocol);
         writer.write_brep(brep, selection, None);
         writer.finish()
     }
@@ -26,7 +53,17 @@ impl StepWriter {
     /// Colors are written as `STYLED_ITEM` + `PRESENTATION_STYLE_ASSIGNMENT`
     /// + `SURFACE_STYLE_USAGE` + `FILL_AREA_STYLE_COLOUR` + `COLOUR_RGB`.
     pub fn write_string_colored(brep: &BRep, colors: &StepColor) -> String {
-        let mut writer = Part21Writer::new();
+        Self::write_string_colored_with_protocol(brep, colors, StepProtocol::Ap214)
+    }
+
+    /// Export with per-face / per-solid color information and the specified
+    /// STEP application protocol.
+    pub fn write_string_colored_with_protocol(
+        brep: &BRep,
+        colors: &StepColor,
+        protocol: StepProtocol,
+    ) -> String {
+        let mut writer = Part21Writer::new_with_protocol(protocol);
         writer.write_brep(
             brep,
             ExportSelection {
@@ -44,19 +81,33 @@ struct Part21Writer {
     records: Vec<String>,
     vertex_point_ids: HashMap<usize, u64>,
     edge_curve_ids: HashMap<usize, u64>,
+    protocol: StepProtocol,
 }
 
 impl Part21Writer {
     fn new() -> Self {
+        Self::new_with_protocol(StepProtocol::Ap214)
+    }
+
+    fn new_with_protocol(protocol: StepProtocol) -> Self {
         Self {
             next_id: 1,
             records: Vec::new(),
             vertex_point_ids: HashMap::new(),
             edge_curve_ids: HashMap::new(),
+            protocol,
         }
     }
 
     fn finish(self) -> String {
+        let schema_token = match self.protocol {
+            StepProtocol::Ap214 => {
+                "AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }"
+            }
+            StepProtocol::Ap242 => {
+                "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 242 1 1 4 }"
+            }
+        };
         let mut out = String::new();
         out.push_str("ISO-10303-21;\n");
         out.push_str("HEADER;\n");
@@ -64,7 +115,7 @@ impl Part21Writer {
         out.push_str(
             "FILE_NAME('rcad_export.step','2026-04-02T00:00:00',(''),(''),'RCAD','RCAD','');\n",
         );
-        out.push_str("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n");
+        out.push_str(&format!("FILE_SCHEMA(('{}'));\n", schema_token));
         out.push_str("ENDSEC;\n");
         out.push_str("DATA;\n");
         for record in self.records {
@@ -167,11 +218,24 @@ impl Part21Writer {
             }
         }
 
-        let app_context = self.application_context("automotive_design");
+        // Application context strings depend on the selected protocol.
+        let (ctx_name, proto_name, proto_year) = match self.protocol {
+            StepProtocol::Ap214 => (
+                "automotive_design",
+                "automotive_design",
+                2000_i32,
+            ),
+            StepProtocol::Ap242 => (
+                "managed model based 3d engineering",
+                "ap242_managed_model_based_3d_engineering_mim_lf",
+                2014_i32,
+            ),
+        };
+        let app_context = self.application_context(ctx_name);
         let _protocol = self.application_protocol_definition(
             "international standard",
-            "automotive_design",
-            2000,
+            proto_name,
+            proto_year,
             app_context,
         );
         let product_context = self.product_context("part definition", app_context, "mechanical");

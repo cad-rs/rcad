@@ -2631,6 +2631,8 @@ dependencies = [
  "rayon",
  "rcad-kernel",
  "rcad-modeling",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2705,6 +2707,8 @@ dependencies = [
  "rcad-algorithms",
  "rcad-kernel",
  "rcad-modeling",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

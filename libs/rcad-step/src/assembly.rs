@@ -20,12 +20,13 @@
 //! entities. This maximises compatibility with STEP readers that do not support
 //! AP214 transformation entities.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{DAffine3, DVec3};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
 use rcad_kernel::BRep;
 use rcad_kernel::appearance::StepColor;
+use serde::Serialize;
 
 use crate::StepError;
 use crate::writer::{ExportSelection, StepWriter};
@@ -778,6 +779,47 @@ pub fn read_assembly_with_healing(
     }
 
     Ok((components, reports))
+}
+
+/// Stable JSON diagnostics payload for assembly import healing.
+#[derive(Debug, Clone, Serialize)]
+pub struct AssemblyImportHealingJsonV1 {
+    pub schema: &'static str,
+    pub component_count: usize,
+    pub clean_components: usize,
+    pub failed_components: usize,
+    pub issue_histogram: Vec<(String, usize)>,
+}
+
+/// Parse STEP assembly, run healing, and export a stable JSON diagnostics report.
+pub fn read_assembly_with_healing_report_json(
+    step: &str,
+    options: HealingOptions,
+) -> Result<(Vec<AssemblyComponent>, Vec<HealingReport>, String), StepError> {
+    let (components, reports) = read_assembly_with_healing(step, options)?;
+
+    let clean_components = reports.iter().filter(|r| r.final_result.is_valid()).count();
+    let failed_components = reports.len().saturating_sub(clean_components);
+
+    let mut issue_map: BTreeMap<String, usize> = BTreeMap::new();
+    for report in &reports {
+        for issue in &report.final_result.issues {
+            *issue_map.entry(issue.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    let payload = AssemblyImportHealingJsonV1 {
+        schema: "step.assembly.import.healing.v1",
+        component_count: components.len(),
+        clean_components,
+        failed_components,
+        issue_histogram: issue_map.into_iter().collect(),
+    };
+
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| StepError::InvalidFormat(format!("healing report JSON serialize failed: {e}")))?;
+
+    Ok((components, reports, json))
 }
 
 /// Healing report for a tree node with geometry.

@@ -125,6 +125,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
                             .iter()
                             .map(|tri| [tri[0] + v_off, tri[1] + v_off, tri[2] + v_off])
                             .collect(),
+                        mesh_dirty: face.mesh_dirty,
                     });
                 }
             }

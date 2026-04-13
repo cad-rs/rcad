@@ -1,5 +1,5 @@
 pub mod assembly;
-pub use assembly::{Assembly, AssemblyNode, NodeContent, assembly_from_parts};
+pub use assembly::{Assembly, AssemblyMetadata, AssemblyNode, NodeContent, assembly_from_parts};
 
 use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire, WireEdge};

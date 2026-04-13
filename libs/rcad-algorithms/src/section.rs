@@ -283,6 +283,7 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
                 inner_wires: vec![],
                 normal: plane.normal,
                 triangles: vec![],
+                mesh_dirty: true,
             })
             .collect();
         result.solids.push(Solid {

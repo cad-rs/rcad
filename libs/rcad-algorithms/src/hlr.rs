@@ -246,8 +246,10 @@ struct SilhouetteCurve {
 /// - **Cylinder**: two lines parallel to the axis at the silhouette angles.
 /// - **Sphere**: a 64-point polyline approximating the great circle perpendicular
 ///   to the view direction.
-fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
+fn compute_silhouettes(brep: &BRep, view_dir: DVec3, samples: usize) -> Vec<SilhouetteCurve> {
     let mut curves: Vec<SilhouetteCurve> = Vec::new();
+    let line_samples = samples.max(16);
+    let dense_curve_samples = (samples * 8).max(96);
 
     if brep.solids.is_empty() {
         return curves;
@@ -305,10 +307,15 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
 
                     for &sign in &[1.0_f64, -1.0] {
                         let offset = sil_dir * sign * cyl.radius;
-                        let p0 = cyl.origin + v0_eff * cyl.axis + offset;
-                        let p1 = cyl.origin + v1_eff * cyl.axis + offset;
+                        let world_pts: Vec<DVec3> = (0..line_samples)
+                            .map(|i| {
+                                let t = i as f64 / (line_samples - 1) as f64;
+                                let v = v0_eff + (v1_eff - v0_eff) * t;
+                                cyl.origin + v * cyl.axis + offset
+                            })
+                            .collect();
                         curves.push(SilhouetteCurve {
-                            world_pts: vec![p0, p1],
+                            world_pts,
                             curve_hint: None,
                             dense: false,
                         });
@@ -319,11 +326,10 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
                     // Silhouette is the great circle perpendicular to view_dir.
                     let x_ax = any_perpendicular(view_dir);
                     let y_ax = view_dir.cross(x_ax).normalize_or_zero();
-                    const N: usize = 64;
-                    // Use 0..N (open) so first ≠ last; the SVG arc hint closes the circle.
-                    let pts: Vec<DVec3> = (0..N)
+                    // Use 0..N (open) so first != last; the SVG arc hint closes the circle.
+                    let pts: Vec<DVec3> = (0..dense_curve_samples)
                         .map(|i| {
-                            let t = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
+                            let t = 2.0 * std::f64::consts::PI * i as f64 / dense_curve_samples as f64;
                             sph.center + sph.radius * (t.cos() * x_ax + t.sin() * y_ax)
                         })
                         .collect();
@@ -370,11 +376,21 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
 
                     let tan_a = con.half_angle_rad.tan();
                     for &sign in &[1.0_f64, -1.0] {
-                        let p0 = con.apex + v0_eff * con.axis + v0_eff * tan_a * sil_dir * sign;
-                        let p1 = con.apex + v1_eff * con.axis + v1_eff * tan_a * sil_dir * sign;
-                        if (p1 - p0).length_squared() > 1e-12 {
+                        let world_pts: Vec<DVec3> = (0..line_samples)
+                            .map(|i| {
+                                let t = i as f64 / (line_samples - 1) as f64;
+                                let v = v0_eff + (v1_eff - v0_eff) * t;
+                                con.apex + v * con.axis + v * tan_a * sil_dir * sign
+                            })
+                            .collect();
+                        if world_pts
+                            .first()
+                            .zip(world_pts.last())
+                            .map(|(a, b)| (*b - *a).length_squared() > 1e-12)
+                            .unwrap_or(false)
+                        {
                             curves.push(SilhouetteCurve {
-                                world_pts: vec![p0, p1],
+                                world_pts,
                                 curve_hint: None,
                                 dense: false,
                             });
@@ -391,11 +407,10 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3) -> Vec<SilhouetteCurve> {
                     let x_ax = any_perpendicular(tor.axis);
                     let y_ax = tor.axis.cross(x_ax).normalize_or_zero();
                     let axis_dot = tor.axis.dot(view_dir);
-                    const N: usize = 64;
                     for &offset in &[0.0_f64, std::f64::consts::PI] {
-                        let pts: Vec<DVec3> = (0..N)
+                        let pts: Vec<DVec3> = (0..dense_curve_samples)
                             .map(|i| {
-                                let u = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
+                                let u = 2.0 * std::f64::consts::PI * i as f64 / dense_curve_samples as f64;
                                 let radial = u.cos() * x_ax + u.sin() * y_ax;
                                 let radial_dot = radial.dot(view_dir);
                                 let v = (-radial_dot).atan2(axis_dot) + offset;
@@ -612,7 +627,7 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     // ── Analytic silhouette curves ────────────────────────────────────────────
 
     let view_dir = (camera.target - camera.eye).normalize_or_zero();
-    for sil in compute_silhouettes(brep, view_dir) {
+    for sil in compute_silhouettes(brep, view_dir, samples) {
         process_world_pts(&sil.world_pts, sil.curve_hint, sil.dense, camera, &view, &triangles, &mut result);
     }
 
@@ -799,7 +814,7 @@ pub fn hlr_assembly(
         }
 
         // ── Analytic silhouette curves ────────────────────────────────────
-        for sil in compute_silhouettes(wb, view_dir) {
+        for sil in compute_silhouettes(wb, view_dir, samples) {
             process_world_pts(&sil.world_pts, sil.curve_hint, sil.dense, camera, &view, &all_triangles, &mut comp_result);
         }
 

@@ -120,17 +120,32 @@ pub struct DS {
     pub faces: Vec<DSFace>,
     pub interferences: Vec<Interference>,
     pub intersection_curves: Vec<IntersectionCurve>,
+    /// Fuzzy tolerance used during interference detection.
+    ///
+    /// Vertices/edges within this distance are considered coincident.
+    /// When set to a value larger than `TOLERANCE_ABS`, approximate
+    /// near-miss intersections (analogous to OCCT `BOPAlgo_Options::SetFuzzyValue`).
+    pub fuzzy_tol: f64,
 }
 
 impl DS {
-    /// Build DS from two BReps. Both must have populated GeomStore.
+    /// Build DS from two BReps using the default absolute tolerance.
     pub fn new(a: &BRep, b: &BRep) -> Self {
+        Self::new_with_fuzzy(a, b, crate::tolerance::TOLERANCE_ABS)
+    }
+
+    /// Build DS with a caller-supplied fuzzy tolerance.
+    ///
+    /// `fuzzy_tol` must be ≥ `TOLERANCE_ABS`; smaller values are clamped up.
+    pub fn new_with_fuzzy(a: &BRep, b: &BRep, fuzzy_tol: f64) -> Self {
+        let tol = fuzzy_tol.max(crate::tolerance::TOLERANCE_ABS);
         let mut ds = DS {
             vertices: Vec::new(),
             edges: Vec::new(),
             faces: Vec::new(),
             interferences: Vec::new(),
             intersection_curves: Vec::new(),
+            fuzzy_tol: tol,
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);

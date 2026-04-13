@@ -16,13 +16,14 @@ pub mod obj_writer;
 pub mod writer;
 
 pub use assembly::{
-    AssemblyComponent, AssemblyNode, AssemblyNodeHealingReport, read_assembly,
-    read_assembly_tree, read_assembly_tree_with_healing, read_assembly_with_healing,
-    write_assembly, write_assembly_tree,
+    AssemblyComponent, AssemblyImportHealingJsonV1, AssemblyNode,
+    AssemblyNodeHealingReport, read_assembly, read_assembly_tree,
+    read_assembly_tree_with_healing, read_assembly_with_healing,
+    read_assembly_with_healing_report_json, write_assembly, write_assembly_tree,
 };
 pub use iges::{IgesError, IgesReader, IgesWriter};
 pub use obj_writer::{ObjError, ObjReader, ObjWriter, write_obj};
-pub use writer::{ExportSelection, StepWriter};
+pub use writer::{ExportSelection, StepProtocol, StepWriter};
 
 /// Errors that can occur when reading or parsing a STEP file.
 #[derive(Debug, Clone)]
@@ -1190,6 +1191,7 @@ fn build_face(
             inner_wires: Vec::new(),
             normal,
             triangles,
+            mesh_dirty: false,
         },
         bound_ids.surface,
     ))

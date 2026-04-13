@@ -67,6 +67,20 @@ pub enum CheckIssue {
         wire_idx: usize,
         vertex: usize,
     },
+    /// A wire's outer boundary edges intersect each other geometrically
+    /// (non-adjacent edges in the wire cross in 3D space).
+    ///
+    /// This catches cases where a face wire forms a figure-eight or butterfly
+    /// polygon rather than a simple closed loop.
+    GeometricSelfIntersection {
+        solid: usize,
+        shell: usize,
+        face: usize,
+        /// Index of one of the crossing edges within the outer wire.
+        edge_a: usize,
+        /// Index of the other crossing edge within the outer wire.
+        edge_b: usize,
+    },
 }
 
 impl std::fmt::Display for CheckIssue {
@@ -111,6 +125,16 @@ impl std::fmt::Display for CheckIssue {
             } => write!(
                 f,
                 "SelfIntersectingWire: solid={solid} shell={shell} face={face} wire={wire_idx} vertex={vertex}"
+            ),
+            CheckIssue::GeometricSelfIntersection {
+                solid,
+                shell,
+                face,
+                edge_a,
+                edge_b,
+            } => write!(
+                f,
+                "GeometricSelfIntersection: solid={solid} shell={shell} face={face} edges {edge_a} and {edge_b} cross"
             ),
         }
     }
@@ -267,6 +291,16 @@ pub fn check(brep: &BRep) -> CheckResult {
                     &mut issues,
                 );
 
+                // C8: geometric self-intersection — check if non-adjacent edges of
+                // the outer wire cross each other in 3D space (projects to 2D via
+                // the face plane for planar faces).
+                check_geometric_self_intersection(
+                    &wire_verts,
+                    &brep.vertices,
+                    si, shi, fi,
+                    &mut issues,
+                );
+
                 // Check inner wires too
                 for (wi, inner_wire) in face.inner_wires.iter().enumerate() {
                     if inner_wire.edges.len() < 2 {
@@ -373,6 +407,115 @@ fn check_wire_self_intersection(
     }
 }
 
+/// Check whether non-adjacent edges of a wire intersect geometrically.
+///
+/// Projects the wire edge endpoints onto the face's 2D plane (using any two
+/// non-collinear edges to form a local basis) and runs 2D segment intersection
+/// tests on all non-adjacent edge pairs. Adjacent edges share an endpoint and
+/// therefore trivially "intersect" at that endpoint — they are excluded.
+///
+/// This check only tests the start/end vertices; curved edges (circles, BSplines)
+/// are approximated by their chord.
+fn check_geometric_self_intersection(
+    wire_verts: &[(usize, usize)],
+    vertices: &[rcad_kernel::topology::Vertex],
+    solid: usize,
+    shell: usize,
+    face: usize,
+    issues: &mut Vec<CheckIssue>,
+) {
+    let n = wire_verts.len();
+    if n < 4 {
+        return; // Need at least 4 edges for non-adjacent crossing to exist
+    }
+
+    // Build the 3D segment list: each edge is (p0, p1).
+    let segs: Vec<(DVec3, DVec3)> = wire_verts
+        .iter()
+        .map(|&(sv, ev)| {
+            let p0 = vertices.get(sv).map(|v| v.point).unwrap_or(DVec3::ZERO);
+            let p1 = vertices.get(ev).map(|v| v.point).unwrap_or(DVec3::ZERO);
+            (p0, p1)
+        })
+        .collect();
+
+    // Project to 2D using a local basis from the first non-degenerate edge.
+    let (origin, axis_u, axis_v) = {
+        let mut found = None;
+        for i in 0..n {
+            let d = segs[i].1 - segs[i].0;
+            if d.length() > 1e-12 {
+                let u = d.normalize();
+                // Pick an arbitrary perpendicular
+                let tmp = if u.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                let v = u.cross(tmp).normalize();
+                found = Some((segs[i].0, u, v));
+                break;
+            }
+        }
+        match found {
+            Some(b) => b,
+            None => return, // All edges are degenerate; skip
+        }
+    };
+
+    let project = |p: DVec3| -> [f64; 2] {
+        let d = p - origin;
+        [d.dot(axis_u), d.dot(axis_v)]
+    };
+
+    let seg2d: Vec<([f64; 2], [f64; 2])> =
+        segs.iter().map(|&(p0, p1)| (project(p0), project(p1))).collect();
+
+    // Check all non-adjacent pairs: i and j are non-adjacent when |i - j| > 1
+    // (mod n, so also check the wrap-around adjacency).
+    for i in 0..n {
+        for j in (i + 2)..n {
+            // Skip adjacent pair at the wrap-around (edge n-1 and edge 0 share a vertex)
+            if i == 0 && j == n - 1 {
+                continue;
+            }
+            if segments_2d_properly_intersect(seg2d[i].0, seg2d[i].1, seg2d[j].0, seg2d[j].1) {
+                issues.push(CheckIssue::GeometricSelfIntersection {
+                    solid,
+                    shell,
+                    face,
+                    edge_a: i,
+                    edge_b: j,
+                });
+                return; // Report only the first crossing per face
+            }
+        }
+    }
+}
+
+/// Returns `true` if the open segment p1→p2 properly intersects segment p3→p4.
+/// Returns `false` if they only share an endpoint (T-intersection) or don't cross.
+fn segments_2d_properly_intersect(
+    p1: [f64; 2],
+    p2: [f64; 2],
+    p3: [f64; 2],
+    p4: [f64; 2],
+) -> bool {
+    let d1 = [p2[0] - p1[0], p2[1] - p1[1]];
+    let d2 = [p4[0] - p3[0], p4[1] - p3[1]];
+
+    let cross = d1[0] * d2[1] - d1[1] * d2[0];
+
+    if cross.abs() < 1e-12 {
+        return false; // Parallel or collinear
+    }
+
+    let dx = p3[0] - p1[0];
+    let dy = p3[1] - p1[1];
+    let t = (dx * d2[1] - dy * d2[0]) / cross;
+    let s = (dx * d1[1] - dy * d1[0]) / cross;
+
+    // Proper interior intersection: t and s must be strictly in (0, 1)
+    let eps = 1e-9;
+    t > eps && t < 1.0 - eps && s > eps && s < 1.0 - eps
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -431,6 +574,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -465,6 +609,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -499,6 +644,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::ZERO, // zero normal — invalid
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -536,6 +682,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -600,6 +747,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         // Face 2: uses e4
         let face2 = Face {
@@ -609,6 +757,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         // Face 3: uses e4 again — this makes e4 shared by 3 faces
         let face3 = Face {
@@ -618,6 +767,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
 
         brep.solids.push(Solid {
@@ -670,6 +820,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -719,6 +870,7 @@ mod tests {
             }],
             normal: DVec3::Z,
             triangles: vec![],
+            mesh_dirty: true,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],

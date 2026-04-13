@@ -49,6 +49,7 @@ pub struct HealingIssueStats {
     pub invalid_vertex_index: usize,
     pub non_manifold_edge: usize,
     pub self_intersecting_wire: usize,
+    pub geometric_self_intersection: usize,
 }
 
 impl HealingIssueStats {
@@ -60,6 +61,7 @@ impl HealingIssueStats {
             + self.invalid_vertex_index
             + self.non_manifold_edge
             + self.self_intersecting_wire
+            + self.geometric_self_intersection
     }
 
     pub fn from_check_result(result: &CheckResult) -> Self {
@@ -73,6 +75,7 @@ impl HealingIssueStats {
                 CheckIssue::InvalidVertexIndex { .. } => s.invalid_vertex_index += 1,
                 CheckIssue::NonManifoldEdge { .. } => s.non_manifold_edge += 1,
                 CheckIssue::SelfIntersectingWire { .. } => s.self_intersecting_wire += 1,
+                CheckIssue::GeometricSelfIntersection { .. } => s.geometric_self_intersection += 1,
             }
         }
         s

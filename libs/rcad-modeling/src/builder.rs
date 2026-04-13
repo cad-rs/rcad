@@ -13,8 +13,8 @@ mod surface;
 
 pub use brep_builder::*;
 pub use curve::*;
-pub use fillet::{chamfer_edge, corner_blend, fillet_edge, fillet_edges};
-pub use fillet::{chamfer_edge_with_history, fillet_edge_with_history, fillet_edges_with_history, corner_blend_with_history};
+pub use fillet::{chamfer_edge, corner_blend, fillet_edge, fillet_edges, fillet_edge_variable_radius};
+pub use fillet::{chamfer_edge_with_history, fillet_edge_with_history, fillet_edge_variable_radius_with_history, fillet_edges_with_history, corner_blend_with_history};
 pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory};
 pub use ops::*;
 pub use solid::*;
@@ -296,6 +296,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                 normal: mirror_vec(face.normal),
                 // Flip triangle winding order to maintain outward normals after mirror
                 triangles: face.triangles.iter().map(|[i, j, k]| [*i, *k, *j]).collect(),
+                mesh_dirty: face.mesh_dirty,
             });
         }
         out.solids.push(rcad_kernel::topology::Solid {

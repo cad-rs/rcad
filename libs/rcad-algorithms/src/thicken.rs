@@ -68,6 +68,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
     let normal = surface.normal_at(0.0, 0.0);
     brep.solids[0].shells[0].faces.push(Face {
         outer_wire: outer, inner_wires: inner, normal, triangles: Vec::new(),
+        mesh_dirty: true,
     });
     while brep.geom.face_surface.len() <= idx { brep.geom.face_surface.push(None); }
     let si = brep.geom.surfaces.len();

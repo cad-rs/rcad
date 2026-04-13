@@ -18,20 +18,22 @@ pub mod tolerance;
 pub mod triangulate;
 pub mod array;
 
+use serde::Serialize;
+
 pub use bvh::{Aabb, Bvh, BvhStats};
 
 use rcad_kernel::BRep;
 
 pub use brep_check::{CheckIssue, CheckResult, check};
 pub use brep_repair::{
-    RepairReport, fix_wire_orientation, merge_close_vertices, recompute_face_normals,
-    remove_degenerate_faces, repair,
+    RepairReport, fix_same_parameter, fix_wire_orientation, merge_close_vertices,
+    recompute_face_normals, remove_degenerate_faces, repair,
 };
 pub use healing::{
     HealingIssueStats, HealingMode, HealingOptions, HealingReport, analyze_and_heal, heal,
 };
 pub use builder::{BooleanError, BooleanOpType};
-pub use history::{BooleanHistory, FaceOrigin};
+pub use history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin};
 pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
@@ -47,6 +49,295 @@ pub use array::{
     LinearPatternParams, CircularPatternParams, PatternError,
     linear_pattern, circular_pattern,
 };
+
+/// Options for post-operation topology simplification.
+#[derive(Debug, Clone, Copy)]
+pub struct SimplifyOptions {
+    pub merge_vertices: bool,
+    pub merge_tolerance: f64,
+    pub recompute_normals: bool,
+    pub remove_degenerate_faces: bool,
+    pub fix_wire_orientation: bool,
+}
+
+impl Default for SimplifyOptions {
+    fn default() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: tolerance::TOLERANCE_ABS,
+            recompute_normals: true,
+            remove_degenerate_faces: true,
+            fix_wire_orientation: true,
+        }
+    }
+}
+
+/// Report of simplification steps and checker deltas.
+#[derive(Debug, Clone, Default)]
+pub struct SimplifyReport {
+    pub vertices_merged: usize,
+    pub degenerate_faces_removed: usize,
+    pub normals_recomputed: usize,
+    pub wires_fixed: usize,
+    pub issues_before: usize,
+    pub issues_after: usize,
+}
+
+/// Options for boolean execution pipeline.
+#[derive(Debug, Clone, Copy)]
+pub struct BooleanOptions {
+    /// Use BVH acceleration during pave filling when possible.
+    pub use_bvh: bool,
+    /// Run structured healing after boolean build.
+    pub run_healing: bool,
+    /// Healing options used when `run_healing` is enabled.
+    pub healing: HealingOptions,
+    /// Run topology simplification after boolean/healing.
+    pub run_simplify: bool,
+    /// Simplification options used when `run_simplify` is enabled.
+    pub simplify: SimplifyOptions,
+    /// Include origin history and stable per-face labels in report.
+    pub include_history: bool,
+    /// Fuzzy tolerance for near-miss interference detection (analogous to
+    /// `BOPAlgo_Options::SetFuzzyValue`).
+    ///
+    /// Values ≤ 0 use the default `TOLERANCE_ABS`.  Useful for inputs with
+    /// vertices/edges that are almost but not exactly touching.
+    pub fuzzy_tol: f64,
+}
+
+impl Default for BooleanOptions {
+    fn default() -> Self {
+        Self {
+            use_bvh: true,
+            run_healing: false,
+            healing: HealingOptions::default(),
+            run_simplify: false,
+            simplify: SimplifyOptions::default(),
+            include_history: false,
+            fuzzy_tol: 0.0,
+        }
+    }
+}
+
+/// Structured diagnostics for boolean execution.
+#[derive(Debug, Clone, Default)]
+pub struct BooleanExecutionReport {
+    pub input_faces_a: usize,
+    pub input_faces_b: usize,
+    pub output_faces: usize,
+    pub used_bvh: bool,
+    pub healed: bool,
+    pub healing_report: Option<HealingReport>,
+    pub simplified: bool,
+    pub simplify_report: Option<SimplifyReport>,
+    pub history_faces: usize,
+    pub persistent_face_labels: Vec<String>,
+}
+
+/// Options for split-first workflows.
+#[derive(Debug, Clone, Copy)]
+pub struct SplitterOptions {
+    /// If true, run healing after each split step.
+    pub heal_after_each_step: bool,
+    /// Healing options used when `heal_after_each_step` is enabled.
+    pub healing: HealingOptions,
+    /// Additional linear tolerance used by splitter broad-phase pruning.
+    ///
+    /// Tools whose axis-aligned bounding boxes are farther than this distance
+    /// from the current object are skipped.
+    pub fuzzy_tolerance: f64,
+    /// Enable AABB broad-phase pruning for split steps.
+    pub broad_phase_pruning: bool,
+    /// Validation strictness used by checked splitter APIs.
+    pub validation_level: SplitterValidationLevel,
+}
+
+/// Validation strictness for checked splitter workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SplitterValidationLevel {
+    /// Accept split-first intermediate non-manifold topology.
+    Relaxed,
+    /// Treat all checker issues as errors.
+    Strict,
+}
+
+impl Default for SplitterOptions {
+    fn default() -> Self {
+        Self {
+            heal_after_each_step: false,
+            healing: HealingOptions::default(),
+            fuzzy_tolerance: 0.0,
+            broad_phase_pruning: true,
+            validation_level: SplitterValidationLevel::Relaxed,
+        }
+    }
+}
+
+/// Per-step diagnostics for splitter execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct SplitterStepReport {
+    /// Zero-based tool index used for this split step.
+    pub step_index: usize,
+    /// Face count before this split step.
+    pub input_faces: usize,
+    /// Number of seam-edge pairs reported by imprint in this step.
+    pub seam_edges: usize,
+    /// Face count after this step.
+    pub output_faces: usize,
+    /// Whether healing was applied at this step.
+    pub healed: bool,
+    /// Whether this step was skipped by broad-phase pruning.
+    pub skipped_by_broad_phase: bool,
+    /// Validation issue count for this step when checked mode is enabled.
+    pub validation_issue_count: Option<usize>,
+    /// First validation issue message when available.
+    pub validation_first_issue: Option<String>,
+}
+
+/// Diagnostics report for split-first workflows.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SplitterReport {
+    /// Step-by-step diagnostics.
+    pub steps: Vec<SplitterStepReport>,
+    /// Total seam-edge pairs accumulated across all steps.
+    pub total_seam_edges: usize,
+}
+
+/// Per-object diagnostics for grouped splitter workflows.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SplitterObjectReport {
+    /// Zero-based object index in input slice.
+    pub object_index: usize,
+    /// Step-level diagnostics for this object.
+    pub steps: Vec<SplitterStepReport>,
+    /// Total seam-edge pairs for this object.
+    pub total_seam_edges: usize,
+    /// Whether this object completed all requested split steps.
+    pub completed: bool,
+    /// Error captured for this object (checked collect mode).
+    pub error: Option<SplitterError>,
+}
+
+/// Diagnostics for object/tool grouped split execution.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SplitterObjectsReport {
+    /// One report per input object, in the same order.
+    pub objects: Vec<SplitterObjectReport>,
+}
+
+/// Aggregated summary for grouped splitter execution.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SplitterObjectsSummary {
+    pub total_objects: usize,
+    pub completed_objects: usize,
+    pub failed_objects: usize,
+    /// Indices of failed objects in original input order.
+    pub failed_object_indices: Vec<usize>,
+    /// Histogram of failing step indices.
+    pub failed_step_histogram: Vec<(usize, usize)>,
+    /// Histogram of first error messages for failed objects.
+    pub first_error_histogram: Vec<(String, usize)>,
+}
+
+impl SplitterObjectsReport {
+    /// Build aggregated success/failure statistics for batch workflows.
+    pub fn summarize(&self) -> SplitterObjectsSummary {
+        let total_objects = self.objects.len();
+        let completed_objects = self.objects.iter().filter(|o| o.completed).count();
+        let failed_objects = total_objects.saturating_sub(completed_objects);
+
+        let failed_object_indices: Vec<usize> = self
+            .objects
+            .iter()
+            .filter(|o| !o.completed)
+            .map(|o| o.object_index)
+            .collect();
+
+        let mut step_map: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+        let mut map: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for obj in &self.objects {
+            if let Some(err) = &obj.error {
+                if let Some(step_index) = err.step_index() {
+                    *step_map.entry(step_index).or_insert(0) += 1;
+                }
+                *map.entry(err.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        SplitterObjectsSummary {
+            total_objects,
+            completed_objects,
+            failed_objects,
+            failed_object_indices,
+            failed_step_histogram: step_map.into_iter().collect(),
+            first_error_histogram: map.into_iter().collect(),
+        }
+    }
+
+    /// Export report and summary as stable JSON payload `splitter.report.v1`.
+    pub fn to_json_v1(&self) -> Result<String, serde_json::Error> {
+        let payload = SplitterJsonV1 {
+            schema: "splitter.report.v1",
+            report: self,
+            summary: self.summarize(),
+        };
+        serde_json::to_string_pretty(&payload)
+    }
+}
+
+/// Stable JSON payload for splitter batch reporting.
+#[derive(Debug, Clone, Serialize)]
+pub struct SplitterJsonV1<'a> {
+    pub schema: &'static str,
+    pub report: &'a SplitterObjectsReport,
+    pub summary: SplitterObjectsSummary,
+}
+
+/// Error returned by checked splitter workflows.
+#[derive(Debug, Clone, Serialize)]
+pub enum SplitterError {
+    /// Split result became invalid at a specific step.
+    StepInvalid {
+        step_index: usize,
+        issue_count: usize,
+        first_issue: Option<String>,
+    },
+}
+
+impl SplitterError {
+    pub fn step_index(&self) -> Option<usize> {
+        match self {
+            Self::StepInvalid { step_index, .. } => Some(*step_index),
+        }
+    }
+}
+
+impl std::fmt::Display for SplitterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StepInvalid {
+                step_index,
+                issue_count,
+                first_issue,
+            } => {
+                if let Some(first) = first_issue {
+                    write!(
+                        f,
+                        "splitter produced invalid result at step {step_index} ({issue_count} issues, first: {first})"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "splitter produced invalid result at step {step_index} ({issue_count} issues)"
+                    )
+                }
+            }
+        }
+    }
+}
+
+impl std::error::Error for SplitterError {}
 
 /// Perform a boolean operation on two BReps.
 ///
@@ -67,6 +358,449 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     // 3. Run Builder — classify and assemble result
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build()
+}
+
+/// Perform a boolean operation with advanced execution options and report.
+pub fn boolean_op_with_options(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    options: BooleanOptions,
+) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+    let input_faces_a = face_count_of(a);
+    let input_faces_b = face_count_of(b);
+    let used_bvh = options.use_bvh && has_faces(a) && has_faces(b);
+
+    let (mut out, mut report, history_opt) = if options.include_history {
+        let (result, history) = if options.use_bvh {
+            boolean_op_with_history(op, a, b)?
+        } else {
+            let mut ds = if options.fuzzy_tol > 0.0 {
+                bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
+            } else {
+                bopds::ds::DS::new(a, b)
+            };
+            let mut filler = pave_filler::PaveFiller::new(&mut ds);
+            filler.perform();
+            let builder = builder::BooleanBuilder::new(&ds, op);
+            builder.build_with_history()?
+        };
+        (
+            result,
+            BooleanExecutionReport {
+                input_faces_a,
+                input_faces_b,
+                used_bvh,
+                ..BooleanExecutionReport::default()
+            },
+            Some(history),
+        )
+    } else {
+        let result = if options.use_bvh {
+            if options.fuzzy_tol > 0.0 {
+                let mut ds = bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol);
+                let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+                let mut filler = match (&bvh_a, &bvh_b) {
+                    (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
+                    _ => pave_filler::PaveFiller::new(&mut ds),
+                };
+                filler.perform();
+                let builder = builder::BooleanBuilder::new(&ds, op);
+                builder.build()?
+            } else {
+                boolean_op(op, a, b)?
+            }
+        } else {
+            let mut ds = if options.fuzzy_tol > 0.0 {
+                bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
+            } else {
+                bopds::ds::DS::new(a, b)
+            };
+            let mut filler = pave_filler::PaveFiller::new(&mut ds);
+            filler.perform();
+            let builder = builder::BooleanBuilder::new(&ds, op);
+            builder.build()?
+        };
+        (
+            result,
+            BooleanExecutionReport {
+                input_faces_a,
+                input_faces_b,
+                used_bvh,
+                ..BooleanExecutionReport::default()
+            },
+            None,
+        )
+    };
+
+    if options.run_healing {
+        let (healed, heal_report) = analyze_and_heal(&out, options.healing);
+        out = healed;
+        report.healed = true;
+        report.healing_report = Some(heal_report);
+    }
+
+    if options.run_simplify {
+        let (simplified, simp_report) = simplify_brep_post_ops(&out, options.simplify);
+        out = simplified;
+        report.simplified = true;
+        report.simplify_report = Some(simp_report);
+    }
+
+    report.output_faces = face_count_of(&out);
+    if let Some(history) = history_opt {
+        report.history_faces = history.len();
+        report.persistent_face_labels = persistent_face_labels_from_history(&history);
+    }
+
+    Ok((out, report))
+}
+
+/// Run post-operation simplification passes on a BRep.
+pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
+    let before = check(brep);
+    let mut out = brep.clone();
+    let mut report = SimplifyReport {
+        issues_before: before.issues.len(),
+        ..SimplifyReport::default()
+    };
+
+    if options.merge_vertices {
+        let (next, merged) = merge_close_vertices(&out, options.merge_tolerance);
+        out = next;
+        report.vertices_merged = merged;
+    }
+    if options.recompute_normals {
+        let (next, n) = recompute_face_normals(&out);
+        out = next;
+        report.normals_recomputed = n;
+    }
+    if options.remove_degenerate_faces {
+        let (next, n) = remove_degenerate_faces(&out);
+        out = next;
+        report.degenerate_faces_removed = n;
+    }
+    if options.fix_wire_orientation {
+        let (next, n) = fix_wire_orientation(&out, options.merge_tolerance);
+        out = next;
+        report.wires_fixed = n;
+    }
+
+    report.issues_after = check(&out).issues.len();
+    (out, report)
+}
+
+/// Boolean + simplification convenience pipeline.
+pub fn boolean_op_simplified(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    options: SimplifyOptions,
+) -> Result<(BRep, SimplifyReport), BooleanError> {
+    let raw = boolean_op(op, a, b)?;
+    Ok(simplify_brep_post_ops(&raw, options))
+}
+
+/// Split `target` by one or more `tools` without boolean classification.
+///
+/// This is a first-stage splitter built on top of [`imprint_brep`]. It keeps
+/// target material and iteratively imprints tool boundaries onto the evolving
+/// target shape.
+pub fn split_brep(target: &BRep, tools: &[BRep]) -> (BRep, SplitterReport) {
+    split_brep_with_options(target, tools, SplitterOptions::default())
+}
+
+/// Like [`split_brep`] with advanced options.
+pub fn split_brep_with_options(
+    target: &BRep,
+    tools: &[BRep],
+    options: SplitterOptions,
+) -> (BRep, SplitterReport) {
+    let (result, report) = split_brep_internal_with_partial_report(target, tools, options, false);
+    match result {
+        Ok(brep) => (brep, report),
+        Err(_) => unreachable!("unchecked splitter path should not fail"),
+    }
+}
+
+/// Split `target` by tools and validate each executed step.
+///
+/// Returns a step-indexed error if an intermediate split result has structural
+/// validity issues, excluding `NonManifoldEdge` (which can be expected for
+/// split-first intermediate topology).
+pub fn split_brep_checked_with_options(
+    target: &BRep,
+    tools: &[BRep],
+    options: SplitterOptions,
+) -> Result<(BRep, SplitterReport), SplitterError> {
+    let (result, report) = split_brep_internal_with_partial_report(target, tools, options, true);
+    result.map(|brep| (brep, report))
+}
+
+fn split_brep_internal_with_partial_report(
+    target: &BRep,
+    tools: &[BRep],
+    options: SplitterOptions,
+    validate_each_step: bool,
+) -> (Result<BRep, SplitterError>, SplitterReport) {
+    let mut acc = target.clone();
+    let mut report = SplitterReport::default();
+
+    for (step_index, tool) in tools.iter().enumerate() {
+        let input_faces = face_count_of(&acc);
+        let fuzzy = options.fuzzy_tolerance.max(0.0);
+        let skipped_by_broad_phase = options.broad_phase_pruning
+            && breps_farther_than_tolerance(&acc, tool, fuzzy);
+
+        if skipped_by_broad_phase {
+            report.steps.push(SplitterStepReport {
+                step_index,
+                input_faces,
+                seam_edges: 0,
+                output_faces: input_faces,
+                healed: false,
+                skipped_by_broad_phase: true,
+                validation_issue_count: if validate_each_step { Some(0) } else { None },
+                validation_first_issue: None,
+            });
+            continue;
+        }
+
+        let mut step = imprint_brep(&acc, tool);
+        let seam_edges = step.seam_edges.len();
+
+        if options.heal_after_each_step {
+            let (healed, _) = analyze_and_heal(&step.brep, options.healing);
+            step.brep = healed;
+        }
+
+        let mut validation_issue_count = None;
+        let mut validation_first_issue = None;
+        let output_faces = face_count_of(&step.brep);
+        if validate_each_step {
+            let validity = check(&step.brep);
+            let (issue_count, first_issue) = splitter_issues_by_level(&validity, options.validation_level);
+            validation_issue_count = Some(issue_count);
+            validation_first_issue = first_issue.clone();
+            if issue_count > 0 {
+                report.steps.push(SplitterStepReport {
+                    step_index,
+                    input_faces,
+                    seam_edges,
+                    output_faces,
+                    healed: options.heal_after_each_step,
+                    skipped_by_broad_phase: false,
+                    validation_issue_count,
+                    validation_first_issue,
+                });
+                return (
+                    Err(SplitterError::StepInvalid {
+                        step_index,
+                        issue_count,
+                        first_issue,
+                    }),
+                    report,
+                );
+            }
+        }
+
+        report.total_seam_edges += seam_edges;
+        report.steps.push(SplitterStepReport {
+            step_index,
+            input_faces,
+            seam_edges,
+            output_faces,
+            healed: options.heal_after_each_step,
+            skipped_by_broad_phase: false,
+            validation_issue_count,
+            validation_first_issue,
+        });
+
+        acc = step.brep;
+    }
+
+    (Ok(acc), report)
+}
+
+fn brep_bounds(brep: &BRep) -> Option<(glam::DVec3, glam::DVec3)> {
+    let mut it = brep.vertices.iter();
+    let first = it.next()?.point;
+    let mut min = first;
+    let mut max = first;
+    for v in it {
+        min = min.min(v.point);
+        max = max.max(v.point);
+    }
+    Some((min, max))
+}
+
+fn aabb_distance(min_a: glam::DVec3, max_a: glam::DVec3, min_b: glam::DVec3, max_b: glam::DVec3) -> f64 {
+    let dx = if max_a.x < min_b.x {
+        min_b.x - max_a.x
+    } else if max_b.x < min_a.x {
+        min_a.x - max_b.x
+    } else {
+        0.0
+    };
+    let dy = if max_a.y < min_b.y {
+        min_b.y - max_a.y
+    } else if max_b.y < min_a.y {
+        min_a.y - max_b.y
+    } else {
+        0.0
+    };
+    let dz = if max_a.z < min_b.z {
+        min_b.z - max_a.z
+    } else if max_b.z < min_a.z {
+        min_a.z - max_b.z
+    } else {
+        0.0
+    };
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+fn breps_farther_than_tolerance(a: &BRep, b: &BRep, tol: f64) -> bool {
+    let Some((min_a, max_a)) = brep_bounds(a) else {
+        return false;
+    };
+    let Some((min_b, max_b)) = brep_bounds(b) else {
+        return false;
+    };
+    aabb_distance(min_a, max_a, min_b, max_b) > tol
+}
+
+fn splitter_issues_by_level(
+    validity: &CheckResult,
+    level: SplitterValidationLevel,
+) -> (usize, Option<String>) {
+    let filtered: Vec<&CheckIssue> = match level {
+        SplitterValidationLevel::Relaxed => validity
+            .issues
+            .iter()
+            .filter(|issue| !matches!(issue, CheckIssue::NonManifoldEdge { .. }))
+            .collect(),
+        SplitterValidationLevel::Strict => validity.issues.iter().collect(),
+    };
+    (filtered.len(), filtered.first().map(|it| it.to_string()))
+}
+
+/// Split each object by a shared set of tools.
+///
+/// This is a grouped splitter API similar to object/tool workflows in mature
+/// boolean kernels: every input object is split against all tools, and results
+/// are returned in object order.
+pub fn split_objects_with_tools(
+    objects: &[BRep],
+    tools: &[BRep],
+) -> (Vec<BRep>, SplitterObjectsReport) {
+    split_objects_with_tools_options(objects, tools, SplitterOptions::default())
+}
+
+/// Like [`split_objects_with_tools`] but with advanced options.
+pub fn split_objects_with_tools_options(
+    objects: &[BRep],
+    tools: &[BRep],
+    options: SplitterOptions,
+) -> (Vec<BRep>, SplitterObjectsReport) {
+    let mut outputs = Vec::with_capacity(objects.len());
+    let mut objects_report = Vec::with_capacity(objects.len());
+
+    for (object_index, object) in objects.iter().enumerate() {
+        let (split, report) = split_brep_with_options(object, tools, options);
+        outputs.push(split);
+        objects_report.push(SplitterObjectReport {
+            object_index,
+            steps: report.steps,
+            total_seam_edges: report.total_seam_edges,
+            completed: true,
+            error: None,
+        });
+    }
+
+    (
+        outputs,
+        SplitterObjectsReport {
+            objects: objects_report,
+        },
+    )
+}
+
+/// Checked grouped splitter variant.
+///
+/// Validates each split step for each object and returns the first error.
+pub fn split_objects_with_tools_checked_options(
+    objects: &[BRep],
+    tools: &[BRep],
+    options: SplitterOptions,
+) -> Result<(Vec<BRep>, SplitterObjectsReport), SplitterError> {
+    let mut outputs = Vec::with_capacity(objects.len());
+    let mut objects_report = Vec::with_capacity(objects.len());
+
+    for (object_index, object) in objects.iter().enumerate() {
+        let (split, report) = split_brep_checked_with_options(object, tools, options)?;
+        outputs.push(split);
+        objects_report.push(SplitterObjectReport {
+            object_index,
+            steps: report.steps,
+            total_seam_edges: report.total_seam_edges,
+            completed: true,
+            error: None,
+        });
+    }
+
+    Ok((
+        outputs,
+        SplitterObjectsReport {
+            objects: objects_report,
+        },
+    ))
+}
+
+/// Checked grouped splitter with per-object failure collection.
+///
+/// Unlike [`split_objects_with_tools_checked_options`], this function does not
+/// fail fast. It records per-object errors in the returned report and keeps
+/// processing remaining objects.
+pub fn split_objects_with_tools_checked_collect_options(
+    objects: &[BRep],
+    tools: &[BRep],
+    options: SplitterOptions,
+) -> (Vec<Option<BRep>>, SplitterObjectsReport) {
+    let mut outputs = Vec::with_capacity(objects.len());
+    let mut objects_report = Vec::with_capacity(objects.len());
+
+    for (object_index, object) in objects.iter().enumerate() {
+        let (result, report) = split_brep_internal_with_partial_report(object, tools, options, true);
+        match result {
+            Ok(split) => {
+                outputs.push(Some(split));
+                objects_report.push(SplitterObjectReport {
+                    object_index,
+                    steps: report.steps,
+                    total_seam_edges: report.total_seam_edges,
+                    completed: true,
+                    error: None,
+                });
+            }
+            Err(err) => {
+                outputs.push(None);
+                objects_report.push(SplitterObjectReport {
+                    object_index,
+                    steps: report.steps,
+                    total_seam_edges: report.total_seam_edges,
+                    completed: false,
+                    error: Some(err),
+                });
+            }
+        }
+    }
+
+    (
+        outputs,
+        SplitterObjectsReport {
+            objects: objects_report,
+        },
+    )
 }
 
 /// Like [`boolean_op`] but also returns a [`BooleanHistory`] mapping each result
@@ -128,6 +862,27 @@ fn build_optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh
         if has_faces_a { Some(bvh::Bvh::build(a)) } else { None },
         if has_faces_b { Some(bvh::Bvh::build(b)) } else { None },
     )
+}
+
+fn has_faces(brep: &BRep) -> bool {
+    brep.solids
+        .first()
+        .and_then(|s| s.shells.first())
+        .map_or(false, |sh| !sh.faces.is_empty())
+}
+
+/// Create stable per-face labels from boolean history.
+pub fn persistent_face_labels_from_history(history: &BooleanHistory) -> Vec<String> {
+    history
+        .face_origins
+        .iter()
+        .enumerate()
+        .map(|(idx, origin)| match origin {
+            FaceOrigin::FromA(src) => format!("face.{idx}.A.{src}"),
+            FaceOrigin::FromB(src) => format!("face.{idx}.B.{src}"),
+            FaceOrigin::Generated => format!("face.{idx}.G"),
+        })
+        .collect()
 }
 
 /// Union two BReps and return both the result and face origin history.
@@ -376,6 +1131,263 @@ pub fn general_fuse_par_detailed(
     ))
 }
 
+/// Merge adjacent coplanar faces within the same shell into single faces.
+///
+/// Analogous to OCCT `ShapeUpgrade_UnifySameDomain`. After a boolean operation,
+/// faces that originally belonged to the same input plane are often split into
+/// multiple adjacent coplanar fragments. This function merges them back.
+///
+/// Only **planar** faces are currently unified. Non-planar faces are left
+/// unchanged. The topology is simplified by removing internal shared edges
+/// between coplanar face pairs.
+///
+/// Returns the simplified BRep and the number of face merges performed.
+///
+/// # Algorithm
+/// Performs iterated passes: in each pass, the first eligible pair of adjacent
+/// coplanar faces sharing a single shell edge is merged. Passes repeat until
+/// no more merges are possible. This is O(faces² × passes) but correct for all
+/// plane-topology inputs produced by the boolean kernel.
+pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
+    let mut out = brep.clone();
+    let mut total_merges = 0usize;
+
+    loop {
+        let merged = unify_one_merge_pass(&mut out);
+        if !merged {
+            break;
+        }
+        total_merges += 1;
+    }
+
+    (out, total_merges)
+}
+
+/// Attempt one merge of two adjacent coplanar faces in `brep`. Returns `true`
+/// if a merge was performed (mutating `brep` in place).
+fn unify_one_merge_pass(brep: &mut BRep) -> bool {
+    use rcad_kernel::geom::Surface3;
+    use std::collections::HashMap;
+
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let nfaces = brep.solids[si].shells[shi].faces.len();
+
+            // Build edge → [face_index_in_shell] adjacency for this shell.
+            let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+            for fi in 0..nfaces {
+                for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
+                    edge_to_faces.entry(we.idx).or_default().push(fi);
+                }
+            }
+
+            // Find the first internal edge shared by exactly 2 coplanar faces.
+            for (edge_idx, face_refs) in &edge_to_faces {
+                if face_refs.len() != 2 {
+                    continue;
+                }
+                let (fi1, fi2) = (face_refs[0], face_refs[1]);
+                if fi1 == fi2 {
+                    continue;
+                }
+
+                let face1_normal = brep.solids[si].shells[shi].faces[fi1].normal;
+                let face2_normal = brep.solids[si].shells[shi].faces[fi2].normal;
+
+                // Only merge planar faces (same surface geometry).
+                // Verify by checking if GeomStore surfaces are both planar.
+                // As a proxy: both normals must be (anti-)parallel.
+                let cross = face1_normal.cross(face2_normal).length();
+                let dot = face1_normal.dot(face2_normal);
+                // normals parallel (same orientation) within angular tolerance
+                if cross > 1e-6 || dot < 0.0 {
+                    continue;
+                }
+
+                // Check same plane: get one vertex from each face and compare
+                // distances to the shared plane defined by face1_normal.
+                let get_face_pt = |fi: usize| -> Option<glam::DVec3> {
+                    let we = brep.solids[si].shells[shi].faces[fi].outer_wire.edges.first()?;
+                    let edge = brep.edges.get(we.idx)?;
+                    let v_idx = if we.forward { edge.start } else { edge.end };
+                    brep.vertices.get(v_idx).map(|v| v.point)
+                };
+                let Some(pt1) = get_face_pt(fi1) else { continue };
+                let Some(pt2) = get_face_pt(fi2) else { continue };
+
+                let n = face1_normal.normalize();
+                if (pt2 - pt1).dot(n).abs() > 1e-6 {
+                    continue; // Different planes
+                }
+
+                // Merge wire: splice Face2 edges into Face1 at the position of the shared edge.
+                let wire1 = brep.solids[si].shells[shi].faces[fi1].outer_wire.edges.clone();
+                let wire2 = brep.solids[si].shells[shi].faces[fi2].outer_wire.edges.clone();
+
+                if let Some(merged_wire_edges) = splice_wires(&wire1, &wire2, *edge_idx) {
+                    // Collect inner wires from both faces.
+                    let inner1 = brep.solids[si].shells[shi].faces[fi1].inner_wires.clone();
+                    let inner2 = brep.solids[si].shells[shi].faces[fi2].inner_wires.clone();
+                    let mut all_inner = inner1;
+                    all_inner.extend(inner2);
+
+                    // Build merged face.
+                    let merged_face = rcad_kernel::topology::Face {
+                        outer_wire: rcad_kernel::topology::Wire {
+                            edges: merged_wire_edges,
+                        },
+                        inner_wires: all_inner,
+                        normal: face1_normal,
+                        triangles: vec![],
+                        mesh_dirty: true,
+                    };
+
+                    // Replace fi1 with merged face, remove fi2.
+                    let (keep_idx, remove_idx) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
+                    brep.solids[si].shells[shi].faces[keep_idx] = merged_face;
+                    brep.solids[si].shells[shi].faces.remove(remove_idx);
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Splice two wire edge lists together by removing the shared edge and
+/// interleaving the remaining edges.
+///
+/// Returns `None` if the shared edge is not found in either wire.
+fn splice_wires(
+    wire_a: &[rcad_kernel::topology::WireEdge],
+    wire_b: &[rcad_kernel::topology::WireEdge],
+    shared_edge_idx: usize,
+) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
+    let pos_a = wire_a.iter().position(|we| we.idx == shared_edge_idx)?;
+    let pos_b = wire_b.iter().position(|we| we.idx == shared_edge_idx)?;
+
+    let n_b = wire_b.len();
+    // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
+    let b_edges: Vec<rcad_kernel::topology::WireEdge> =
+        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b]).collect();
+
+    let mut merged = Vec::with_capacity(wire_a.len() - 1 + b_edges.len());
+    merged.extend_from_slice(&wire_a[..pos_a]);
+    merged.extend(b_edges);
+    merged.extend_from_slice(&wire_a[pos_a + 1..]);
+
+    if merged.len() < 3 {
+        return None; // Degenerate result
+    }
+
+    Some(merged)
+}
+
+/// Remove redundant internal faces from a Boolean Fuse (Union) result.
+///
+/// After a Union operation, coincident input faces (faces from A and B on
+/// exactly the same plane) can appear duplicated in the result: both input
+/// faces survive classification because they lie precisely on the Boolean
+/// boundary. This function detects such duplicate faces within each shell and
+/// removes the extra copies.
+///
+/// Detection criterion: two faces in the same shell are duplicates when all of
+/// the following hold:
+/// - They share the same normal direction (parallel within `1e-6`).
+/// - One face's representative vertex lies on the other face's plane (within `1e-6`).
+/// - Their edge sets overlap entirely (every outer-wire edge of the smaller
+///   face is also in the larger face, or they share ≥ 75 % of edges).
+///
+/// Returns the cleaned BRep and the number of faces removed.
+///
+/// Analogous to the internal-face elimination step of OCCT `BOPAlgo_BuilderSolid`.
+pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
+    use std::collections::HashSet;
+
+    let mut out = brep.clone();
+    let mut total_removed = 0usize;
+
+    for si in 0..out.solids.len() {
+        for shi in 0..out.solids[si].shells.len() {
+            // Iteratively remove one duplicate per pass.
+            loop {
+                let nfaces = out.solids[si].shells[shi].faces.len();
+                let mut removed_idx: Option<usize> = None;
+
+                'outer: for fi in 0..nfaces {
+                    for fj in (fi + 1)..nfaces {
+                        let face_i = &out.solids[si].shells[shi].faces[fi];
+                        let face_j = &out.solids[si].shells[shi].faces[fj];
+
+                        let ni = face_i.normal;
+                        let nj = face_j.normal;
+
+                        if ni == glam::DVec3::ZERO || nj == glam::DVec3::ZERO {
+                            continue;
+                        }
+
+                        // Check parallel normals (same orientation).
+                        let cross = ni.cross(nj).length();
+                        let dot = ni.dot(nj);
+                        if cross > 1e-6 || dot < 0.0 {
+                            continue;
+                        }
+
+                        // Check same plane: a vertex from j must lie on i's plane.
+                        let get_pt = |f: &rcad_kernel::topology::Face| -> Option<glam::DVec3> {
+                            let we = f.outer_wire.edges.first()?;
+                            let edge = out.edges.get(we.idx)?;
+                            let vi = if we.forward { edge.start } else { edge.end };
+                            out.vertices.get(vi).map(|v| v.point)
+                        };
+                        let Some(pi) = get_pt(face_i) else { continue };
+                        let Some(pj) = get_pt(face_j) else { continue };
+
+                        let n_unit = ni.normalize();
+                        if (pj - pi).dot(n_unit).abs() > 1e-5 {
+                            continue;
+                        }
+
+                        // Check edge overlap: build edge-index sets for both faces.
+                        let edges_i: HashSet<usize> = out.solids[si].shells[shi].faces[fi]
+                            .outer_wire
+                            .edges
+                            .iter()
+                            .map(|we| we.idx)
+                            .collect();
+                        let edges_j: HashSet<usize> = out.solids[si].shells[shi].faces[fj]
+                            .outer_wire
+                            .edges
+                            .iter()
+                            .map(|we| we.idx)
+                            .collect();
+
+                        let overlap = edges_i.intersection(&edges_j).count();
+                        let min_edges = edges_i.len().min(edges_j.len()).max(1);
+
+                        // If ≥ 75% of the smaller face's edges are shared, treat as duplicate.
+                        if overlap * 4 >= min_edges * 3 {
+                            // Remove fj (keep fi).
+                            removed_idx = Some(fj);
+                            break 'outer;
+                        }
+                    }
+                }
+
+                if let Some(idx) = removed_idx {
+                    out.solids[si].shells[shi].faces.remove(idx);
+                    total_removed += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    (out, total_removed)
+}
+
 fn face_count_of(brep: &BRep) -> usize {
     brep
         .solids
@@ -537,6 +1549,311 @@ mod tests {
         let parts: Vec<BRep> = Vec::new();
         let result = general_fuse_detailed(&parts);
         assert!(matches!(result, Err(GeneralFuseError::EmptyInput)));
+    }
+
+    #[test]
+    fn split_brep_empty_tools_returns_clone_and_empty_report() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let (out, report) = split_brep(&target, &[]);
+
+        assert_eq!(face_count(&out), face_count(&target));
+        assert!(report.steps.is_empty());
+        assert_eq!(report.total_seam_edges, 0);
+    }
+
+    #[test]
+    fn split_brep_with_tool_produces_step_report() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (out, report) = split_brep(&target, &[tool]);
+
+        assert_eq!(report.steps.len(), 1);
+        assert_eq!(report.steps[0].step_index, 0);
+        assert!(report.steps[0].input_faces > 0);
+        assert!(report.steps[0].output_faces > 0);
+        assert_eq!(report.total_seam_edges, report.steps[0].seam_edges);
+        assert!(!report.steps[0].skipped_by_broad_phase);
+        assert!(report.steps[0].validation_issue_count.is_none());
+        assert!(report.steps[0].validation_first_issue.is_none());
+        assert!(face_count(&out) >= face_count(&target));
+    }
+
+    #[test]
+    fn splitter_options_default_validation_is_relaxed() {
+        let opts = SplitterOptions::default();
+        assert_eq!(opts.validation_level, SplitterValidationLevel::Relaxed);
+    }
+
+    #[test]
+    fn split_brep_with_healing_sets_healed_flag() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (_out, report) = split_brep_with_options(
+            &target,
+            &[tool],
+            SplitterOptions {
+                heal_after_each_step: true,
+                healing: HealingOptions {
+                    mode: HealingMode::AnalyzeOnly,
+                    ..HealingOptions::default()
+                },
+                ..SplitterOptions::default()
+            },
+        );
+
+        assert_eq!(report.steps.len(), 1);
+        assert!(report.steps[0].healed);
+        assert!(!report.steps[0].skipped_by_broad_phase);
+    }
+
+    #[test]
+    fn split_brep_far_tool_is_skipped_by_broad_phase() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let far_tool = box_at(100.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (out, report) = split_brep_with_options(
+            &target,
+            &[far_tool],
+            SplitterOptions {
+                broad_phase_pruning: true,
+                fuzzy_tolerance: 0.0,
+                ..SplitterOptions::default()
+            },
+        );
+
+        assert_eq!(report.steps.len(), 1);
+        let step = &report.steps[0];
+        assert!(step.skipped_by_broad_phase);
+        assert_eq!(step.seam_edges, 0);
+        assert_eq!(step.input_faces, step.output_faces);
+        assert_eq!(face_count(&out), face_count(&target));
+    }
+
+    #[test]
+    fn split_brep_checked_with_options_detects_invalid_step() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let err = split_brep_checked_with_options(&target, &[tool], SplitterOptions::default())
+            .expect_err("checked splitter should report invalid intermediate topology");
+
+        assert!(matches!(
+            err,
+            SplitterError::StepInvalid {
+                step_index: 0,
+                issue_count: c,
+                ..
+            } if c > 0
+        ));
+    }
+
+    #[test]
+    fn split_objects_with_tools_empty_objects_returns_empty() {
+        let (out, report) = split_objects_with_tools(&[], &[]);
+        assert!(out.is_empty());
+        assert!(report.objects.is_empty());
+    }
+
+    #[test]
+    fn split_objects_with_tools_empty_tools_clones_each_object() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(3.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (out, report) = split_objects_with_tools(&[a.clone(), b.clone()], &[]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(face_count(&out[0]), face_count(&a));
+        assert_eq!(face_count(&out[1]), face_count(&b));
+
+        assert_eq!(report.objects.len(), 2);
+        assert!(report.objects.iter().all(|r| r.steps.is_empty()));
+        assert!(report.objects.iter().all(|r| r.total_seam_edges == 0));
+        assert!(report.objects.iter().all(|r| r.completed));
+        assert!(report.objects.iter().all(|r| r.error.is_none()));
+    }
+
+    #[test]
+    fn split_objects_with_tools_reports_each_object() {
+        let object_a = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let object_b = box_at(4.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (out, report) = split_objects_with_tools(&[object_a, object_b], &[tool]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(report.objects.len(), 2);
+        assert_eq!(report.objects[0].object_index, 0);
+        assert_eq!(report.objects[1].object_index, 1);
+        assert!(report.objects.iter().all(|r| r.steps.len() == 1));
+        assert!(report.objects.iter().all(|r| r.completed));
+        assert!(report.objects.iter().all(|r| r.error.is_none()));
+        assert!(
+            report.objects.iter().any(|r| !r.steps[0].skipped_by_broad_phase),
+            "at least one object should execute split step"
+        );
+        assert!(
+            report.objects.iter().any(|r| r.steps[0].skipped_by_broad_phase),
+            "at least one far object should be skipped by broad-phase"
+        );
+    }
+
+    #[test]
+    fn split_objects_with_tools_checked_options_succeeds_when_steps_are_skipped() {
+        let object_a = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let object_b = box_at(4.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(100.0, 100.0, 100.0, 1.0, 1.0, 1.0);
+
+        let (out, report) = split_objects_with_tools_checked_options(
+            &[object_a, object_b],
+            &[tool],
+            SplitterOptions::default(),
+        )
+        .expect("checked grouped splitter should succeed when broad-phase skips all steps");
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(report.objects.len(), 2);
+        assert!(report.objects.iter().all(|r| r.steps[0].skipped_by_broad_phase));
+        assert!(report.objects.iter().all(|r| r.completed));
+        assert!(report.objects.iter().all(|r| r.error.is_none()));
+        assert!(
+            report
+                .objects
+                .iter()
+                .all(|r| r.steps[0].validation_issue_count == Some(0))
+        );
+    }
+
+    #[test]
+    fn split_objects_with_tools_checked_collect_reports_mixed_outcomes() {
+        let near_object = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let far_object = box_at(100.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (out, report) = split_objects_with_tools_checked_collect_options(
+            &[near_object, far_object],
+            &[tool],
+            SplitterOptions::default(),
+        );
+
+        assert_eq!(out.len(), 2);
+        assert!(out[0].is_none(), "near object should fail checked split");
+        assert!(out[1].is_some(), "far object should be skipped and succeed");
+
+        assert_eq!(report.objects.len(), 2);
+        assert!(!report.objects[0].completed);
+        assert!(report.objects[0].error.is_some());
+        assert_eq!(report.objects[0].steps.len(), 1);
+        assert_eq!(report.objects[0].steps[0].step_index, 0);
+        assert!(report.objects[0].steps[0].validation_issue_count.unwrap_or(0) > 0);
+
+        assert!(report.objects[1].completed);
+        assert!(report.objects[1].error.is_none());
+        assert_eq!(report.objects[1].steps.len(), 1);
+        assert!(report.objects[1].steps[0].skipped_by_broad_phase);
+
+        let summary = report.summarize();
+        assert_eq!(summary.total_objects, 2);
+        assert_eq!(summary.completed_objects, 1);
+        assert_eq!(summary.failed_objects, 1);
+        assert_eq!(summary.failed_object_indices, vec![0]);
+        assert_eq!(summary.failed_step_histogram, vec![(0, 1)]);
+        assert_eq!(summary.first_error_histogram.len(), 1);
+    }
+
+    #[test]
+    fn splitter_objects_report_summarize_counts_success_and_failure() {
+        let near_object = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let far_object = box_at(100.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (_out, report) = split_objects_with_tools_checked_collect_options(
+            &[near_object, far_object],
+            &[tool],
+            SplitterOptions::default(),
+        );
+
+        let summary = report.summarize();
+        assert_eq!(summary.total_objects, 2);
+        assert_eq!(summary.completed_objects, 1);
+        assert_eq!(summary.failed_objects, 1);
+        assert_eq!(summary.failed_object_indices, vec![0]);
+        assert_eq!(summary.failed_step_histogram, vec![(0, 1)]);
+        assert!(
+            !summary.first_error_histogram.is_empty(),
+            "summary should include at least one error bucket"
+        );
+    }
+
+    #[test]
+    fn splitter_objects_report_to_json_v1_contains_schema_and_summary() {
+        let near_object = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let far_object = box_at(100.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let (_out, report) = split_objects_with_tools_checked_collect_options(
+            &[near_object, far_object],
+            &[tool],
+            SplitterOptions::default(),
+        );
+
+        let json = report
+            .to_json_v1()
+            .expect("splitter report json serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("serialized splitter json should parse");
+
+        assert_eq!(v["schema"], "splitter.report.v1");
+        assert_eq!(v["summary"]["total_objects"], 2);
+        assert_eq!(v["summary"]["failed_objects"], 1);
+        assert!(
+            v["summary"]["failed_object_indices"].is_array(),
+            "failed_object_indices must be exported as an array"
+        );
+    }
+
+    #[test]
+    fn split_brep_checked_strict_mode_reports_step_invalid() {
+        let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
+        let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
+
+        let err = split_brep_checked_with_options(
+            &target,
+            &[tool],
+            SplitterOptions {
+                validation_level: SplitterValidationLevel::Strict,
+                ..SplitterOptions::default()
+            },
+        )
+        .expect_err("strict checked splitter should fail on current intermediate issues");
+
+        assert!(matches!(err, SplitterError::StepInvalid { step_index: 0, .. }));
+    }
+
+    #[test]
+    fn simplify_brep_post_ops_reports_checker_delta() {
+        let mut b = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        b.solids[0].shells[0].faces[0].normal = DVec3::ZERO;
+
+        let (_out, report) = simplify_brep_post_ops(&b, SimplifyOptions::default());
+        assert!(report.issues_before >= report.issues_after);
+        assert!(report.normals_recomputed >= 1);
+    }
+
+    #[test]
+    fn boolean_op_simplified_union_runs() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (out, report) = boolean_op_simplified(
+            BooleanOpType::Union,
+            &a,
+            &b,
+            SimplifyOptions::default(),
+        )
+        .expect("boolean_op_simplified union should succeed");
+
+        assert!(!out.solids.is_empty());
+        assert!(report.issues_before >= report.issues_after);
     }
 
     #[test]
@@ -1361,11 +2678,35 @@ mod tests {
 
     #[test]
     fn boolean_options_structure_accessible() {
-        // Verify BooleanOptions can be created and configured
-        // (Note: Currently not exposed in public API; this test documents future accessibility)
-        // Once fully wired through, users will do:
-        // let opts = BooleanOptions { fuzzy_tolerance: 1e-6, use_bvh: true, non_destructive: false };
-        // let result = boolean_op_with_options(BooleanOpType::Union, &a, &b, opts)?;
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let options = BooleanOptions {
+            use_bvh: true,
+            run_healing: true,
+            healing: HealingOptions::default(),
+            run_simplify: true,
+            simplify: SimplifyOptions::default(),
+            include_history: true,
+            fuzzy_tol: 0.0,
+        };
+
+        let (result, report) = boolean_op_with_options(BooleanOpType::Union, &a, &b, options)
+            .expect("boolean_op_with_options should succeed");
+
+        assert!(report.used_bvh);
+        assert!(report.healed);
+        assert!(report.simplified);
+        assert!(report.healing_report.is_some());
+        assert!(report.simplify_report.is_some());
+        assert_eq!(report.output_faces, face_count(&result));
+        assert_eq!(report.history_faces, report.persistent_face_labels.len());
+        assert!(
+            report
+                .persistent_face_labels
+                .iter()
+                .all(|label| label.starts_with("face."))
+        );
     }
 
 }

@@ -130,6 +130,7 @@ pub fn imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
                 inner_wires: vec![],
                 normal: sf.normal,
                 triangles,
+                    mesh_dirty: false,
             });
         }
 

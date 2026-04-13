@@ -116,7 +116,7 @@ pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
-pub use topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
 /// surface parameter domain (u, v).  Analogous to OCCT `BRep_CurveOnSurface`.
@@ -289,6 +289,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 0.0, -1.0),
                 triangles: vec![[0, 1, 2], [0, 2, 3]],
+                mesh_dirty: false,
             },
             // Back   (z=d, normal +Z)
             Face {
@@ -303,6 +304,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 0.0, 1.0),
                 triangles: vec![[5, 4, 7], [5, 7, 6]],
+                mesh_dirty: false,
             },
             // Bottom (y=0, normal -Y)
             Face {
@@ -317,6 +319,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, -1.0, 0.0),
                 triangles: vec![[0, 1, 5], [0, 5, 4]],
+                mesh_dirty: false,
             },
             // Top    (y=h, normal +Y)
             Face {
@@ -331,6 +334,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 1.0, 0.0),
                 triangles: vec![[3, 2, 6], [3, 6, 7]],
+                mesh_dirty: false,
             },
             // Left   (x=0, normal -X)
             Face {
@@ -345,6 +349,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(-1.0, 0.0, 0.0),
                 triangles: vec![[0, 3, 7], [0, 7, 4]],
+                mesh_dirty: false,
             },
             // Right  (x=w, normal +X)
             Face {
@@ -359,6 +364,7 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(1.0, 0.0, 0.0),
                 triangles: vec![[1, 2, 6], [1, 6, 5]],
+                mesh_dirty: false,
             },
         ];
 
@@ -400,6 +406,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X, // outward, approximate
             triangles: vec![],
+            mesh_dirty: true,
         };
         let shell = Shell { faces: vec![face] };
         let solid = Solid {
@@ -486,25 +493,16 @@ impl BRep {
         let h = height;
         let half_h = h * 0.5;
 
-        // Vertices: seam points where the circle meets the seam line (theta=0 → x=r, z=0)
         let top_p = DVec3::new(r, half_h, 0.0);
         let bot_p = DVec3::new(r, -half_h, 0.0);
         let vertices = vec![Vertex { point: top_p }, Vertex { point: bot_p }];
 
-        // Edges
-        // E0: top circle (seam: start == end == top_p = vertex 0)
-        // E1: bot circle (seam: start == end == bot_p = vertex 1)
-        // E2: seam line top→bot
         let edges = vec![
-            Edge { start: 0, end: 0 }, // E0 top circle seam
-            Edge { start: 1, end: 1 }, // E1 bot circle seam
-            Edge { start: 0, end: 1 }, // E2 seam line
+            Edge { start: 0, end: 0 },
+            Edge { start: 1, end: 1 },
+            Edge { start: 0, end: 1 },
         ];
 
-        // Faces
-        // F0 lateral: outer_wire = [E2_fwd, E1_rev, E2_rev, E0_fwd]
-        //   Cylinder lateral face: E2 fwd (top→bot seam down), E1 rev (bot circle CCW),
-        //   E2 rev (bot→top seam up), E0 fwd (top circle CW seam).
         let f0 = Face {
             outer_wire: Wire {
                 edges: vec![
@@ -517,8 +515,8 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            mesh_dirty: true,
         };
-        // F1 top cap: wire = [E0] forward
         let f1 = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(0)],
@@ -526,8 +524,8 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::Y,
             triangles: vec![],
+            mesh_dirty: true,
         };
-        // F2 bottom cap: wire = [E1] reversed (bottom circle traversed CW from -Y view)
         let f2 = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::rev(1)],
@@ -535,6 +533,7 @@ impl BRep {
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
+            mesh_dirty: true,
         };
         let shell = Shell {
             faces: vec![f0, f1, f2],
@@ -543,7 +542,6 @@ impl BRep {
             shells: vec![shell],
         };
 
-        // GeomStore — curves
         let top_circle = Curve3::Circle(Circle3 {
             center: DVec3::new(0.0, half_h, 0.0),
             normal: DVec3::Y,
@@ -559,8 +557,6 @@ impl BRep {
             direction: (bot_p - top_p).normalize(),
         });
 
-        // GeomStore — surfaces
-        // F0: CylindricalSurface (origin at bottom center, axis=+Y)
         let cyl_surf = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(0.0, -half_h, 0.0),
             axis: DVec3::Y,
@@ -575,12 +571,6 @@ impl BRep {
             normal: -DVec3::Y,
         });
 
-        // PCurves
-        // Cylinder param: u=azimuth [0,2π], v=height [0,h] (v=0 at bottom, v=h at top)
-        // E0 (top circle) on F0 (cyl): iso-line v=h, u from 0 to 2π (but seam: u=2π→0)
-        //   We use the convention u goes from 2π to 0 for the "reversed" seam orientation.
-        //   Forward: Line2d (2π, h) dir=(-1, 0)  [u decreases at v=h]
-        // E0 (top circle) on F1 (top plane): circle in plane param space
         let e0_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(2.0 * PI, h),
             direction: glam::DVec2::new(-1.0, 0.0),
@@ -589,7 +579,6 @@ impl BRep {
             center: glam::DVec2::ZERO,
             radius: r,
         });
-        // E1 (bot circle) on F0 (cyl): iso-line v=0, u from 0 to 2π
         let e1_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, 0.0),
             direction: glam::DVec2::new(1.0, 0.0),
@@ -598,54 +587,47 @@ impl BRep {
             center: glam::DVec2::ZERO,
             radius: r,
         });
-        // E2 (seam line) on F0 (cyl): iso-line u=0, v from h to 0
         let e2_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, h),
             direction: glam::DVec2::new(0.0, -1.0),
         });
 
         let geom = GeomStore {
-            curves: vec![top_circle, bot_circle, seam_line], // curve 0,1,2
-            surfaces: vec![cyl_surf, top_plane, bot_plane],  // surface 0,1,2
-            curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0, e1_on_f2, e2_on_f0], // 0..4
-            edge_curve: vec![Some(0), Some(1), Some(2)],     // E0→0, E1→1, E2→2
-            face_surface: vec![Some(0), Some(1), Some(2)],   // F0→cyl, F1→top, F2→bot
+            curves: vec![top_circle, bot_circle, seam_line],
+            surfaces: vec![cyl_surf, top_plane, bot_plane],
+            curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0, e1_on_f2, e2_on_f0],
+            edge_curve: vec![Some(0), Some(1), Some(2)],
+            face_surface: vec![Some(0), Some(1), Some(2)],
             edge_pcurves: vec![
-                // E0: top circle → on cyl (idx 0) and top plane (idx 1)
                 vec![
                     PCurve {
                         surface_idx: 0,
                         curve2d_idx: 0,
-                    }, // E0 on cyl
+                    },
                     PCurve {
                         surface_idx: 1,
                         curve2d_idx: 1,
-                    }, // E0 on top plane
+                    },
                 ],
-                // E1: bot circle → on cyl (idx 0) and bot plane (idx 2)
                 vec![
                     PCurve {
                         surface_idx: 0,
                         curve2d_idx: 2,
-                    }, // E1 on cyl
+                    },
                     PCurve {
                         surface_idx: 2,
                         curve2d_idx: 3,
-                    }, // E1 on bot plane
+                    },
                 ],
-                // E2: seam line → on cyl only
-                vec![
-                    PCurve {
-                        surface_idx: 0,
-                        curve2d_idx: 4,
-                    }, // E2 on cyl
-                ],
+                vec![PCurve {
+                    surface_idx: 0,
+                    curve2d_idx: 4,
+                }],
             ],
-            // E0/E1: full circles [0, 2π]; E2: seam line [0, h]
             edge_curve_range: vec![
-                Some([0.0, 2.0 * PI]), // E0 top circle
-                Some([0.0, 2.0 * PI]), // E1 bot circle
-                Some([0.0, h]),        // E2 seam line
+                Some([0.0, 2.0 * PI]),
+                Some([0.0, 2.0 * PI]),
+                Some([0.0, h]),
             ],
             edge_degenerated: vec![false, false, false],
             vertex_tolerance: Vec::new(),
@@ -699,6 +681,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            mesh_dirty: true,
         };
         // F1 base cap: E0 reversed (base circle CW from -Y view)
         let f1 = Face {
@@ -708,6 +691,7 @@ impl BRep {
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
+            mesh_dirty: true,
         };
         let shell = Shell {
             faces: vec![f0, f1],
@@ -850,6 +834,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            mesh_dirty: true,
         };
         let shell = Shell { faces: vec![face] };
         let solid = Solid {
@@ -1188,6 +1173,37 @@ impl BRep {
         let mut result = self.clone();
         result.apply_transform(mat);
         result
+    }
+
+    /// Mark every face's cached triangulation as stale.
+    ///
+    /// After calling this, the next [`mesh_brep`] invocation will
+    /// re-tessellate all faces unconditionally.
+    ///
+    /// Call this whenever geometry (vertices, edges, surfaces) has changed
+    /// but the topology remains valid — for example after a deformation or
+    /// parameter update.
+    ///
+    /// [`mesh_brep`]: https://docs.rs/rcad-algorithms/latest/rcad_algorithms/fn.mesh_brep.html
+    pub fn invalidate_mesh(&mut self) {
+        for solid in &mut self.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.mesh_dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Returns `true` if any face has a stale (dirty) cached triangulation.
+    ///
+    /// Use this to decide whether to call [`mesh_brep`] before rendering.
+    pub fn needs_remesh(&self) -> bool {
+        self.solids
+            .iter()
+            .flat_map(|s| s.shells.iter())
+            .flat_map(|sh| sh.faces.iter())
+            .any(|f| f.mesh_dirty)
     }
 }
 
