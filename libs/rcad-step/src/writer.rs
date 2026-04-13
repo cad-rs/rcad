@@ -1,7 +1,7 @@
 use rcad_kernel::appearance::{Color, StepColor};
 use crate::StepGeneralProperty;
 use crate::{
-    StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+    StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
     StepPropertyDefinitionRepr,
 };
 
@@ -35,6 +35,7 @@ pub struct StepAp242Metadata {
     pub dimensional_locations: Vec<StepDimensionalLocation>,
     pub dimensional_sizes: Vec<StepDimensionalSize>,
     pub geometric_tolerances: Vec<StepGeometricTolerance>,
+    pub datums: Vec<StepDatum>,
 }
 
 pub struct StepWriter;
@@ -1758,6 +1759,12 @@ impl Part21Writer {
                 name, desc, val, shape
             ));
         }
+        for datum in &metadata.datums {
+            let name = opt_step_string(datum.name.as_deref());
+            let desc = opt_step_string(datum.description.as_deref());
+            let shape = opt_ref_token(datum.shape_aspect_id);
+            self.push(format!("DATUM({},{},{})", name, desc, shape));
+        }
     }
 
     fn push(&mut self, body: String) -> u64 {
@@ -1975,7 +1982,7 @@ fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
+        StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
         StepPropertyDefinitionRepr, StepReader,
     };
     use glam::DVec3;
@@ -2063,6 +2070,12 @@ mod tests {
                 value_entity_id: Some(50),
                 shape_aspect_id: Some(60),
             }],
+            datums: vec![StepDatum {
+                entity_id: 0,
+                name: Some("A".into()),
+                description: Some("primary".into()),
+                shape_aspect_id: Some(70),
+            }],
         };
         let step = StepWriter::write_string_with_ap242_metadata(
             &brep,
@@ -2079,6 +2092,7 @@ mod tests {
         assert!(step.contains("DIMENSIONAL_LOCATION('d_loc','desc',#30,#31)"));
         assert!(step.contains("DIMENSIONAL_SIZE('d_size',$,#40)"));
         assert!(step.contains("GEOMETRIC_TOLERANCE('flatness','gtol',#50,#60)"));
+        assert!(step.contains("DATUM('A','primary',#70)"));
     }
 
     #[test]
@@ -2111,6 +2125,12 @@ mod tests {
                 value_entity_id: Some(66),
                 shape_aspect_id: Some(77),
             }],
+            datums: vec![StepDatum {
+                entity_id: 0,
+                name: Some("B".into()),
+                description: Some("secondary".into()),
+                shape_aspect_id: Some(88),
+            }],
         };
 
         let step = StepWriter::write_string_with_ap242_metadata(
@@ -2130,6 +2150,7 @@ mod tests {
         assert_eq!(doc_meta.dimensional_locations.len(), 1);
         assert_eq!(doc_meta.dimensional_sizes.len(), 1);
         assert_eq!(doc_meta.geometric_tolerances.len(), 1);
+        assert_eq!(doc_meta.datums.len(), 1);
     }
 
     #[test]
