@@ -60,7 +60,7 @@ pub use brep_repair::{
 };
 pub use healing::{
     HealingIssueStats, HealingMode, HealingOptions, HealingReport, HealingStage,
-    HealingStageReport, analyze_and_heal, heal,
+    HealingStageReport, MakeConnectedPrepassMode, analyze_and_heal, heal,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{
@@ -717,6 +717,7 @@ pub fn boolean_op_with_options(
         // If boolean make-connected is enabled, allow healing to use the same
         // connectivity rebuild policy when repair passes stall.
         if options.run_make_connected {
+            healing_options.make_connected_prepass_mode = MakeConnectedPrepassMode::IssueDriven;
             healing_options.run_make_connected_on_stall = true;
             healing_options.make_connected_tolerance = options.make_connected_tolerance;
             healing_options.make_connected_max_passes = options.make_connected_max_passes;

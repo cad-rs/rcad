@@ -18,6 +18,18 @@ pub enum HealingMode {
     AnalyzeAndRepair,
 }
 
+/// Policy controlling whether a make-connected prepass is executed before
+/// regular repair passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeConnectedPrepassMode {
+    /// Never run a prepass.
+    Disabled,
+    /// Run only when initial checker issues indicate connectivity stress.
+    IssueDriven,
+    /// Always run before repair passes.
+    Always,
+}
+
 /// Options controlling healing execution.
 #[derive(Debug, Clone, Copy)]
 pub struct HealingOptions {
@@ -27,6 +39,8 @@ pub struct HealingOptions {
     pub max_passes: usize,
     /// Execution mode for the pipeline.
     pub mode: HealingMode,
+    /// Control whether to run make-connected before normal repair passes.
+    pub make_connected_prepass_mode: MakeConnectedPrepassMode,
     /// When a repair pass makes no progress while issues remain, run a
     /// MakeConnected-style connectivity rebuild pass.
     pub run_make_connected_on_stall: bool,
@@ -46,6 +60,7 @@ impl Default for HealingOptions {
             tolerance: TOLERANCE_ABS,
             max_passes: 2,
             mode: HealingMode::AnalyzeAndRepair,
+            make_connected_prepass_mode: MakeConnectedPrepassMode::Disabled,
             run_make_connected_on_stall: false,
             make_connected_tolerance: TOLERANCE_ABS,
             make_connected_max_passes: 3,
@@ -121,6 +136,7 @@ pub struct HealingReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealingStage {
     InitialCheck,
+    PreMakeConnected,
     RepairPass,
     MakeConnectedPass,
     FinalCheck,
@@ -215,6 +231,51 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         issue_count: initial.issues.len(),
     }];
     let pass_count = options.max_passes.max(1);
+
+    let run_prepass = match options.make_connected_prepass_mode {
+        MakeConnectedPrepassMode::Disabled => false,
+        MakeConnectedPrepassMode::IssueDriven => has_connectivity_stress_issues(&initial),
+        MakeConnectedPrepassMode::Always => true,
+    };
+
+    if run_prepass {
+        let (reconnected, mc_report) = make_connected_iterative_with_growth_cap(
+            &current,
+            options.make_connected_tolerance,
+            options.make_connected_max_passes,
+            options.make_connected_tolerance_growth,
+            options.make_connected_tolerance_cap,
+        );
+        current = reconnected;
+        make_connected_passes.push(mc_report);
+
+        let chk = check(&current);
+        stages.push(HealingStageReport {
+            stage: HealingStage::PreMakeConnected,
+            pass_index: None,
+            issue_count: chk.issues.len(),
+        });
+        if chk.is_valid() {
+            let final_stats = HealingIssueStats::from_check_result(&chk);
+            stages.push(HealingStageReport {
+                stage: HealingStage::FinalCheck,
+                pass_index: None,
+                issue_count: chk.issues.len(),
+            });
+            return (
+                current,
+                HealingReport {
+                    initial,
+                    final_result: chk,
+                    passes,
+                    make_connected_passes,
+                    initial_stats,
+                    final_stats,
+                    stages,
+                },
+            );
+        }
+    }
 
     for pass_idx in 0..pass_count {
         let (next, rep) = repair(&current, options.tolerance);
@@ -339,6 +400,18 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
     )
 }
 
+fn has_connectivity_stress_issues(result: &CheckResult) -> bool {
+    result.issues.iter().any(|issue| {
+        matches!(
+            issue,
+            CheckIssue::OpenWire { .. }
+                | CheckIssue::NonManifoldEdge { .. }
+                | CheckIssue::SelfIntersectingWire { .. }
+                | CheckIssue::GeometricSelfIntersection { .. }
+        )
+    })
+}
+
 /// Convenience wrapper using default options.
 pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
     analyze_and_heal(brep, HealingOptions::default())
@@ -449,5 +522,32 @@ mod tests {
             .count();
         assert_eq!(mc_stage_count, report.make_connected_passes.len());
         assert!(report.make_connected_passes.len() <= 1);
+    }
+
+    #[test]
+    fn healing_make_connected_prepass_always_records_stage() {
+        let mut b = unit_box();
+        b.solids[0].shells[0].faces[0].outer_wire.edges[0].idx = usize::MAX;
+
+        let (_out, report) = analyze_and_heal(
+            &b,
+            HealingOptions {
+                max_passes: 1,
+                make_connected_prepass_mode: MakeConnectedPrepassMode::Always,
+                make_connected_tolerance: 1.0e-4,
+                make_connected_max_passes: 1,
+                make_connected_tolerance_growth: 1.0,
+                make_connected_tolerance_cap: 1.0e-4,
+                ..HealingOptions::default()
+            },
+        );
+
+        assert!(
+            report
+                .stages
+                .iter()
+                .any(|s| matches!(s.stage, HealingStage::PreMakeConnected))
+        );
+        assert!(!report.make_connected_passes.is_empty());
     }
 }
