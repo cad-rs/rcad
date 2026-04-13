@@ -516,12 +516,249 @@ fn segments_2d_properly_intersect(
     t > eps && t < 1.0 - eps && s > eps && s < 1.0 - eps
 }
 
+// ── SameParameter diagnosis ───────────────────────────────────────────────────
+
+/// A single edge whose 3D curve endpoints deviate from the vertex positions.
+///
+/// Analogous to the diagnostic output of `BRepCheck_Edge::SameParameter()` in OCCT.
+#[derive(Debug, Clone)]
+pub struct SuspectEdge {
+    /// Index of the edge in `BRep.edges`.
+    pub edge_idx: usize,
+    /// Distance from `curve.point_at(t1)` to the start vertex position.
+    pub start_gap: f64,
+    /// Distance from `curve.point_at(t2)` to the end vertex position.
+    pub end_gap: f64,
+}
+
+/// Report from [`diagnose_same_parameter`].
+#[derive(Debug, Clone, Default)]
+pub struct SameParameterDiagnosis {
+    /// Edges whose curve endpoints deviate from vertex positions beyond `tolerance`.
+    pub suspect_edges: Vec<SuspectEdge>,
+}
+
+impl SameParameterDiagnosis {
+    /// Returns `true` if no SameParameter violations were found.
+    pub fn is_clean(&self) -> bool {
+        self.suspect_edges.is_empty()
+    }
+}
+
+/// Scan all edges in `brep` for SameParameter violations.
+///
+/// For each edge that has a known 3D curve and curve range `[t1, t2]`, evaluates
+/// the curve at `t1` and `t2` and compares the resulting points to the
+/// corresponding vertex positions.  Edges whose endpoint gap exceeds `tolerance`
+/// are reported as suspects and their `edge_same_parameter` flag is updated to
+/// `false` so that a subsequent [`fix_same_parameter`] pass can repair them.
+///
+/// Analogous to `BRepLib::SameParameter()` diagnosis step in OCCT.
+///
+/// Returns a non-mutating diagnosis; call `fix_same_parameter_with_scan` to
+/// also repair the flagged edges.
+pub fn diagnose_same_parameter(brep: &BRep, tolerance: f64) -> SameParameterDiagnosis {
+    use rcad_kernel::geom::CurveEval;
+
+    let mut suspects = Vec::new();
+    let n_edges = brep.edges.len();
+    let n_verts = brep.vertices.len();
+
+    for edge_idx in 0..n_edges {
+        let curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c);
+        let Some(ci) = curve_idx else { continue };
+        let Some(curve) = brep.geom.curves.get(ci) else { continue };
+        let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) else { continue };
+
+        let edge = &brep.edges[edge_idx];
+        if edge.start >= n_verts || edge.end >= n_verts {
+            continue;
+        }
+
+        let p_start = brep.vertices[edge.start].point;
+        let p_end = brep.vertices[edge.end].point;
+
+        let eval_start = curve.point_at(range[0]);
+        let eval_end = curve.point_at(range[1]);
+
+        let start_gap = (eval_start - p_start).length();
+        let end_gap = (eval_end - p_end).length();
+
+        if start_gap > tolerance || end_gap > tolerance {
+            suspects.push(SuspectEdge {
+                edge_idx,
+                start_gap,
+                end_gap,
+            });
+        }
+    }
+
+    SameParameterDiagnosis { suspect_edges: suspects }
+}
+
+// ── Shell topology analysis ───────────────────────────────────────────────────
+
+/// Topology analysis report for a BRep's shell structure.
+///
+/// Analogous to `ShapeAnalysis_Shell` in OCCT's TKShHealing.
+#[derive(Debug, Clone, Default)]
+pub struct ShellTopologyReport {
+    /// `true` if every edge is referenced by exactly 2 faces (no free edges).
+    pub is_closed: bool,
+    /// `true` if no edge is referenced by more than 2 faces.
+    pub is_manifold: bool,
+    /// Number of edges referenced by exactly 1 face (free / open edges).
+    pub open_edge_count: usize,
+    /// Number of edges referenced by 3 or more faces (non-manifold edges).
+    pub non_manifold_edge_count: usize,
+    /// Number of vertices not referenced by any edge in the BRep.
+    pub isolated_vertex_count: usize,
+    /// Total edge count in the BRep.
+    pub total_edges: usize,
+    /// Total face count across all solids/shells.
+    pub total_faces: usize,
+}
+
+/// Analyze the shell topology of `brep`.
+///
+/// Counts free edges, non-manifold edges, and isolated vertices to determine
+/// whether the BRep represents a closed manifold solid.
+///
+/// Analogous to `ShapeAnalysis_Shell::LoadUnorientedEdges()` + checks in OCCT.
+pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
+    let total_edges = brep.edges.len();
+
+    // Count how many faces each edge is referenced by.
+    let mut edge_face_count: Vec<usize> = vec![0; total_edges];
+    let mut total_faces = 0usize;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                total_faces += 1;
+                for we in &face.outer_wire.edges {
+                    if we.idx < total_edges {
+                        edge_face_count[we.idx] += 1;
+                    }
+                }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        if we.idx < total_edges {
+                            edge_face_count[we.idx] += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let open_edge_count = edge_face_count.iter().filter(|&&c| c == 1).count();
+    let non_manifold_edge_count = edge_face_count.iter().filter(|&&c| c > 2).count();
+
+    // Count isolated vertices: those not referenced by any edge as start or end.
+    let mut vertex_used = vec![false; brep.vertices.len()];
+    for edge in &brep.edges {
+        if edge.start < vertex_used.len() {
+            vertex_used[edge.start] = true;
+        }
+        if edge.end < vertex_used.len() {
+            vertex_used[edge.end] = true;
+        }
+    }
+    let isolated_vertex_count = vertex_used.iter().filter(|&&used| !used).count();
+
+    ShellTopologyReport {
+        is_closed: open_edge_count == 0,
+        is_manifold: non_manifold_edge_count == 0,
+        open_edge_count,
+        non_manifold_edge_count,
+        isolated_vertex_count,
+        total_edges,
+        total_faces,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rcad_kernel::PrimitiveSolid;
+    use rcad_kernel::geom::{Curve3, Line3};
+
+    #[test]
+    fn analyze_shell_topology_unit_box_is_closed_manifold() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let report = analyze_shell_topology(&brep);
+        assert!(report.is_closed, "unit box should be a closed shell");
+        assert!(report.is_manifold, "unit box should be manifold");
+        assert_eq!(report.open_edge_count, 0);
+        assert_eq!(report.non_manifold_edge_count, 0);
+        assert_eq!(report.total_faces, 6);
+    }
+
+    #[test]
+    fn diagnose_same_parameter_clean_box_has_no_violations() {
+        // A primitive box has no geom curves populated, so the diagnosis should
+        // return empty (nothing to check = nothing flagged).
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let diagnosis = diagnose_same_parameter(&brep, 1e-7);
+        assert!(
+            diagnosis.is_clean(),
+            "primitive box with no edge_curve entries should have no violations"
+        );
+    }
+
+    #[test]
+    fn diagnose_same_parameter_detects_mismatch() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Build a triangle with a Line3 curve whose range is deliberately mismatched.
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: glam::DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: glam::DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(rcad_kernel::topology::Vertex { point: glam::DVec3::new(0.0, 1.0, 0.0) });
+        brep.edges.push(rcad_kernel::topology::Edge { start: 0, end: 1 });
+        brep.edges.push(rcad_kernel::topology::Edge { start: 1, end: 2 });
+        brep.edges.push(rcad_kernel::topology::Edge { start: 2, end: 0 });
+
+        // Edge 0: line from (0,0,0) toward (1,0,0), but with range [0, 999] — huge mismatch
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(Curve3::Line(Line3 {
+            origin: glam::DVec3::ZERO,
+            direction: glam::DVec3::X,
+        }));
+        brep.geom.edge_curve.push(Some(ci));
+        brep.geom.edge_curve_range.push(Some([0.0, 999.0])); // wrong range!
+        brep.geom.edge_curve.push(None);
+        brep.geom.edge_curve_range.push(None);
+        brep.geom.edge_curve.push(None);
+        brep.geom.edge_curve_range.push(None);
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: glam::DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let diagnosis = diagnose_same_parameter(&brep, 1e-6);
+        assert!(!diagnosis.is_clean(), "mismatch should be detected");
+        assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
+        assert!(diagnosis.suspect_edges[0].end_gap > 1.0, "end gap should be ~998");
+    }
 
     #[test]
     fn unit_box_is_valid() {

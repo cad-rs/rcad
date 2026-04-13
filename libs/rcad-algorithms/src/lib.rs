@@ -11,7 +11,7 @@ pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
-pub use features::{FeatureError, make_cylindrical_hole};
+pub use features::{FeatureError, make_cylindrical_hole, make_prism};
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -26,10 +26,14 @@ pub use bvh::{Aabb, Bvh, BvhStats};
 
 use rcad_kernel::BRep;
 
-pub use brep_check::{CheckIssue, CheckResult, check};
+pub use brep_check::{CheckIssue, CheckResult, check,
+    SuspectEdge, SameParameterDiagnosis, diagnose_same_parameter,
+    ShellTopologyReport, analyze_shell_topology,
+};
 pub use brep_repair::{
-    RepairReport, fix_same_parameter, fix_wire_orientation, merge_close_vertices,
-    recompute_face_normals, remove_degenerate_faces, repair,
+    RepairReport, fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
+    merge_close_vertices, recompute_face_normals, remove_degenerate_faces, repair,
+    remove_small_edges,
 };
 pub use healing::{
     HealingIssueStats, HealingMode, HealingOptions, HealingReport, analyze_and_heal, heal,
@@ -64,6 +68,10 @@ pub struct SimplifyOptions {
     pub unify_same_domain_faces: bool,
     /// Remove redundant coplanar internal faces (mainly for union outputs).
     pub remove_internal_faces: bool,
+    /// Remove edges whose chord length is below `small_edge_min_length`.
+    pub remove_small_edges: bool,
+    /// Chord-length threshold for small-edge removal (default: `TOLERANCE_ABS`).
+    pub small_edge_min_length: f64,
 }
 
 impl Default for SimplifyOptions {
@@ -76,6 +84,8 @@ impl Default for SimplifyOptions {
             fix_wire_orientation: true,
             unify_same_domain_faces: true,
             remove_internal_faces: true,
+            remove_small_edges: false,
+            small_edge_min_length: tolerance::TOLERANCE_ABS,
         }
     }
 }
@@ -89,6 +99,7 @@ pub struct SimplifyReport {
     pub wires_fixed: usize,
     pub same_domain_face_merges: usize,
     pub internal_faces_removed: usize,
+    pub small_edges_removed: usize,
     pub issues_before: usize,
     pub issues_after: usize,
 }
@@ -504,6 +515,11 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
         let (next, n) = remove_internal_faces(&out);
         out = next;
         report.internal_faces_removed = n;
+    }
+    if options.remove_small_edges {
+        let (next, n) = remove_small_edges(&out, options.small_edge_min_length);
+        out = next;
+        report.small_edges_removed = n;
     }
 
     report.issues_after = check(&out).issues.len();

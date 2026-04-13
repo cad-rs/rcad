@@ -18,6 +18,7 @@
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use crate::brep_check::diagnose_same_parameter;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -651,10 +652,216 @@ pub fn fix_same_parameter(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
     (out, fixed)
 }
 
+/// Scan all edges for SameParameter violations, flag them, and repair.
+///
+/// This combines the diagnostic scan from [`diagnose_same_parameter`] with the
+/// repair logic of [`fix_same_parameter`] in a single call:
+///
+/// 1. Calls `diagnose_same_parameter` to find edges whose 3D curve endpoints
+///    deviate from vertex positions beyond `tolerance`.
+/// 2. Flags those edges with `edge_same_parameter = false`.
+/// 3. Calls `fix_same_parameter` to reparameterize their PCurves.
+///
+/// Returns the repaired BRep and the number of edges repaired.
+///
+/// Analogous to OCCT `BRepLib::SameParameter(shape, enforce=true)`.
+pub fn fix_same_parameter_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+    let diagnosis = diagnose_same_parameter(brep, tolerance);
+    if diagnosis.suspect_edges.is_empty() {
+        return (brep.clone(), 0);
+    }
+
+    let mut out = brep.clone();
+    let n_edges = out.edges.len();
+
+    // Ensure edge_same_parameter is sized.
+    if out.geom.edge_same_parameter.len() < n_edges {
+        out.geom.edge_same_parameter.resize(n_edges, true);
+    }
+
+    // Flag suspect edges.
+    for suspect in &diagnosis.suspect_edges {
+        if suspect.edge_idx < n_edges {
+            out.geom.edge_same_parameter[suspect.edge_idx] = false;
+        }
+    }
+
+    // Now run the standard fix_same_parameter which repairs flagged edges.
+    let (repaired, fixed) = fix_same_parameter(&out, tolerance);
+    (repaired, fixed)
+}
+
+/// Remove short edges whose chord length is below `min_length`.
+///
+/// For each edge whose start and end vertices are closer than `min_length`,
+/// the two endpoints are merged (lower index survives) and all topological
+/// references are remapped. Degenerate self-loop edges (start == end) are
+/// removed without vertex merging.
+///
+/// Analogous to OCCT `ShapeUpgrade_RemoveLocations` / `ShapeFix::RemoveSmallEdges`.
+///
+/// Returns the cleaned BRep and the number of short edges removed.
+pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
+    let mut out = brep.clone();
+    let mut total_removed = 0usize;
+
+    loop {
+        let edge_count = out.edges.len();
+        let mut removed_edge: Option<usize> = None;
+
+        for ei in 0..edge_count {
+            let edge = &out.edges[ei];
+            let start = edge.start;
+            let end = edge.end;
+
+            // Degenerate self-loop: remove immediately
+            let is_degenerate = start == end;
+            let is_short = if is_degenerate {
+                true
+            } else {
+                let ps = out.vertices[start].point;
+                let pe = out.vertices[end].point;
+                (pe - ps).length() < min_length
+            };
+
+            if is_short {
+                removed_edge = Some(ei);
+                break;
+            }
+        }
+
+        let Some(ei) = removed_edge else { break };
+
+        let edge = out.edges[ei];
+        let keep_vi = edge.start.min(edge.end);
+        let drop_vi = edge.start.max(edge.end);
+
+        // Remap vertex references: drop_vi → keep_vi, shift higher indices down.
+        let remap_vertex = |vi: usize| -> usize {
+            if vi == drop_vi {
+                keep_vi
+            } else if vi > drop_vi {
+                vi - 1
+            } else {
+                vi
+            }
+        };
+
+        // Remove the dropped vertex from the vertex list.
+        if !edge.start == !edge.end {
+            // Self-loop: no vertex to remove
+        } else {
+            out.vertices.remove(drop_vi);
+        }
+
+        // Remap all edge endpoints.
+        for e in &mut out.edges {
+            e.start = remap_vertex(e.start);
+            e.end = remap_vertex(e.end);
+        }
+
+        // Remap vertex tolerance parallel vec if present.
+        if out.geom.vertex_tolerance.len() > drop_vi
+            && drop_vi != out.geom.vertex_tolerance.len()
+        {
+            out.geom.vertex_tolerance.remove(drop_vi);
+        }
+
+        // Remove the short edge and its geom entries.
+        out.edges.remove(ei);
+        macro_rules! rm {
+            ($vec:expr) => {
+                if ei < $vec.len() {
+                    $vec.remove(ei);
+                }
+            };
+        }
+        rm!(out.geom.edge_curve);
+        rm!(out.geom.edge_curve_range);
+        rm!(out.geom.edge_degenerated);
+        rm!(out.geom.edge_pcurves);
+        rm!(out.geom.edge_same_parameter);
+        rm!(out.geom.edge_same_range);
+        rm!(out.geom.edge_tolerance);
+
+        // Remove wire references to this edge in all faces; remap remaining indices.
+        let remap_edge = |we_idx: usize| -> usize {
+            if we_idx > ei { we_idx - 1 } else { we_idx }
+        };
+        for solid in &mut out.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    // Remove WireEdges pointing to the deleted edge from all wires.
+                    let filter_remap = |wire: &mut Wire| {
+                        wire.edges.retain(|we| we.idx != ei);
+                        for we in &mut wire.edges {
+                            we.idx = remap_edge(we.idx);
+                        }
+                    };
+                    filter_remap(&mut face.outer_wire);
+                    for iw in &mut face.inner_wires {
+                        filter_remap(iw);
+                    }
+                }
+            }
+        }
+
+        total_removed += 1;
+    }
+
+    (out, total_removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rcad_kernel::PrimitiveSolid;
+
+    #[test]
+    fn remove_small_edges_removes_degenerate_loop() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Build a triangle with one degenerate self-loop edge (start == end).
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        // Edges: 0-1, 1-2, 2-0, plus degenerate 0-0
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 0 }); // degenerate
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![
+                    WireEdge::fwd(0),
+                    WireEdge::fwd(1),
+                    WireEdge::fwd(2),
+                ],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let (fixed, removed) = remove_small_edges(&brep, 1e-6);
+        assert!(removed >= 1, "degenerate self-loop should be removed");
+        assert!(fixed.edges.len() < brep.edges.len());
+    }
+
+    #[test]
+    fn remove_small_edges_is_noop_on_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let (fixed, removed) = remove_small_edges(&brep, 1e-7);
+        assert_eq!(removed, 0, "unit box edges are not short");
+        assert_eq!(fixed.edges.len(), brep.edges.len());
+    }
 
     #[test]
     fn repair_unit_box_is_no_op() {

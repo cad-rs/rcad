@@ -1,10 +1,12 @@
-//! First-stage feature operations (TKFeat-like APIs).
+﻿//! First-stage feature operations (TKFeat-like APIs).
 //!
 //! This module builds practical feature workflows on top of the existing
 //! boolean kernel. The first shipped feature is a cylindrical hole.
 
 use glam::{DAffine3, DMat3, DVec3};
-use rcad_kernel::{BRep, PrimitiveSolid};
+use rcad_kernel::{BRep, GeomStore, PrimitiveSolid};
+use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::{BooleanError, BooleanOpType, boolean_op};
 
@@ -113,6 +115,131 @@ pub fn make_cylindrical_hole(
     Ok(boolean_op(BooleanOpType::Difference, target, &tool)?)
 }
 
+/// Create a prismatic boss or pocket by extruding a polygon profile and
+/// performing a boolean union (boss) or difference (pocket) with `target`.
+///
+/// - `profile_verts`: 3D coplanar polygon vertices in CCW order when viewed
+///   along the extrusion direction.  Minimum 3 vertices required.
+/// - `direction`: extrusion direction (unit vector is computed internally).
+/// - `depth`: extrusion length (must be > 0).
+/// - `op`: [`BooleanOpType::Union`] = boss; [`BooleanOpType::Difference`] = pocket.
+///
+/// Analogous to OCCT `BRepFeat_MakePrism` for linear boss/pocket features.
+pub fn make_prism(
+    target: &BRep,
+    profile_verts: &[DVec3],
+    direction: DVec3,
+    depth: f64,
+    op: BooleanOpType,
+) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::NonPositiveInput("profile_verts needs >= 3 vertices"));
+    }
+    let dir = normalize("direction", direction)?;
+    let depth = validate_positive("depth", depth)?;
+
+    let tool = build_polygon_prism(profile_verts, dir, depth)?;
+    Ok(boolean_op(op, target, &tool)?)
+}
+
+/// Build a solid BRep prism from a polygon profile (n vertices, coplanar) extruded
+fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Result<BRep, FeatureError> {
+    let n = profile_verts.len();
+    let bot: &[DVec3] = profile_verts;
+    let top: Vec<DVec3> = bot.iter().map(|&p| p + dir * depth).collect();
+
+    let mut brep = BRep {
+        vertices: Vec::with_capacity(2 * n),
+        edges: Vec::new(),
+        solids: Vec::new(),
+        geom: GeomStore::default(),
+    };
+
+    // Add vertices: bot[0..n] then top[0..n]
+    // bot vertex index: i; top vertex index: n + i
+    for &p in bot { brep.vertices.push(Vertex { point: p }); }
+    for &p in &top { brep.vertices.push(Vertex { point: p }); }
+
+    /// Add a line edge from start to end and return its index.
+    fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
+        let p0 = brep.vertices[start].point;
+        let p1 = brep.vertices[end].point;
+        let d = p1 - p0;
+        let len = d.length();
+        let dir = if len > 0.0 { d / len } else { DVec3::X };
+        let ei = brep.edges.len();
+        brep.edges.push(Edge { start, end });
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
+        brep.geom.edge_curve.push(Some(ci));
+        brep.geom.edge_curve_range.push(Some([0.0, len]));
+        brep.geom.edge_degenerated.push(false);
+        ei
+    }
+
+    // Bottom-cap edges: bot[i] 鈫?bot[(i+1)%n]
+    let bot_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, (i + 1) % n)).collect();
+    // Top-cap edges: top[i] 鈫?top[(i+1)%n]
+    let top_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, n + i, n + (i + 1) % n)).collect();
+    // Vertical edges: bot[i] 鈫?top[i]
+    let vert_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, n + i)).collect();
+
+    let mut faces = Vec::with_capacity(n + 2);
+
+    // Bottom cap (outward normal = -dir): reverse traversal of bot edges
+    {
+        let wire_edges: Vec<WireEdge> = (0..n)
+            .map(|i| WireEdge { idx: bot_edges[n - 1 - i], forward: false })
+            .collect();
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: -dir, triangles: vec![], mesh_dirty: true });
+        let si = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot[0], normal: -dir }));
+        brep.geom.face_surface.push(Some(si));
+    }
+
+    // Top cap (outward normal = +dir): forward traversal of top edges
+    {
+        let wire_edges: Vec<WireEdge> = (0..n)
+            .map(|i| WireEdge { idx: top_edges[i], forward: true })
+            .collect();
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: dir, triangles: vec![], mesh_dirty: true });
+        let si = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top[0], normal: dir }));
+        brep.geom.face_surface.push(Some(si));
+    }
+
+    // Lateral quad faces: quad bot[i]鈫抌ot[j]鈫抰op[j]鈫抰op[i] for each edge i
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = bot[i];
+        let b = bot[j];
+        let c = top[j];
+        let face_normal = {
+            let ab = b - a;
+            let ac = c - a;
+            let nv = ab.cross(ac);
+            if nv.length_squared() > 1e-24 { nv.normalize() } else { -dir.cross(ab).normalize() }
+        };
+        // wire: bot[i]鈫抌ot[j], vert bot[j]鈫抰op[j], top[j]鈫抰op[i] (reversed), vert top[i]鈫抌ot[i] (reversed)
+        let wire_edges = vec![
+            WireEdge { idx: bot_edges[i],  forward: true },
+            WireEdge { idx: vert_edges[j], forward: true },
+            WireEdge { idx: top_edges[i],  forward: false },
+            WireEdge { idx: vert_edges[i], forward: false },
+        ];
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: face_normal, triangles: vec![], mesh_dirty: true });
+        let si = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Plane(Plane { origin: a, normal: face_normal }));
+        brep.geom.face_surface.push(Some(si));
+    }
+
+    brep.solids.push(Solid { shells: vec![Shell { faces }] });
+    Ok(brep)
+}
+
 #[cfg(test)]
 mod tests {
     use glam::DVec3;
@@ -163,5 +290,64 @@ mod tests {
         .expect_err("parallel axis/ref_dir must be rejected");
 
         assert!(matches!(err, FeatureError::ParallelVectors(_, _)));
+    }
+
+    #[test]
+    fn make_prism_boss_adds_material() {
+        // Start with a box, add a smaller rectangular prism on top.
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 0.5,
+            depth: 4.0,
+        });
+
+        // Profile: a 1脳1 square centred at origin on the Z=0 plane
+        let profile = vec![
+            DVec3::new(-0.5, 0.0, -0.5),
+            DVec3::new( 0.5, 0.0, -0.5),
+            DVec3::new( 0.5, 0.0,  0.5),
+            DVec3::new(-0.5, 0.0,  0.5),
+        ];
+
+        let result = make_prism(&target, &profile, DVec3::Y, 1.0, BooleanOpType::Union)
+            .expect("make_prism boss should succeed");
+
+        assert!(!result.edges.is_empty(), "boss result must have edges");
+        assert!(
+            result.solids[0].shells[0].faces.len() >= target.solids[0].shells[0].faces.len(),
+            "boss should keep or increase face count"
+        );
+    }
+
+    #[test]
+    fn make_prism_pocket_removes_material() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 2.0,
+            depth: 4.0,
+        });
+
+        // Profile: a 0.5脳0.5 square, extruded 3.0 through the 2.0-tall box
+        let profile = vec![
+            DVec3::new(-0.25, 0.0, -0.25),
+            DVec3::new( 0.25, 0.0, -0.25),
+            DVec3::new( 0.25, 0.0,  0.25),
+            DVec3::new(-0.25, 0.0,  0.25),
+        ];
+
+        let result = make_prism(&target, &profile, DVec3::Y, 3.0, BooleanOpType::Difference)
+            .expect("make_prism pocket should succeed");
+
+        assert!(!result.edges.is_empty(), "pocket result must have edges");
+    }
+
+    #[test]
+    fn make_prism_rejects_degenerate_profile() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0, height: 2.0, depth: 2.0,
+        });
+        let err = make_prism(&target, &[DVec3::ZERO, DVec3::X], DVec3::Y, 1.0, BooleanOpType::Union)
+            .expect_err("profile with 2 verts must be rejected");
+        assert!(matches!(err, FeatureError::NonPositiveInput(_)));
     }
 }

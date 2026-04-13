@@ -245,6 +245,30 @@ pub struct StepDocumentMetadata {
     pub file_name: Option<String>,
     /// Uncertainty value from `UNCERTAINTY_MEASURE_WITH_UNIT`, if present.
     pub uncertainty_value: Option<f64>,
+    /// Materials extracted from `MATERIAL` entities, if present.
+    pub materials: Vec<StepMaterial>,
+    /// Layers extracted from `PRESENTATION_LAYER_ASSIGNMENT` entities, if present.
+    pub layers: Vec<StepLayer>,
+}
+
+/// A material entry extracted from a STEP file.
+///
+/// Analogous to `XCAFDoc_Material` / `XCAFDoc_MaterialTool` in OCCT.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepMaterial {
+    /// Material name (from the `MATERIAL(name, ...)` entity).
+    pub name: String,
+    /// Optional density value parsed from associated property definitions.
+    pub density: Option<f64>,
+}
+
+/// A layer/group entry extracted from a STEP file.
+///
+/// Analogous to `XCAFDoc_Layer` / `XCAFDoc_LayerTool` in OCCT.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepLayer {
+    /// Layer name (first argument of `PRESENTATION_LAYER_ASSIGNMENT`).
+    pub name: String,
 }
 
 fn extract_file_schema(content: &str) -> Option<String> {
@@ -281,6 +305,45 @@ fn infer_protocol_hint(file_schema: Option<&str>) -> StepProtocolHint {
     }
 }
 
+/// Extract material names from `MATERIAL('name', ...)` entities in the data section.
+fn extract_materials(content: &str) -> Vec<StepMaterial> {
+    let mut materials = Vec::new();
+    let mut search = content;
+    while let Some(pos) = search.find("MATERIAL(") {
+        let rest = &search[pos + "MATERIAL(".len()..];
+        if let Some(name) = extract_first_string_arg(rest) {
+            materials.push(StepMaterial { name, density: None });
+        }
+        search = &search[pos + 1..];
+    }
+    materials
+}
+
+/// Extract layer names from `PRESENTATION_LAYER_ASSIGNMENT('name', ...)` entities.
+fn extract_layers(content: &str) -> Vec<StepLayer> {
+    let mut layers = Vec::new();
+    let mut search = content;
+    while let Some(pos) = search.find("PRESENTATION_LAYER_ASSIGNMENT(") {
+        let rest = &search[pos + "PRESENTATION_LAYER_ASSIGNMENT(".len()..];
+        if let Some(name) = extract_first_string_arg(rest) {
+            if !layers.iter().any(|l: &StepLayer| l.name == name) {
+                layers.push(StepLayer { name });
+            }
+        }
+        search = &search[pos + 1..];
+    }
+    layers
+}
+
+/// Extract the first single-quoted string argument from a STEP entity argument list.
+fn extract_first_string_arg(args: &str) -> Option<String> {
+    let q1 = args.find('\'')?;
+    let rest = &args[q1 + 1..];
+    let q2 = rest.find('\'')?;
+    let s = rest[..q2].to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
 impl StepReader {
     pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
@@ -315,6 +378,8 @@ impl StepReader {
             file_name: extract_file_name(content),
             file_schema,
             uncertainty_value: entities.uncertainty_value,
+            materials: extract_materials(content),
+            layers: extract_layers(content),
         };
 
         Ok((brep, metadata))
@@ -3330,6 +3395,47 @@ mod tests {
             "protocol hint should be classified"
         );
         assert!(meta.file_name.is_some(), "FILE_NAME should be extracted");
+        // materials and layers are empty for this simple test file
+        let _ = &meta.materials;
+        let _ = &meta.layers;
+    }
+
+    #[test]
+    fn extract_materials_finds_material_entities() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 1 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=MATERIAL('Steel','Carbon steel',#2);
+#2=MATERIAL('Aluminium','Lightweight alloy',#3);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let materials = extract_materials(step_fragment);
+        assert_eq!(materials.len(), 2);
+        assert_eq!(materials[0].name, "Steel");
+        assert_eq!(materials[1].name, "Aluminium");
+    }
+
+    #[test]
+    fn extract_layers_finds_presentation_layer_assignment() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 1 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#10=PRESENTATION_LAYER_ASSIGNMENT('Layer_0','Default layer',(#5));
+#11=PRESENTATION_LAYER_ASSIGNMENT('Body_Layer','Body geometry',(#6,#7));
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let layers = extract_layers(step_fragment);
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].name, "Layer_0");
+        assert_eq!(layers[1].name, "Body_Layer");
     }
 
     #[test]
