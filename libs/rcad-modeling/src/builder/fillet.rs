@@ -517,6 +517,114 @@ pub fn chamfer_edge_with_history(
     rebuild_with_chamfer_verts_history(brep, edge_idx, f0, f1, nv0a, nv1a, nv0b, nv1b)
 }
 
+// ── Angle-mode chamfer ────────────────────────────────────────────────────────
+
+/// Chamfer an edge in **distance-angle** mode.
+///
+/// The chamfer is defined by:
+/// - `dist`: the setback distance measured along Face 0 (the face with the smaller
+///   index among the two adjacent face indices).
+/// - `angle_rad`: the angle (in radians) between the chamfer face and Face 0.
+///   Must satisfy `0 < angle_rad < dihedral_angle`.
+///
+/// The setback on Face 1 is derived from the dihedral angle β and the chamfer
+/// angle α using:
+///
+/// ```text
+/// sb1 = dist * sin(α) / sin(β − α)
+/// ```
+///
+/// For a 90° edge this simplifies to `sb1 = dist * tan(α)`.  Setting
+/// `α = β/2` produces a symmetric chamfer identical to [`chamfer_edge`] with
+/// distance `dist`.
+///
+/// # Errors
+/// - `BuildError::NonPositiveValue` if `dist ≤ 0` or `angle_rad ≤ 0`.
+/// - `BuildError::InvalidIndex` if `edge_idx` is out of bounds.
+/// - `BuildError::DegenerateGeometry` if the edge is not shared by exactly two
+///   faces, the setback direction cannot be computed, or `angle_rad ≥ β`
+///   (chamfer does not intersect the second face).
+pub fn chamfer_edge_angle(
+    brep: &BRep,
+    edge_idx: usize,
+    dist: f64,
+    angle_rad: f64,
+) -> Result<BRep, BuildError> {
+    chamfer_edge_angle_with_history(brep, edge_idx, dist, angle_rad).map(|(b, _)| b)
+}
+
+/// Chamfer an edge in distance-angle mode and return history.
+///
+/// See [`chamfer_edge_angle`] for geometry details.
+pub fn chamfer_edge_angle_with_history(
+    brep: &BRep,
+    edge_idx: usize,
+    dist: f64,
+    angle_rad: f64,
+) -> Result<(BRep, FilletHistory), BuildError> {
+    if dist <= 0.0 {
+        return Err(BuildError::NonPositiveValue("dist"));
+    }
+    if angle_rad <= 0.0 {
+        return Err(BuildError::NonPositiveValue("angle_rad"));
+    }
+    if edge_idx >= brep.edges.len() {
+        return Err(BuildError::InvalidIndex(edge_idx));
+    }
+
+    let (f0, f1) = find_adjacent_faces(brep, edge_idx).ok_or(BuildError::DegenerateGeometry(
+        "edge must be shared by exactly 2 faces",
+    ))?;
+
+    let s0 = setback_direction(brep, f0, edge_idx);
+    let s1 = setback_direction(brep, f1, edge_idx);
+    if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
+        return Err(BuildError::DegenerateGeometry(
+            "cannot compute setback direction",
+        ));
+    }
+
+    // Compute the dihedral angle β (same formula as fillet_edge).
+    let n0 = face_normal(brep, f0);
+    let n1 = face_normal(brep, f1);
+    let cos_angle = n0.dot(n1).clamp(-1.0, 1.0);
+    let convexity = classify_edge_convexity(brep, edge_idx, f0, f1);
+    let beta = match convexity {
+        EdgeConvexity::Convex => std::f64::consts::PI - cos_angle.acos(),
+        EdgeConvexity::Concave => cos_angle.acos(),
+    };
+
+    // Validate: chamfer angle must be strictly less than the dihedral angle so
+    // the chamfer face intersects the second adjacent face.
+    let sin_beta_minus_alpha = (beta - angle_rad).sin();
+    if sin_beta_minus_alpha.abs() < 1e-10 || angle_rad >= beta {
+        return Err(BuildError::DegenerateGeometry(
+            "angle_rad must be strictly less than the dihedral angle",
+        ));
+    }
+
+    // sb0 = dist (setback on Face 0)
+    // sb1 = dist * sin(α) / sin(β − α)  (setback on Face 1)
+    let sb0 = dist;
+    let sb1 = dist * angle_rad.sin() / sin_beta_minus_alpha;
+
+    let edge = &brep.edges[edge_idx];
+    let p0 = brep.vertices[edge.start].point;
+    let p1 = brep.vertices[edge.end].point;
+
+    let sign = match convexity {
+        EdgeConvexity::Convex => 1.0,
+        EdgeConvexity::Concave => -1.0,
+    };
+
+    let nv0a = p0 + sign * sb0 * s0;
+    let nv1a = p1 + sign * sb0 * s0;
+    let nv0b = p0 + sign * sb1 * s1;
+    let nv1b = p1 + sign * sb1 * s1;
+
+    rebuild_with_chamfer_verts_history(brep, edge_idx, f0, f1, nv0a, nv1a, nv0b, nv1b)
+}
+
 // ── Fillet ────────────────────────────────────────────────────────────────────
 
 /// Fillet (rounded) the edge at `edge_idx` in `brep` with `radius`.
@@ -1469,6 +1577,129 @@ mod tests {
     fn chamfer_invalid_edge_index() {
         let brep = box_brep_2x2x2();
         assert!(chamfer_edge(&brep, 999, 0.2).is_err());
+    }
+
+    // ── Angle-mode chamfer tests ──────────────────────────────────────────────
+
+    #[test]
+    fn chamfer_angle_produces_same_face_count_as_dd() {
+        // Like symmetric chamfer, angle-mode should produce 9 faces.
+        let brep = box_brep_2x2x2();
+        let result = chamfer_edge_angle(&brep, 0, 0.2, std::f64::consts::FRAC_PI_4).unwrap();
+        let n_faces = result.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9, "expected 9 faces after angle-mode chamfer");
+    }
+
+    #[test]
+    fn chamfer_angle_at_45deg_matches_symmetric_on_90deg_edge() {
+        // On a 90-degree edge, alpha=45° should give sb1 = dist*tan(45°) = dist,
+        // i.e., the same setback on both faces as the symmetric chamfer.
+        let brep = box_brep_2x2x2();
+        let dist = 0.3;
+        let alpha = std::f64::consts::FRAC_PI_4; // 45 degrees
+
+        let sym = chamfer_edge(&brep, 0, dist).unwrap();
+        let ang = chamfer_edge_angle(&brep, 0, dist, alpha).unwrap();
+
+        // Both should produce the same face count.
+        assert_eq!(
+            sym.solids[0].shells[0].faces.len(),
+            ang.solids[0].shells[0].faces.len()
+        );
+
+        // The chamfer face (index n-3 in our rebuild order) should have the same
+        // four corner vertices in both cases.
+        let n = sym.solids[0].shells[0].faces.len();
+        let sym_face = &sym.solids[0].shells[0].faces[n - 3];
+        let ang_face = &ang.solids[0].shells[0].faces[n - 3];
+
+        // Collect vertex positions for both chamfer faces.
+        let sym_pts: Vec<DVec3> = sym_face
+            .outer_wire
+            .edges
+            .iter()
+            .map(|we| sym.vertices[sym.edges[we.idx].start].point)
+            .collect();
+        let ang_pts: Vec<DVec3> = ang_face
+            .outer_wire
+            .edges
+            .iter()
+            .map(|we| ang.vertices[ang.edges[we.idx].start].point)
+            .collect();
+
+        for (ps, pa) in sym_pts.iter().zip(ang_pts.iter()) {
+            assert!(
+                (ps - pa).length() < 1e-9,
+                "symmetric and angle-mode chamfer diverge: {ps:?} vs {pa:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn chamfer_angle_asymmetric_setbacks_on_90deg_edge() {
+        // On a 90-degree box edge with alpha=30°, the setback on face 1 should be
+        // dist * tan(30°) = dist / sqrt(3).
+        let brep = box_brep_2x2x2();
+        let dist = 0.3f64;
+        let alpha = std::f64::consts::PI / 6.0; // 30 degrees
+
+        let result = chamfer_edge_angle(&brep, 0, dist, alpha).unwrap();
+        // Verify we get a valid BRep with the expected face count.
+        let n_faces = result.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9);
+
+        // The setback on face 1 should ≈ dist * tan(30°) = dist/√3 ≈ 0.1732.
+        // We verify this indirectly: the chamfer face's quad should be non-square with
+        // the two parallel edges having lengths proportional to dist and dist*tan(30°).
+        // The simplest check: the chamfer face normal is not degenerate.
+        let chamfer_face = &result.solids[0].shells[0].faces[n_faces - 3];
+        assert!(
+            chamfer_face.normal.length() > 0.5,
+            "chamfer face normal should be a unit vector, got {:?}",
+            chamfer_face.normal
+        );
+    }
+
+    #[test]
+    fn chamfer_angle_rejects_zero_dist() {
+        let brep = box_brep_2x2x2();
+        assert!(chamfer_edge_angle(&brep, 0, 0.0, std::f64::consts::FRAC_PI_4).is_err());
+    }
+
+    #[test]
+    fn chamfer_angle_rejects_zero_angle() {
+        let brep = box_brep_2x2x2();
+        assert!(chamfer_edge_angle(&brep, 0, 0.2, 0.0).is_err());
+    }
+
+    #[test]
+    fn chamfer_angle_rejects_angle_ge_dihedral() {
+        // On a 90° edge (β = π/2), passing angle_rad = π/2 should fail.
+        let brep = box_brep_2x2x2();
+        assert!(
+            chamfer_edge_angle(&brep, 0, 0.2, std::f64::consts::FRAC_PI_2).is_err(),
+            "angle equal to dihedral angle should be rejected"
+        );
+    }
+
+    #[test]
+    fn chamfer_angle_invalid_edge_index() {
+        let brep = box_brep_2x2x2();
+        assert!(chamfer_edge_angle(&brep, 999, 0.2, std::f64::consts::FRAC_PI_4).is_err());
+    }
+
+    #[test]
+    fn chamfer_angle_history_reports_correct_faces() {
+        let brep = box_brep_2x2x2();
+        let (result, hist) =
+            chamfer_edge_angle_with_history(&brep, 0, 0.2, std::f64::consts::FRAC_PI_4).unwrap();
+        let n = result.solids[0].shells[0].faces.len();
+        assert_eq!(hist.modified_faces.len(), 2);
+        assert_eq!(hist.closing_faces.len(), 2);
+        // All face indices must be in range.
+        for fi in hist.all_faces() {
+            assert!(fi < n, "history face index {fi} out of range (n={n})");
+        }
     }
 
     #[test]

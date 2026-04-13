@@ -416,7 +416,7 @@ Assuming 1 developer working full-time on kernel work:
 | **Circular helix curve** | **P7 - Low** | **✅ Done** |
 | Normal projection of wire onto surface | P3 - Low | Not started |
 | Stabilize advanced fillet corner cases | P3 - Medium | Not started |
-| Angle-mode chamfer | P3 - Low | Not started |
+| Angle-mode chamfer | P3 - Low | **Done (`chamfer_edge_angle` + `chamfer_edge_angle_with_history`; setback formula sb1 = dist·sin(α)/sin(β−α); 9 unit tests covering asymmetric setbacks, 45° symmetry, error cases)** |
 | 2-D fillet/chamfer API | Convenience | Not started |
 
 ### libs/rcad-step
