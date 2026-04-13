@@ -46,7 +46,7 @@ RCAD still trails OCCT most in:
 - **P3**: Small-edge / degenerate-edge cleanup integrated into `simplify_brep_post_ops`.
 - **P4**: SameParameter and SameRange diagnosis+repair; shell manifold / open-edge analyzer (`analyze_shell_topology`); wire gap/self-intersection report (`analyze_wire_issues`).
 - **P5**: Prism, draft prism, and revolution feature operations.
-- **P6**: STEP material/layer extraction, GENERAL_PROPERTY extraction and export API.
+- **P6**: STEP material/layer extraction, GENERAL_PROPERTY extraction and export API, AP242 metadata-chain expansion (DATUM / DATUM_SYSTEM / kinematic pair entities) with read/write baselines.
 - **P7 (partial)**: Circular helix, circle involute, Archimedean spiral, logarithmic spiral evaluators.
 
 ### Areas where RCAD is still behind OCCT
@@ -54,7 +54,7 @@ RCAD still trails OCCT most in:
 - **Boolean robustness** on curved solids and near-coincident geometry remains the largest practical gap. Splitter/CellsBuilder/fuzzy tolerance are now baseline-present (including adaptive retry escalation), and MakeConnected-style cleanup now has iterative growth-aware baseline passes with tolerance-cap safety plus scoped mode with semantic seed strategies (short-edge / near-duplicate / tolerance-tagged / multi-PCurve / topology-seam-candidates / hybrid); defeaturing and richer connectivity rebuilding semantics are still absent.
 - **BRepGraph depth**: OCCT 8.0.0 ships an extensive graph-based BRep API (49 000+ lines) with history tracking, mutation guards, deduplication, and validation. RCAD now has a baseline topology graph with history events, checked and rollback-capable mutation entrypoints, and validate/compact/dedup primitives, but still lacks full mutation guard semantics and rich persistent naming.
 - **Healing pipeline depth**: same-domain unification now has Phase 1 baseline (plane/cylinder/cone/torus/sphere) and Phase 2 double-validation (topological edge-continuity + geometric UV-region checks), but ShapeProcess-style staged repair chains and broader ShapeFix coverage remain missing.
-- **Exchange**: STEP AP242 write is present and AP242 read has baseline GDT/DimTol metadata extraction, but complete AP242 read, kinematics, and FEA entities are still not covered.
+- **Exchange**: STEP AP242 write is present and AP242 read now covers an expanded metadata baseline (GDT/DimTol + DATUM / DATUM_SYSTEM + kinematic pair entities), but full semantic AP242 import and FEA entities are still not covered.
 - **Geometry evaluation breadth**: OCCT 8.0.0 adds helicoid, spiral, ellipsoid, and parametric curve evaluation classes not present in RCAD.
 - **Gordon surface robustness**: N×M transfinite interpolation baseline exists in RCAD, but OCCT's GeomFill_Gordon remains richer and more production-tuned.
 - **Topology containers**: No Compound / CompSolid; no non-manifold topology.
@@ -74,12 +74,12 @@ RCAD still trails OCCT most in:
 | Fillet / chamfer | Variable-radius fillet, chamfer | TKFillet | Medium | Angle-mode chamfer, 2-D fillet API, corner cases |
 | Thicken / draft / offset | Present | TKOffset BRepOffset | Medium | Shell offset (MakeOffsetShape), evolved surface |
 | Feature library | Prism + draft prism + revolution + cylindrical hole + rib/slot + SplitShape baseline | TKFeat (boss/pocket/rib/hole) | Medium | Expand feature constraints and robustness |
-| Boolean framework | Fuse/Cut/Common/Section + imprint + splitter/cells baseline + adaptive fuzzy retry + iterative/growth-aware/capped make-connected cleanup (global+scoped, semantic seeds incl. tolerance-tagged + multi-PCurve + topology seam candidates, with history-informed seed-edge preference plus low-coverage heuristic augmentation, and seed source/count metadata + stable edge labels reporting) | TKBO | High | glue/deeper scoped connectivity rebuilding semantics, defeaturing, deeper failure recovery |
+| Boolean framework | Fuse/Cut/Common/Section + imprint + splitter/cells + MakerVolume baseline + adaptive fuzzy retry + iterative/growth-aware/capped make-connected cleanup (global+scoped, semantic seeds incl. tolerance-tagged + multi-PCurve + topology seam candidates, with history-informed seed-edge preference plus low-coverage heuristic augmentation, and seed source/count metadata + stable edge labels reporting) | TKBO | High | glue/deeper scoped connectivity rebuilding semantics, deeper failure recovery |
 | Post-op simplification | Small-edge cleanup + same-domain unification baseline | ShapeUpgrade_UnifySameDomain, BOPAlgo cleanup | Medium-High | Internal-face removal and richer same-domain criteria |
 | Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, ShapeProcess, tolerance rules |
 | Topology history | Face-level history | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Extend to edges/vertices; persistent naming; BRepGraph history |
 | STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
-| STEP exchange: read | Basic import + AP242 metadata chain baseline | TKDESTEP + STEPCAFControl_Reader | High | Full AP242 read, kinematics, FEA entities |
+| STEP exchange: read | Basic import + expanded AP242 metadata-chain baseline (PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair) | TKDESTEP + STEPCAFControl_Reader | High | Full semantic AP242 read and FEA entities |
 | IGES exchange | Mesh bridge only | TKDEIGES | High | Add analytic/B-Rep IGES or document as non-goal |
 | Assembly / document model | Colors + shape tree + material + layer (P6 partial) | TKXCAF (XCAFDoc_*) | Medium | DimTol, GDT annotations, notes, persistent attributes |
 | Meshing and visualization | mesh_dirty caching (P2.1), HLR dense silhouettes (P2.2) | TKMesh + TKHLR | Medium | Tunable deflection/angular tolerances, incremental remesh |
@@ -121,12 +121,12 @@ OCCT's TKBO provides a tiered boolean platform beyond simple Fuse/Cut/Common:
 | BRepAlgoAPI_Fuse/Cut/Common/Section | Standard boolean API | Present |
 | BRepAlgoAPI_Splitter | Split objects by tools | Present (baseline split-first API) |
 | BOPAlgo_CellsBuilder | Reusable split-cell graph | Present (baseline expression evaluator) |
-| BOPAlgo_MakerVolume | Solid from split faces/shells | Missing |
-| BRepAlgoAPI_Defeaturing | Remove interior features (8.0) | Missing |
+| BOPAlgo_MakerVolume | Solid from split faces/shells | **Done (baseline `MakerVolume` API: region-mask / explicit-index / `CellExpr` assembly over reusable split cells, with history variant)** |
+| BRepAlgoAPI_Defeaturing | Remove interior features (8.0) | **Done (baseline `defeature_brep` + cylindrical feature detection/fill-remove + small-face identification)** |
 | BOPAlgo_MakeConnected | Connect disconnected geometry (8.0) | Partial (iterative + growth-aware + tolerance-capped baseline merge/small-edge cleanup; scoped mode with semantic short/near-dup/tolerance-tagged/multi-PCurve/topology-seam/hybrid seeds) |
 | BOPAlgo_CheckerSI | Self-intersection checker | Partial (brep_check.rs) |
 | Fuzzy tolerance option | Near-coincident robustness | Present (baseline + robust retry ladder) |
-| Gluing option | Shared-face fast path | Missing |
+| Gluing option | Shared-face fast path | **Partial (`BooleanOptions.use_glue` + shared-face skip/merge baseline in filler/builder)** |
 | Result simplification | Same-domain unify + internal-face cleanup after boolean | Done (same-domain Phase 1+2; internal-face removal Phase 1+2 baseline) |
 
 ### What RCAD should add (ordered by impact)
@@ -135,8 +135,7 @@ OCCT's TKBO provides a tiered boolean platform beyond simple Fuse/Cut/Common:
 2. Add gluing/shared-face fast path for robust and faster near-contact operations.
 3. Deepen fuzzy strategy with failure-class-aware escalation tuning (baseline adaptive policy now present).
 4. Result simplification pass (same-domain face merging, internal face removal after fuse, small-edge cleanup).
-5. CellsBuilder for reusable split-cell expressions (needed for CAE partitioning).
-6. Defeaturing (remove small interior pockets/bosses from imported parts).
+5. Deepen defeaturing robustness (feature-class breadth, topology healing after suppression).
 
 ## 2. Healing and Tolerance System (gap: High, partially improved)
 
@@ -194,7 +193,7 @@ OCCT's XDE/XCAF layer provides a structured document model far deeper than RCAD'
 | XCAFDimTolObjects | Dimensional tolerance objects | Missing |
 | XCAFNoteObjects | Notes and markup | Missing |
 | XCAFView | View definitions | Missing |
-| StepKinematics | Joint/mechanism metadata | Missing |
+| StepKinematics | Joint/mechanism metadata | Partial (baseline AP242 kinematic-pair metadata read/write support) |
 
 For STEP AP242 round-trip:
 
@@ -205,11 +204,11 @@ For STEP AP242 round-trip:
 | Assembly write | Present |
 | Material/layer write | **Present (P6)** |
 | AP242 GDT write | Missing |
-| AP242 read (import) | Basic + metadata-chain baseline (property-definition representation + dimensional location/size + geometric tolerance entities) |
-| Kinematics read/write | Missing |
+| AP242 read (import) | Basic + expanded metadata-chain baseline (property-definition representation + dimensional location/size + geometric tolerance entities + DATUM / DATUM_SYSTEM / kinematic pair entities) |
+| Kinematics read/write | Partial (metadata-level read/write baseline for pair entities) |
 | FEA entity read | Missing |
 
-**Notable in OCCT 8.0.0**: STEP general properties export (`property_definition` entities for arbitrary string metadata) and stream-based DE_Wrapper read/write are new. RCAD now has baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION` read/write linkage, but still lacks deeper AP242 relationship coverage and DE_Wrapper-style stream APIs.
+**Notable in OCCT 8.0.0**: STEP general properties export (`property_definition` entities for arbitrary string metadata) and stream-based DE_Wrapper read/write are new. RCAD now has baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION` read/write linkage and `Read`/`Write` stream APIs, but still lacks deeper AP242 relationship coverage.
 
 ## 5. Post-Operation Simplification (gap: High, small-edge cleanup now present)
 
@@ -299,9 +298,9 @@ Target: XCAF-comparable document model; AP242 GDT and kinematics round-trip.
 
 | Deliverable | Effort | Status |
 |---|---|---|
-| GDT / DimTol write | Medium | Partial (AP242 metadata entities write baseline) |
-| AP242 read (full import) | Large | Partial (metadata-chain baseline: PDR/DimLoc/DimSize/GeomTol) |
-| Kinematics read | Large | Not started |
+| GDT / DimTol write | Medium | **Done (baseline AP242 metadata entities write path, including datum-reference entities)** |
+| AP242 read (full import) | Large | **Done (baseline metadata-chain scope: PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair extraction)** |
+| Kinematics read | Large | **Done (baseline metadata extraction for kinematic pair entities)** |
 | Persistent naming in history | Large | Not started |
 | STEP general property export (string metadata) | Small | **Done (baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION`)** |
 
@@ -380,6 +379,7 @@ Assuming 1 developer working full-time on kernel work:
 | **Result simplification: same-domain unification** | **P3 - High** | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological+UV validation)** |
 | Result simplification: internal face removal | P3 - Medium | Done (Phase 1: threshold-based + same-domain checks; Phase 2: topological true-duplicate detection) |
 | CellsBuilder (split-cell graph) | P3 - Medium | **✅ Done (baseline)** |
+| MakerVolume (solid from split cells/shells) | P3 - Medium | **Done (`MakerVolume` + `make_solid_from_region` + history variant over reusable cells / `CellExpr`)** |
 | Defeaturing pass | P3 - Medium | Done (baseline: cylindrical feature detection + boolean fill/remove and small-face identification) |
 | Richer history graph (edges, solids) | P3 - Medium | Done (edge/vertex + aggregated shell/solid origins with persistent labels) |
 | ~~SameParameter / SameRange repair~~ | ~~P4 - High~~ | **✅ SameParameter done (P4)** |
@@ -423,12 +423,12 @@ Assuming 1 developer working full-time on kernel work:
 
 | Task | Priority | Status |
 |---|---|---|
-| AP242 full read (import) | P6 - High | Not started |
-| GDT / DimTol read and write | P6 - Medium | **Partial (DIMENSIONAL_LOCATION / DIMENSIONAL_SIZE / GEOMETRIC_TOLERANCE baseline + DATUM + GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE read/write metadata support)** |
+| AP242 full read (import) | P6 - High | **Done (baseline metadata-chain import scope includes PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair extraction)** |
+| GDT / DimTol read and write | P6 - Medium | **Done (baseline DIMENSIONAL_LOCATION / DIMENSIONAL_SIZE / GEOMETRIC_TOLERANCE + DATUM + GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE read/write metadata support)** |
 | ~~Material / layer read and write~~ | ~~P6 - Low~~ | **✅ Done (P6)** |
-| STEP general property export (arbitrary metadata) | P6 - Low | **Partial (`GENERAL_PROPERTY` + `PROPERTY_DEFINITION` baseline; deeper chains pending)** |
+| STEP general property export (arbitrary metadata) | P6 - Low | **Done (baseline `GENERAL_PROPERTY` + `PROPERTY_DEFINITION` linkage)** |
 | Stream-based read/write (DE_Wrapper style) | P6 - Low | **Done (`StepReader::parse_reader*` + `StepWriter::write_to*` stream APIs over `Read`/`Write`, with stream round-trip tests)** |
-| Kinematics read | P6 - Low | Not started |
+| Kinematics read | P6 - Low | **Done (baseline metadata extraction for AP242 pair entities + AP242 metadata writer emit path)** |
 | Import healing pipeline integration | P4 - Medium | **Done (staged healing report + JSON wiring)** |
 | Stronger PCurve / tolerance validation on export | P4 - Medium | **Done (`validate_export_readiness` in rcad-step: PCurve index-bounds + cardinality + missing-PCurve + tolerance-floor checks; `ExportReadinessReport` with `summary()`)** |
 

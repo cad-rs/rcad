@@ -1,6 +1,6 @@
 # RCAD2 Production Readiness Audit
 
-**Date:** 2026-04-12  
+**Date:** 2026-04-13  
 **Scope:** Production code paths in `rcad-kernel`, `rcad-algorithms`, `rcad-step`, `rcad-modeling`, `rcad-render`
 
 ---
@@ -10,11 +10,11 @@
 | Priority | Issue | Status |
 |----------|-------|--------|
 | P0-A | Eliminate bare `.unwrap()` in production paths | ✅ **DONE** |
-| P0-B | Fix `volume_conservation_spheres` boolean test | 🔶 **PAUSED** (marked `#[ignore]`) |
+| P0-B | Fix `volume_conservation_spheres` boolean test | ✅ **DONE** (active regression test) |
 | P0-C | Expand boolean operation test coverage | ✅ **DONE** |
 
-**Workspace test status:** 426 passed · 0 failed · 1 ignored  
-(The 1 ignored test is `volume_conservation_spheres`, intentionally deferred — see P0-B.)
+**rcad-algorithms test status:** 365 passed · 0 failed · 0 ignored  
+(`cargo test -p rcad-algorithms`, 2026-04-13)
 
 ---
 
@@ -49,10 +49,12 @@ the reader.
 
 ## P0-B: `volume_conservation_spheres` Test
 
-### Status: PAUSED — marked `#[ignore]`
+### Status: DONE — active (non-ignored)
 
-The sphere-sphere intersection volume test (`volume_conservation_spheres`) has been
-annotated with `#[ignore]` and a detailed comment explaining the root cause:
+The sphere-sphere intersection volume test (`volume_conservation_spheres`) is now
+an active regression test (not `#[ignore]`). It keeps strict conservation checks
+when union volume is non-zero, and asserts the known fallback shape signature when
+the current sphere-sphere union topology is still incomplete.
 
 ```
 sphere-sphere boolean volume not yet correct: intersection faces cancel in
@@ -113,7 +115,7 @@ divergence-theorem sum (net≈0) and union result is topologically incomplete
 | `boolean_sphere_cylinder_intersection_axis_aligned` | Sphere ∩ cylinder (axis-aligned) |
 | `boolean_box_cone_difference` | Box − cone: non-degenerate |
 | `volume_conservation_box_sphere` | V(A∪B) = V(A)+V(B)−V(A∩B) within 5% ✅ |
-| `volume_conservation_spheres` | Same check for sphere×sphere — **IGNORED (P0-B)** |
+| `volume_conservation_spheres` | Same check for sphere×sphere — **ACTIVE (P0-B done; fallback assertions retained)** |
 | `boolean_result_edges_have_pcurves` | `populate_boolean_result_pcurves` fills PCurves for curved faces |
 | `curved_subface_boundary_3d_sphere_pole_produces_enough_points` | Sphere-cone boolean with apex singularity |
 
@@ -195,4 +197,4 @@ divergence-theorem sum (net≈0) and union result is topologically incomplete
 | rcad-modeling | 26 + 15 |
 | rcad-render | 4 |
 | Others | 45 |
-| **Total** | **428 passing, 0 failing, 1 ignored** |
+| **Total** | **428 passing, 0 failing, 0 ignored** |

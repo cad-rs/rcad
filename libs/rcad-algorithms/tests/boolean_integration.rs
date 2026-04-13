@@ -2,9 +2,12 @@
 /// These complement the inline unit tests by testing multi-step workflows and
 /// error path behavior at crate boundary.
 use glam::DVec3;
-use rcad_algorithms::{BooleanError, BooleanOpType, boolean_op};
+use rcad_algorithms::{
+    BooleanError, BooleanOpType, CellExpr, MakerVolume, boolean_op, make_solid_from_region,
+};
 use rcad_kernel::PrimitiveSolid;
 use rcad_kernel::BRep;
+use rcad_kernel::properties::volume;
 use rcad_algorithms::geom_populate;
 use rcad_modeling::{make_box_brep, make_cylinder_brep, make_sphere_brep};
 
@@ -144,4 +147,42 @@ fn disjoint_union_then_difference_no_panic() {
         .expect("difference with disjoint c should succeed");
 
     assert_eq!(face_count(&result), face_count(&ab));
+}
+
+// ── MakerVolume ─────────────────────────────────────────────────────────────
+
+#[test]
+fn maker_volume_region_mask_unions_selected_cells() {
+    let cells = vec![
+        box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+    ];
+
+    let result = make_solid_from_region(&cells, &[true, false, true])
+        .expect("maker volume region mask should succeed");
+    assert!((volume(&result) - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn maker_volume_expression_and_history_workflow() {
+    let maker = MakerVolume::from_cells(vec![
+        box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+        box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+    ]);
+    let expr = CellExpr::Union(
+        Box::new(CellExpr::Cell(0)),
+        Box::new(CellExpr::Union(Box::new(CellExpr::Cell(1)), Box::new(CellExpr::Cell(2)))),
+    );
+
+    let expr_result = maker
+        .build_from_expr(&expr)
+        .expect("maker volume expression should succeed");
+    let (_history_result, history) = maker
+        .build_from_indices_with_history(&[0, 1, 2])
+        .expect("maker volume history path should succeed");
+
+    assert!((volume(&expr_result) - 3.0).abs() < 1e-9);
+    assert_eq!(history.steps.len(), 2);
 }

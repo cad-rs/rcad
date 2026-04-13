@@ -30,6 +30,7 @@ pub mod tolerance;
 pub mod triangulate;
 pub mod array;
 pub mod cells_builder;
+pub mod maker_volume;
 
 use serde::Serialize;
 
@@ -81,6 +82,10 @@ pub use array::{
     linear_pattern, circular_pattern,
 };
 pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
+pub use maker_volume::{
+    MakerVolume, MakerVolumeError, MakerVolumeSelection, make_solid_from_cell_indices,
+    make_solid_from_region, make_solid_from_region_with_history,
+};
 pub use brep_graph::{
     NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent, TopoGraphValidationIssue,
     TopoNode,

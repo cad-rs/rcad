@@ -273,6 +273,10 @@ pub struct StepDocumentMetadata {
     pub geometric_tolerances_with_datum_references: Vec<StepGeometricToleranceWithDatumReference>,
     /// DATUM entries (AP242 datum system baseline).
     pub datums: Vec<StepDatum>,
+    /// DATUM_SYSTEM entries (AP242 datum system grouping).
+    pub datum_systems: Vec<StepDatumSystem>,
+    /// Kinematics/joint entries (AP242 kinematic pair baseline).
+    pub kinematic_pairs: Vec<StepKinematicPair>,
 }
 
 /// Linkage from PROPERTY_DEFINITION to a representation via PROPERTY_DEFINITION_REPRESENTATION.
@@ -331,6 +335,27 @@ pub struct StepDatum {
     pub name: Option<String>,
     pub description: Option<String>,
     pub shape_aspect_id: Option<u64>,
+}
+
+/// A datum system entry (AP242 DATUM_SYSTEM).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumSystem {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub datum_ids: Vec<u64>,
+}
+
+/// A kinematic/joint metadata entry (AP242 kinematic pair family).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepKinematicPair {
+    pub entity_id: u64,
+    /// Original STEP entity token (e.g. `REVOLUTE_PAIR`).
+    pub entity_type: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Referenced ids carried by this entity.
+    pub related_entity_ids: Vec<u64>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -669,6 +694,69 @@ fn extract_datums(content: &str) -> Vec<StepDatum> {
     }
     out
 }
+
+fn extract_datum_systems(content: &str) -> Vec<StepDatumSystem> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DATUM_SYSTEM") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let datum_ids = parts
+            .get(2)
+            .map(|p| parse_ref_list(p.trim()))
+            .unwrap_or_default();
+        out.push(StepDatumSystem {
+            entity_id: id,
+            name,
+            description,
+            datum_ids,
+        });
+    }
+    out
+}
+
+fn extract_kinematic_pairs(content: &str) -> Vec<StepKinematicPair> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let is_kinematic = entity_upper.contains("KINEMATIC")
+            || entity_upper.contains("JOINT")
+            || entity_upper.ends_with("_PAIR");
+        if !is_kinematic {
+            continue;
+        }
+
+        out.push(StepKinematicPair {
+            entity_id: id,
+            entity_type: entity_upper,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            related_entity_ids: parse_ref_list(args),
+        });
+    }
+    out
+}
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
     let rest = &args[q1 + 1..];
@@ -792,6 +880,8 @@ impl StepReader {
             geometric_tolerances_with_datum_references:
                 extract_geometric_tolerances_with_datum_references(content),
             datums: extract_datums(content),
+            datum_systems: extract_datum_systems(content),
+            kinematic_pairs: extract_kinematic_pairs(content),
         };
 
         Ok((brep, metadata))
@@ -4193,6 +4283,27 @@ END-ISO-10303-21;
     }
 
     #[test]
+    fn extract_datum_systems_parses_grouping() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#8=DATUM('A','primary',#70);\n#9=DATUM('B','secondary',#71);\n#10=DATUM_SYSTEM('A|B','main',(#8,#9));\nENDSEC;\nEND-ISO-10303-21;\n";
+        let systems = extract_datum_systems(step);
+        assert_eq!(systems.len(), 1);
+        assert_eq!(systems[0].entity_id, 10);
+        assert_eq!(systems[0].name.as_deref(), Some("A|B"));
+        assert_eq!(systems[0].datum_ids, vec![8, 9]);
+    }
+
+    #[test]
+    fn extract_kinematic_pairs_parses_revolute_pair() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=REVOLUTE_PAIR('hinge','joint',#10,#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let pairs = extract_kinematic_pairs(step);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].entity_id, 100);
+        assert_eq!(pairs[0].entity_type, "REVOLUTE_PAIR");
+        assert_eq!(pairs[0].name.as_deref(), Some("hinge"));
+        assert_eq!(pairs[0].related_entity_ids, vec![10, 20, 30]);
+    }
+
+    #[test]
     fn parse_reader_matches_parse_string() {
         let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
         let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
@@ -4224,6 +4335,8 @@ END-ISO-10303-21;
             b_md.geometric_tolerances_with_datum_references.len()
         );
         assert_eq!(a_md.datums.len(), b_md.datums.len());
+        assert_eq!(a_md.datum_systems.len(), b_md.datum_systems.len());
+        assert_eq!(a_md.kinematic_pairs.len(), b_md.kinematic_pairs.len());
     }
 
     #[test]

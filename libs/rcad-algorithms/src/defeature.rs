@@ -22,15 +22,19 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
-//! use rcad_algorithms::{defeature_brep, DefeaturingOptions};
+//! ```rust
+//! use glam::DVec3;
+//! use rcad_algorithms::{DefeaturingOptions, defeature_brep};
+//! use rcad_modeling::make_box_brep;
 //!
+//! let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
 //! let opts = DefeaturingOptions {
 //!     max_hole_radius: 5.0,  // fill holes <= 5 mm radius
 //!     ..Default::default()
 //! };
-//! let (defeatured, report) = defeature_brep(&brep, &opts).unwrap();
-//! println!("holes removed: {}", report.holes_removed);
+//!
+//! let (_defeatured, report) = defeature_brep(&brep, &opts).unwrap();
+//! assert_eq!(report.holes_removed, 0);
 //! ```
 
 use std::collections::{HashMap, HashSet, VecDeque};

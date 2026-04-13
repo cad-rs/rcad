@@ -1,8 +1,8 @@
 use rcad_kernel::appearance::{Color, StepColor};
 use crate::StepGeneralProperty;
 use crate::{
-    StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
-    StepGeometricToleranceWithDatumReference,
+    StepDatum, StepDatumSystem, StepDimensionalLocation, StepDimensionalSize,
+    StepGeometricTolerance, StepGeometricToleranceWithDatumReference, StepKinematicPair,
     StepPropertyDefinitionRepr,
 };
 
@@ -38,6 +38,8 @@ pub struct StepAp242Metadata {
     pub geometric_tolerances: Vec<StepGeometricTolerance>,
     pub geometric_tolerances_with_datum_references: Vec<StepGeometricToleranceWithDatumReference>,
     pub datums: Vec<StepDatum>,
+    pub datum_systems: Vec<StepDatumSystem>,
+    pub kinematic_pairs: Vec<StepKinematicPair>,
 }
 
 pub struct StepWriter;
@@ -1778,6 +1780,40 @@ impl Part21Writer {
             let shape = opt_ref_token(datum.shape_aspect_id);
             self.push(format!("DATUM({},{},{})", name, desc, shape));
         }
+        for system in &metadata.datum_systems {
+            let name = opt_step_string(system.name.as_deref());
+            let desc = opt_step_string(system.description.as_deref());
+            let refs = if system.datum_ids.is_empty() {
+                "$".to_string()
+            } else {
+                format!(
+                    "({})",
+                    system
+                        .datum_ids
+                        .iter()
+                        .map(|id| format!("#{}", id))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            };
+            self.push(format!("DATUM_SYSTEM({},{},{})", name, desc, refs));
+        }
+        for pair in &metadata.kinematic_pairs {
+            let entity = sanitize_step_entity_name(&pair.entity_type);
+            let name = opt_step_string(pair.name.as_deref());
+            let desc = opt_step_string(pair.description.as_deref());
+            let refs = if pair.related_entity_ids.is_empty() {
+                "$".to_string()
+            } else {
+                pair
+                    .related_entity_ids
+                    .iter()
+                    .map(|id| format!("#{}", id))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            self.push(format!("{}({},{},{})", entity, name, desc, refs));
+        }
     }
 
     fn push(&mut self, body: String) -> u64 {
@@ -1800,6 +1836,23 @@ fn opt_ref_token(v: Option<u64>) -> String {
 fn opt_step_string(s: Option<&str>) -> String {
     s.map(|v| format!("'{}'", escape_step_string(v)))
         .unwrap_or_else(|| "$".to_string())
+}
+
+fn sanitize_step_entity_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        let up = ch.to_ascii_uppercase();
+        if up.is_ascii_alphanumeric() || up == '_' {
+            out.push(up);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "KINEMATIC_PAIR".to_string()
+    } else {
+        out
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2100,6 +2153,19 @@ mod tests {
                 description: Some("primary".into()),
                 shape_aspect_id: Some(70),
             }],
+            datum_systems: vec![StepDatumSystem {
+                entity_id: 0,
+                name: Some("A_SYS".into()),
+                description: Some("primary_system".into()),
+                datum_ids: vec![70],
+            }],
+            kinematic_pairs: vec![StepKinematicPair {
+                entity_id: 0,
+                entity_type: "REVOLUTE_PAIR".into(),
+                name: Some("hinge".into()),
+                description: Some("joint".into()),
+                related_entity_ids: vec![81, 82, 83],
+            }],
         };
         let step = StepWriter::write_string_with_ap242_metadata(
             &brep,
@@ -2120,6 +2186,8 @@ mod tests {
             "GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE('position','gtol_datum',#51,#61,#71)"
         ));
         assert!(step.contains("DATUM('A','primary',#70)"));
+        assert!(step.contains("DATUM_SYSTEM('A_SYS','primary_system',(#70))"));
+        assert!(step.contains("REVOLUTE_PAIR('hinge','joint',#81,#82,#83)"));
     }
 
     #[test]
@@ -2168,6 +2236,19 @@ mod tests {
                 description: Some("secondary".into()),
                 shape_aspect_id: Some(88),
             }],
+            datum_systems: vec![StepDatumSystem {
+                entity_id: 0,
+                name: Some("B_SYS".into()),
+                description: Some("secondary_system".into()),
+                datum_ids: vec![88],
+            }],
+            kinematic_pairs: vec![StepKinematicPair {
+                entity_id: 0,
+                entity_type: "PRISMATIC_PAIR".into(),
+                name: Some("slider".into()),
+                description: Some("guide".into()),
+                related_entity_ids: vec![90, 91],
+            }],
         };
 
         let step = StepWriter::write_string_with_ap242_metadata(
@@ -2189,6 +2270,8 @@ mod tests {
         assert_eq!(doc_meta.geometric_tolerances.len(), 1);
         assert_eq!(doc_meta.geometric_tolerances_with_datum_references.len(), 1);
         assert_eq!(doc_meta.datums.len(), 1);
+        assert_eq!(doc_meta.datum_systems.len(), 1);
+        assert_eq!(doc_meta.kinematic_pairs.len(), 1);
     }
 
     #[test]
