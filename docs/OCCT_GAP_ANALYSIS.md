@@ -69,7 +69,7 @@ RCAD still trails OCCT most in:
 | Gordon / N×M surface fill | Baseline transfinite Gordon support | GeomFill_Gordon (8.0) | Medium | Improve robustness and continuity controls |
 | Point cloud analysis | Missing | PointSetLib (8.0) -- PCA, inertia, dimensionality | Low | Low priority; add if needed for import QC |
 | Core B-Rep model | Vertex/Edge/Wire/Face/Shell/Solid | TKBRep | Medium | Add Compound, CompSolid, non-manifold support |
-| Graph-based topology layer | Baseline traversal + history events + **RAII mutation guard (`BRepGraphMutGuard`)** + checkpoint/rollback + `validate_invariants` + validate/compact/dedup primitives | BRepGraph (8.0, 49k lines) -- history, mutation, dedup, validate | Medium | Add richer persistent-history semantics and persistent naming |
+| Graph-based topology layer | Baseline traversal + **graph-native mutation history (`BRepGraphHistory`)** + **RAII mutation guard (`BRepGraphMutGuard`)** + checkpoint/rollback + `validate_invariants` + validate/compact/dedup primitives | BRepGraph (8.0, 49k lines) -- history, mutation, dedup, validate | Medium | Add richer persistent-history semantics and persistent naming |
 | Primitive and sweep modeling | Good breadth (extrude/revolve/loft/sweep) | TKPrim + TKOffset | Low | Edge cases; N-sided fill, normal projection |
 | Fillet / chamfer | Variable-radius fillet, chamfer | TKFillet | Medium | Angle-mode chamfer, 2-D fillet API, corner cases |
 | Thicken / draft / offset | Present | TKOffset BRepOffset | Medium | Shell offset (MakeOffsetShape), evolved surface |
@@ -77,7 +77,7 @@ RCAD still trails OCCT most in:
 | Boolean framework | Fuse/Cut/Common/Section + imprint + splitter/cells + MakerVolume baseline + adaptive fuzzy retry + iterative/growth-aware/capped make-connected cleanup (global+scoped, semantic seeds incl. tolerance-tagged + multi-PCurve + topology seam candidates, with history-informed seed-edge preference plus low-coverage heuristic augmentation, and seed source/count metadata + stable edge labels reporting) | TKBO | High | glue/deeper scoped connectivity rebuilding semantics, deeper failure recovery |
 | Post-op simplification | Small-edge cleanup + same-domain unification baseline | ShapeUpgrade_UnifySameDomain, BOPAlgo cleanup | Medium-High | Internal-face removal and richer same-domain criteria |
 | Healing and validation | SameParameter/SameRange + shell + wire diagnostics (P4 partial) + staged healing with issue-driven pre-make-connected, iterative parametric consistency pass, and make-connected-on-stall fallback | TKShHealing (10 packages) | High | ShapeUpgrade_UnifySameDomain, ShapeProcess, tolerance rules |
-| Topology history | Face/edge/vertex/shell/solid origin tracking + baseline persistent-name propagation from boolean history | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Add graph-native history objects and richer persistent naming semantics |
+| Topology history | Face/edge/vertex/shell/solid origin tracking + baseline persistent-name propagation from boolean history + graph-native mutation event log (`BRepGraphHistory`) | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Deepen graph-native history semantics and richer persistent naming semantics |
 | STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
 | STEP exchange: read | Basic import + expanded AP242 metadata-chain baseline (PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair) | TKDESTEP + STEPCAFControl_Reader | High | Full semantic AP242 read and FEA entities |
 | IGES exchange | Mesh bridge only | TKDEIGES | High | Add analytic/B-Rep IGES or document as non-goal |
@@ -96,7 +96,7 @@ Key capabilities exposed by OCCT `BRepGraph`, with RCAD status:
 | BRepGraph feature | Purpose | RCAD status |
 |---|---|---|
 | `BRepGraph_NodeId`-typed incidence tables | Graph traversal without pointer chasing | **Baseline present** (index-based adjacency tables) |
-| `BRepGraph_History` | Persistent shape history (which new faces came from which old faces) | Partial |
+| `BRepGraph_History` | Persistent shape history (which new faces came from which old faces) | **Partial → improved** (`BRepGraphHistory` + `BRepGraphHistoryEvent`; commit-time event recording via `commit_with_history`) |
 | `BRepGraph_MutGuard` | Safe mutation of topology with invariant checking | **Done** |
 | `BRepGraph_Deduplicate` | Remove coincident geometry across copies | **Baseline present** |
 | `BRepGraph_Validate` | Full topology validity checking | **Baseline present** (`validate_invariants`) |
@@ -104,7 +104,7 @@ Key capabilities exposed by OCCT `BRepGraph`, with RCAD status:
 | `BRepGraph_Builder` | Construct graphs programmatically (no TopoDS needed) | **Done** |
 | `BRepGraph_Tool` | Geometry access analogous to `BRep_Tool`, but over graph nodes | **Done** |
 
-**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, a full RAII `BRepGraphMutGuard` (commit/rollback/checkpoint/validate_invariants), programmatic graph construction (`BRepGraphBuilder`), graph-node geometry access (`BRepGraphTool`), and compact/dedup primitives. The remaining gap is richer persistent-history semantics and stable persistent naming.
+**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, graph-native history logging (`BRepGraphHistory`), a full RAII `BRepGraphMutGuard` (commit/rollback/checkpoint/validate_invariants), programmatic graph construction (`BRepGraphBuilder`), graph-node geometry access (`BRepGraphTool`), and compact/dedup primitives. The remaining gap is richer persistent-history semantics and stable persistent naming.
 
 **Recommended direction**: Design a lightweight graph topology wrapper (`rcad-kernel` or new `rcad-graph` crate) that maps existing `BRep` topology to a history-capable graph. This can start as read-only traversal and grow to support mutation.
 
@@ -334,7 +334,7 @@ Answering the question: **how far is RCAD from being production-grade?**
 |---|---|---|---|---|
 | Geometry kernel | 92% | 95% | Minor gaps (advanced surface families and robustness) | Improved |
 | B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | **+3% (non-manifold repair hints)** |
-| Graph topology layer | **42%** | 50% | RAII MutGuard + checkpoint/rollback/validate + Builder/Tool done; persistent-history naming still pending | **+17% (BRepGraphMutGuard + BRepGraphCheckpoint + BRepGraphBuilder + BRepGraphTool + validate_invariants + ExtremaPC analytic dispatch)** |
+| Graph topology layer | **44%** | 50% | RAII MutGuard + checkpoint/rollback/validate + Builder/Tool + graph-native history log done; persistent-history naming still pending | **+19% (BRepGraphMutGuard + BRepGraphCheckpoint + BRepGraphBuilder + BRepGraphTool + BRepGraphHistory + validate_invariants + ExtremaPC analytic dispatch)** |
 | Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
 | Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
@@ -463,7 +463,7 @@ The three areas that dominate the remaining production gap, in order:
 
 1. **Boolean robustness and result simplification hardening** -- splitter/fuzzy/same-domain baselines exist; robustness and defeaturing remain the biggest gap.
 2. **Healing depth** -- staged pipeline exists, but ShapeProcess-like coverage and richer repair semantics remain.
-3. **BRepGraph / graph topology depth** -- RAII mutation guard (`BRepGraphMutGuard`), checkpoint/rollback, `validate_invariants`, `BRepGraphBuilder`, and `BRepGraphTool` are now in place; persistent-history naming remains.
+3. **BRepGraph / graph topology depth** -- RAII mutation guard (`BRepGraphMutGuard`), checkpoint/rollback, `validate_invariants`, `BRepGraphBuilder`, `BRepGraphTool`, and graph-native mutation history (`BRepGraphHistory`) are now in place; persistent-history naming remains.
 
 At the current trajectory, RCAD can become a credible industrial CAD kernel with **8–12 months of focused kernel work**, assuming the priority order above and one dedicated developer. If BRepGraph and Gordon/eval-breadth work are deferred to a later phase, the immediate production baseline can be reached in roughly **5–7 months** (same-domain unification + healing pipeline completion + AP242 read depth).
 

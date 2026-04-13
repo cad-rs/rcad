@@ -1075,6 +1075,59 @@ pub struct BRepGraphCheckpoint {
     face_dirty: Vec<bool>,
 }
 
+/// Structured graph-mutation event recorded when a scoped mutation is
+/// committed.
+///
+/// Analogous to OCCT `BRepGraph_History` event entries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BRepGraphHistoryEvent {
+    /// Optional user-provided label, for example "boolean_post_cleanup".
+    pub label: Option<String>,
+    /// Entities whose dirty-bit state changed between checkpoint and commit.
+    pub touched_vertices: Vec<usize>,
+    pub touched_edges: Vec<usize>,
+    pub touched_faces: Vec<usize>,
+    /// Counts before and after commit.
+    pub vertex_count_before: usize,
+    pub vertex_count_after: usize,
+    pub edge_count_before: usize,
+    pub edge_count_after: usize,
+    pub face_count_before: usize,
+    pub face_count_after: usize,
+    /// True if any adjacency table changed.
+    pub topology_changed: bool,
+}
+
+/// In-memory history log for graph mutations.
+///
+/// This is a lightweight baseline analogue to OCCT `BRepGraph_History`.
+#[derive(Debug, Clone, Default)]
+pub struct BRepGraphHistory {
+    pub events: Vec<BRepGraphHistoryEvent>,
+}
+
+impl BRepGraphHistory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, event: BRepGraphHistoryEvent) {
+        self.events.push(event);
+    }
+
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
+    pub fn last(&self) -> Option<&BRepGraphHistoryEvent> {
+        self.events.last()
+    }
+}
+
 impl BRepGraph {
     // ── Checkpoint / restore ──────────────────────────────────────────────────
 
@@ -1324,6 +1377,34 @@ impl<'g> BRepGraphMutGuard<'g> {
         self.committed = true;
     }
 
+    /// Validate invariants, commit, and append a structured event to `history`.
+    pub fn commit_with_history(
+        mut self,
+        history: &mut BRepGraphHistory,
+        label: impl Into<Option<String>>,
+    ) -> Result<(), Vec<String>> {
+        let errors = self.graph.validate_invariants();
+        if errors.is_empty() {
+            let event = self.make_history_event(label.into());
+            history.push(event);
+            self.committed = true;
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Commit without validation and append a structured event to `history`.
+    pub fn commit_unchecked_with_history(
+        mut self,
+        history: &mut BRepGraphHistory,
+        label: impl Into<Option<String>>,
+    ) {
+        let event = self.make_history_event(label.into());
+        history.push(event);
+        self.committed = true;
+    }
+
     /// Explicitly roll back all mutations made since the guard was created.
     ///
     /// This is equivalent to simply dropping the guard without committing,
@@ -1341,6 +1422,39 @@ impl<'g> BRepGraphMutGuard<'g> {
         self.committed = true;
         self.checkpoint.clone()
     }
+
+    fn make_history_event(&self, label: Option<String>) -> BRepGraphHistoryEvent {
+        BRepGraphHistoryEvent {
+            label,
+            touched_vertices: changed_dirty_indices(&self.checkpoint.vertex_dirty, &self.graph.vertex_dirty),
+            touched_edges: changed_dirty_indices(&self.checkpoint.edge_dirty, &self.graph.edge_dirty),
+            touched_faces: changed_dirty_indices(&self.checkpoint.face_dirty, &self.graph.face_dirty),
+            vertex_count_before: self.checkpoint.vertex_count,
+            vertex_count_after: self.graph.vertex_count,
+            edge_count_before: self.checkpoint.edge_count,
+            edge_count_after: self.graph.edge_count,
+            face_count_before: self.checkpoint.face_count,
+            face_count_after: self.graph.face_count,
+            topology_changed: self.checkpoint.edge_to_faces != self.graph.edge_to_faces
+                || self.checkpoint.face_to_edges != self.graph.face_to_edges
+                || self.checkpoint.vertex_to_edges != self.graph.vertex_to_edges
+                || self.checkpoint.vertex_to_faces != self.graph.vertex_to_faces
+                || self.checkpoint.edge_endpoints != self.graph.edge_endpoints,
+        }
+    }
+}
+
+fn changed_dirty_indices(before: &[bool], after: &[bool]) -> Vec<usize> {
+    let n = before.len().max(after.len());
+    let mut out = Vec::new();
+    for i in 0..n {
+        let b = before.get(i).copied().unwrap_or(false);
+        let a = after.get(i).copied().unwrap_or(false);
+        if b != a {
+            out.push(i);
+        }
+    }
+    out
 }
 
 impl Drop for BRepGraphMutGuard<'_> {
@@ -1871,6 +1985,65 @@ mod tests {
         let g = BRepGraph::from_brep(&brep);
         let errors = g.validate_invariants();
         assert!(errors.is_empty(), "tripod graph should have no index invariant violations: {errors:?}");
+    }
+
+    #[test]
+    fn mut_guard_commit_with_history_records_event() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+        let mut hist = BRepGraphHistory::new();
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_vertex_modified(1);
+            guard.graph().mark_edge_modified(2);
+            guard.graph().mark_face_modified(3);
+            guard
+                .commit_with_history(&mut hist, Some("unit_test_mutation".to_string()))
+                .expect("commit_with_history should validate");
+        }
+
+        assert_eq!(hist.len(), 1);
+        let ev = hist.last().expect("history event should exist");
+        assert_eq!(ev.label.as_deref(), Some("unit_test_mutation"));
+        assert_eq!(ev.touched_vertices, vec![1]);
+        assert_eq!(ev.touched_edges, vec![2]);
+        assert_eq!(ev.touched_faces, vec![3]);
+        assert!(!ev.topology_changed);
+    }
+
+    #[test]
+    fn mut_guard_drop_without_commit_does_not_record_history() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+        let hist = BRepGraphHistory::new();
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_face_modified(0);
+            // no commit_with_history
+        }
+
+        assert!(hist.is_empty());
+        assert!(!g.has_modifications());
+    }
+
+    #[test]
+    fn mut_guard_commit_unchecked_with_history_records_event() {
+        let brep = unit_box();
+        let mut g = BRepGraph::from_brep(&brep);
+        let mut hist = BRepGraphHistory::new();
+
+        {
+            let mut guard = g.begin_mutation();
+            guard.graph().mark_edge_modified(5);
+            guard.commit_unchecked_with_history(&mut hist, None);
+        }
+
+        assert_eq!(hist.len(), 1);
+        let ev = hist.last().unwrap();
+        assert_eq!(ev.label, None);
+        assert_eq!(ev.touched_edges, vec![5]);
     }
 
     // ── BRepGraphBuilder / BRepGraphTool ────────────────────────────────────
