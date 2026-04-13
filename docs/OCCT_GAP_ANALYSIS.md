@@ -430,13 +430,13 @@ Assuming 1 developer working full-time on kernel work:
 | Stream-based read/write (DE_Wrapper style) | P6 - Low | Not started |
 | Kinematics read | P6 - Low | Not started |
 | Import healing pipeline integration | P4 - Medium | **Done (staged healing report + JSON wiring)** |
-| Stronger PCurve / tolerance validation on export | P4 - Medium | Not started |
+| Stronger PCurve / tolerance validation on export | P4 - Medium | **Done (`validate_export_readiness` in rcad-step: PCurve index-bounds + cardinality + missing-PCurve + tolerance-floor checks; `ExportReadinessReport` with `summary()`)** |
 
 ### libs/rcad-render
 
 | Task | Priority | Status |
 |---|---|---|
-| Tunable meshing deflection / angular tolerances | P3 - Medium | Not started |
+| Tunable meshing deflection / angular tolerances | P3 - Medium | **Done (`TessellationOptions = TessellationParams` re-export + `Tessellator::tessellate_with_options` in rcad-render; wires `mesh_brep` with chord/angle params to GPU mesh builder)** |
 | Incremental cache invalidation for edited models | P2.1 followup - Medium | Not started |
 | Better HLR on curved geometry | P2.2 followup - Low | Not started |
 

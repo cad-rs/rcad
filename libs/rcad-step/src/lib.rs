@@ -3492,6 +3492,202 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     None
 }
 
+// ── PCurve / tolerance export validation ─────────────────────────────────────
+//
+// Analogous to OCCT's `BRepLib::CheckCurveOnSurface` and the tolerance-check
+// stage of `BRepAlgoAPI_Check`.
+
+/// A single issue found by [`validate_export_readiness`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportIssue {
+    /// Edge has a PCurve whose surface index is out of range.
+    PcurveSurfaceOutOfRange { edge_idx: usize, surface_idx: usize },
+    /// Edge has a PCurve whose 2D curve index is out of range.
+    PcurveCurveOutOfRange { edge_idx: usize, curve2d_idx: usize },
+    /// Edge tolerance is below the global precision floor (`CONFUSION`).
+    EdgeToleranceTooTight { edge_idx: usize, tolerance: f64 },
+    /// Vertex tolerance is below the global precision floor.
+    VertexToleranceTooTight { vertex_idx: usize, tolerance: f64 },
+    /// Per-face tolerance is below the global precision floor.
+    FaceToleranceTooTight { face_idx: usize, tolerance: f64 },
+    /// Edge has more than 2 PCurves, which is unusual and may cause
+    /// conformance issues with strict STEP readers.
+    TooManyPcurves { edge_idx: usize, count: usize },
+    /// Edge is referenced by a surface-bearing face but has no PCurve stored,
+    /// meaning the SURFACE_CURVE entity will be missing on export.
+    MissingPcurve { edge_idx: usize },
+}
+
+impl std::fmt::Display for ExportIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ExportIssue::*;
+        match self {
+            PcurveSurfaceOutOfRange { edge_idx, surface_idx } =>
+                write!(f, "edge {edge_idx}: PCurve surface_idx {surface_idx} out of range"),
+            PcurveCurveOutOfRange { edge_idx, curve2d_idx } =>
+                write!(f, "edge {edge_idx}: PCurve curve2d_idx {curve2d_idx} out of range"),
+            EdgeToleranceTooTight { edge_idx, tolerance } =>
+                write!(f, "edge {edge_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
+            VertexToleranceTooTight { vertex_idx, tolerance } =>
+                write!(f, "vertex {vertex_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
+            FaceToleranceTooTight { face_idx, tolerance } =>
+                write!(f, "face {face_idx}: tolerance {tolerance} < CONFUSION ({CONFUSION})"),
+            TooManyPcurves { edge_idx, count } =>
+                write!(f, "edge {edge_idx}: has {count} PCurves (max 2 expected)"),
+            MissingPcurve { edge_idx } =>
+                write!(f, "edge {edge_idx}: used by surface-bearing face but no PCurve stored"),
+        }
+    }
+}
+
+/// Result of [`validate_export_readiness`].
+#[derive(Debug, Clone, Default)]
+pub struct ExportReadinessReport {
+    /// All detected issues.  Empty ↔ [`is_ready`] == true.
+    pub issues: Vec<ExportIssue>,
+    /// `true` when no issues were found.
+    pub is_ready: bool,
+    /// Number of edges whose PCurve lists were inspected.
+    pub edges_checked: usize,
+    /// Total number of individual PCurve entries validated.
+    pub pcurves_checked: usize,
+}
+
+impl ExportReadinessReport {
+    /// One-line human-readable summary.
+    pub fn summary(&self) -> String {
+        if self.is_ready {
+            format!(
+                "export-ready: {} edges, {} pcurves checked, 0 issues",
+                self.edges_checked, self.pcurves_checked
+            )
+        } else {
+            format!(
+                "NOT export-ready: {} issue(s) across {} edges / {} pcurves",
+                self.issues.len(), self.edges_checked, self.pcurves_checked
+            )
+        }
+    }
+}
+
+/// Validate a [`BRep`] for STEP export correctness.
+///
+/// Performs three categories of checks:
+///
+/// 1. **PCurve index bounds** — every [`PCurve`] in `geom.edge_pcurves` must
+///    reference a valid index into `geom.surfaces` and `geom.curve2ds`.
+/// 2. **PCurve cardinality** — more than 2 PCurves on a single edge is unusual
+///    and may cause conformance issues with strict STEP AP214/AP242 readers.
+/// 3. **Missing PCurves** — an edge that is referenced by a surface-bearing face
+///    (i.e., `geom.face_surface` has a `Some` entry for that face's flat index)
+///    but has no PCurve entry is flagged.  Advisory: analytic primitives that do
+///    not populate `geom.edge_pcurves` at all are *not* flagged because the
+///    writer synthesises the SURFACE_CURVE on the fly for such shapes.
+/// 4. **Tolerance floor** — stored tolerance values below `CONFUSION` (1 × 10⁻⁷)
+///    would violate the STEP AP214/AP242 minimum-tolerance recommendations.
+///
+/// Analogous to `BRepLib::CheckCurveOnSurface` + OCCT shape-analysis tolerance
+/// queries before a `WriteSTEP` call.
+pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
+    let mut issues = Vec::new();
+    let n_surfaces = brep.geom.surfaces.len();
+    let n_curve2ds = brep.geom.curve2ds.len();
+    let n_edge_pcurve_entries = brep.geom.edge_pcurves.len();
+    let n_edges = brep.edges.len();
+    let mut pcurves_checked = 0usize;
+
+    // ── 1 & 2: PCurve index validity and cardinality ──────────────────────────
+    for ei in 0..n_edge_pcurve_entries {
+        let pcs = &brep.geom.edge_pcurves[ei];
+        if pcs.len() > 2 {
+            issues.push(ExportIssue::TooManyPcurves { edge_idx: ei, count: pcs.len() });
+        }
+        for pc in pcs {
+            pcurves_checked += 1;
+            if pc.surface_idx >= n_surfaces {
+                issues.push(ExportIssue::PcurveSurfaceOutOfRange {
+                    edge_idx: ei,
+                    surface_idx: pc.surface_idx,
+                });
+            }
+            if pc.curve2d_idx >= n_curve2ds {
+                issues.push(ExportIssue::PcurveCurveOutOfRange {
+                    edge_idx: ei,
+                    curve2d_idx: pc.curve2d_idx,
+                });
+            }
+        }
+    }
+
+    // ── 3: Missing PCurves ────────────────────────────────────────────────────
+    // Only flag when `edge_pcurves` has been partially populated (i.e. the BRep
+    // uses explicit PCurve storage) but a particular edge slot is empty or absent.
+    // If the slice is entirely empty the writer uses analytic fallback paths and
+    // we should not raise false-positive MissingPcurve issues.
+    let any_pcurves_stored = brep.geom.edge_pcurves.iter().any(|v| !v.is_empty());
+    if any_pcurves_stored {
+        // Collect edge indices that are adjacent to surface-bearing faces.
+        let mut surface_edges: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut flat_fi = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let has_surface = brep.geom.face_surface
+                        .get(flat_fi)
+                        .and_then(|o| *o)
+                        .is_some();
+                    if has_surface {
+                        for we in &face.outer_wire.edges {
+                            surface_edges.insert(we.idx);
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                surface_edges.insert(we.idx);
+                            }
+                        }
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+
+        for &ei in &surface_edges {
+            let has_pcurve = brep.geom.edge_pcurves
+                .get(ei)
+                .map_or(false, |v| !v.is_empty());
+            if !has_pcurve {
+                issues.push(ExportIssue::MissingPcurve { edge_idx: ei });
+            }
+        }
+    }
+
+    // ── 4: Tolerance floor ────────────────────────────────────────────────────
+    for (vi, &t) in brep.geom.vertex_tolerance.iter().enumerate() {
+        if t > 0.0 && t < CONFUSION {
+            issues.push(ExportIssue::VertexToleranceTooTight { vertex_idx: vi, tolerance: t });
+        }
+    }
+    for (ei, &t) in brep.geom.edge_tolerance.iter().enumerate() {
+        if t > 0.0 && t < CONFUSION {
+            issues.push(ExportIssue::EdgeToleranceTooTight { edge_idx: ei, tolerance: t });
+        }
+    }
+    for (fi, &t) in brep.geom.face_tolerance.iter().enumerate() {
+        if t > 0.0 && t < CONFUSION {
+            issues.push(ExportIssue::FaceToleranceTooTight { face_idx: fi, tolerance: t });
+        }
+    }
+
+    let is_ready = issues.is_empty();
+    ExportReadinessReport {
+        is_ready,
+        issues,
+        edges_checked: n_edges,
+        pcurves_checked,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3831,5 +4027,136 @@ END-ISO-10303-21;
         assert_eq!(tols[0].name.as_deref(), Some("flatness"));
         assert_eq!(tols[0].value_entity_id, Some(50));
         assert_eq!(tols[0].shape_aspect_id, Some(60));
+    }
+
+    // ── validate_export_readiness tests ──────────────────────────────────────
+
+    #[test]
+    fn export_readiness_clean_brep_is_ready() {
+        // A BRep loaded from box.step should parse and be export-ready
+        // (no out-of-range pcurve indices, tolerances are ≥ CONFUSION).
+        let brep = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let report = validate_export_readiness(&brep);
+        assert!(
+            report.is_ready,
+            "box.step should be export-ready; issues: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn export_readiness_out_of_range_surface_idx_detected() {
+        use rcad_kernel::{BRep, PCurve, Edge, Vertex};
+        use rcad_kernel::geom::Line2d;
+
+        // Build a minimal BRep with one edge whose PCurve has an invalid surface_idx.
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: [0.0, 0.0, 0.0].into() });
+        brep.vertices.push(Vertex { point: [1.0, 0.0, 0.0].into() });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        // surface_idx = 99 is out of range (no surfaces in geom.surfaces)
+        brep.geom.edge_pcurves.push(vec![PCurve { surface_idx: 99, curve2d_idx: 0 }]);
+        brep.geom.curve2ds.push(rcad_kernel::Curve2d::Line(Line2d {
+            origin: glam::DVec2::ZERO,
+            direction: glam::DVec2::X,
+        }));
+
+        let report = validate_export_readiness(&brep);
+        assert!(!report.is_ready);
+        assert_eq!(report.pcurves_checked, 1);
+        assert!(
+            report.issues.iter().any(|i| matches!(
+                i,
+                ExportIssue::PcurveSurfaceOutOfRange { edge_idx: 0, surface_idx: 99 }
+            )),
+            "expected PcurveSurfaceOutOfRange, got {:?}", report.issues
+        );
+    }
+
+    #[test]
+    fn export_readiness_out_of_range_curve2d_idx_detected() {
+        use rcad_kernel::{BRep, PCurve, Edge, Vertex};
+        use rcad_kernel::geom::Plane;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: [0.0, 0.0, 0.0].into() });
+        brep.vertices.push(Vertex { point: [1.0, 0.0, 0.0].into() });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.geom.surfaces.push(rcad_kernel::Surface3::Plane(Plane {
+            origin: glam::DVec3::ZERO,
+            normal: glam::DVec3::Z,
+        }));
+        // curve2d_idx = 99 is out of range (no curve2ds stored)
+        brep.geom.edge_pcurves.push(vec![PCurve { surface_idx: 0, curve2d_idx: 99 }]);
+
+        let report = validate_export_readiness(&brep);
+        assert!(!report.is_ready);
+        assert!(
+            report.issues.iter().any(|i| matches!(
+                i,
+                ExportIssue::PcurveCurveOutOfRange { edge_idx: 0, curve2d_idx: 99 }
+            )),
+            "expected PcurveCurveOutOfRange, got {:?}", report.issues
+        );
+    }
+
+    #[test]
+    fn export_readiness_tolerance_too_tight_detected() {
+        use rcad_kernel::BRep;
+
+        let mut brep = BRep::new();
+        // Push a sub-CONFUSION edge tolerance.
+        brep.geom.edge_tolerance.push(1e-10);
+
+        let report = validate_export_readiness(&brep);
+        assert!(!report.is_ready);
+        assert!(
+            report.issues.iter().any(|i| matches!(i, ExportIssue::EdgeToleranceTooTight { .. })),
+            "expected EdgeToleranceTooTight, got {:?}", report.issues
+        );
+    }
+
+    #[test]
+    fn export_readiness_too_many_pcurves_flagged() {
+        use rcad_kernel::{BRep, PCurve, Edge, Vertex};
+        use rcad_kernel::geom::{Plane, Line2d};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: [0.0, 0.0, 0.0].into() });
+        brep.vertices.push(Vertex { point: [1.0, 0.0, 0.0].into() });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.geom.surfaces.push(rcad_kernel::Surface3::Plane(Plane {
+            origin: glam::DVec3::ZERO,
+            normal: glam::DVec3::Z,
+        }));
+        brep.geom.curve2ds.push(rcad_kernel::Curve2d::Line(Line2d {
+            origin: glam::DVec2::ZERO,
+            direction: glam::DVec2::X,
+        }));
+        // 3 PCurves on a single edge — unusual
+        brep.geom.edge_pcurves.push(vec![
+            PCurve { surface_idx: 0, curve2d_idx: 0 },
+            PCurve { surface_idx: 0, curve2d_idx: 0 },
+            PCurve { surface_idx: 0, curve2d_idx: 0 },
+        ]);
+
+        let report = validate_export_readiness(&brep);
+        assert!(!report.is_ready);
+        assert!(
+            report.issues.iter().any(|i| matches!(
+                i,
+                ExportIssue::TooManyPcurves { edge_idx: 0, count: 3 }
+            )),
+            "expected TooManyPcurves, got {:?}", report.issues
+        );
+    }
+
+    #[test]
+    fn export_readiness_summary_text() {
+        use rcad_kernel::BRep;
+        let brep = BRep::new();
+        let report = validate_export_readiness(&brep);
+        let s = report.summary();
+        assert!(s.contains("export-ready"), "summary should say export-ready: {s}");
     }
 }

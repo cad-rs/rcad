@@ -1,5 +1,11 @@
 use rcad_kernel::BRep;
+use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
+
+/// Tessellation quality options for `[`Tessellator::tessellate_with_options`]`.
+///
+/// Re-exported from `[`rcad_algorithms::TessellationParams`]`.
+pub type TessellationOptions = TessellationParams;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionMode {
@@ -387,6 +393,17 @@ impl Tessellator {
             indices,
             line_indices,
         }
+    }
+
+    /// Re-tessellate dirty faces using the given quality options, then build a GPU `[`Mesh`]`.
+    ///
+    /// Calls `[`rcad_algorithms::mesh_brep`]` to recompute triangles for any face whose
+    /// `mesh_dirty` flag is set, then delegates to `[`Tessellator::tessellate`]`.
+    ///
+    /// Analogous to `BRepMesh_IncrementalMesh` with explicit deflection/angular arguments in OCCT.
+    pub fn tessellate_with_options(brep: &mut BRep, options: &TessellationOptions) -> Mesh {
+        mesh_brep(brep, options);
+        Self::tessellate(brep)
     }
 }
 
