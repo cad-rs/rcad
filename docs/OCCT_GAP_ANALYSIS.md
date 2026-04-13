@@ -91,20 +91,20 @@ RCAD still trails OCCT most in:
 
 OCCT 8.0.0-rc5 introduces `BRepGraph`, an entirely new graph-based representation of topology and BRep geometry as an alternative to the traditional `TopoDS_Shape` linked structure. This is 49 000+ lines of new code with 20+ GTest files.
 
-Key capabilities of BRepGraph that RCAD does not have:
+Key capabilities exposed by OCCT `BRepGraph`, with RCAD status:
 
-| BRepGraph feature | Purpose |
-|---|---|
-| `BRepGraph_NodeId`-typed incidence tables | Graph traversal without pointer chasing |
-| `BRepGraph_History` | Persistent shape history (which new faces came from which old faces) |
-| `BRepGraph_MutGuard` | Safe mutation of topology with invariant checking |
-| `BRepGraph_Deduplicate` | Remove coincident geometry across copies |
-| `BRepGraph_Validate` | Full topology validity checking |
-| `BRepGraph_Compact` | Compact sparse topology after edits |
-| `BRepGraph_Builder` | Construct graphs programmatically (no TopoDS needed) |
-| `BRepGraph_Tool` | Geometry access analogous to `BRep_Tool`, but over graph nodes |
+| BRepGraph feature | Purpose | RCAD status |
+|---|---|---|
+| `BRepGraph_NodeId`-typed incidence tables | Graph traversal without pointer chasing | **Baseline present** (index-based adjacency tables) |
+| `BRepGraph_History` | Persistent shape history (which new faces came from which old faces) | Partial |
+| `BRepGraph_MutGuard` | Safe mutation of topology with invariant checking | **Done** |
+| `BRepGraph_Deduplicate` | Remove coincident geometry across copies | **Baseline present** |
+| `BRepGraph_Validate` | Full topology validity checking | **Baseline present** (`validate_invariants`) |
+| `BRepGraph_Compact` | Compact sparse topology after edits | **Baseline present** |
+| `BRepGraph_Builder` | Construct graphs programmatically (no TopoDS needed) | **Done** |
+| `BRepGraph_Tool` | Geometry access analogous to `BRep_Tool`, but over graph nodes | **Done** |
 
-**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, a full RAII `BRepGraphMutGuard` (commit/rollback/checkpoint/validate_invariants), and compact/dedup primitives. The remaining gap is richer persistent-history semantics and stable persistent naming.
+**Impact on RCAD**: The `BRepGraph` layer is what OCCT will use for persistent naming, richer history (edges, vertices, solids), and safer boolean post-processing. It is the foundation for future defeaturing, rib, and history-based re-feature workflows. RCAD now has a baseline topology graph traversal API with history events, a full RAII `BRepGraphMutGuard` (commit/rollback/checkpoint/validate_invariants), programmatic graph construction (`BRepGraphBuilder`), graph-node geometry access (`BRepGraphTool`), and compact/dedup primitives. The remaining gap is richer persistent-history semantics and stable persistent naming.
 
 **Recommended direction**: Design a lightweight graph topology wrapper (`rcad-kernel` or new `rcad-graph` crate) that maps existing `BRep` topology to a history-capable graph. This can start as read-only traversal and grow to support mutation.
 
@@ -334,7 +334,7 @@ Answering the question: **how far is RCAD from being production-grade?**
 |---|---|---|---|---|
 | Geometry kernel | 92% | 95% | Minor gaps (advanced surface families and robustness) | Improved |
 | B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | **+3% (non-manifold repair hints)** |
-| Graph topology layer | **38%** | 50% | RAII MutGuard + checkpoint/rollback/validate done; persistent-history naming still pending | **+13% (BRepGraphMutGuard + BRepGraphCheckpoint + validate_invariants + ExtremaPC analytic dispatch)** |
+| Graph topology layer | **42%** | 50% | RAII MutGuard + checkpoint/rollback/validate + Builder/Tool done; persistent-history naming still pending | **+17% (BRepGraphMutGuard + BRepGraphCheckpoint + BRepGraphBuilder + BRepGraphTool + validate_invariants + ExtremaPC analytic dispatch)** |
 | Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
 | Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
@@ -355,7 +355,7 @@ Assuming 1 developer working full-time on kernel work:
 | P4 remaining | ShapeProcess-grade healing semantics and tolerance policy hardening | 1-2 months | In progress |
 | P5 remaining | feature constraints/variants and robustness hardening | 1-2 months | In progress |
 | P6 remaining | AP242 semantic read depth + broader XCAF-style document semantics | 2-3 months | Partial |
-| P7 remaining | persistent history/naming semantics (mutation guard now **done**) | 1-2 months | In progress |
+| P7 remaining | persistent history/naming semantics (mutation guard + Builder/Tool now **done**) | 1-2 months | In progress |
 | Hardening, edge cases, test coverage | Ongoing | +2 months across all phases | Ongoing |
 
 **Total to reach credible production baseline: approximately 7–11 months** (revised down as P3-P7 baseline items are now largely landed; still bounded by AP242 semantic depth, healing-pipeline depth, and persistent-history semantics).
@@ -405,7 +405,7 @@ Assuming 1 developer working full-time on kernel work:
 | Persistent naming hooks | P6 - Medium | **Done (`PersistentNamingHooks::propagate_through_remap` + `propagate_face_remap` + `identity_map` + `iter`; empty-map = passthrough semantics; 5 propagation tests)** |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
-| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported; `BRepGraphMutGuard` RAII + `BRepGraphCheckpoint` + `validate_invariants`; 14 new mutation-guard tests)** |
+| **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported; `BRepGraphMutGuard` RAII + `BRepGraphCheckpoint` + `validate_invariants`; `BRepGraphBuilder` + `BRepGraphTool`; 35 graph tests total)** |
 
 ### libs/rcad-modeling
 
@@ -463,7 +463,7 @@ The three areas that dominate the remaining production gap, in order:
 
 1. **Boolean robustness and result simplification hardening** -- splitter/fuzzy/same-domain baselines exist; robustness and defeaturing remain the biggest gap.
 2. **Healing depth** -- staged pipeline exists, but ShapeProcess-like coverage and richer repair semantics remain.
-3. **BRepGraph / graph topology depth** -- RAII mutation guard (`BRepGraphMutGuard`), checkpoint/rollback, and `validate_invariants` are now in place; persistent-history naming and compaction semantics remain.
+3. **BRepGraph / graph topology depth** -- RAII mutation guard (`BRepGraphMutGuard`), checkpoint/rollback, `validate_invariants`, `BRepGraphBuilder`, and `BRepGraphTool` are now in place; persistent-history naming remains.
 
 At the current trajectory, RCAD can become a credible industrial CAD kernel with **8–12 months of focused kernel work**, assuming the priority order above and one dedicated developer. If BRepGraph and Gordon/eval-breadth work are deferred to a later phase, the immediate production baseline can be reached in roughly **5–7 months** (same-domain unification + healing pipeline completion + AP242 read depth).
 

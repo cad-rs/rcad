@@ -50,7 +50,8 @@
 //! assert!(graph.is_closed());
 //! ```
 
-use crate::BRep;
+use crate::{BRep, Edge, Face, PCurve, Vertex};
+use glam::DVec3;
 use std::collections::{HashSet, VecDeque};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +96,35 @@ pub struct BRepGraph {
     edge_dirty: Vec<bool>,
     /// Dirty flags for faces (by flat face index).
     face_dirty: Vec<bool>,
+}
+
+/// Programmatic builder for a [`BRepGraph`] without first materializing a full
+/// [`BRep`].
+///
+/// Analogous to OCCT `BRepGraph_Builder`.
+#[derive(Debug, Clone)]
+pub struct BRepGraphBuilder {
+    vertex_count: usize,
+    edge_count: usize,
+    face_count: usize,
+    edge_to_faces: Vec<Vec<usize>>,
+    face_to_edges: Vec<Vec<usize>>,
+    edge_endpoints: Vec<(usize, usize)>,
+    vertex_dirty: Vec<bool>,
+    edge_dirty: Vec<bool>,
+    face_dirty: Vec<bool>,
+}
+
+/// Geometry/topology accessor over graph node indices.
+///
+/// This bridges flat `BRepGraph` indices back to the source [`BRep`] entities
+/// and geometry pools.
+///
+/// Analogous to OCCT `BRepGraph_Tool` / `BRep_Tool` accessors.
+#[derive(Debug, Clone, Copy)]
+pub struct BRepGraphTool<'a> {
+    graph: &'a BRepGraph,
+    brep: &'a BRep,
 }
 
 /// Non-manifold topology summary derived from edge-face adjacency.
@@ -279,6 +309,20 @@ impl BRepGraph {
             edge_dirty: vec![false; ec],
             face_dirty: vec![false; fc],
         }
+    }
+
+    /// Start building a graph programmatically.
+    ///
+    /// The caller provides the intended vertex/edge/face counts up front, then
+    /// fills edge endpoints and edge/face incidence through the returned
+    /// [`BRepGraphBuilder`].
+    pub fn builder(vertex_count: usize, edge_count: usize, face_count: usize) -> BRepGraphBuilder {
+        BRepGraphBuilder::new(vertex_count, edge_count, face_count)
+    }
+
+    /// Create a geometry/topology access wrapper over this graph and `brep`.
+    pub fn tool<'a>(&'a self, brep: &'a BRep) -> BRepGraphTool<'a> {
+        BRepGraphTool::new(self, brep)
     }
 
     // ── O(1) adjacency queries ────────────────────────────────────────────────
@@ -641,6 +685,226 @@ impl BRepGraph {
     /// vertex.  Yields edge indices in DFS discovery order.
     pub fn dfs_edges_from_vertex(&self, seed_vertex_idx: usize) -> DfsEdgesFromVertex<'_> {
         DfsEdgesFromVertex::new(self, seed_vertex_idx)
+    }
+}
+
+impl BRepGraphBuilder {
+    /// Create an empty builder with pre-sized incidence tables.
+    pub fn new(vertex_count: usize, edge_count: usize, face_count: usize) -> Self {
+        Self {
+            vertex_count,
+            edge_count,
+            face_count,
+            edge_to_faces: vec![Vec::new(); edge_count],
+            face_to_edges: vec![Vec::new(); face_count],
+            edge_endpoints: vec![(0, 0); edge_count],
+            vertex_dirty: vec![false; vertex_count],
+            edge_dirty: vec![false; edge_count],
+            face_dirty: vec![false; face_count],
+        }
+    }
+
+    /// Set the start/end vertices of an edge.
+    pub fn set_edge_endpoints(
+        &mut self,
+        edge_idx: usize,
+        start_vertex: usize,
+        end_vertex: usize,
+    ) -> &mut Self {
+        if let Some(slot) = self.edge_endpoints.get_mut(edge_idx) {
+            *slot = (start_vertex, end_vertex);
+        }
+        self
+    }
+
+    /// Add an edge→face incidence entry.
+    pub fn add_edge_face(&mut self, edge_idx: usize, face_idx: usize) -> &mut Self {
+        if let Some(adj) = self.edge_to_faces.get_mut(edge_idx) {
+            if !adj.contains(&face_idx) {
+                adj.push(face_idx);
+            }
+        }
+        self
+    }
+
+    /// Add a face→edge incidence entry.
+    pub fn add_face_edge(&mut self, face_idx: usize, edge_idx: usize) -> &mut Self {
+        if let Some(adj) = self.face_to_edges.get_mut(face_idx) {
+            if !adj.contains(&edge_idx) {
+                adj.push(edge_idx);
+            }
+        }
+        self
+    }
+
+    /// Mark a vertex dirty in the initial graph state.
+    pub fn mark_vertex_modified(&mut self, vertex_idx: usize) -> &mut Self {
+        if let Some(dirty) = self.vertex_dirty.get_mut(vertex_idx) {
+            *dirty = true;
+        }
+        self
+    }
+
+    /// Mark an edge dirty in the initial graph state.
+    pub fn mark_edge_modified(&mut self, edge_idx: usize) -> &mut Self {
+        if let Some(dirty) = self.edge_dirty.get_mut(edge_idx) {
+            *dirty = true;
+        }
+        self
+    }
+
+    /// Mark a face dirty in the initial graph state.
+    pub fn mark_face_modified(&mut self, face_idx: usize) -> &mut Self {
+        if let Some(dirty) = self.face_dirty.get_mut(face_idx) {
+            *dirty = true;
+        }
+        self
+    }
+
+    /// Build the graph, deriving vertex incidence from edge endpoints and
+    /// face-edge incidence, and validating internal consistency.
+    pub fn build(self) -> Result<BRepGraph, Vec<String>> {
+        let graph = self.build_unchecked();
+        let errors = graph.validate_invariants();
+        if errors.is_empty() {
+            Ok(graph)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Build the graph without validation.
+    pub fn build_unchecked(self) -> BRepGraph {
+        let mut vertex_to_edges = vec![Vec::new(); self.vertex_count];
+        for (edge_idx, &(start_vertex, end_vertex)) in self.edge_endpoints.iter().enumerate() {
+            if start_vertex < self.vertex_count {
+                vertex_to_edges[start_vertex].push(edge_idx);
+            }
+            if end_vertex < self.vertex_count && end_vertex != start_vertex {
+                vertex_to_edges[end_vertex].push(edge_idx);
+            }
+        }
+
+        let mut vertex_to_faces = vec![Vec::new(); self.vertex_count];
+        for (face_idx, edges) in self.face_to_edges.iter().enumerate() {
+            let mut vertices_on_face = HashSet::new();
+            for &edge_idx in edges {
+                if let Some(&(start_vertex, end_vertex)) = self.edge_endpoints.get(edge_idx) {
+                    if start_vertex < self.vertex_count {
+                        vertices_on_face.insert(start_vertex);
+                    }
+                    if end_vertex < self.vertex_count {
+                        vertices_on_face.insert(end_vertex);
+                    }
+                }
+            }
+            for vertex_idx in vertices_on_face {
+                vertex_to_faces[vertex_idx].push(face_idx);
+            }
+        }
+
+        BRepGraph {
+            vertex_count: self.vertex_count,
+            edge_count: self.edge_count,
+            face_count: self.face_count,
+            edge_to_faces: self.edge_to_faces,
+            face_to_edges: self.face_to_edges,
+            vertex_to_edges,
+            vertex_to_faces,
+            edge_endpoints: self.edge_endpoints,
+            vertex_dirty: self.vertex_dirty,
+            edge_dirty: self.edge_dirty,
+            face_dirty: self.face_dirty,
+        }
+    }
+}
+
+impl<'a> BRepGraphTool<'a> {
+    pub fn new(graph: &'a BRepGraph, brep: &'a BRep) -> Self {
+        Self { graph, brep }
+    }
+
+    /// Raw vertex by graph vertex index.
+    pub fn vertex(&self, vertex_idx: usize) -> Option<&'a Vertex> {
+        self.brep.vertices.get(vertex_idx)
+    }
+
+    /// Raw edge by graph edge index.
+    pub fn edge(&self, edge_idx: usize) -> Option<&'a Edge> {
+        self.brep.edges.get(edge_idx)
+    }
+
+    /// Raw face by graph flat-face index.
+    pub fn face(&self, face_idx: usize) -> Option<&'a Face> {
+        self.face_location(face_idx)
+            .and_then(|(solid_idx, shell_idx, local_face_idx)| {
+                self.brep
+                    .solids
+                    .get(solid_idx)?
+                    .shells
+                    .get(shell_idx)?
+                    .faces
+                    .get(local_face_idx)
+            })
+    }
+
+    /// Map a flat face index back to `(solid_idx, shell_idx, local_face_idx)`.
+    pub fn face_location(&self, face_idx: usize) -> Option<(usize, usize, usize)> {
+        let mut flat_face_idx = 0usize;
+        for (solid_idx, solid) in self.brep.solids.iter().enumerate() {
+            for (shell_idx, shell) in solid.shells.iter().enumerate() {
+                for local_face_idx in 0..shell.faces.len() {
+                    if flat_face_idx == face_idx {
+                        return Some((solid_idx, shell_idx, local_face_idx));
+                    }
+                    flat_face_idx += 1;
+                }
+            }
+        }
+        None
+    }
+
+    /// Vertex position by graph vertex index.
+    pub fn vertex_point(&self, vertex_idx: usize) -> Option<DVec3> {
+        self.vertex(vertex_idx).map(|vertex| vertex.point)
+    }
+
+    /// Edge endpoint positions by graph edge index.
+    pub fn edge_points(&self, edge_idx: usize) -> Option<(DVec3, DVec3)> {
+        let (start_vertex, end_vertex) = self.graph.edge_endpoints(edge_idx)?;
+        Some((self.vertex_point(start_vertex)?, self.vertex_point(end_vertex)?))
+    }
+
+    /// Face normal by graph flat-face index.
+    pub fn face_normal(&self, face_idx: usize) -> Option<DVec3> {
+        self.face(face_idx).map(|face| face.normal)
+    }
+
+    /// Associated 3D curve for an edge, if the source `BRep` carries one.
+    pub fn edge_curve(&self, edge_idx: usize) -> Option<&'a crate::geom::Curve3> {
+        let curve_idx = self.brep.geom.edge_curve.get(edge_idx).copied().flatten()?;
+        self.brep.geom.curves.get(curve_idx)
+    }
+
+    /// Associated surface for a face, if the source `BRep` carries one.
+    pub fn face_surface(&self, face_idx: usize) -> Option<&'a crate::geom::Surface3> {
+        let surface_idx = self.brep.geom.face_surface.get(face_idx).copied().flatten()?;
+        self.brep.geom.surfaces.get(surface_idx)
+    }
+
+    /// PCurves attached to an edge.
+    pub fn edge_pcurves(&self, edge_idx: usize) -> Option<&'a [PCurve]> {
+        self.brep.geom.edge_pcurves.get(edge_idx).map(|pcurves| pcurves.as_slice())
+    }
+
+    /// Edge parameter range on its 3D curve, if present.
+    pub fn edge_curve_range(&self, edge_idx: usize) -> Option<[f64; 2]> {
+        self.brep.geom.edge_curve_range.get(edge_idx).copied().flatten()
+    }
+
+    /// Face surface parameter domain override, if present.
+    pub fn face_surface_range(&self, face_idx: usize) -> Option<[f64; 4]> {
+        self.brep.geom.face_surface_range.get(face_idx).copied().flatten()
     }
 }
 
@@ -1095,7 +1359,7 @@ impl Drop for BRepGraphMutGuard<'_> {
 mod tests {
     use super::*;
     use crate::{
-        BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge,
+        BRep, Edge, Face, Shell, Solid, Surface3, Vertex, Wire, WireEdge,
         geom::PrimitiveSolid,
     };
     use glam::DVec3;
@@ -1607,5 +1871,87 @@ mod tests {
         let g = BRepGraph::from_brep(&brep);
         let errors = g.validate_invariants();
         assert!(errors.is_empty(), "tripod graph should have no index invariant violations: {errors:?}");
+    }
+
+    // ── BRepGraphBuilder / BRepGraphTool ────────────────────────────────────
+
+    #[test]
+    fn builder_constructs_same_adjacency_as_box() {
+        let brep = unit_box();
+        let graph_from_brep = BRepGraph::from_brep(&brep);
+
+        let mut builder = BRepGraph::builder(
+            graph_from_brep.vertex_count,
+            graph_from_brep.edge_count,
+            graph_from_brep.face_count,
+        );
+        for edge_idx in 0..graph_from_brep.edge_count {
+            let (start_vertex, end_vertex) = graph_from_brep.edge_endpoints(edge_idx).unwrap();
+            builder.set_edge_endpoints(edge_idx, start_vertex, end_vertex);
+            for &face_idx in graph_from_brep.edge_adjacent_faces(edge_idx) {
+                builder.add_edge_face(edge_idx, face_idx);
+            }
+        }
+        for face_idx in 0..graph_from_brep.face_count {
+            for &edge_idx in graph_from_brep.face_edges(face_idx) {
+                builder.add_face_edge(face_idx, edge_idx);
+            }
+        }
+        builder.mark_face_modified(2).mark_edge_modified(1);
+
+        let built = builder.build().expect("builder output should validate");
+        assert_eq!(built.vertex_count, graph_from_brep.vertex_count);
+        assert_eq!(built.edge_count, graph_from_brep.edge_count);
+        assert_eq!(built.face_count, graph_from_brep.face_count);
+        for edge_idx in 0..built.edge_count {
+            assert_eq!(built.edge_adjacent_faces(edge_idx), graph_from_brep.edge_adjacent_faces(edge_idx));
+            assert_eq!(built.edge_endpoints(edge_idx), graph_from_brep.edge_endpoints(edge_idx));
+        }
+        for face_idx in 0..built.face_count {
+            assert_eq!(built.face_edges(face_idx), graph_from_brep.face_edges(face_idx));
+        }
+        assert_eq!(built.vertex_adjacent_edges(0), graph_from_brep.vertex_adjacent_edges(0));
+        assert!(built.modified_faces().contains(&2));
+        assert!(built.modified_edges().contains(&1));
+    }
+
+    #[test]
+    fn builder_reports_invalid_indices() {
+        let mut builder = BRepGraph::builder(2, 1, 1);
+        builder
+            .set_edge_endpoints(0, 0, 7)
+            .add_edge_face(0, 0)
+            .add_face_edge(0, 0);
+
+        let errors = builder.build().expect_err("out-of-range endpoint should fail validation");
+        assert!(
+            errors.iter().any(|error| error.contains("end vertex 7 out of range")),
+            "expected endpoint validation error, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tool_exposes_flat_face_and_geometry_access() {
+        let mut brep = unit_box();
+        brep.geom.surfaces.push(Surface3::Plane(crate::geom::Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        }));
+        brep.geom.face_surface = vec![Some(0); 6];
+        brep.geom.face_surface_range = vec![Some([0.0, 1.0, 0.0, 1.0]); 6];
+
+        let graph = BRepGraph::from_brep(&brep);
+        let tool = graph.tool(&brep);
+
+        let face = tool.face(0).expect("flat face 0 should resolve");
+        assert_eq!(face.outer_wire.edges.len(), 4);
+        assert_eq!(tool.face_location(0), Some((0, 0, 0)));
+        assert!(tool.face_normal(0).is_some());
+        assert!(matches!(tool.face_surface(0), Some(Surface3::Plane(_))));
+        assert_eq!(tool.face_surface_range(0), Some([0.0, 1.0, 0.0, 1.0]));
+
+        let (start_point, end_point) = tool.edge_points(0).expect("edge 0 should have endpoints");
+        assert_eq!(start_point, brep.vertices[brep.edges[0].start].point);
+        assert_eq!(end_point, brep.vertices[brep.edges[0].end].point);
     }
 }
