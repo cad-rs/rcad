@@ -516,6 +516,64 @@ fn segments_2d_properly_intersect(
     t > eps && t < 1.0 - eps && s > eps && s < 1.0 - eps
 }
 
+fn count_geometric_self_intersections(
+    wire_verts: &[(usize, usize)],
+    vertices: &[rcad_kernel::topology::Vertex],
+) -> usize {
+    let n = wire_verts.len();
+    if n < 4 {
+        return 0;
+    }
+
+    let segs: Vec<(DVec3, DVec3)> = wire_verts
+        .iter()
+        .map(|&(sv, ev)| {
+            let p0 = vertices.get(sv).map(|v| v.point).unwrap_or(DVec3::ZERO);
+            let p1 = vertices.get(ev).map(|v| v.point).unwrap_or(DVec3::ZERO);
+            (p0, p1)
+        })
+        .collect();
+
+    let (origin, axis_u, axis_v) = {
+        let mut found = None;
+        for i in 0..n {
+            let d = segs[i].1 - segs[i].0;
+            if d.length() > 1e-12 {
+                let u = d.normalize();
+                let tmp = if u.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                let v = u.cross(tmp).normalize();
+                found = Some((segs[i].0, u, v));
+                break;
+            }
+        }
+        match found {
+            Some(b) => b,
+            None => return 0,
+        }
+    };
+
+    let project = |p: DVec3| -> [f64; 2] {
+        let d = p - origin;
+        [d.dot(axis_u), d.dot(axis_v)]
+    };
+
+    let seg2d: Vec<([f64; 2], [f64; 2])> =
+        segs.iter().map(|&(p0, p1)| (project(p0), project(p1))).collect();
+
+    let mut count = 0usize;
+    for i in 0..n {
+        for j in (i + 2)..n {
+            if i == 0 && j == n - 1 {
+                continue;
+            }
+            if segments_2d_properly_intersect(seg2d[i].0, seg2d[i].1, seg2d[j].0, seg2d[j].1) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 // ── SameParameter diagnosis ───────────────────────────────────────────────────
 
 /// A single edge whose 3D curve endpoints deviate from the vertex positions.
@@ -543,6 +601,163 @@ impl SameParameterDiagnosis {
     pub fn is_clean(&self) -> bool {
         self.suspect_edges.is_empty()
     }
+}
+
+/// A single edge whose PCurve ranges deviate from the 3D edge range.
+///
+/// Analogous to the diagnostic output of `BRepCheck_Edge::SameRange()` in OCCT.
+#[derive(Debug, Clone)]
+pub struct SuspectSameRangeEdge {
+    /// Index of the edge in `BRep.edges`.
+    pub edge_idx: usize,
+    /// Number of attached PCurves that do not match the 3D edge range.
+    pub mismatched_pcurves: usize,
+    /// Maximum endpoint mismatch magnitude among attached PCurves.
+    pub max_delta: f64,
+}
+
+/// Report from [`diagnose_same_range`].
+#[derive(Debug, Clone, Default)]
+pub struct SameRangeDiagnosis {
+    /// Edges whose PCurve ranges deviate from their 3D edge range beyond tolerance.
+    pub suspect_edges: Vec<SuspectSameRangeEdge>,
+}
+
+impl SameRangeDiagnosis {
+    /// Returns `true` if no SameRange violations were found.
+    pub fn is_clean(&self) -> bool {
+        self.suspect_edges.is_empty()
+    }
+}
+
+/// Per-wire diagnostics for gap and self-intersection analysis.
+#[derive(Debug, Clone, Default)]
+pub struct WireIssueReport {
+    pub solid: usize,
+    pub shell: usize,
+    pub face: usize,
+    /// 0 = outer wire, 1..N = inner wire index + 1.
+    pub wire_idx: usize,
+    pub edge_count: usize,
+    pub open_gaps: usize,
+    pub topological_self_intersections: usize,
+    pub geometric_self_intersections: usize,
+}
+
+/// Aggregated report from [`analyze_wire_issues`].
+#[derive(Debug, Clone, Default)]
+pub struct WireAnalysisReport {
+    pub wires: Vec<WireIssueReport>,
+    pub total_open_gaps: usize,
+    pub total_topological_self_intersections: usize,
+    pub total_geometric_self_intersections: usize,
+}
+
+impl WireAnalysisReport {
+    /// Returns true when no gap or self-intersection issue was found.
+    pub fn is_clean(&self) -> bool {
+        self.total_open_gaps == 0
+            && self.total_topological_self_intersections == 0
+            && self.total_geometric_self_intersections == 0
+    }
+}
+
+/// Analyze all face wires for gap and self-intersection issues.
+///
+/// This is a structured counterpart to checker issues C1/C7/C8 and is useful
+/// for import diagnostics and healing reports.
+pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
+    use std::collections::HashMap;
+
+    let mut report = WireAnalysisReport::default();
+    let n_edges = brep.edges.len();
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                let mut all_wires: Vec<(usize, &rcad_kernel::topology::Wire)> = Vec::new();
+                all_wires.push((0, &face.outer_wire));
+                for (wi, inner) in face.inner_wires.iter().enumerate() {
+                    all_wires.push((wi + 1, inner));
+                }
+
+                for (wire_idx, wire) in all_wires {
+                    let mut wire_verts = Vec::with_capacity(wire.edges.len());
+                    let mut valid = true;
+                    for we in &wire.edges {
+                        if we.idx >= n_edges {
+                            valid = false;
+                            break;
+                        }
+                        let edge = &brep.edges[we.idx];
+                        let (sv, ev) = if we.forward {
+                            (edge.start, edge.end)
+                        } else {
+                            (edge.end, edge.start)
+                        };
+                        if sv >= brep.vertices.len() || ev >= brep.vertices.len() {
+                            valid = false;
+                            break;
+                        }
+                        wire_verts.push((sv, ev));
+                    }
+
+                    if !valid {
+                        continue;
+                    }
+
+                    let mut open_gaps = 0usize;
+                    let n = wire_verts.len();
+                    if n > 1 {
+                        for i in 0..n {
+                            let next = (i + 1) % n;
+                            let end_v = wire_verts[i].1;
+                            let start_v = wire_verts[next].0;
+                            if end_v != start_v {
+                                let end_pt = brep.vertices[end_v].point;
+                                let start_pt = brep.vertices[start_v].point;
+                                if (end_pt - start_pt).length() > tolerance {
+                                    open_gaps += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    let mut vertex_count: HashMap<usize, usize> = HashMap::new();
+                    for &(sv, ev) in &wire_verts {
+                        *vertex_count.entry(sv).or_insert(0) += 1;
+                        *vertex_count.entry(ev).or_insert(0) += 1;
+                    }
+                    let topological_self_intersections =
+                        vertex_count.values().filter(|&&c| c > 2).count();
+                    let geometric_self_intersections =
+                        count_geometric_self_intersections(&wire_verts, &brep.vertices);
+
+                    if open_gaps > 0
+                        || topological_self_intersections > 0
+                        || geometric_self_intersections > 0
+                    {
+                        report.wires.push(WireIssueReport {
+                            solid: si,
+                            shell: shi,
+                            face: fi,
+                            wire_idx,
+                            edge_count: wire_verts.len(),
+                            open_gaps,
+                            topological_self_intersections,
+                            geometric_self_intersections,
+                        });
+                    }
+
+                    report.total_open_gaps += open_gaps;
+                    report.total_topological_self_intersections += topological_self_intersections;
+                    report.total_geometric_self_intersections += geometric_self_intersections;
+                }
+            }
+        }
+    }
+
+    report
 }
 
 /// Scan all edges in `brep` for SameParameter violations.
@@ -594,6 +809,63 @@ pub fn diagnose_same_parameter(brep: &BRep, tolerance: f64) -> SameParameterDiag
     }
 
     SameParameterDiagnosis { suspect_edges: suspects }
+}
+
+/// Scan all edges in `brep` for SameRange violations.
+///
+/// For each edge with known 3D range and attached PCurves, checks whether each
+/// referenced `curve2d_range` matches the edge's `[t1, t2]` within `tolerance`.
+/// Missing 2D ranges are also treated as violations.
+pub fn diagnose_same_range(brep: &BRep, tolerance: f64) -> SameRangeDiagnosis {
+    let mut suspects = Vec::new();
+    let n_edges = brep.edges.len();
+
+    for edge_idx in 0..n_edges {
+        let Some(range3d) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) else {
+            continue;
+        };
+        let Some(pcurves) = brep.geom.edge_pcurves.get(edge_idx) else {
+            continue;
+        };
+        if pcurves.is_empty() {
+            continue;
+        }
+
+        let mut mismatched_pcurves = 0usize;
+        let mut max_delta = 0.0f64;
+
+        for pc in pcurves {
+            let Some(range2d) = brep.geom.curve2d_range.get(pc.curve2d_idx).and_then(|r| *r) else {
+                mismatched_pcurves += 1;
+                max_delta = max_delta.max(tolerance);
+                continue;
+            };
+
+            let d0 = (range2d[0] - range3d[0]).abs();
+            let d1 = (range2d[1] - range3d[1]).abs();
+            let d = d0.max(d1);
+            if d > tolerance {
+                mismatched_pcurves += 1;
+                max_delta = max_delta.max(d);
+            }
+        }
+
+        let flagged_false = brep
+            .geom
+            .edge_same_range
+            .get(edge_idx)
+            .is_some_and(|v| !*v);
+
+        if mismatched_pcurves > 0 || flagged_false {
+            suspects.push(SuspectSameRangeEdge {
+                edge_idx,
+                mismatched_pcurves,
+                max_delta,
+            });
+        }
+    }
+
+    SameRangeDiagnosis { suspect_edges: suspects }
 }
 
 // ── Shell topology analysis ───────────────────────────────────────────────────
@@ -719,7 +991,7 @@ mod tests {
 
     #[test]
     fn diagnose_same_parameter_detects_mismatch() {
-        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+        use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
 
         // Build a triangle with a Line3 curve whose range is deliberately mismatched.
         let mut brep = BRep::new();
@@ -758,6 +1030,30 @@ mod tests {
         assert!(!diagnosis.is_clean(), "mismatch should be detected");
         assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
         assert!(diagnosis.suspect_edges[0].end_gap > 1.0, "end gap should be ~998");
+    }
+
+    #[test]
+    fn diagnose_same_range_detects_mismatch() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        if brep.geom.edge_curve_range.is_empty()
+            || brep.geom.edge_pcurves.is_empty()
+            || brep.geom.edge_pcurves[0].is_empty()
+        {
+            return;
+        }
+
+        brep.geom.edge_curve_range[0] = Some([0.0, std::f64::consts::PI]);
+        if brep.geom.curve2d_range.len() < brep.geom.curve2ds.len() {
+            brep.geom.curve2d_range.resize(brep.geom.curve2ds.len(), None);
+        }
+        let pc = brep.geom.edge_pcurves[0][0];
+        brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]);
+
+        let diagnosis = diagnose_same_range(&brep, 1e-9);
+        assert!(!diagnosis.is_clean());
+        assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
+        assert!(diagnosis.suspect_edges[0].mismatched_pcurves >= 1);
     }
 
     #[test]
@@ -1072,6 +1368,54 @@ mod tests {
             "expected SelfIntersectingWire issue, issues: {:?}",
             result.issues
         );
+
+        let wire_report = analyze_wire_issues(&brep, 1e-6);
+        assert!(
+            wire_report.total_topological_self_intersections >= 1,
+            "wire analysis should report topological self-intersections"
+        );
+        assert!(!wire_report.is_clean());
+    }
+
+    #[test]
+    fn analyze_wire_issues_reports_open_gap() {
+        use glam::DVec3;
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 3, end: 0 }); // gap between edge1 end (v2) and edge2 start (v3)
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let wire_report = analyze_wire_issues(&brep, 1e-6);
+        assert!(wire_report.total_open_gaps >= 1);
+        assert!(!wire_report.is_clean());
     }
 
     #[test]

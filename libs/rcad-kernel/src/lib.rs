@@ -100,12 +100,14 @@ pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
-pub use geom::{BSplineCurve2, Ellipse2d};
+pub use geom::{
+    ArchimedeanSpiral2d, BSplineCurve2, CircleInvolute2d, Ellipse2d, LogarithmicSpiral2d,
+};
 pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
 pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{Curve2dEval, CurveEval, SurfaceEval, any_perpendicular};
-pub use geom::{Hyperbola3, Parabola3};
+pub use geom::{CircularHelix3, Hyperbola3, Parabola3};
 pub use geom::{OffsetCurve3, OffsetSurface};
 pub use properties::{InertiaTensor, centroid, inertia_tensor, surface_area, volume};
 pub use tolerance::{
@@ -1050,6 +1052,11 @@ impl BRep {
                     p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
                     p.axis_dir = mat.transform_vector3(p.axis_dir).normalize_or_zero();
                 }
+                Curve3::CircularHelix(h) => {
+                    h.origin = mat.transform_point3(h.origin);
+                    h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
+                    h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
+                }
             }
         }
         for c in &mut self.geom.curves {
@@ -1149,6 +1156,11 @@ impl BRep {
                     p.vertex = mat.transform_point3(p.vertex);
                     p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
                     p.axis_dir = mat.transform_vector3(p.axis_dir).normalize_or_zero();
+                }
+                geom::Curve3::CircularHelix(h) => {
+                    h.origin = mat.transform_point3(h.origin);
+                    h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
+                    h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
                 }
             }
         }

@@ -18,7 +18,7 @@
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use crate::brep_check::diagnose_same_parameter;
+use crate::brep_check::{diagnose_same_parameter, diagnose_same_range};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -134,6 +134,32 @@ pub fn fix_same_range_flags(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     }
 
     (out, fixed)
+}
+
+/// Scan all edges for SameRange violations, flag them, and repair.
+///
+/// This combines the diagnostic scan from [`diagnose_same_range`] with the
+/// repair logic of [`fix_same_range_flags`] in a single call.
+pub fn fix_same_range_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+    let diagnosis = diagnose_same_range(brep, tolerance);
+    if diagnosis.suspect_edges.is_empty() {
+        return (brep.clone(), 0);
+    }
+
+    let mut out = brep.clone();
+    let n_edges = out.edges.len();
+
+    if out.geom.edge_same_range.len() < n_edges {
+        out.geom.edge_same_range.resize(n_edges, true);
+    }
+
+    for suspect in &diagnosis.suspect_edges {
+        if suspect.edge_idx < n_edges {
+            out.geom.edge_same_range[suspect.edge_idx] = false;
+        }
+    }
+
+    fix_same_range_flags(&out, tolerance)
 }
 
 /// Merge vertices that are within `tolerance` of each other.
@@ -1019,6 +1045,38 @@ mod tests {
         brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]); // mismatched
 
         let (fixed, n) = fix_same_range_flags(&brep, 1e-9);
+        assert!(n >= 1);
+        assert!(fixed.geom.edge_same_range[0]);
+        assert_eq!(
+            fixed.geom.curve2d_range[pc.curve2d_idx],
+            Some([0.0, std::f64::consts::PI])
+        );
+    }
+
+    #[test]
+    fn fix_same_range_with_scan_repairs_flagged_edges() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        if brep.geom.edge_curve_range.is_empty()
+            || brep.geom.edge_pcurves.is_empty()
+            || brep.geom.edge_pcurves[0].is_empty()
+        {
+            return;
+        }
+
+        brep.geom.edge_curve_range[0] = Some([0.0, std::f64::consts::PI]);
+        if brep.geom.curve2d_range.len() < brep.geom.curve2ds.len() {
+            brep.geom.curve2d_range.resize(brep.geom.curve2ds.len(), None);
+        }
+        if brep.geom.edge_same_range.len() < brep.edges.len() {
+            brep.geom.edge_same_range.resize(brep.edges.len(), true);
+        }
+
+        let pc = brep.geom.edge_pcurves[0][0];
+        brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]);
+        brep.geom.edge_same_range[0] = false;
+
+        let (fixed, n) = fix_same_range_with_scan(&brep, 1e-9);
         assert!(n >= 1);
         assert!(fixed.geom.edge_same_range[0]);
         assert_eq!(

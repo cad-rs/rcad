@@ -102,6 +102,10 @@ pub fn arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
             t2 - t1
         }
         Curve3::Circle(c) => c.radius * (t2 - t1),
+        Curve3::CircularHelix(h) => {
+            let lead = h.pitch / (2.0 * std::f64::consts::PI);
+            (h.radius * h.radius + lead * lead).sqrt() * (t2 - t1)
+        }
         Curve3::Ellipse(_)
         | Curve3::BSpline(_)
         | Curve3::Bezier(_)
@@ -116,7 +120,7 @@ pub fn arc_length(curve: &Curve3, t1: f64, t2: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::{BSplineCurve3, Circle3, Ellipse3, Line3};
+    use crate::geom::{BSplineCurve3, Circle3, CircularHelix3, Ellipse3, Line3};
     use glam::DVec3;
     use std::f64::consts::PI;
 
@@ -160,6 +164,22 @@ mod tests {
         });
         let l = arc_length(&c, 0.0, 2.0 * PI);
         assert!(approx_eq(l, 4.0 * PI, TOL), "full circle r=2 got {l}");
+    }
+
+    #[test]
+    fn circular_helix_analytic_length() {
+        let c = Curve3::CircularHelix(CircularHelix3 {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 2.0,
+            pitch: 1.5,
+        });
+        let dt = 4.0 * PI;
+        let lead = 1.5 / (2.0 * PI);
+        let expected = (2.0_f64 * 2.0 + lead * lead).sqrt() * dt;
+        let got = arc_length(&c, 0.0, dt);
+        assert!(approx_eq(got, expected, 1e-8), "helix length got {got} expected {expected}");
     }
 
     #[test]

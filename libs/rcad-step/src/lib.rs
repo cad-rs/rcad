@@ -1,5 +1,5 @@
 use rcad_kernel::appearance::{Color, StepColor};
-use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
+use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::{
@@ -223,6 +223,12 @@ pub struct StepImportHealingJsonV1 {
     pub final_issue_count: usize,
     pub fixed_issue_count: usize,
     pub issue_histogram: Vec<(String, usize)>,
+    /// Wire-level open-gap count after healing.
+    pub wire_open_gaps: usize,
+    /// Wire-level topological self-intersection count after healing.
+    pub wire_topological_self_intersections: usize,
+    /// Wire-level geometric self-intersection count after healing.
+    pub wire_geometric_self_intersections: usize,
 }
 
 /// Coarse protocol hint inferred from `FILE_SCHEMA`.
@@ -249,6 +255,8 @@ pub struct StepDocumentMetadata {
     pub materials: Vec<StepMaterial>,
     /// Layers extracted from `PRESENTATION_LAYER_ASSIGNMENT` entities, if present.
     pub layers: Vec<StepLayer>,
+    /// General properties extracted from `GENERAL_PROPERTY` entities.
+    pub general_properties: Vec<StepGeneralProperty>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -269,6 +277,17 @@ pub struct StepMaterial {
 pub struct StepLayer {
     /// Layer name (first argument of `PRESENTATION_LAYER_ASSIGNMENT`).
     pub name: String,
+}
+
+/// A generic STEP property entry extracted from `GENERAL_PROPERTY`.
+///
+/// Analogous to OCCT's STEP general attributes exported as `property_definition`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepGeneralProperty {
+    /// Property name.
+    pub name: String,
+    /// Optional human-readable description when present.
+    pub description: Option<String>,
 }
 
 fn extract_file_schema(content: &str) -> Option<String> {
@@ -335,6 +354,21 @@ fn extract_layers(content: &str) -> Vec<StepLayer> {
     layers
 }
 
+/// Extract generic properties from `GENERAL_PROPERTY('name','description',...)` entities.
+fn extract_general_properties(content: &str) -> Vec<StepGeneralProperty> {
+    let mut props = Vec::new();
+    let mut search = content;
+    while let Some(pos) = search.find("GENERAL_PROPERTY(") {
+        let rest = &search[pos + "GENERAL_PROPERTY(".len()..];
+        if let Some(name) = extract_nth_string_arg(rest, 0) {
+            let description = extract_nth_string_arg(rest, 1);
+            props.push(StepGeneralProperty { name, description });
+        }
+        search = &search[pos + 1..];
+    }
+    props
+}
+
 /// Extract the first single-quoted string argument from a STEP entity argument list.
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
@@ -342,6 +376,30 @@ fn extract_first_string_arg(args: &str) -> Option<String> {
     let q2 = rest.find('\'')?;
     let s = rest[..q2].to_string();
     if s.is_empty() { None } else { Some(s) }
+}
+
+/// Extract the N-th single-quoted string argument from a STEP argument list.
+fn extract_nth_string_arg(args: &str, n: usize) -> Option<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let b = args.as_bytes();
+    while i < b.len() {
+        if b[i] == b'\'' {
+            let start = i + 1;
+            let mut j = start;
+            while j < b.len() && b[j] != b'\'' {
+                j += 1;
+            }
+            if j >= b.len() {
+                break;
+            }
+            out.push(args[start..j].to_string());
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out.get(n).cloned().filter(|s| !s.is_empty())
 }
 
 impl StepReader {
@@ -380,6 +438,7 @@ impl StepReader {
             uncertainty_value: entities.uncertainty_value,
             materials: extract_materials(content),
             layers: extract_layers(content),
+            general_properties: extract_general_properties(content),
         };
 
         Ok((brep, metadata))
@@ -409,6 +468,7 @@ impl StepReader {
         options: HealingOptions,
     ) -> Result<(BRep, HealingReport, String), StepError> {
         let (healed, report) = Self::parse_string_with_healing(content, options)?;
+        let wire = analyze_wire_issues(&healed, options.tolerance);
 
         let mut issue_map: BTreeMap<String, usize> = BTreeMap::new();
         for issue in &report.final_result.issues {
@@ -422,6 +482,9 @@ impl StepReader {
             final_issue_count: report.final_issue_count(),
             fixed_issue_count: report.fixed_issue_count(),
             issue_histogram: issue_map.into_iter().collect(),
+            wire_open_gaps: wire.total_open_gaps,
+            wire_topological_self_intersections: wire.total_topological_self_intersections,
+            wire_geometric_self_intersections: wire.total_geometric_self_intersections,
         };
 
         let json = serde_json::to_string_pretty(&payload)
@@ -3381,6 +3444,9 @@ mod tests {
             report.final_issue_count()
         );
         assert!(v["issue_histogram"].is_array());
+        assert!(v["wire_open_gaps"].is_u64());
+        assert!(v["wire_topological_self_intersections"].is_u64());
+        assert!(v["wire_geometric_self_intersections"].is_u64());
     }
 
     #[test]
@@ -3398,6 +3464,7 @@ mod tests {
         // materials and layers are empty for this simple test file
         let _ = &meta.materials;
         let _ = &meta.layers;
+        let _ = &meta.general_properties;
     }
 
     #[test]
@@ -3436,6 +3503,27 @@ END-ISO-10303-21;
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0].name, "Layer_0");
         assert_eq!(layers[1].name, "Body_Layer");
+    }
+
+    #[test]
+    fn extract_general_properties_finds_general_property_entities() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#21=GENERAL_PROPERTY('PartNumber','ERP key',$);
+#22=GENERAL_PROPERTY('Revision','A',$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let props = extract_general_properties(step_fragment);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].name, "PartNumber");
+        assert_eq!(props[0].description.as_deref(), Some("ERP key"));
+        assert_eq!(props[1].name, "Revision");
+        assert_eq!(props[1].description.as_deref(), Some("A"));
     }
 
     #[test]

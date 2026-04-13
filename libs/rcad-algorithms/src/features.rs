@@ -15,8 +15,10 @@ use crate::{BooleanError, BooleanOpType, boolean_op};
 pub enum FeatureError {
     NonFiniteInput(&'static str),
     NonPositiveInput(&'static str),
+    InvalidInput(&'static str),
     ZeroVector(&'static str),
     ParallelVectors(&'static str, &'static str),
+    Modeling(String),
     Boolean(BooleanError),
 }
 
@@ -25,8 +27,10 @@ impl std::fmt::Display for FeatureError {
         match self {
             Self::NonFiniteInput(name) => write!(f, "{name} must be finite"),
             Self::NonPositiveInput(name) => write!(f, "{name} must be > 0"),
+            Self::InvalidInput(name) => write!(f, "{name} is invalid"),
             Self::ZeroVector(name) => write!(f, "{name} must be non-zero"),
             Self::ParallelVectors(a, b) => write!(f, "{a} must not be parallel to {b}"),
+            Self::Modeling(msg) => write!(f, "modeling operation failed: {msg}"),
             Self::Boolean(err) => write!(f, "boolean operation failed: {err}"),
         }
     }
@@ -37,6 +41,12 @@ impl std::error::Error for FeatureError {}
 impl From<BooleanError> for FeatureError {
     fn from(value: BooleanError) -> Self {
         Self::Boolean(value)
+    }
+}
+
+impl From<rcad_modeling::BuildError> for FeatureError {
+    fn from(value: rcad_modeling::BuildError) -> Self {
+        Self::Modeling(value.to_string())
     }
 }
 
@@ -142,11 +152,145 @@ pub fn make_prism(
     Ok(boolean_op(op, target, &tool)?)
 }
 
+/// Create a drafted prismatic boss or pocket by extruding a polygon profile
+/// with radial taper and applying a boolean operation.
+///
+/// Positive `draft_angle_rad` expands the top profile outward; negative values
+/// shrink it inward.
+///
+/// Analogous to OCCT `BRepFeat_MakeDPrism` (linear draft prism).
+pub fn make_draft_prism(
+    target: &BRep,
+    profile_verts: &[DVec3],
+    direction: DVec3,
+    depth: f64,
+    draft_angle_rad: f64,
+    op: BooleanOpType,
+) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+    }
+    let dir = normalize("direction", direction)?;
+    let depth = validate_positive("depth", depth)?;
+    let angle = validate_finite("draft_angle_rad", draft_angle_rad)?;
+    if angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+        return Err(FeatureError::InvalidInput("draft_angle_rad must be in (-pi/2, pi/2)"));
+    }
+
+    let bot: Vec<DVec3> = profile_verts.to_vec();
+    let centroid = bot.iter().copied().fold(DVec3::ZERO, |acc, p| acc + p) / bot.len() as f64;
+    let axial = dir * depth;
+    let taper = depth * angle.tan();
+
+    let top: Vec<DVec3> = bot
+        .iter()
+        .map(|&p| {
+            let v = p - centroid;
+            let radial = v - dir * v.dot(dir);
+            let radial_dir = if radial.length_squared() > EPS {
+                radial.normalize()
+            } else {
+                DVec3::ZERO
+            };
+            p + axial + radial_dir * taper
+        })
+        .collect();
+
+    let tool = build_prism_from_sections(&bot, &top, dir)?;
+    Ok(boolean_op(op, target, &tool)?)
+}
+
+/// Create a revolution boss/pocket feature from a planar profile.
+///
+/// The profile polygon is revolved around `axis_origin + t * axis_dir` by
+/// `angle_rad`, then combined with `target` by boolean `op`.
+///
+/// Analogous to OCCT `BRepFeat_MakeRevol` for linear profile faces.
+pub fn make_revolution(
+    target: &BRep,
+    profile_verts: &[DVec3],
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+    angle_rad: f64,
+    op: BooleanOpType,
+) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+    }
+    if !axis_origin.is_finite() {
+        return Err(FeatureError::NonFiniteInput("axis_origin"));
+    }
+    let axis_dir = normalize("axis_dir", axis_dir)?;
+    let angle_rad = validate_positive("angle_rad", angle_rad)?;
+
+    let profile = build_polygon_face_brep(profile_verts)?;
+    let tool = rcad_modeling::revolve(&profile, 0, axis_origin, axis_dir, angle_rad)?;
+
+    Ok(boolean_op(op, target, &tool)?)
+}
+
+fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
+    }
+
+    let n = profile_verts.len();
+    let mut brep = BRep {
+        vertices: Vec::with_capacity(n),
+        edges: Vec::with_capacity(n),
+        solids: Vec::new(),
+        geom: GeomStore::default(),
+    };
+
+    for &p in profile_verts {
+        brep.vertices.push(Vertex { point: p });
+    }
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        brep.edges.push(Edge { start: i, end: j });
+    }
+
+    let normal = {
+        let a = profile_verts[0];
+        let b = profile_verts[1];
+        let c = profile_verts[2];
+        let n = (b - a).cross(c - a);
+        if n.length_squared() <= EPS {
+            return Err(FeatureError::InvalidInput("profile_verts are degenerate"));
+        }
+        n.normalize()
+    };
+
+    let face = Face {
+        outer_wire: Wire {
+            edges: (0..n).map(WireEdge::fwd).collect(),
+        },
+        inner_wires: vec![],
+        normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+
+    brep.solids.push(Solid {
+        shells: vec![Shell { faces: vec![face] }],
+    });
+
+    Ok(brep)
+}
+
 /// Build a solid BRep prism from a polygon profile (n vertices, coplanar) extruded
 fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Result<BRep, FeatureError> {
-    let n = profile_verts.len();
-    let bot: &[DVec3] = profile_verts;
+    let bot: Vec<DVec3> = profile_verts.to_vec();
     let top: Vec<DVec3> = bot.iter().map(|&p| p + dir * depth).collect();
+    build_prism_from_sections(&bot, &top, dir)
+}
+
+fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<BRep, FeatureError> {
+    let n = bot.len();
+    if n < 3 || top.len() != n {
+        return Err(FeatureError::InvalidInput("section vertex count mismatch"));
+    }
 
     let mut brep = BRep {
         vertices: Vec::with_capacity(2 * n),
@@ -158,7 +302,7 @@ fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Resul
     // Add vertices: bot[0..n] then top[0..n]
     // bot vertex index: i; top vertex index: n + i
     for &p in bot { brep.vertices.push(Vertex { point: p }); }
-    for &p in &top { brep.vertices.push(Vertex { point: p }); }
+    for &p in top { brep.vertices.push(Vertex { point: p }); }
 
     /// Add a line edge from start to end and return its index.
     fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
@@ -177,11 +321,11 @@ fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Resul
         ei
     }
 
-    // Bottom-cap edges: bot[i] 鈫?bot[(i+1)%n]
+    // Bottom-cap edges: bot[i] -> bot[(i+1)%n]
     let bot_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, (i + 1) % n)).collect();
-    // Top-cap edges: top[i] 鈫?top[(i+1)%n]
+    // Top-cap edges: top[i] -> top[(i+1)%n]
     let top_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, n + i, n + (i + 1) % n)).collect();
-    // Vertical edges: bot[i] 鈫?top[i]
+    // Vertical edges: bot[i] -> top[i]
     let vert_edges: Vec<usize> = (0..n).map(|i| add_line_edge(&mut brep, i, n + i)).collect();
 
     let mut faces = Vec::with_capacity(n + 2);
@@ -210,7 +354,7 @@ fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Resul
         brep.geom.face_surface.push(Some(si));
     }
 
-    // Lateral quad faces: quad bot[i]鈫抌ot[j]鈫抰op[j]鈫抰op[i] for each edge i
+    // Lateral quad faces: quad bot[i] -> bot[j] -> top[j] -> top[i] for each edge i
     for i in 0..n {
         let j = (i + 1) % n;
         let a = bot[i];
@@ -222,7 +366,7 @@ fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Resul
             let nv = ab.cross(ac);
             if nv.length_squared() > 1e-24 { nv.normalize() } else { -dir.cross(ab).normalize() }
         };
-        // wire: bot[i]鈫抌ot[j], vert bot[j]鈫抰op[j], top[j]鈫抰op[i] (reversed), vert top[i]鈫抌ot[i] (reversed)
+        // wire: bot[i]->bot[j], vert bot[j]->top[j], top[j]->top[i] (reversed), vert top[i]->bot[i] (reversed)
         let wire_edges = vec![
             WireEdge { idx: bot_edges[i],  forward: true },
             WireEdge { idx: vert_edges[j], forward: true },
@@ -349,5 +493,80 @@ mod tests {
         let err = make_prism(&target, &[DVec3::ZERO, DVec3::X], DVec3::Y, 1.0, BooleanOpType::Union)
             .expect_err("profile with 2 verts must be rejected");
         assert!(matches!(err, FeatureError::NonPositiveInput(_)));
+    }
+
+    #[test]
+    fn make_draft_prism_boss_adds_material() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 2.0,
+            depth: 4.0,
+        });
+        let profile = vec![
+            DVec3::new(-0.4, 1.0, -0.4),
+            DVec3::new(0.4, 1.0, -0.4),
+            DVec3::new(0.4, 1.0, 0.4),
+            DVec3::new(-0.4, 1.0, 0.4),
+        ];
+
+        let out = make_draft_prism(
+            &target,
+            &profile,
+            DVec3::Y,
+            0.8,
+            8.0_f64.to_radians(),
+            BooleanOpType::Union,
+        )
+        .expect("draft prism boss should succeed");
+
+        assert!(!out.solids.is_empty());
+        assert!(out.edges.len() >= target.edges.len());
+    }
+
+    #[test]
+    fn make_revolution_boss_adds_material() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 5.0,
+            height: 5.0,
+            depth: 5.0,
+        });
+        let profile = vec![
+            DVec3::new(1.5, -0.3, 0.0),
+            DVec3::new(2.0, -0.3, 0.0),
+            DVec3::new(2.0, 0.3, 0.0),
+            DVec3::new(1.5, 0.3, 0.0),
+        ];
+
+        let out = make_revolution(
+            &target,
+            &profile,
+            DVec3::ZERO,
+            DVec3::Z,
+            std::f64::consts::TAU,
+            BooleanOpType::Union,
+        )
+        .expect("make_revolution boss should succeed");
+
+        assert!(!out.solids.is_empty());
+        assert!(!out.edges.is_empty());
+    }
+
+    #[test]
+    fn make_revolution_rejects_invalid_profile() {
+        let target = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let err = make_revolution(
+            &target,
+            &[DVec3::ZERO, DVec3::X],
+            DVec3::ZERO,
+            DVec3::Z,
+            1.0,
+            BooleanOpType::Union,
+        )
+        .expect_err("profile with <3 verts should fail");
+        assert!(matches!(err, FeatureError::InvalidInput(_)));
     }
 }

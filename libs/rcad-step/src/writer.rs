@@ -1,4 +1,5 @@
 use rcad_kernel::appearance::{Color, StepColor};
+use crate::StepGeneralProperty;
 
 /// Selects which STEP application protocol to use when writing a file.
 ///
@@ -44,7 +45,21 @@ impl StepWriter {
         protocol: StepProtocol,
     ) -> String {
         let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None);
+        writer.write_brep(brep, selection, None, &[]);
+        writer.finish()
+    }
+
+    /// Export with additional generic metadata properties.
+    ///
+    /// Properties are emitted as `GENERAL_PROPERTY` entities.
+    pub fn write_string_with_properties(
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        properties: &[StepGeneralProperty],
+        protocol: StepProtocol,
+    ) -> String {
+        let mut writer = Part21Writer::new_with_protocol(protocol);
+        writer.write_brep(brep, selection, None, properties);
         writer.finish()
     }
 
@@ -71,6 +86,7 @@ impl StepWriter {
                 selected_edges: &[],
             },
             Some(colors),
+            &[],
         );
         writer.finish()
     }
@@ -132,7 +148,14 @@ impl Part21Writer {
         brep: &BRep,
         selection: ExportSelection<'_>,
         colors: Option<&StepColor>,
+        properties: &[StepGeneralProperty],
     ) {
+
+                // Optional general metadata properties.
+                for prop in properties {
+                    let desc = prop.description.as_deref().unwrap_or("");
+                    self.general_property(&prop.name, desc);
+                }
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
@@ -809,6 +832,30 @@ impl Part21Writer {
                 )
             }
             Some(Curve2d::BSpline(bs)) => self.write_bspline_curve2d(&bs.clone()),
+            Some(Curve2d::CircleInvolute(_)) => {
+                // Involute PCurve: no dedicated STEP 2D involute entity writer yet.
+                // Fall back to a degenerate line placeholder (valid STEP).
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
+            Some(Curve2d::ArchimedeanSpiral(_)) => {
+                // Spiral PCurve: no dedicated STEP 2D spiral writer yet.
+                // Fall back to a degenerate line placeholder (valid STEP).
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
+            Some(Curve2d::LogarithmicSpiral(_)) => {
+                // Spiral PCurve: no dedicated STEP 2D spiral writer yet.
+                // Fall back to a degenerate line placeholder (valid STEP).
+                let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
+                let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
+                let vec = self.vector("pc_vec", dir, 1e-9);
+                self.line("pcurve_line", p, vec)
+            }
             Some(Curve2d::Bezier(_)) => {
                 // Bezier PCurve: fall back to degenerate line (no Bezier 2D STEP writer yet)
                 let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
@@ -916,6 +963,19 @@ impl Part21Writer {
                 let placement =
                     self.axis2_from_origin_axis_ref("par_axis", p.vertex, p.normal, p.axis_dir);
                 self.parabola("edge_parabola", placement, p.focal_param.max(1e-9))
+            }
+            Curve3::CircularHelix(_) => {
+                // No dedicated helix STEP writer yet; export a tiny line fallback.
+                let p0 = self.cartesian_point("edge_origin", start_point);
+                let delta = [
+                    end_point[0] - start_point[0],
+                    end_point[1] - start_point[1],
+                    end_point[2] - start_point[2],
+                ];
+                let magnitude = vector_length(delta).max(1e-9);
+                let direction = self.direction("edge_dir", normalize(delta));
+                let vector = self.vector("edge_vec", direction, magnitude);
+                self.line("edge_line", p0, vector)
             }
             Curve3::Offset(o) => {
                 let basis_id = self.write_curve3_entity(&o.basis, start_point, end_point);
@@ -1567,12 +1627,24 @@ impl Part21Writer {
         ))
     }
 
+    fn general_property(&mut self, name: &str, description: &str) -> u64 {
+        self.push(format!(
+            "GENERAL_PROPERTY('{}','{}',$)",
+            escape_step_string(name),
+            escape_step_string(description)
+        ))
+    }
+
     fn push(&mut self, body: String) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.records.push(format!("#{}={};", id, body));
         id
     }
+}
+
+fn escape_step_string(s: &str) -> String {
+    s.replace('\'', "''")
 }
 
 #[derive(Clone, Copy)]
@@ -1789,6 +1861,34 @@ mod tests {
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(step.contains("CLOSED_SHELL"));
+    }
+
+    #[test]
+    fn exports_general_properties_when_provided() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let props = vec![
+            StepGeneralProperty {
+                name: "PartNumber".to_string(),
+                description: Some("PN-001".to_string()),
+            },
+            StepGeneralProperty {
+                name: "Revision".to_string(),
+                description: Some("A".to_string()),
+            },
+        ];
+        let step = StepWriter::write_string_with_properties(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &props,
+            StepProtocol::Ap242,
+        );
+
+        assert!(step.contains("GENERAL_PROPERTY('PartNumber','PN-001',$)"));
+        assert!(step.contains("GENERAL_PROPERTY('Revision','A',$)"));
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
-pub use features::{FeatureError, make_cylindrical_hole, make_prism};
+pub use features::{FeatureError, make_cylindrical_hole, make_draft_prism, make_prism, make_revolution};
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
@@ -19,6 +19,7 @@ pub mod thicken;
 pub mod tolerance;
 pub mod triangulate;
 pub mod array;
+pub mod cells_builder;
 
 use serde::Serialize;
 
@@ -28,12 +29,14 @@ use rcad_kernel::BRep;
 
 pub use brep_check::{CheckIssue, CheckResult, check,
     SuspectEdge, SameParameterDiagnosis, diagnose_same_parameter,
+    SuspectSameRangeEdge, SameRangeDiagnosis, diagnose_same_range,
     ShellTopologyReport, analyze_shell_topology,
+    WireAnalysisReport, WireIssueReport, analyze_wire_issues,
 };
 pub use brep_repair::{
     RepairReport, fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
     merge_close_vertices, recompute_face_normals, remove_degenerate_faces, repair,
-    remove_small_edges,
+    remove_small_edges, fix_same_range_with_scan,
 };
 pub use healing::{
     HealingIssueStats, HealingMode, HealingOptions, HealingReport, analyze_and_heal, heal,
@@ -55,6 +58,7 @@ pub use array::{
     LinearPatternParams, CircularPatternParams, PatternError,
     linear_pattern, circular_pattern,
 };
+pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
@@ -1204,6 +1208,53 @@ pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
 fn unify_one_merge_pass(brep: &mut BRep) -> bool {
     use std::collections::HashMap;
 
+    fn flat_face_index_of(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+        let mut idx = 0usize;
+        for s in 0..si {
+            for sh in &brep.solids[s].shells {
+                idx += sh.faces.len();
+            }
+        }
+        for sh in 0..shi {
+            idx += brep.solids[si].shells[sh].faces.len();
+        }
+        idx + fi
+    }
+
+    fn planes_match_by_geom_store(
+        brep: &BRep,
+        si: usize,
+        shi: usize,
+        fi1: usize,
+        fi2: usize,
+    ) -> Option<bool> {
+        let ff1 = flat_face_index_of(brep, si, shi, fi1);
+        let ff2 = flat_face_index_of(brep, si, shi, fi2);
+        let sid1 = brep.geom.face_surface.get(ff1).and_then(|v| *v)?;
+        let sid2 = brep.geom.face_surface.get(ff2).and_then(|v| *v)?;
+        let s1 = brep.geom.surfaces.get(sid1)?;
+        let s2 = brep.geom.surfaces.get(sid2)?;
+        let (p1, p2) = match (s1, s2) {
+            (rcad_kernel::geom::Surface3::Plane(a), rcad_kernel::geom::Surface3::Plane(b)) => {
+                (a, b)
+            }
+            _ => return Some(false),
+        };
+
+        let n1 = p1.normal.normalize_or_zero();
+        let n2 = p2.normal.normalize_or_zero();
+        if n1.length_squared() <= 1e-24 || n2.length_squared() <= 1e-24 {
+            return Some(false);
+        }
+        let cross = n1.cross(n2).length();
+        let dot = n1.dot(n2);
+        if cross > 1e-6 || dot < 0.0 {
+            return Some(false);
+        }
+        let d = (p2.origin - p1.origin).dot(n1).abs();
+        Some(d <= 1e-6)
+    }
+
     for si in 0..brep.solids.len() {
         for shi in 0..brep.solids[si].shells.len() {
             let nfaces = brep.solids[si].shells[shi].faces.len();
@@ -1213,6 +1264,11 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
             for fi in 0..nfaces {
                 for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
                     edge_to_faces.entry(we.idx).or_default().push(fi);
+                }
+                for iw in &brep.solids[si].shells[shi].faces[fi].inner_wires {
+                    for we in &iw.edges {
+                        edge_to_faces.entry(we.idx).or_default().push(fi);
+                    }
                 }
             }
 
@@ -1228,6 +1284,12 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
 
                 let face1_normal = brep.solids[si].shells[shi].faces[fi1].normal;
                 let face2_normal = brep.solids[si].shells[shi].faces[fi2].normal;
+
+                if let Some(planes_match) = planes_match_by_geom_store(brep, si, shi, fi1, fi2) {
+                    if !planes_match {
+                        continue;
+                    }
+                }
 
                 // Only merge planar faces (same surface geometry).
                 // Verify by checking if GeomStore surfaces are both planar.
@@ -1401,8 +1463,9 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                         let overlap = edges_i.intersection(&edges_j).count();
                         let min_edges = edges_i.len().min(edges_j.len()).max(1);
 
-                        // If ≥ 75% of the smaller face's edges are shared, treat as duplicate.
-                        if overlap * 4 >= min_edges * 3 {
+                        // Conservative duplicate rule: every edge of the smaller
+                        // face must be shared by the larger one.
+                        if overlap == min_edges {
                             // Remove fj (keep fi).
                             removed_idx = Some(fj);
                             break 'outer;

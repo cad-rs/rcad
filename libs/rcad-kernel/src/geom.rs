@@ -86,6 +86,23 @@ pub struct Parabola3 {
     pub focal_param: f64, // p  (= 2 × focal_length)
 }
 
+/// A circular helix curve around an axis.
+///
+/// Parameterization:
+/// `P(t) = origin + radius*(cos t * x_axis + sin t * y_axis) + (pitch/(2*pi))*t * axis`
+///
+/// Analogous to OCCT TKHelix circular helix primitives.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CircularHelix3 {
+    pub origin: Point3,
+    pub axis: Vec3,
+    /// A reference direction orthogonalized against `axis` at evaluation time.
+    pub ref_dir: Vec3,
+    pub radius: f64,
+    /// Axial advance per full revolution (2*pi in parameter).
+    pub pitch: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Curve3 {
     Line(Line3),
@@ -96,6 +113,7 @@ pub enum Curve3 {
     Offset(OffsetCurve3),  // Phase M
     Hyperbola(Hyperbola3), // Phase S
     Parabola(Parabola3),   // Phase S
+    CircularHelix(CircularHelix3), // Phase P7
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -305,6 +323,44 @@ pub struct Ellipse2d {
     pub minor_radius: f64,
 }
 
+/// A 2D involute of a base circle in parameter space.
+///
+/// Parametric form around the local x-axis:
+/// `x(t) = r * (cos t + t sin t)`
+/// `y(t) = r * (sin t - t cos t)`
+///
+/// The local frame is then rotated by `start_angle` and translated by `center`.
+/// This curve is commonly used for gear-tooth flank profiles.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CircleInvolute2d {
+    pub center: Point2,
+    pub base_radius: f64,
+    /// Rotation of the local involute frame in radians.
+    pub start_angle: f64,
+}
+
+/// A 2D Archimedean spiral in parameter space.
+///
+/// `r(t) = a + b*t`, `theta(t) = start_angle + t`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ArchimedeanSpiral2d {
+    pub center: Point2,
+    pub a: f64,
+    pub b: f64,
+    pub start_angle: f64,
+}
+
+/// A 2D logarithmic spiral in parameter space.
+///
+/// `r(t) = a * exp(b*t)`, `theta(t) = start_angle + t`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LogarithmicSpiral2d {
+    pub center: Point2,
+    pub a: f64,
+    pub b: f64,
+    pub start_angle: f64,
+}
+
 /// A non-uniform rational B-spline curve in 2D parameter space.
 ///
 /// Analogous to OCCT `Geom2d_BSplineCurve`. Used for PCurves: the image of
@@ -338,6 +394,9 @@ pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
     Ellipse(Ellipse2d), // Phase J
+    CircleInvolute(CircleInvolute2d), // Phase P7
+    ArchimedeanSpiral(ArchimedeanSpiral2d), // Phase P7
+    LogarithmicSpiral(LogarithmicSpiral2d), // Phase P7
     BSpline(BSplineCurve2),
     Bezier(BezierCurve2), // Phase M
 }
@@ -467,6 +526,37 @@ impl CurveEval for Parabola3 {
     }
 }
 
+impl CurveEval for CircularHelix3 {
+    fn point_at(&self, t: f64) -> DVec3 {
+        let axis = self.axis.normalize_or_zero();
+        let mut x_axis = self.ref_dir - axis * self.ref_dir.dot(axis);
+        if x_axis.length_squared() <= 1e-24 {
+            x_axis = any_perpendicular(axis);
+        } else {
+            x_axis = x_axis.normalize();
+        }
+        let y_axis = axis.cross(x_axis).normalize_or_zero();
+        let lead = self.pitch / (2.0 * PI);
+        self.origin + self.radius * (t.cos() * x_axis + t.sin() * y_axis) + (lead * t) * axis
+    }
+    fn tangent_at(&self, t: f64) -> DVec3 {
+        let axis = self.axis.normalize_or_zero();
+        let mut x_axis = self.ref_dir - axis * self.ref_dir.dot(axis);
+        if x_axis.length_squared() <= 1e-24 {
+            x_axis = any_perpendicular(axis);
+        } else {
+            x_axis = x_axis.normalize();
+        }
+        let y_axis = axis.cross(x_axis).normalize_or_zero();
+        let lead = self.pitch / (2.0 * PI);
+        (-self.radius * t.sin() * x_axis + self.radius * t.cos() * y_axis + lead * axis)
+            .normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [-1e4, 1e4]
+    }
+}
+
 impl CurveEval for Curve3 {
     fn point_at(&self, t: f64) -> DVec3 {
         match self {
@@ -478,6 +568,7 @@ impl CurveEval for Curve3 {
             Curve3::Offset(c) => c.point_at(t),
             Curve3::Hyperbola(c) => c.point_at(t),
             Curve3::Parabola(c) => c.point_at(t),
+            Curve3::CircularHelix(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
@@ -490,6 +581,7 @@ impl CurveEval for Curve3 {
             Curve3::Offset(c) => c.tangent_at(t),
             Curve3::Hyperbola(c) => c.tangent_at(t),
             Curve3::Parabola(c) => c.tangent_at(t),
+            Curve3::CircularHelix(c) => c.tangent_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -502,6 +594,7 @@ impl CurveEval for Curve3 {
             Curve3::Offset(c) => c.default_domain(),
             Curve3::Hyperbola(c) => c.default_domain(),
             Curve3::Parabola(c) => c.default_domain(),
+            Curve3::CircularHelix(c) => c.default_domain(),
         }
     }
 }
@@ -1114,6 +1207,36 @@ impl Curve2dEval for Ellipse2d {
     }
 }
 
+impl Curve2dEval for CircleInvolute2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let r = self.base_radius.max(0.0);
+        let x = r * (t.cos() + t * t.sin());
+        let y = r * (t.sin() - t * t.cos());
+
+        let ca = self.start_angle.cos();
+        let sa = self.start_angle.sin();
+        let xr = x * ca - y * sa;
+        let yr = x * sa + y * ca;
+        self.center + DVec2::new(xr, yr)
+    }
+}
+
+impl Curve2dEval for ArchimedeanSpiral2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let r = self.a + self.b * t;
+        let th = self.start_angle + t;
+        self.center + DVec2::new(r * th.cos(), r * th.sin())
+    }
+}
+
+impl Curve2dEval for LogarithmicSpiral2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let r = self.a * (self.b * t).exp();
+        let th = self.start_angle + t;
+        self.center + DVec2::new(r * th.cos(), r * th.sin())
+    }
+}
+
 impl Curve2dEval for BSplineCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
         de_boor_2d(
@@ -1132,9 +1255,55 @@ impl Curve2dEval for Curve2d {
             Curve2d::Line(c) => c.point_at(t),
             Curve2d::Circle(c) => c.point_at(t),
             Curve2d::Ellipse(c) => c.point_at(t),
+            Curve2d::CircleInvolute(c) => c.point_at(t),
+            Curve2d::ArchimedeanSpiral(c) => c.point_at(t),
+            Curve2d::LogarithmicSpiral(c) => c.point_at(t),
             Curve2d::BSpline(c) => c.point_at(t),
             Curve2d::Bezier(c) => c.point_at(t),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circle_involute_starts_on_base_circle() {
+        let inv = CircleInvolute2d {
+            center: DVec2::new(2.0, -1.0),
+            base_radius: 3.0,
+            start_angle: 0.0,
+        };
+        let p0 = inv.point_at(0.0);
+        assert!((p0.x - 5.0).abs() < 1e-12);
+        assert!((p0.y + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn archimedean_spiral_point_progresses_radially() {
+        let s = ArchimedeanSpiral2d {
+            center: DVec2::ZERO,
+            a: 1.0,
+            b: 0.5,
+            start_angle: 0.0,
+        };
+        let p0 = s.point_at(0.0);
+        let p1 = s.point_at(2.0);
+        assert!(p1.length() > p0.length(), "spiral radius should increase with t");
+    }
+
+    #[test]
+    fn logarithmic_spiral_grows_exponentially() {
+        let s = LogarithmicSpiral2d {
+            center: DVec2::ZERO,
+            a: 1.0,
+            b: 0.4,
+            start_angle: 0.0,
+        };
+        let p0 = s.point_at(0.0);
+        let p1 = s.point_at(2.0);
+        assert!(p1.length() > p0.length() * 1.5, "log spiral should grow faster than linear at this sample");
     }
 }
 
