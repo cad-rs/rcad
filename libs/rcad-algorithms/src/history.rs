@@ -38,6 +38,32 @@ pub enum VertexOrigin {
     Intersection,
 }
 
+/// Aggregate origin of a result shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellOrigin {
+    /// Every tracked face in the shell came from solid A.
+    FromA,
+    /// Every tracked face in the shell came from solid B.
+    FromB,
+    /// Every tracked face in the shell was generated.
+    Generated,
+    /// The shell contains a mixture of A/B/generated faces.
+    Mixed,
+}
+
+/// Aggregate origin of a result solid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolidOrigin {
+    /// Every tracked shell in the solid came from solid A.
+    FromA,
+    /// Every tracked shell in the solid came from solid B.
+    FromB,
+    /// Every tracked shell in the solid was generated.
+    Generated,
+    /// The solid contains a mixture of A/B/generated shells or faces.
+    Mixed,
+}
+
 /// Per-face origin map for a boolean operation result.
 ///
 /// `face_origins[i]` gives the origin of `result_brep.solids[0].shells[0].faces[i]`.
@@ -53,6 +79,10 @@ pub struct BooleanHistory {
     ///
     /// Empty when vertex history was not requested.
     pub vertex_origins: Vec<VertexOrigin>,
+    /// Per-shell aggregate origin map. Flattened in the same order as `result_brep.solids[*].shells[*]`.
+    pub shell_origins: Vec<ShellOrigin>,
+    /// Per-solid aggregate origin map. `solid_origins[i]` gives the origin of `result_brep.solids[i]`.
+    pub solid_origins: Vec<SolidOrigin>,
 }
 
 impl BooleanHistory {
@@ -71,6 +101,16 @@ impl BooleanHistory {
     /// Returns `None` if vertex history was not recorded.
     pub fn vertex_origin(&self, idx: usize) -> Option<VertexOrigin> {
         self.vertex_origins.get(idx).copied()
+    }
+
+    /// Returns the aggregate origin of shell `idx` in the flattened result BRep.
+    pub fn shell_origin(&self, idx: usize) -> Option<ShellOrigin> {
+        self.shell_origins.get(idx).copied()
+    }
+
+    /// Returns the aggregate origin of solid `idx` in the result BRep.
+    pub fn solid_origin(&self, idx: usize) -> Option<SolidOrigin> {
+        self.solid_origins.get(idx).copied()
     }
 
     /// Number of result faces tracked.
@@ -119,6 +159,14 @@ impl BooleanHistory {
         self.edge_origins
             .iter()
             .filter(|o| matches!(o, EdgeOrigin::Generated))
+            .count()
+    }
+
+    /// How many result solids contain contributions from both inputs and/or generated topology.
+    pub fn solid_count_mixed(&self) -> usize {
+        self.solid_origins
+            .iter()
+            .filter(|o| matches!(o, SolidOrigin::Mixed))
             .count()
     }
 }

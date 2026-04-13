@@ -8,7 +8,9 @@ use rcad_kernel::topology::*;
 
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
-use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin};
+use crate::history::{
+    BooleanHistory, EdgeOrigin, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin,
+};
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 use crate::triangulate::triangulate_polygon;
@@ -277,6 +279,8 @@ impl ResultBuilder {
             face_origins: self.face_origins,
             edge_origins: Vec::new(),
             vertex_origins: Vec::new(),
+            shell_origins: Vec::new(),
+            solid_origins: Vec::new(),
         };
 
         let brep = BRep {
@@ -381,6 +385,76 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
     history.edge_origins = edge_origins;
 }
 
+fn aggregate_face_region_origin(face_origins: &[FaceOrigin]) -> ShellOrigin {
+    let mut has_a = false;
+    let mut has_b = false;
+    let mut has_generated = false;
+    for origin in face_origins {
+        match origin {
+            FaceOrigin::FromA(_) => has_a = true,
+            FaceOrigin::FromB(_) => has_b = true,
+            FaceOrigin::Generated => has_generated = true,
+        }
+    }
+
+    match (has_a, has_b, has_generated) {
+        (true, false, false) => ShellOrigin::FromA,
+        (false, true, false) => ShellOrigin::FromB,
+        (false, false, true) => ShellOrigin::Generated,
+        _ => ShellOrigin::Mixed,
+    }
+}
+
+fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> SolidOrigin {
+    let mut has_a = false;
+    let mut has_b = false;
+    let mut has_generated = false;
+    let mut has_mixed = false;
+    for origin in shell_origins {
+        match origin {
+            ShellOrigin::FromA => has_a = true,
+            ShellOrigin::FromB => has_b = true,
+            ShellOrigin::Generated => has_generated = true,
+            ShellOrigin::Mixed => has_mixed = true,
+        }
+    }
+
+    if has_mixed {
+        return SolidOrigin::Mixed;
+    }
+
+    match (has_a, has_b, has_generated) {
+        (true, false, false) => SolidOrigin::FromA,
+        (false, true, false) => SolidOrigin::FromB,
+        (false, false, true) => SolidOrigin::Generated,
+        _ => SolidOrigin::Mixed,
+    }
+}
+
+fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
+    let mut face_cursor = 0;
+    let mut shell_origins = Vec::new();
+    let mut solid_origins = Vec::with_capacity(brep.solids.len());
+
+    for solid in &brep.solids {
+        let solid_shell_start = shell_origins.len();
+        for shell in &solid.shells {
+            let shell_face_count = shell.faces.len();
+            let shell_face_origins = history
+                .face_origins
+                .get(face_cursor..face_cursor + shell_face_count)
+                .unwrap_or(&[]);
+            shell_origins.push(aggregate_face_region_origin(shell_face_origins));
+            face_cursor += shell_face_count;
+        }
+        solid_origins.push(aggregate_shell_region_origin(&shell_origins[solid_shell_start..]));
+    }
+
+    debug_assert_eq!(face_cursor, history.face_origins.len());
+    history.shell_origins = shell_origins;
+    history.solid_origins = solid_origins;
+}
+
 /// Boolean result builder (OCCT: BOPAlgo_BOP).
 /// Tracks face splice origins and participates in `BooleanHistory`.
 pub struct BooleanBuilder<'a> {
@@ -471,8 +545,9 @@ impl<'a> BooleanBuilder<'a> {
             return Err(BooleanError::DegenerateResult);
         }
 
-        // Annotate edge and vertex origins from the DS.
+        // Annotate edge/vertex origins from the DS and aggregate shell/solid provenance.
         annotate_history_from_ds(&brep, &mut history, self.ds);
+        annotate_shell_and_solid_history(&brep, &mut history);
 
         // Debug-mode geometry integrity check.
         // Verifies that every face in the result has a non-zero normal vector.
@@ -585,6 +660,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         annotate_history_from_ds(&brep, &mut history, self.ds);
+        annotate_shell_and_solid_history(&brep, &mut history);
 
         #[cfg(debug_assertions)]
         for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {

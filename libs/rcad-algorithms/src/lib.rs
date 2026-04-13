@@ -59,7 +59,9 @@ pub use healing::{
     HealingStageReport, analyze_and_heal, heal,
 };
 pub use builder::{BooleanError, BooleanOpType};
-pub use history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin};
+pub use history::{
+    BooleanHistory, EdgeOrigin, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin,
+};
 pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
@@ -255,7 +257,14 @@ pub struct BooleanExecutionReport {
     /// Stable labels for scoped seed edges (orientation-insensitive).
     pub make_connected_scope_seed_edge_labels: Vec<String>,
     pub history_faces: usize,
+    pub history_edges: usize,
+    pub history_vertices: usize,
+    pub history_shells: usize,
+    pub history_solids: usize,
     pub persistent_face_labels: Vec<String>,
+    pub persistent_edge_labels: Vec<String>,
+    pub persistent_shell_labels: Vec<String>,
+    pub persistent_solid_labels: Vec<String>,
     /// Number of retry attempts performed before success.
     pub retry_count: usize,
     /// Fuzzy tolerance value that produced the final result.
@@ -769,7 +778,14 @@ pub fn boolean_op_with_options(
     report.effective_fuzzy_tol = options.fuzzy_tol.max(0.0);
     if let Some(history) = history_opt {
         report.history_faces = history.len();
+        report.history_edges = history.edge_origins.len();
+        report.history_vertices = history.vertex_origins.len();
+        report.history_shells = history.shell_origins.len();
+        report.history_solids = history.solid_origins.len();
         report.persistent_face_labels = persistent_face_labels_from_history(&history);
+        report.persistent_edge_labels = persistent_edge_labels_from_history(&history);
+        report.persistent_shell_labels = persistent_shell_labels_from_history(&history);
+        report.persistent_solid_labels = persistent_solid_labels_from_history(&history);
     }
 
     Ok((out, report))
@@ -1636,6 +1652,52 @@ pub fn persistent_face_labels_from_history(history: &BooleanHistory) -> Vec<Stri
         .collect()
 }
 
+/// Create stable per-edge labels from boolean history.
+pub fn persistent_edge_labels_from_history(history: &BooleanHistory) -> Vec<String> {
+    history
+        .edge_origins
+        .iter()
+        .enumerate()
+        .map(|(idx, origin)| match origin {
+            EdgeOrigin::FromA(src) => format!("edge.{idx}.A.{src}"),
+            EdgeOrigin::FromB(src) => format!("edge.{idx}.B.{src}"),
+            EdgeOrigin::Generated => format!("edge.{idx}.G"),
+            EdgeOrigin::SplitFromA(src) => format!("edge.{idx}.A.split.{src}"),
+            EdgeOrigin::SplitFromB(src) => format!("edge.{idx}.B.split.{src}"),
+        })
+        .collect()
+}
+
+/// Create stable per-shell labels from boolean history.
+pub fn persistent_shell_labels_from_history(history: &BooleanHistory) -> Vec<String> {
+    history
+        .shell_origins
+        .iter()
+        .enumerate()
+        .map(|(idx, origin)| match origin {
+            ShellOrigin::FromA => format!("shell.{idx}.A"),
+            ShellOrigin::FromB => format!("shell.{idx}.B"),
+            ShellOrigin::Generated => format!("shell.{idx}.G"),
+            ShellOrigin::Mixed => format!("shell.{idx}.M"),
+        })
+        .collect()
+}
+
+/// Create stable per-solid labels from boolean history.
+pub fn persistent_solid_labels_from_history(history: &BooleanHistory) -> Vec<String> {
+    history
+        .solid_origins
+        .iter()
+        .enumerate()
+        .map(|(idx, origin)| match origin {
+            SolidOrigin::FromA => format!("solid.{idx}.A"),
+            SolidOrigin::FromB => format!("solid.{idx}.B"),
+            SolidOrigin::Generated => format!("solid.{idx}.G"),
+            SolidOrigin::Mixed => format!("solid.{idx}.M"),
+        })
+        .collect()
+}
+
 /// Union two BReps and return both the result and face origin history.
 pub fn union_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
     boolean_op_with_history(BooleanOpType::Union, a, b)
@@ -1724,6 +1786,17 @@ pub struct GeneralFuseStepReport {
 #[derive(Debug, Clone)]
 pub struct GeneralFuseReport {
     pub steps: Vec<GeneralFuseStepReport>,
+}
+
+/// Diagnostics report for split-first general fuse execution.
+#[derive(Debug, Clone)]
+pub struct GeneralFuseSplitFirstReport {
+    /// Per-object splitter execution details before the N-ary fuse stage.
+    pub split_report: SplitterObjectsReport,
+    /// Face counts of the split outputs in object order.
+    pub split_face_counts: Vec<usize>,
+    /// Per-step diagnostics of the final fuse fold over split objects.
+    pub fuse_report: GeneralFuseReport,
 }
 
 /// Error with step location for N-ary fuse workflows.
@@ -1840,6 +1913,63 @@ pub fn general_fuse_detailed(
         acc,
         GeneralFuseHistory { steps: histories },
         GeneralFuseReport { steps: reports },
+    ))
+}
+
+/// Split-first multi-body fuse.
+///
+/// This is a more OCCT-like baseline than [`general_fuse`]: each object is
+/// first split by all other objects, then the split outputs are fused in a
+/// final N-ary fold. The implementation remains conservative by reusing the
+/// existing splitter and binary boolean core.
+pub fn general_fuse_split_first(parts: &[BRep]) -> Result<BRep, GeneralFuseError> {
+    let (brep, _) = general_fuse_split_first_with_options(parts, SplitterOptions::default())?;
+    Ok(brep)
+}
+
+/// Split-first multi-body fuse with splitter options and structured reporting.
+pub fn general_fuse_split_first_with_options(
+    parts: &[BRep],
+    splitter_options: SplitterOptions,
+) -> Result<(BRep, GeneralFuseSplitFirstReport), GeneralFuseError> {
+    if parts.is_empty() {
+        return Err(GeneralFuseError::EmptyInput);
+    }
+
+    let mut split_parts = Vec::with_capacity(parts.len());
+    let mut object_reports = Vec::with_capacity(parts.len());
+    let mut split_face_counts = Vec::with_capacity(parts.len());
+
+    for (object_index, object) in parts.iter().enumerate() {
+        let tools: Vec<BRep> = parts
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != object_index)
+            .map(|(_, part)| part.clone())
+            .collect();
+
+        let (split, report) = split_brep_with_options(object, &tools, splitter_options);
+        split_face_counts.push(face_count_of(&split));
+        object_reports.push(SplitterObjectReport {
+            object_index,
+            steps: report.steps,
+            total_seam_edges: report.total_seam_edges,
+            completed: true,
+            error: None,
+        });
+        split_parts.push(split);
+    }
+
+    let (fused, _history, fuse_report) = general_fuse_detailed(&split_parts)?;
+    Ok((
+        fused,
+        GeneralFuseSplitFirstReport {
+            split_report: SplitterObjectsReport {
+                objects: object_reports,
+            },
+            split_face_counts,
+            fuse_report,
+        },
     ))
 }
 
@@ -2813,6 +2943,64 @@ mod tests {
     }
 
     #[test]
+    fn general_fuse_split_first_single_input_returns_clone() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (fused, report) = general_fuse_split_first_with_options(&[a.clone()], SplitterOptions::default())
+            .expect("single-item split-first general fuse should succeed");
+
+        assert_eq!(face_count(&fused), face_count(&a));
+        assert_eq!(report.split_report.objects.len(), 1);
+        assert_eq!(report.fuse_report.steps.len(), 0);
+        assert_eq!(report.split_face_counts, vec![face_count(&a)]);
+    }
+
+    #[test]
+    fn general_fuse_split_first_three_disjoint_boxes_accumulates_volume() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let c = box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (fused, report) = general_fuse_split_first_with_options(
+            &[a.clone(), b.clone(), c.clone()],
+            SplitterOptions::default(),
+        )
+        .expect("split-first general fuse should succeed");
+
+        let v = rcad_kernel::properties::volume(&fused);
+        assert!((v - 3.0).abs() < 1e-6, "expected volume 3.0, got {v}");
+        assert_eq!(report.split_report.objects.len(), 3);
+        assert_eq!(report.fuse_report.steps.len(), 2);
+        assert_eq!(report.split_face_counts.len(), 3);
+    }
+
+    #[test]
+    fn general_fuse_split_first_reports_per_object_steps() {
+        let a = box_at(0.0, 0.0, 0.0, 1.2, 1.0, 1.0);
+        let b = box_at(0.6, 0.0, 0.0, 1.2, 1.0, 1.0);
+        let c = box_at(1.2, 0.0, 0.0, 1.2, 1.0, 1.0);
+
+        let (_fused, report) = general_fuse_split_first_with_options(
+            &[a, b, c],
+            SplitterOptions::default(),
+        )
+        .expect("split-first general fuse should succeed on overlapping chain");
+
+        assert_eq!(report.split_report.objects.len(), 3);
+        assert!(report
+            .split_report
+            .objects
+            .iter()
+            .all(|obj| obj.completed));
+        assert!(report
+            .split_report
+            .objects
+            .iter()
+            .all(|obj| obj.steps.len() == 2));
+        assert_eq!(report.fuse_report.steps.len(), 2);
+    }
+
+    #[test]
     fn split_brep_empty_tools_returns_clone_and_empty_report() {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let (out, report) = split_brep(&target, &[]);
@@ -2820,6 +3008,34 @@ mod tests {
         assert_eq!(face_count(&out), face_count(&target));
         assert!(report.steps.is_empty());
         assert_eq!(report.total_seam_edges, 0);
+    }
+
+    #[test]
+    fn tolerance_propagation_bottom_up_is_publicly_usable() {
+        let mut brep = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        brep.geom.vertex_tolerance = vec![1.0e-5; brep.vertices.len()];
+        brep.geom.edge_tolerance = vec![1.0e-7; brep.edges.len()];
+        let face_count = face_count(&brep);
+        brep.geom.face_tolerance = vec![1.0e-7; face_count];
+
+        let out = propagate_tolerances(&brep, 1.0e-7, ToleranceFlowDirection::BottomUp);
+
+        assert!(out.geom.edge_tolerance.iter().all(|&tol| tol >= 1.0e-5));
+        assert!(out.geom.face_tolerance.iter().all(|&tol| tol >= 1.0e-5));
+    }
+
+    #[test]
+    fn tolerance_propagation_post_boolean_stamps_seam_edges() {
+        let mut brep = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        brep.geom.edge_tolerance = vec![1.0e-7; brep.edges.len()];
+        brep.geom.vertex_tolerance = vec![1.0e-7; brep.vertices.len()];
+        brep.geom.face_tolerance = vec![1.0e-7; face_count(&brep)];
+
+        let out = propagate_tolerances_post_boolean(&brep, &[0, 1], 1.0e-4, 1.0e-7);
+
+        assert!(out.geom.edge_tolerance[0] >= 1.0e-4);
+        assert!(out.geom.edge_tolerance[1] >= 1.0e-4);
+        assert!(out.geom.face_tolerance.iter().any(|&tol| tol >= 1.0e-4));
     }
 
     #[test]
@@ -4705,11 +4921,33 @@ mod tests {
         assert!(report.simplify_report.is_some());
         assert_eq!(report.output_faces, face_count(&result));
         assert_eq!(report.history_faces, report.persistent_face_labels.len());
+        assert_eq!(report.history_edges, report.persistent_edge_labels.len());
+        assert_eq!(report.history_shells, report.persistent_shell_labels.len());
+        assert_eq!(report.history_solids, report.persistent_solid_labels.len());
+        assert!(report.history_vertices > 0);
         assert!(
             report
                 .persistent_face_labels
                 .iter()
                 .all(|label| label.starts_with("face."))
+        );
+        assert!(
+            report
+                .persistent_edge_labels
+                .iter()
+                .all(|label| label.starts_with("edge."))
+        );
+        assert!(
+            report
+                .persistent_shell_labels
+                .iter()
+                .all(|label| label.starts_with("shell."))
+        );
+        assert!(
+            report
+                .persistent_solid_labels
+                .iter()
+                .all(|label| label.starts_with("solid."))
         );
     }
 
@@ -5016,6 +5254,8 @@ mod tests {
             face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
             edge_origins: vec![],
             vertex_origins: vec![],
+            shell_origins: vec![],
+            solid_origins: vec![],
         };
 
         let seeds = make_connected_seed_edges_from_boolean_history(&brep, &history);
@@ -5062,6 +5302,8 @@ mod tests {
             face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
             edge_origins: vec![],
             vertex_origins: vec![],
+            shell_origins: vec![],
+            solid_origins: vec![],
         };
 
         let (seed_edges, history_count, heuristic_count, source) = select_scoped_seed_edges(
@@ -5127,6 +5369,31 @@ mod tests {
             .any(|o| matches!(o, EdgeOrigin::FromB(_)));
         assert!(has_from_a, "expected at least one EdgeOrigin::FromA after box-box union");
         assert!(has_from_b, "expected at least one EdgeOrigin::FromB after box-box union");
+    }
+
+    #[test]
+    fn boolean_history_shell_and_solid_origins_populated_after_box_box_union() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (brep, history) = boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
+
+        let shell_count: usize = brep.solids.iter().map(|solid| solid.shells.len()).sum();
+        assert_eq!(history.shell_origins.len(), shell_count, "shell_origins length mismatch");
+        assert_eq!(history.solid_origins.len(), brep.solids.len(), "solid_origins length mismatch");
+        assert!(
+            history
+                .shell_origins
+                .iter()
+                .any(|origin| matches!(origin, ShellOrigin::Mixed)),
+            "expected a mixed shell origin for overlapping box union"
+        );
+        assert!(
+            history
+                .solid_origins
+                .iter()
+                .any(|origin| matches!(origin, SolidOrigin::Mixed)),
+            "expected a mixed solid origin for overlapping box union"
+        );
     }
 
 }

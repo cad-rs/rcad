@@ -127,7 +127,7 @@ OCCT's TKBO provides a tiered boolean platform beyond simple Fuse/Cut/Common:
 | BOPAlgo_CheckerSI | Self-intersection checker | Partial (brep_check.rs) |
 | Fuzzy tolerance option | Near-coincident robustness | Present (baseline + robust retry ladder) |
 | Gluing option | Shared-face fast path | Missing |
-| Result simplification | Same-domain unify after boolean | Partial (baseline present) |
+| Result simplification | Same-domain unify + internal-face cleanup after boolean | Done (same-domain Phase 1+2; internal-face removal Phase 1+2 baseline) |
 
 ### What RCAD should add (ordered by impact)
 
@@ -151,7 +151,7 @@ OCCT's TKShHealing comprises 10 packages. After P3–P4, RCAD has improved from 
 | ShapeFix_Solid | Solid closure, shell orientation | Missing |
 | ShapeAnalysis_Surface | UV consistency, surface bounds analysis | Missing |
 | ShapeAnalysis_Wire | Wire gap, self-intersection, area | **Partial (gap/self-intersection report present)** |
-| ShapeUpgrade_UnifySameDomain | Merge co-planar/co-cylindrical faces | **Partial (plane/cylinder/torus/sphere baseline present)** |
+| ShapeUpgrade_UnifySameDomain | Merge co-planar/co-cylindrical faces | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological guards)** |
 | ShapeCustom | BSpline restriction, convert to indirect | Missing |
 | ShapeProcess | Batch pipeline with operator chain | Missing |
 
@@ -261,7 +261,7 @@ Target: imported and modeled solids through boolean workflows with much better r
 | Deliverable | Effort | Status |
 |---|---|---|
 | **Same-domain face unification** | Medium | **Done (baseline plane/cylinder/cone/torus/sphere)** |
-| Internal-face removal after fuse | Small | Partial (baseline cleanup path present) |
+| Internal-face removal after fuse | Small | Done (Phase 1 threshold-based cleanup; Phase 2 true-duplicate detection) |
 | Splitter API (object/tool split) | Medium | **Done (baseline split-first API)** |
 | Fuzzy tolerance option | Small | **Done (boolean/split options + adaptive retry policy baseline)** |
 | CellsBuilder (split-cell graph) | Large | **Done (baseline expression evaluator)** |
@@ -275,7 +275,7 @@ Target: imported CAD data can be analyzed, repaired, and pushed into modeling/bo
 
 | Deliverable | Effort | Status |
 |---|---|---|
-| **ShapeUpgrade_UnifySameDomain equivalent** | Medium | **Partial (same-domain baseline present, depth pending)** |
+| **ShapeUpgrade_UnifySameDomain equivalent** | Medium | **Done (Phase 1 analytic same-domain merge; Phase 2 topological + UV guards)** |
 | SameRange repair | Medium | **Done (baseline scan+repair)** |
 | Face-on-surface consistency checker | Medium | **Done (baseline diagnosis API)** |
 | Wire gap / self-intersection analyzer | Medium | **Done (wire report API)** |
@@ -374,22 +374,22 @@ Assuming 1 developer working full-time on kernel work:
 
 | Task | Priority | Status |
 |---|---|---|
-| General fuse split-first core | P3 - High | Not started |
-| Splitter API | P3 - High | Not started |
-| Fuzzy / glue boolean options | P3 - High | Not started |
+| General fuse split-first core | P3 - High | Done (baseline split-first general_fuse API + per-object splitter/fuse reporting) |
+| Splitter API | P3 - High | Done (baseline split_brep and grouped object/tool variants) |
+| Fuzzy / glue boolean options | P3 - High | Done (BooleanOptions glue path + fuzzy analytic coverage baseline) |
 | **Result simplification: same-domain unification** | **P3 - High** | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological+UV validation)** |
 | Result simplification: internal face removal | P3 - Medium | Done (Phase 1: threshold-based + same-domain checks; Phase 2: topological true-duplicate detection) |
 | CellsBuilder (split-cell graph) | P3 - Medium | **✅ Done (baseline)** |
 | Defeaturing pass | P3 - Medium | Done (baseline: cylindrical feature detection + boolean fill/remove and small-face identification) |
-| Richer history graph (edges, solids) | P3 - Medium | Not started |
+| Richer history graph (edges, solids) | P3 - Medium | Done (edge/vertex + aggregated shell/solid origins with persistent labels) |
 | ~~SameParameter / SameRange repair~~ | ~~P4 - High~~ | **✅ SameParameter done (P4)** |
 | SameRange repair | P4 - High | **✅ Done (scan+repair)** |
 | ShapeUpgrade_UnifySameDomain equivalent | P4 - High | Done (Phase 1 baseline: plane/cylinder/cone/torus/sphere; Phase 2 topological guards) |
 | Face-on-surface consistency checker | P4 - Medium | **✅ Done (diagnose_face_surface_consistency)** |
 | ~~Shell / manifoldness analyzer~~ | ~~P4 - Medium~~ | **✅ Done (P4)** |
 | Wire gap / self-intersection analyzer | P4 - Medium | **✅ Done (analyze_wire_issues)** |
-| Import analyze/heal pipeline | P4 - Medium | **Partial (JSON diagnostics wired)** |
-| Tolerance propagation rules | P4 - Medium | Not started |
+| Import analyze/heal pipeline | P4 - Medium | **Done (staged healing report + JSON integration)** |
+| Tolerance propagation rules | P4 - Medium | **Done (baseline bottom-up/top-down propagation API)** |
 | ~~Small-edge cleanup~~ | ~~P3 - Medium~~ | **✅ Done (P3)** |
 | ~~Feature prism / cylindrical hole~~ | ~~P5 - Medium~~ | **✅ Done (P5)** |
 | Draft prism feature | P5 - Medium | **✅ Done** |
