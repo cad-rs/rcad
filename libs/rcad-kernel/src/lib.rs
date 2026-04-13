@@ -135,7 +135,7 @@ pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
-pub use brep_graph::{BRepGraph, BfsFaces, DfsFaces, DfsEdgesFromVertex, NonManifoldSummary};
+pub use brep_graph::{BRepGraph, BfsFaces, DfsFaces, DfsEdgesFromVertex, NonManifoldSummary, ManifoldRepairHints, RepairHint};
 pub use naming::{PersistentNamingHooks, TopoEntityRef};
 pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 

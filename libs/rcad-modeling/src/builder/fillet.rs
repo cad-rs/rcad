@@ -625,6 +625,112 @@ pub fn chamfer_edge_angle_with_history(
     rebuild_with_chamfer_verts_history(brep, edge_idx, f0, f1, nv0a, nv1a, nv0b, nv1b)
 }
 
+// ── Safe (auto-clamping) fillet / chamfer ─────────────────────────────────────
+
+/// **Result type for safe fillet / chamfer operations.**
+///
+/// When the requested `radius` or `dist` exceeds half the edge length (which
+/// would cause the setback points to pass through the edge endpoints), the
+/// parameter is automatically clamped to the maximum safe value.
+#[derive(Debug, Clone)]
+pub struct SafeFilletResult {
+    /// The resulting BRep.
+    pub brep: BRep,
+    /// The effective radius / dist that was actually applied.
+    /// Equals the requested value when no clamping was needed.
+    pub effective_param: f64,
+    /// `true` if the parameter was clamped (requested > max safe).
+    pub was_clamped: bool,
+}
+
+/// Compute the maximum safe setback for `edge_idx` given the adjacent faces,
+/// so that the setback points remain inside the two adjacent face edges.
+///
+/// Returns `f64::INFINITY` if either setback direction is degenerate.
+fn max_safe_setback(brep: &BRep, edge_idx: usize) -> f64 {
+    let Some((f0, f1)) = find_adjacent_faces(brep, edge_idx) else {
+        return f64::INFINITY;
+    };
+    let s0 = setback_direction(brep, f0, edge_idx);
+    let s1 = setback_direction(brep, f1, edge_idx);
+    if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
+        return f64::INFINITY;
+    }
+    let edge = &brep.edges[edge_idx];
+    let p0 = brep.vertices[edge.start].point;
+    let p1 = brep.vertices[edge.end].point;
+    let edge_len = (p1 - p0).length();
+
+    // Maximum setback is half the shortest adjacent edge in either face.
+    let mut min_len = f64::INFINITY;
+    let shell = &brep.solids[0].shells[0];
+    for face in [&shell.faces[f0], &shell.faces[f1]] {
+        for we in &face.outer_wire.edges {
+            if we.idx == edge_idx {
+                continue;
+            }
+            if let Some(e) = brep.edges.get(we.idx) {
+                let l = (brep.vertices[e.start].point - brep.vertices[e.end].point).length();
+                if l < min_len {
+                    min_len = l;
+                }
+            }
+        }
+    }
+    // Also cap at half the edge's own length.
+    (min_len * 0.49).min(edge_len * 0.49)
+}
+
+/// Fillet `edge_idx` with `radius`, automatically clamping the radius if it
+/// exceeds the maximum safe setback for the edge geometry.
+///
+/// This is a robust wrapper around [`fillet_edge`] suitable for use in batch
+/// or automated pipelines where input parameters may not be pre-validated.
+///
+/// # Errors
+/// Returns errors only for structurally invalid inputs (`radius ≤ 0`,
+/// `edge_idx` out of bounds, edge not shared by exactly 2 faces, or
+/// degenerate setback direction).
+pub fn fillet_edge_safe(
+    brep: &BRep,
+    edge_idx: usize,
+    radius: f64,
+) -> Result<SafeFilletResult, BuildError> {
+    if radius <= 0.0 {
+        return Err(BuildError::NonPositiveValue("radius"));
+    }
+    let max_r = max_safe_setback(brep, edge_idx);
+    let (effective, was_clamped) = if radius > max_r && max_r.is_finite() {
+        (max_r.max(1e-12), true)
+    } else {
+        (radius, false)
+    };
+    let new_brep = fillet_edge(brep, edge_idx, effective)?;
+    Ok(SafeFilletResult { brep: new_brep, effective_param: effective, was_clamped })
+}
+
+/// Chamfer `edge_idx` with `dist`, automatically clamping the distance if it
+/// exceeds the maximum safe setback.
+///
+/// See [`fillet_edge_safe`] for the full contract.
+pub fn chamfer_edge_safe(
+    brep: &BRep,
+    edge_idx: usize,
+    dist: f64,
+) -> Result<SafeFilletResult, BuildError> {
+    if dist <= 0.0 {
+        return Err(BuildError::NonPositiveValue("dist"));
+    }
+    let max_d = max_safe_setback(brep, edge_idx);
+    let (effective, was_clamped) = if dist > max_d && max_d.is_finite() {
+        (max_d.max(1e-12), true)
+    } else {
+        (dist, false)
+    };
+    let new_brep = chamfer_edge(brep, edge_idx, effective)?;
+    Ok(SafeFilletResult { brep: new_brep, effective_param: effective, was_clamped })
+}
+
 // ── Fillet ────────────────────────────────────────────────────────────────────
 
 /// Fillet (rounded) the edge at `edge_idx` in `brep` with `radius`.
@@ -2004,5 +2110,57 @@ mod tests {
             fillet_edge_variable_radius(&brep, 999, 0.1, 0.2),
             Err(BuildError::InvalidIndex(_))
         ));
+    }
+
+    // ── Safe fillet / chamfer tests ───────────────────────────────────────
+
+    #[test]
+    fn fillet_safe_normal_radius_not_clamped() {
+        let brep = box_brep_2x2x2();
+        let result = fillet_edge_safe(&brep, 0, 0.2).unwrap();
+        assert!(!result.was_clamped, "small radius should not be clamped");
+        assert!((result.effective_param - 0.2).abs() < 1e-12);
+        let n_faces = result.brep.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9);
+    }
+
+    #[test]
+    fn fillet_safe_large_radius_is_clamped() {
+        let brep = box_brep_2x2x2(); // 2×2×2 box, edge length = 2
+        // radius = 5.0 >> 0.49 * min(edge len, adj edge len) → should be clamped
+        let result = fillet_edge_safe(&brep, 0, 5.0).unwrap();
+        assert!(result.was_clamped, "large radius should be clamped");
+        assert!(result.effective_param < 5.0, "effective radius should be < requested");
+        // Result must still be a valid BRep
+        let n_faces = result.brep.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9);
+    }
+
+    #[test]
+    fn fillet_safe_rejects_zero_radius() {
+        let brep = box_brep_2x2x2();
+        assert!(fillet_edge_safe(&brep, 0, 0.0).is_err());
+    }
+
+    #[test]
+    fn chamfer_safe_normal_dist_not_clamped() {
+        let brep = box_brep_2x2x2();
+        let result = chamfer_edge_safe(&brep, 0, 0.2).unwrap();
+        assert!(!result.was_clamped);
+        assert!((result.effective_param - 0.2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn chamfer_safe_large_dist_is_clamped() {
+        let brep = box_brep_2x2x2(); // 2×2×2 box, edge length = 2
+        let result = chamfer_edge_safe(&brep, 0, 10.0).unwrap();
+        assert!(result.was_clamped);
+        assert!(result.effective_param < 10.0);
+    }
+
+    #[test]
+    fn chamfer_safe_rejects_zero_dist() {
+        let brep = box_brep_2x2x2();
+        assert!(chamfer_edge_safe(&brep, 0, 0.0).is_err());
     }
 }

@@ -10,15 +10,17 @@ pub mod fillet;
 pub mod ops;
 mod solid;
 mod surface;
+pub mod wire_ops;
 
 pub use brep_builder::*;
 pub use curve::*;
-pub use fillet::{chamfer_edge, chamfer_edge_angle, corner_blend, fillet_edge, fillet_edges, fillet_edge_variable_radius};
+pub use fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_safe, corner_blend, fillet_edge, fillet_edge_safe, fillet_edges, fillet_edge_variable_radius};
 pub use fillet::{chamfer_edge_with_history, chamfer_edge_angle_with_history, fillet_edge_with_history, fillet_edge_variable_radius_with_history, fillet_edges_with_history, corner_blend_with_history};
-pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory};
+pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory, SafeFilletResult};
 pub use ops::*;
 pub use solid::*;
 pub use surface::*;
+pub use wire_ops::{chamfer_wire_2d, fillet_wire_2d, project_wire_onto_surface};
 
 use glam::DVec3;
 use rcad_kernel::BRep;
@@ -503,7 +505,7 @@ mod tests {
                         .unwrap_or(DVec3::ZERO);
                     let surf_idx = brep.geom.surfaces.len();
                     brep.geom.surfaces.push(Surface3::Plane(Plane { origin, normal: face.normal }));
-                    let face_idx = brep.geom.face_surface.len();
+                    let _face_idx = brep.geom.face_surface.len();
                     brep.geom.face_surface.push(Some(surf_idx));
                 }
             }

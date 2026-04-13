@@ -116,6 +116,56 @@ impl NonManifoldSummary {
     }
 }
 
+/// Categorised repair hints for a non-manifold BRep.
+///
+/// Each hint describes one problem and suggests a concrete remedy action.
+/// Analogous to OCCT `BRepCheck_Analyzer` diagnostic entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepairHint {
+    /// Two boundary edges share both endpoints — they can be stitched together.
+    StitchablePair {
+        edge_a: usize,
+        edge_b: usize,
+        face_a: usize,
+        face_b: usize,
+    },
+    /// A boundary edge has no stitch candidate — the hole must be capped.
+    UnmatchedBoundaryEdge { edge_idx: usize, face_idx: usize },
+    /// An orphan edge is attached to no face — it should be removed.
+    OrphanEdge { edge_idx: usize },
+    /// An edge is shared by more than two faces — it must be split into
+    /// separate copies, one per face pair.
+    MultiManifoldEdge { edge_idx: usize, face_count: usize },
+    /// A vertex lies on a multi-face edge — it may require duplication when
+    /// the surrounding edge is split.
+    NonManifoldVertex { vertex_idx: usize, connected_multi_edges: Vec<usize> },
+}
+
+/// Detailed actionable repair hints derived from a `NonManifoldSummary`.
+///
+/// Build with [`BRepGraph::repair_hints`].
+#[derive(Debug, Clone, Default)]
+pub struct ManifoldRepairHints {
+    pub hints: Vec<RepairHint>,
+}
+
+impl ManifoldRepairHints {
+    /// Returns `true` when there are no repair items.
+    pub fn is_empty(&self) -> bool {
+        self.hints.is_empty()
+    }
+
+    /// All hints of the `StitchablePair` variant.
+    pub fn stitchable_pairs(&self) -> impl Iterator<Item = &RepairHint> {
+        self.hints.iter().filter(|h| matches!(h, RepairHint::StitchablePair { .. }))
+    }
+
+    /// All hints of the `OrphanEdge` variant.
+    pub fn orphan_edges(&self) -> impl Iterator<Item = &RepairHint> {
+        self.hints.iter().filter(|h| matches!(h, RepairHint::OrphanEdge { .. }))
+    }
+}
+
 impl BRepGraph {
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -358,6 +408,131 @@ impl BRepGraph {
             multi_face_edges: self.multi_face_edges(),
             non_manifold_vertices: self.non_manifold_vertices(),
         }
+    }
+
+    /// The number of faces sharing `edge_idx` (the edge "valence").
+    ///
+    /// - 0 → orphan edge
+    /// - 1 → boundary / free edge
+    /// - 2 → manifold edge (expected)
+    /// - >2 → non-manifold / T-junction edge
+    #[inline]
+    pub fn edge_valence(&self, edge_idx: usize) -> usize {
+        self.edge_to_faces
+            .get(edge_idx)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+
+    /// The number of edges incident to `vertex_idx` (vertex degree).
+    #[inline]
+    pub fn vertex_degree(&self, vertex_idx: usize) -> usize {
+        self.vertex_to_edges
+            .get(vertex_idx)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+
+    /// Generate actionable [`ManifoldRepairHints`] for this graph.
+    ///
+    /// The algorithm classifies each problem edge and groups compatible
+    /// boundary edges as stitchable pairs (same orientation·length within 1e-6).
+    ///
+    /// Analogous to OCCT `BRepCheck_Analyzer` hint emission.
+    pub fn repair_hints(&self, brep: &crate::BRep) -> ManifoldRepairHints {
+        let mut hints = Vec::new();
+
+        // ── Multi-face (non-manifold) edges ───────────────────────────────────
+        let multi = self.multi_face_edges();
+        for ei in &multi {
+            hints.push(RepairHint::MultiManifoldEdge {
+                edge_idx: *ei,
+                face_count: self.edge_valence(*ei),
+            });
+        }
+
+        // ── Non-manifold vertices ─────────────────────────────────────────────
+        for vi in self.non_manifold_vertices() {
+            let connected: Vec<usize> = self
+                .vertex_adjacent_edges(vi)
+                .iter()
+                .copied()
+                .filter(|&ei| self.edge_valence(ei) > 2)
+                .collect();
+            if !connected.is_empty() {
+                hints.push(RepairHint::NonManifoldVertex {
+                    vertex_idx: vi,
+                    connected_multi_edges: connected,
+                });
+            }
+        }
+
+        // ── Orphan edges ──────────────────────────────────────────────────────
+        for ei in self.orphan_edges() {
+            hints.push(RepairHint::OrphanEdge { edge_idx: ei });
+        }
+
+        // ── Boundary edges: find stitchable pairs ─────────────────────────────
+        let boundary = self.boundary_edges();
+        let mut paired: HashSet<usize> = HashSet::new();
+
+        for i in 0..boundary.len() {
+            let ei = boundary[i];
+            if paired.contains(&ei) {
+                continue;
+            }
+            let face_i = self.edge_adjacent_faces(ei).first().copied().unwrap_or(0);
+            let (va, vb) = match self.edge_endpoints(ei) {
+                Some(ep) => ep,
+                None => continue,
+            };
+            let pa = brep.vertices.get(va).map(|v| v.point).unwrap_or_default();
+            let pb = brep.vertices.get(vb).map(|v| v.point).unwrap_or_default();
+            let len_i = (pb - pa).length();
+
+            let mut matched = false;
+            for j in (i + 1)..boundary.len() {
+                let ej = boundary[j];
+                if paired.contains(&ej) {
+                    continue;
+                }
+                let (vc2, vd) = match self.edge_endpoints(ej) {
+                    Some(ep) => ep,
+                    None => continue,
+                };
+                let pc = brep.vertices.get(vc2).map(|v| v.point).unwrap_or_default();
+                let pd = brep.vertices.get(vd).map(|v| v.point).unwrap_or_default();
+                let len_j = (pd - pc).length();
+
+                // Stitchable if both endpoints are coincident (within 1e-6),
+                // possibly with reversed orientation.
+                let direct  = (pa - pc).length() < 1e-6 && (pb - pd).length() < 1e-6;
+                let reverse = (pa - pd).length() < 1e-6 && (pb - pc).length() < 1e-6;
+                let same_len = (len_i - len_j).abs() < 1e-6;
+
+                if same_len && (direct || reverse) {
+                    let face_j = self.edge_adjacent_faces(ej).first().copied().unwrap_or(0);
+                    hints.push(RepairHint::StitchablePair {
+                        edge_a: ei,
+                        edge_b: ej,
+                        face_a: face_i,
+                        face_b: face_j,
+                    });
+                    paired.insert(ei);
+                    paired.insert(ej);
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                hints.push(RepairHint::UnmatchedBoundaryEdge {
+                    edge_idx: ei,
+                    face_idx: face_i,
+                });
+            }
+        }
+
+        ManifoldRepairHints { hints }
     }
 
     /// Returns vertex indices that are referenced by a number of edges other
@@ -899,5 +1074,85 @@ mod tests {
         visited.sort_unstable();
         assert_eq!(visited.len(), 12, "DFS from any vertex should reach all 12 edges");
         assert_eq!(visited, (0..12).collect::<Vec<_>>());
+    }
+
+    // ── Edge valence and vertex degree ────────────────────────────────────────
+
+    #[test]
+    fn edge_valence_manifold_box() {
+        let brep = unit_box();
+        let g = BRepGraph::from_brep(&brep);
+        for ei in 0..brep.edges.len() {
+            assert_eq!(g.edge_valence(ei), 2, "every box edge should have valence 2");
+        }
+        assert_eq!(g.edge_valence(9999), 0, "out-of-range returns 0");
+    }
+
+    #[test]
+    fn edge_valence_tripod_multi_face_edge() {
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+        assert_eq!(g.edge_valence(0), 3, "shared spine should have valence 3");
+        assert_eq!(g.edge_valence(1), 1, "side edge should have valence 1 (boundary)");
+    }
+
+    #[test]
+    fn vertex_degree_box() {
+        let brep = unit_box();
+        let g = BRepGraph::from_brep(&brep);
+        // Every vertex of a box is incident to exactly 3 edges.
+        for vi in 0..brep.vertices.len() {
+            assert_eq!(g.vertex_degree(vi), 3, "box vertex {vi} should have degree 3");
+        }
+    }
+
+    // ── repair_hints ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn repair_hints_empty_for_manifold_box() {
+        let brep = unit_box();
+        let g = BRepGraph::from_brep(&brep);
+        let hints = g.repair_hints(&brep);
+        assert!(
+            hints.is_empty(),
+            "a closed manifold box should have no repair hints"
+        );
+    }
+
+    #[test]
+    fn repair_hints_detect_multi_manifold_edge_in_tripod() {
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+        let hints = g.repair_hints(&brep);
+        // Must include at least one MultiManifoldEdge hint for edge 0.
+        let has_multi = hints.hints.iter().any(|h| {
+            matches!(h, RepairHint::MultiManifoldEdge { edge_idx: 0, .. })
+        });
+        assert!(has_multi, "tripod must generate a MultiManifoldEdge hint for edge 0");
+    }
+
+    #[test]
+    fn repair_hints_detect_non_manifold_vertex_in_tripod() {
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+        let hints = g.repair_hints(&brep);
+        let has_nm_vert = hints.hints.iter().any(|h| {
+            matches!(h, RepairHint::NonManifoldVertex { .. })
+        });
+        assert!(has_nm_vert, "tripod must generate NonManifoldVertex hints");
+    }
+
+    #[test]
+    fn repair_hints_detect_unmatched_boundary_in_tripod() {
+        let brep = non_manifold_tripod();
+        let g = BRepGraph::from_brep(&brep);
+        let hints = g.repair_hints(&brep);
+        // Tripod side edges (1-6) are all boundary edges;
+        // they cannot be stitched to each other because there are no matching
+        // partner edges with coincident endpoints.
+        let has_unmatched = hints.hints.iter().any(|h| {
+            matches!(h, RepairHint::UnmatchedBoundaryEdge { .. })
+        });
+        assert!(has_unmatched, "tripod must have unmatched boundary edges");
     }
 }

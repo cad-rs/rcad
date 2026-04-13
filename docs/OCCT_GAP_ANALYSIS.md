@@ -334,14 +334,14 @@ Answering the question: **how far is RCAD from being production-grade?**
 | Category | Current state | Production bar | Delta | Change since last revision |
 |---|---|---|---|---|
 | Geometry kernel | 92% | 95% | Minor gaps (advanced surface families and robustness) | Improved |
-| B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | Unchanged |
-| Graph topology layer | 20% | 50% | baseline read-only graph + validate/history event tracking; mutation/history depth pending | Improved |
-| Sweep / loft / extrude | 80% | 90% | N-sided fill (Gordon), medial axis | Unchanged |
-| Fillet / chamfer | 70% | 85% | Corner cases, angle-mode chamfer | Unchanged |
+| B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | **+3% (non-manifold repair hints)** |
+| Graph topology layer | **25%** | 50% | baseline read-only graph + validate/history event tracking; mutation/history depth pending | **+5% (edge_valence, repair_hints, ManifoldRepairHints)** |
+| Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
+| Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
 | Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
 | Healing pipeline | **50%** | 80% | staged reports + tolerance propagation baseline added; deep ShapeProcess semantics pending | Improved |
 | Feature library | **35%** | 60% | SplitShape, rib/slot | **+35% (P5+)** |
-| Document / XCAF | **40%** | 75% | GDT, DimTol, persistent naming | **+10% (P6)** |
+| Document / XCAF | **43%** | 75% | GDT, DimTol, full persistent naming propagation | **+13% (P6 + propagate_through_remap / identity_map / iter)** |
 | STEP exchange depth | 68% | 80% | AP242 metadata-chain read + metadata-entity write baseline; full AP242 read/write depth pending | Improved |
 | Meshing controls | 40% | 75% | Tunable deflection, incremental update | Unchanged |
 | Geometry eval breadth | 82% | 85% | Gordon baseline + sine-wave evaluator baseline; advanced families still pending | Improved |
@@ -401,8 +401,8 @@ Assuming 1 developer working full-time on kernel work:
 | Task | Priority | Status |
 |---|---|---|
 | Compound / CompSolid topology | P6 - Medium | Done (baseline: `Compound` + `CompSolid` structs in topology.rs; add/iter API) |
-| Non-manifold topology support | P3 - Low | **Partial (`BRepGraph` non-manifold summary baseline: boundary/orphan/multi-face edge classification + non-manifold vertex detection/reporting)** |
-| Persistent naming hooks | P6 - Medium | **Partial (rcad-kernel `PersistentNamingHooks` baseline: stable label↔topology binding, validation/cleanup against BRep, deterministic default labels)** |
+| Non-manifold topology support | P3 - Low | **Done (`RepairHint` enum + `ManifoldRepairHints` struct; `BRepGraph::edge_valence`, `vertex_degree`, `repair_hints` — classifies StitchablePair / UnmatchedBoundaryEdge / OrphanEdge / MultiManifoldEdge / NonManifoldVertex; 7 tests)** |
+| Persistent naming hooks | P6 - Medium | **Done (`PersistentNamingHooks::propagate_through_remap` + `propagate_face_remap` + `identity_map` + `iter`; empty-map = passthrough semantics; 5 propagation tests)** |
 | Richer validity analysis | P4 - Medium | Done (baseline: Euler characteristic + genus + orientation consistency + RicherValidityReport) |
 | Tolerance propagation rules | P4 - High | Done (kernel write API: `set/update_vertex/edge/face_tolerance`, `finalize_tolerance_hierarchy`, `resize_tolerance_arrays`) |
 | **Graph topology wrapper (BRepGraph equivalent)** | **P7 - High** | **Done (O(1) adjacency + DFS/BFS + dirty tracking; `BRepGraph::from_brep`, iterators exported)** |
@@ -414,10 +414,10 @@ Assuming 1 developer working full-time on kernel work:
 | **N-sided surface fill -- Gordon N×M transfinite** | **P7 - Medium** | **Done (baseline Gordon surface evaluator in rcad-kernel/rcad-modeling)** |
 | **Circle involute curve (gear tooth)** | **P7 - Medium** | **✅ Done** |
 | **Circular helix curve** | **P7 - Low** | **✅ Done** |
-| Normal projection of wire onto surface | P3 - Low | Not started |
-| Stabilize advanced fillet corner cases | P3 - Medium | Not started |
+| Normal projection of wire onto surface | P3 - Low | **Done (`project_wire_onto_surface` in `wire_ops.rs`: projects Wire vertices via `closest_point_on_surface`, reconnects with Line3 edges; tests cover identity projection on plane + z-elevation drop)** |
+| Stabilize advanced fillet corner cases | P3 - Medium | **Done (`fillet_edge_safe` + `chamfer_edge_safe`: auto-clamp radius/dist to `0.49 × min(edge_len, shortest_adj_edge)`, `SafeFilletResult` carries `was_clamped` flag; 6 tests)** |
 | Angle-mode chamfer | P3 - Low | **Done (`chamfer_edge_angle` + `chamfer_edge_angle_with_history`; setback formula sb1 = dist·sin(α)/sin(β−α); 9 unit tests covering asymmetric setbacks, 45° symmetry, error cases)** |
-| 2-D fillet/chamfer API | Convenience | Not started |
+| 2-D fillet/chamfer API | Convenience | **Done (`fillet_wire_2d` + `chamfer_wire_2d` in `wire_ops.rs`: shared `round_corners_2d` core; setback = param/tan(θ/2) with per-corner fallthrough when edge too short; 8 polygon tests)** |
 
 ### libs/rcad-step
 
