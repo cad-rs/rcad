@@ -159,6 +159,12 @@ pub enum MakeConnectedScopeSeedSource {
     HistoryAugmentedHeuristic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeConnectedScopeFallbackReason {
+    InsufficientSeedCoverage,
+    NoScopedChanges,
+}
+
 /// Options for boolean execution pipeline.
 #[derive(Debug, Clone, Copy)]
 pub struct BooleanOptions {
@@ -199,6 +205,13 @@ pub struct BooleanOptions {
     /// broader recovery path for cases where scoped seeds miss the stressed
     /// region.
     pub make_connected_scope_fallback_to_global: bool,
+    /// Minimum number of scoped seed vertices required before running the
+    /// scoped pass.
+    ///
+    /// Values of `0` disable coverage-based fallback. Values `> 0` escalate
+    /// directly to global make-connected when scoped seed coverage is smaller
+    /// than this threshold.
+    pub make_connected_scope_fallback_min_seed_vertices: usize,
     /// Seed derivation strategy for scoped mode.
     pub make_connected_scope_seed_mode: MakeConnectedScopeSeedMode,
     /// Minimum history-seed edge count before skipping heuristic augmentation.
@@ -243,6 +256,7 @@ impl Default for BooleanOptions {
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             fuzzy_tol: 0.0,
@@ -273,6 +287,12 @@ pub struct BooleanExecutionReport {
     pub make_connected_scope_seed_source: Option<MakeConnectedScopeSeedSource>,
     /// Whether scoped make-connected escalated to a global fallback pass.
     pub make_connected_scope_fallback_applied: bool,
+    /// Why scoped make-connected escalated to a global fallback pass.
+    pub make_connected_scope_fallback_reason: Option<MakeConnectedScopeFallbackReason>,
+    /// Report for the scoped make-connected phase when it was executed.
+    pub make_connected_scope_scoped_report: Option<MakeConnectedReport>,
+    /// Report for the global fallback make-connected phase when it was executed.
+    pub make_connected_scope_global_fallback_report: Option<MakeConnectedReport>,
     /// Number of history-derived seed edges before union.
     pub make_connected_scope_history_seed_edge_count: usize,
     /// Number of heuristic-derived seed edges before union.
@@ -541,6 +561,25 @@ fn run_make_connected_for_boolean_output(
         make_connected_seed_edge_labels(brep, &scope_seed_edges);
     report.make_connected_scope_seed_edges = scope_seed_edges;
 
+    let min_seed_vertices = options.make_connected_scope_fallback_min_seed_vertices;
+    if options.make_connected_scope_fallback_to_global
+        && min_seed_vertices > 0
+        && scope_vertices.len() < min_seed_vertices
+    {
+        let (global_connected, global_report) = make_connected_iterative_with_growth_cap(
+            brep,
+            options.make_connected_tolerance,
+            options.make_connected_max_passes,
+            options.make_connected_tolerance_growth,
+            options.make_connected_tolerance_cap,
+        );
+        report.make_connected_scope_fallback_applied = true;
+        report.make_connected_scope_fallback_reason =
+            Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage);
+        report.make_connected_scope_global_fallback_report = Some(global_report.clone());
+        return (global_connected, global_report);
+    }
+
     let (scoped_connected, scoped_report) = make_connected_iterative_scoped_with_growth_cap(
         brep,
         &scope_vertices,
@@ -549,6 +588,7 @@ fn run_make_connected_for_boolean_output(
         options.make_connected_tolerance_growth,
         options.make_connected_tolerance_cap,
     );
+    report.make_connected_scope_scoped_report = Some(scoped_report.clone());
     let scoped_no_changes =
         scoped_report.vertices_merged == 0 && scoped_report.small_edges_removed == 0;
 
@@ -561,6 +601,9 @@ fn run_make_connected_for_boolean_output(
             options.make_connected_tolerance_cap,
         );
         report.make_connected_scope_fallback_applied = true;
+        report.make_connected_scope_fallback_reason =
+            Some(MakeConnectedScopeFallbackReason::NoScopedChanges);
+        report.make_connected_scope_global_fallback_report = Some(global_report.clone());
         return (
             global_connected,
             merge_make_connected_reports(scoped_report, global_report),
@@ -3436,6 +3479,7 @@ mod tests {
                     make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
                                         make_connected_scope_history_ring_depth: 1,
                                         make_connected_scope_fallback_to_global: true,
+                    make_connected_scope_fallback_min_seed_vertices: 1,
                     make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
                     make_connected_scope_min_history_edges: 2,
                     fuzzy_tol: 0.0,
@@ -5116,6 +5160,7 @@ mod tests {
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: true,
@@ -5200,6 +5245,7 @@ mod tests {
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5229,6 +5275,10 @@ mod tests {
             report.make_connected_scope_seed_source,
             Some(MakeConnectedScopeSeedSource::Heuristic)
         );
+        if report.make_connected_scope_fallback_applied {
+            assert!(report.make_connected_scope_fallback_reason.is_some());
+            assert!(report.make_connected_scope_global_fallback_report.is_some());
+        }
         assert_eq!(report.make_connected_scope_history_seed_edge_count, 0);
         assert_eq!(
             report.make_connected_scope_heuristic_seed_edge_count,
@@ -5260,6 +5310,7 @@ mod tests {
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5720,6 +5771,7 @@ mod tests {
             make_connected_scope_seed_length: 1e-6,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::MultiPcurveEdges,
             make_connected_scope_min_history_edges: 1,
             ..BooleanOptions::default()
@@ -5730,9 +5782,15 @@ mod tests {
             run_make_connected_for_boolean_output(&brep, None, &options, &mut report);
 
         assert!(report.make_connected_scope_fallback_applied);
+        assert_eq!(
+            report.make_connected_scope_fallback_reason,
+            Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage)
+        );
         assert_eq!(report.make_connected_scope_history_ring_depth, Some(1));
         assert_eq!(report.make_connected_scope_seed_vertices.len(), 0);
         assert_eq!(report.make_connected_scope_seed_edges.len(), 0);
+        assert!(report.make_connected_scope_scoped_report.is_none());
+        assert!(report.make_connected_scope_global_fallback_report.is_some());
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
     }
@@ -5775,6 +5833,7 @@ mod tests {
             make_connected_scope_seed_length: 1e-6,
             make_connected_scope_history_ring_depth: 1,
             make_connected_scope_fallback_to_global: false,
+            make_connected_scope_fallback_min_seed_vertices: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::MultiPcurveEdges,
             make_connected_scope_min_history_edges: 1,
             ..BooleanOptions::default()
@@ -5788,6 +5847,90 @@ mod tests {
         assert_eq!(mc_report.vertices_merged, 0);
         assert_eq!(mc_report.small_edges_removed, 0);
         assert_eq!(connected.vertices.len(), brep.vertices.len());
+    }
+
+    #[test]
+    fn scoped_make_connected_falls_back_after_scoped_no_changes() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 2.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 3
+        brep.vertices.push(Vertex { point: DVec3::new(11.0, 0.0, 0.0) }); // 4
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 1.0, 0.0) }); // 5
+        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 6 dup of 3
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0 tagged for scoped seed
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+        brep.edges.push(Edge { start: 3, end: 4 }); // e3
+        brep.edges.push(Edge { start: 4, end: 5 }); // e4
+        brep.edges.push(Edge { start: 5, end: 3 }); // e5
+        brep.edges.push(Edge { start: 3, end: 6 }); // e6 tiny edge only global can fix
+
+        brep.geom.edge_tolerance = vec![1e-3, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7, 1e-7];
+
+        let face_a = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let face_b = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::fwd(5)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face_a, face_b] }],
+        });
+
+        let options = BooleanOptions {
+            run_make_connected: true,
+            make_connected_tolerance: 1e-6,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: 1e-4,
+            make_connected_scoped: true,
+            make_connected_scope_seed_length: 1e-3,
+            make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
+            make_connected_scope_fallback_min_seed_vertices: 1,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::ToleranceTaggedEdges,
+            make_connected_scope_min_history_edges: 1,
+            ..BooleanOptions::default()
+        };
+        let mut report = BooleanExecutionReport::default();
+
+        let (connected, mc_report) =
+            run_make_connected_for_boolean_output(&brep, None, &options, &mut report);
+
+        assert!(report.make_connected_scope_fallback_applied);
+        assert_eq!(
+            report.make_connected_scope_fallback_reason,
+            Some(MakeConnectedScopeFallbackReason::NoScopedChanges)
+        );
+        assert!(report.make_connected_scope_scoped_report.is_some());
+        assert!(report.make_connected_scope_global_fallback_report.is_some());
+        assert_eq!(
+            report
+                .make_connected_scope_scoped_report
+                .as_ref()
+                .map(|r| r.vertices_merged + r.small_edges_removed)
+                .unwrap_or(usize::MAX),
+            0
+        );
+        assert!(mc_report.vertices_merged >= 1);
+        assert!(connected.vertices.len() < brep.vertices.len());
     }
 
     #[test]
