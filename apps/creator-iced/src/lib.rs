@@ -3,8 +3,8 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length, Task};
 use rcad_kernel::BRep;
 use rcad_render::{
-    Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
-    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
+    AxisGizmoHit, Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
+    axis_gizmo_hit_test, build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
 use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
@@ -298,6 +298,15 @@ impl RCadApp {
     }
 
     fn handle_primary_click(&mut self, cursor: [f32; 2], viewport: [f32; 2]) {
+        if let Some(hit) = axis_gizmo_hit_test(
+            &self.camera,
+            [0, 0],
+            [viewport[0].round().max(1.0) as u32, viewport[1].round().max(1.0) as u32],
+            cursor,
+        ) {
+            self.apply_axis_gizmo_hit(hit);
+            return;
+        }
         if let Some(new_brep) = self.creation.handle_primary_click(
             &self.brep,
             &self.camera,
@@ -318,6 +327,15 @@ impl RCadApp {
             cursor,
             viewport,
         );
+    }
+
+    fn apply_axis_gizmo_hit(&mut self, hit: AxisGizmoHit) {
+        match hit {
+            AxisGizmoHit::X => self.camera.set_view_direction(glam::Vec3::X),
+            AxisGizmoHit::Y => self.camera.set_view_direction(glam::Vec3::Y),
+            AxisGizmoHit::Z => self.camera.set_view_direction(glam::Vec3::Z),
+            AxisGizmoHit::Center => self.camera.set_isometric_view(),
+        }
     }
 
     fn commit_active_command(&mut self) {
@@ -622,7 +640,7 @@ impl iced::widget::shader::Primitive for Primitive {
         target: &iced::wgpu::TextureView,
         clip_bounds: &iced::Rectangle<u32>,
     ) {
-        pipeline.renderer.render_with_defaults(
+        pipeline.renderer.render_with_defaults_and_axis_gizmo(
             unsafe { std::mem::transmute(target) },
             unsafe { std::mem::transmute(encoder) },
             Some((

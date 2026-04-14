@@ -3,8 +3,9 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_modeling::make_box_brep;
 use rcad_render::{
-    Camera, Mesh, SelectionMode, SelectionState, TessellationOptions, Tessellator, WgpuRenderer,
-    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
+    AxisGizmoHit, Camera, Mesh, SelectionMode, SelectionState, TessellationOptions,
+    Tessellator, WgpuRenderer, axis_gizmo_hit_test, build_edges_highlight_mesh,
+    build_faces_highlight_mesh, merge_meshes,
 };
 use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
@@ -79,6 +80,8 @@ struct RenderCallback {
     camera: Camera,
     aspect: f32,
     mesh: Mesh,
+    viewport_origin_px: [u32; 2],
+    viewport_size_px: [u32; 2],
     selected_faces: Vec<usize>,
     selected_edges: Vec<usize>,
     preview_mesh: Option<Mesh>,
@@ -121,6 +124,11 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
             return;
         };
         renderer.draw_in_render_pass(render_pass, false);
+        renderer.draw_axis_gizmo_in_render_pass(
+            render_pass,
+            self.viewport_origin_px,
+            self.viewport_size_px,
+        );
     }
 }
 
@@ -471,6 +479,15 @@ impl eframe::App for RCadApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let size = ui.available_size();
             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+            let pixels_per_point = ctx.pixels_per_point();
+            let viewport_origin_px = [
+                (rect.min.x * pixels_per_point).round().max(0.0) as u32,
+                (rect.min.y * pixels_per_point).round().max(0.0) as u32,
+            ];
+            let viewport_size_px = [
+                (rect.width() * pixels_per_point).round().max(1.0) as u32,
+                (rect.height() * pixels_per_point).round().max(1.0) as u32,
+            ];
 
             if response.dragged() {
                 let delta = ui.input(|i| i.pointer.delta());
@@ -495,6 +512,19 @@ impl eframe::App for RCadApp {
                 let local = pointer - rect.min;
                 let alt_down = ui.input(|i| i.modifiers.alt);
                 if !alt_down {
+                    let pointer_px = [pointer.x * pixels_per_point, pointer.y * pixels_per_point];
+                    if self.has_renderer
+                        && let Some(hit) = axis_gizmo_hit_test(
+                            &self.camera,
+                            viewport_origin_px,
+                            viewport_size_px,
+                            pointer_px,
+                        )
+                    {
+                        self.apply_axis_gizmo_hit(hit);
+                        ctx.request_repaint();
+                        return;
+                    }
                     self.handle_primary_click([local.x, local.y], [rect.width(), rect.height()]);
                 }
             }
@@ -529,6 +559,8 @@ impl eframe::App for RCadApp {
                     camera: self.camera,
                     aspect,
                     mesh: self.mesh.clone(),
+                    viewport_origin_px,
+                    viewport_size_px,
                     selected_faces: self.selection.highlighted_faces(),
                     selected_edges: self.selection.highlighted_edges(),
                     preview_mesh,
@@ -548,6 +580,15 @@ impl eframe::App for RCadApp {
 impl RCadApp {
     fn set_tool(&mut self, tool: Tool) {
         self.creation.set_tool(tool, &mut self.selection);
+    }
+
+    fn apply_axis_gizmo_hit(&mut self, hit: AxisGizmoHit) {
+        match hit {
+            AxisGizmoHit::X => self.camera.set_view_direction(glam::Vec3::X),
+            AxisGizmoHit::Y => self.camera.set_view_direction(glam::Vec3::Y),
+            AxisGizmoHit::Z => self.camera.set_view_direction(glam::Vec3::Z),
+            AxisGizmoHit::Center => self.camera.set_isometric_view(),
+        }
     }
 
     fn handle_primary_click(&mut self, cursor: [f32; 2], viewport: [f32; 2]) {

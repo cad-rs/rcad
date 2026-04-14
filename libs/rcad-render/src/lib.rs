@@ -57,6 +57,146 @@ pub enum DisplayMode {
 
 pub const DEFAULT_EDGE_PICK_RADIUS_PX: f32 = 8.0;
 
+const AXIS_GIZMO_CAMERA_DISTANCE: f32 = 3.2;
+const AXIS_GIZMO_SIDE_RATIO: f32 = 0.22;
+const AXIS_GIZMO_MIN_SIDE_PX: u32 = 92;
+const AXIS_GIZMO_MAX_SIDE_PX: u32 = 160;
+const AXIS_GIZMO_PADDING_RATIO: f32 = 0.12;
+const AXIS_GIZMO_AXIS_LENGTH: f32 = 0.78;
+const AXIS_GIZMO_CENTER_HALF_EXTENT: f32 = 0.22;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AxisGizmoLayout {
+    pub origin_px: [u32; 2],
+    pub size_px: [u32; 2],
+}
+
+impl AxisGizmoLayout {
+    pub fn contains_point(&self, point_px: [f32; 2]) -> bool {
+        let min_x = self.origin_px[0] as f32;
+        let min_y = self.origin_px[1] as f32;
+        let max_x = min_x + self.size_px[0] as f32;
+        let max_y = min_y + self.size_px[1] as f32;
+        point_px[0] >= min_x
+            && point_px[1] >= min_y
+            && point_px[0] <= max_x
+            && point_px[1] <= max_y
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisGizmoHit {
+    X,
+    Y,
+    Z,
+    Center,
+}
+
+pub fn axis_gizmo_layout(
+    viewport_origin_px: [u32; 2],
+    viewport_size_px: [u32; 2],
+) -> Option<AxisGizmoLayout> {
+    let width = viewport_size_px[0];
+    let height = viewport_size_px[1];
+    if width < 32 || height < 32 {
+        return None;
+    }
+
+    let side = ((width.min(height) as f32) * AXIS_GIZMO_SIDE_RATIO).round() as u32;
+    let side = side
+        .clamp(AXIS_GIZMO_MIN_SIDE_PX, AXIS_GIZMO_MAX_SIDE_PX)
+        .min(width)
+        .min(height);
+    let padding = ((side as f32) * AXIS_GIZMO_PADDING_RATIO).round() as u32;
+    if side == 0 || side + padding > width || side + padding > height {
+        return None;
+    }
+
+    Some(AxisGizmoLayout {
+        origin_px: [
+            viewport_origin_px[0] + width - side - padding,
+            viewport_origin_px[1] + height - side - padding,
+        ],
+        size_px: [side, side],
+    })
+}
+
+fn axis_gizmo_eye(camera: &Camera) -> glam::Vec3 {
+    let mut eye_dir = camera.eye_position().normalize_or_zero();
+    if eye_dir.length_squared() <= 1e-8 {
+        eye_dir = glam::Vec3::new(1.0, 1.0, 1.0).normalize();
+    }
+    eye_dir * AXIS_GIZMO_CAMERA_DISTANCE
+}
+
+fn axis_gizmo_view_projection(camera: &Camera) -> [[f32; 4]; 4] {
+    let eye = axis_gizmo_eye(camera);
+    let forward = (-eye).normalize_or_zero();
+    let up = if forward.dot(glam::Vec3::Y).abs() > 0.98 {
+        glam::Vec3::Z
+    } else {
+        glam::Vec3::Y
+    };
+    let view = glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, up);
+    let proj = glam::Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+    (proj * view).to_cols_array_2d()
+}
+
+pub fn axis_gizmo_hit_test(
+    camera: &Camera,
+    viewport_origin_px: [u32; 2],
+    viewport_size_px: [u32; 2],
+    pointer_px: [f32; 2],
+) -> Option<AxisGizmoHit> {
+    let layout = axis_gizmo_layout(viewport_origin_px, viewport_size_px)?;
+    if !layout.contains_point(pointer_px) {
+        return None;
+    }
+
+    let local = [
+        pointer_px[0] - layout.origin_px[0] as f32,
+        pointer_px[1] - layout.origin_px[1] as f32,
+    ];
+    let side = layout.size_px[0] as f32;
+    let vp = glam::Mat4::from_cols_array_2d(&axis_gizmo_view_projection(camera));
+    let center = project_to_screen(vp, glam::Vec3::ZERO, [side, side])?;
+
+    let center_radius = (side * 0.14).clamp(10.0, 18.0);
+    let center_distance = ((local[0] - center[0]).powi(2) + (local[1] - center[1]).powi(2)).sqrt();
+    if center_distance <= center_radius {
+        return Some(AxisGizmoHit::Center);
+    }
+
+    let axis_threshold = (side * 0.10).clamp(8.0, 18.0);
+    let endpoint_radius = (side * 0.13).clamp(10.0, 22.0);
+    let axes = [
+        (AxisGizmoHit::X, glam::Vec3::X),
+        (AxisGizmoHit::Y, glam::Vec3::Y),
+        (AxisGizmoHit::Z, glam::Vec3::Z),
+    ];
+    let mut best: Option<(f32, f32, AxisGizmoHit)> = None;
+
+    for (hit, axis_dir) in axes {
+        let tip = project_to_screen(vp, axis_dir * AXIS_GIZMO_AXIS_LENGTH, [side, side])?;
+        let tip_distance = ((local[0] - tip[0]).powi(2) + (local[1] - tip[1]).powi(2)).sqrt();
+        let shaft_distance =
+            point_segment_distance_2d(local, [center[0], center[1]], [tip[0], tip[1]]);
+        if tip_distance > endpoint_radius && shaft_distance > axis_threshold {
+            continue;
+        }
+
+        let score = tip_distance.min(shaft_distance + endpoint_radius * 0.35);
+        match best {
+            Some((best_score, best_depth, _))
+                if score > best_score
+                    || ((score - best_score).abs() < 1e-3 && tip[2] >= best_depth) => {}
+            _ => best = Some((score, tip[2], hit)),
+        }
+    }
+
+    best.map(|(_, _, hit)| hit)
+}
+
 impl Default for SelectionState {
     fn default() -> Self {
         Self {
@@ -276,6 +416,13 @@ pub struct Mesh {
 struct MaterialUniform {
     color: [f32; 4],
     flags: [f32; 4],
+}
+
+#[derive(Debug)]
+struct SolidMeshBuffers {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
 }
 
 pub fn build_face_highlight_mesh(brep: &BRep, face_index: usize) -> Option<Mesh> {
@@ -753,7 +900,12 @@ impl Camera {
     pub fn build_view_projection_matrix(&self, aspect: f32) -> [[f32; 4]; 4] {
         let eye = self.eye_position();
         let target = self.target;
-        let up = glam::Vec3::Y;
+        let forward = (target - eye).normalize_or_zero();
+        let up = if forward.dot(glam::Vec3::Y).abs() > 0.98 {
+            glam::Vec3::Z
+        } else {
+            glam::Vec3::Y
+        };
 
         let view = glam::Mat4::look_at_rh(eye, target, up);
         let proj = glam::Mat4::perspective_rh(45.0_f32.to_radians(), aspect, 0.1, 100.0);
@@ -786,6 +938,20 @@ impl Camera {
 
         let scale = self.distance.max(0.1) * 0.0015;
         self.target += (-dx * right + dy * up) * scale;
+    }
+
+    pub fn set_view_direction(&mut self, direction: glam::Vec3) {
+        let dir = direction.normalize_or_zero();
+        if dir.length_squared() <= 1e-8 {
+            return;
+        }
+        self.rot_x = dir.y.clamp(-1.0, 1.0).asin();
+        self.rot_y = dir.z.atan2(dir.x);
+    }
+
+    pub fn set_isometric_view(&mut self) {
+        self.rot_x = 0.4;
+        self.rot_y = 0.5;
     }
 }
 
@@ -1006,6 +1172,196 @@ fn build_axis_arrow_mesh(
     (vertices, tri_indices, line_indices)
 }
 
+fn append_ring_vertices(
+    vertices: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    center: glam::Vec3,
+    u: glam::Vec3,
+    v: glam::Vec3,
+    radius: f32,
+    segments: u32,
+    normal_scale_xy: f32,
+    normal_scale_axis: f32,
+    axis: glam::Vec3,
+) -> u32 {
+    let start = vertices.len() as u32;
+    for i in 0..segments {
+        let angle = 2.0 * std::f32::consts::PI * (i as f32) / segments as f32;
+        let radial = u * angle.cos() + v * angle.sin();
+        let position = center + radial * radius;
+        let normal = (radial * normal_scale_xy + axis * normal_scale_axis).normalize_or_zero();
+        vertices.push(position.to_array());
+        normals.push(normal.to_array());
+    }
+    start
+}
+
+fn append_ring_indices(indices: &mut Vec<u32>, start0: u32, start1: u32, segments: u32) {
+    for i in 0..segments {
+        let next = (i + 1) % segments;
+        let a0 = start0 + i;
+        let a1 = start0 + next;
+        let b0 = start1 + i;
+        let b1 = start1 + next;
+
+        indices.extend_from_slice(&[a0, b0, a1, a1, b0, b1]);
+    }
+}
+
+fn build_solid_axis_arrow_mesh(
+    direction: glam::Vec3,
+    shaft_length: f32,
+    shaft_radius: f32,
+    cone_radius: f32,
+    cone_height: f32,
+    segments: u32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let axis = direction.normalize_or_zero();
+    let arbitrary = if axis.y.abs() < 0.9 {
+        glam::Vec3::Y
+    } else {
+        glam::Vec3::X
+    };
+    let u = axis.cross(arbitrary).normalize_or_zero();
+    let v = axis.cross(u).normalize_or_zero();
+
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    let shaft_start = append_ring_vertices(
+        &mut vertices,
+        &mut normals,
+        glam::Vec3::ZERO,
+        u,
+        v,
+        shaft_radius,
+        segments,
+        1.0,
+        0.0,
+        axis,
+    );
+    let shaft_end_center = axis * shaft_length;
+    let shaft_end = append_ring_vertices(
+        &mut vertices,
+        &mut normals,
+        shaft_end_center,
+        u,
+        v,
+        shaft_radius,
+        segments,
+        1.0,
+        0.0,
+        axis,
+    );
+    append_ring_indices(&mut indices, shaft_start, shaft_end, segments);
+
+    let cone_base = append_ring_vertices(
+        &mut vertices,
+        &mut normals,
+        shaft_end_center,
+        u,
+        v,
+        cone_radius,
+        segments,
+        cone_height,
+        cone_radius,
+        axis,
+    );
+    let tip_index = vertices.len() as u32;
+    let tip = shaft_end_center + axis * cone_height;
+    vertices.push(tip.to_array());
+    normals.push(axis.to_array());
+    for i in 0..segments {
+        let next = (i + 1) % segments;
+        indices.extend_from_slice(&[tip_index, cone_base + i, cone_base + next]);
+    }
+
+    (vertices, normals, indices)
+}
+
+fn build_cube_mesh(half_extent: f32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    let faces = [
+        (
+            glam::Vec3::X,
+            [
+                glam::Vec3::new(half_extent, -half_extent, -half_extent),
+                glam::Vec3::new(half_extent, -half_extent, half_extent),
+                glam::Vec3::new(half_extent, half_extent, half_extent),
+                glam::Vec3::new(half_extent, half_extent, -half_extent),
+            ],
+        ),
+        (
+            -glam::Vec3::X,
+            [
+                glam::Vec3::new(-half_extent, -half_extent, half_extent),
+                glam::Vec3::new(-half_extent, -half_extent, -half_extent),
+                glam::Vec3::new(-half_extent, half_extent, -half_extent),
+                glam::Vec3::new(-half_extent, half_extent, half_extent),
+            ],
+        ),
+        (
+            glam::Vec3::Y,
+            [
+                glam::Vec3::new(-half_extent, half_extent, -half_extent),
+                glam::Vec3::new(half_extent, half_extent, -half_extent),
+                glam::Vec3::new(half_extent, half_extent, half_extent),
+                glam::Vec3::new(-half_extent, half_extent, half_extent),
+            ],
+        ),
+        (
+            -glam::Vec3::Y,
+            [
+                glam::Vec3::new(-half_extent, -half_extent, half_extent),
+                glam::Vec3::new(half_extent, -half_extent, half_extent),
+                glam::Vec3::new(half_extent, -half_extent, -half_extent),
+                glam::Vec3::new(-half_extent, -half_extent, -half_extent),
+            ],
+        ),
+        (
+            glam::Vec3::Z,
+            [
+                glam::Vec3::new(-half_extent, -half_extent, half_extent),
+                glam::Vec3::new(-half_extent, half_extent, half_extent),
+                glam::Vec3::new(half_extent, half_extent, half_extent),
+                glam::Vec3::new(half_extent, -half_extent, half_extent),
+            ],
+        ),
+        (
+            -glam::Vec3::Z,
+            [
+                glam::Vec3::new(half_extent, -half_extent, -half_extent),
+                glam::Vec3::new(half_extent, half_extent, -half_extent),
+                glam::Vec3::new(-half_extent, half_extent, -half_extent),
+                glam::Vec3::new(-half_extent, -half_extent, -half_extent),
+            ],
+        ),
+    ];
+
+    for (normal, corners) in faces {
+        let start = vertices.len() as u32;
+        for corner in corners {
+            vertices.push(corner.to_array());
+            normals.push(normal.to_array());
+        }
+        indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    }
+
+    (vertices, normals, indices)
+}
+
+fn interleave_positions_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
+    vertices
+        .iter()
+        .zip(normals.iter())
+        .map(|(&[px, py, pz], &[nx, ny, nz])| [px, py, pz, nx, ny, nz])
+        .collect()
+}
+
 struct GridBuffers {
     vertex_buffer: wgpu::Buffer,
     major_index_buffer: wgpu::Buffer,
@@ -1130,7 +1486,15 @@ pub struct WgpuRenderer {
     grid: GridBuffers,
     grid_major_material_bind_group: wgpu::BindGroup,
     grid_minor_material_bind_group: wgpu::BindGroup,
+    gizmo_camera_buffer: wgpu::Buffer,
+    gizmo_camera_bind_group: wgpu::BindGroup,
+    gizmo_axes_buffers: [SolidMeshBuffers; 3],
+    gizmo_axes_material_bind_groups: [wgpu::BindGroup; 3],
+    gizmo_center_buffers: SolidMeshBuffers,
+    gizmo_center_material_bind_group: wgpu::BindGroup,
     show_grid: std::sync::Mutex<bool>,
+    show_axis_gizmo: std::sync::Mutex<bool>,
+    gizmo_eye: std::sync::Mutex<glam::Vec3>,
     light_dir: std::sync::Mutex<glam::Vec3>,
 }
 
@@ -1154,6 +1518,7 @@ impl WgpuRenderer {
         layout: &wgpu::PipelineLayout,
         topology: wgpu::PrimitiveTopology,
         with_depth: bool,
+        blend: Option<wgpu::BlendState>,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(if with_depth {
@@ -1182,7 +1547,7 @@ impl WgpuRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -1255,6 +1620,23 @@ impl WgpuRenderer {
             }],
         });
 
+        let gizmo_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Axis Gizmo Camera Buffer"),
+            contents: bytemuck::cast_slice(&[CameraUniform {
+                view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                eye_pos: [0.0, 0.0, 3.0, 1.0],
+                light_dir: [0.45, 0.85, 0.35, 0.0],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let gizmo_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Axis Gizmo Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gizmo_camera_buffer.as_entire_binding(),
+            }],
+        });
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Material Bind Group Layout"),
@@ -1355,6 +1737,7 @@ impl WgpuRenderer {
             &pipeline_layout,
             wgpu::PrimitiveTopology::TriangleList,
             false,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
         );
         let pipeline_depth = Self::create_pipeline(
             device,
@@ -1363,6 +1746,7 @@ impl WgpuRenderer {
             &pipeline_layout,
             wgpu::PrimitiveTopology::TriangleList,
             true,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
         );
         let pipeline_line = Self::create_pipeline(
             device,
@@ -1371,6 +1755,7 @@ impl WgpuRenderer {
             &pipeline_layout,
             wgpu::PrimitiveTopology::LineList,
             false,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
         );
         let pipeline_line_depth = Self::create_pipeline(
             device,
@@ -1379,6 +1764,7 @@ impl WgpuRenderer {
             &pipeline_layout,
             wgpu::PrimitiveTopology::LineList,
             true,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
         );
 
         // Build background grid
@@ -1506,6 +1892,99 @@ impl WgpuRenderer {
             .try_into()
             .expect("axes loop always produces exactly 3 axis buffers");
 
+        let gizmo_axis_colors: [[f32; 4]; 3] = [
+            [0.98, 0.16, 0.12, 1.0],
+            [0.10, 0.84, 0.26, 1.0],
+            [0.14, 0.43, 0.98, 1.0],
+        ];
+        let mut gizmo_axes_material_bind_groups_vec = Vec::with_capacity(3);
+        let mut gizmo_axes_buffers_vec = Vec::with_capacity(3);
+        for i in 0..3 {
+            let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Axis Gizmo {} Material Buffer", axis_names[i])),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: gizmo_axis_colors[i],
+                    flags: [0.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Axis Gizmo {} Material Bind Group", axis_names[i])),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mat_buf.as_entire_binding(),
+                }],
+            });
+            gizmo_axes_material_bind_groups_vec.push(bind_group);
+
+            let (verts, normals, tri_idx) = build_solid_axis_arrow_mesh(
+                axis_dirs[i],
+                AXIS_GIZMO_AXIS_LENGTH,
+                0.06,
+                0.12,
+                0.24,
+                20,
+            );
+            let interleaved = interleave_positions_normals(&verts, &normals);
+            gizmo_axes_buffers_vec.push(SolidMeshBuffers {
+                vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Axis Gizmo {} Vertex Buffer", axis_names[i])),
+                    contents: bytemuck::cast_slice(&interleaved),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+                index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("Axis Gizmo {} Index Buffer", axis_names[i])),
+                    contents: bytemuck::cast_slice(&tri_idx),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                index_count: tri_idx.len() as u32,
+            });
+        }
+        let gizmo_axes_material_bind_groups: [_; 3] = gizmo_axes_material_bind_groups_vec
+            .try_into()
+            .expect("gizmo axes loop always produces exactly 3 bind groups");
+        let gizmo_axes_buffers: [_; 3] = gizmo_axes_buffers_vec
+            .try_into()
+            .expect("gizmo axes loop always produces exactly 3 axis buffers");
+
+        let gizmo_center_material_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Axis Gizmo Center Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.60, 0.62, 0.66, 1.0],
+                    flags: [0.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let gizmo_center_material_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Axis Gizmo Center Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gizmo_center_material_buffer.as_entire_binding(),
+                }],
+            });
+        let (gizmo_center_verts, gizmo_center_normals, gizmo_center_idx) =
+            build_cube_mesh(AXIS_GIZMO_CENTER_HALF_EXTENT);
+        let gizmo_center_buffers = SolidMeshBuffers {
+            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Axis Gizmo Center Vertex Buffer"),
+                contents: bytemuck::cast_slice(&interleave_positions_normals(
+                    &gizmo_center_verts,
+                    &gizmo_center_normals,
+                )),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Axis Gizmo Center Index Buffer"),
+                contents: bytemuck::cast_slice(&gizmo_center_idx),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            index_count: gizmo_center_idx.len() as u32,
+        };
+
         Self {
             pipeline,
             pipeline_depth,
@@ -1539,7 +2018,15 @@ impl WgpuRenderer {
             grid,
             grid_major_material_bind_group,
             grid_minor_material_bind_group,
+            gizmo_camera_buffer,
+            gizmo_camera_bind_group,
+            gizmo_axes_buffers,
+            gizmo_axes_material_bind_groups,
+            gizmo_center_buffers,
+            gizmo_center_material_bind_group,
             show_grid: std::sync::Mutex::new(true),
+            show_axis_gizmo: std::sync::Mutex::new(true),
+            gizmo_eye: std::sync::Mutex::new(glam::Vec3::new(0.0, 0.0, 3.2)),
             light_dir: std::sync::Mutex::new(glam::Vec3::new(0.45, 0.85, 0.35)),
         }
     }
@@ -1587,6 +2074,7 @@ impl WgpuRenderer {
     ) {
         self.upload_mesh(device, mesh);
         self.update_camera(queue, camera, aspect.max(0.001));
+        self.update_axis_gizmo_camera(queue, camera);
     }
 
     pub fn prepare_scene_with_depth(
@@ -1699,6 +2187,18 @@ impl WgpuRenderer {
             light_dir: [ld.x, ld.y, ld.z, 0.0],
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    fn update_axis_gizmo_camera(&self, queue: &wgpu::Queue, camera: &Camera) {
+        let eye = axis_gizmo_eye(camera);
+        let light_dir = glam::Vec3::new(0.55, 0.8, 0.35).normalize_or_zero();
+        let uniform = CameraUniform {
+            view_proj: axis_gizmo_view_projection(camera),
+            eye_pos: [eye.x, eye.y, eye.z, 1.0],
+            light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
+        };
+        queue.write_buffer(&self.gizmo_camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
+        *self.gizmo_eye.lock().expect("render mutex poisoned") = eye;
     }
 
     pub fn draw_in_render_pass(
@@ -1831,6 +2331,95 @@ impl WgpuRenderer {
         }
     }
 
+    pub fn draw_axis_gizmo_in_render_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        viewport_origin_px: [u32; 2],
+        viewport_size_px: [u32; 2],
+    ) {
+        if !*self.show_axis_gizmo.lock().expect("render mutex poisoned") {
+            return;
+        }
+        let Some(layout) = axis_gizmo_layout(viewport_origin_px, viewport_size_px) else {
+            return;
+        };
+        let width = viewport_size_px[0];
+        let height = viewport_size_px[1];
+        let x = layout.origin_px[0];
+        let y = layout.origin_px[1];
+        let side = layout.size_px[0];
+
+        render_pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
+        render_pass.set_scissor_rect(x, y, side, side);
+
+        let eye = *self.gizmo_eye.lock().expect("render mutex poisoned");
+        let mut far_axes = Vec::new();
+        let mut near_axes = Vec::new();
+        for axis_index in 0..3 {
+            let axis_dir = match axis_index {
+                0 => glam::Vec3::X,
+                1 => glam::Vec3::Y,
+                _ => glam::Vec3::Z,
+            };
+            let depth = (axis_dir * 0.48 - eye).length_squared();
+            if depth > (glam::Vec3::ZERO - eye).length_squared() {
+                far_axes.push((depth, axis_index));
+            } else {
+                near_axes.push((depth, axis_index));
+            }
+        }
+        far_axes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        near_axes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (_, axis_index) in far_axes {
+            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index);
+        }
+        self.draw_gizmo_center_in_render_pass(render_pass);
+        for (_, axis_index) in near_axes {
+            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index);
+        }
+
+        render_pass.set_viewport(
+            viewport_origin_px[0] as f32,
+            viewport_origin_px[1] as f32,
+            width as f32,
+            height as f32,
+            0.0,
+            1.0,
+        );
+        render_pass.set_scissor_rect(
+            viewport_origin_px[0],
+            viewport_origin_px[1],
+            width.max(1),
+            height.max(1),
+        );
+    }
+    fn draw_gizmo_axis_in_render_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        axis_index: usize,
+    ) {
+        let axis = &self.gizmo_axes_buffers[axis_index];
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.gizmo_camera_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.gizmo_axes_material_bind_groups[axis_index], &[]);
+        render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(axis.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..axis.index_count, 0, 0..1);
+    }
+
+    fn draw_gizmo_center_in_render_pass(&self, render_pass: &mut wgpu::RenderPass<'_>) {
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.gizmo_camera_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.gizmo_center_material_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.gizmo_center_buffers.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(
+            self.gizmo_center_buffers.index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        render_pass.draw_indexed(0..self.gizmo_center_buffers.index_count, 0, 0..1);
+    }
+
     fn draw_axes_in_render_pass(
         &self,
         render_pass: &mut wgpu::RenderPass<'_>,
@@ -1925,6 +2514,14 @@ impl WgpuRenderer {
         *self.show_grid.lock().expect("render mutex poisoned")
     }
 
+    pub fn set_show_axis_gizmo(&self, show: bool) {
+        *self.show_axis_gizmo.lock().expect("render mutex poisoned") = show;
+    }
+
+    pub fn show_axis_gizmo(&self) -> bool {
+        *self.show_axis_gizmo.lock().expect("render mutex poisoned")
+    }
+
     pub fn set_model_color(&self, queue: &wgpu::Queue, color: [f32; 4]) {
         let uniform = MaterialUniform {
             color,
@@ -2014,6 +2611,39 @@ impl WgpuRenderer {
         self.draw_in_render_pass(&mut render_pass, use_depth_pipeline);
     }
 
+    pub fn render_with_axis_gizmo(
+        &self,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        clear_color: wgpu::Color,
+        clip_bounds: Option<(u32, u32, u32, u32)>,
+    ) {
+        self.render(view, encoder, clear_color, clip_bounds);
+
+        if let Some((x, y, width, height)) = clip_bounds
+            && width > 0
+            && height > 0
+        {
+            let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Axis Gizmo Overlay Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            gizmo_pass.set_scissor_rect(x, y, width.max(1), height.max(1));
+            self.draw_axis_gizmo_in_render_pass(&mut gizmo_pass, [x, y], [width, height]);
+        }
+    }
+
     pub fn render_with_defaults(
         &self,
         view: &wgpu::TextureView,
@@ -2021,6 +2651,15 @@ impl WgpuRenderer {
         clip_bounds: Option<(u32, u32, u32, u32)>,
     ) {
         self.render(view, encoder, Self::default_clear_color(), clip_bounds);
+    }
+
+    pub fn render_with_defaults_and_axis_gizmo(
+        &self,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        clip_bounds: Option<(u32, u32, u32, u32)>,
+    ) {
+        self.render_with_axis_gizmo(view, encoder, Self::default_clear_color(), clip_bounds);
     }
 
     /// Render the current scene to an offscreen texture and return it as an RGBA image.
