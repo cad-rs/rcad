@@ -413,6 +413,10 @@ pub struct BooleanRobustAttemptReport {
     pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
     /// Effective history ring depth configured for this attempt.
     pub make_connected_scope_history_ring_depth: Option<usize>,
+    /// Effective scoped seed length configured for this attempt.
+    pub make_connected_scope_seed_length: Option<f64>,
+    /// Effective minimum history-edge threshold before heuristic augmentation.
+    pub make_connected_scope_min_history_edges: Option<usize>,
     /// Effective scoped seed source observed during this attempt.
     pub make_connected_scope_seed_source: Option<MakeConnectedScopeSeedSource>,
     /// Number of history-derived scoped seed edges observed during this attempt.
@@ -631,10 +635,16 @@ fn tune_boolean_options_for_retry_class(
                     .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped {
+                options.make_connected_scope_seed_length = options
+                    .make_connected_scope_seed_length
+                    .max(base_tol * 10.0 * (retry_round as f64 + 1.0));
                 options.make_connected_scope_history_ring_depth =
                     options
                         .make_connected_scope_history_ring_depth
                         .max(2 + retry_round);
+                options.make_connected_scope_min_history_edges = options
+                    .make_connected_scope_min_history_edges
+                    .max(2 + retry_round);
                 options.make_connected_scope_seed_mode = match options.make_connected_scope_seed_mode
                 {
                     MakeConnectedScopeSeedMode::ShortEdges
@@ -694,10 +704,16 @@ fn tune_boolean_options_for_retry_class(
                     .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped {
+                options.make_connected_scope_seed_length = options
+                    .make_connected_scope_seed_length
+                    .max(base_tol * 100.0 * (retry_round as f64 + 1.0));
                 options.make_connected_scope_history_ring_depth =
                     options
                         .make_connected_scope_history_ring_depth
                         .max(3 + retry_round);
+                options.make_connected_scope_min_history_edges = options
+                    .make_connected_scope_min_history_edges
+                    .max(3 + retry_round);
                 options.make_connected_scope_seed_mode = MakeConnectedScopeSeedMode::Hybrid;
                 options.make_connected_scope_fallback_to_global = true;
                 options.make_connected_scope_fallback_min_seed_vertices =
@@ -1324,6 +1340,20 @@ pub fn boolean_op_robust(
         } else {
             None
         };
+        let attempt_scope_seed_length = if attempt_options.run_make_connected
+            && attempt_options.make_connected_scoped
+        {
+            Some(attempt_options.make_connected_scope_seed_length)
+        } else {
+            None
+        };
+        let attempt_scope_min_history_edges = if attempt_options.run_make_connected
+            && attempt_options.make_connected_scoped
+        {
+            Some(attempt_options.make_connected_scope_min_history_edges)
+        } else {
+            None
+        };
         match boolean_op_with_options(op, a, b, attempt_options) {
             Ok((brep, mut report)) => {
                 attempt_reports.push(BooleanRobustAttemptReport {
@@ -1334,6 +1364,8 @@ pub fn boolean_op_robust(
                     make_connected_scope_seed_mode: report.make_connected_scope_seed_mode,
                     make_connected_scope_history_ring_depth: report
                         .make_connected_scope_history_ring_depth,
+                    make_connected_scope_seed_length: attempt_scope_seed_length,
+                    make_connected_scope_min_history_edges: attempt_scope_min_history_edges,
                     make_connected_scope_seed_source: report.make_connected_scope_seed_source,
                     make_connected_scope_history_seed_edge_count: Some(
                         report.make_connected_scope_history_seed_edge_count,
@@ -1380,6 +1412,8 @@ pub fn boolean_op_robust(
                     origin_retry_class,
                     make_connected_scope_seed_mode: attempt_scope_seed_mode,
                     make_connected_scope_history_ring_depth: attempt_scope_history_ring_depth,
+                    make_connected_scope_seed_length: attempt_scope_seed_length,
+                    make_connected_scope_min_history_edges: attempt_scope_min_history_edges,
                     make_connected_scope_seed_source: None,
                     make_connected_scope_history_seed_edge_count: None,
                     make_connected_scope_heuristic_seed_edge_count: None,
@@ -3887,6 +3921,11 @@ mod tests {
             .max(options.glue_tolerance)
             .max(tolerance::TOLERANCE_ABS)
             * 10.0;
+        let expected_seed_length = options
+            .make_connected_scope_seed_length
+            .max(options.make_connected_tolerance)
+            .max(tolerance::TOLERANCE_ABS)
+            * 10.0;
 
         tune_boolean_options_for_retry_class(
             &mut options,
@@ -3897,11 +3936,13 @@ mod tests {
         assert!(options.make_connected_scope_fallback_to_global);
         assert!(options.use_glue);
         assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
+        assert!(options.make_connected_scope_seed_length + 1e-15 >= expected_seed_length);
         assert_eq!(
             options.make_connected_scope_seed_mode,
             MakeConnectedScopeSeedMode::TopologySeamCandidates
         );
         assert!(options.make_connected_scope_history_ring_depth >= 2);
+        assert!(options.make_connected_scope_min_history_edges >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_vertices >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_edge_coverage >= 0.25);
         assert!(options.make_connected_scope_fallback_min_seed_face_coverage >= 0.25);
@@ -3937,6 +3978,11 @@ mod tests {
             .max(options.glue_tolerance)
             .max(tolerance::TOLERANCE_ABS)
             * 100.0;
+        let expected_seed_length = options
+            .make_connected_scope_seed_length
+            .max(options.make_connected_tolerance)
+            .max(tolerance::TOLERANCE_ABS)
+            * 100.0;
 
         tune_boolean_options_for_retry_class(
             &mut options,
@@ -3947,11 +3993,13 @@ mod tests {
         assert!(options.make_connected_scope_fallback_to_global);
         assert!(options.use_glue);
         assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
+        assert!(options.make_connected_scope_seed_length + 1e-15 >= expected_seed_length);
         assert_eq!(
             options.make_connected_scope_seed_mode,
             MakeConnectedScopeSeedMode::Hybrid
         );
         assert!(options.make_connected_scope_history_ring_depth >= 3);
+        assert!(options.make_connected_scope_min_history_edges >= 3);
         assert!(options.make_connected_scope_fallback_min_seed_vertices >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_edge_coverage >= 0.5);
         assert!(options.make_connected_scope_fallback_min_seed_face_coverage >= 0.5);
@@ -4015,9 +4063,14 @@ mod tests {
 
         assert!(round2.glue_tolerance > round0.glue_tolerance);
         assert!(round2.make_connected_max_passes > round0.make_connected_max_passes);
+        assert!(round2.make_connected_scope_seed_length > round0.make_connected_scope_seed_length);
         assert!(
             round2.make_connected_scope_history_ring_depth
                 > round0.make_connected_scope_history_ring_depth
+        );
+        assert!(
+            round2.make_connected_scope_min_history_edges
+                > round0.make_connected_scope_min_history_edges
         );
         assert!(
             round2.make_connected_scope_global_fallback_tolerance_multiplier
@@ -4088,6 +4141,10 @@ mod tests {
         assert!(report
             .robust_attempts
             .iter()
+            .all(|a| !a.success || a.make_connected_scope_seed_length.is_none()));
+        assert!(report
+            .robust_attempts
+            .iter()
             .all(|a| !a.success || a.make_connected_scope_seed_source.is_none()));
         assert!(report.robust_attempts.iter().all(|a| !a.used_glue));
         assert!(report
@@ -4150,6 +4207,11 @@ mod tests {
             Some(MakeConnectedScopeSeedMode::Hybrid)
         );
         assert_eq!(attempt.make_connected_scope_history_ring_depth, Some(1));
+        assert_eq!(
+            attempt.make_connected_scope_seed_length,
+            Some(tolerance::TOLERANCE_ABS * 10.0)
+        );
+        assert_eq!(attempt.make_connected_scope_min_history_edges, Some(2));
         assert_eq!(
             attempt.make_connected_scope_seed_source,
             report.make_connected_scope_seed_source
