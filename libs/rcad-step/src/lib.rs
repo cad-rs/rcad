@@ -3,7 +3,8 @@ use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_w
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve, Surface3,
+    BRep, BSplineCurve2, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve,
+    Surface3, SurfaceEval,
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_modeling::make_box_brep;
@@ -70,8 +71,9 @@ struct AdvancedFaceRecord {
 
 /// B-spline curve: (degree, control_point_refs, knot_mults, knot_vals)
 type BSplineCurveData = (usize, Vec<u64>, Vec<usize>, Vec<f64>);
-/// B-spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
+/// B-spline surface: (name, degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
 type BSplineSurfaceData = (
+    String,
     usize,
     usize,
     Vec<Vec<u64>>,
@@ -224,6 +226,16 @@ pub struct StepImportHealingJsonV1 {
     pub final_issue_count: usize,
     pub fixed_issue_count: usize,
     pub issue_histogram: Vec<(String, usize)>,
+    pub repair_pass_count: usize,
+    pub parametric_pass_count: usize,
+    pub make_connected_pass_count: usize,
+    pub vertices_merged: usize,
+    pub degenerate_faces_removed: usize,
+    pub normals_recomputed: usize,
+    pub faces_reoriented: usize,
+    pub wires_fixed: usize,
+    pub same_range_fixed: usize,
+    pub same_parameter_fixed: usize,
     /// Wire-level open-gap count after healing.
     pub wire_open_gaps: usize,
     /// Wire-level topological self-intersection count after healing.
@@ -250,6 +262,18 @@ pub struct StepDocumentMetadata {
     pub protocol_hint: StepProtocolHint,
     /// `FILE_NAME` first field when available.
     pub file_name: Option<String>,
+    /// Structured `PRODUCT` records found in the STEP data section.
+    pub products: Vec<StepProduct>,
+    /// `PRODUCT_DEFINITION_FORMATION` chain entries.
+    pub product_definition_formations: Vec<StepProductDefinitionFormation>,
+    /// `PRODUCT_DEFINITION` chain entries resolved back to products when possible.
+    pub product_definitions: Vec<StepProductDefinitionInfo>,
+    /// `SHAPE_DEFINITION_REPRESENTATION` entries resolved back to product definitions when possible.
+    pub shape_definition_representations: Vec<StepShapeDefinitionRepresentation>,
+    /// `NEXT_ASSEMBLY_USAGE_OCCURRENCE` links for assembly hierarchy metadata.
+    pub assembly_occurrences: Vec<StepAssemblyUsageOccurrence>,
+    /// `PRODUCT` names found in the STEP data section.
+    pub product_names: Vec<String>,
     /// Uncertainty value from `UNCERTAINTY_MEASURE_WITH_UNIT`, if present.
     pub uncertainty_value: Option<f64>,
     /// Materials extracted from `MATERIAL` entities, if present.
@@ -277,6 +301,102 @@ pub struct StepDocumentMetadata {
     pub datum_systems: Vec<StepDatumSystem>,
     /// Kinematics/joint entries (AP242 kinematic pair baseline).
     pub kinematic_pairs: Vec<StepKinematicPair>,
+    /// Tolerance zone entries (AP242 TOLERANCE_ZONE).
+    pub tolerance_zones: Vec<StepToleranceZone>,
+    /// Tolerance zone definitions (AP242 TOLERANCE_ZONE_DEFINITION).
+    pub tolerance_zone_definitions: Vec<StepToleranceZoneDefinition>,
+    /// Datum feature entries (AP242 DATUM_FEATURE).
+    pub datum_features: Vec<StepDatumFeature>,
+    /// Datum reference elements (AP242 DATUM_REFERENCE_ELEMENT).
+    pub datum_reference_elements: Vec<StepDatumReferenceElement>,
+    /// Shape aspect entries (AP242 SHAPE_ASPECT).
+    pub shape_aspects: Vec<StepShapeAspect>,
+    /// Shape aspect definitions (AP242 SHAPE_ASPECT_DEFINITION).
+    pub shape_aspect_definitions: Vec<StepShapeAspectDefinition>,
+    /// Derived shape aspects (AP242 DERIVED_SHAPE_ASPECT).
+    pub derived_shape_aspects: Vec<StepDerivedShapeAspect>,
+}
+
+impl StepDocumentMetadata {
+    /// Returns a human-readable summary of extracted AP242 entities.
+    pub fn summary(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("Products: {}", self.products.len()));
+        lines.push(format!("Product definitions: {}", self.product_definitions.len()));
+        lines.push(format!("Assembly occurrences: {}", self.assembly_occurrences.len()));
+        lines.push(format!("Materials: {}", self.materials.len()));
+        lines.push(format!("Layers: {}", self.layers.len()));
+        lines.push(format!("General properties: {}", self.general_properties.len()));
+        lines.push(format!("Property definitions: {}", self.property_definitions.len()));
+        lines.push(format!("Property definition representations: {}", self.property_definition_representations.len()));
+        lines.push(format!("Dimensional locations: {}", self.dimensional_locations.len()));
+        lines.push(format!("Dimensional sizes: {}", self.dimensional_sizes.len()));
+        lines.push(format!("Geometric tolerances: {}", self.geometric_tolerances.len()));
+        lines.push(format!("Geometric tolerances with datum references: {}", self.geometric_tolerances_with_datum_references.len()));
+        lines.push(format!("Datums: {}", self.datums.len()));
+        lines.push(format!("Datum systems: {}", self.datum_systems.len()));
+        lines.push(format!("Kinematic pairs: {}", self.kinematic_pairs.len()));
+        lines.push(format!("Tolerance zones: {}", self.tolerance_zones.len()));
+        lines.push(format!("Tolerance zone definitions: {}", self.tolerance_zone_definitions.len()));
+        lines.push(format!("Datum features: {}", self.datum_features.len()));
+        lines.push(format!("Datum reference elements: {}", self.datum_reference_elements.len()));
+        lines.push(format!("Shape aspects: {}", self.shape_aspects.len()));
+        lines.push(format!("Shape aspect definitions: {}", self.shape_aspect_definitions.len()));
+        lines.push(format!("Derived shape aspects: {}", self.derived_shape_aspects.len()));
+        lines.join("\n")
+    }
+}
+
+/// A `PRODUCT` record extracted from the STEP data section.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProduct {
+    pub entity_id: u64,
+    pub product_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// A `PRODUCT_DEFINITION_FORMATION` record linked back to a `PRODUCT` when possible.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProductDefinitionFormation {
+    pub entity_id: u64,
+    pub formation_id: Option<String>,
+    pub description: Option<String>,
+    pub product_id: Option<u64>,
+    pub product_name: Option<String>,
+}
+
+/// A `PRODUCT_DEFINITION` record resolved through the formation chain when possible.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProductDefinitionInfo {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub formation_id: Option<u64>,
+    pub product_id: Option<u64>,
+    pub product_name: Option<String>,
+}
+
+/// A `SHAPE_DEFINITION_REPRESENTATION` linkage resolved to a `PRODUCT_DEFINITION` when possible.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepShapeDefinitionRepresentation {
+    pub entity_id: u64,
+    pub product_definition_shape_id: Option<u64>,
+    pub product_definition_id: Option<u64>,
+    pub representation_id: Option<u64>,
+}
+
+/// A `NEXT_ASSEMBLY_USAGE_OCCURRENCE` relationship between two product definitions.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepAssemblyUsageOccurrence {
+    pub entity_id: u64,
+    pub usage_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub relating_product_definition_id: Option<u64>,
+    pub related_product_definition_id: Option<u64>,
+    pub relating_product_name: Option<String>,
+    pub related_product_name: Option<String>,
 }
 
 /// Linkage from PROPERTY_DEFINITION to a representation via PROPERTY_DEFINITION_REPRESENTATION.
@@ -358,6 +478,79 @@ pub struct StepKinematicPair {
     pub related_entity_ids: Vec<u64>,
 }
 
+/// A tolerance zone entry (AP242 TOLERANCE_ZONE).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepToleranceZone {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Referenced toleranced_shape_aspect (typically GEOMETRIC_TOLERANCE).
+    pub toleranced_shape_aspect_id: Option<u64>,
+}
+
+/// A tolerance zone definition (AP242 TOLERANCE_ZONE_DEFINITION).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepToleranceZoneDefinition {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to TOLERANCE_ZONE.
+    pub tolerance_zone_id: Option<u64>,
+    /// Reference to shape_aspect defining the zone boundaries.
+    pub shape_aspect_id: Option<u64>,
+}
+
+/// A datum feature entry (AP242 DATUM_FEATURE).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumFeature {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to associated DATUM.
+    pub datum_id: Option<u64>,
+}
+
+/// A datum reference element (AP242 DATUM_REFERENCE_ELEMENT).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumReferenceElement {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to associated DATUM or DATUM_FEATURE.
+    pub associated_entity_id: Option<u64>,
+}
+
+/// A shape aspect entry (AP242 SHAPE_ASPECT).
+/// Used to associate tolerance information to geometric features.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepShapeAspect {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the product_definition_shape this aspect belongs to.
+    pub product_definition_shape_id: Option<u64>,
+}
+
+/// A shape aspect definition (AP242 SHAPE_ASPECT_DEFINITION).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepShapeAspectDefinition {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to parent SHAPE_ASPECT.
+    pub shape_aspect_id: Option<u64>,
+}
+
+/// A derived shape aspect (AP242 DERIVED_SHAPE_ASPECT).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDerivedShapeAspect {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to base shape_aspect(s).
+    pub base_shape_aspect_ids: Vec<u64>,
+}
+
 /// A material entry extracted from a STEP file.
 ///
 /// Analogous to `XCAFDoc_Material` / `XCAFDoc_MaterialTool` in OCCT.
@@ -423,6 +616,244 @@ fn extract_file_name(content: &str) -> Option<String> {
     let rest = &rest[first_quote + 1..];
     let end_quote = rest.find('\'')?;
     Some(rest[..end_quote].to_string())
+}
+
+fn extract_product_names(content: &str) -> Vec<String> {
+    extract_products(content)
+        .into_iter()
+        .filter_map(|product| product.name.or(product.product_id))
+        .fold(Vec::new(), |mut names, name| {
+            if !names.iter().any(|existing| existing == &name) {
+                names.push(name);
+            }
+            names
+        })
+}
+
+fn extract_products(content: &str) -> Vec<StepProduct> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut products = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT") {
+            continue;
+        }
+        products.push(StepProduct {
+            entity_id: id,
+            product_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+        });
+    }
+    products
+}
+
+fn extract_product_definition_formations(content: &str) -> Vec<StepProductDefinitionFormation> {
+    use std::collections::HashMap;
+
+    let products_by_id: HashMap<u64, StepProduct> = extract_products(content)
+        .into_iter()
+        .map(|product| (product.entity_id, product))
+        .collect();
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION_FORMATION")
+            && !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE")
+        {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        let product_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let product_name = product_id.and_then(|pid| {
+            products_by_id
+                .get(&pid)
+                .and_then(|product| product.name.clone().or(product.product_id.clone()))
+        });
+
+        out.push(StepProductDefinitionFormation {
+            entity_id: id,
+            formation_id: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            product_id,
+            product_name,
+        });
+    }
+
+    out
+}
+
+fn extract_product_definitions(content: &str) -> Vec<StepProductDefinitionInfo> {
+    use std::collections::HashMap;
+
+    let formation_by_id: HashMap<u64, StepProductDefinitionFormation> =
+        extract_product_definition_formations(content)
+            .into_iter()
+            .map(|formation| (formation.entity_id, formation))
+            .collect();
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        let formation_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let (product_id, product_name) = formation_id
+            .and_then(|fid| formation_by_id.get(&fid))
+            .map(|formation| (formation.product_id, formation.product_name.clone()))
+            .unwrap_or((None, None));
+
+        out.push(StepProductDefinitionInfo {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            formation_id,
+            product_id,
+            product_name,
+        });
+    }
+
+    out
+}
+
+fn extract_shape_definition_representations(content: &str) -> Vec<StepShapeDefinitionRepresentation> {
+    use std::collections::{HashMap, HashSet};
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let product_definition_ids: HashSet<u64> = extract_product_definitions(content)
+        .into_iter()
+        .map(|definition| definition.entity_id)
+        .collect();
+
+    let mut pds_to_definition: HashMap<u64, u64> = HashMap::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION_SHAPE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        if let Some(definition_id) = parts.get(2).and_then(|p| parse_ref(p.trim())) {
+            pds_to_definition.insert(id, definition_id);
+        }
+    }
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SHAPE_DEFINITION_REPRESENTATION") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let product_definition_shape_id = parts.first().and_then(|p| parse_ref(p.trim()));
+        let product_definition_id = product_definition_shape_id
+            .and_then(|pds_id| pds_to_definition.get(&pds_id).copied())
+            .filter(|definition_id| product_definition_ids.contains(definition_id));
+        let representation_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+
+        out.push(StepShapeDefinitionRepresentation {
+            entity_id: id,
+            product_definition_shape_id,
+            product_definition_id,
+            representation_id,
+        });
+    }
+
+    out
+}
+
+fn extract_assembly_occurrences(content: &str) -> Vec<StepAssemblyUsageOccurrence> {
+    use std::collections::HashMap;
+
+    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> = extract_product_definitions(content)
+        .into_iter()
+        .map(|definition| (definition.entity_id, definition))
+        .collect();
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        let relating_product_definition_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let related_product_definition_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+
+        out.push(StepAssemblyUsageOccurrence {
+            entity_id: id,
+            usage_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            relating_product_definition_id,
+            related_product_definition_id,
+            relating_product_name: relating_product_definition_id.and_then(|pd| {
+                product_defs_by_id
+                    .get(&pd)
+                    .and_then(|definition| definition.product_name.clone())
+            }),
+            related_product_name: related_product_definition_id.and_then(|pd| {
+                product_defs_by_id
+                    .get(&pd)
+                    .and_then(|definition| definition.product_name.clone())
+            }),
+        });
+    }
+
+    out
 }
 
 fn infer_protocol_hint(file_schema: Option<&str>) -> StepProtocolHint {
@@ -757,6 +1188,215 @@ fn extract_kinematic_pairs(content: &str) -> Vec<StepKinematicPair> {
     }
     out
 }
+
+fn extract_tolerance_zones(content: &str) -> Vec<StepToleranceZone> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("TOLERANCE_ZONE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let toleranced_shape_aspect_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepToleranceZone {
+            entity_id: id,
+            name,
+            description,
+            toleranced_shape_aspect_id,
+        });
+    }
+    out
+}
+
+fn extract_tolerance_zone_definitions(content: &str) -> Vec<StepToleranceZoneDefinition> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("TOLERANCE_ZONE_DEFINITION") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let tolerance_zone_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        out.push(StepToleranceZoneDefinition {
+            entity_id: id,
+            name,
+            description,
+            tolerance_zone_id,
+            shape_aspect_id,
+        });
+    }
+    out
+}
+
+fn extract_datum_features(content: &str) -> Vec<StepDatumFeature> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DATUM_FEATURE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let datum_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDatumFeature {
+            entity_id: id,
+            name,
+            description,
+            datum_id,
+        });
+    }
+    out
+}
+
+fn extract_datum_reference_elements(content: &str) -> Vec<StepDatumReferenceElement> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DATUM_REFERENCE_ELEMENT") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let associated_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDatumReferenceElement {
+            entity_id: id,
+            name,
+            description,
+            associated_entity_id,
+        });
+    }
+    out
+}
+
+fn extract_shape_aspects(content: &str) -> Vec<StepShapeAspect> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SHAPE_ASPECT") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let product_definition_shape_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepShapeAspect {
+            entity_id: id,
+            name,
+            description,
+            product_definition_shape_id,
+        });
+    }
+    out
+}
+
+fn extract_shape_aspect_definitions(content: &str) -> Vec<StepShapeAspectDefinition> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SHAPE_ASPECT_DEFINITION") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let shape_aspect_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepShapeAspectDefinition {
+            entity_id: id,
+            name,
+            description,
+            shape_aspect_id,
+        });
+    }
+    out
+}
+
+fn extract_derived_shape_aspects(content: &str) -> Vec<StepDerivedShapeAspect> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DERIVED_SHAPE_ASPECT") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let base_shape_aspect_ids = parts
+            .get(2)
+            .map(|p| parse_ref_list(p.trim()))
+            .unwrap_or_default();
+        out.push(StepDerivedShapeAspect {
+            entity_id: id,
+            name,
+            description,
+            base_shape_aspect_ids,
+        });
+    }
+    out
+}
+
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
     let rest = &args[q1 + 1..];
@@ -864,9 +1504,16 @@ impl StepReader {
         let entities = parse_entities(content)?;
         let brep = build_brep_from_parsed(&entities)?;
         let file_schema = extract_file_schema(content);
+        let products = extract_products(content);
         let metadata = StepDocumentMetadata {
             protocol_hint: infer_protocol_hint(file_schema.as_deref()),
             file_name: extract_file_name(content),
+            product_names: extract_product_names(content),
+            products,
+            product_definition_formations: extract_product_definition_formations(content),
+            product_definitions: extract_product_definitions(content),
+            shape_definition_representations: extract_shape_definition_representations(content),
+            assembly_occurrences: extract_assembly_occurrences(content),
             file_schema,
             uncertainty_value: entities.uncertainty_value,
             materials: extract_materials(content),
@@ -882,6 +1529,13 @@ impl StepReader {
             datums: extract_datums(content),
             datum_systems: extract_datum_systems(content),
             kinematic_pairs: extract_kinematic_pairs(content),
+            tolerance_zones: extract_tolerance_zones(content),
+            tolerance_zone_definitions: extract_tolerance_zone_definitions(content),
+            datum_features: extract_datum_features(content),
+            datum_reference_elements: extract_datum_reference_elements(content),
+            shape_aspects: extract_shape_aspects(content),
+            shape_aspect_definitions: extract_shape_aspect_definitions(content),
+            derived_shape_aspects: extract_derived_shape_aspects(content),
         };
 
         Ok((brep, metadata))
@@ -918,6 +1572,36 @@ impl StepReader {
             *issue_map.entry(issue.to_string()).or_insert(0) += 1;
         }
 
+        let vertices_merged = report.passes.iter().map(|pass| pass.vertices_merged).sum();
+        let degenerate_faces_removed = report
+            .passes
+            .iter()
+            .map(|pass| pass.degenerate_faces_removed)
+            .sum();
+        let normals_recomputed = report.passes.iter().map(|pass| pass.normals_recomputed).sum();
+        let faces_reoriented = report.passes.iter().map(|pass| pass.faces_reoriented).sum();
+        let wires_fixed = report.passes.iter().map(|pass| pass.wires_fixed).sum();
+        let same_range_fixed = report
+            .passes
+            .iter()
+            .map(|pass| pass.same_range_fixed)
+            .sum::<usize>()
+            + report
+                .parametric_passes
+                .iter()
+                .map(|pass| pass.same_range_fixed)
+                .sum::<usize>();
+        let same_parameter_fixed = report
+            .passes
+            .iter()
+            .map(|pass| pass.same_parameter_fixed)
+            .sum::<usize>()
+            + report
+                .parametric_passes
+                .iter()
+                .map(|pass| pass.same_parameter_fixed)
+                .sum::<usize>();
+
         let payload = StepImportHealingJsonV1 {
             schema: "step.import.healing.v1",
             clean: report.final_result.is_valid(),
@@ -925,6 +1609,16 @@ impl StepReader {
             final_issue_count: report.final_issue_count(),
             fixed_issue_count: report.fixed_issue_count(),
             issue_histogram: issue_map.into_iter().collect(),
+            repair_pass_count: report.passes.len(),
+            parametric_pass_count: report.parametric_passes.len(),
+            make_connected_pass_count: report.make_connected_passes.len(),
+            vertices_merged,
+            degenerate_faces_removed,
+            normals_recomputed,
+            faces_reoriented,
+            wires_fixed,
+            same_range_fixed,
+            same_parameter_fixed,
             wire_open_gaps: wire.total_open_gaps,
             wire_topological_self_intersections: wire.total_topological_self_intersections,
             wire_geometric_self_intersections: wire.total_geometric_self_intersections,
@@ -1752,6 +2446,7 @@ fn build_face(
     let mut wire_edge_indices: Vec<WireEdge> = Vec::new();
     let mut face_vertex_indices: Vec<usize> = Vec::new();
     let mut sampled_loop_points: Vec<glam::DVec3> = Vec::new();
+    let mut sampled_loop_uv_points: Vec<glam::DVec2> = Vec::new();
 
     // Detect seam edges: an edge_curve that appears twice in the same face boundary
     let mut edge_curve_count: HashMap<u64, usize> = HashMap::new();
@@ -1778,6 +2473,16 @@ fn build_face(
 
         if let Some(points) = sample_oriented_edge_points(parsed, edge_curve_id, orientation) {
             append_edge_points(&mut sampled_loop_points, &points);
+        }
+        if let Some(surface_ref) = bound_ids.surface
+            && let Some(points) = sample_oriented_edge_uv_points(
+                parsed,
+                edge_curve_id,
+                orientation,
+                surface_ref,
+            )
+        {
+            append_edge_uv_points(&mut sampled_loop_uv_points, &points);
         }
 
         if polygon.is_empty() {
@@ -1867,28 +2572,65 @@ fn build_face(
         .map(|sid| parsed.planes.contains_key(&sid))
         .unwrap_or(true);
 
+    if let Some(surface_ref) = face_surface
+        && sampled_loop_uv_points.len() < 3
+        && sampled_loop_points.len() >= 3
+    {
+        if let Some(projected) = project_boundary_points_to_surface_uv(
+            parsed,
+            surface_ref,
+            &sampled_loop_points,
+        ) {
+            sampled_loop_uv_points = projected;
+        }
+    }
+
     let triangles = if sampled_loop_points.len() >= 3 && is_planar_face {
         triangulate_point_loop(vertices, &sampled_loop_points)
     } else if let Some(surface_ref) = face_surface
+        && sampled_loop_uv_points.len() >= 3
+    {
+        let tris = triangulate_surface_trim_loop(parsed, surface_ref, vertices, &sampled_loop_uv_points);
+        eprintln!(
+            "[rcad-step][diag] face #{face_id} curved uv-loop surface=#{surface_ref} uv_pts={} tris={}",
+            sampled_loop_uv_points.len(),
+            tris.len()
+        );
+        tris
+    } else if let Some(surface_ref) = face_surface
         && !parsed.planes.contains_key(&surface_ref)
     {
-        triangulate_surface_fallback(
+        let tris = triangulate_surface_fallback(
             parsed,
             surface_ref,
             vertices,
             &face_vertex_indices,
             has_seam,
-        )
+        );
+        eprintln!(
+            "[rcad-step][diag] face #{face_id} curved fallback surface=#{surface_ref} uv_pts={} sampled_pts={} tris={}",
+            sampled_loop_uv_points.len(),
+            sampled_loop_points.len(),
+            tris.len()
+        );
+        tris
     } else if polygon.len() >= 3 {
         triangulate_fan(&polygon)
     } else if let Some(surface_ref) = face_surface {
-        triangulate_surface_fallback(
+        let tris = triangulate_surface_fallback(
             parsed,
             surface_ref,
             vertices,
             &face_vertex_indices,
             has_seam,
-        )
+        );
+        eprintln!(
+            "[rcad-step][diag] face #{face_id} fallback-no-polygon surface=#{surface_ref} uv_pts={} sampled_pts={} tris={}",
+            sampled_loop_uv_points.len(),
+            sampled_loop_points.len(),
+            tris.len()
+        );
+        tris
     } else {
         Vec::new()
     };
@@ -1974,6 +2716,17 @@ fn append_edge_points(dst: &mut Vec<glam::DVec3>, src: &[glam::DVec3]) {
     }
 }
 
+fn append_edge_uv_points(dst: &mut Vec<glam::DVec2>, src: &[glam::DVec2]) {
+    for p in src {
+        if let Some(last) = dst.last()
+            && last.distance(*p) < 1e-7
+        {
+            continue;
+        }
+        dst.push(*p);
+    }
+}
+
 fn dedup_consecutive_points(points: &mut Vec<glam::DVec3>) {
     if points.len() < 2 {
         return;
@@ -2036,6 +2789,455 @@ fn sample_oriented_edge_points(
         points.reverse();
     }
     Some(points)
+}
+
+fn sample_oriented_edge_uv_points(
+    parsed: &ParsedStep,
+    edge_curve_id: u64,
+    orientation: bool,
+    surface_ref: u64,
+) -> Option<Vec<glam::DVec2>> {
+    let (_, _, curve_ref) = *parsed.edge_curves.get(&edge_curve_id)?;
+    let step_curve_id = curve_ref?;
+    let (_, pcurve_refs, _) = parsed
+        .surface_curves
+        .get(&step_curve_id)
+        .or_else(|| {
+            parsed.surface_curves.iter().find_map(|(_, value)| {
+                if value.0 == step_curve_id {
+                    Some(value)
+                } else {
+                    None
+                }
+            })
+        })?;
+
+    let pcurve_ref = pcurve_refs.iter().find(|pcurve_ref| {
+        parsed
+            .pcurves
+            .get(pcurve_ref)
+            .map(|(candidate_surface, _)| *candidate_surface == surface_ref)
+            .unwrap_or(false)
+    })?;
+    let (_, def_ref) = *parsed.pcurves.get(pcurve_ref)?;
+    let curve2d_ref = *parsed.definitional_reps.get(&def_ref)?;
+
+    let mut points = sample_curve2d_points(parsed, curve2d_ref)?;
+    if !orientation {
+        points.reverse();
+    }
+    Some(points)
+}
+
+fn curve2d_default_range(curve: &Curve2d) -> [f64; 2] {
+    match curve {
+        Curve2d::Line(_) => [0.0, 1.0],
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) => [0.0, std::f64::consts::TAU],
+        Curve2d::CircleInvolute(_) => [0.0, 4.0 * std::f64::consts::PI],
+        Curve2d::ArchimedeanSpiral(_) | Curve2d::LogarithmicSpiral(_) => {
+            [0.0, 4.0 * std::f64::consts::PI]
+        }
+        Curve2d::SineWave(_) | Curve2d::BSpline(_) | Curve2d::Bezier(_) => [0.0, 1.0],
+    }
+}
+
+fn sample_curve2d_points(parsed: &ParsedStep, curve_ref: u64) -> Option<Vec<glam::DVec2>> {
+    let (base_curve_ref, range) = if let Some(&(underlying_ref, t0, t1)) = parsed.trimmed_curves.get(&curve_ref) {
+        (underlying_ref, Some([t0, t1]))
+    } else {
+        (curve_ref, None)
+    };
+    let curve = resolve_curve2d(parsed, base_curve_ref)?;
+    let [t0, t1] = range.unwrap_or_else(|| curve2d_default_range(&curve));
+    let segments = match curve {
+        Curve2d::Line(_) => 1usize,
+        Curve2d::Circle(_) | Curve2d::Ellipse(_) => 48usize,
+        Curve2d::BSpline(_) | Curve2d::Bezier(_) => 64usize,
+        _ => 32usize,
+    };
+
+    let mut points = Vec::with_capacity(segments + 1);
+    if (t1 - t0).abs() < 1e-12 {
+        points.push(curve.point_at(t0));
+        return Some(points);
+    }
+
+    for index in 0..=segments {
+        let t = t0 + (t1 - t0) * (index as f64 / segments as f64);
+        points.push(curve.point_at(t));
+    }
+    dedup_consecutive_uv_points(&mut points);
+    Some(points)
+}
+
+fn dedup_consecutive_uv_points(points: &mut Vec<glam::DVec2>) {
+    if points.len() < 2 {
+        return;
+    }
+    let mut deduped = Vec::with_capacity(points.len());
+    for point in points.iter().copied() {
+        if deduped
+            .last()
+            .map(|last: &glam::DVec2| last.distance(point) < 1e-7)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        deduped.push(point);
+    }
+    *points = deduped;
+}
+
+fn triangulate_surface_trim_loop(
+    parsed: &ParsedStep,
+    surface_ref: u64,
+    vertices: &mut Vec<Vertex>,
+    uv_points: &[glam::DVec2],
+) -> Vec<[usize; 3]> {
+    let Some(surface) = resolve_surface_for_trim_ops(parsed, surface_ref) else {
+        return Vec::new();
+    };
+
+    let mut loop_uv = uv_points.to_vec();
+    dedup_consecutive_uv_points(&mut loop_uv);
+    if loop_uv.len() > 1 {
+        let first = loop_uv[0];
+        let last = *loop_uv.last().unwrap_or(&first);
+        if first.distance(last) < 1e-6 {
+            loop_uv.pop();
+        }
+    }
+    unwrap_periodic_uv_loop(&surface, &mut loop_uv);
+    if loop_uv.len() < 3 {
+        return Vec::new();
+    }
+
+    if !matches!(surface, Surface3::Plane(_)) {
+        if let Some(triangles) = triangulate_surface_trim_grid(&surface, vertices, &loop_uv) {
+            if !triangles.is_empty() {
+                return triangles;
+            }
+        }
+    }
+
+    let uv_poly_3d: Vec<glam::DVec3> = loop_uv
+        .iter()
+        .map(|uv| glam::DVec3::new(uv.x, uv.y, 0.0))
+        .collect();
+    let local_tris = rcad_algorithms::triangulate::triangulate_polygon(&uv_poly_3d, glam::DVec3::Z);
+    if local_tris.is_empty() {
+        return Vec::new();
+    }
+
+    let base = vertices.len();
+    for uv in &loop_uv {
+        vertices.push(Vertex {
+            point: surface.point_at(uv.x, uv.y),
+        });
+    }
+
+    local_tris
+        .into_iter()
+        .filter(|[a, b, c]| a != b && b != c && a != c)
+        .map(|[a, b, c]| [base + a, base + b, base + c])
+        .collect()
+}
+
+fn triangulate_surface_trim_grid(
+    surface: &Surface3,
+    vertices: &mut Vec<Vertex>,
+    uv_loop: &[glam::DVec2],
+) -> Option<Vec<[usize; 3]>> {
+    if uv_loop.len() < 3 {
+        return None;
+    }
+
+    let (segments_u, segments_v) = match surface {
+        Surface3::Sphere(_) => (32usize, 16usize),
+        Surface3::Cylinder(_) | Surface3::Cone(_) => (40usize, 12usize),
+        Surface3::Torus(_) => (48usize, 24usize),
+        Surface3::BSpline(_) | Surface3::Bezier(_) | Surface3::Trimmed(_) => (24usize, 24usize),
+        _ => (24usize, 16usize),
+    };
+
+    let mut min_u = f64::INFINITY;
+    let mut max_u = f64::NEG_INFINITY;
+    let mut min_v = f64::INFINITY;
+    let mut max_v = f64::NEG_INFINITY;
+    for uv in uv_loop {
+        min_u = min_u.min(uv.x);
+        max_u = max_u.max(uv.x);
+        min_v = min_v.min(uv.y);
+        max_v = max_v.max(uv.y);
+    }
+    if !min_u.is_finite() || !max_u.is_finite() || !min_v.is_finite() || !max_v.is_finite() {
+        return None;
+    }
+    if (max_u - min_u).abs() < 1e-10 || (max_v - min_v).abs() < 1e-10 {
+        return None;
+    }
+
+    let mut grid_indices = vec![None; (segments_u + 1) * (segments_v + 1)];
+    for j in 0..=segments_v {
+        let v = min_v + (max_v - min_v) * (j as f64 / segments_v as f64);
+        for i in 0..=segments_u {
+            let u = min_u + (max_u - min_u) * (i as f64 / segments_u as f64);
+            let uv = glam::DVec2::new(u, v);
+            if !point_in_polygon_2d(uv, uv_loop) && !point_near_polygon_2d(uv, uv_loop, 1e-6) {
+                continue;
+            }
+            let idx = vertices.len();
+            vertices.push(Vertex {
+                point: surface.point_at(u, v),
+            });
+            grid_indices[j * (segments_u + 1) + i] = Some(idx);
+        }
+    }
+
+    let mut triangles = Vec::new();
+    for j in 0..segments_v {
+        for i in 0..segments_u {
+            let idx = |ii: usize, jj: usize| grid_indices[jj * (segments_u + 1) + ii];
+            let uv0 = glam::DVec2::new(
+                min_u + (max_u - min_u) * (i as f64 / segments_u as f64),
+                min_v + (max_v - min_v) * (j as f64 / segments_v as f64),
+            );
+            let uv1 = glam::DVec2::new(
+                min_u + (max_u - min_u) * ((i + 1) as f64 / segments_u as f64),
+                min_v + (max_v - min_v) * (j as f64 / segments_v as f64),
+            );
+            let uv2 = glam::DVec2::new(
+                min_u + (max_u - min_u) * (i as f64 / segments_u as f64),
+                min_v + (max_v - min_v) * ((j + 1) as f64 / segments_v as f64),
+            );
+            let uv3 = glam::DVec2::new(
+                min_u + (max_u - min_u) * ((i + 1) as f64 / segments_u as f64),
+                min_v + (max_v - min_v) * ((j + 1) as f64 / segments_v as f64),
+            );
+
+            let Some(i0) = idx(i, j) else { continue };
+            let Some(i1) = idx(i + 1, j) else { continue };
+            let Some(i2) = idx(i, j + 1) else { continue };
+            let Some(i3) = idx(i + 1, j + 1) else { continue };
+
+            let p0 = vertices[i0].point;
+            let p1 = vertices[i1].point;
+            let p2 = vertices[i2].point;
+            let p3 = vertices[i3].point;
+            let diag_03 = (p3 - p0).length_squared();
+            let diag_12 = (p2 - p1).length_squared();
+            let use_diag_03 = if (diag_03 - diag_12).abs() <= 1e-12 {
+                ((i + j) & 1) == 0
+            } else {
+                diag_03 < diag_12
+            };
+
+            if use_diag_03 {
+                let centroid_a = (uv0 + uv2 + uv3) / 3.0;
+                if point_in_polygon_2d(centroid_a, uv_loop)
+                    || point_near_polygon_2d(centroid_a, uv_loop, 1e-6)
+                {
+                    triangles.push([i0, i2, i3]);
+                }
+
+                let centroid_b = (uv0 + uv3 + uv1) / 3.0;
+                if point_in_polygon_2d(centroid_b, uv_loop)
+                    || point_near_polygon_2d(centroid_b, uv_loop, 1e-6)
+                {
+                    triangles.push([i0, i3, i1]);
+                }
+            } else {
+                let centroid_a = (uv0 + uv2 + uv1) / 3.0;
+                if point_in_polygon_2d(centroid_a, uv_loop)
+                    || point_near_polygon_2d(centroid_a, uv_loop, 1e-6)
+                {
+                    triangles.push([i0, i2, i1]);
+                }
+
+                let centroid_b = (uv1 + uv2 + uv3) / 3.0;
+                if point_in_polygon_2d(centroid_b, uv_loop)
+                    || point_near_polygon_2d(centroid_b, uv_loop, 1e-6)
+                {
+                    triangles.push([i1, i2, i3]);
+                }
+            }
+        }
+    }
+
+    Some(triangles)
+}
+
+fn point_in_polygon_2d(point: glam::DVec2, polygon: &[glam::DVec2]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut prev = polygon.len() - 1;
+    for current in 0..polygon.len() {
+        let a = polygon[current];
+        let b = polygon[prev];
+        let intersects = ((a.y > point.y) != (b.y > point.y))
+            && (point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y).abs().max(1e-20) + a.x);
+        if intersects {
+            inside = !inside;
+        }
+        prev = current;
+    }
+    inside
+}
+
+fn point_near_polygon_2d(point: glam::DVec2, polygon: &[glam::DVec2], tolerance: f64) -> bool {
+    if polygon.len() < 2 {
+        return false;
+    }
+    for index in 0..polygon.len() {
+        let a = polygon[index];
+        let b = polygon[(index + 1) % polygon.len()];
+        if point_segment_distance_2d(point, a, b) <= tolerance {
+            return true;
+        }
+    }
+    false
+}
+
+fn point_segment_distance_2d(point: glam::DVec2, a: glam::DVec2, b: glam::DVec2) -> f64 {
+    let ab = b - a;
+    let denom = ab.length_squared();
+    if denom <= 1e-20 {
+        return point.distance(a);
+    }
+    let t = ((point - a).dot(ab) / denom).clamp(0.0, 1.0);
+    point.distance(a + ab * t)
+}
+
+fn project_boundary_points_to_surface_uv(
+    parsed: &ParsedStep,
+    surface_ref: u64,
+    boundary_points: &[glam::DVec3],
+) -> Option<Vec<glam::DVec2>> {
+    let surface = resolve_surface_for_trim_ops(parsed, surface_ref)?;
+    let mut uv_points = Vec::with_capacity(boundary_points.len());
+    for &point in boundary_points {
+        uv_points.push(project_point_to_surface_uv(&surface, point)?);
+    }
+    unwrap_periodic_uv_loop(&surface, &mut uv_points);
+    dedup_consecutive_uv_points(&mut uv_points);
+    Some(uv_points)
+}
+
+fn project_point_to_surface_uv(surface: &Surface3, point: glam::DVec3) -> Option<glam::DVec2> {
+    match surface {
+        Surface3::Plane(plane) => {
+            let u_axis = any_perpendicular(plane.normal);
+            let v_axis = plane.normal.cross(u_axis).normalize_or_zero();
+            let delta = point - plane.origin;
+            Some(glam::DVec2::new(delta.dot(u_axis), delta.dot(v_axis)))
+        }
+        Surface3::Cylinder(cylinder) => {
+            let axis = cylinder.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u_axis = any_perpendicular(axis);
+            let v_axis = axis.cross(u_axis).normalize_or_zero();
+            let delta = point - cylinder.origin;
+            let radial = delta - axis * delta.dot(axis);
+            Some(glam::DVec2::new(
+                radial.dot(v_axis).atan2(radial.dot(u_axis)),
+                delta.dot(axis),
+            ))
+        }
+        Surface3::Sphere(sphere) => {
+            let axis = sphere.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u_axis = any_perpendicular(axis);
+            let v_axis = axis.cross(u_axis).normalize_or_zero();
+            let radial = (point - sphere.center).normalize_or_zero();
+            if radial.length_squared() <= 1e-20 {
+                return None;
+            }
+            Some(glam::DVec2::new(
+                radial.dot(v_axis).atan2(radial.dot(u_axis)),
+                radial.dot(axis).clamp(-1.0, 1.0).acos(),
+            ))
+        }
+        Surface3::Cone(cone) => {
+            let axis = cone.axis_dir();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u_axis = any_perpendicular(axis);
+            let v_axis = axis.cross(u_axis).normalize_or_zero();
+            let delta = point - cone.apex;
+            let height = delta.dot(axis);
+            let radial = delta - axis * height;
+            Some(glam::DVec2::new(
+                radial.dot(v_axis).atan2(radial.dot(u_axis)),
+                cone.slant_from_axial(height),
+            ))
+        }
+        Surface3::Torus(torus) => {
+            let axis = torus.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u_axis = any_perpendicular(axis);
+            let v_axis = axis.cross(u_axis).normalize_or_zero();
+            let delta = point - torus.center;
+            let planar = delta - axis * delta.dot(axis);
+            if planar.length_squared() <= 1e-20 {
+                return None;
+            }
+            let theta = planar.dot(v_axis).atan2(planar.dot(u_axis));
+            let ring_dir = (u_axis * theta.cos() + v_axis * theta.sin()).normalize_or_zero();
+            let ring_center = torus.center + torus.major_radius * ring_dir;
+            let tube_vec = (point - ring_center).normalize_or_zero();
+            Some(glam::DVec2::new(
+                theta,
+                tube_vec.dot(axis).atan2(tube_vec.dot(ring_dir)),
+            ))
+        }
+        Surface3::Trimmed(trimmed) => project_point_to_surface_uv(trimmed.basis.as_ref(), point),
+        _ => None,
+    }
+}
+
+fn unwrap_periodic_uv_loop(surface: &Surface3, points: &mut [glam::DVec2]) {
+    let period = match surface {
+        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
+            Some(std::f64::consts::TAU)
+        }
+        Surface3::Trimmed(trimmed) => match trimmed.basis.as_ref() {
+            Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
+                Some(std::f64::consts::TAU)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+
+    let Some(period) = period else {
+        return;
+    };
+    if points.len() < 2 {
+        return;
+    }
+
+    let mut offset = 0.0;
+    let mut previous = points[0].x;
+    for point in points.iter_mut().skip(1) {
+        let raw = point.x + offset;
+        let delta = raw - previous;
+        if delta > period * 0.5 {
+            offset -= period;
+        } else if delta < -period * 0.5 {
+            offset += period;
+        }
+        point.x += offset;
+        previous = point.x;
+    }
 }
 
 fn sample_circle_edge(
@@ -2314,7 +3516,7 @@ fn triangulate_cylindrical_surface(
         }
     }
 
-    triangulate_grid(base, height_segments, radial_segments, stride)
+    triangulate_grid(vertices, base, height_segments, radial_segments, stride)
 }
 
 fn triangulate_conical_surface(
@@ -2367,7 +3569,7 @@ fn triangulate_conical_surface(
         }
     }
 
-    triangulate_grid(base, height_segments, radial_segments, stride)
+    triangulate_grid(vertices, base, height_segments, radial_segments, stride)
 }
 
 fn triangulate_toroidal_surface(
@@ -2438,7 +3640,7 @@ fn triangulate_toroidal_surface(
         }
     }
 
-    triangulate_grid(base, major_segments, minor_segments, stride)
+    triangulate_grid(vertices, base, major_segments, minor_segments, stride)
 }
 
 /// Infer the angular (theta) range of boundary vertices projected onto a
@@ -2600,7 +3802,13 @@ fn infer_torus_minor_range(
     (phi_min, phi_max)
 }
 
-fn triangulate_grid(base: usize, rows: usize, cols: usize, stride: usize) -> Vec<[usize; 3]> {
+fn triangulate_grid(
+    vertices: &[Vertex],
+    base: usize,
+    rows: usize,
+    cols: usize,
+    stride: usize,
+) -> Vec<[usize; 3]> {
     let mut triangles = Vec::with_capacity(rows * cols * 2);
     for r in 0..rows {
         for c in 0..cols {
@@ -2608,8 +3816,20 @@ fn triangulate_grid(base: usize, rows: usize, cols: usize, stride: usize) -> Vec
             let i1 = i0 + 1;
             let i2 = i0 + stride;
             let i3 = i2 + 1;
-            triangles.push([i0, i2, i1]);
-            triangles.push([i1, i2, i3]);
+            let p0 = vertices[i0].point;
+            let p1 = vertices[i1].point;
+            let p2 = vertices[i2].point;
+            let p3 = vertices[i3].point;
+            let diag_03 = (p3 - p0).length_squared();
+            let diag_12 = (p2 - p1).length_squared();
+
+            if diag_03 <= diag_12 {
+                triangles.push([i0, i2, i3]);
+                triangles.push([i0, i3, i1]);
+            } else {
+                triangles.push([i0, i2, i1]);
+                triangles.push([i1, i2, i3]);
+            }
         }
     }
     triangles
@@ -2641,7 +3861,7 @@ fn triangulate_bspline_surface(
             });
         }
     }
-    triangulate_grid(base, nv, nu, nu + 1)
+    triangulate_grid(vertices, base, nv, nu, nu + 1)
 }
 
 fn infer_axis_range(
@@ -2700,6 +3920,7 @@ fn split_records(data: &str) -> Vec<String> {
     let mut records = Vec::new();
     let mut current = String::new();
     let mut in_comment = false;
+    let mut in_string = false;
     let mut chars = data.chars().peekable();
 
     while let Some(ch) = chars.next() {
@@ -2711,13 +3932,27 @@ fn split_records(data: &str) -> Vec<String> {
             continue;
         }
 
-        if ch == '/' && chars.peek() == Some(&'*') {
+        if ch == '\'' {
+            current.push(ch);
+            if in_string {
+                if chars.peek() == Some(&'\'') {
+                    current.push(chars.next().unwrap_or('\''));
+                } else {
+                    in_string = false;
+                }
+            } else {
+                in_string = true;
+            }
+            continue;
+        }
+
+        if !in_string && ch == '/' && chars.peek() == Some(&'*') {
             let _ = chars.next();
             in_comment = true;
             continue;
         }
 
-        if ch == ';' {
+        if ch == ';' && !in_string {
             let trimmed = current.trim();
             if !trimmed.is_empty() {
                 records.push(trimmed.to_string());
@@ -2880,7 +4115,7 @@ fn parse_bspline_curve_full(args: &str) -> Option<BSplineCurveData> {
 }
 
 /// Parse B_SPLINE_SURFACE_WITH_KNOTS args.
-/// Returns (degree_u, degree_v, ctrl_grid[v_row][u_col], mults_u, knots_u, mults_v, knots_v)
+/// Returns (name, degree_u, degree_v, ctrl_grid[v_row][u_col], mults_u, knots_u, mults_v, knots_v)
 fn parse_bspline_surface_with_knots(args: &str) -> Option<BSplineSurfaceData> {
     // STEP format:
     // ('name', degree_u, degree_v, ((#p00,#p01,...),(#p10,...)),
@@ -2892,6 +4127,7 @@ fn parse_bspline_surface_with_knots(args: &str) -> Option<BSplineSurfaceData> {
     if parts.len() < 12 {
         return None;
     }
+    let name = parse_step_string(parts[0]);
     let degree_u = parts[1].trim().parse::<usize>().ok()?;
     let degree_v = parts[2].trim().parse::<usize>().ok()?;
 
@@ -2926,8 +4162,184 @@ fn parse_bspline_surface_with_knots(args: &str) -> Option<BSplineSurfaceData> {
         return None;
     }
     Some((
-        degree_u, degree_v, ctrl_grid, mults_u, knots_u, mults_v, knots_v,
+        name, degree_u, degree_v, ctrl_grid, mults_u, knots_u, mults_v, knots_v,
     ))
+}
+
+fn parse_step_string(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        trimmed[1..trimmed.len() - 1].replace("''", "'")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn parse_triplet(raw: &str) -> Option<[f64; 3]> {
+    let vals: Vec<f64> = raw
+        .split(',')
+        .map(|s| s.trim().parse::<f64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    if vals.len() != 3 {
+        return None;
+    }
+    Some([vals[0], vals[1], vals[2]])
+}
+
+fn decode_rcad_tagged_surface(name: &str) -> Option<Surface3> {
+    let mut parts = name.split(';');
+    let kind = parts.next()?;
+    let mut attrs = std::collections::HashMap::<&str, &str>::new();
+    for part in parts {
+        let (key, value) = part.split_once('=')?;
+        attrs.insert(key, value);
+    }
+
+    match kind {
+        "RCAD_ELLIPSOID" => {
+            let c = parse_triplet(attrs.get("c").copied()?)?;
+            let a = parse_triplet(attrs.get("a").copied()?)?;
+            let d = parse_triplet(attrs.get("d").copied()?)?;
+            let r = parse_triplet(attrs.get("r").copied()?)?;
+            Some(Surface3::Ellipsoid(rcad_kernel::EllipsoidalSurface {
+                center: glam::DVec3::from_array(c),
+                axis: glam::DVec3::from_array(a),
+                ref_dir: glam::DVec3::from_array(d),
+                radius_x: r[0],
+                radius_y: r[1],
+                radius_z: r[2],
+            }))
+        }
+        "RCAD_HELICOID" => {
+            let o = parse_triplet(attrs.get("o").copied()?)?;
+            let a = parse_triplet(attrs.get("a").copied()?)?;
+            let d = parse_triplet(attrs.get("d").copied()?)?;
+            Some(Surface3::Helicoid(rcad_kernel::HelicoidSurface {
+                origin: glam::DVec3::from_array(o),
+                axis: glam::DVec3::from_array(a),
+                ref_dir: glam::DVec3::from_array(d),
+                pitch: attrs.get("p")?.trim().parse::<f64>().ok()?,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn build_bspline_surface_from_data(
+    degree_u: usize,
+    degree_v: usize,
+    ctrl_grid_raw: &[Vec<u64>],
+    mults_u: &[usize],
+    knots_u: &[f64],
+    mults_v: &[usize],
+    knots_v: &[f64],
+    parsed: &ParsedStep,
+) -> Option<Surface3> {
+    let expanded_u = expand_knots(mults_u, knots_u);
+    let expanded_v = expand_knots(mults_v, knots_v);
+
+    let n_v = ctrl_grid_raw.len();
+    let n_u = ctrl_grid_raw.first().map(|r| r.len()).unwrap_or(0);
+    if n_u == 0 || n_v == 0 {
+        return None;
+    }
+
+    let mut control_points = vec![vec![glam::DVec3::ZERO; n_v]; n_u];
+    let weights = vec![vec![1.0f64; n_v]; n_u];
+    for (vi, row) in ctrl_grid_raw.iter().enumerate() {
+        for (ui, &ref_id) in row.iter().enumerate() {
+            if let Some(pt) = point_from_ref(parsed, ref_id) {
+                control_points[ui][vi] = pt;
+            }
+        }
+    }
+
+    Some(Surface3::BSpline(rcad_kernel::geom::BSplineSurface {
+        degree_u,
+        degree_v,
+        knots_u: expanded_u,
+        knots_v: expanded_v,
+        control_points,
+        weights,
+    }))
+}
+
+fn resolve_surface_for_trim_ops(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
+    if let Some((_, degree_u, degree_v, ctrl_grid_raw, mults_u, knots_u, mults_v, knots_v)) =
+        parsed.b_spline_surfaces.get(&surface_ref)
+    {
+        return build_bspline_surface_from_data(
+            *degree_u,
+            *degree_v,
+            ctrl_grid_raw,
+            mults_u,
+            knots_u,
+            mults_v,
+            knots_v,
+            parsed,
+        );
+    }
+
+    resolve_surface(parsed, surface_ref)
+}
+
+#[cfg(test)]
+mod tagged_surface_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_rcad_ellipsoid_surface_tag() {
+        let tag = "RCAD_ELLIPSOID;c=1,2,3;a=0,0,1;d=1,0,0;r=4,5,6";
+        let surface = decode_rcad_tagged_surface(tag);
+        match surface {
+            Some(Surface3::Ellipsoid(e)) => {
+                assert_eq!(e.center, glam::DVec3::new(1.0, 2.0, 3.0));
+                assert_eq!(e.axis, glam::DVec3::Z);
+                assert_eq!(e.ref_dir, glam::DVec3::X);
+                assert_eq!(e.radius_x, 4.0);
+                assert_eq!(e.radius_y, 5.0);
+                assert_eq!(e.radius_z, 6.0);
+            }
+            other => panic!("expected ellipsoid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_rcad_helicoid_surface_tag() {
+        let tag = "RCAD_HELICOID;o=1,2,3;a=0,0,1;d=1,0,0;p=7.5";
+        let surface = decode_rcad_tagged_surface(tag);
+        match surface {
+            Some(Surface3::Helicoid(h)) => {
+                assert_eq!(h.origin, glam::DVec3::new(1.0, 2.0, 3.0));
+                assert_eq!(h.axis, glam::DVec3::Z);
+                assert_eq!(h.ref_dir, glam::DVec3::X);
+                assert_eq!(h.pitch, 7.5);
+            }
+            other => panic!("expected helicoid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_bspline_surface_with_tagged_name_containing_commas() {
+        let args = "'RCAD_ELLIPSOID;c=1,2,3;a=0,0,1;d=1,0,0;r=4,5,6',2,2,((#1,#2,#3),(#4,#5,#6),(#7,#8,#9)),.UNSPECIFIED.,.F.,.F.,.F.,(3,3),(3,3),(0.0,1.0),(0.0,1.0),.UNSPECIFIED.";
+        let parsed = parse_bspline_surface_with_knots(args)
+            .expect("tagged B-spline surface args should parse");
+        assert!(parsed.0.starts_with("RCAD_ELLIPSOID"));
+        assert_eq!(parsed.1, 2);
+        assert_eq!(parsed.2, 2);
+        assert_eq!(parsed.3.len(), 3);
+    }
+
+    #[test]
+    fn parse_entities_keeps_tagged_bspline_surface_names() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_NAME('test','','','','','','');\nFILE_SCHEMA(('AP214'));\nENDSEC;\nDATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=CARTESIAN_POINT('',(1.,0.,0.));\n#3=CARTESIAN_POINT('',(2.,0.,0.));\n#4=CARTESIAN_POINT('',(0.,1.,0.));\n#5=CARTESIAN_POINT('',(1.,1.,0.));\n#6=CARTESIAN_POINT('',(2.,1.,0.));\n#7=CARTESIAN_POINT('',(0.,2.,0.));\n#8=CARTESIAN_POINT('',(1.,2.,0.));\n#9=CARTESIAN_POINT('',(2.,2.,0.));\n#10=B_SPLINE_SURFACE_WITH_KNOTS('RCAD_HELICOID;o=0,0,0;a=0,0,1;d=1,0,0;p=3',2,2,((#1,#2,#3),(#4,#5,#6),(#7,#8,#9)),.UNSPECIFIED.,.F.,.F.,.F.,(3,3),(3,3),(0.0,1.0),(0.0,1.0),.UNSPECIFIED.);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let parsed = parse_entities(step).expect("tagged B-spline surface STEP should parse");
+        let data = parsed
+            .b_spline_surfaces
+            .get(&10)
+            .expect("tagged B-spline surface should be retained");
+        assert!(data.0.starts_with("RCAD_HELICOID"));
+    }
 }
 
 fn parse_conical_surface(args: &str) -> Option<(u64, f64, f64)> {
@@ -3124,35 +4536,22 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
         }));
     }
 
-    if let Some((degree_u, degree_v, ctrl_grid_raw, mults_u, knots_u, mults_v, knots_v)) =
+    if let Some((name, degree_u, degree_v, ctrl_grid_raw, mults_u, knots_u, mults_v, knots_v)) =
         parsed.b_spline_surfaces.get(&surface_ref)
     {
-        let expanded_u = expand_knots(mults_u, knots_u);
-        let expanded_v = expand_knots(mults_v, knots_v);
-
-        // ctrl_grid_raw is indexed [v][u] in STEP; BSplineSurface.control_points is [u][v] 鈥?transpose
-        let n_v = ctrl_grid_raw.len();
-        let n_u = ctrl_grid_raw.first().map(|r| r.len()).unwrap_or(0);
-        if n_u == 0 || n_v == 0 {
-            return None;
+        if let Some(surface) = decode_rcad_tagged_surface(name) {
+            return Some(surface);
         }
-        let mut control_points = vec![vec![glam::DVec3::ZERO; n_v]; n_u];
-        let weights = vec![vec![1.0f64; n_v]; n_u];
-        for (vi, row) in ctrl_grid_raw.iter().enumerate() {
-            for (ui, &ref_id) in row.iter().enumerate() {
-                if let Some(pt) = point_from_ref(parsed, ref_id) {
-                    control_points[ui][vi] = pt;
-                }
-            }
-        }
-        return Some(Surface3::BSpline(rcad_kernel::geom::BSplineSurface {
-            degree_u: *degree_u,
-            degree_v: *degree_v,
-            knots_u: expanded_u,
-            knots_v: expanded_v,
-            control_points,
-            weights,
-        }));
+        return build_bspline_surface_from_data(
+            *degree_u,
+            *degree_v,
+            ctrl_grid_raw,
+            mults_u,
+            knots_u,
+            mults_v,
+            knots_v,
+            parsed,
+        );
     }
 
     // SURFACE_OF_LINEAR_EXTRUSION
@@ -4150,6 +5549,21 @@ mod tests {
             report.final_issue_count()
         );
         assert!(v["issue_histogram"].is_array());
+        assert_eq!(
+            v["repair_pass_count"].as_u64().unwrap_or(0) as usize,
+            report.passes.len()
+        );
+        assert_eq!(
+            v["parametric_pass_count"].as_u64().unwrap_or(0) as usize,
+            report.parametric_passes.len()
+        );
+        assert_eq!(
+            v["make_connected_pass_count"].as_u64().unwrap_or(0) as usize,
+            report.make_connected_passes.len()
+        );
+        assert!(v["faces_reoriented"].is_u64());
+        assert!(v["same_range_fixed"].is_u64());
+        assert!(v["same_parameter_fixed"].is_u64());
         assert!(v["wire_open_gaps"].is_u64());
         assert!(v["wire_topological_self_intersections"].is_u64());
         assert!(v["wire_geometric_self_intersections"].is_u64());
@@ -4172,6 +5586,95 @@ mod tests {
         let _ = &meta.layers;
         let _ = &meta.general_properties;
         let _ = &meta.property_definitions;
+        let _ = &meta.products;
+    }
+
+    #[test]
+    fn writer_tagged_ellipsoid_surface_resolves_back_to_native_surface() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Ellipsoid(rcad_kernel::EllipsoidalSurface {
+            center: glam::DVec3::new(0.5, 0.5, 0.5),
+            axis: glam::DVec3::Z,
+            ref_dir: glam::DVec3::X,
+            radius_x: 2.0,
+            radius_y: 1.5,
+            radius_z: 1.0,
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        let parsed = parse_entities(&step).expect("tagged ellipsoid STEP should parse into entities");
+        let (&surface_id, _) = parsed
+            .b_spline_surfaces
+            .iter()
+            .find(|(_, data)| data.0.starts_with("RCAD_ELLIPSOID"))
+            .expect("expected tagged ellipsoid B-spline surface entity");
+
+        match resolve_surface(&parsed, surface_id) {
+            Some(Surface3::Ellipsoid(surface)) => {
+                assert_eq!(surface.center, glam::DVec3::new(0.5, 0.5, 0.5));
+                assert_eq!(surface.axis, glam::DVec3::Z);
+                assert_eq!(surface.ref_dir, glam::DVec3::X);
+                assert_eq!(surface.radius_x, 2.0);
+                assert_eq!(surface.radius_y, 1.5);
+                assert_eq!(surface.radius_z, 1.0);
+            }
+            other => panic!("expected ellipsoid from tagged surface, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn writer_tagged_helicoid_surface_resolves_back_to_native_surface() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Helicoid(rcad_kernel::HelicoidSurface {
+            origin: glam::DVec3::ZERO,
+            axis: glam::DVec3::Z,
+            ref_dir: glam::DVec3::X,
+            pitch: 3.0,
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        let parsed = parse_entities(&step).expect("tagged helicoid STEP should parse into entities");
+        let (&surface_id, _) = parsed
+            .b_spline_surfaces
+            .iter()
+            .find(|(_, data)| data.0.starts_with("RCAD_HELICOID"))
+            .expect("expected tagged helicoid B-spline surface entity");
+
+        match resolve_surface(&parsed, surface_id) {
+            Some(Surface3::Helicoid(surface)) => {
+                assert_eq!(surface.origin, glam::DVec3::ZERO);
+                assert_eq!(surface.axis, glam::DVec3::Z);
+                assert_eq!(surface.ref_dir, glam::DVec3::X);
+                assert_eq!(surface.pitch, 3.0);
+            }
+            other => panic!("expected helicoid from tagged surface, got {other:?}"),
+        }
     }
 
     #[test]
@@ -4210,6 +5713,157 @@ END-ISO-10303-21;
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0].name, "Layer_0");
         assert_eq!(layers[1].name, "Body_Layer");
+    }
+
+    #[test]
+    fn extract_product_names_finds_unique_product_entities() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=PRODUCT('ROOT-001','RootAsm','assembly root',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+#4=PRODUCT('BRKT-001','Bracket','mount bracket',(#2));
+#5=PRODUCT('BRKT-001-DUP','Bracket','mount bracket duplicate',(#2));
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let names = extract_product_names(step_fragment);
+        assert_eq!(names, vec!["RootAsm".to_string(), "Bracket".to_string()]);
+    }
+
+    #[test]
+    fn extract_products_returns_step_product_records() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#11=PRODUCT('ASM-100','Top Assembly','assembly description',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let products = extract_products(step_fragment);
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].entity_id, 11);
+        assert_eq!(products[0].product_id.as_deref(), Some("ASM-100"));
+        assert_eq!(products[0].name.as_deref(), Some("Top Assembly"));
+        assert_eq!(products[0].description.as_deref(), Some("assembly description"));
+    }
+
+    #[test]
+    fn extract_product_definition_formations_resolve_product_names() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=PRODUCT('ROOT-001','RootAsm','assembly root',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+#10=PRODUCT_DEFINITION_FORMATION('rel-1','released',#1);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let formations = extract_product_definition_formations(step_fragment);
+        assert_eq!(formations.len(), 1);
+        assert_eq!(formations[0].entity_id, 10);
+        assert_eq!(formations[0].product_id, Some(1));
+        assert_eq!(formations[0].product_name.as_deref(), Some("RootAsm"));
+    }
+
+    #[test]
+    fn extract_product_definitions_resolve_product_chain() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=PRODUCT('ROOT-001','RootAsm','assembly root',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+#10=PRODUCT_DEFINITION_FORMATION('rel-1','released',#1);
+#20=PRODUCT_DEFINITION('root def','',#10,#30);
+#30=PRODUCT_DEFINITION_CONTEXT('part definition',#3,'design');
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let defs = extract_product_definitions(step_fragment);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].entity_id, 20);
+        assert_eq!(defs[0].formation_id, Some(10));
+        assert_eq!(defs[0].product_id, Some(1));
+        assert_eq!(defs[0].product_name.as_deref(), Some("RootAsm"));
+    }
+
+    #[test]
+    fn extract_shape_definition_representations_resolve_product_definition() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=PRODUCT('ROOT-001','RootAsm','assembly root',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+#10=PRODUCT_DEFINITION_FORMATION('rel-1','released',#1);
+#20=PRODUCT_DEFINITION('root def','',#10,#30);
+#30=PRODUCT_DEFINITION_CONTEXT('part definition',#3,'design');
+#40=PRODUCT_DEFINITION_SHAPE('','',#20);
+#50=SHAPE_DEFINITION_REPRESENTATION(#40,#60);
+#60=SHAPE_REPRESENTATION('RootAsm',(),#70);
+#70=( GEOMETRIC_REPRESENTATION_CONTEXT(3) REPRESENTATION_CONTEXT('Context #1','3D') );
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let reprs = extract_shape_definition_representations(step_fragment);
+        assert_eq!(reprs.len(), 1);
+        assert_eq!(reprs[0].product_definition_shape_id, Some(40));
+        assert_eq!(reprs[0].product_definition_id, Some(20));
+        assert_eq!(reprs[0].representation_id, Some(60));
+    }
+
+    #[test]
+    fn extract_assembly_occurrences_resolve_parent_child_product_names() {
+        let step_fragment = r#"ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));
+FILE_NAME('test','','','','','','');
+ENDSEC;
+DATA;
+#1=PRODUCT('ASM-001','Assembly','root assembly',(#2));
+#4=PRODUCT('PRT-001','Bracket','child part',(#2));
+#2=PRODUCT_CONTEXT('part definition',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs of mechanical parts and assemblies');
+#10=PRODUCT_DEFINITION_FORMATION('asm-rel','released',#1);
+#11=PRODUCT_DEFINITION_FORMATION('prt-rel','released',#4);
+#20=PRODUCT_DEFINITION('asm def','',#10,#30);
+#21=PRODUCT_DEFINITION('part def','',#11,#30);
+#30=PRODUCT_DEFINITION_CONTEXT('part definition',#3,'design');
+#50=NEXT_ASSEMBLY_USAGE_OCCURRENCE('1','Bracket occ','',#20,#21,$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+
+        let occs = extract_assembly_occurrences(step_fragment);
+        assert_eq!(occs.len(), 1);
+        assert_eq!(occs[0].relating_product_definition_id, Some(20));
+        assert_eq!(occs[0].related_product_definition_id, Some(21));
+        assert_eq!(occs[0].relating_product_name.as_deref(), Some("Assembly"));
+        assert_eq!(occs[0].related_product_name.as_deref(), Some("Bracket"));
     }
 
     #[test]
@@ -4370,6 +6024,99 @@ END-ISO-10303-21;
     }
 
     #[test]
+    fn extract_tolerance_zones_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#20=TOLERANCE_ZONE('cylindrical','zone definition',#50);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let zones = extract_tolerance_zones(step);
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].entity_id, 20);
+        assert_eq!(zones[0].name.as_deref(), Some("cylindrical"));
+        assert_eq!(zones[0].description.as_deref(), Some("zone definition"));
+        assert_eq!(zones[0].toleranced_shape_aspect_id, Some(50));
+    }
+
+    #[test]
+    fn extract_tolerance_zone_definitions_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#30=TOLERANCE_ZONE_DEFINITION('def1','definition',#20,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_tolerance_zone_definitions(step);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].entity_id, 30);
+        assert_eq!(defs[0].name.as_deref(), Some("def1"));
+        assert_eq!(defs[0].tolerance_zone_id, Some(20));
+        assert_eq!(defs[0].shape_aspect_id, Some(40));
+    }
+
+    #[test]
+    fn extract_datum_features_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#15=DATUM_FEATURE('feature_A','datum feature',#8);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let features = extract_datum_features(step);
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].entity_id, 15);
+        assert_eq!(features[0].name.as_deref(), Some("feature_A"));
+        assert_eq!(features[0].description.as_deref(), Some("datum feature"));
+        assert_eq!(features[0].datum_id, Some(8));
+    }
+
+    #[test]
+    fn extract_datum_reference_elements_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#25=DATUM_REFERENCE_ELEMENT('ref_elem','reference element',#15);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let elems = extract_datum_reference_elements(step);
+        assert_eq!(elems.len(), 1);
+        assert_eq!(elems[0].entity_id, 25);
+        assert_eq!(elems[0].name.as_deref(), Some("ref_elem"));
+        assert_eq!(elems[0].associated_entity_id, Some(15));
+    }
+
+    #[test]
+    fn extract_shape_aspects_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#60=SHAPE_ASPECT('hole','hole feature',#100);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let aspects = extract_shape_aspects(step);
+        assert_eq!(aspects.len(), 1);
+        assert_eq!(aspects[0].entity_id, 60);
+        assert_eq!(aspects[0].name.as_deref(), Some("hole"));
+        assert_eq!(aspects[0].description.as_deref(), Some("hole feature"));
+        assert_eq!(aspects[0].product_definition_shape_id, Some(100));
+    }
+
+    #[test]
+    fn extract_shape_aspect_definitions_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#70=SHAPE_ASPECT_DEFINITION('hole_def','hole definition',#60);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_shape_aspect_definitions(step);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].entity_id, 70);
+        assert_eq!(defs[0].name.as_deref(), Some("hole_def"));
+        assert_eq!(defs[0].shape_aspect_id, Some(60));
+    }
+
+    #[test]
+    fn extract_derived_shape_aspects_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#80=DERIVED_SHAPE_ASPECT('derived','derived aspect',(#60,#70));\nENDSEC;\nEND-ISO-10303-21;\n";
+        let aspects = extract_derived_shape_aspects(step);
+        assert_eq!(aspects.len(), 1);
+        assert_eq!(aspects[0].entity_id, 80);
+        assert_eq!(aspects[0].name.as_deref(), Some("derived"));
+        assert_eq!(aspects[0].base_shape_aspect_ids, vec![60, 70]);
+    }
+
+    #[test]
+    fn metadata_summary_reports_all_entity_counts() {
+        // Test extraction functions directly
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#60=SHAPE_ASPECT('hole','hole feature',#100);\n#20=TOLERANCE_ZONE('cylindrical','zone definition',#50);\n#15=DATUM_FEATURE('feature_A','datum feature',#8);\nENDSEC;\nEND-ISO-10303-21;\n";
+
+        // Verify extraction functions work
+        let shape_aspects = extract_shape_aspects(step);
+        let tolerance_zones = extract_tolerance_zones(step);
+        let datum_features = extract_datum_features(step);
+
+        assert_eq!(shape_aspects.len(), 1, "Should extract 1 shape aspect");
+        assert_eq!(tolerance_zones.len(), 1, "Should extract 1 tolerance zone");
+        assert_eq!(datum_features.len(), 1, "Should extract 1 datum feature");
+
+        assert_eq!(shape_aspects[0].name.as_deref(), Some("hole"));
+        assert_eq!(tolerance_zones[0].name.as_deref(), Some("cylindrical"));
+        assert_eq!(datum_features[0].name.as_deref(), Some("feature_A"));
+    }
+
+    #[test]
     fn parse_reader_matches_parse_string() {
         let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
         let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
@@ -4388,6 +6135,12 @@ END-ISO-10303-21;
 
         assert_eq!(a_md.file_schema, b_md.file_schema);
         assert_eq!(a_md.protocol_hint as u8, b_md.protocol_hint as u8);
+        assert_eq!(a_md.products.len(), b_md.products.len());
+        assert_eq!(a_md.product_definition_formations.len(), b_md.product_definition_formations.len());
+        assert_eq!(a_md.product_definitions.len(), b_md.product_definitions.len());
+        assert_eq!(a_md.shape_definition_representations.len(), b_md.shape_definition_representations.len());
+        assert_eq!(a_md.assembly_occurrences.len(), b_md.assembly_occurrences.len());
+        assert_eq!(a_md.product_names, b_md.product_names);
         assert_eq!(a_md.materials.len(), b_md.materials.len());
         assert_eq!(a_md.layers.len(), b_md.layers.len());
         assert_eq!(a_md.general_properties.len(), b_md.general_properties.len());
@@ -4403,6 +6156,13 @@ END-ISO-10303-21;
         assert_eq!(a_md.datums.len(), b_md.datums.len());
         assert_eq!(a_md.datum_systems.len(), b_md.datum_systems.len());
         assert_eq!(a_md.kinematic_pairs.len(), b_md.kinematic_pairs.len());
+        assert_eq!(a_md.tolerance_zones.len(), b_md.tolerance_zones.len());
+        assert_eq!(a_md.tolerance_zone_definitions.len(), b_md.tolerance_zone_definitions.len());
+        assert_eq!(a_md.datum_features.len(), b_md.datum_features.len());
+        assert_eq!(a_md.datum_reference_elements.len(), b_md.datum_reference_elements.len());
+        assert_eq!(a_md.shape_aspects.len(), b_md.shape_aspects.len());
+        assert_eq!(a_md.shape_aspect_definitions.len(), b_md.shape_aspect_definitions.len());
+        assert_eq!(a_md.derived_shape_aspects.len(), b_md.derived_shape_aspects.len());
     }
 
     #[test]

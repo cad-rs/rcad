@@ -62,20 +62,274 @@ impl<'a> PaveFiller<'a> {
         self.ds.fuzzy_tol
     }
 
+    fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
+        let mut pts = Vec::new();
+        for &ei in &self.ds.faces[face_idx].boundary_edges {
+            if let Some(edge) = self.ds.edges.get(ei) {
+                let [t0, t1] = edge.t_range;
+                let n = samples_per_edge.max(1);
+                for k in 0..=n {
+                    let t = t0 + (t1 - t0) * k as f64 / n as f64;
+                    let p = edge.curve.point_at(t);
+                    if p.is_finite() {
+                        pts.push(p);
+                    }
+                }
+            }
+        }
+        if pts.is_empty() {
+            self.ds.face_boundary_points(face_idx)
+        } else {
+            pts
+        }
+    }
+
+    fn closest_point_on_boundary_samples(&self, point: DVec3, samples: &[DVec3]) -> DVec3 {
+        samples
+            .iter()
+            .copied()
+            .min_by(|a, b| {
+                let da = (*a - point).length_squared();
+                let db = (*b - point).length_squared();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap_or(point)
+    }
+
+    fn snap_polyline_endpoints_to_face_boundaries(
+        &self,
+        chain: &mut Vec<DVec3>,
+        f1: usize,
+        f2: usize,
+    ) {
+        if chain.len() < 2 {
+            return;
+        }
+
+        let boundary_a = self.sampled_face_boundary_points(f1, 12);
+        let boundary_b = self.sampled_face_boundary_points(f2, 12);
+        if boundary_a.is_empty() || boundary_b.is_empty() {
+            return;
+        }
+
+        let snap_start_a = self.closest_point_on_boundary_samples(chain[0], &boundary_a);
+        let snap_start_b = self.closest_point_on_boundary_samples(chain[0], &boundary_b);
+        let snap_end_a = self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_a);
+        let snap_end_b = self.closest_point_on_boundary_samples(chain[chain.len() - 1], &boundary_b);
+
+        let choose_better = |orig: DVec3, p1: DVec3, p2: DVec3| {
+            let d1 = (p1 - orig).length_squared();
+            let d2 = (p2 - orig).length_squared();
+            if d1 <= d2 { p1 } else { p2 }
+        };
+
+        let start = choose_better(chain[0], snap_start_a, snap_start_b);
+        let end = choose_better(chain[chain.len() - 1], snap_end_a, snap_end_b);
+
+        // Only snap if it is a local correction rather than a gross relocation.
+        let local_scale = chain
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .fold(f64::INFINITY, f64::min)
+            .min(1.0);
+        let snap_tol = (local_scale * 4.0).max(1e-4);
+
+        if (start - chain[0]).length() <= snap_tol {
+            chain[0] = start;
+        }
+        if (end - chain[chain.len() - 1]).length() <= snap_tol {
+            let last = chain.len() - 1;
+            chain[last] = end;
+        }
+    }
+
     /// Execute all intersection passes.
     pub fn perform(&mut self) {
+        // Detect shared topology before interference passes when glue is enabled
+        if self.use_glue {
+            self.ds.detect_shared_topology(self.glue_tolerance);
+        }
+
+        // Skip redundant interference passes when glue is enabled and shared topology is detected
+        let skip_ve = self.should_skip_ve_pass();
+        let skip_ee = self.should_skip_ee_pass();
+        let skip_vf = self.should_skip_vf_pass();
+        let skip_ef = self.should_skip_ef_pass();
+        let skip_ff = self.should_skip_ff_pass();
+
         self.perform_vv();
-        self.perform_ve();
-        self.perform_ee();
-        self.perform_vf();
-        self.perform_ef();
-        self.perform_ff();
+
+        if !skip_ve {
+            self.perform_ve();
+        }
+
+        if !skip_ee {
+            self.perform_ee();
+        }
+
+        if !skip_vf {
+            self.perform_vf();
+        }
+
+        if !skip_ef {
+            self.perform_ef();
+        }
+
+        if !skip_ff {
+            self.perform_ff();
+        }
+
         self.build_split_edges();
+    }
+
+    /// Determine if Vertex-Edge pass can be skipped.
+    ///
+    /// Returns true when all shared vertices are connected to shared edges,
+    /// meaning no additional V-E intersections are needed.
+    fn should_skip_ve_pass(&self) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        // If all vertices are shared, skip V-E pass
+        let shared_verts = &self.ds.shared_topology.shared_vertices;
+        if shared_verts.is_empty() {
+            return false;
+        }
+
+        // Check if all vertices from shape A have matches in shape B
+        let a_verts: std::collections::HashSet<usize> = self.ds.vertices
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.origin == Some(ShapeOrigin::ShapeA))
+            .map(|(i, _)| i)
+            .collect();
+
+        let matched_a: std::collections::HashSet<usize> = shared_verts
+            .iter()
+            .map(|(a, _)| *a)
+            .collect();
+
+        a_verts == matched_a && !a_verts.is_empty()
+    }
+
+    /// Determine if Edge-Edge pass can be skipped.
+    ///
+    /// Returns true when all shared edges are detected, meaning no additional
+    /// E-E intersections are needed.
+    fn should_skip_ee_pass(&self) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        let shared_edges = &self.ds.shared_topology.shared_edges;
+        if shared_edges.is_empty() {
+            return false;
+        }
+
+        // Check if all edges from shape A have matches in shape B
+        let a_edges: std::collections::HashSet<usize> = self.ds.edges
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.origin == ShapeOrigin::ShapeA)
+            .map(|(i, _)| i)
+            .collect();
+
+        let matched_a: std::collections::HashSet<usize> = shared_edges
+            .iter()
+            .map(|(a, _)| *a)
+            .collect();
+
+        a_edges == matched_a && !a_edges.is_empty()
+    }
+
+    /// Determine if Vertex-Face pass can be skipped.
+    fn should_skip_vf_pass(&self) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        // If all faces are fully glued, skip V-F pass
+        self.ds.shared_topology.fully_glued_faces.len() > 0
+            && self.ds.shared_topology.fully_glued_faces.len()
+                == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
+    }
+
+    /// Determine if Edge-Face pass can be skipped.
+    fn should_skip_ef_pass(&self) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        // If all faces are fully glued, skip E-F pass
+        self.ds.shared_topology.fully_glued_faces.len() > 0
+            && self.ds.shared_topology.fully_glued_faces.len()
+                == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
+    }
+
+    /// Determine if Face-Face pass can be skipped.
+    ///
+    /// Returns true when all faces have been detected as fully glued,
+    /// meaning no F-F intersections are needed.
+    fn should_skip_ff_pass(&self) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        // If all faces are fully glued, skip F-F pass
+        let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
+        self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
+    }
+
+    /// Skip redundant interferences based on pre-detected shared topology.
+    ///
+    /// This function identifies interference computations that can be skipped
+    /// because the involved sub-shapes are already known to share topology.
+    ///
+    /// # Returns
+    /// A set of (subshape_a, subshape_b, interference_type) pairs that can be skipped.
+    pub fn skip_redundant_interferences(&self) -> std::collections::HashSet<(usize, usize, u8)> {
+        let mut skip_set = std::collections::HashSet::new();
+
+        if !self.use_glue {
+            return skip_set;
+        }
+
+        // Skip V-V for shared vertices
+        for &(va, vb) in &self.ds.shared_topology.shared_vertices {
+            skip_set.insert((va, vb, 0)); // 0 = V-V
+        }
+
+        // Skip E-E for shared edges
+        for &(ea, eb) in &self.ds.shared_topology.shared_edges {
+            skip_set.insert((ea, eb, 2)); // 2 = E-E
+        }
+
+        // Skip F-F for fully glued faces
+        for &(fa, fb) in &self.ds.shared_topology.fully_glued_faces {
+            skip_set.insert((fa, fb, 5)); // 5 = F-F
+        }
+
+        skip_set
     }
 
     // ─── Pass 1: Vertex-Vertex ─────────────────────────────────────────
 
     fn perform_vv(&mut self) {
+        // Use pre-detected shared vertices if glue is enabled
+        if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
+            for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
+                self.ds.interferences.push(Interference::VertexVertex {
+                    v1: vi_a,
+                    v2: vi_b,
+                    merged_vertex: vi_a,
+                });
+            }
+            return;
+        }
+
+        // Fallback: brute-force search
         let a_verts: Vec<usize> = self
             .ds
             .vertices
@@ -189,8 +443,33 @@ impl<'a> PaveFiller<'a> {
         let a_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeA);
         let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
 
+        // Build a set of shared edge pairs for fast lookup when glue is enabled
+        let shared_edge_set: std::collections::HashSet<(usize, usize)> = if self.use_glue {
+            self.ds
+                .shared_topology
+                .shared_edges
+                .iter()
+                .map(|(e1, e2)| (*e1, *e2))
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
         for &ae in &a_edges {
             for &be in &b_edges {
+                // Skip shared edges when glue is enabled
+                if self.use_glue && shared_edge_set.contains(&(ae, be)) {
+                    // Add interference for the shared edge but skip geometric intersection
+                    self.ds.interferences.push(Interference::EdgeEdge {
+                        e1: ae,
+                        e2: be,
+                        point: self.ds.vertices[self.ds.edges[ae].start_vertex].point,
+                        param1: self.ds.edges[ae].t_range[0],
+                        param2: self.ds.edges[be].t_range[0],
+                        new_vertex: self.ds.edges[ae].start_vertex,
+                    });
+                    continue;
+                }
                 self.check_edge_edge(ae, be);
             }
         }
@@ -454,6 +733,12 @@ impl<'a> PaveFiller<'a> {
         if !self.use_glue {
             return false;
         }
+
+        // Use pre-detected fully-glued faces if available
+        if self.ds.is_fully_glued_face_pair(f1, f2) {
+            return true;
+        }
+
         let face1 = &self.ds.faces[f1];
         let face2 = &self.ds.faces[f2];
         if face1.origin == face2.origin {
@@ -548,6 +833,136 @@ impl<'a> PaveFiller<'a> {
             }
         }
         true
+    }
+
+    /// Detect partially shared edges between two faces (for enhanced glue detection).
+    /// Returns a list of (edge_idx_in_f1, edge_idx_in_f2) pairs for shared edges.
+    fn detect_shared_edges_between_faces(&self, f1: usize, f2: usize) -> Vec<(usize, usize)> {
+        let tol = self.glue_tolerance;
+        let tol_sq = tol * tol;
+        let mut shared_edges = Vec::new();
+
+        let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.iter().copied().collect();
+        let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.iter().copied().collect();
+
+        for &e1 in &edges1 {
+            let edge1 = match self.ds.edges.get(e1) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // Get endpoints of edge1
+            let pts1: Vec<DVec3> = (0..=8)
+                .map(|k| {
+                    let t = edge1.t_range[0] + (edge1.t_range[1] - edge1.t_range[0]) * k as f64 / 8.0;
+                    edge1.curve.point_at(t)
+                })
+                .collect();
+
+            for &e2 in &edges2 {
+                let edge2 = match self.ds.edges.get(e2) {
+                    Some(e) => e,
+                    None => continue,
+                };
+
+                // Check if edges are geometrically compatible (same curve direction or reverse)
+                let curve_compatible = self.edges_curve_compatible(e1, e2, tol);
+                if !curve_compatible {
+                    continue;
+                }
+
+                // Sample edge2 and check proximity
+                let pts2: Vec<DVec3> = (0..=8)
+                    .map(|k| {
+                        let t = edge2.t_range[0] + (edge2.t_range[1] - edge2.t_range[0]) * k as f64 / 8.0;
+                        edge2.curve.point_at(t)
+                    })
+                    .collect();
+
+                // Check if sampled points are close
+                let mut all_close = true;
+                for p1 in &pts1 {
+                    let min_dist = pts2.iter().map(|p2| (*p1 - *p2).length_squared()).fold(f64::INFINITY, f64::min);
+                    if min_dist > tol_sq {
+                        all_close = false;
+                        break;
+                    }
+                }
+
+                if all_close {
+                    shared_edges.push((e1, e2));
+                    break; // Each edge in f1 matches at most one in f2
+                }
+            }
+        }
+
+        shared_edges
+    }
+
+    /// Check if two edges have compatible curves (same geometry, possibly reversed direction).
+    fn edges_curve_compatible(&self, e1: usize, e2: usize, tol: f64) -> bool {
+        let edge1 = match self.ds.edges.get(e1) {
+            Some(e) => e,
+            None => return false,
+        };
+        let edge2 = match self.ds.edges.get(e2) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        match (&edge1.curve, &edge2.curve) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => {
+                // Check if lines are parallel (or anti-parallel)
+                let d1 = l1.direction.normalize_or_zero();
+                let d2 = l2.direction.normalize_or_zero();
+                if d1.dot(d2).abs() < 0.999 {
+                    return false;
+                }
+                // Check if origins are on the same line
+                let v = l2.origin - l1.origin;
+                let perp = v - d1 * v.dot(d1);
+                perp.length() <= tol
+            }
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => {
+                // Check if circles are the same
+                (c1.center - c2.center).length() <= tol
+                    && c1.normal.dot(c2.normal).abs() >= 0.999
+                    && (c1.radius - c2.radius).abs() <= tol
+            }
+            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
+                // Simplified ellipse compatibility check
+                (e1.center - e2.center).length() <= tol
+                    && e1.normal.dot(e2.normal).abs() >= 0.999
+                    && (e1.major_radius - e2.major_radius).abs() <= tol
+                    && (e1.minor_radius - e2.minor_radius).abs() <= tol
+            }
+            // For other curve types, return false (conservative)
+            _ => false,
+        }
+    }
+
+    /// Check if two faces have partial glue (share some edges but not full boundary).
+    fn has_partial_glue(&self, f1: usize, f2: usize) -> bool {
+        if !self.use_glue {
+            return false;
+        }
+
+        let face1 = &self.ds.faces[f1];
+        let face2 = &self.ds.faces[f2];
+
+        // Faces must come from different original shapes
+        if face1.origin == face2.origin {
+            return false;
+        }
+
+        // Surfaces must be glue-compatible
+        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
+            return false;
+        }
+
+        // Check for shared edges
+        let shared = self.detect_shared_edges_between_faces(f1, f2);
+        !shared.is_empty()
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
@@ -2048,7 +2463,7 @@ impl<'a> PaveFiller<'a> {
 
         let mut curve_indices = Vec::new();
         for sir in &result.curves {
-            let chain = match &sir.curve_3d {
+            let mut chain = match &sir.curve_3d {
                 crate::inttools::intss::SurfaceCurve::Polyline(pts) => pts.clone(),
                 _ => continue,
             };
@@ -2056,13 +2471,21 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
 
+            self.snap_polyline_endpoints_to_face_boundaries(&mut chain, f1, f2);
+
             let v_start = self.ds.add_vertex(chain[0]);
             let v_end = self.ds.add_vertex(chain[chain.len() - 1]);
 
             let arc_len: f64 = chain.windows(2).map(|w| (w[1] - w[0]).length()).sum();
             let dir = (chain[chain.len() - 1] - chain[0]).normalize_or_zero();
-            let pcurve_a = polyline_pcurve_by_projection(&chain, s1);
-            let pcurve_b = polyline_pcurve_by_projection(&chain, s2);
+            let pcurve_a = sir
+                .pcurve_on_a
+                .clone()
+                .or_else(|| polyline_pcurve_by_projection(&chain, s1));
+            let pcurve_b = sir
+                .pcurve_on_b
+                .clone()
+                .or_else(|| polyline_pcurve_by_projection(&chain, s2));
 
             let curve_idx = self.ds.intersection_curves.len();
             self.ds.intersection_curves.push(IntersectionCurve {
@@ -2103,6 +2526,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
+        use inttools::marching::{adaptive_sampling_density, MarchingConfig};
         use inttools::pcurve_derive::polyline_pcurve_by_projection;
 
         let s1 = self.ds.faces[f1].surface.clone();
@@ -2118,10 +2542,25 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // For plane-curved pairs: use gradient marching with grid-based seed finder.
-        let (n_u, n_v) = (16usize, 16usize);
+        // Use adaptive sampling density based on surface geometry
+        let base_density = 16usize;
+        let sampling1 = adaptive_sampling_density(&s1, base_density);
+        let sampling2 = adaptive_sampling_density(&s2, base_density);
+        // Use the higher density to ensure we don't miss narrow intersections
+        let n_u = sampling1.n_u.max(sampling2.n_u);
+        let n_v = sampling1.n_v.max(sampling2.n_v);
+
         let samples = self.generate_surface_samples_grid(&s1, n_u, n_v);
-        let seeds = inttools::marching::find_seed_points_grid(&s1, &s2, &samples, n_u, n_v);
+        // Use multi-scale seed detection for improved robustness
+        // Scales: coarse (8x8), medium (16x16), fine (32x32)
+        let base_step = self.estimate_step_size(&s1, &s2);
+        let seeds = inttools::marching::find_seed_points_multiscale(
+            &s1,
+            &s2,
+            |nu, nv| self.generate_surface_samples_grid(&s1, nu, nv),
+            &[8, 16, 32],
+            base_step * 2.0, // dedup tolerance
+        );
 
         if seeds.is_empty() {
             return;
@@ -2166,8 +2605,20 @@ impl<'a> PaveFiller<'a> {
         let aabb_min = mn1.min(mn2) - DVec3::splat(margin);
         let aabb_max = mx1.max(mx2) + DVec3::splat(margin);
 
-        // March each seed
-        let step_size = self.estimate_step_size(&s1, &s2);
+        // Use adaptive step size based on characteristic lengths
+        let char_len = sampling1.characteristic_length.min(sampling2.characteristic_length);
+        let step_size = base_step.min(char_len * 0.5).max(1e-6);
+
+        // Configure marching with convergence monitoring
+        let marching_config = MarchingConfig {
+            step_size,
+            min_step_size: step_size * 0.01,
+            max_steps: 500,
+            max_oscillations: 3,
+            step_reduction_factor: 0.5,
+            multiscale_seeds: true,
+        };
+
         let mut curve_indices = Vec::new();
         // Track all points already covered by marched curves, to deduplicate
         // seeds that trace the same intersection curve.
@@ -2183,12 +2634,11 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
 
-            let curve = inttools::marching::march_intersection(
+            let curve = inttools::marching::march_intersection_with_config(
                 &s1,
                 &s2,
                 seed,
-                step_size,
-                500,
+                &marching_config,
                 |p: DVec3| p.cmpge(aabb_min).all() && p.cmple(aabb_max).all(),
             );
 
@@ -2343,28 +2793,40 @@ impl<'a> PaveFiller<'a> {
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
+            Surface3::Ellipsoid(e) => e.radius_x.min(e.radius_y).min(e.radius_z),
+            Surface3::Pipe(p) => p.radius,
             Surface3::Plane(_)
+            | Surface3::Helicoid(_)
             | Surface3::BSpline(_)
+            | Surface3::TriBezier(_)
             | Surface3::LinearExtrusion(_)
             | Surface3::Revolution(_)
+            | Surface3::Ruled(_)
+            | Surface3::Coons(_)
             | Surface3::Bezier(_)
             | Surface3::Offset(_)
-            | Surface3::Trimmed(_) => 1.0,
-                | Surface3::Gordon(_) => 1.0,
+            | Surface3::Trimmed(_)
+            | Surface3::Gordon(_) => 1.0,
         };
         let size2 = match s2 {
             Surface3::Sphere(s) => s.radius,
             Surface3::Cylinder(c) => c.radius,
             Surface3::Cone(c) => c.radius.max(0.5),
             Surface3::Torus(t) => t.minor_radius,
+            Surface3::Ellipsoid(e) => e.radius_x.min(e.radius_y).min(e.radius_z),
+            Surface3::Pipe(p) => p.radius,
             Surface3::Plane(_)
+            | Surface3::Helicoid(_)
             | Surface3::BSpline(_)
+            | Surface3::TriBezier(_)
             | Surface3::LinearExtrusion(_)
             | Surface3::Revolution(_)
+            | Surface3::Ruled(_)
+            | Surface3::Coons(_)
             | Surface3::Bezier(_)
             | Surface3::Offset(_)
-            | Surface3::Trimmed(_) => 1.0,
-                | Surface3::Gordon(_) => 1.0,
+            | Surface3::Trimmed(_)
+            | Surface3::Gordon(_) => 1.0,
         };
         size1.min(size2) * 0.1
     }

@@ -47,10 +47,19 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     EulerAnalysis, euler_analysis,
     OrientationIssue, OrientationReport, check_orientation_consistency,
     RicherValidityReport, richer_validity_analysis,
+    // Surface UV analysis (ShapeAnalysis_Surface equivalent)
+    SurfaceAnalysisReport, UvBoundsViolation,
+    analyze_surface_uv_consistency,
+    // Wire quality metrics (ShapeAnalysis_Wire enhancement)
+    WireQualityMetrics, WireQualityReport, analyze_wire_quality,
 };
 pub use brep_repair::{
     MakeConnectedReport, RepairReport, ToleranceFlowDirection,
-    fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
+    WireGapRepairReport, fix_wire_gaps,
+    UvBoundsRepairReport, fix_uv_bounds_violations,
+    ToleranceStats, ToleranceAnalysisReport, analyze_tolerances, limit_tolerances,
+    EdgeSewReport, sew_close_edges, make_connected_enhanced,
+    fix_face_orientation, fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
     merge_close_vertices, recompute_face_normals, remove_degenerate_faces, repair,
     remove_small_edges, fix_same_range_with_scan, make_connected_baseline,
     make_connected_iterative, make_connected_iterative_with_growth,
@@ -59,9 +68,9 @@ pub use brep_repair::{
     propagate_tolerances, propagate_tolerances_post_boolean,
 };
 pub use healing::{
-    HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
+    ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
     HealingStage, HealingStageReport, MakeConnectedPrepassMode,
-    ParametricConsistencyReport, analyze_and_heal, heal, run_healing_operator_chain,
+    ParametricConsistencyReport, analyze_and_heal, diagnose_all, heal, run_healing_operator_chain,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{
@@ -3077,6 +3086,67 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 let dc = (s1.center - s2.center).length();
                 (Some(dc <= LIN_TOL), false)
             }
+            (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
+                // Phase 3: BSpline same-domain detection.
+                // Two BSpline surfaces are considered same-domain if they have:
+                // - Identical degrees
+                // - Identical knot vectors (within tolerance)
+                // - Identical control point grids (within tolerance)
+                // - Identical weights (for rational surfaces)
+                const CP_TOL: f64 = 1e-6;
+
+                if b1.degree_u != b2.degree_u || b1.degree_v != b2.degree_v {
+                    return (Some(false), false);
+                }
+
+                // Check knot vectors.
+                if b1.knots_u.len() != b2.knots_u.len() || b1.knots_v.len() != b2.knots_v.len() {
+                    return (Some(false), false);
+                }
+
+                for (k1, k2) in b1.knots_u.iter().zip(b2.knots_u.iter()) {
+                    if (k1 - k2).abs() > LIN_TOL {
+                        return (Some(false), false);
+                    }
+                }
+                for (k1, k2) in b1.knots_v.iter().zip(b2.knots_v.iter()) {
+                    if (k1 - k2).abs() > LIN_TOL {
+                        return (Some(false), false);
+                    }
+                }
+
+                // Check control points.
+                if b1.control_points.len() != b2.control_points.len() {
+                    return (Some(false), false);
+                }
+                for (row1, row2) in b1.control_points.iter().zip(b2.control_points.iter()) {
+                    if row1.len() != row2.len() {
+                        return (Some(false), false);
+                    }
+                    for (cp1, cp2) in row1.iter().zip(row2.iter()) {
+                        if cp1.distance(*cp2) > CP_TOL {
+                            return (Some(false), false);
+                        }
+                    }
+                }
+
+                // Check weights for rational surfaces.
+                if b1.weights.len() != b2.weights.len() {
+                    return (Some(false), false);
+                }
+                for (row1, row2) in b1.weights.iter().zip(b2.weights.iter()) {
+                    if row1.len() != row2.len() {
+                        return (Some(false), false);
+                    }
+                    for (w1, w2) in row1.iter().zip(row2.iter()) {
+                        if (w1 - w2).abs() > LIN_TOL {
+                            return (Some(false), false);
+                        }
+                    }
+                }
+
+                (Some(true), false)
+            }
             // Mismatched types are never same-domain.
             _ => (Some(false), false),
         }
@@ -3353,6 +3423,34 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
             }
             (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
                 (s1.radius - s2.radius).abs() <= LIN_TOL && (s1.center - s2.center).length() <= LIN_TOL
+            }
+            (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
+                // Phase 3: BSpline same-domain detection.
+                const CP_TOL: f64 = 1e-6;
+
+                if b1.degree_u != b2.degree_u || b1.degree_v != b2.degree_v {
+                    false
+                } else if b1.knots_u.len() != b2.knots_u.len() || b1.knots_v.len() != b2.knots_v.len() {
+                    false
+                } else if !b1.knots_u.iter().zip(b2.knots_u.iter()).all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL) {
+                    false
+                } else if !b1.knots_v.iter().zip(b2.knots_v.iter()).all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL) {
+                    false
+                } else if b1.control_points.len() != b2.control_points.len() {
+                    false
+                } else if !b1.control_points.iter().zip(b2.control_points.iter()).all(|(row1, row2)| {
+                    row1.len() == row2.len() && row1.iter().zip(row2.iter()).all(|(cp1, cp2)| cp1.distance(*cp2) <= CP_TOL)
+                }) {
+                    false
+                } else if b1.weights.len() != b2.weights.len() {
+                    false
+                } else if !b1.weights.iter().zip(b2.weights.iter()).all(|(row1, row2)| {
+                    row1.len() == row2.len() && row1.iter().zip(row2.iter()).all(|(w1, w2)| (w1 - w2).abs() <= LIN_TOL)
+                }) {
+                    false
+                } else {
+                    true
+                }
             }
             _ => false,
         })

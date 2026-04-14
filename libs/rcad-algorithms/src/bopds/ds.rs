@@ -13,6 +13,27 @@ pub enum ShapeOrigin {
     ShapeB,
 }
 
+/// Information about shared topology between the two input shapes.
+///
+/// This is used by the glue path to skip interference detection for
+/// sub-shapes that are already coincident between the two inputs.
+#[derive(Debug, Clone, Default)]
+pub struct SharedTopologyInfo {
+    /// Pairs of vertex indices (v_a, v_b) that are coincident.
+    /// v_a is from ShapeA (index < a_vertex_count), v_b from ShapeB.
+    pub shared_vertices: Vec<(usize, usize)>,
+    /// Pairs of edge indices (e_a, e_b) that share the same geometry.
+    /// e_a is from ShapeA (index < a_edge_count), e_b from ShapeB.
+    pub shared_edges: Vec<(usize, usize)>,
+    /// Pairs of face indices (f_a, f_b) that have shared topology.
+    /// This includes both fully-overlapping faces and faces with partial overlap.
+    pub shared_faces: Vec<(usize, usize)>,
+    /// Face pairs with full boundary overlap (can be skipped entirely).
+    pub fully_glued_faces: Vec<(usize, usize)>,
+    /// Face pairs with partial edge sharing.
+    pub partially_glued_faces: Vec<(usize, usize)>,
+}
+
 /// A vertex in the DS pool.
 #[derive(Debug, Clone)]
 pub struct DSVertex {
@@ -130,6 +151,10 @@ pub struct DS {
     pub a_vertex_count: usize,
     /// Number of edges loaded from shape A. Shape A DS edge indices are 0..a_edge_count.
     pub a_edge_count: usize,
+    /// Number of faces loaded from shape A. Shape A DS face indices are 0..a_face_count.
+    pub a_face_count: usize,
+    /// Shared topology information for glue path optimization.
+    pub shared_topology: SharedTopologyInfo,
 }
 
 impl DS {
@@ -152,11 +177,14 @@ impl DS {
             fuzzy_tol: tol,
             a_vertex_count: 0,
             a_edge_count: 0,
+            a_face_count: 0,
+            shared_topology: SharedTopologyInfo::default(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
         ds.a_vertex_count = ds.vertices.len();
         ds.a_edge_count = ds.edges.len();
+        ds.a_face_count = ds.faces.len();
         ds.load_brep(b, ShapeOrigin::ShapeB);
         ds.compute_uv_boundaries();
 
@@ -256,39 +284,40 @@ impl DS {
                     continue;
                 }
                 Surface3::Cone(cone) => {
-                    // Cone param: u = azimuth [0, 2π], v = slant distance from apex (v ≥ 0).
-                    // Estimate v range from boundary edge samples.
+                    // Cone param: u = azimuth [0, 2π], v = slant distance from the
+                    // reference circle centered at `cone.apex`.
+                    // Estimate the full slant range from boundary edge samples so
+                    // reference-circle cones keep the correct UV window.
                     let boundary_edges = self.faces[fi].boundary_edges.clone();
-                    let mut v_max = 0.0_f64;
-                    let apex = cone.apex;
-                    let axis = cone.axis.normalize();
-                    let tan_h = cone.half_angle_rad.tan();
+                    let mut v_min = f64::INFINITY;
+                    let mut v_max = f64::NEG_INFINITY;
+                    let ref_point = cone.apex;
+                    let axis = cone.axis_dir();
                     for ei in &boundary_edges {
                         let edge = &self.edges[*ei];
                         let [t0, t1] = edge.t_range;
                         for k in 0..=N_SAMPLES {
                             let t = t0 + (t1 - t0) * k as f64 / N_SAMPLES as f64;
                             let p = edge.curve.point_at(t);
-                            let local = p - apex;
+                            let local = p - ref_point;
                             let along = local.dot(axis);
-                            // slant distance s satisfies: z = s, r = s*tan(half)
-                            // → s = along / (1 + tan²) + radial/tan ... approximate: s ≈ along
-                            let radial_len = (local - axis * along).length();
-                            let s = if tan_h > 1e-14 {
-                                (along + radial_len / tan_h) * 0.5
-                            } else {
-                                along
-                            };
-                            v_max = v_max.max(s.max(0.0));
+                            let slant = cone.slant_from_axial(along);
+                            v_min = v_min.min(slant);
+                            v_max = v_max.max(slant);
                         }
                     }
-                    if v_max < 1e-9 {
+                    if !v_min.is_finite() || !v_max.is_finite() {
+                        v_min = 0.0;
                         v_max = 1.0;
                     }
-                    let margin = v_max * 0.01 + 1e-9;
+                    if (v_max - v_min).abs() < 1e-9 {
+                        v_min -= 0.5;
+                        v_max += 0.5;
+                    }
+                    let margin = (v_max - v_min) * 0.01 + 1e-9;
                     let uv = vec![
-                        DVec2::new(0.0, 0.0),
-                        DVec2::new(2.0 * PI, 0.0),
+                        DVec2::new(0.0, v_min - margin),
+                        DVec2::new(2.0 * PI, v_min - margin),
                         DVec2::new(2.0 * PI, v_max + margin),
                         DVec2::new(0.0, v_max + margin),
                     ];
@@ -507,6 +536,208 @@ impl DS {
             .map(|&vi| self.vertices[vi].point)
             .collect()
     }
+
+    /// Detect shared topology between ShapeA and ShapeB.
+    ///
+    /// This method populates `self.shared_topology` with information about
+    /// coincident vertices, edges, and faces. It should be called after
+    /// the DS is fully constructed but before interference detection.
+    ///
+    /// # Arguments
+    /// * `tolerance` - Maximum distance for considering geometry coincident.
+    ///
+    /// # Returns
+    /// A reference to the populated `SharedTopologyInfo`.
+    pub fn detect_shared_topology(&mut self, tolerance: f64) -> &SharedTopologyInfo {
+        let tol = tolerance.max(TOLERANCE_ABS);
+        let tol_sq = tol * tol;
+
+        // Clear any previous data
+        self.shared_topology = SharedTopologyInfo::default();
+
+        // Detect shared vertices
+        for vi_a in 0..self.a_vertex_count {
+            for vi_b in self.a_vertex_count..self.vertices.len() {
+                let p_a = self.vertices[vi_a].point;
+                let p_b = self.vertices[vi_b].point;
+                if (p_a - p_b).length_squared() <= tol_sq {
+                    self.shared_topology.shared_vertices.push((vi_a, vi_b));
+                }
+            }
+        }
+
+        // Detect shared edges
+        for ei_a in 0..self.a_edge_count {
+            for ei_b in self.a_edge_count..self.edges.len() {
+                if self.edges_geometry_compatible(ei_a, ei_b, tol) {
+                    self.shared_topology.shared_edges.push((ei_a, ei_b));
+                }
+            }
+        }
+
+        // Detect shared faces (full and partial)
+        for fi_a in 0..self.a_face_count {
+            for fi_b in self.a_face_count..self.faces.len() {
+                if self.faces[fi_a].origin == self.faces[fi_b].origin {
+                    continue; // Same shape, skip
+                }
+
+                let full_overlap = self.faces_boundary_fully_overlap(fi_a, fi_b, tol);
+                let partial_overlap = !full_overlap && self.faces_share_edges(fi_a, fi_b, tol);
+
+                if full_overlap {
+                    self.shared_topology.fully_glued_faces.push((fi_a, fi_b));
+                    self.shared_topology.shared_faces.push((fi_a, fi_b));
+                } else if partial_overlap {
+                    self.shared_topology.partially_glued_faces.push((fi_a, fi_b));
+                    self.shared_topology.shared_faces.push((fi_a, fi_b));
+                }
+            }
+        }
+
+        &self.shared_topology
+    }
+
+    /// Check if two edges have compatible geometry.
+    fn edges_geometry_compatible(&self, e1: usize, e2: usize, tol: f64) -> bool {
+        let edge1 = &self.edges[e1];
+        let edge2 = &self.edges[e2];
+
+        // Check curve compatibility
+        match (&edge1.curve, &edge2.curve) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => {
+                // Lines must be collinear
+                let d1 = l1.direction.normalize_or_zero();
+                let d2 = l2.direction.normalize_or_zero();
+                if d1.dot(d2).abs() < 0.999 {
+                    return false;
+                }
+                // Origins must be on the same line
+                let v = l2.origin - l1.origin;
+                let perp = v - d1 * v.dot(d1);
+                if perp.length() > tol {
+                    return false;
+                }
+                // Check parameter ranges overlap
+                let p1_start = l1.origin + d1 * edge1.t_range[0];
+                let p1_end = l1.origin + d1 * edge1.t_range[1];
+                let p2_start = l2.origin + d2 * edge2.t_range[0];
+                let p2_end = l2.origin + d2 * edge2.t_range[1];
+
+                // Project edge2 endpoints onto edge1 line
+                let t2_start = (p2_start - l1.origin).dot(d1);
+                let t2_end = (p2_end - l1.origin).dot(d1);
+                let (t2_min, t2_max) = if t2_start < t2_end {
+                    (t2_start, t2_end)
+                } else {
+                    (t2_end, t2_start)
+                };
+
+                // Check for overlap
+                t2_min <= edge1.t_range[1] + tol && t2_max >= edge1.t_range[0] - tol
+            }
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => {
+                // Circles must be same radius and coplanar
+                (c1.center - c2.center).length() <= tol
+                    && c1.normal.dot(c2.normal).abs() >= 0.999
+                    && (c1.radius - c2.radius).abs() <= tol
+            }
+            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
+                // Ellipses must be same
+                (e1.center - e2.center).length() <= tol
+                    && e1.normal.dot(e2.normal).abs() >= 0.999
+                    && (e1.major_radius - e2.major_radius).abs() <= tol
+                    && (e1.minor_radius - e2.minor_radius).abs() <= tol
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if two faces have fully overlapping boundaries.
+    fn faces_boundary_fully_overlap(&self, f1: usize, f2: usize, tol: f64) -> bool {
+        let pts1 = self.face_boundary_points(f1);
+        let pts2 = self.face_boundary_points(f2);
+
+        if pts1.len() < 3 || pts2.len() < 3 {
+            return false;
+        }
+
+        // Each point in pts1 must have a matching point in pts2
+        let tol_sq = tol * tol;
+        let mut used = vec![false; pts2.len()];
+
+        for p1 in &pts1 {
+            let mut found = false;
+            for (j, p2) in pts2.iter().enumerate() {
+                if used[j] {
+                    continue;
+                }
+                if (*p1 - *p2).length_squared() <= tol_sq {
+                    used[j] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check if two faces share any edges.
+    fn faces_share_edges(&self, f1: usize, f2: usize, tol: f64) -> bool {
+        let edges1: std::collections::HashSet<usize> =
+            self.faces[f1].boundary_edges.iter().copied().collect();
+        let edges2: std::collections::HashSet<usize> =
+            self.faces[f2].boundary_edges.iter().copied().collect();
+
+        // Check for geometry-compatible edges
+        for &e1 in &edges1 {
+            for &e2 in &edges2 {
+                if self.edges_geometry_compatible(e1, e2, tol) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a face pair is fully glued (can skip intersection entirely).
+    pub fn is_fully_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
+        self.shared_topology
+            .fully_glued_faces
+            .iter()
+            .any(|&(a, b)| (a == f1 && b == f2) || (a == f2 && b == f1))
+    }
+
+    /// Check if a face pair is partially glued (has shared edges).
+    pub fn is_partially_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
+        self.shared_topology
+            .partially_glued_faces
+            .iter()
+            .any(|&(a, b)| (a == f1 && b == f2) || (a == f2 && b == f1))
+    }
+
+    /// Get shared vertices for a face pair.
+    pub fn get_shared_vertices_for_faces(&self, f1: usize, f2: usize) -> Vec<(usize, usize)> {
+        let boundary1: std::collections::HashSet<usize> =
+            self.faces[f1].boundary_verts.iter().copied().collect();
+        let boundary2: std::collections::HashSet<usize> =
+            self.faces[f2].boundary_verts.iter().copied().collect();
+
+        self.shared_topology
+            .shared_vertices
+            .iter()
+            .filter(|(v1, v2)| {
+                (boundary1.contains(v1) && boundary2.contains(v2))
+                    || (boundary1.contains(v2) && boundary2.contains(v1))
+            })
+            .copied()
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -565,5 +796,29 @@ mod tests {
             let uv = f.uv_boundary.as_ref().unwrap();
             assert!(uv.len() >= 3, "uv boundary should have at least 3 points");
         }
+    }
+
+    #[test]
+    fn ds_cone_uv_boundary_uses_reference_circle_slant_range() {
+        use rcad_modeling::make_cone_brep;
+
+        let a = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 4.0).unwrap();
+        let b = BRep::default();
+        let ds = DS::new(&a, &b);
+
+        let cone_face = ds
+            .faces
+            .iter()
+            .find(|face| matches!(face.surface, Surface3::Cone(_)))
+            .expect("should have a cone face");
+        let uv = cone_face
+            .uv_boundary
+            .as_ref()
+            .expect("cone face should have uv_boundary");
+
+        let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        assert!(v_min < 0.0, "expected apex-side slant range below the reference circle, got {v_min}");
+        assert!(v_max > 0.0, "expected base-side slant range above the reference circle, got {v_max}");
     }
 }

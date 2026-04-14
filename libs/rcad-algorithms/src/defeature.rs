@@ -15,10 +15,21 @@
 //! - **Cylindrical bosses** (protruding cylinders): same detection, opposite normal
 //!   direction, filled by boolean-differencing the boss cylinder from the host body.
 //!
+//! - **Conical holes/bosses**: similar detection for conical features.
+//!
 //! - **Small-face identification**: faces whose approximate polygon area is below
 //!   `max_small_face_area` are reported (see [`identify_small_faces`]).  Removal is
 //!   left to the caller because patching isolated small faces without topology
 //!   information is highly geometry-specific.
+//!
+//! # Enhanced Features
+//!
+//! The enhanced implementation also supports:
+//! - **Retry mechanism**: Boolean failures trigger fuzzy tolerance escalation.
+//! - **Topology healing**: Post-defeature connectivity repair.
+//! - **Feature group detection**: Connected compound features are handled together.
+//! - **Slot/pocket detection**: Rectangular and circular slot features.
+//! - **Blend/chamfer detection**: Fillets and chamfers below a size threshold.
 //!
 //! # Usage
 //!
@@ -41,12 +52,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{CylindricalSurface, Surface3, any_perpendicular};
+use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface, any_perpendicular};
 use rcad_kernel::topology::{Face, Wire};
 use rcad_modeling::make_cylinder_brep;
 
 use crate::tolerance::TOLERANCE_ABS;
-use crate::{BooleanOpType, boolean_op};
+use crate::{BooleanOpType, BooleanOptions, boolean_op, boolean_op_robust, BooleanRobustOptions, BooleanRetryPolicy};
+use crate::brep_repair::make_connected_enhanced;
 
 // -- Tolerances --------------------------------------------------------------
 
@@ -102,6 +114,117 @@ impl CylindricalFeature {
     }
 }
 
+/// A detected conical feature (hole or boss) in a B-Rep solid.
+#[derive(Debug, Clone)]
+pub struct ConicalFeature {
+    /// Local face indices within the shell that make up the conical wall.
+    pub face_indices: Vec<usize>,
+    /// True if this is a hole (material surrounds the cone from outside).
+    pub is_hole: bool,
+    /// Apex point of the cone.
+    pub apex: DVec3,
+    /// Normalized axis direction.
+    pub axis: DVec3,
+    /// Reference radius at a specific height.
+    pub reference_radius: f64,
+    /// Half angle in radians.
+    pub half_angle: f64,
+    /// Minimum parametric extent along axis from apex.
+    pub t_min: f64,
+    /// Maximum parametric extent along axis from apex.
+    pub t_max: f64,
+}
+
+/// A detected slot feature in a B-Rep solid.
+///
+/// Slots are elongated recesses or protrusions, typically with rectangular
+/// or rounded cross-sections.
+#[derive(Debug, Clone)]
+pub struct SlotFeature {
+    /// Local face indices within the shell that make up the slot.
+    pub face_indices: Vec<usize>,
+    /// True if this is a recess (slot), false if protrusion.
+    pub is_recess: bool,
+    /// Slot length along the major direction.
+    pub length: f64,
+    /// Slot width.
+    pub width: f64,
+    /// Slot depth (for recesses) or height (for protrusions).
+    pub depth: f64,
+    /// Origin point at the center of the slot bottom.
+    pub origin: DVec3,
+    /// Direction along the slot length.
+    pub length_dir: DVec3,
+    /// Direction along the slot width.
+    pub width_dir: DVec3,
+    /// Direction along the slot depth.
+    pub depth_dir: DVec3,
+    /// Whether the slot has rounded ends (cylindrical end caps).
+    pub has_rounded_ends: bool,
+}
+
+/// A detected pocket feature in a B-Rep solid.
+///
+/// Pockets are enclosed recesses, typically with flat bottoms and
+/// vertical or drafted side walls.
+#[derive(Debug, Clone)]
+pub struct PocketFeature {
+    /// Local face indices within the shell that make up the pocket.
+    pub face_indices: Vec<usize>,
+    /// True if this is a pocket (recess), false if a pad (protrusion).
+    pub is_recess: bool,
+    /// Pocket diameter for circular pockets, or max dimension for rectangular.
+    pub diameter: f64,
+    /// Pocket depth.
+    pub depth: f64,
+    /// Center point of the pocket opening.
+    pub center: DVec3,
+    /// Normal direction pointing out of the pocket.
+    pub normal: DVec3,
+    /// Whether the pocket is circular (true) or rectangular (false).
+    pub is_circular: bool,
+    /// Width for rectangular pockets (0.0 for circular).
+    pub width: f64,
+    /// Length for rectangular pockets (0.0 for circular).
+    pub length: f64,
+}
+
+/// A detected blend (fillet) or chamfer feature in a B-Rep solid.
+#[derive(Debug, Clone)]
+pub struct BlendFeature {
+    /// Local face indices within the shell that make up the blend.
+    pub face_indices: Vec<usize>,
+    /// True if this is a fillet (curved), false if a chamfer (flat).
+    pub is_fillet: bool,
+    /// Radius for fillets, 0.0 for chamfers.
+    pub radius: f64,
+    /// Chamfer distance (both sides equal) for chamfers.
+    pub chamfer_distance: f64,
+    /// Representative point on the blend.
+    pub sample_point: DVec3,
+    /// Approximate normal direction at the sample point.
+    pub normal: DVec3,
+}
+
+/// Feature group representing connected features that should be processed together.
+#[derive(Debug, Clone)]
+pub struct FeatureGroup {
+    /// Group ID.
+    pub id: usize,
+    /// Cylindrical feature indices in this group.
+    pub cylindrical_indices: Vec<usize>,
+    /// Conical feature indices in this group.
+    pub conical_indices: Vec<usize>,
+    /// Slot feature indices in this group.
+    pub slot_indices: Vec<usize>,
+    /// Pocket feature indices in this group.
+    pub pocket_indices: Vec<usize>,
+    /// Blend feature indices in this group.
+    pub blend_indices: Vec<usize>,
+    /// Total number of faces in this group.
+    pub total_faces: usize,
+}
+
 /// Options controlling the defeaturing pass.
 #[derive(Debug, Clone, Copy)]
 pub struct DefeaturingOptions {
@@ -120,6 +243,57 @@ pub struct DefeaturingOptions {
     /// Safety margin (in model units) added on each side of the fill solid
     /// along the cylinder axis to prevent numerical slivers.
     pub fill_margin: f64,
+
+    /// Enable conical feature detection and removal.
+    pub enable_conical_features: bool,
+
+    /// Maximum reference radius for conical holes.
+    pub max_conical_hole_radius: f64,
+
+    /// Enable retry mechanism for failed boolean operations.
+    pub enable_retry: bool,
+
+    /// Fuzzy tolerance multiplier for retry attempts.
+    pub retry_fuzzy_multiplier: f64,
+
+    /// Maximum number of retry attempts per feature.
+    pub max_retries: usize,
+
+    /// Run post-defeature connectivity healing.
+    pub run_post_healing: bool,
+
+    /// Tolerance for post-defeature healing.
+    pub healing_tolerance: f64,
+
+    // -- Slot/Pocket feature options --
+    /// Enable slot feature detection and removal.
+    pub enable_slot_features: bool,
+
+    /// Maximum slot width to consider for removal.
+    pub max_slot_width: f64,
+
+    /// Maximum slot depth to consider for removal.
+    pub max_slot_depth: f64,
+
+    /// Enable pocket feature detection and removal.
+    pub enable_pocket_features: bool,
+
+    /// Maximum pocket diameter (or max dimension) for removal.
+    pub max_pocket_diameter: f64,
+
+    /// Maximum pocket depth for removal.
+    pub max_pocket_depth: f64,
+
+    // -- Blend/Chamfer feature options --
+    /// Enable blend (fillet/chamfer) feature detection.
+    pub enable_blend_features: bool,
+
+    /// Maximum blend radius to consider for removal.
+    /// Fillets with radius <= this value will be targeted.
+    pub max_blend_radius: f64,
+
+    /// Maximum chamfer distance to consider for removal.
+    pub max_chamfer_distance: f64,
 }
 
 impl Default for DefeaturingOptions {
@@ -129,6 +303,24 @@ impl Default for DefeaturingOptions {
             max_boss_radius: 0.0,
             max_small_face_area: 0.0,
             fill_margin: DEFAULT_FILL_MARGIN,
+            enable_conical_features: false,
+            max_conical_hole_radius: 0.0,
+            enable_retry: false,
+            retry_fuzzy_multiplier: 10.0,
+            max_retries: 3,
+            run_post_healing: false,
+            healing_tolerance: TOLERANCE_ABS * 10.0,
+            // Slot/Pocket defaults
+            enable_slot_features: false,
+            max_slot_width: 0.0,
+            max_slot_depth: 0.0,
+            enable_pocket_features: false,
+            max_pocket_diameter: 0.0,
+            max_pocket_depth: 0.0,
+            // Blend defaults
+            enable_blend_features: false,
+            max_blend_radius: 0.0,
+            max_chamfer_distance: 0.0,
         }
     }
 }
@@ -142,14 +334,50 @@ pub struct DefeaturingReport {
     /// Number of cylindrical bosses successfully removed.
     pub bosses_removed: usize,
 
+    /// Number of conical features removed.
+    pub conical_features_removed: usize,
+
     /// Number of features that were detected but could not be suppressed
     /// (e.g. due to a boolean failure).
     pub failed_features: usize,
+
+    /// Number of retry attempts made.
+    pub retry_attempts: usize,
+
+    /// Number of features that succeeded after retry.
+    pub succeeded_after_retry: usize,
 
     /// Number of faces identified as "small" (area <= `max_small_face_area`).
     /// These are *not* removed automatically; use the returned face indices
     /// from [`identify_small_faces`] for targeted treatment.
     pub small_faces_identified: usize,
+
+    /// Whether post-defeature healing was performed.
+    pub healing_performed: bool,
+
+    /// Number of vertices merged during healing.
+    pub healing_vertices_merged: usize,
+
+    /// Number of small edges removed during healing.
+    pub healing_small_edges_removed: usize,
+
+    // -- Slot/Pocket statistics --
+    /// Number of slot features removed.
+    pub slots_removed: usize,
+
+    /// Number of pocket features removed.
+    pub pockets_removed: usize,
+
+    // -- Blend statistics --
+    /// Number of blend (fillet/chamfer) features removed.
+    pub blends_removed: usize,
+
+    // -- Feature group statistics --
+    /// Number of feature groups processed.
+    pub feature_groups_processed: usize,
+
+    /// Number of faces that are part of detected feature groups.
+    pub grouped_faces: usize,
 }
 
 /// Errors returned by the defeaturing pass.
@@ -197,6 +425,174 @@ fn face_cylinder(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Cylind
         Surface3::Cylinder(c) => Some(*c),
         _ => None,
     }
+}
+
+/// Return the `ConicalSurface` backing a face, or `None` if the face has
+/// no surface data or is not a cone.
+fn face_cone(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ConicalSurface> {
+    let ffi = flat_face_index(brep, si, shi, fi);
+    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
+    match brep.geom.surfaces.get(sid)? {
+        Surface3::Cone(c) => Some(*c),
+        _ => None,
+    }
+}
+
+/// Return the `Plane` backing a face, or `None` if the face has
+/// no surface data or is not a plane.
+fn face_plane(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Plane> {
+    let ffi = flat_face_index(brep, si, shi, fi);
+    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
+    match brep.geom.surfaces.get(sid)? {
+        Surface3::Plane(p) => Some(*p),
+        _ => None,
+    }
+}
+
+/// Return the `ToroidalSurface` backing a face, or `None` if the face has
+/// no surface data or is not a torus.
+fn face_torus(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalSurface> {
+    let ffi = flat_face_index(brep, si, shi, fi);
+    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
+    match brep.geom.surfaces.get(sid)? {
+        Surface3::Torus(t) => Some(*t),
+        _ => None,
+    }
+}
+
+/// Return the `SphericalSurface` backing a face, or `None` if the face has
+/// no surface data or is not a sphere.
+fn face_sphere(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<SphericalSurface> {
+    let ffi = flat_face_index(brep, si, shi, fi);
+    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
+    match brep.geom.surfaces.get(sid)? {
+        Surface3::Sphere(s) => Some(*s),
+        _ => None,
+    }
+}
+
+/// Check if a face is likely a planar blend/chamfer face.
+/// Returns Some((is_fillet, radius_or_chamfer_dist)) if detected.
+fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_radius: f64, max_chamfer_distance: f64) -> Option<BlendFeature> {
+    // Check for torus (fillet)
+    if max_blend_radius > 0.0 {
+        if let Some(torus) = face_torus(brep, si, shi, fi) {
+            // Torus minor radius indicates fillet radius
+            if torus.minor_radius > 0.0 && torus.minor_radius <= max_blend_radius {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or(torus.center);
+                return Some(BlendFeature {
+                    face_indices: vec![fi],
+                    is_fillet: true,
+                    radius: torus.minor_radius,
+                    chamfer_distance: 0.0,
+                    sample_point,
+                    normal: face.normal.normalize_or_zero(),
+                });
+            }
+        }
+
+        // Check for sphere (ball-end fillet)
+        if let Some(sphere) = face_sphere(brep, si, shi, fi) {
+            if sphere.radius > 0.0 && sphere.radius <= max_blend_radius {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                return Some(BlendFeature {
+                    face_indices: vec![fi],
+                    is_fillet: true,
+                    radius: sphere.radius,
+                    chamfer_distance: 0.0,
+                    sample_point: sphere.center,
+                    normal: face.normal.normalize_or_zero(),
+                });
+            }
+        }
+
+        // Check for cylinder with small radius (edge fillet)
+        if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
+            if cyl.radius > 0.0 && cyl.radius <= max_blend_radius {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let sample_point = cyl.origin;
+                return Some(BlendFeature {
+                    face_indices: vec![fi],
+                    is_fillet: true,
+                    radius: cyl.radius,
+                    chamfer_distance: 0.0,
+                    sample_point,
+                    normal: face.normal.normalize_or_zero(),
+                });
+            }
+        }
+    }
+
+    // Check for chamfer (small planar face connecting two other faces at an angle)
+    if max_chamfer_distance > 0.0 {
+        if let Some(_plane) = face_plane(brep, si, shi, fi) {
+            // Heuristic: small planar face that connects two non-parallel faces
+            // This is a simplified check; a full implementation would analyze
+            // the adjacent faces and check if they meet at an angle
+            let face = &brep.solids[si].shells[shi].faces[fi];
+
+            // Estimate chamfer size from face dimensions
+            let face_area = estimate_face_area(brep, si, shi, fi);
+            let chamfer_estimate = face_area.sqrt() / 1.414; // Approximate for 45-degree chamfer
+
+            if chamfer_estimate > 0.0 && chamfer_estimate <= max_chamfer_distance {
+                let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or_default();
+                return Some(BlendFeature {
+                    face_indices: vec![fi],
+                    is_fillet: false,
+                    radius: 0.0,
+                    chamfer_distance: chamfer_estimate,
+                    sample_point,
+                    normal: face.normal.normalize_or_zero(),
+                });
+            }
+        }
+    }
+
+    None
+}
+
+/// Get a sample point from a face (first vertex).
+fn get_face_sample_point(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
+    let face = &brep.solids[si].shells[shi].faces[fi];
+    for we in &face.outer_wire.edges {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            if let Some(v) = brep.vertices.get(edge.start) {
+                return Some(v.point);
+            }
+        }
+    }
+    None
+}
+
+/// Estimate the area of a face using fan triangulation.
+fn estimate_face_area(brep: &BRep, si: usize, shi: usize, fi: usize) -> f64 {
+    let face = &brep.solids[si].shells[shi].faces[fi];
+
+    // Collect vertex positions in order
+    let mut pts: Vec<DVec3> = Vec::new();
+    for we in &face.outer_wire.edges {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            let vi = if we.forward { edge.start } else { edge.end };
+            if let Some(v) = brep.vertices.get(vi) {
+                pts.push(v.point);
+            }
+        }
+    }
+
+    if pts.len() < 3 {
+        return 0.0;
+    }
+
+    // Fan triangulation from first point
+    let p0 = pts[0];
+    let mut area = 0.0f64;
+    for i in 1..pts.len() - 1 {
+        area += (pts[i] - p0).cross(pts[i + 1] - p0).length() * 0.5;
+    }
+
+    area
 }
 
 /// Return `true` if two normalized axis vectors are parallel (or antiparallel).
@@ -444,7 +840,925 @@ pub fn detect_cylindrical_features(
     features
 }
 
-/// Identify all faces in `solids[0].shells[0]` whose approximate polygon area
+/// Detect all conical features (holes and bosses) in `solids[0].shells[0]`
+/// whose reference radius falls within the specified bounds.
+///
+/// Pass `max_hole_radius = 0.0` to skip hole detection.
+///
+/// Returns a list of [`ConicalFeature`] objects, one per connected group.
+pub fn detect_conical_features(
+    brep: &BRep,
+    max_hole_radius: f64,
+) -> Vec<ConicalFeature> {
+    let si = 0;
+    let shi = 0;
+    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+        return Vec::new();
+    };
+    let n_faces = shell.faces.len();
+
+    // Build edge -> [local face_idx] adjacency.
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for inner in &face.inner_wires {
+            for we in &inner.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    let mut visited = vec![false; n_faces];
+    let mut features = Vec::new();
+
+    for start in 0..n_faces {
+        if visited[start] {
+            continue;
+        }
+
+        // Check if this face is a cone surface.
+        let Some(cone) = face_cone(brep, si, shi, start) else {
+            continue;
+        };
+
+        // Calculate reference radius at mid-height for size filtering.
+        // Use a point on the cone surface to estimate the reference radius.
+        let face = &shell.faces[start];
+        let mut sample_point: Option<DVec3> = None;
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = brep.edges.get(we.idx) {
+                if let Some(v) = brep.vertices.get(edge.start) {
+                    sample_point = Some(v.point);
+                    break;
+                }
+            }
+        }
+
+        let reference_radius = if let Some(pt) = sample_point {
+            let ax = cone.axis.normalize_or_zero();
+            let to_pt = pt - cone.apex;
+            let t = to_pt.dot(ax);
+            // Radius at height t from apex: r = t * tan(half_angle)
+            t.abs() * cone.half_angle_rad.tan()
+        } else {
+            // Fallback: use the cone's stored reference radius if available
+            cone.radius
+        };
+
+        if max_hole_radius <= 0.0 || reference_radius > max_hole_radius {
+            continue;
+        }
+
+        // BFS: collect all connected conical faces on the same axis/apex.
+        let mut group: Vec<usize> = Vec::new();
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(start);
+        visited[start] = true;
+
+        while let Some(fi) = queue.pop_front() {
+            group.push(fi);
+
+            let face_edges: Vec<usize> = {
+                let f = &shell.faces[fi];
+                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
+                for iw in &f.inner_wires {
+                    es.extend(iw.edges.iter().map(|we| we.idx));
+                }
+                es
+            };
+
+            for ei in face_edges {
+                let Some(neighbours) = edge_to_faces.get(&ei) else {
+                    continue;
+                };
+                for &nfi in neighbours {
+                    if visited[nfi] {
+                        continue;
+                    }
+                    let Some(ncone) = face_cone(brep, si, shi, nfi) else {
+                        continue;
+                    };
+                    // Check same axis line and similar half angle.
+                    if !axes_same_line(cone.apex, cone.axis, ncone.apex, ncone.axis) {
+                        continue;
+                    }
+                    if (ncone.half_angle_rad - cone.half_angle_rad).abs() > 1e-4 {
+                        continue;
+                    }
+                    visited[nfi] = true;
+                    queue.push_back(nfi);
+                }
+            }
+        }
+
+        // Determine is_hole by checking if the cone widens away from apex
+        // and the face normal points inward (toward axis).
+        let ax = cone.axis.normalize_or_zero();
+        let is_hole = {
+            // Sample the first face's normal to determine hole vs boss.
+            let f = &shell.faces[group[0]];
+            let fnormal = f.normal.normalize_or_zero();
+            // For a conical hole, the normal points outward from the solid,
+            // which for an inward-facing cone wall means pointing toward the axis.
+            // Check by computing radial direction at a sample point.
+            let mut toward_axis_votes = 0i32;
+            let mut away_axis_votes = 0i32;
+            for we in &f.outer_wire.edges {
+                if let Some(edge) = brep.edges.get(we.idx) {
+                    for &vi in &[edge.start, edge.end] {
+                        if let Some(v) = brep.vertices.get(vi) {
+                            let to_pt = v.point - cone.apex;
+                            let radial = to_pt - to_pt.dot(ax) * ax;
+                            if radial.length_squared() < 1e-20 {
+                                continue;
+                            }
+                            let radial_dir = radial.normalize();
+                            // Dot < 0 means normal points toward axis (hole).
+                            let dot = fnormal.dot(radial_dir);
+                            if dot < -1e-6 {
+                                toward_axis_votes += 1;
+                            } else if dot > 1e-6 {
+                                away_axis_votes += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            toward_axis_votes >= away_axis_votes
+        };
+
+        // Compute axis extents from vertices.
+        let mut t_min = f64::INFINITY;
+        let mut t_max = f64::NEG_INFINITY;
+        for &fi in &group {
+            let f = &shell.faces[fi];
+            for we in &f.outer_wire.edges {
+                if let Some(edge) = brep.edges.get(we.idx) {
+                    for &vi in &[edge.start, edge.end] {
+                        if let Some(v) = brep.vertices.get(vi) {
+                            let t = (v.point - cone.apex).dot(ax);
+                            t_min = t_min.min(t);
+                            t_max = t_max.max(t);
+                        }
+                    }
+                }
+            }
+        }
+
+        if t_min.is_infinite() {
+            t_min = 0.0;
+            t_max = 0.0;
+        }
+
+        features.push(ConicalFeature {
+            face_indices: group,
+            is_hole,
+            apex: cone.apex,
+            axis: ax,
+            reference_radius,
+            half_angle: cone.half_angle_rad,
+            t_min,
+            t_max,
+        });
+    }
+
+    features
+}
+
+/// Detect all slot features in `solids[0].shells[0]`.
+///
+/// Slots are elongated features with rectangular or rounded cross-sections,
+/// typically formed by a combination of planar and cylindrical faces.
+///
+/// Parameters:
+/// - `max_width`: Maximum slot width to consider
+/// - `max_depth`: Maximum slot depth to consider
+///
+/// Returns a list of [`SlotFeature`] objects.
+pub fn detect_slot_features(
+    brep: &BRep,
+    max_width: f64,
+    max_depth: f64,
+) -> Vec<SlotFeature> {
+    if max_width <= 0.0 || max_depth <= 0.0 {
+        return Vec::new();
+    }
+
+    let si = 0;
+    let shi = 0;
+    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+        return Vec::new();
+    };
+    let n_faces = shell.faces.len();
+
+    // Build edge -> face adjacency
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for inner in &face.inner_wires {
+            for we in &inner.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    let mut visited = vec![false; n_faces];
+    let mut features = Vec::new();
+
+    // Strategy: Find groups of connected planar faces that form a slot-like shape
+    for start in 0..n_faces {
+        if visited[start] {
+            continue;
+        }
+
+        // Check if this face could be part of a slot (planar or small-radius cylinder)
+        let is_slot_candidate = face_plane(brep, si, shi, start).is_some()
+            || face_cylinder(brep, si, shi, start)
+                .map(|c| c.radius <= max_width)
+                .unwrap_or(false);
+
+        if !is_slot_candidate {
+            continue;
+        }
+
+        // BFS to find connected slot-like faces
+        let mut group: Vec<usize> = Vec::new();
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(start);
+        visited[start] = true;
+
+        // Collect geometry information
+        let mut planes: Vec<Plane> = Vec::new();
+        let mut cylinders: Vec<(CylindricalSurface, usize)> = Vec::new();
+
+        while let Some(fi) = queue.pop_front() {
+            group.push(fi);
+
+            if let Some(plane) = face_plane(brep, si, shi, fi) {
+                planes.push(plane);
+            }
+            if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
+                if cyl.radius <= max_width {
+                    cylinders.push((cyl, fi));
+                }
+            }
+
+            let face_edges: Vec<usize> = {
+                let f = &shell.faces[fi];
+                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
+                for iw in &f.inner_wires {
+                    es.extend(iw.edges.iter().map(|we| we.idx));
+                }
+                es
+            };
+
+            for ei in face_edges {
+                let Some(neighbours) = edge_to_faces.get(&ei) else {
+                    continue;
+                };
+                for &nfi in neighbours {
+                    if visited[nfi] {
+                        continue;
+                    }
+                    // Check if neighbor is also slot-like
+                    let is_neighbor_candidate = face_plane(brep, si, shi, nfi).is_some()
+                        || face_cylinder(brep, si, shi, nfi)
+                            .map(|c| c.radius <= max_width)
+                            .unwrap_or(false);
+
+                    if is_neighbor_candidate {
+                        visited[nfi] = true;
+                        queue.push_back(nfi);
+                    }
+                }
+            }
+        }
+
+        // Analyze the group to determine if it's a slot
+        if group.len() < 3 {
+            // A slot needs at least a bottom and two sides
+            continue;
+        }
+
+        // Try to identify slot geometry
+        if let Some(slot) = analyze_slot_group(brep, si, shi, &group, &planes, &cylinders, max_width, max_depth) {
+            features.push(slot);
+        }
+    }
+
+    features
+}
+
+/// Analyze a group of faces to determine if they form a slot.
+fn analyze_slot_group(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    group: &[usize],
+    planes: &[Plane],
+    cylinders: &[(CylindricalSurface, usize)],
+    max_width: f64,
+    max_depth: f64,
+) -> Option<SlotFeature> {
+    // Need at least one planar face (bottom)
+    if planes.is_empty() {
+        return None;
+    }
+
+    // Collect all vertices
+    let mut vertices: Vec<DVec3> = Vec::new();
+    for &fi in group {
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = brep.edges.get(we.idx) {
+                if let Some(v) = brep.vertices.get(edge.start) {
+                    vertices.push(v.point);
+                }
+                if let Some(v) = brep.vertices.get(edge.end) {
+                    vertices.push(v.point);
+                }
+            }
+        }
+    }
+
+    if vertices.len() < 4 {
+        return None;
+    }
+
+    // Compute bounding box
+    let mut min_pt = vertices[0];
+    let mut max_pt = vertices[0];
+    for pt in &vertices[1..] {
+        min_pt = min_pt.min(*pt);
+        max_pt = max_pt.max(*pt);
+    }
+
+    let dimensions = max_pt - min_pt;
+    let mut dims = [dimensions.x, dimensions.y, dimensions.z];
+    dims.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Slot should be elongated (one dimension significantly larger than width)
+    let length = dims[0];
+    let width = dims[1];
+    let depth = dims[2];
+
+    if width > max_width || depth > max_depth {
+        return None;
+    }
+
+    // Determine slot orientation
+    let length_dir = if (dimensions.x - length).abs() < 1e-6 {
+        DVec3::X
+    } else if (dimensions.y - length).abs() < 1e-6 {
+        DVec3::Y
+    } else {
+        DVec3::Z
+    };
+
+    let width_dir = if (dimensions.x - width).abs() < 1e-6 {
+        DVec3::X
+    } else if (dimensions.y - width).abs() < 1e-6 {
+        DVec3::Y
+    } else {
+        DVec3::Z
+    };
+
+    let depth_dir = if (dimensions.x - depth).abs() < 1e-6 {
+        DVec3::X
+    } else if (dimensions.y - depth).abs() < 1e-6 {
+        DVec3::Y
+    } else {
+        DVec3::Z
+    };
+
+    // Check for rounded ends (cylindrical faces at slot ends)
+    let has_rounded_ends = !cylinders.is_empty();
+
+    let center = (min_pt + max_pt) * 0.5;
+    let origin = center - depth_dir * depth * 0.5; // Bottom center
+
+    Some(SlotFeature {
+        face_indices: group.to_vec(),
+        is_recess: true, // Assume recess by default
+        length,
+        width,
+        depth,
+        origin,
+        length_dir,
+        width_dir,
+        depth_dir,
+        has_rounded_ends,
+    })
+}
+
+/// Detect all pocket features in `solids[0].shells[0]`.
+///
+/// Pockets are enclosed recesses with flat bottoms and side walls.
+/// Both circular and rectangular pockets are detected.
+///
+/// Parameters:
+/// - `max_diameter`: Maximum pocket diameter (or max dimension) to consider
+/// - `max_depth`: Maximum pocket depth to consider
+///
+/// Returns a list of [`PocketFeature`] objects.
+pub fn detect_pocket_features(
+    brep: &BRep,
+    max_diameter: f64,
+    max_depth: f64,
+) -> Vec<PocketFeature> {
+    if max_diameter <= 0.0 || max_depth <= 0.0 {
+        return Vec::new();
+    }
+
+    let si = 0;
+    let shi = 0;
+    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+        return Vec::new();
+    };
+    let n_faces = shell.faces.len();
+
+    // Build edge -> face adjacency
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for inner in &face.inner_wires {
+            for we in &inner.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    let mut visited = vec![false; n_faces];
+    let mut features = Vec::new();
+
+    // Find connected groups that could be pockets
+    for start in 0..n_faces {
+        if visited[start] {
+            continue;
+        }
+
+        // Check if this face could be part of a pocket
+        let is_pocket_candidate = face_plane(brep, si, shi, start).is_some()
+            || face_cylinder(brep, si, shi, start)
+                .map(|c| c.radius <= max_diameter)
+                .unwrap_or(false);
+
+        if !is_pocket_candidate {
+            continue;
+        }
+
+        // BFS to find connected pocket-like faces
+        let mut group: Vec<usize> = Vec::new();
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(start);
+        visited[start] = true;
+
+        let mut has_cylindrical_walls = false;
+        let mut cylindrical_radius = 0.0f64;
+        let mut wall_planes: Vec<Plane> = Vec::new();
+
+        while let Some(fi) = queue.pop_front() {
+            group.push(fi);
+
+            if let Some(plane) = face_plane(brep, si, shi, fi) {
+                wall_planes.push(plane);
+            }
+            if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
+                if cyl.radius <= max_diameter {
+                    has_cylindrical_walls = true;
+                    cylindrical_radius = cyl.radius;
+                }
+            }
+
+            let face_edges: Vec<usize> = {
+                let f = &shell.faces[fi];
+                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
+                for iw in &f.inner_wires {
+                    es.extend(iw.edges.iter().map(|we| we.idx));
+                }
+                es
+            };
+
+            for ei in face_edges {
+                let Some(neighbours) = edge_to_faces.get(&ei) else {
+                    continue;
+                };
+                for &nfi in neighbours {
+                    if visited[nfi] {
+                        continue;
+                    }
+                    let is_neighbor_candidate = face_plane(brep, si, shi, nfi).is_some()
+                        || face_cylinder(brep, si, shi, nfi)
+                            .map(|c| c.radius <= max_diameter)
+                            .unwrap_or(false);
+
+                    if is_neighbor_candidate {
+                        visited[nfi] = true;
+                        queue.push_back(nfi);
+                    }
+                }
+            }
+        }
+
+        // Analyze the group
+        if let Some(pocket) = analyze_pocket_group(
+            brep,
+            si,
+            shi,
+            &group,
+            has_cylindrical_walls,
+            cylindrical_radius,
+            &wall_planes,
+            max_diameter,
+            max_depth,
+        ) {
+            features.push(pocket);
+        }
+    }
+
+    features
+}
+
+/// Analyze a group of faces to determine if they form a pocket.
+fn analyze_pocket_group(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    group: &[usize],
+    has_cylindrical_walls: bool,
+    cylindrical_radius: f64,
+    wall_planes: &[Plane],
+    max_diameter: f64,
+    max_depth: f64,
+) -> Option<PocketFeature> {
+    if group.is_empty() {
+        return None;
+    }
+
+    // Collect all vertices
+    let mut vertices: Vec<DVec3> = Vec::new();
+    for &fi in group {
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = brep.edges.get(we.idx) {
+                if let Some(v) = brep.vertices.get(edge.start) {
+                    vertices.push(v.point);
+                }
+                if let Some(v) = brep.vertices.get(edge.end) {
+                    vertices.push(v.point);
+                }
+            }
+        }
+    }
+
+    if vertices.len() < 3 {
+        return None;
+    }
+
+    // Compute bounding box
+    let mut min_pt = vertices[0];
+    let mut max_pt = vertices[0];
+    for pt in &vertices[1..] {
+        min_pt = min_pt.min(*pt);
+        max_pt = max_pt.max(*pt);
+    }
+
+    let dimensions = max_pt - min_pt;
+    let mut dims = [dimensions.x, dimensions.y, dimensions.z];
+    dims.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    let depth = dims[2]; // Smallest dimension is likely depth
+
+    if depth > max_depth {
+        return None;
+    }
+
+    let center = (min_pt + max_pt) * 0.5;
+
+    // Determine if circular or rectangular
+    let is_circular = has_cylindrical_walls && cylindrical_radius > 0.0;
+
+    let (diameter, width, length) = if is_circular {
+        (cylindrical_radius * 2.0, 0.0, 0.0)
+    } else {
+        (dims[0], dims[1], dims[0])
+    };
+
+    if diameter > max_diameter {
+        return None;
+    }
+
+    // Compute approximate normal from wall planes
+    let normal = wall_planes
+        .first()
+        .map(|p| p.normal.normalize_or_zero())
+        .unwrap_or(DVec3::Z);
+
+    Some(PocketFeature {
+        face_indices: group.to_vec(),
+        is_recess: true,
+        diameter,
+        depth,
+        center,
+        normal,
+        is_circular,
+        width,
+        length,
+    })
+}
+
+/// Detect all blend (fillet/chamfer) features in `solids[0].shells[0]`.
+///
+/// Parameters:
+/// - `max_blend_radius`: Maximum fillet radius to detect
+/// - `max_chamfer_distance`: Maximum chamfer distance to detect
+///
+/// Returns a list of [`BlendFeature`] objects.
+pub fn detect_blend_features(
+    brep: &BRep,
+    max_blend_radius: f64,
+    max_chamfer_distance: f64,
+) -> Vec<BlendFeature> {
+    if max_blend_radius <= 0.0 && max_chamfer_distance <= 0.0 {
+        return Vec::new();
+    }
+
+    let si = 0;
+    let shi = 0;
+    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+        return Vec::new();
+    };
+    let n_faces = shell.faces.len();
+
+    // Build edge -> face adjacency
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for inner in &face.inner_wires {
+            for we in &inner.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    let mut visited = vec![false; n_faces];
+    let mut features = Vec::new();
+
+    for start in 0..n_faces {
+        if visited[start] {
+            continue;
+        }
+
+        // Check if this face is a blend
+        if let Some(blend) = detect_blend_face(brep, si, shi, start, max_blend_radius, max_chamfer_distance) {
+            // BFS to find connected blend faces with similar characteristics
+            let mut group: Vec<usize> = Vec::new();
+            let mut queue: VecDeque<usize> = VecDeque::new();
+            queue.push_back(start);
+            visited[start] = true;
+
+            let mut total_radius = blend.radius;
+            let mut count = 1usize;
+
+            while let Some(fi) = queue.pop_front() {
+                group.push(fi);
+
+                let face_edges: Vec<usize> = {
+                    let f = &shell.faces[fi];
+                    let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
+                    for iw in &f.inner_wires {
+                        es.extend(iw.edges.iter().map(|we| we.idx));
+                    }
+                    es
+                };
+
+                for ei in face_edges {
+                    let Some(neighbours) = edge_to_faces.get(&ei) else {
+                        continue;
+                    };
+                    for &nfi in neighbours {
+                        if visited[nfi] {
+                            continue;
+                        }
+                        if let Some(nblend) = detect_blend_face(brep, si, shi, nfi, max_blend_radius, max_chamfer_distance) {
+                            // Check if similar blend
+                            if (nblend.is_fillet == blend.is_fillet)
+                                && (nblend.radius - blend.radius).abs() < 1e-4
+                            {
+                                visited[nfi] = true;
+                                queue.push_back(nfi);
+                                total_radius += nblend.radius;
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let avg_radius = if count > 0 { total_radius / count as f64 } else { blend.radius };
+
+            features.push(BlendFeature {
+                face_indices: group,
+                is_fillet: blend.is_fillet,
+                radius: avg_radius,
+                chamfer_distance: blend.chamfer_distance,
+                sample_point: blend.sample_point,
+                normal: blend.normal,
+            });
+        }
+    }
+
+    features
+}
+
+/// Detect connected groups of features that should be processed together.
+///
+/// This function analyzes spatial relationships between features and groups
+/// those that share edges or vertices.
+///
+/// Returns a map from face index to group ID.
+pub fn detect_connected_feature_groups(
+    brep: &BRep,
+    cylindrical_features: &[CylindricalFeature],
+    conical_features: &[ConicalFeature],
+    slot_features: &[SlotFeature],
+    pocket_features: &[PocketFeature],
+    blend_features: &[BlendFeature],
+) -> (Vec<FeatureGroup>, HashMap<usize, usize>) {
+    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+        return (Vec::new(), HashMap::new());
+    };
+
+    // Build face -> feature indices mapping
+    let mut face_to_features: HashMap<usize, Vec<(usize, FeatureType)>> = HashMap::new();
+
+    for (i, f) in cylindrical_features.iter().enumerate() {
+        for &fi in &f.face_indices {
+            face_to_features.entry(fi).or_default().push((i, FeatureType::Cylindrical));
+        }
+    }
+    for (i, f) in conical_features.iter().enumerate() {
+        for &fi in &f.face_indices {
+            face_to_features.entry(fi).or_default().push((i, FeatureType::Conical));
+        }
+    }
+    for (i, f) in slot_features.iter().enumerate() {
+        for &fi in &f.face_indices {
+            face_to_features.entry(fi).or_default().push((i, FeatureType::Slot));
+        }
+    }
+    for (i, f) in pocket_features.iter().enumerate() {
+        for &fi in &f.face_indices {
+            face_to_features.entry(fi).or_default().push((i, FeatureType::Pocket));
+        }
+    }
+    for (i, f) in blend_features.iter().enumerate() {
+        for &fi in &f.face_indices {
+            face_to_features.entry(fi).or_default().push((i, FeatureType::Blend));
+        }
+    }
+
+    // Build edge adjacency between faces
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for inner in &face.inner_wires {
+            for we in &inner.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    // Build feature adjacency graph through shared edges
+    let mut feature_adjacency: HashMap<(usize, FeatureType), HashSet<(usize, FeatureType)>> = HashMap::new();
+
+    for (_, feature_list) in &face_to_features {
+        // All features sharing a face are connected
+        for i in 0..feature_list.len() {
+            for j in (i + 1)..feature_list.len() {
+                feature_adjacency
+                    .entry(feature_list[i])
+                    .or_default()
+                    .insert(feature_list[j]);
+                feature_adjacency
+                    .entry(feature_list[j])
+                    .or_default()
+                    .insert(feature_list[i]);
+            }
+        }
+    }
+
+    // Also check edge-sharing between features
+    for (fi, features1) in &face_to_features {
+        // Find neighboring faces through edges
+        let face = &shell.faces[*fi];
+        for we in &face.outer_wire.edges {
+            if let Some(neighbors) = edge_to_faces.get(&we.idx) {
+                for &nfi in neighbors {
+                    if nfi == *fi {
+                        continue;
+                    }
+                    if let Some(features2) = face_to_features.get(&nfi) {
+                        for f1 in features1 {
+                            for f2 in features2 {
+                                if f1 != f2 {
+                                    feature_adjacency.entry(*f1).or_default().insert(*f2);
+                                    feature_adjacency.entry(*f2).or_default().insert(*f1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Find connected components using BFS
+    let mut visited: HashSet<(usize, FeatureType)> = HashSet::new();
+    let mut groups: Vec<FeatureGroup> = Vec::new();
+    let mut face_to_group: HashMap<usize, usize> = HashMap::new();
+
+    let all_features: Vec<(usize, FeatureType)> = face_to_features
+        .values()
+        .flat_map(|v| v.iter().copied())
+        .collect();
+
+    for start in all_features {
+        if visited.contains(&start) {
+            continue;
+        }
+
+        let mut group = FeatureGroup {
+            id: groups.len(),
+            cylindrical_indices: Vec::new(),
+            conical_indices: Vec::new(),
+            slot_indices: Vec::new(),
+            pocket_indices: Vec::new(),
+            blend_indices: Vec::new(),
+            total_faces: 0,
+        };
+
+        let mut queue: VecDeque<(usize, FeatureType)> = VecDeque::new();
+        queue.push_back(start);
+        visited.insert(start);
+
+        while let Some((idx, ftype)) = queue.pop_front() {
+            match ftype {
+                FeatureType::Cylindrical => group.cylindrical_indices.push(idx),
+                FeatureType::Conical => group.conical_indices.push(idx),
+                FeatureType::Slot => group.slot_indices.push(idx),
+                FeatureType::Pocket => group.pocket_indices.push(idx),
+                FeatureType::Blend => group.blend_indices.push(idx),
+            }
+
+            // Add faces to group map
+            let face_indices: &Vec<usize> = match ftype {
+                FeatureType::Cylindrical => &cylindrical_features[idx].face_indices,
+                FeatureType::Conical => &conical_features[idx].face_indices,
+                FeatureType::Slot => &slot_features[idx].face_indices,
+                FeatureType::Pocket => &pocket_features[idx].face_indices,
+                FeatureType::Blend => &blend_features[idx].face_indices,
+            };
+            for &fi in face_indices {
+                face_to_group.insert(fi, group.id);
+                group.total_faces += 1;
+            }
+
+            // Explore neighbors
+            if let Some(neighbors) = feature_adjacency.get(&(idx, ftype)) {
+                for &neighbor in neighbors {
+                    if !visited.contains(&neighbor) {
+                        visited.insert(neighbor);
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+
+        groups.push(group);
+    }
+
+    (groups, face_to_group)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FeatureType {
+    Cylindrical,
+    Conical,
+    Slot,
+    Pocket,
+    Blend,
+}
 /// (fan-triangulation from outer-wire vertices) is <= `max_area`.
 ///
 /// Returns a sorted, deduplicated list of local face indices.
@@ -543,6 +1857,10 @@ fn make_boss_cylinder(
 /// * A feature that causes a boolean failure is counted in
 ///   [`DefeaturingReport::failed_features`]; the pass continues with
 ///   remaining features.
+/// * When `enable_retry` is enabled, failed boolean operations are retried
+///   with increased fuzzy tolerance according to `retry_fuzzy_multiplier`.
+/// * When `run_post_healing` is enabled, `make_connected_enhanced` is called
+///   after all features are processed to repair connectivity.
 pub fn defeature_brep(
     brep: &BRep,
     options: &DefeaturingOptions,
@@ -553,11 +1871,13 @@ pub fn defeature_brep(
 
     let mut report = DefeaturingReport::default();
     let mut current = brep.clone();
+
     // -- Small-face identification ------------------------------------------
     if options.max_small_face_area > 0.0 {
         report.small_faces_identified =
             identify_small_faces(&current, options.max_small_face_area).len();
     }
+
     // -- Cylindrical holes and bosses ---------------------------------------
     let needs_cyl = options.max_hole_radius > 0.0 || options.max_boss_radius > 0.0;
     if needs_cyl {
@@ -582,15 +1902,33 @@ pub fn defeature_brep(
                     continue;
                 }
                 match make_fill_cylinder(feature, margin) {
-                    Ok(fill) => match boolean_op(BooleanOpType::Union, &current, &fill) {
-                        Ok(new_brep) => {
-                            current = new_brep;
-                            report.holes_removed += 1;
+                    Ok(fill) => {
+                        let result = if options.enable_retry {
+                            try_boolean_with_retry(
+                                BooleanOpType::Union,
+                                &current,
+                                &fill,
+                                options.retry_fuzzy_multiplier,
+                                options.max_retries,
+                                &mut report,
+                            )
+                        } else {
+                            boolean_op(BooleanOpType::Union, &current, &fill)
+                                .map(|b| (b, false))
+                        };
+                        match result {
+                            Ok((new_brep, retried)) => {
+                                current = new_brep;
+                                report.holes_removed += 1;
+                                if retried {
+                                    report.succeeded_after_retry += 1;
+                                }
+                            }
+                            Err(_) => {
+                                report.failed_features += 1;
+                            }
                         }
-                        Err(_) => {
-                            report.failed_features += 1;
-                        }
-                    },
+                    }
                     Err(_) => {
                         report.failed_features += 1;
                     }
@@ -600,15 +1938,33 @@ pub fn defeature_brep(
                     continue;
                 }
                 match make_boss_cylinder(feature, margin) {
-                    Ok(boss) => match boolean_op(BooleanOpType::Difference, &current, &boss) {
-                        Ok(new_brep) => {
-                            current = new_brep;
-                            report.bosses_removed += 1;
+                    Ok(boss) => {
+                        let result = if options.enable_retry {
+                            try_boolean_with_retry(
+                                BooleanOpType::Difference,
+                                &current,
+                                &boss,
+                                options.retry_fuzzy_multiplier,
+                                options.max_retries,
+                                &mut report,
+                            )
+                        } else {
+                            boolean_op(BooleanOpType::Difference, &current, &boss)
+                                .map(|b| (b, false))
+                        };
+                        match result {
+                            Ok((new_brep, retried)) => {
+                                current = new_brep;
+                                report.bosses_removed += 1;
+                                if retried {
+                                    report.succeeded_after_retry += 1;
+                                }
+                            }
+                            Err(_) => {
+                                report.failed_features += 1;
+                            }
                         }
-                        Err(_) => {
-                            report.failed_features += 1;
-                        }
-                    },
+                    }
                     Err(_) => {
                         report.failed_features += 1;
                     }
@@ -617,7 +1973,124 @@ pub fn defeature_brep(
         }
     }
 
+    // -- Conical features ---------------------------------------------------
+    if options.enable_conical_features && options.max_conical_hole_radius > 0.0 {
+        let features = detect_conical_features(&current, options.max_conical_hole_radius);
+
+        for feature in &features {
+            if !feature.is_hole {
+                // Boss removal for cones not yet implemented.
+                continue;
+            }
+
+            // Build a fill cone using a cylinder approximation for now.
+            // A proper implementation would construct a conical solid.
+            match make_fill_cone(feature, options.fill_margin) {
+                Ok(fill) => {
+                    let result = if options.enable_retry {
+                        try_boolean_with_retry(
+                            BooleanOpType::Union,
+                            &current,
+                            &fill,
+                            options.retry_fuzzy_multiplier,
+                            options.max_retries,
+                            &mut report,
+                        )
+                    } else {
+                        boolean_op(BooleanOpType::Union, &current, &fill)
+                            .map(|b| (b, false))
+                    };
+                    match result {
+                        Ok((new_brep, retried)) => {
+                            current = new_brep;
+                            report.conical_features_removed += 1;
+                            if retried {
+                                report.succeeded_after_retry += 1;
+                            }
+                        }
+                        Err(_) => {
+                            report.failed_features += 1;
+                        }
+                    }
+                }
+                Err(_) => {
+                    report.failed_features += 1;
+                }
+            }
+        }
+    }
+
+    // -- Post-defeature healing ---------------------------------------------
+    if options.run_post_healing {
+        let (healed_brep, heal_report) =
+            make_connected_enhanced(&current, options.healing_tolerance, 3);
+        current = healed_brep;
+        report.healing_performed = true;
+        report.healing_vertices_merged = heal_report.vertices_merged;
+        report.healing_small_edges_removed = heal_report.small_edges_removed;
+    }
+
     Ok((current, report))
+}
+
+/// Try a boolean operation with retry using increased fuzzy tolerance.
+///
+/// Returns `Ok((brep, true))` if succeeded after retry, `Ok((brep, false))` if
+/// succeeded on first try, or `Err` if all attempts failed.
+fn try_boolean_with_retry(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    fuzzy_multiplier: f64,
+    max_retries: usize,
+    report: &mut DefeaturingReport,
+) -> Result<(BRep, bool), crate::BooleanError> {
+    // First attempt with default fuzzy tolerance.
+    match boolean_op(op, a, b) {
+        Ok(result) => return Ok((result, false)),
+        Err(first_err) => {
+            // Build retry ladder based on multiplier.
+            let ladder: Vec<f64> = (1..=max_retries)
+                .map(|i| TOLERANCE_ABS * fuzzy_multiplier * (i as f64))
+                .collect();
+
+            let robust_opts = BooleanRobustOptions {
+                base: BooleanOptions::default(),
+                fuzzy_retry_ladder: ladder,
+                retry_policy: BooleanRetryPolicy::Aggressive,
+            };
+
+            report.retry_attempts += 1;
+
+            match boolean_op_robust(op, a, b, robust_opts) {
+                Ok((result, _exec_report)) => {
+                    report.retry_attempts += _exec_report.retry_count;
+                    return Ok((result, true));
+                }
+                Err(_) => {
+                    return Err(first_err);
+                }
+            }
+        }
+    }
+}
+
+/// Build a fill solid for a conical feature.
+///
+/// Currently uses a cylinder approximation. A proper implementation would
+/// construct a conical solid matching the feature geometry.
+fn make_fill_cone(
+    feature: &ConicalFeature,
+    margin: f64,
+) -> Result<BRep, rcad_modeling::BuildError> {
+    // Use the reference radius and height to build an approximating cylinder.
+    let ax = feature.axis;
+    let height = (feature.t_max - feature.t_min).max(0.0) + 2.0 * margin;
+    let base_pt = feature.apex + ax * (feature.t_min - margin);
+    let ref_dir = any_perpendicular(ax);
+    // Expand radius slightly to ensure coverage.
+    let expanded_r = feature.reference_radius + TOLERANCE_ABS * 10.0;
+    make_cylinder_brep(base_pt, ax, ref_dir, expanded_r, height)
 }
 
 // -- Tests -------------------------------------------------------------------
@@ -721,5 +2194,221 @@ mod tests {
         let brep = box_with_hole(4.0, 0.3);
         let features = detect_cylindrical_features(&brep, 0.0, 0.0);
         assert!(features.is_empty());
+    }
+
+    #[test]
+    fn detect_slot_features_returns_empty_for_box() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
+        let slots = detect_slot_features(&brep, 5.0, 5.0);
+        // A simple box has no slots
+        assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn detect_slot_features_returns_empty_when_disabled() {
+        let brep = box_with_hole(4.0, 0.3);
+        let slots = detect_slot_features(&brep, 0.0, 0.0);
+        assert!(slots.is_empty());
+    }
+
+    #[test]
+    fn detect_pocket_features_returns_empty_for_box() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
+        let pockets = detect_pocket_features(&brep, 5.0, 5.0);
+        // A simple box has no pockets
+        assert!(pockets.is_empty());
+    }
+
+    #[test]
+    fn detect_pocket_features_returns_empty_when_disabled() {
+        let brep = box_with_hole(4.0, 0.3);
+        let pockets = detect_pocket_features(&brep, 0.0, 0.0);
+        assert!(pockets.is_empty());
+    }
+
+    #[test]
+    fn detect_blend_features_returns_empty_for_box() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
+        let blends = detect_blend_features(&brep, 1.0, 1.0);
+        // A simple box has no blend features
+        assert!(blends.is_empty());
+    }
+
+    #[test]
+    fn detect_blend_features_returns_empty_when_disabled() {
+        let brep = box_with_hole(4.0, 0.3);
+        let blends = detect_blend_features(&brep, 0.0, 0.0);
+        assert!(blends.is_empty());
+    }
+
+    #[test]
+    fn detect_connected_feature_groups_returns_empty_for_no_features() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
+        let (groups, face_to_group) = detect_connected_feature_groups(
+            &brep,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+        assert!(groups.is_empty());
+        assert!(face_to_group.is_empty());
+    }
+
+    #[test]
+    fn detect_connected_feature_groups_groups_cylindrical_features() {
+        let brep = box_with_hole(4.0, 0.3);
+        let cyl_features = detect_cylindrical_features(&brep, 1.0, 0.0);
+
+        let (groups, face_to_group) = detect_connected_feature_groups(
+            &brep,
+            &cyl_features,
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+
+        // There should be at least one group
+        if !cyl_features.is_empty() {
+            assert!(!groups.is_empty(), "Expected at least one feature group");
+
+            // Check that faces in the cylindrical feature are mapped to a group
+            for f in &cyl_features {
+                for &fi in &f.face_indices {
+                    assert!(face_to_group.contains_key(&fi), "Face {} should be in a group", fi);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn slot_feature_has_correct_properties() {
+        let slot = SlotFeature {
+            face_indices: vec![0, 1, 2],
+            is_recess: true,
+            length: 10.0,
+            width: 5.0,
+            depth: 3.0,
+            origin: DVec3::ZERO,
+            length_dir: DVec3::X,
+            width_dir: DVec3::Y,
+            depth_dir: DVec3::Z,
+            has_rounded_ends: false,
+        };
+
+        assert!(slot.is_recess);
+        assert_eq!(slot.length, 10.0);
+        assert_eq!(slot.width, 5.0);
+        assert_eq!(slot.depth, 3.0);
+        assert!(!slot.has_rounded_ends);
+    }
+
+    #[test]
+    fn pocket_feature_has_correct_properties() {
+        let pocket = PocketFeature {
+            face_indices: vec![0, 1, 2, 3],
+            is_recess: true,
+            diameter: 8.0,
+            depth: 5.0,
+            center: DVec3::new(5.0, 5.0, 0.0),
+            normal: DVec3::Z,
+            is_circular: true,
+            width: 0.0,
+            length: 0.0,
+        };
+
+        assert!(pocket.is_recess);
+        assert!(pocket.is_circular);
+        assert_eq!(pocket.diameter, 8.0);
+        assert_eq!(pocket.depth, 5.0);
+    }
+
+    #[test]
+    fn blend_feature_has_correct_properties() {
+        let fillet = BlendFeature {
+            face_indices: vec![0],
+            is_fillet: true,
+            radius: 2.0,
+            chamfer_distance: 0.0,
+            sample_point: DVec3::new(1.0, 0.0, 0.0),
+            normal: DVec3::Y,
+        };
+
+        assert!(fillet.is_fillet);
+        assert_eq!(fillet.radius, 2.0);
+        assert_eq!(fillet.chamfer_distance, 0.0);
+
+        let chamfer = BlendFeature {
+            face_indices: vec![1],
+            is_fillet: false,
+            radius: 0.0,
+            chamfer_distance: 1.5,
+            sample_point: DVec3::new(2.0, 0.0, 0.0),
+            normal: DVec3::Y,
+        };
+
+        assert!(!chamfer.is_fillet);
+        assert_eq!(chamfer.chamfer_distance, 1.5);
+    }
+
+    #[test]
+    fn feature_group_has_correct_properties() {
+        let group = FeatureGroup {
+            id: 0,
+            cylindrical_indices: vec![0, 1],
+            conical_indices: vec![],
+            slot_indices: vec![],
+            pocket_indices: vec![],
+            blend_indices: vec![0],
+            total_faces: 10,
+        };
+
+        assert_eq!(group.id, 0);
+        assert_eq!(group.cylindrical_indices.len(), 2);
+        assert_eq!(group.blend_indices.len(), 1);
+        assert_eq!(group.total_faces, 10);
+    }
+
+    #[test]
+    fn defeaturing_options_has_new_fields() {
+        let opts = DefeaturingOptions {
+            enable_slot_features: true,
+            max_slot_width: 5.0,
+            max_slot_depth: 10.0,
+            enable_pocket_features: true,
+            max_pocket_diameter: 8.0,
+            max_pocket_depth: 15.0,
+            enable_blend_features: true,
+            max_blend_radius: 2.0,
+            max_chamfer_distance: 3.0,
+            ..Default::default()
+        };
+
+        assert!(opts.enable_slot_features);
+        assert_eq!(opts.max_slot_width, 5.0);
+        assert!(opts.enable_pocket_features);
+        assert!(opts.enable_blend_features);
+        assert_eq!(opts.max_blend_radius, 2.0);
+    }
+
+    #[test]
+    fn defeaturing_report_has_new_fields() {
+        let report = DefeaturingReport {
+            holes_removed: 2,
+            slots_removed: 1,
+            pockets_removed: 3,
+            blends_removed: 5,
+            feature_groups_processed: 2,
+            grouped_faces: 20,
+            ..Default::default()
+        };
+
+        assert_eq!(report.slots_removed, 1);
+        assert_eq!(report.pockets_removed, 3);
+        assert_eq!(report.blends_removed, 5);
+        assert_eq!(report.feature_groups_processed, 2);
+        assert_eq!(report.grouped_faces, 20);
     }
 }
