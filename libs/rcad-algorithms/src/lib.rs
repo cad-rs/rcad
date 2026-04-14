@@ -421,6 +421,10 @@ pub struct BooleanRobustAttemptReport {
     pub make_connected_scope_seed_vertex_count: Option<usize>,
     /// Number of scoped seed edges observed during this attempt.
     pub make_connected_scope_seed_edge_count: Option<usize>,
+    /// Whether glue mode was enabled for this attempt.
+    pub used_glue: bool,
+    /// Effective glue tolerance configured for this attempt.
+    pub glue_tolerance: f64,
     /// Retry classification for a failed attempt.
     pub retry_class: Option<BooleanRetryClass>,
     /// Debug message for a failed attempt.
@@ -596,15 +600,21 @@ fn tune_boolean_options_for_retry_class(
         return;
     };
 
-    if !options.run_make_connected {
-        return;
-    }
-
-    let base_tol = options.make_connected_tolerance.max(tolerance::TOLERANCE_ABS);
+    let base_tol = options
+        .make_connected_tolerance
+        .max(options.glue_tolerance)
+        .max(tolerance::TOLERANCE_ABS);
 
     match retry_class {
         BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => {}
         BooleanRetryClass::DegenerateTopology => {
+            options.use_glue = true;
+            options.glue_tolerance = options.glue_tolerance.max(base_tol * 10.0);
+
+            if !options.run_make_connected {
+                return;
+            }
+
             options.make_connected_max_passes = options.make_connected_max_passes.max(4);
             options.make_connected_tolerance_growth =
                 options.make_connected_tolerance_growth.max(2.0);
@@ -649,6 +659,13 @@ fn tune_boolean_options_for_retry_class(
             }
         }
         BooleanRetryClass::NumericalInstability => {
+            options.use_glue = true;
+            options.glue_tolerance = options.glue_tolerance.max(base_tol * 100.0);
+
+            if !options.run_make_connected {
+                return;
+            }
+
             options.make_connected_max_passes = options.make_connected_max_passes.max(5);
             options.make_connected_tolerance_growth =
                 options.make_connected_tolerance_growth.max(10.0);
@@ -1294,6 +1311,8 @@ pub fn boolean_op_robust(
                     make_connected_scope_seed_edge_count: Some(
                         report.make_connected_scope_seed_edges.len(),
                     ),
+                    used_glue: attempt_options.use_glue,
+                    glue_tolerance: attempt_options.glue_tolerance,
                     retry_class: None,
                     error_message: None,
                     output_faces: Some(report.output_faces),
@@ -1329,6 +1348,8 @@ pub fn boolean_op_robust(
                     make_connected_scope_heuristic_seed_edge_count: None,
                     make_connected_scope_seed_vertex_count: None,
                     make_connected_scope_seed_edge_count: None,
+                    used_glue: attempt_options.use_glue,
+                    glue_tolerance: attempt_options.glue_tolerance,
                     retry_class: Some(retry_class),
                     error_message: Some(format!("{err:?}")),
                     output_faces: None,
@@ -3791,6 +3812,11 @@ mod tests {
             make_connected_scope_global_fallback_tolerance_cap: 0.0,
             ..BooleanOptions::default()
         };
+        let expected_glue_tolerance = options
+            .make_connected_tolerance
+            .max(options.glue_tolerance)
+            .max(tolerance::TOLERANCE_ABS)
+            * 10.0;
 
         tune_boolean_options_for_retry_class(
             &mut options,
@@ -3798,6 +3824,8 @@ mod tests {
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
+        assert!(options.use_glue);
+        assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
         assert_eq!(
             options.make_connected_scope_seed_mode,
             MakeConnectedScopeSeedMode::TopologySeamCandidates
@@ -3833,6 +3861,11 @@ mod tests {
             make_connected_scope_global_fallback_tolerance_cap: 0.0,
             ..BooleanOptions::default()
         };
+        let expected_glue_tolerance = options
+            .make_connected_tolerance
+            .max(options.glue_tolerance)
+            .max(tolerance::TOLERANCE_ABS)
+            * 100.0;
 
         tune_boolean_options_for_retry_class(
             &mut options,
@@ -3840,6 +3873,8 @@ mod tests {
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
+        assert!(options.use_glue);
+        assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
         assert_eq!(
             options.make_connected_scope_seed_mode,
             MakeConnectedScopeSeedMode::Hybrid
@@ -3852,6 +3887,31 @@ mod tests {
         assert!(options.make_connected_scope_global_fallback_max_passes >= 5);
         assert!(options.make_connected_scope_global_fallback_tolerance_growth >= 10.0);
         assert!(options.make_connected_scope_global_fallback_tolerance_cap >= 1e-2);
+    }
+
+    #[test]
+    fn retry_class_tunes_glue_even_without_make_connected() {
+        let mut options = BooleanOptions {
+            run_make_connected: false,
+            make_connected_tolerance: 1e-6,
+            glue_tolerance: tolerance::TOLERANCE_ABS,
+            use_glue: false,
+            ..BooleanOptions::default()
+        };
+        let expected_glue_tolerance = options
+            .make_connected_tolerance
+            .max(options.glue_tolerance)
+            .max(tolerance::TOLERANCE_ABS)
+            * 100.0;
+
+        tune_boolean_options_for_retry_class(
+            &mut options,
+            Some(BooleanRetryClass::NumericalInstability),
+        );
+
+        assert!(options.use_glue);
+        assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
+        assert_eq!(options.make_connected_max_passes, BooleanOptions::default().make_connected_max_passes);
     }
 
     #[test]
@@ -3917,6 +3977,11 @@ mod tests {
             .robust_attempts
             .iter()
             .all(|a| !a.success || a.make_connected_scope_seed_source.is_none()));
+        assert!(report.robust_attempts.iter().all(|a| !a.used_glue));
+        assert!(report
+            .robust_attempts
+            .iter()
+            .all(|a| (a.glue_tolerance - tolerance::TOLERANCE_ABS).abs() <= 1e-15));
     }
 
     #[test]
@@ -4000,6 +4065,8 @@ mod tests {
             attempt.make_connected_scope_seed_face_coverage,
             report.make_connected_scope_seed_face_coverage
         );
+        assert!(!attempt.used_glue);
+        assert!((attempt.glue_tolerance - tolerance::TOLERANCE_ABS).abs() <= 1e-15);
     }
 
     #[test]
