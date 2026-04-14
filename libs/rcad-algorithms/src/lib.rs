@@ -1579,12 +1579,15 @@ fn select_scoped_seed_edges(
     mode: MakeConnectedScopeSeedMode,
     min_history_edges: usize,
 ) -> (Vec<usize>, usize, usize, MakeConnectedScopeSeedSource) {
-    let history_seed_edges = history
+    let history_seed_edges_raw = history
         .map(|h| make_connected_seed_edges_from_boolean_history(brep, h))
         .unwrap_or_default();
+    // Expand history-derived seeds to one-ring adjacency so scoped make-connected
+    // can touch immediate neighborhood edges around boolean interface topology.
+    let history_seed_edges = expand_seed_edges_with_one_ring(brep, &history_seed_edges_raw);
     let heuristic_seed_edges = make_connected_seed_edges(brep, seed_length, mode);
 
-    if history_seed_edges.is_empty() {
+    if history_seed_edges_raw.is_empty() {
         return (
             heuristic_seed_edges.clone(),
             0,
@@ -1593,7 +1596,7 @@ fn select_scoped_seed_edges(
         );
     }
 
-    if history_seed_edges.len() < min_history_edges {
+    if history_seed_edges_raw.len() < min_history_edges {
         let mut set = std::collections::BTreeSet::new();
         for ei in &history_seed_edges {
             set.insert(*ei);
@@ -1603,7 +1606,7 @@ fn select_scoped_seed_edges(
         }
         return (
             set.into_iter().collect(),
-            history_seed_edges.len(),
+            history_seed_edges_raw.len(),
             heuristic_seed_edges.len(),
             MakeConnectedScopeSeedSource::HistoryAugmentedHeuristic,
         );
@@ -1611,10 +1614,22 @@ fn select_scoped_seed_edges(
 
     (
         history_seed_edges.clone(),
-        history_seed_edges.len(),
+        history_seed_edges_raw.len(),
         heuristic_seed_edges.len(),
         MakeConnectedScopeSeedSource::History,
     )
+}
+
+fn expand_seed_edges_with_one_ring(brep: &BRep, seed_edges: &[usize]) -> Vec<usize> {
+    let mut out: std::collections::BTreeSet<usize> = seed_edges.iter().copied().collect();
+    for &ei in seed_edges {
+        for fi in rcad_kernel::edge_adjacent_faces(brep, ei) {
+            for fei in rcad_kernel::face_edges(brep, fi) {
+                out.insert(fei);
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 fn make_connected_seed_edges_from_boolean_history(
@@ -5434,6 +5449,69 @@ mod tests {
         assert!(heuristic_count >= 1);
         assert!(seed_edges.contains(&0));
         assert!(seed_edges.contains(&1));
+    }
+
+    #[test]
+    fn select_scoped_seed_edges_expands_history_to_neighbor_edges() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 3
+
+        // e0 is the interface edge shared by both faces.
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+        brep.edges.push(Edge { start: 1, end: 3 }); // e3
+        brep.edges.push(Edge { start: 3, end: 0 }); // e4
+
+        let f0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(0), WireEdge::fwd(3), WireEdge::fwd(4)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![f0, f1] }],
+        });
+
+        let history = BooleanHistory {
+            face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+            edge_origins: vec![],
+            vertex_origins: vec![],
+            shell_origins: vec![],
+            solid_origins: vec![],
+        };
+
+        let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(
+            &brep,
+            Some(&history),
+            1e-6,
+            MakeConnectedScopeSeedMode::ShortEdges,
+            1,
+        );
+
+        // Raw history count stays semantic (interface edge count), while selected
+        // seeds include one-ring neighbors around that interface.
+        assert_eq!(history_count, 1);
+        assert_eq!(source, MakeConnectedScopeSeedSource::History);
+        assert!(seed_edges.contains(&0));
+        assert!(seed_edges.len() > 1, "expected one-ring history expansion");
     }
 
     #[test]
