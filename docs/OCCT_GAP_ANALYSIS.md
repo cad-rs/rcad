@@ -133,7 +133,7 @@ OCCT's TKBO provides a tiered boolean platform beyond simple Fuse/Cut/Common:
 
 1. Deepen make-connected cleanup from iterative baseline (merge/small-edge) to scoped connectivity rebuilding.
 2. Add gluing/shared-face fast path for robust and faster near-contact operations.
-3. Deepen fuzzy strategy with failure-class-aware escalation tuning (baseline adaptive policy now present).
+3. Deepen fuzzy strategy with failure-class-aware escalation tuning (baseline adaptive policy now present; configurable conservative/adaptive/aggressive retry policies added).
 4. Result simplification pass (same-domain face merging, internal face removal after fuse, small-edge cleanup).
 5. Deepen defeaturing robustness (feature-class breadth, topology healing after suppression).
 

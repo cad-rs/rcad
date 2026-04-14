@@ -288,6 +288,8 @@ pub struct BooleanRobustOptions {
     pub base: BooleanOptions,
     /// Additional fuzzy tolerance values to try when an attempt fails.
     pub fuzzy_retry_ladder: Vec<f64>,
+    /// Retry policy controlling candidate generation after each failure.
+    pub retry_policy: BooleanRetryPolicy,
 }
 
 /// Retry classes used by adaptive robust-boolean retry policy.
@@ -303,6 +305,17 @@ pub enum BooleanRetryClass {
     NumericalInstability,
 }
 
+/// Retry-policy presets for robust boolean fuzzy escalation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanRetryPolicy {
+    /// Conservative: only retry with ladder values larger than attempted fuzzy.
+    Conservative,
+    /// Adaptive: classify failures and choose escalation candidates by class.
+    AdaptiveByFailureClass,
+    /// Aggressive: retry ladder values plus multiplicative fuzzy boosts.
+    Aggressive,
+}
+
 impl Default for BooleanRobustOptions {
     fn default() -> Self {
         Self {
@@ -312,6 +325,7 @@ impl Default for BooleanRobustOptions {
                 tolerance::TOLERANCE_ABS * 100.0,
                 tolerance::TOLERANCE_ABS * 1000.0,
             ],
+            retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
         }
     }
 }
@@ -386,6 +400,61 @@ pub fn boolean_retry_ladder_for_error(
                     push_unique(v);
                 }
             }
+        }
+    }
+
+    out
+}
+
+/// Build next fuzzy values using the configured retry policy.
+pub fn boolean_retry_ladder_for_error_with_policy(
+    attempted_fuzzy: f64,
+    ladder: &[f64],
+    err: &BooleanError,
+    policy: BooleanRetryPolicy,
+) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::new();
+    let mut push_unique = |v: f64| {
+        if v <= 0.0 {
+            return;
+        }
+        if !out.iter().any(|e| (*e - v).abs() <= 1e-15) {
+            out.push(v);
+        }
+    };
+
+    match policy {
+        BooleanRetryPolicy::AdaptiveByFailureClass => {
+            return boolean_retry_ladder_for_error(attempted_fuzzy, ladder, err);
+        }
+        BooleanRetryPolicy::Conservative => {
+            match classify_boolean_retry(err) {
+                BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => return out,
+                _ => {}
+            }
+            for &v in ladder {
+                if v > attempted_fuzzy {
+                    push_unique(v);
+                }
+            }
+        }
+        BooleanRetryPolicy::Aggressive => {
+            match classify_boolean_retry(err) {
+                BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => return out,
+                _ => {}
+            }
+            let baseline = if attempted_fuzzy > 0.0 {
+                attempted_fuzzy
+            } else {
+                tolerance::TOLERANCE_ABS
+            };
+            for &v in ladder {
+                if v > attempted_fuzzy {
+                    push_unique(v);
+                }
+            }
+            push_unique(baseline * 10.0);
+            push_unique(baseline * 100.0);
         }
     }
 
@@ -846,10 +915,11 @@ pub fn boolean_op_robust(
                 return Ok((brep, report));
             }
             Err(err) => {
-                for candidate in boolean_retry_ladder_for_error(
+                for candidate in boolean_retry_ladder_for_error_with_policy(
                     fuzzy,
                     &options.fuzzy_retry_ladder,
                     &err,
+                    options.retry_policy,
                 ) {
                     let seen = tried.iter().any(|v| (*v - candidate).abs() <= 1e-15)
                         || pending.iter().any(|v| (*v - candidate).abs() <= 1e-15);
@@ -3206,6 +3276,29 @@ mod tests {
     }
 
     #[test]
+    fn boolean_retry_ladder_with_conservative_policy_uses_ladder_only() {
+        let vals = boolean_retry_ladder_for_error_with_policy(
+            1e-6,
+            &[1e-6, 1e-5, 1e-4],
+            &BooleanError::NumericalFailure("test"),
+            BooleanRetryPolicy::Conservative,
+        );
+        assert_eq!(vals, vec![1e-5, 1e-4]);
+    }
+
+    #[test]
+    fn boolean_retry_ladder_with_aggressive_policy_adds_boosts() {
+        let vals = boolean_retry_ladder_for_error_with_policy(
+            1e-6,
+            &[1e-5],
+            &BooleanError::DegenerateResult,
+            BooleanRetryPolicy::Aggressive,
+        );
+        assert!(vals.contains(&1e-5));
+        assert!(vals.iter().any(|v| (*v - 1e-4).abs() <= 1e-14));
+    }
+
+    #[test]
     fn boolean_op_robust_reports_retry_metadata() {
         let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
@@ -3236,6 +3329,7 @@ mod tests {
                        glue_tolerance: tolerance::TOLERANCE_ABS,
                 },
                 fuzzy_retry_ladder: vec![1e-6, 1e-5],
+                retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
             },
         )
         .expect("robust union should succeed");
