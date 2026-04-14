@@ -5,6 +5,14 @@ use crate::{
     StepGeometricTolerance, StepGeometricToleranceWithDatumReference, StepKinematicPair,
     StepPropertyDefinitionRepr,
 };
+use crate::{
+    StepDimensionalTolerance, StepToleranceValue, StepPositionTolerance,
+    StepOrientationTolerance, StepFormTolerance, StepRunoutTolerance, StepProfileTolerance,
+    StepDatumReferenceFrame, StepDatumTarget, StepToleranceZoneDefinitionEnhanced,
+    OrientationToleranceType, FormToleranceType, RunoutToleranceType, ProfileToleranceType,
+    DatumTargetType, ToleranceZoneShape, ToleranceZonePosition,
+};
+use rcad_kernel::surface_to_bspline;
 
 /// Selects which STEP application protocol to use when writing a file.
 ///
@@ -40,6 +48,17 @@ pub struct StepAp242Metadata {
     pub datums: Vec<StepDatum>,
     pub datum_systems: Vec<StepDatumSystem>,
     pub kinematic_pairs: Vec<StepKinematicPair>,
+    // GDT Extended fields
+    pub dimensional_tolerances: Vec<StepDimensionalTolerance>,
+    pub tolerance_values: Vec<StepToleranceValue>,
+    pub position_tolerances: Vec<StepPositionTolerance>,
+    pub orientation_tolerances: Vec<StepOrientationTolerance>,
+    pub form_tolerances: Vec<StepFormTolerance>,
+    pub runout_tolerances: Vec<StepRunoutTolerance>,
+    pub profile_tolerances: Vec<StepProfileTolerance>,
+    pub datum_reference_frames: Vec<StepDatumReferenceFrame>,
+    pub datum_targets: Vec<StepDatumTarget>,
+    pub tolerance_zone_definitions_enhanced: Vec<StepToleranceZoneDefinitionEnhanced>,
 }
 
 pub struct StepWriter;
@@ -678,13 +697,55 @@ impl Part21Writer {
             }
             None => self.plane("face_plane", fallback_placement),
             Some(Surface3::BSpline(bs)) => self.write_bspline_surface(&bs.clone()),
-            Some(Surface3::LinearExtrusion(_))
-            | Some(Surface3::Revolution(_))
-            | Some(Surface3::Bezier(_))
-                | Some(Surface3::Offset(_))
-                | Some(Surface3::Gordon(_)) => {
-                // Swept/Bezier/Offset surfaces: fall back to plane (no direct STEP writer yet)
-                self.plane("face_plane", fallback_placement)
+            Some(Surface3::Ellipsoid(ellipsoid)) => {
+                let bs = surface_to_bspline(&Surface3::Ellipsoid(ellipsoid), 9, 9);
+                let name = format!(
+                    "RCAD_ELLIPSOID;c={},{},{};a={},{},{};d={},{},{};r={},{},{}",
+                    ellipsoid.center.x,
+                    ellipsoid.center.y,
+                    ellipsoid.center.z,
+                    ellipsoid.axis.x,
+                    ellipsoid.axis.y,
+                    ellipsoid.axis.z,
+                    ellipsoid.ref_dir.x,
+                    ellipsoid.ref_dir.y,
+                    ellipsoid.ref_dir.z,
+                    ellipsoid.radius_x,
+                    ellipsoid.radius_y,
+                    ellipsoid.radius_z,
+                );
+                self.write_bspline_surface_named(&name, &bs)
+            }
+            Some(Surface3::Helicoid(helicoid)) => {
+                let bs = surface_to_bspline(&Surface3::Helicoid(helicoid), 9, 9);
+                let name = format!(
+                    "RCAD_HELICOID;o={},{},{};a={},{},{};d={},{},{};p={}",
+                    helicoid.origin.x,
+                    helicoid.origin.y,
+                    helicoid.origin.z,
+                    helicoid.axis.x,
+                    helicoid.axis.y,
+                    helicoid.axis.z,
+                    helicoid.ref_dir.x,
+                    helicoid.ref_dir.y,
+                    helicoid.ref_dir.z,
+                    helicoid.pitch,
+                );
+                self.write_bspline_surface_named(&name, &bs)
+            }
+            Some(surface @ Surface3::Pipe(_))
+            | Some(surface @ Surface3::LinearExtrusion(_))
+            | Some(surface @ Surface3::Revolution(_))
+            | Some(surface @ Surface3::Ruled(_))
+            | Some(surface @ Surface3::Coons(_))
+            | Some(surface @ Surface3::TriBezier(_))
+            | Some(surface @ Surface3::Bezier(_))
+            | Some(surface @ Surface3::Offset(_))
+            | Some(surface @ Surface3::Gordon(_)) => {
+                // Export higher-level surfaces through a sampled NURBS fallback
+                // instead of collapsing them to a plane.
+                let bs = surface_to_bspline(&surface, 9, 9);
+                self.write_bspline_surface(&bs)
             }
             Some(Surface3::Trimmed(ts)) => {
                 // Write the underlying basis surface — trim bounds are implied by the
@@ -695,6 +756,14 @@ impl Part21Writer {
     }
 
     fn write_bspline_surface(&mut self, bs: &rcad_kernel::geom::BSplineSurface) -> u64 {
+        self.write_bspline_surface_named("bspline_surf", bs)
+    }
+
+    fn write_bspline_surface_named(
+        &mut self,
+        name: &str,
+        bs: &rcad_kernel::geom::BSplineSurface,
+    ) -> u64 {
         let n_u = bs.control_points.len();
         let n_v = bs.control_points.first().map(|r| r.len()).unwrap_or(0);
         if n_u == 0 || n_v == 0 {
@@ -717,7 +786,7 @@ impl Part21Writer {
         let (mults_u, knots_u) = compress_knot_vector(&bs.knots_u);
         let (mults_v, knots_v) = compress_knot_vector(&bs.knots_v);
         self.b_spline_surface_with_knots(
-            "bspline_surf",
+            name,
             bs.degree_u,
             bs.degree_v,
             &cp_grid,
@@ -1835,6 +1904,187 @@ impl Part21Writer {
             };
             self.push(format!("{}({},{},{})", entity, name, desc, refs));
         }
+        // Write GDT extended entities
+        for tol in &metadata.dimensional_tolerances {
+            self.write_dimensional_tolerance(tol);
+        }
+        for val in &metadata.tolerance_values {
+            self.write_tolerance_value(val);
+        }
+        for tol in &metadata.position_tolerances {
+            self.write_position_tolerance(tol);
+        }
+        for tol in &metadata.orientation_tolerances {
+            self.write_orientation_tolerance(tol);
+        }
+        for tol in &metadata.form_tolerances {
+            self.write_form_tolerance(tol);
+        }
+        for tol in &metadata.runout_tolerances {
+            self.write_runout_tolerance(tol);
+        }
+        for tol in &metadata.profile_tolerances {
+            self.write_profile_tolerance(tol);
+        }
+        for frame in &metadata.datum_reference_frames {
+            self.write_datum_reference_frame(frame);
+        }
+        for target in &metadata.datum_targets {
+            self.write_datum_target(target);
+        }
+        for def in &metadata.tolerance_zone_definitions_enhanced {
+            self.write_tolerance_zone_definition_enhanced(def);
+        }
+    }
+
+    fn write_dimensional_tolerance(&mut self, tol: &StepDimensionalTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let dim_char = opt_ref_token(tol.dimensional_characteristic_id);
+        let upper = tol.upper_tolerance.map(|v| format!("{}", v)).unwrap_or_else(|| "$".to_string());
+        let lower = tol.lower_tolerance.map(|v| format!("{}", v)).unwrap_or_else(|| "$".to_string());
+        let unit = opt_step_string(tol.unit.as_deref());
+        self.push(format!(
+            "DIMENSIONAL_TOLERANCE({},{},{},{},{},{})",
+            name, desc, dim_char, upper, lower, unit
+        ));
+    }
+
+    fn write_tolerance_value(&mut self, val: &StepToleranceValue) {
+        let name = opt_step_string(val.name.as_deref());
+        let value = val.value;
+        let unit = opt_step_string(val.unit.as_deref());
+        self.push(format!(
+            "MEASURE_REPRESENTATION_ITEM({},{},{})",
+            name, value, unit
+        ));
+    }
+
+    fn write_position_tolerance(&mut self, tol: &StepPositionTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let val = opt_ref_token(tol.value_entity_id);
+        let shape = opt_ref_token(tol.shape_aspect_id);
+        let datum = opt_ref_token(tol.datum_system_id);
+        let projected = if tol.projected { ".T." } else { ".F." };
+        let proj_height = tol.projected_height.map(|h| format!("{}", h)).unwrap_or_else(|| "$".to_string());
+        self.push(format!(
+            "POSITION_TOLERANCE({},{},{},{},{},{},{})",
+            name, desc, val, shape, datum, projected, proj_height
+        ));
+    }
+
+    fn write_orientation_tolerance(&mut self, tol: &StepOrientationTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let val = opt_ref_token(tol.value_entity_id);
+        let shape = opt_ref_token(tol.shape_aspect_id);
+        let datum = opt_ref_token(tol.datum_system_id);
+        let entity_name = match tol.orientation_type {
+            OrientationToleranceType::Angularity => "ANGULARITY_TOLERANCE",
+            OrientationToleranceType::Perpendicularity => "PERPENDICULARITY_TOLERANCE",
+            OrientationToleranceType::Parallelism => "PARALLELISM_TOLERANCE",
+        };
+        self.push(format!(
+            "{}({},{},{},{},{})",
+            entity_name, name, desc, val, shape, datum
+        ));
+    }
+
+    fn write_form_tolerance(&mut self, tol: &StepFormTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let val = opt_ref_token(tol.value_entity_id);
+        let shape = opt_ref_token(tol.shape_aspect_id);
+        let entity_name = match tol.form_type {
+            FormToleranceType::Flatness => "FLATNESS_TOLERANCE",
+            FormToleranceType::Straightness => "STRAIGHTNESS_TOLERANCE",
+            FormToleranceType::Circularity => "CIRCULARITY_TOLERANCE",
+            FormToleranceType::Cylindricity => "CYLINDRICITY_TOLERANCE",
+        };
+        self.push(format!("{}({},{},{},{})", entity_name, name, desc, val, shape));
+    }
+
+    fn write_runout_tolerance(&mut self, tol: &StepRunoutTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let val = opt_ref_token(tol.value_entity_id);
+        let shape = opt_ref_token(tol.shape_aspect_id);
+        let datum = opt_ref_token(tol.datum_system_id);
+        let entity_name = match tol.runout_type {
+            RunoutToleranceType::CircularRunout => "CIRCULAR_RUNOUT_TOLERANCE",
+            RunoutToleranceType::TotalRunout => "TOTAL_RUNOUT_TOLERANCE",
+        };
+        self.push(format!(
+            "{}({},{},{},{},{})",
+            entity_name, name, desc, val, shape, datum
+        ));
+    }
+
+    fn write_profile_tolerance(&mut self, tol: &StepProfileTolerance) {
+        let name = opt_step_string(tol.name.as_deref());
+        let desc = opt_step_string(tol.description.as_deref());
+        let val = opt_ref_token(tol.value_entity_id);
+        let shape = opt_ref_token(tol.shape_aspect_id);
+        let datum = opt_ref_token(tol.datum_system_id);
+        let entity_name = match tol.profile_type {
+            ProfileToleranceType::ProfileOfALine => "LINE_PROFILE_TOLERANCE",
+            ProfileToleranceType::ProfileOfASurface => "SURFACE_PROFILE_TOLERANCE",
+        };
+        self.push(format!(
+            "{}({},{},{},{},{})",
+            entity_name, name, desc, val, shape, datum
+        ));
+    }
+
+    fn write_datum_reference_frame(&mut self, frame: &StepDatumReferenceFrame) {
+        let name = opt_step_string(frame.name.as_deref());
+        let desc = opt_step_string(frame.description.as_deref());
+        let refs = if frame.datum_system_ids.is_empty() {
+            "$".to_string()
+        } else {
+            format!(
+                "({})",
+                frame
+                    .datum_system_ids
+                    .iter()
+                    .map(|id| format!("#{}", id))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        self.push(format!("DATUM_REFERENCE_FRAME({},{},{})", name, desc, refs));
+    }
+
+    fn write_datum_target(&mut self, target: &StepDatumTarget) {
+        let name = opt_step_string(target.name.as_deref());
+        let desc = opt_step_string(target.description.as_deref());
+        let target_id = opt_step_string(target.target_identifier.as_deref());
+        let datum = opt_ref_token(target.datum_id);
+        let shape = opt_ref_token(target.shape_aspect_id);
+        let entity_name = match target.target_type {
+            DatumTargetType::Point => "DATUM_TARGET_POINT",
+            DatumTargetType::Line => "DATUM_TARGET_LINE",
+            DatumTargetType::Area => "DATUM_TARGET_AREA",
+            DatumTargetType::AreaCircle => "DATUM_TARGET_CIRCLE",
+            DatumTargetType::AreaRectangle => "DATUM_TARGET_RECTANGLE",
+        };
+        self.push(format!(
+            "{}({},{},{},{},{})",
+            entity_name, name, desc, target_id, datum, shape
+        ));
+    }
+
+    fn write_tolerance_zone_definition_enhanced(&mut self, def: &StepToleranceZoneDefinitionEnhanced) {
+        let name = opt_step_string(def.name.as_deref());
+        let desc = opt_step_string(def.description.as_deref());
+        let zone = opt_ref_token(def.tolerance_zone_id);
+        let shape = opt_ref_token(def.shape_aspect_id);
+        let defining_shape = opt_ref_token(def.defining_shape_aspect_id);
+        self.push(format!(
+            "TOLERANCE_ZONE_DEFINITION({},{},{},{},{})",
+            name, desc, zone, shape, defining_shape
+        ));
     }
 
     fn push(&mut self, body: String) -> u64 {
@@ -2035,12 +2285,18 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         Surface3::Sphere(s) => Some(s.axis),
         Surface3::Cone(c) => Some(c.axis),
         Surface3::Torus(t) => Some(t.axis),
+        Surface3::Ellipsoid(e) => Some(e.axis),
+        Surface3::Helicoid(h) => Some(h.axis),
+        Surface3::Pipe(_) => None,
         Surface3::BSpline(_) => None,
         Surface3::LinearExtrusion(_)
         | Surface3::Revolution(_)
+        | Surface3::Ruled(_)
+        | Surface3::Coons(_)
+        | Surface3::TriBezier(_)
         | Surface3::Bezier(_)
-            | Surface3::Offset(_)
-            | Surface3::Gordon(_) => None,
+        | Surface3::Offset(_)
+        | Surface3::Gordon(_) => None,
         Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
     }
 }
@@ -2187,6 +2443,17 @@ mod tests {
                 description: Some("joint".into()),
                 related_entity_ids: vec![81, 82, 83],
             }],
+            // GDT extended fields
+            dimensional_tolerances: vec![],
+            tolerance_values: vec![],
+            position_tolerances: vec![],
+            orientation_tolerances: vec![],
+            form_tolerances: vec![],
+            runout_tolerances: vec![],
+            profile_tolerances: vec![],
+            datum_reference_frames: vec![],
+            datum_targets: vec![],
+            tolerance_zone_definitions_enhanced: vec![],
         };
         let step = StepWriter::write_string_with_ap242_metadata(
             &brep,
@@ -2270,6 +2537,92 @@ mod tests {
                 description: Some("guide".into()),
                 related_entity_ids: vec![90, 91],
             }],
+            // GDT extended fields
+            dimensional_tolerances: vec![StepDimensionalTolerance {
+                entity_id: 0,
+                name: Some("diam_tol".into()),
+                description: Some("diameter tolerance".into()),
+                dimensional_characteristic_id: Some(100),
+                upper_tolerance: Some(0.05),
+                lower_tolerance: Some(-0.05),
+                unit: Some("mm".into()),
+            }],
+            tolerance_values: vec![StepToleranceValue {
+                entity_id: 0,
+                name: Some("tol_val".into()),
+                value: 0.025,
+                unit: Some("mm".into()),
+            }],
+            position_tolerances: vec![StepPositionTolerance {
+                entity_id: 0,
+                name: Some("pos_tol".into()),
+                description: Some("positional tolerance".into()),
+                value_entity_id: Some(101),
+                shape_aspect_id: Some(102),
+                datum_system_id: Some(103),
+                projected: false,
+                projected_height: None,
+            }],
+            orientation_tolerances: vec![StepOrientationTolerance {
+                entity_id: 0,
+                name: Some("ang_tol".into()),
+                description: Some("angularity".into()),
+                value_entity_id: Some(104),
+                shape_aspect_id: Some(105),
+                datum_system_id: Some(106),
+                orientation_type: OrientationToleranceType::Angularity,
+            }],
+            form_tolerances: vec![StepFormTolerance {
+                entity_id: 0,
+                name: Some("flat_tol".into()),
+                description: Some("flatness".into()),
+                value_entity_id: Some(107),
+                shape_aspect_id: Some(108),
+                form_type: FormToleranceType::Flatness,
+            }],
+            runout_tolerances: vec![StepRunoutTolerance {
+                entity_id: 0,
+                name: Some("cr_tol".into()),
+                description: Some("circular runout".into()),
+                value_entity_id: Some(109),
+                shape_aspect_id: Some(110),
+                datum_system_id: Some(111),
+                runout_type: RunoutToleranceType::CircularRunout,
+            }],
+            profile_tolerances: vec![StepProfileTolerance {
+                entity_id: 0,
+                name: Some("lin_tol".into()),
+                description: Some("profile of a line".into()),
+                value_entity_id: Some(112),
+                shape_aspect_id: Some(113),
+                datum_system_id: None,
+                profile_type: ProfileToleranceType::ProfileOfALine,
+            }],
+            datum_reference_frames: vec![StepDatumReferenceFrame {
+                entity_id: 0,
+                name: Some("DRF1".into()),
+                description: Some("datum reference frame".into()),
+                datum_system_ids: vec![88],
+            }],
+            datum_targets: vec![StepDatumTarget {
+                entity_id: 0,
+                name: Some("A1".into()),
+                description: Some("datum target".into()),
+                target_identifier: Some("A1".into()),
+                datum_id: Some(88),
+                target_type: DatumTargetType::Point,
+                shape_aspect_id: Some(114),
+            }],
+            tolerance_zone_definitions_enhanced: vec![StepToleranceZoneDefinitionEnhanced {
+                entity_id: 0,
+                name: Some("cylindrical".into()),
+                description: Some("symmetric".into()),
+                tolerance_zone_id: Some(115),
+                shape_aspect_id: Some(116),
+                zone_shape: ToleranceZoneShape::Cylindrical,
+                zone_position: ToleranceZonePosition::Symmetric,
+                defining_shape_aspect_id: None,
+            }],
         };
 
         let step = StepWriter::write_string_with_ap242_metadata(
@@ -2293,6 +2646,17 @@ mod tests {
         assert_eq!(doc_meta.datums.len(), 1);
         assert_eq!(doc_meta.datum_systems.len(), 1);
         assert_eq!(doc_meta.kinematic_pairs.len(), 1);
+        // GDT extended assertions
+        assert_eq!(doc_meta.dimensional_tolerances.len(), 1);
+        assert_eq!(doc_meta.tolerance_values.len(), 1);
+        assert_eq!(doc_meta.position_tolerances.len(), 1);
+        assert_eq!(doc_meta.orientation_tolerances.len(), 1);
+        assert_eq!(doc_meta.form_tolerances.len(), 1);
+        assert_eq!(doc_meta.runout_tolerances.len(), 1);
+        assert_eq!(doc_meta.profile_tolerances.len(), 1);
+        assert_eq!(doc_meta.datum_reference_frames.len(), 1);
+        assert_eq!(doc_meta.datum_targets.len(), 1);
+        assert_eq!(doc_meta.tolerance_zone_definitions_enhanced.len(), 1);
     }
 
     #[test]
@@ -2443,5 +2807,564 @@ mod tests {
             "expected at least 1 cone face after round-trip, got {}",
             cone_count
         );
+    }
+
+    #[test]
+    fn exports_ellipsoid_surface_emits_semantic_tag() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Ellipsoid(rcad_kernel::EllipsoidalSurface {
+            center: DVec3::new(0.5, 0.5, 0.5),
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 2.0,
+            radius_y: 1.5,
+            radius_z: 1.0,
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
+        assert!(step.contains("RCAD_ELLIPSOID"));
+
+        let reparsed = StepReader::parse_string(&step).expect("ellipsoid fallback STEP should parse");
+        let ellipsoid_surfaces = reparsed
+            .geom
+            .surfaces
+            .iter()
+            .filter(|surface| matches!(surface, Surface3::Ellipsoid(_)))
+            .count();
+        assert!(
+            ellipsoid_surfaces > 0,
+            "expected at least one reparsed ellipsoid surface"
+        );
+    }
+
+    #[test]
+    fn exports_helicoid_surface_emits_semantic_tag() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Helicoid(rcad_kernel::HelicoidSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            pitch: 3.0,
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
+        assert!(step.contains("RCAD_HELICOID"));
+
+        let reparsed = StepReader::parse_string(&step).expect("helicoid fallback STEP should parse");
+        let helicoid_surfaces = reparsed
+            .geom
+            .surfaces
+            .iter()
+            .filter(|surface| matches!(surface, Surface3::Helicoid(_)))
+            .count();
+        assert!(
+            helicoid_surfaces > 0,
+            "expected at least one reparsed helicoid surface"
+        );
+    }
+
+    #[test]
+    fn exports_coons_surface_via_bspline_fallback() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Coons(rcad_kernel::CoonsSurface {
+            south: Box::new(rcad_kernel::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::new(0.0, 0.0, 0.0),
+                direction: DVec3::X,
+            })),
+            north: Box::new(rcad_kernel::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::new(0.0, 1.0, 1.0),
+                direction: DVec3::X,
+            })),
+            west: Box::new(rcad_kernel::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::new(0.0, 0.0, 0.0),
+                direction: DVec3::new(0.0, 1.0, 1.0),
+            })),
+            east: Box::new(rcad_kernel::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::new(1.0, 0.0, 0.0),
+                direction: DVec3::new(0.0, 1.0, 1.0),
+            })),
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
+        assert!(!step.contains("RCAD_COONS"));
+
+        let reparsed = StepReader::parse_string(&step).expect("Coons fallback STEP should parse");
+        let bspline_surfaces = reparsed
+            .geom
+            .surfaces
+            .iter()
+            .filter(|surface| matches!(surface, Surface3::BSpline(_)))
+            .count();
+        assert!(
+            bspline_surfaces > 0,
+            "expected at least one reparsed bspline surface from Coons fallback"
+        );
+    }
+
+    #[test]
+    fn exports_pipe_surface_via_bspline_fallback() {
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let sid = *brep
+            .geom
+            .face_surface
+            .iter()
+            .flatten()
+            .next()
+            .expect("hfss.step should contain a face surface");
+        brep.geom.surfaces[sid] = Surface3::Pipe(rcad_kernel::PipeSurface {
+            spine: Box::new(rcad_kernel::Curve3::Line(rcad_kernel::geom::Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::Z,
+            })),
+            ref_dir: DVec3::X,
+            radius: 1.25,
+        });
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
+
+        let reparsed = StepReader::parse_string(&step).expect("Pipe fallback STEP should parse");
+        let bspline_surfaces = reparsed
+            .geom
+            .surfaces
+            .iter()
+            .filter(|surface| matches!(surface, Surface3::BSpline(_)))
+            .count();
+        assert!(
+            bspline_surfaces > 0,
+            "expected at least one reparsed bspline surface from Pipe fallback"
+        );
+    }
+
+    // ── GDT Extended entity write tests ──────────────────────────────────────
+
+    #[test]
+    fn writes_dimensional_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            dimensional_tolerances: vec![StepDimensionalTolerance {
+                entity_id: 0,
+                name: Some("diam_tol".into()),
+                description: Some("diameter tolerance".into()),
+                dimensional_characteristic_id: Some(100),
+                upper_tolerance: Some(0.05),
+                lower_tolerance: Some(-0.05),
+                unit: Some("mm".into()),
+            }],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("DIMENSIONAL_TOLERANCE('diam_tol','diameter tolerance',#100,0.05,-0.05,'mm')"));
+    }
+
+    #[test]
+    fn writes_tolerance_values() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            tolerance_values: vec![StepToleranceValue {
+                entity_id: 0,
+                name: Some("tol_value".into()),
+                value: 0.025,
+                unit: Some("mm".into()),
+            }],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("MEASURE_REPRESENTATION_ITEM('tol_value',0.025,'mm')"));
+    }
+
+    #[test]
+    fn writes_position_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            position_tolerances: vec![StepPositionTolerance {
+                entity_id: 0,
+                name: Some("pos_tol".into()),
+                description: Some("positional tolerance".into()),
+                value_entity_id: Some(20),
+                shape_aspect_id: Some(30),
+                datum_system_id: Some(40),
+                projected: true,
+                projected_height: Some(10.0),
+            }],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("POSITION_TOLERANCE('pos_tol','positional tolerance',#20,#30,#40,.T.,10)"));
+    }
+
+    #[test]
+    fn writes_orientation_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            orientation_tolerances: vec![
+                StepOrientationTolerance {
+                    entity_id: 0,
+                    name: Some("ang_tol".into()),
+                    description: Some("angularity".into()),
+                    value_entity_id: Some(20),
+                    shape_aspect_id: Some(30),
+                    datum_system_id: Some(40),
+                    orientation_type: OrientationToleranceType::Angularity,
+                },
+                StepOrientationTolerance {
+                    entity_id: 0,
+                    name: Some("perp_tol".into()),
+                    description: Some("perpendicularity".into()),
+                    value_entity_id: Some(21),
+                    shape_aspect_id: Some(31),
+                    datum_system_id: Some(41),
+                    orientation_type: OrientationToleranceType::Perpendicularity,
+                },
+                StepOrientationTolerance {
+                    entity_id: 0,
+                    name: Some("para_tol".into()),
+                    description: Some("parallelism".into()),
+                    value_entity_id: Some(22),
+                    shape_aspect_id: Some(32),
+                    datum_system_id: Some(42),
+                    orientation_type: OrientationToleranceType::Parallelism,
+                },
+            ],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("ANGULARITY_TOLERANCE('ang_tol','angularity',#20,#30,#40)"));
+        assert!(step.contains("PERPENDICULARITY_TOLERANCE('perp_tol','perpendicularity',#21,#31,#41)"));
+        assert!(step.contains("PARALLELISM_TOLERANCE('para_tol','parallelism',#22,#32,#42)"));
+    }
+
+    #[test]
+    fn writes_form_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            form_tolerances: vec![
+                StepFormTolerance {
+                    entity_id: 0,
+                    name: Some("flat_tol".into()),
+                    description: Some("flatness".into()),
+                    value_entity_id: Some(20),
+                    shape_aspect_id: Some(30),
+                    form_type: FormToleranceType::Flatness,
+                },
+                StepFormTolerance {
+                    entity_id: 0,
+                    name: Some("str_tol".into()),
+                    description: Some("straightness".into()),
+                    value_entity_id: Some(21),
+                    shape_aspect_id: Some(31),
+                    form_type: FormToleranceType::Straightness,
+                },
+                StepFormTolerance {
+                    entity_id: 0,
+                    name: Some("cir_tol".into()),
+                    description: Some("circularity".into()),
+                    value_entity_id: Some(22),
+                    shape_aspect_id: Some(32),
+                    form_type: FormToleranceType::Circularity,
+                },
+                StepFormTolerance {
+                    entity_id: 0,
+                    name: Some("cyl_tol".into()),
+                    description: Some("cylindricity".into()),
+                    value_entity_id: Some(23),
+                    shape_aspect_id: Some(33),
+                    form_type: FormToleranceType::Cylindricity,
+                },
+            ],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("FLATNESS_TOLERANCE('flat_tol','flatness',#20,#30)"));
+        assert!(step.contains("STRAIGHTNESS_TOLERANCE('str_tol','straightness',#21,#31)"));
+        assert!(step.contains("CIRCULARITY_TOLERANCE('cir_tol','circularity',#22,#32)"));
+        assert!(step.contains("CYLINDRICITY_TOLERANCE('cyl_tol','cylindricity',#23,#33)"));
+    }
+
+    #[test]
+    fn writes_runout_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            runout_tolerances: vec![
+                StepRunoutTolerance {
+                    entity_id: 0,
+                    name: Some("cr_tol".into()),
+                    description: Some("circular runout".into()),
+                    value_entity_id: Some(20),
+                    shape_aspect_id: Some(30),
+                    datum_system_id: Some(40),
+                    runout_type: RunoutToleranceType::CircularRunout,
+                },
+                StepRunoutTolerance {
+                    entity_id: 0,
+                    name: Some("tr_tol".into()),
+                    description: Some("total runout".into()),
+                    value_entity_id: Some(21),
+                    shape_aspect_id: Some(31),
+                    datum_system_id: Some(41),
+                    runout_type: RunoutToleranceType::TotalRunout,
+                },
+            ],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("CIRCULAR_RUNOUT_TOLERANCE('cr_tol','circular runout',#20,#30,#40)"));
+        assert!(step.contains("TOTAL_RUNOUT_TOLERANCE('tr_tol','total runout',#21,#31,#41)"));
+    }
+
+    #[test]
+    fn writes_profile_tolerances() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            profile_tolerances: vec![
+                StepProfileTolerance {
+                    entity_id: 0,
+                    name: Some("lin_tol".into()),
+                    description: Some("profile of a line".into()),
+                    value_entity_id: Some(20),
+                    shape_aspect_id: Some(30),
+                    datum_system_id: None,
+                    profile_type: ProfileToleranceType::ProfileOfALine,
+                },
+                StepProfileTolerance {
+                    entity_id: 0,
+                    name: Some("surf_tol".into()),
+                    description: Some("profile of a surface".into()),
+                    value_entity_id: Some(21),
+                    shape_aspect_id: Some(31),
+                    datum_system_id: Some(41),
+                    profile_type: ProfileToleranceType::ProfileOfASurface,
+                },
+            ],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("LINE_PROFILE_TOLERANCE('lin_tol','profile of a line',#20,#30,$)"));
+        assert!(step.contains("SURFACE_PROFILE_TOLERANCE('surf_tol','profile of a surface',#21,#31,#41)"));
+    }
+
+    #[test]
+    fn writes_datum_reference_frames() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            datum_reference_frames: vec![StepDatumReferenceFrame {
+                entity_id: 0,
+                name: Some("DRF1".into()),
+                description: Some("primary datum reference frame".into()),
+                datum_system_ids: vec![50, 51, 52],
+            }],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("DATUM_REFERENCE_FRAME('DRF1','primary datum reference frame',(#50,#51,#52))"));
+    }
+
+    #[test]
+    fn writes_datum_targets() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            datum_targets: vec![
+                StepDatumTarget {
+                    entity_id: 0,
+                    name: Some("A1".into()),
+                    description: Some("datum target point".into()),
+                    target_identifier: Some("A1".into()),
+                    datum_id: Some(80),
+                    target_type: DatumTargetType::Point,
+                    shape_aspect_id: Some(100),
+                },
+                StepDatumTarget {
+                    entity_id: 0,
+                    name: Some("B1".into()),
+                    description: Some("datum target line".into()),
+                    target_identifier: Some("B1".into()),
+                    datum_id: Some(81),
+                    target_type: DatumTargetType::Line,
+                    shape_aspect_id: Some(101),
+                },
+                StepDatumTarget {
+                    entity_id: 0,
+                    name: Some("C1".into()),
+                    description: Some("datum target area".into()),
+                    target_identifier: Some("C1".into()),
+                    datum_id: Some(82),
+                    target_type: DatumTargetType::AreaCircle,
+                    shape_aspect_id: Some(102),
+                },
+            ],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("DATUM_TARGET_POINT('A1','datum target point','A1',#80,#100)"));
+        assert!(step.contains("DATUM_TARGET_LINE('B1','datum target line','B1',#81,#101)"));
+        assert!(step.contains("DATUM_TARGET_CIRCLE('C1','datum target area','C1',#82,#102)"));
+    }
+
+    #[test]
+    fn writes_enhanced_tolerance_zone_definitions() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let metadata = StepAp242Metadata {
+            tolerance_zone_definitions_enhanced: vec![StepToleranceZoneDefinitionEnhanced {
+                entity_id: 0,
+                name: Some("cylindrical".into()),
+                description: Some("symmetric".into()),
+                tolerance_zone_id: Some(90),
+                shape_aspect_id: Some(110),
+                zone_shape: ToleranceZoneShape::Cylindrical,
+                zone_position: ToleranceZonePosition::Symmetric,
+                defining_shape_aspect_id: Some(120),
+            }],
+            ..Default::default()
+        };
+        let step = StepWriter::write_string_with_ap242_metadata(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &[],
+            &metadata,
+            StepProtocol::Ap242,
+        );
+        assert!(step.contains("TOLERANCE_ZONE_DEFINITION('cylindrical','symmetric',#90,#110,#120)"));
     }
 }

@@ -37,6 +37,11 @@ pub mod brep_graph;
 /// Analogous to OCCT OCAF/TopoNaming-style name tables.
 pub mod naming;
 
+/// Persistent naming semantics for BRepGraph topology entities.
+///
+/// Provides stable, operation-surviving identifiers for topology entities.
+pub mod persistent_naming;
+
 /// Differential geometry: principal curvatures, Gaussian curvature, mean curvature.
 ///
 /// Analogous to OCCT `GeomLProp_SLProps`.
@@ -115,10 +120,11 @@ pub use geom::{
     ArchimedeanSpiral2d, BSplineCurve2, CircleInvolute2d, Ellipse2d, LogarithmicSpiral2d,
     SineWave2d,
 };
-pub use geom::{BSplineSurface, LinearExtrusionSurface, RevolutionSurface};
-pub use geom::{BezierCurve2, BezierCurve3, BezierSurface};
+pub use geom::{BSplineSurface, CoonsSurface, LinearExtrusionSurface, RevolutionSurface, RuledSurface};
+pub use geom::{BezierCurve2, BezierCurve3, BezierSurface, TriBezierSurface};
 pub use geom::{Curve2d, Curve3, Surface3};
 pub use geom::{Curve2dEval, CurveEval, SurfaceEval, any_perpendicular};
+pub use geom::{EllipsoidalSurface, HelicoidSurface, PipeSurface};
 pub use geom::{CircularHelix3, Hyperbola3, Parabola3, SineWave3};
 pub use geom::{OffsetCurve3, OffsetSurface};
 pub use properties::{InertiaTensor, centroid, inertia_tensor, surface_area, volume};
@@ -137,6 +143,11 @@ pub use topo_query::{
 };
 pub use brep_graph::{BRepGraph, BRepGraphBuilder, BRepGraphCheckpoint, BRepGraphHistory, BRepGraphHistoryEvent, BRepGraphMutGuard, BRepGraphTool, BfsFaces, DfsFaces, DfsEdgesFromVertex, NonManifoldSummary, ManifoldRepairHints, RepairHint};
 pub use naming::{PersistentNamingHooks, TopoEntityRef};
+pub use persistent_naming::{
+    ConflictResolution, NamingConflictResolution, NamingContext, NamingEvent, NamingHistory,
+    NamingRule, NamingStabilityReport, NamePropagationPolicy, PersistentId,
+    PersistentNamingEngine, PersistentNamingHooksExt,
+};
 pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 /// A parameter-space curve binding that ties a 3D edge to an adjacent face's
@@ -1110,6 +1121,20 @@ impl BRep {
                     t.center = mat.transform_point3(t.center);
                     t.axis = mat.transform_vector3(t.axis).normalize_or_zero();
                 }
+                Surface3::Ellipsoid(e) => {
+                    e.center = mat.transform_point3(e.center);
+                    e.axis = mat.transform_vector3(e.axis).normalize_or_zero();
+                    e.ref_dir = mat.transform_vector3(e.ref_dir).normalize_or_zero();
+                }
+                Surface3::Helicoid(h) => {
+                    h.origin = mat.transform_point3(h.origin);
+                    h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
+                    h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
+                }
+                Surface3::Pipe(p) => {
+                    xf_surface_curve(&mut p.spine, mat);
+                    p.ref_dir = mat.transform_vector3(p.ref_dir).normalize_or_zero();
+                }
                 Surface3::BSpline(b) => {
                     for row in &mut b.control_points {
                         for p in row.iter_mut() {
@@ -1118,6 +1143,13 @@ impl BRep {
                     }
                 }
                 Surface3::Bezier(b) => {
+                    for row in &mut b.control_points {
+                        for p in row.iter_mut() {
+                            *p = mat.transform_point3(*p);
+                        }
+                    }
+                }
+                Surface3::TriBezier(b) => {
                     for row in &mut b.control_points {
                         for p in row.iter_mut() {
                             *p = mat.transform_point3(*p);
@@ -1133,6 +1165,16 @@ impl BRep {
                     r.axis_dir = mat.transform_vector3(r.axis_dir).normalize_or_zero();
                     xf_surface_curve(&mut r.profile, mat);
                 }
+                Surface3::Ruled(r) => {
+                    xf_surface_curve(&mut r.start, mat);
+                    xf_surface_curve(&mut r.end, mat);
+                }
+                Surface3::Coons(c) => {
+                    xf_surface_curve(&mut c.south, mat);
+                    xf_surface_curve(&mut c.north, mat);
+                    xf_surface_curve(&mut c.west, mat);
+                    xf_surface_curve(&mut c.east, mat);
+                }
                 Surface3::Offset(o) => {
                     xf_surface(&mut o.basis, mat);
                 }
@@ -1140,15 +1182,15 @@ impl BRep {
                     xf_surface(&mut t.basis, mat);
                     // trim domain is in parameter space — unchanged by transform
                 }
-                    Surface3::Gordon(g) => {
-                        for c in &mut g.u_curves {
-                            xf_curve(c, mat);
-                        }
-                        for c in &mut g.v_curves {
-                            xf_curve(c, mat);
-                        }
-                        // u/v parameter grids are dimensionless param values.
+                Surface3::Gordon(g) => {
+                    for c in &mut g.u_curves {
+                        xf_curve(c, mat);
                     }
+                    for c in &mut g.v_curves {
+                        xf_curve(c, mat);
+                    }
+                    // u/v parameter grids are dimensionless param values.
+                }
             }
         }
         fn xf_surface_curve(c: &mut Box<geom::Curve3>, mat: glam::DAffine3) {

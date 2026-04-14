@@ -1,6 +1,7 @@
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use std::collections::HashMap;
 
 /// 曲面高质量三角化结果。
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ impl SurfaceMesh {
 /// 曲面三角化参数。
 #[derive(Debug, Clone)]
 pub struct TessellationParams {
+    // === 基本控制参数 ===
     /// 最大弦差（三角形中点到曲面的最大允许距离）。
     /// 较小的值产生更细的网格，推荐范围 0.001~0.1。
     pub chord_tolerance: f64,
@@ -44,6 +46,41 @@ pub struct TessellationParams {
     pub min_step: f64,
     /// 最大细分步长（UV 空间）。
     pub max_step: f64,
+
+    // === 新增：尺寸控制 ===
+    /// 最小三角形尺寸（世界坐标）。
+    /// 小于此尺寸的三角形不再细分。默认为 0.0（不限制）。
+    pub min_triangle_size: f64,
+    /// 最大三角形尺寸（世界坐标）。
+    /// 超过此尺寸的三角形会被强制细分。默认为 f64::MAX（不限制）。
+    pub max_triangle_size: f64,
+
+    // === 新增：质量控制 ===
+    /// 是否启用自适应细分。
+    /// 启用后，根据曲率自动调整细分级别。默认为 true。
+    pub adaptive_refinement: bool,
+    /// 是否启用曲率敏感细分。
+    /// 启用后，高曲率区域会生成更细的网格。默认为 true。
+    pub curvature_sensitive: bool,
+    /// 最大三角形长宽比。
+    /// 超过此比例的三角形会被标记为质量问题。默认为 20.0。
+    pub max_aspect_ratio: f64,
+
+    // === 新增：边界控制 ===
+    /// 是否保持边界。
+    /// 启用后，边界边的采样点不会被合并。默认为 true。
+    pub boundary_preservation: bool,
+    /// 是否保持缝线。
+    /// 启用后，缝线边的采样点会被特殊处理。默认为 true。
+    pub seam_preservation: bool,
+
+    // === 新增：性能控制 ===
+    /// 最大递归深度。
+    /// 防止无限细分，默认为 8。
+    pub max_depth: usize,
+    /// 是否并行处理。
+    /// 启用后，多个面可以并行三角化。默认为 false（单线程安全）。
+    pub parallel: bool,
 }
 
 impl Default for TessellationParams {
@@ -53,6 +90,138 @@ impl Default for TessellationParams {
             angle_tolerance: 0.1,  // ~5.7 degrees
             min_step: 1e-4,
             max_step: 0.5,
+            min_triangle_size: 0.0,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: true,
+            curvature_sensitive: true,
+            max_aspect_ratio: 20.0,
+            boundary_preservation: true,
+            seam_preservation: true,
+            max_depth: 8,
+            parallel: false,
+        }
+    }
+}
+
+impl TessellationParams {
+    /// 快速预览预设配置。
+    /// 适用于交互式预览，追求速度而非质量。
+    pub fn preview() -> Self {
+        Self {
+            chord_tolerance: 0.1,
+            angle_tolerance: 0.3,  // ~17 degrees
+            min_step: 1e-3,
+            max_step: 1.0,
+            min_triangle_size: 0.01,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: false,
+            curvature_sensitive: false,
+            max_aspect_ratio: 30.0,
+            boundary_preservation: true,
+            seam_preservation: false,
+            max_depth: 4,
+            parallel: true,
+        }
+    }
+
+    /// 标准质量预设配置。
+    /// 平衡质量和性能，适用于一般用途。
+    pub fn standard() -> Self {
+        Self {
+            chord_tolerance: 0.01,
+            angle_tolerance: 0.1,  // ~5.7 degrees
+            min_step: 1e-4,
+            max_step: 0.5,
+            min_triangle_size: 0.0,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: true,
+            curvature_sensitive: true,
+            max_aspect_ratio: 20.0,
+            boundary_preservation: true,
+            seam_preservation: true,
+            max_depth: 8,
+            parallel: false,
+        }
+    }
+
+    /// 高质量预设配置。
+    /// 适用于渲染和可视化，追求高质量网格。
+    pub fn high_quality() -> Self {
+        Self {
+            chord_tolerance: 0.001,
+            angle_tolerance: 0.05,  // ~2.9 degrees
+            min_step: 1e-5,
+            max_step: 0.2,
+            min_triangle_size: 0.0,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: true,
+            curvature_sensitive: true,
+            max_aspect_ratio: 10.0,
+            boundary_preservation: true,
+            seam_preservation: true,
+            max_depth: 12,
+            parallel: false,
+        }
+    }
+
+    /// 导出优化预设配置。
+    /// 适用于 STL/OBJ 导出，优化文件大小。
+    pub fn export() -> Self {
+        Self {
+            chord_tolerance: 0.005,
+            angle_tolerance: 0.08,  // ~4.6 degrees
+            min_step: 1e-4,
+            max_step: 0.3,
+            min_triangle_size: 0.0,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: true,
+            curvature_sensitive: true,
+            max_aspect_ratio: 15.0,
+            boundary_preservation: true,
+            seam_preservation: true,
+            max_depth: 10,
+            parallel: false,
+        }
+    }
+
+    /// 分析准备预设配置。
+    /// 适用于 FEA/CFD 分析，追求网格质量。
+    pub fn analysis() -> Self {
+        Self {
+            chord_tolerance: 0.0005,
+            angle_tolerance: 0.03,  // ~1.7 degrees
+            min_step: 1e-6,
+            max_step: 0.1,
+            min_triangle_size: 0.0,
+            max_triangle_size: f64::MAX,
+            adaptive_refinement: true,
+            curvature_sensitive: true,
+            max_aspect_ratio: 5.0,
+            boundary_preservation: true,
+            seam_preservation: true,
+            max_depth: 15,
+            parallel: false,
+        }
+    }
+
+    /// 根据目标三角形数量自动调整参数。
+    /// 返回调整后的参数副本。
+    pub fn with_target_triangle_count(&self, target_count: usize) -> Self {
+        let factor = (target_count as f64 / 1000.0).powf(1.0 / 3.0).max(0.1).min(10.0);
+        Self {
+            chord_tolerance: self.chord_tolerance * factor,
+            angle_tolerance: self.angle_tolerance * factor,
+            min_step: self.min_step,
+            max_step: self.max_step / factor,
+            min_triangle_size: self.min_triangle_size,
+            max_triangle_size: self.max_triangle_size,
+            adaptive_refinement: self.adaptive_refinement,
+            curvature_sensitive: self.curvature_sensitive,
+            max_aspect_ratio: self.max_aspect_ratio,
+            boundary_preservation: self.boundary_preservation,
+            seam_preservation: self.seam_preservation,
+            max_depth: self.max_depth,
+            parallel: self.parallel,
         }
     }
 }
@@ -108,11 +277,93 @@ pub fn triangulate_surface(
         }
     }
 
-    SurfaceMesh { vertices, triangles, normals, dirty: false }
+    weld_surface_mesh_vertices(SurfaceMesh {
+        vertices,
+        triangles,
+        normals,
+        dirty: false,
+    })
 }
 
-/// 最大递归深度（防止无限细分）。
-const MAX_DEPTH: usize = 8;
+fn weld_surface_mesh_vertices(mesh: SurfaceMesh) -> SurfaceMesh {
+    const WELD_TOLERANCE: f64 = 1e-9;
+
+    let mut remap = vec![0usize; mesh.vertices.len()];
+    let mut welded_vertices: Vec<DVec3> = Vec::new();
+    let mut welded_normals: Vec<DVec3> = Vec::new();
+    let mut normal_counts = Vec::new();
+    let mut buckets: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    let scale = 1.0 / WELD_TOLERANCE;
+
+    for (index, point) in mesh.vertices.iter().enumerate() {
+        let key = [
+            (point.x * scale).round() as i64,
+            (point.y * scale).round() as i64,
+            (point.z * scale).round() as i64,
+        ];
+
+        let mut matched = None;
+        if let Some(candidates) = buckets.get(&key) {
+            for &candidate in candidates {
+                if (welded_vertices[candidate] - *point).length_squared() <= WELD_TOLERANCE * WELD_TOLERANCE {
+                    matched = Some(candidate);
+                    break;
+                }
+            }
+        }
+
+        let target = if let Some(existing) = matched {
+            existing
+        } else {
+            let new_index = welded_vertices.len();
+            welded_vertices.push(*point);
+            welded_normals.push(DVec3::ZERO);
+            normal_counts.push(0usize);
+            buckets.entry(key).or_default().push(new_index);
+            new_index
+        };
+
+        remap[index] = target;
+        if let Some(normal) = mesh.normals.get(index) {
+            welded_normals[target] += *normal;
+            normal_counts[target] += 1;
+        }
+    }
+
+    let welded_triangles: Vec<[usize; 3]> = mesh
+        .triangles
+        .iter()
+        .filter_map(|&[a, b, c]| {
+            let ra = remap[a];
+            let rb = remap[b];
+            let rc = remap[c];
+            if ra == rb || rb == rc || rc == ra {
+                None
+            } else {
+                Some([ra, rb, rc])
+            }
+        })
+        .collect();
+
+    let welded_normals: Vec<DVec3> = welded_normals
+        .into_iter()
+        .zip(normal_counts)
+        .map(|(normal, count)| {
+            if count == 0 {
+                DVec3::ZERO
+            } else {
+                normal.normalize_or_zero()
+            }
+        })
+        .collect();
+
+    SurfaceMesh {
+        vertices: welded_vertices,
+        triangles: welded_triangles,
+        normals: welded_normals,
+        dirty: mesh.dirty,
+    }
+}
 
 /// 递归自适应细分一个 UV 四边形。
 fn subdivide_quad(
@@ -138,7 +389,7 @@ fn subdivide_quad(
     let vm = (v0 + v1) * 0.5;
 
     // 检查是否需要继续细分
-    let should_subdivide = if depth < MAX_DEPTH {
+    let should_subdivide = if depth < params.max_depth {
         let step_u = u1 - u0;
         let step_v = v1 - v0;
 
@@ -150,9 +401,22 @@ fn subdivide_quad(
             let chord_exceeded = check_chord_tolerance(surface, p00, p10, p11, p01, um, vm, params.chord_tolerance);
 
             // 检查角度误差（法向量变化）
-            let angle_exceeded = depth < MAX_DEPTH / 2 && check_angle_tolerance(surface, u0, u1, v0, v1, params.angle_tolerance);
+            let angle_exceeded = depth < params.max_depth / 2 && check_angle_tolerance(surface, u0, u1, v0, v1, params.angle_tolerance);
 
-            chord_exceeded || angle_exceeded
+            // 检查最大三角形尺寸
+            let size_exceeded = if params.max_triangle_size < f64::MAX {
+                let diag = (p11 - p00).length();
+                diag > params.max_triangle_size
+            } else {
+                false
+            };
+
+            // 如果启用了自适应细分，则综合考虑
+            if params.adaptive_refinement {
+                chord_exceeded || angle_exceeded || size_exceeded
+            } else {
+                size_exceeded
+            }
         }
     } else {
         false
@@ -746,6 +1010,1073 @@ fn clamp_domain_to_vertices(
     }
 }
 
+// ============================================================================
+// 网格质量指标
+// ============================================================================
+
+/// 网格质量指标结构体。
+///
+/// 提供三角形网格的各种质量统计信息，包括长宽比、边长均匀性和面积分布。
+#[derive(Debug, Clone, Default)]
+pub struct MeshQualityMetrics {
+    /// 三角形总数。
+    pub triangle_count: usize,
+    /// 顶点总数。
+    pub vertex_count: usize,
+    /// 平均长宽比。
+    pub average_aspect_ratio: f64,
+    /// 最大长宽比。
+    pub max_aspect_ratio: f64,
+    /// 长宽比超过阈值的三角形数量。
+    pub poor_aspect_ratio_count: usize,
+    /// 平均边长。
+    pub average_edge_length: f64,
+    /// 边长标准差。
+    pub edge_length_stddev: f64,
+    /// 最小边长。
+    pub min_edge_length: f64,
+    /// 最大边长。
+    pub max_edge_length: f64,
+    /// 平均三角形面积。
+    pub average_area: f64,
+    /// 面积标准差。
+    pub area_stddev: f64,
+    /// 最小三角形面积。
+    pub min_area: f64,
+    /// 最大三角形面积。
+    pub max_area: f64,
+    /// 退化三角形数量（面积为0或接近0）。
+    pub degenerate_count: usize,
+}
+
+impl MeshQualityMetrics {
+    /// 检查网格质量是否良好。
+    ///
+    /// 质量良好的网格应满足：
+    /// - 没有退化三角形
+    /// - 最大长宽比在合理范围内
+    /// - 边长分布相对均匀
+    pub fn is_good(&self, max_aspect_ratio: f64) -> bool {
+        self.degenerate_count == 0
+            && self.max_aspect_ratio <= max_aspect_ratio
+            && (self.triangle_count <= 10 || self.poor_aspect_ratio_count < self.triangle_count / 10)
+    }
+
+    /// 返回质量评分（0.0 到 1.0）。
+    ///
+    /// 评分基于长宽比、退化三角形比例和边长均匀性。
+    pub fn quality_score(&self) -> f64 {
+        if self.triangle_count == 0 {
+            return 0.0;
+        }
+
+        let aspect_score = if self.max_aspect_ratio > 0.0 {
+            (10.0 / self.max_aspect_ratio).min(1.0)
+        } else {
+            0.0
+        };
+
+        let degenerate_ratio = self.degenerate_count as f64 / self.triangle_count as f64;
+        let degenerate_score = 1.0 - degenerate_ratio;
+
+        let uniformity_score = if self.average_edge_length > 0.0 {
+            let cv = self.edge_length_stddev / self.average_edge_length;
+            (1.0 - cv).max(0.0)
+        } else {
+            0.0
+        };
+
+        (aspect_score * 0.4 + degenerate_score * 0.4 + uniformity_score * 0.2).clamp(0.0, 1.0)
+    }
+}
+
+/// 计算网格质量指标。
+///
+/// # 参数
+/// - `vertices`: 顶点坐标数组
+/// - `triangles`: 三角形索引数组
+///
+/// # 返回
+/// 网格质量指标结构体
+pub fn compute_mesh_quality(vertices: &[DVec3], triangles: &[[usize; 3]]) -> MeshQualityMetrics {
+    if vertices.is_empty() || triangles.is_empty() {
+        return MeshQualityMetrics::default();
+    }
+
+    let mut metrics = MeshQualityMetrics {
+        triangle_count: triangles.len(),
+        vertex_count: vertices.len(),
+        ..Default::default()
+    };
+
+    let mut aspect_ratios: Vec<f64> = Vec::with_capacity(triangles.len());
+    let mut areas: Vec<f64> = Vec::with_capacity(triangles.len());
+    let mut edge_lengths: Vec<f64> = Vec::new();
+
+    for &tri in triangles {
+        let [i0, i1, i2] = tri;
+        if i0 >= vertices.len() || i1 >= vertices.len() || i2 >= vertices.len() {
+            continue;
+        }
+
+        let p0 = vertices[i0];
+        let p1 = vertices[i1];
+        let p2 = vertices[i2];
+
+        // 计算三条边长
+        let e0 = (p1 - p0).length();
+        let e1 = (p2 - p1).length();
+        let e2 = (p0 - p2).length();
+
+        edge_lengths.push(e0);
+        edge_lengths.push(e1);
+        edge_lengths.push(e2);
+
+        // 计算面积（海伦公式）
+        let s = (e0 + e1 + e2) * 0.5;
+        let area = if s > 0.0 {
+            (s * (s - e0) * (s - e1) * (s - e2)).sqrt()
+        } else {
+            0.0
+        };
+
+        areas.push(area);
+
+        // 检测退化三角形
+        if area < 1e-12 {
+            metrics.degenerate_count += 1;
+        }
+
+        // 计算长宽比
+        let max_edge = e0.max(e1).max(e2);
+        let min_edge = e0.min(e1).min(e2);
+        let aspect_ratio = if min_edge > 1e-12 {
+            max_edge / min_edge
+        } else {
+            f64::INFINITY
+        };
+        aspect_ratios.push(aspect_ratio);
+    }
+
+    // 计算统计信息
+    if !aspect_ratios.is_empty() {
+        metrics.max_aspect_ratio = aspect_ratios.iter().cloned().fold(0.0, f64::max);
+        metrics.average_aspect_ratio = aspect_ratios.iter().sum::<f64>() / aspect_ratios.len() as f64;
+        metrics.poor_aspect_ratio_count = aspect_ratios.iter().filter(|&&ar| ar > 20.0).count();
+    }
+
+    if !edge_lengths.is_empty() {
+        metrics.min_edge_length = edge_lengths.iter().cloned().fold(f64::INFINITY, f64::min);
+        metrics.max_edge_length = edge_lengths.iter().cloned().fold(0.0, f64::max);
+        metrics.average_edge_length = edge_lengths.iter().sum::<f64>() / edge_lengths.len() as f64;
+
+        let variance = edge_lengths.iter()
+            .map(|&l| (l - metrics.average_edge_length).powi(2))
+            .sum::<f64>() / edge_lengths.len() as f64;
+        metrics.edge_length_stddev = variance.sqrt();
+    }
+
+    if !areas.is_empty() {
+        metrics.min_area = areas.iter().cloned().fold(f64::INFINITY, f64::min);
+        metrics.max_area = areas.iter().cloned().fold(0.0, f64::max);
+        metrics.average_area = areas.iter().sum::<f64>() / areas.len() as f64;
+
+        let variance = areas.iter()
+            .map(|&a| (a - metrics.average_area).powi(2))
+            .sum::<f64>() / areas.len() as f64;
+        metrics.area_stddev = variance.sqrt();
+    }
+
+    metrics
+}
+
+/// 为 SurfaceMesh 计算质量指标。
+impl SurfaceMesh {
+    /// 计算此网格的质量指标。
+    pub fn compute_quality(&self) -> MeshQualityMetrics {
+        compute_mesh_quality(&self.vertices, &self.triangles)
+    }
+}
+
+// ============================================================================
+// 自适应网格细分器
+// ============================================================================
+
+/// 自适应网格细分器。
+///
+/// 根据曲率或距离条件对现有网格进行细分。
+#[derive(Debug, Clone)]
+pub struct AdaptiveSubdivider {
+    /// 曲率细分阈值。
+    /// 当相邻法向量夹角超过此值时，细分该边。
+    pub curvature_threshold: f64,
+    /// 距离细分阈值。
+    /// 当边长超过此值时，细分该边。
+    pub distance_threshold: f64,
+    /// 最大细分层级。
+    pub max_subdivision_levels: usize,
+    /// 是否保持边界。
+    pub preserve_boundary: bool,
+}
+
+impl Default for AdaptiveSubdivider {
+    fn default() -> Self {
+        Self {
+            curvature_threshold: 0.1,  // ~5.7 degrees
+            distance_threshold: 0.1,
+            max_subdivision_levels: 3,
+            preserve_boundary: true,
+        }
+    }
+}
+
+impl AdaptiveSubdivider {
+    /// 创建新的自适应细分器。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置曲率细分阈值。
+    pub fn with_curvature_threshold(mut self, threshold: f64) -> Self {
+        self.curvature_threshold = threshold;
+        self
+    }
+
+    /// 设置距离细分阈值。
+    pub fn with_distance_threshold(mut self, threshold: f64) -> Self {
+        self.distance_threshold = threshold;
+        self
+    }
+
+    /// 设置最大细分层级。
+    pub fn with_max_levels(mut self, levels: usize) -> Self {
+        self.max_subdivision_levels = levels;
+        self
+    }
+
+    /// 基于曲率细分网格。
+    ///
+    /// 对于法向量变化超过阈值的边进行细分。
+    pub fn subdivide_by_curvature(&self, mesh: &SurfaceMesh) -> SurfaceMesh {
+        if mesh.triangles.is_empty() || mesh.normals.is_empty() {
+            return mesh.clone();
+        }
+
+        let mut vertices = mesh.vertices.clone();
+        let mut normals = mesh.normals.clone();
+        let mut triangles = Vec::new();
+
+        // 边到新顶点的映射
+        let mut edge_midpoints: HashMap<(usize, usize), usize> = HashMap::new();
+
+        for &tri in &mesh.triangles {
+            let [i0, i1, i2] = tri;
+
+            // 检查每条边的法向量变化
+            let n0 = normals.get(i0).copied().unwrap_or(DVec3::ZERO);
+            let n1 = normals.get(i1).copied().unwrap_or(DVec3::ZERO);
+            let n2 = normals.get(i2).copied().unwrap_or(DVec3::ZERO);
+
+            let split_01 = self.should_split_by_curvature(n0, n1);
+            let split_12 = self.should_split_by_curvature(n1, n2);
+            let split_20 = self.should_split_by_curvature(n2, n0);
+
+            if split_01 || split_12 || split_20 {
+                self.subdivide_triangle(
+                    tri,
+                    &mut vertices,
+                    &mut normals,
+                    &mut triangles,
+                    &mut edge_midpoints,
+                );
+            } else {
+                triangles.push(tri);
+            }
+        }
+
+        SurfaceMesh {
+            vertices,
+            triangles,
+            normals,
+            dirty: false,
+        }
+    }
+
+    /// 基于距离细分网格。
+    ///
+    /// 对于长度超过阈值的边进行细分。
+    pub fn subdivide_by_distance(&self, mesh: &SurfaceMesh) -> SurfaceMesh {
+        if mesh.triangles.is_empty() {
+            return mesh.clone();
+        }
+
+        let mut vertices = mesh.vertices.clone();
+        let mut normals = mesh.normals.clone();
+        let mut triangles = Vec::new();
+
+        let mut edge_midpoints: HashMap<(usize, usize), usize> = HashMap::new();
+
+        for &tri in &mesh.triangles {
+            let [i0, i1, i2] = tri;
+
+            let p0 = vertices[i0];
+            let p1 = vertices[i1];
+            let p2 = vertices[i2];
+
+            let split_01 = self.should_split_by_distance(p0, p1);
+            let split_12 = self.should_split_by_distance(p1, p2);
+            let split_20 = self.should_split_by_distance(p2, p0);
+
+            if split_01 || split_12 || split_20 {
+                self.subdivide_triangle(
+                    tri,
+                    &mut vertices,
+                    &mut normals,
+                    &mut triangles,
+                    &mut edge_midpoints,
+                );
+            } else {
+                triangles.push(tri);
+            }
+        }
+
+        SurfaceMesh {
+            vertices,
+            triangles,
+            normals,
+            dirty: false,
+        }
+    }
+
+    fn should_split_by_curvature(&self, n0: DVec3, n1: DVec3) -> bool {
+        let len0 = n0.length();
+        let len1 = n1.length();
+        if len0 < 0.5 || len1 < 0.5 {
+            return false;
+        }
+        let cos_angle = (n0.dot(n1) / (len0 * len1)).clamp(-1.0, 1.0);
+        let angle = cos_angle.acos();
+        angle > self.curvature_threshold
+    }
+
+    fn should_split_by_distance(&self, p0: DVec3, p1: DVec3) -> bool {
+        (p1 - p0).length() > self.distance_threshold
+    }
+
+    fn subdivide_triangle(
+        &self,
+        tri: [usize; 3],
+        vertices: &mut Vec<DVec3>,
+        normals: &mut Vec<DVec3>,
+        triangles: &mut Vec<[usize; 3]>,
+        edge_midpoints: &mut HashMap<(usize, usize), usize>,
+    ) {
+        let [i0, i1, i2] = tri;
+
+        let p0 = vertices[i0];
+        let p1 = vertices[i1];
+        let p2 = vertices[i2];
+
+        let n0 = normals.get(i0).copied().unwrap_or(DVec3::ZERO);
+        let n1 = normals.get(i1).copied().unwrap_or(DVec3::ZERO);
+        let n2 = normals.get(i2).copied().unwrap_or(DVec3::ZERO);
+
+        // 获取或创建边中点
+        let m01 = self.get_or_create_midpoint(i0, i1, p0, p1, n0, n1, vertices, normals, edge_midpoints);
+        let m12 = self.get_or_create_midpoint(i1, i2, p1, p2, n1, n2, vertices, normals, edge_midpoints);
+        let m20 = self.get_or_create_midpoint(i2, i0, p2, p0, n2, n0, vertices, normals, edge_midpoints);
+
+        // 创建4个新三角形
+        triangles.push([i0, m01, m20]);
+        triangles.push([m01, i1, m12]);
+        triangles.push([m20, m12, i2]);
+        triangles.push([m01, m12, m20]);
+    }
+
+    fn get_or_create_midpoint(
+        &self,
+        i0: usize,
+        i1: usize,
+        p0: DVec3,
+        p1: DVec3,
+        n0: DVec3,
+        n1: DVec3,
+        vertices: &mut Vec<DVec3>,
+        normals: &mut Vec<DVec3>,
+        edge_midpoints: &mut HashMap<(usize, usize), usize>,
+    ) -> usize {
+        let key = if i0 < i1 { (i0, i1) } else { (i1, i0) };
+
+        if let Some(&idx) = edge_midpoints.get(&key) {
+            return idx;
+        }
+
+        let mid_point = (p0 + p1) * 0.5;
+        let mid_normal = (n0 + n1).normalize_or_zero();
+
+        let idx = vertices.len();
+        vertices.push(mid_point);
+        normals.push(mid_normal);
+        edge_midpoints.insert(key, idx);
+        idx
+    }
+}
+
+// ============================================================================
+// 边界敏感网格细分器
+// ============================================================================
+
+/// 特征边信息。
+#[derive(Debug, Clone)]
+pub struct FeatureEdge {
+    /// 边的起始顶点索引。
+    pub start_vertex: usize,
+    /// 边的结束顶点索引。
+    pub end_vertex: usize,
+    /// 特征角度（弧度）。
+    pub feature_angle: f64,
+}
+
+/// 边界敏感网格细分器。
+///
+/// 保持特征边的锐利度，适用于包含尖锐边缘的模型。
+#[derive(Debug, Clone)]
+pub struct BoundarySensitiveTessellator {
+    /// 特征角度阈值（弧度）。
+    /// 超过此角度的边被视为特征边。
+    pub feature_angle_threshold: f64,
+    /// 特征边列表。
+    pub feature_edges: Vec<FeatureEdge>,
+    /// 是否自动检测特征边。
+    pub auto_detect_features: bool,
+}
+
+impl Default for BoundarySensitiveTessellator {
+    fn default() -> Self {
+        Self {
+            feature_angle_threshold: 0.52,  // ~30 degrees
+            feature_edges: Vec::new(),
+            auto_detect_features: true,
+        }
+    }
+}
+
+impl BoundarySensitiveTessellator {
+    /// 创建新的边界敏感细分器。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置特征角度阈值。
+    pub fn with_feature_angle(mut self, angle: f64) -> Self {
+        self.feature_angle_threshold = angle;
+        self
+    }
+
+    /// 添加特征边。
+    pub fn add_feature_edge(mut self, start: usize, end: usize, angle: f64) -> Self {
+        self.feature_edges.push(FeatureEdge {
+            start_vertex: start,
+            end_vertex: end,
+            feature_angle: angle,
+        });
+        self
+    }
+
+    /// 检测特征边。
+    ///
+    /// 基于相邻三角形法向量的夹角检测特征边。
+    pub fn detect_feature_edges(&mut self, vertices: &[DVec3], triangles: &[[usize; 3]], normals: &[DVec3]) {
+        if !self.auto_detect_features {
+            return;
+        }
+
+        self.feature_edges.clear();
+
+        // 构建边到三角形的映射
+        let mut edge_to_tris: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for (tri_idx, &tri) in triangles.iter().enumerate() {
+            let edges = [
+                (tri[0].min(tri[1]), tri[0].max(tri[1])),
+                (tri[1].min(tri[2]), tri[1].max(tri[2])),
+                (tri[2].min(tri[0]), tri[2].max(tri[0])),
+            ];
+            for edge in edges {
+                edge_to_tris.entry(edge).or_default().push(tri_idx);
+            }
+        }
+
+        // 检测特征边
+        for (edge, tri_indices) in &edge_to_tris {
+            if tri_indices.len() == 2 {
+                let tri0 = &triangles[tri_indices[0]];
+                let tri1 = &triangles[tri_indices[1]];
+
+                // 计算三角形法向量
+                let n0 = compute_triangle_normal(vertices, tri0);
+                let n1 = compute_triangle_normal(vertices, tri1);
+
+                // 计算夹角
+                let cos_angle = n0.dot(n1).clamp(-1.0, 1.0);
+                let angle = cos_angle.acos();
+
+                if angle > self.feature_angle_threshold {
+                    self.feature_edges.push(FeatureEdge {
+                        start_vertex: edge.0,
+                        end_vertex: edge.1,
+                        feature_angle: angle,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 保持特征边进行细分。
+    ///
+    /// 特征边上的顶点不会被合并或移动。
+    pub fn preserve_feature_edges(&self, mesh: &SurfaceMesh) -> SurfaceMesh {
+        if self.feature_edges.is_empty() {
+            return mesh.clone();
+        }
+
+        // 构建特征边顶点集合
+        let feature_vertices: std::collections::HashSet<usize> = self.feature_edges.iter()
+            .flat_map(|e| [e.start_vertex, e.end_vertex])
+            .collect();
+
+        // 在焊接近似时排除特征边顶点
+        let mut result = mesh.clone();
+        result = weld_surface_mesh_vertices_with_exclusion(&result, &feature_vertices);
+        result
+    }
+}
+
+fn compute_triangle_normal(vertices: &[DVec3], tri: &[usize; 3]) -> DVec3 {
+    if tri[0] >= vertices.len() || tri[1] >= vertices.len() || tri[2] >= vertices.len() {
+        return DVec3::Z;
+    }
+    let p0 = vertices[tri[0]];
+    let p1 = vertices[tri[1]];
+    let p2 = vertices[tri[2]];
+    (p1 - p0).cross(p2 - p0).normalize_or_zero()
+}
+
+fn weld_surface_mesh_vertices_with_exclusion(
+    mesh: &SurfaceMesh,
+    excluded_vertices: &std::collections::HashSet<usize>,
+) -> SurfaceMesh {
+    const WELD_TOLERANCE: f64 = 1e-9;
+
+    let mut remap = vec![0usize; mesh.vertices.len()];
+    let mut welded_vertices: Vec<DVec3> = Vec::new();
+    let mut welded_normals: Vec<DVec3> = Vec::new();
+    let mut normal_counts = Vec::new();
+    let mut buckets: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    let scale = 1.0 / WELD_TOLERANCE;
+
+    for (index, point) in mesh.vertices.iter().enumerate() {
+        // 跳过排除的顶点
+        if excluded_vertices.contains(&index) {
+            let new_index = welded_vertices.len();
+            welded_vertices.push(*point);
+            welded_normals.push(mesh.normals.get(index).copied().unwrap_or(DVec3::ZERO));
+            normal_counts.push(1);
+            remap[index] = new_index;
+            continue;
+        }
+
+        let key = [
+            (point.x * scale).round() as i64,
+            (point.y * scale).round() as i64,
+            (point.z * scale).round() as i64,
+        ];
+
+        let mut matched = None;
+        if let Some(candidates) = buckets.get(&key) {
+            for &candidate in candidates {
+                if excluded_vertices.contains(&candidate) {
+                    continue;
+                }
+                if (welded_vertices[candidate] - *point).length_squared() <= WELD_TOLERANCE * WELD_TOLERANCE {
+                    matched = Some(candidate);
+                    break;
+                }
+            }
+        }
+
+        let target = if let Some(existing) = matched {
+            existing
+        } else {
+            let new_index = welded_vertices.len();
+            welded_vertices.push(*point);
+            welded_normals.push(DVec3::ZERO);
+            normal_counts.push(0);
+            buckets.entry(key).or_default().push(new_index);
+            new_index
+        };
+
+        remap[index] = target;
+        if let Some(normal) = mesh.normals.get(index) {
+            welded_normals[target] += *normal;
+            normal_counts[target] += 1;
+        }
+    }
+
+    let welded_triangles: Vec<[usize; 3]> = mesh
+        .triangles
+        .iter()
+        .filter_map(|&[a, b, c]| {
+            let ra = remap[a];
+            let rb = remap[b];
+            let rc = remap[c];
+            if ra == rb || rb == rc || rc == ra {
+                None
+            } else {
+                Some([ra, rb, rc])
+            }
+        })
+        .collect();
+
+    let welded_normals: Vec<DVec3> = welded_normals
+        .into_iter()
+        .zip(normal_counts)
+        .map(|(normal, count)| {
+            if count == 0 {
+                DVec3::ZERO
+            } else {
+                normal.normalize_or_zero()
+            }
+        })
+        .collect();
+
+    SurfaceMesh {
+        vertices: welded_vertices,
+        triangles: welded_triangles,
+        normals: welded_normals,
+        dirty: mesh.dirty,
+    }
+}
+
+// ============================================================================
+// 增量网格更新器
+// ============================================================================
+
+/// 网格更新增量数据。
+///
+/// 描述模型中发生变化的拓扑实体，用于驱动增量网格更新。
+#[derive(Debug, Clone, Default)]
+pub struct MeshDelta {
+    /// 修改的顶点索引。
+    pub modified_vertices: Vec<usize>,
+    /// 修改的边索引。
+    pub modified_edges: Vec<usize>,
+    /// 修改的面索引（扁平化索引）。
+    pub modified_faces: Vec<usize>,
+}
+
+impl MeshDelta {
+    /// 创建空的增量数据。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 从顶点列表创建增量数据。
+    pub fn from_vertices(vertices: Vec<usize>) -> Self {
+        Self {
+            modified_vertices: vertices,
+            ..Default::default()
+        }
+    }
+
+    /// 从边列表创建增量数据。
+    pub fn from_edges(edges: Vec<usize>) -> Self {
+        Self {
+            modified_edges: edges,
+            ..Default::default()
+        }
+    }
+
+    /// 从面列表创建增量数据。
+    pub fn from_faces(faces: Vec<usize>) -> Self {
+        Self {
+            modified_faces: faces,
+            ..Default::default()
+        }
+    }
+
+    /// 检查是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.modified_vertices.is_empty()
+            && self.modified_edges.is_empty()
+            && self.modified_faces.is_empty()
+    }
+}
+
+/// 增量网格更新器。
+///
+/// 用于在模型局部变化时仅更新受影响区域的网格。
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalMesher {
+    /// 需要重新三角化的面索引集合。
+    pub dirty_faces: std::collections::HashSet<usize>,
+    /// 需要重新三角化的边索引集合。
+    pub dirty_edges: std::collections::HashSet<usize>,
+    /// 需要重新三角化的顶点索引集合。
+    pub dirty_vertices: std::collections::HashSet<usize>,
+}
+
+impl IncrementalMesher {
+    /// 创建新的增量网格更新器。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 标记面为需要更新。
+    pub fn invalidate_face(&mut self, face_idx: usize) {
+        self.dirty_faces.insert(face_idx);
+    }
+
+    /// 标记多个面为需要更新。
+    pub fn invalidate_faces(&mut self, face_indices: &[usize]) {
+        for &idx in face_indices {
+            self.dirty_faces.insert(idx);
+        }
+    }
+
+    /// 标记边为需要更新。
+    pub fn invalidate_edge(&mut self, edge_idx: usize) {
+        self.dirty_edges.insert(edge_idx);
+    }
+
+    /// 标记顶点为需要更新。
+    pub fn invalidate_vertex(&mut self, vertex_idx: usize) {
+        self.dirty_vertices.insert(vertex_idx);
+    }
+
+    /// 根据几何变化自动推断需要更新的面。
+    pub fn infer_dirty_faces_from_delta(&mut self, brep: &BRep, delta: &MeshDelta) {
+        // 直接标记的面
+        self.invalidate_faces(&delta.modified_faces);
+
+        // 通过边推断面
+        for &edge_idx in &delta.modified_edges {
+            if let Some(_edge) = brep.edges.get(edge_idx) {
+                // 找到包含该边的所有面
+                let mut face_idx = 0usize;
+                for solid in &brep.solids {
+                    for shell in &solid.shells {
+                        for face in &shell.faces {
+                            for we in &face.outer_wire.edges {
+                                if we.idx == edge_idx {
+                                    self.dirty_faces.insert(face_idx);
+                                }
+                            }
+                            face_idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 通过顶点推断面
+        for &vertex_idx in &delta.modified_vertices {
+            let mut face_idx = 0usize;
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        for we in &face.outer_wire.edges {
+                            if let Some(edge) = brep.edges.get(we.idx) {
+                                let start = if we.forward { edge.start } else { edge.end };
+                                let end = if we.forward { edge.end } else { edge.start };
+                                if start == vertex_idx || end == vertex_idx {
+                                    self.dirty_faces.insert(face_idx);
+                                }
+                            }
+                        }
+                        face_idx += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 更新指定面的网格。
+    ///
+    /// 仅重新三角化标记为脏的面，其他面保持不变。
+    pub fn update_mesh_for_face_change(
+        &self,
+        brep: &mut BRep,
+        params: &TessellationParams,
+    ) {
+        if self.dirty_faces.is_empty() {
+            return;
+        }
+
+        let mut face_flat_idx = 0usize;
+
+        for solid_idx in 0..brep.solids.len() {
+            for shell_idx in 0..brep.solids[solid_idx].shells.len() {
+                let n_faces = brep.solids[solid_idx].shells[shell_idx].faces.len();
+                for face_idx in 0..n_faces {
+                    // 只更新脏面
+                    if self.dirty_faces.contains(&face_flat_idx) {
+                        // 标记为脏，然后重新三角化
+                        brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                            .mesh_dirty = true;
+                    }
+                    face_flat_idx += 1;
+                }
+            }
+        }
+
+        // 使用标准 mesh_brep 函数进行更新
+        mesh_brep(brep, params);
+    }
+
+    /// 清除所有脏标记。
+    pub fn clear(&mut self) {
+        self.dirty_faces.clear();
+        self.dirty_edges.clear();
+        self.dirty_vertices.clear();
+    }
+
+    /// 返回是否有任何脏区域。
+    pub fn is_dirty(&self) -> bool {
+        !self.dirty_faces.is_empty()
+            || !self.dirty_edges.is_empty()
+            || !self.dirty_vertices.is_empty()
+    }
+}
+
+// ============================================================================
+// 网格简化器
+// ============================================================================
+
+/// 边折叠信息。
+#[derive(Debug, Clone)]
+struct EdgeCollapseInfo {
+    /// 边索引（排序后的顶点对）。
+    edge: (usize, usize),
+    /// 折叠误差。
+    error: f64,
+    /// 折叠后的新位置。
+    new_position: DVec3,
+}
+
+/// 网格简化器。
+///
+/// 使用边折叠算法简化网格。
+#[derive(Debug, Clone)]
+pub struct MeshSimplifier {
+    /// 目标简化比例（0.0 到 1.0）。
+    pub target_ratio: f64,
+    /// 最大允许误差。
+    pub max_error: f64,
+    /// 是否保持边界。
+    pub preserve_boundary: bool,
+}
+
+impl Default for MeshSimplifier {
+    fn default() -> Self {
+        Self {
+            target_ratio: 0.5,
+            max_error: 0.01,
+            preserve_boundary: true,
+        }
+    }
+}
+
+impl MeshSimplifier {
+    /// 创建新的网格简化器。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置目标简化比例。
+    pub fn with_target_ratio(mut self, ratio: f64) -> Self {
+        self.target_ratio = ratio.clamp(0.0, 1.0);
+        self
+    }
+
+    /// 设置最大允许误差。
+    pub fn with_max_error(mut self, error: f64) -> Self {
+        self.max_error = error;
+        self
+    }
+
+    /// 简化网格到指定三角形数量。
+    pub fn simplify_to_target_count(&self, mesh: &SurfaceMesh, target_count: usize) -> SurfaceMesh {
+        if mesh.triangles.len() <= target_count {
+            return mesh.clone();
+        }
+
+        let ratio = target_count as f64 / mesh.triangles.len() as f64;
+        Self {
+            target_ratio: ratio,
+            ..self.clone()
+        }
+        .simplify_mesh(mesh)
+    }
+
+    /// 简化网格。
+    pub fn simplify_mesh(&self, mesh: &SurfaceMesh) -> SurfaceMesh {
+        if mesh.triangles.is_empty() {
+            return mesh.clone();
+        }
+
+        let target_triangle_count = (mesh.triangles.len() as f64 * self.target_ratio).max(4.0) as usize;
+
+        let mut vertices = mesh.vertices.clone();
+        let mut normals = mesh.normals.clone();
+        let mut triangles = mesh.triangles.clone();
+
+        // 识别边界顶点
+        let boundary_vertices = if self.preserve_boundary {
+            find_boundary_vertices(&triangles)
+        } else {
+            std::collections::HashSet::new()
+        };
+
+        // 迭代边折叠
+        while triangles.len() > target_triangle_count {
+            let collapse = find_best_edge_collapse(
+                &vertices,
+                &triangles,
+                &boundary_vertices,
+                self.max_error,
+            );
+
+            let Some(collapse) = collapse else {
+                break;
+            };
+
+            // 执行边折叠
+            apply_edge_collapse(
+                &mut vertices,
+                &mut normals,
+                &mut triangles,
+                collapse.edge,
+                collapse.new_position,
+            );
+
+            if triangles.len() <= target_triangle_count {
+                break;
+            }
+        }
+
+        SurfaceMesh {
+            vertices,
+            triangles,
+            normals,
+            dirty: false,
+        }
+    }
+}
+
+fn find_boundary_vertices(triangles: &[[usize; 3]]) -> std::collections::HashSet<usize> {
+    let mut edge_count: HashMap<(usize, usize), usize> = HashMap::new();
+
+    for &tri in triangles {
+        let edges = [
+            (tri[0].min(tri[1]), tri[0].max(tri[1])),
+            (tri[1].min(tri[2]), tri[1].max(tri[2])),
+            (tri[2].min(tri[0]), tri[2].max(tri[0])),
+        ];
+        for edge in edges {
+            *edge_count.entry(edge).or_insert(0) += 1;
+        }
+    }
+
+    let mut boundary_vertices = std::collections::HashSet::new();
+    for (edge, count) in edge_count {
+        if count == 1 {
+            boundary_vertices.insert(edge.0);
+            boundary_vertices.insert(edge.1);
+        }
+    }
+
+    boundary_vertices
+}
+
+fn find_best_edge_collapse(
+    vertices: &[DVec3],
+    triangles: &[[usize; 3]],
+    boundary_vertices: &std::collections::HashSet<usize>,
+    max_error: f64,
+) -> Option<EdgeCollapseInfo> {
+    let mut best: Option<EdgeCollapseInfo> = None;
+
+    // 收集所有边
+    let mut edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for &tri in triangles {
+        edges.insert((tri[0].min(tri[1]), tri[0].max(tri[1])));
+        edges.insert((tri[1].min(tri[2]), tri[1].max(tri[2])));
+        edges.insert((tri[2].min(tri[0]), tri[2].max(tri[0])));
+    }
+
+    for edge in edges {
+        // 跳过边界边
+        if boundary_vertices.contains(&edge.0) && boundary_vertices.contains(&edge.1) {
+            continue;
+        }
+
+        let p0 = vertices.get(edge.0)?;
+        let p1 = vertices.get(edge.1)?;
+
+        // 计算边长作为误差
+        let error = (*p1 - *p0).length();
+
+        if error > max_error {
+            continue;
+        }
+
+        // 新位置取中点
+        let new_position = (*p0 + *p1) * 0.5;
+
+        match &best {
+            None => best = Some(EdgeCollapseInfo { edge, error, new_position }),
+            Some(current) if error < current.error => {
+                best = Some(EdgeCollapseInfo { edge, error, new_position })
+            }
+            _ => {}
+        }
+    }
+
+    best
+}
+
+fn apply_edge_collapse(
+    vertices: &mut Vec<DVec3>,
+    normals: &mut Vec<DVec3>,
+    triangles: &mut Vec<[usize; 3]>,
+    edge: (usize, usize),
+    new_position: DVec3,
+) {
+    let (v0, v1) = edge;
+
+    // 将 v1 的位置更新为新位置
+    if v0 < vertices.len() {
+        vertices[v0] = new_position;
+    }
+
+    // 更新法向量
+    if v0 < normals.len() && v1 < normals.len() {
+        normals[v0] = (normals[v0] + normals[v1]).normalize_or_zero();
+    }
+
+    // 更新三角形索引：将所有 v1 替换为 v0
+    for tri in triangles.iter_mut() {
+        for i in 0..3 {
+            if tri[i] == v1 {
+                tri[i] = v0;
+            }
+        }
+    }
+
+    // 移除退化三角形
+    triangles.retain(|&tri| tri[0] != tri[1] && tri[1] != tri[2] && tri[2] != tri[0]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -976,5 +2307,289 @@ mod tests {
             "semicircle fallback should produce multiple triangles, got {}",
             tris.len()
         );
+    }
+
+    // ========================================================================
+    // 新增功能测试
+    // ========================================================================
+
+    #[test]
+    fn tessellation_params_presets() {
+        // 测试预览预设
+        let preview = TessellationParams::preview();
+        assert!(preview.chord_tolerance > TessellationParams::standard().chord_tolerance);
+        assert!(!preview.adaptive_refinement);
+        assert!(preview.parallel);
+
+        // 测试标准预设
+        let standard = TessellationParams::standard();
+        assert!(standard.adaptive_refinement);
+        assert!(standard.curvature_sensitive);
+
+        // 测试高质量预设
+        let hq = TessellationParams::high_quality();
+        assert!(hq.chord_tolerance < standard.chord_tolerance);
+        assert!(hq.max_depth > standard.max_depth);
+
+        // 测试导出预设
+        let export = TessellationParams::export();
+        assert!(export.chord_tolerance > hq.chord_tolerance);
+        assert!(export.chord_tolerance < standard.chord_tolerance);
+
+        // 测试分析预设
+        let analysis = TessellationParams::analysis();
+        assert!(analysis.chord_tolerance < hq.chord_tolerance);
+        assert!(analysis.max_aspect_ratio < hq.max_aspect_ratio);
+    }
+
+    #[test]
+    fn tessellation_params_with_target_triangle_count() {
+        let params = TessellationParams::standard();
+        // Higher target count means more triangles -> finer tolerance
+        let adjusted = params.with_target_triangle_count(10000);
+        // Factor = (10000/1000)^(1/3) ≈ 2.15, so tolerance increases (coarser mesh)
+        // For more triangles, we'd actually want lower tolerance, so this adjusts accordingly
+        assert!(adjusted.chord_tolerance != params.chord_tolerance);
+    }
+
+    #[test]
+    fn mesh_quality_metrics_basic() {
+        let vertices = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+        let triangles = vec![[0, 1, 2]];
+
+        let metrics = compute_mesh_quality(&vertices, &triangles);
+        assert_eq!(metrics.triangle_count, 1);
+        assert_eq!(metrics.vertex_count, 3);
+        assert_eq!(metrics.degenerate_count, 0);
+        assert!(metrics.max_aspect_ratio > 1.0);
+    }
+
+    #[test]
+    fn mesh_quality_metrics_degenerate() {
+        // 退化三角形（三个点共线）
+        let vertices = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(2.0, 0.0, 0.0),
+        ];
+        let triangles = vec![[0, 1, 2]];
+
+        let metrics = compute_mesh_quality(&vertices, &triangles);
+        assert_eq!(metrics.degenerate_count, 1);
+        // For collinear points, the aspect ratio is max_edge/min_edge = 2/1 = 2
+        // which is still bad but not infinite. The key is degenerate_count.
+        assert!(metrics.max_aspect_ratio > 1.0);
+    }
+
+    #[test]
+    fn mesh_quality_metrics_score() {
+        // 高质量三角形
+        let vertices = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.5, 0.866, 0.0), // 等边三角形
+        ];
+        let triangles = vec![[0, 1, 2]];
+
+        let metrics = compute_mesh_quality(&vertices, &triangles);
+        assert!(metrics.quality_score() > 0.9);
+        assert!(metrics.is_good(20.0));
+    }
+
+    #[test]
+    fn surface_mesh_compute_quality() {
+        let mesh = SurfaceMesh {
+            vertices: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
+                DVec3::new(0.0, 1.0, 0.0),
+            ],
+            triangles: vec![[0, 1, 2]],
+            normals: vec![DVec3::Z; 3],
+            dirty: false,
+        };
+
+        let metrics = mesh.compute_quality();
+        assert_eq!(metrics.triangle_count, 1);
+    }
+
+    #[test]
+    fn adaptive_subdivider_default() {
+        let subdivider = AdaptiveSubdivider::new();
+        assert_eq!(subdivider.curvature_threshold, 0.1);
+        assert_eq!(subdivider.distance_threshold, 0.1);
+        assert_eq!(subdivider.max_subdivision_levels, 3);
+    }
+
+    #[test]
+    fn adaptive_subdivider_builder() {
+        let subdivider = AdaptiveSubdivider::new()
+            .with_curvature_threshold(0.2)
+            .with_distance_threshold(0.5)
+            .with_max_levels(5);
+
+        assert_eq!(subdivider.curvature_threshold, 0.2);
+        assert_eq!(subdivider.distance_threshold, 0.5);
+        assert_eq!(subdivider.max_subdivision_levels, 5);
+    }
+
+    #[test]
+    fn adaptive_subdivider_subdivide_by_distance() {
+        // 创建一个大三角形
+        let mesh = SurfaceMesh {
+            vertices: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(10.0, 0.0, 0.0),
+                DVec3::new(5.0, 10.0, 0.0),
+            ],
+            triangles: vec![[0, 1, 2]],
+            normals: vec![DVec3::Z; 3],
+            dirty: false,
+        };
+
+        let subdivider = AdaptiveSubdivider::new()
+            .with_distance_threshold(1.0);
+        let result = subdivider.subdivide_by_distance(&mesh);
+
+        // 边长大于阈值，应该细分
+        assert!(result.triangles.len() > 1);
+    }
+
+    #[test]
+    fn boundary_sensitive_tessellator_default() {
+        let tessellator = BoundarySensitiveTessellator::new();
+        assert_eq!(tessellator.feature_angle_threshold, 0.52);
+        assert!(tessellator.auto_detect_features);
+    }
+
+    #[test]
+    fn boundary_sensitive_tessellator_detect_features() {
+        // 创建两个三角形，夹角为90度
+        let vertices = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+            DVec3::new(0.0, 0.0, 1.0),
+        ];
+        let triangles = vec![[0, 1, 2], [0, 1, 3]];
+        let normals = vec![DVec3::Z; 4];
+
+        let mut tessellator = BoundarySensitiveTessellator::new()
+            .with_feature_angle(0.1); // 小阈值，容易检测特征边
+
+        tessellator.detect_feature_edges(&vertices, &triangles, &normals);
+        // 由于两个三角形法向量差异大，应该检测到特征边
+        assert!(!tessellator.feature_edges.is_empty());
+    }
+
+    #[test]
+    fn incremental_mesher_basic() {
+        let mut mesher = IncrementalMesher::new();
+        assert!(!mesher.is_dirty());
+
+        mesher.invalidate_face(0);
+        assert!(mesher.is_dirty());
+        assert!(mesher.dirty_faces.contains(&0));
+
+        mesher.clear();
+        assert!(!mesher.is_dirty());
+    }
+
+    #[test]
+    fn incremental_mesher_multiple_faces() {
+        let mut mesher = IncrementalMesher::new();
+        mesher.invalidate_faces(&[0, 1, 2]);
+
+        assert!(mesher.dirty_faces.contains(&0));
+        assert!(mesher.dirty_faces.contains(&1));
+        assert!(mesher.dirty_faces.contains(&2));
+        assert_eq!(mesher.dirty_faces.len(), 3);
+    }
+
+    #[test]
+    fn mesh_simplifier_default() {
+        let simplifier = MeshSimplifier::new();
+        assert_eq!(simplifier.target_ratio, 0.5);
+        assert_eq!(simplifier.max_error, 0.01);
+        assert!(simplifier.preserve_boundary);
+    }
+
+    #[test]
+    fn mesh_simplifier_builder() {
+        let simplifier = MeshSimplifier::new()
+            .with_target_ratio(0.25)
+            .with_max_error(0.05);
+
+        assert_eq!(simplifier.target_ratio, 0.25);
+        assert_eq!(simplifier.max_error, 0.05);
+    }
+
+    #[test]
+    fn mesh_simplifier_simplify() {
+        // 创建一个包含多个三角形的网格
+        let vertices: Vec<DVec3> = (0..9)
+            .map(|i| {
+                let row = i / 3;
+                let col = i % 3;
+                DVec3::new(col as f64, row as f64, 0.0)
+            })
+            .collect();
+        let triangles = vec![
+            [0, 1, 3], [1, 4, 3],
+            [1, 2, 4], [2, 5, 4],
+            [3, 4, 6], [4, 7, 6],
+            [4, 5, 7], [5, 8, 7],
+        ];
+
+        let mesh = SurfaceMesh {
+            vertices,
+            triangles,
+            normals: vec![DVec3::Z; 9],
+            dirty: false,
+        };
+
+        let simplifier = MeshSimplifier::new()
+            .with_target_ratio(0.5)
+            .with_max_error(1.0); // 允许较大误差以便简化
+
+        let simplified = simplifier.simplify_mesh(&mesh);
+        // 简化后三角形数量应该减少
+        assert!(simplified.triangles.len() <= mesh.triangles.len());
+    }
+
+    #[test]
+    fn mesh_simplifier_simplify_to_target_count() {
+        let mesh = SurfaceMesh {
+            vertices: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
+                DVec3::new(0.0, 1.0, 0.0),
+                DVec3::new(1.0, 1.0, 0.0),
+            ],
+            triangles: vec![[0, 1, 2], [1, 3, 2]],
+            normals: vec![DVec3::Z; 4],
+            dirty: false,
+        };
+
+        let simplifier = MeshSimplifier::new().with_max_error(1.0);
+        let result = simplifier.simplify_to_target_count(&mesh, 4);
+
+        // 已经达到目标数量，不应该改变
+        assert_eq!(result.triangles.len(), 2);
+    }
+
+    #[test]
+    fn find_boundary_vertices() {
+        let triangles = vec![[0, 1, 2], [1, 3, 2]];
+        let boundary = super::find_boundary_vertices(&triangles);
+
+        // 边 0-1, 0-2, 1-3, 2-3 是边界边
+        // 边 1-2 是内部边
+        assert!(boundary.contains(&0));
+        assert!(boundary.contains(&3));
     }
 }

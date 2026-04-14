@@ -71,6 +71,8 @@ pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
     HealingStage, HealingStageReport, MakeConnectedPrepassMode,
     ParametricConsistencyReport, analyze_and_heal, diagnose_all, heal, run_healing_operator_chain,
+    OperatorParams, OperatorReport, StageReport, ShapeProcessStats, ShapeProcessReport, ShapeProcessConfig,
+    run_shape_process,
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{
@@ -84,10 +86,27 @@ pub use imprint::{
 pub use inttools::{
     SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
     intersect_surfaces_with_density, intersect_surfaces_with_tolerance,
+    // Extreme geometry handling
+    AspectRatioAdaptiveTolerance, DegenerateGeometryHandler, DegenerateType,
+    HighAspectRatioEdge, HighAspectRatioFace, NearDegenerateGeometry,
+    NearTangentConfig, NearTangentHandler, NearTangentSeverity,
+    SizeDifferenceAnalysis, SizeDifferenceHandler,
+    ExtremeGeometryAnalysis, ExtremeGeometryAnalysisOptions,
+    analyze_extreme_geometry, analyze_size_difference,
+    detect_high_aspect_ratio_edges, detect_near_degenerate_geometry,
+    detect_near_tangent_configurations,
+    ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
 };
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 pub use thicken::{ThickeningResult, thicken_shell};
-pub use triangulate::{SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface};
+pub use triangulate::{
+    SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface,
+    MeshQualityMetrics, compute_mesh_quality,
+    AdaptiveSubdivider,
+    BoundarySensitiveTessellator, FeatureEdge,
+    IncrementalMesher, MeshDelta,
+    MeshSimplifier,
+};
 pub use array::{
     LinearPatternParams, CircularPatternParams, PatternError,
     linear_pattern, circular_pattern,
@@ -381,6 +400,8 @@ pub struct BooleanRobustOptions {
     pub fuzzy_retry_ladder: Vec<f64>,
     /// Retry policy controlling candidate generation after each failure.
     pub retry_policy: BooleanRetryPolicy,
+    /// Configuration for extreme geometry handling.
+    pub extreme_geometry: ExtremeGeometryRetryConfig,
 }
 
 /// Retry classes used by adaptive robust-boolean retry policy.
@@ -405,6 +426,144 @@ pub enum BooleanRetryPolicy {
     AdaptiveByFailureClass,
     /// Aggressive: retry ladder values plus multiplicative fuzzy boosts.
     Aggressive,
+}
+
+/// Retry strategy for extreme geometry conditions.
+///
+/// This policy extends the base retry mechanism to account for geometric
+/// conditions that require specialized tolerance adjustments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtremeGeometryRetryPolicy {
+    /// No extreme geometry handling (use base retry policy only).
+    None,
+    /// Detect extreme geometry and adjust tolerances before first attempt.
+    PreAnalyze,
+    /// Detect extreme geometry and use specialized retry ladder.
+    AdaptiveTolerance,
+    /// Full extreme geometry analysis with geometry-aware retry strategy.
+    GeometryAware,
+}
+
+/// Configuration for extreme geometry retry handling.
+#[derive(Debug, Clone)]
+pub struct ExtremeGeometryRetryConfig {
+    /// Policy to use for extreme geometry.
+    pub policy: ExtremeGeometryRetryPolicy,
+    /// Whether to check for near-tangent configurations.
+    pub check_near_tangent: bool,
+    /// Whether to check for high aspect ratio geometry.
+    pub check_aspect_ratio: bool,
+    /// Whether to check for degenerate geometry.
+    pub check_degenerate: bool,
+    /// Whether to check for size differences between inputs.
+    pub check_size_difference: bool,
+    /// Maximum fuzzy tolerance multiplier for extreme geometry.
+    pub max_fuzzy_multiplier: f64,
+    /// Number of additional retry steps to add for extreme geometry.
+    pub extra_retry_steps: usize,
+}
+
+impl Default for ExtremeGeometryRetryConfig {
+    fn default() -> Self {
+        Self {
+            policy: ExtremeGeometryRetryPolicy::AdaptiveTolerance,
+            check_near_tangent: true,
+            check_aspect_ratio: true,
+            check_degenerate: true,
+            check_size_difference: true,
+            max_fuzzy_multiplier: 1000.0,
+            extra_retry_steps: 2,
+        }
+    }
+}
+
+impl ExtremeGeometryRetryConfig {
+    /// Create a configuration that skips all extreme geometry checks.
+    pub fn none() -> Self {
+        Self {
+            policy: ExtremeGeometryRetryPolicy::None,
+            check_near_tangent: false,
+            check_aspect_ratio: false,
+            check_degenerate: false,
+            check_size_difference: false,
+            max_fuzzy_multiplier: 1.0,
+            extra_retry_steps: 0,
+        }
+    }
+
+    /// Create a configuration for geometry-aware retry.
+    pub fn geometry_aware() -> Self {
+        Self {
+            policy: ExtremeGeometryRetryPolicy::GeometryAware,
+            ..Default::default()
+        }
+    }
+
+    /// Build a specialized retry ladder based on extreme geometry analysis.
+    pub fn build_retry_ladder(
+        &self,
+        base_ladder: &[f64],
+        analysis: &ExtremeGeometryAnalysis,
+    ) -> Vec<f64> {
+        if self.policy == ExtremeGeometryRetryPolicy::None {
+            return base_ladder.to_vec();
+        }
+
+        let mut ladder = base_ladder.to_vec();
+
+        // Add tolerance adjustments for near-tangent configurations
+        if self.check_near_tangent && !analysis.near_tangent_configs.is_empty() {
+            for config in &analysis.near_tangent_configs {
+                let tol = config.suggested_fuzzy_adjustment;
+                if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                    ladder.push(tol);
+                }
+            }
+        }
+
+        // Add tolerance adjustments for high aspect ratio edges
+        if self.check_aspect_ratio {
+            for edge in &analysis.high_aspect_ratio_edges {
+                if edge.is_problematic {
+                    let tol = tolerance::TOLERANCE_ABS * edge.suggested_tolerance_multiplier;
+                    if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                        ladder.push(tol);
+                    }
+                }
+            }
+        }
+
+        // Add tolerance adjustments for size difference
+        if self.check_size_difference {
+            if let Some(ref sd) = analysis.size_difference {
+                if sd.is_extreme {
+                    let tol = tolerance::TOLERANCE_ABS * sd.suggested_tolerance_multiplier;
+                    if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                        ladder.push(tol);
+                    }
+                }
+            }
+        }
+
+        // Add the recommended fuzzy tolerance from the analysis
+        if analysis.recommended_fuzzy_tolerance > tolerance::TOLERANCE_ABS {
+            let tol = analysis.recommended_fuzzy_tolerance.min(
+                tolerance::TOLERANCE_ABS * self.max_fuzzy_multiplier
+            );
+            if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                ladder.push(tol);
+            }
+        }
+
+        // Sort and deduplicate
+        ladder.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        ladder.dedup_by(|a, b| (*a - *b).abs() < tolerance::TOLERANCE_ABS);
+
+        // Cap the ladder
+        ladder.truncate(base_ladder.len() + self.extra_retry_steps + 1);
+
+        ladder
+    }
 }
 
 /// Per-attempt diagnostics for robust boolean retry execution.
@@ -474,6 +633,7 @@ impl Default for BooleanRobustOptions {
                 tolerance::TOLERANCE_ABS * 1000.0,
             ],
             retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+            extreme_geometry: ExtremeGeometryRetryConfig::default(),
         }
     }
 }
@@ -4397,6 +4557,7 @@ mod tests {
                 },
                 fuzzy_retry_ladder: vec![1e-6, 1e-5],
                 retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+                extreme_geometry: ExtremeGeometryRetryConfig::default(),
             },
         )
         .expect("robust union should succeed");
@@ -4473,6 +4634,7 @@ mod tests {
                 },
                 fuzzy_retry_ladder: vec![1e-6, 1e-5],
                 retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+                extreme_geometry: ExtremeGeometryRetryConfig::default(),
             },
         )
         .expect("robust union with scoped make-connected should succeed");

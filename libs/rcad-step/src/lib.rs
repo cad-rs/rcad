@@ -315,6 +315,40 @@ pub struct StepDocumentMetadata {
     pub shape_aspect_definitions: Vec<StepShapeAspectDefinition>,
     /// Derived shape aspects (AP242 DERIVED_SHAPE_ASPECT).
     pub derived_shape_aspects: Vec<StepDerivedShapeAspect>,
+    /// GDT dimensional tolerances (AP242 DIMENSIONAL_TOLERANCE).
+    pub dimensional_tolerances: Vec<StepDimensionalTolerance>,
+    /// GDT tolerance values (AP242 MEASURE_REPRESENTATION_ITEM).
+    pub tolerance_values: Vec<StepToleranceValue>,
+    /// GDT position tolerances (AP242 POSITION_TOLERANCE).
+    pub position_tolerances: Vec<StepPositionTolerance>,
+    /// GDT orientation tolerances (AP242 ORIENTATION_TOLERANCE).
+    pub orientation_tolerances: Vec<StepOrientationTolerance>,
+    /// GDT form tolerances (AP242 FORM_TOLERANCE).
+    pub form_tolerances: Vec<StepFormTolerance>,
+    /// GDT runout tolerances (AP242 RUNOUT_TOLERANCE).
+    pub runout_tolerances: Vec<StepRunoutTolerance>,
+    /// GDT profile tolerances (AP242 PROFILE_TOLERANCE).
+    pub profile_tolerances: Vec<StepProfileTolerance>,
+    /// GDT datum reference frames (AP242 DATUM_REFERENCE_FRAME).
+    pub datum_reference_frames: Vec<StepDatumReferenceFrame>,
+    /// GDT datum targets (AP242 DATUM_TARGET).
+    pub datum_targets: Vec<StepDatumTarget>,
+    /// Enhanced tolerance zone definitions.
+    pub tolerance_zone_definitions_enhanced: Vec<StepToleranceZoneDefinitionEnhanced>,
+    /// FEA model definitions (AP242 FEAMEDIAN_MODEL).
+    pub fea_models: Vec<StepFeaModel>,
+    /// FEA meshes (AP242 FEAMEDIAN_MESH).
+    pub fea_meshes: Vec<StepFeaMesh>,
+    /// FEA node sets (AP242 FEAMEDIAN_NODE_SET).
+    pub fea_node_sets: Vec<StepFeaNodeSet>,
+    /// FEA element sets (AP242 FEAMEDIAN_ELEMENT_SET).
+    pub fea_element_sets: Vec<StepFeaElementSet>,
+    /// FEA material properties (AP242 FEAMEDIAN_MATERIAL_PROPERTY).
+    pub fea_material_properties: Vec<StepFeaMaterialProperty>,
+    /// FEA boundary conditions (AP242 FEAMEDIAN_BOUNDARY_CONDITION).
+    pub fea_boundary_conditions: Vec<StepFeaBoundaryCondition>,
+    /// FEA loads (AP242 FEAMEDIAN_LOAD).
+    pub fea_loads: Vec<StepFeaLoad>,
 }
 
 impl StepDocumentMetadata {
@@ -343,6 +377,23 @@ impl StepDocumentMetadata {
         lines.push(format!("Shape aspects: {}", self.shape_aspects.len()));
         lines.push(format!("Shape aspect definitions: {}", self.shape_aspect_definitions.len()));
         lines.push(format!("Derived shape aspects: {}", self.derived_shape_aspects.len()));
+        lines.push(format!("Dimensional tolerances: {}", self.dimensional_tolerances.len()));
+        lines.push(format!("Tolerance values: {}", self.tolerance_values.len()));
+        lines.push(format!("Position tolerances: {}", self.position_tolerances.len()));
+        lines.push(format!("Orientation tolerances: {}", self.orientation_tolerances.len()));
+        lines.push(format!("Form tolerances: {}", self.form_tolerances.len()));
+        lines.push(format!("Runout tolerances: {}", self.runout_tolerances.len()));
+        lines.push(format!("Profile tolerances: {}", self.profile_tolerances.len()));
+        lines.push(format!("Datum reference frames: {}", self.datum_reference_frames.len()));
+        lines.push(format!("Datum targets: {}", self.datum_targets.len()));
+        lines.push(format!("Enhanced tolerance zone definitions: {}", self.tolerance_zone_definitions_enhanced.len()));
+        lines.push(format!("FEA models: {}", self.fea_models.len()));
+        lines.push(format!("FEA meshes: {}", self.fea_meshes.len()));
+        lines.push(format!("FEA node sets: {}", self.fea_node_sets.len()));
+        lines.push(format!("FEA element sets: {}", self.fea_element_sets.len()));
+        lines.push(format!("FEA material properties: {}", self.fea_material_properties.len()));
+        lines.push(format!("FEA boundary conditions: {}", self.fea_boundary_conditions.len()));
+        lines.push(format!("FEA loads: {}", self.fea_loads.len()));
         lines.join("\n")
     }
 }
@@ -520,6 +571,261 @@ pub struct StepDatumReferenceElement {
     pub associated_entity_id: Option<u64>,
 }
 
+// ── GDT Extended Structures (AP242) ───────────────────────────────────────────
+
+/// Tolerance zone shape enumeration for AP242.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ToleranceZoneShape {
+    /// Cylindrical tolerance zone.
+    Cylindrical,
+    /// Spherical tolerance zone.
+    Spherical,
+    /// Zone between two parallel planes.
+    TwoParallelPlanes,
+    /// Zone between two coaxial cylinders.
+    TwoCoaxialCylinders,
+    /// Zone between two concentric circles.
+    TwoConcentricCircles,
+    /// Zone within a circle.
+    WithinCircle,
+    /// Zone between two parallel lines.
+    TwoParallelLines,
+    /// Complex shape defined by supplementary geometry.
+    Complex,
+    /// Unknown or unspecified shape.
+    Unknown,
+}
+
+/// Tolerance zone position enumeration for AP242.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ToleranceZonePosition {
+    /// Zone is symmetric about the theoretical exact location.
+    Symmetric,
+    /// Zone is unilateral (one-sided).
+    Unilateral,
+    /// Zone is bilateral but asymmetric.
+    BilateralAsymmetric,
+    /// Zone position not specified.
+    Unspecified,
+}
+
+/// A tolerance value with optional unit (AP242 MEASURE_REPRESENTATION_ITEM).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepToleranceValue {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// The tolerance value (typically half the total tolerance zone).
+    pub value: f64,
+    /// Unit name (e.g., "mm", "in").
+    pub unit: Option<String>,
+}
+
+/// A dimensional tolerance (AP242 DIMENSIONAL_TOLERANCE).
+/// Represents a plus/minus tolerance on a dimension.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDimensionalTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to DIMENSIONAL_SIZE or DIMENSIONAL_LOCATION.
+    pub dimensional_characteristic_id: Option<u64>,
+    /// Upper tolerance value (positive).
+    pub upper_tolerance: Option<f64>,
+    /// Lower tolerance value (typically negative or zero).
+    pub lower_tolerance: Option<f64>,
+    /// Unit of the tolerance values.
+    pub unit: Option<String>,
+}
+
+/// Position tolerance (AP242 POSITION_TOLERANCE).
+/// Defines the allowable variation in position of a feature.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepPositionTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to tolerance value entity.
+    pub value_entity_id: Option<u64>,
+    /// Reference to the toleranced shape aspect.
+    pub shape_aspect_id: Option<u64>,
+    /// Reference to datum system (for tolerances with datum reference).
+    pub datum_system_id: Option<u64>,
+    /// Whether this is a projected tolerance zone.
+    pub projected: bool,
+    /// Projected height if projected tolerance zone.
+    pub projected_height: Option<f64>,
+}
+
+/// Orientation tolerance (AP242 ORIENTATION_TOLERANCE).
+/// Covers angularity, perpendicularity, and parallelism tolerances.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepOrientationTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to tolerance value entity.
+    pub value_entity_id: Option<u64>,
+    /// Reference to the toleranced shape aspect.
+    pub shape_aspect_id: Option<u64>,
+    /// Reference to datum system.
+    pub datum_system_id: Option<u64>,
+    /// The type of orientation tolerance.
+    pub orientation_type: OrientationToleranceType,
+}
+
+/// Types of orientation tolerance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum OrientationToleranceType {
+    /// Angularity tolerance.
+    Angularity,
+    /// Perpendicularity tolerance.
+    Perpendicularity,
+    /// Parallelism tolerance.
+    Parallelism,
+}
+
+/// Form tolerance (AP242 FORM_TOLERANCE).
+/// Covers flatness, straightness, circularity (roundness), and cylindricity.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFormTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to tolerance value entity.
+    pub value_entity_id: Option<u64>,
+    /// Reference to the toleranced shape aspect.
+    pub shape_aspect_id: Option<u64>,
+    /// The type of form tolerance.
+    pub form_type: FormToleranceType,
+}
+
+/// Types of form tolerance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum FormToleranceType {
+    /// Flatness tolerance.
+    Flatness,
+    /// Straightness tolerance.
+    Straightness,
+    /// Circularity (roundness) tolerance.
+    Circularity,
+    /// Cylindricity tolerance.
+    Cylindricity,
+}
+
+/// Runout tolerance (AP242 RUNOUT_TOLERANCE).
+/// Covers circular runout and total runout tolerances.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepRunoutTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to tolerance value entity.
+    pub value_entity_id: Option<u64>,
+    /// Reference to the toleranced shape aspect.
+    pub shape_aspect_id: Option<u64>,
+    /// Reference to datum system.
+    pub datum_system_id: Option<u64>,
+    /// The type of runout tolerance.
+    pub runout_type: RunoutToleranceType,
+}
+
+/// Types of runout tolerance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum RunoutToleranceType {
+    /// Circular runout tolerance.
+    CircularRunout,
+    /// Total runout tolerance.
+    TotalRunout,
+}
+
+/// Profile tolerance (AP242 PROFILE_TOLERANCE).
+/// Covers profile of a line and profile of a surface tolerances.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProfileTolerance {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to tolerance value entity.
+    pub value_entity_id: Option<u64>,
+    /// Reference to the toleranced shape aspect.
+    pub shape_aspect_id: Option<u64>,
+    /// Reference to datum system (optional for profile tolerances).
+    pub datum_system_id: Option<u64>,
+    /// The type of profile tolerance.
+    pub profile_type: ProfileToleranceType,
+}
+
+/// Types of profile tolerance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ProfileToleranceType {
+    /// Profile of a line tolerance.
+    ProfileOfALine,
+    /// Profile of a surface tolerance.
+    ProfileOfASurface,
+}
+
+/// A datum reference frame (AP242 DATUM_REFERENCE_FRAME).
+/// Establishes a coordinate system for tolerance measurement.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumReferenceFrame {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Ordered list of datum system IDs that define the reference frame.
+    /// Primary, secondary, and tertiary datums.
+    pub datum_system_ids: Vec<u64>,
+}
+
+/// A datum target (AP242 DATUM_TARGET).
+/// Represents a specific point, line, or area used to establish a datum.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumTarget {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The target identifier (e.g., "A1", "A2" for datum A targets).
+    pub target_identifier: Option<String>,
+    /// Reference to the parent DATUM.
+    pub datum_id: Option<u64>,
+    /// The type of datum target.
+    pub target_type: DatumTargetType,
+    /// Reference to the geometry defining the target location/shape.
+    pub shape_aspect_id: Option<u64>,
+}
+
+/// Types of datum target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum DatumTargetType {
+    /// Point target.
+    Point,
+    /// Line target.
+    Line,
+    /// Area target (circular or rectangular).
+    Area,
+    /// Target area is a circle.
+    AreaCircle,
+    /// Target area is a rectangle.
+    AreaRectangle,
+}
+
+/// Enhanced tolerance zone definition (AP242 TOLERANCE_ZONE_DEFINITION extended).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepToleranceZoneDefinitionEnhanced {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to TOLERANCE_ZONE.
+    pub tolerance_zone_id: Option<u64>,
+    /// Reference to shape_aspect defining the zone boundaries.
+    pub shape_aspect_id: Option<u64>,
+    /// Shape of the tolerance zone.
+    pub zone_shape: ToleranceZoneShape,
+    /// Position of the tolerance zone.
+    pub zone_position: ToleranceZonePosition,
+    /// Reference to defining shape aspect (supplementary geometry).
+    pub defining_shape_aspect_id: Option<u64>,
+}
+
 /// A shape aspect entry (AP242 SHAPE_ASPECT).
 /// Used to associate tolerance information to geometric features.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -549,6 +855,71 @@ pub struct StepDerivedShapeAspect {
     pub description: Option<String>,
     /// Reference to base shape_aspect(s).
     pub base_shape_aspect_ids: Vec<u64>,
+}
+
+// ── FEA (Finite Element Analysis) entities (AP242) ────────────────────────────
+
+/// FEA model definition (AP242 FEAMEDIAN_MODEL).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaModel {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// FEA mesh (AP242 FEAMEDIAN_MESH).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaMesh {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub node_count: Option<u64>,
+    pub element_count: Option<u64>,
+}
+
+/// FEA node set (AP242 FEAMEDIAN_NODE_SET).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaNodeSet {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub model_id: Option<u64>,
+}
+
+/// FEA element set (AP242 FEAMEDIAN_ELEMENT_SET).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaElementSet {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub model_id: Option<u64>,
+    pub element_type: Option<String>,
+}
+
+/// FEA material property (AP242 FEAMEDIAN_MATERIAL_PROPERTY).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaMaterialProperty {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub property_type: Option<String>,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+}
+
+/// FEA boundary condition (AP242 FEAMEDIAN_BOUNDARY_CONDITION).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaBoundaryCondition {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub condition_type: Option<String>,
+    pub node_set_id: Option<u64>,
+}
+
+/// FEA load (AP242 FEAMEDIAN_LOAD).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaLoad {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub load_type: Option<String>,
+    pub magnitude: Option<f64>,
+    pub direction: Option<[f64; 3]>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -1397,6 +1768,737 @@ fn extract_derived_shape_aspects(content: &str) -> Vec<StepDerivedShapeAspect> {
     out
 }
 
+// ── GDT Extended entity extraction (AP242) ─────────────────────────────────────
+
+fn extract_dimensional_tolerances(content: &str) -> Vec<StepDimensionalTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        // DIMENSIONAL_TOLERANCE is often expressed via PLUS_MINUS_VALUE or TOLERANCE_VALUE
+        if !entity.eq_ignore_ascii_case("DIMENSIONAL_TOLERANCE")
+            && !entity.eq_ignore_ascii_case("TOLERANCE_VALUE")
+            && !entity.eq_ignore_ascii_case("PLUS_MINUS_VALUE")
+        {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let dimensional_characteristic_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let upper_tolerance = parts.get(3).and_then(|p| parse_float_arg(p.trim()));
+        let lower_tolerance = parts.get(4).and_then(|p| parse_float_arg(p.trim()));
+        let unit = parts.get(5).and_then(|p| parse_string_arg(p.trim()));
+        out.push(StepDimensionalTolerance {
+            entity_id: id,
+            name,
+            description,
+            dimensional_characteristic_id,
+            upper_tolerance,
+            lower_tolerance,
+            unit,
+        });
+    }
+    out
+}
+
+fn extract_tolerance_values(content: &str) -> Vec<StepToleranceValue> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        // Tolerance values are often MEASURE_REPRESENTATION_ITEM or LENGTH_MEASURE_WITH_UNIT
+        if !entity.eq_ignore_ascii_case("MEASURE_REPRESENTATION_ITEM")
+            && !entity.eq_ignore_ascii_case("LENGTH_MEASURE_WITH_UNIT")
+            && !entity.eq_ignore_ascii_case("MEASURE_WITH_UNIT")
+        {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        // Value is typically the second argument or extracted from a nested structure
+        let value = parts.get(1).and_then(|p| parse_float_arg(p.trim()));
+        // Unit might be a reference or string
+        let unit = parts.get(2).and_then(|p| {
+            let s = p.trim();
+            if s.starts_with('#') {
+                // It's a reference to a unit definition
+                None
+            } else {
+                parse_string_arg(s)
+            }
+        });
+        out.push(StepToleranceValue {
+            entity_id: id,
+            name,
+            value: value.unwrap_or(0.0),
+            unit,
+        });
+    }
+    out
+}
+
+fn extract_position_tolerances(content: &str) -> Vec<StepPositionTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("POSITION_TOLERANCE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        let projected = parts.get(5).and_then(|p| parse_bool_arg(p.trim())).unwrap_or(false);
+        let projected_height = parts.get(6).and_then(|p| parse_float_arg(p.trim()));
+        out.push(StepPositionTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            datum_system_id,
+            projected,
+            projected_height,
+        });
+    }
+    out
+}
+
+fn extract_orientation_tolerances(content: &str) -> Vec<StepOrientationTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let orientation_type = if entity_upper == "ANGULARITY_TOLERANCE" {
+            Some(OrientationToleranceType::Angularity)
+        } else if entity_upper == "PERPENDICULARITY_TOLERANCE" {
+            Some(OrientationToleranceType::Perpendicularity)
+        } else if entity_upper == "PARALLELISM_TOLERANCE" {
+            Some(OrientationToleranceType::Parallelism)
+        } else if entity_upper == "ORIENTATION_TOLERANCE" {
+            // Generic orientation tolerance, type determined by name
+            None
+        } else {
+            continue;
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        // Determine type from name if not set
+        let final_type = orientation_type.unwrap_or_else(|| {
+            match name.as_deref() {
+                Some("angularity") => OrientationToleranceType::Angularity,
+                Some("perpendicularity") => OrientationToleranceType::Perpendicularity,
+                Some("parallelism") => OrientationToleranceType::Parallelism,
+                _ => OrientationToleranceType::Angularity, // Default
+            }
+        });
+        out.push(StepOrientationTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            datum_system_id,
+            orientation_type: final_type,
+        });
+    }
+    out
+}
+
+fn extract_form_tolerances(content: &str) -> Vec<StepFormTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let form_type = if entity_upper == "FLATNESS_TOLERANCE" {
+            Some(FormToleranceType::Flatness)
+        } else if entity_upper == "STRAIGHTNESS_TOLERANCE" {
+            Some(FormToleranceType::Straightness)
+        } else if entity_upper == "CIRCULARITY_TOLERANCE" || entity_upper == "ROUNDNESS_TOLERANCE" {
+            Some(FormToleranceType::Circularity)
+        } else if entity_upper == "CYLINDRICITY_TOLERANCE" {
+            Some(FormToleranceType::Cylindricity)
+        } else if entity_upper == "FORM_TOLERANCE" {
+            None
+        } else {
+            continue;
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        // Determine type from name if not set
+        let final_type = form_type.unwrap_or_else(|| {
+            match name.as_deref() {
+                Some("flatness") => FormToleranceType::Flatness,
+                Some("straightness") => FormToleranceType::Straightness,
+                Some("circularity") | Some("roundness") => FormToleranceType::Circularity,
+                Some("cylindricity") => FormToleranceType::Cylindricity,
+                _ => FormToleranceType::Flatness, // Default
+            }
+        });
+        out.push(StepFormTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            form_type: final_type,
+        });
+    }
+    out
+}
+
+fn extract_runout_tolerances(content: &str) -> Vec<StepRunoutTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let runout_type = if entity_upper == "CIRCULAR_RUNOUT_TOLERANCE" {
+            Some(RunoutToleranceType::CircularRunout)
+        } else if entity_upper == "TOTAL_RUNOUT_TOLERANCE" {
+            Some(RunoutToleranceType::TotalRunout)
+        } else if entity_upper == "RUNOUT_TOLERANCE" {
+            None
+        } else {
+            continue;
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        // Determine type from name if not set
+        let final_type = runout_type.unwrap_or_else(|| {
+            match name.as_deref() {
+                Some("circular runout") => RunoutToleranceType::CircularRunout,
+                Some("total runout") => RunoutToleranceType::TotalRunout,
+                _ => RunoutToleranceType::CircularRunout, // Default
+            }
+        });
+        out.push(StepRunoutTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            datum_system_id,
+            runout_type: final_type,
+        });
+    }
+    out
+}
+
+fn extract_profile_tolerances(content: &str) -> Vec<StepProfileTolerance> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let profile_type = if entity_upper == "LINE_PROFILE_TOLERANCE" {
+            Some(ProfileToleranceType::ProfileOfALine)
+        } else if entity_upper == "SURFACE_PROFILE_TOLERANCE" {
+            Some(ProfileToleranceType::ProfileOfASurface)
+        } else if entity_upper == "PROFILE_TOLERANCE" {
+            None
+        } else {
+            continue;
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        // Determine type from name if not set
+        let final_type = profile_type.unwrap_or_else(|| {
+            match name.as_deref() {
+                Some("profile of a line") => ProfileToleranceType::ProfileOfALine,
+                Some("profile of a surface") => ProfileToleranceType::ProfileOfASurface,
+                _ => ProfileToleranceType::ProfileOfASurface, // Default
+            }
+        });
+        out.push(StepProfileTolerance {
+            entity_id: id,
+            name,
+            description,
+            value_entity_id,
+            shape_aspect_id,
+            datum_system_id,
+            profile_type: final_type,
+        });
+    }
+    out
+}
+
+fn extract_datum_reference_frames(content: &str) -> Vec<StepDatumReferenceFrame> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DATUM_REFERENCE_FRAME") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let datum_system_ids = parts
+            .get(2)
+            .map(|p| parse_ref_list(p.trim()))
+            .unwrap_or_default();
+        out.push(StepDatumReferenceFrame {
+            entity_id: id,
+            name,
+            description,
+            datum_system_ids,
+        });
+    }
+    out
+}
+
+fn extract_datum_targets(content: &str) -> Vec<StepDatumTarget> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_ascii_uppercase();
+        let target_type = if entity_upper == "DATUM_TARGET" || entity_upper == "DATUM_TARGET_POINT" {
+            Some(DatumTargetType::Point)
+        } else if entity_upper == "DATUM_TARGET_LINE" {
+            Some(DatumTargetType::Line)
+        } else if entity_upper == "DATUM_TARGET_AREA" {
+            Some(DatumTargetType::Area)
+        } else if entity_upper == "DATUM_TARGET_CIRCLE" {
+            Some(DatumTargetType::AreaCircle)
+        } else if entity_upper == "DATUM_TARGET_RECTANGLE" {
+            Some(DatumTargetType::AreaRectangle)
+        } else {
+            continue;
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let target_identifier = parts.get(2).and_then(|p| parse_string_arg(p.trim()));
+        let datum_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDatumTarget {
+            entity_id: id,
+            name,
+            description,
+            target_identifier,
+            datum_id,
+            target_type: target_type.unwrap_or(DatumTargetType::Point),
+            shape_aspect_id,
+        });
+    }
+    out
+}
+
+fn extract_tolerance_zone_definitions_enhanced(content: &str) -> Vec<StepToleranceZoneDefinitionEnhanced> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("TOLERANCE_ZONE_DEFINITION") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let tolerance_zone_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        // Parse zone shape from name or use default
+        let zone_shape = match name.as_deref() {
+            Some("cylindrical") => ToleranceZoneShape::Cylindrical,
+            Some("spherical") => ToleranceZoneShape::Spherical,
+            Some("two parallel planes") => ToleranceZoneShape::TwoParallelPlanes,
+            Some("two coaxial cylinders") => ToleranceZoneShape::TwoCoaxialCylinders,
+            Some("two concentric circles") => ToleranceZoneShape::TwoConcentricCircles,
+            Some("within circle") => ToleranceZoneShape::WithinCircle,
+            Some("two parallel lines") => ToleranceZoneShape::TwoParallelLines,
+            _ => ToleranceZoneShape::Unknown,
+        };
+        // Parse zone position from description or use default
+        let zone_position = match description.as_deref() {
+            Some("symmetric") => ToleranceZonePosition::Symmetric,
+            Some("unilateral") => ToleranceZonePosition::Unilateral,
+            Some("bilateral asymmetric") => ToleranceZonePosition::BilateralAsymmetric,
+            _ => ToleranceZonePosition::Unspecified,
+        };
+        let defining_shape_aspect_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+        out.push(StepToleranceZoneDefinitionEnhanced {
+            entity_id: id,
+            name,
+            description,
+            tolerance_zone_id,
+            shape_aspect_id,
+            zone_shape,
+            zone_position,
+            defining_shape_aspect_id,
+        });
+    }
+    out
+}
+
+// ── FEA (Finite Element Analysis) entity extraction (AP242) ──────────────────
+
+fn extract_fea_models(content: &str) -> Vec<StepFeaModel> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MODEL") {
+            continue;
+        }
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        out.push(StepFeaModel {
+            entity_id: id,
+            name,
+            description,
+        });
+    }
+    out
+}
+
+fn extract_fea_meshes(content: &str) -> Vec<StepFeaMesh> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MESH") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let node_count = parts.get(1).and_then(|p| parse_uint_arg(p.trim()));
+        let element_count = parts.get(2).and_then(|p| parse_uint_arg(p.trim()));
+        out.push(StepFeaMesh {
+            entity_id: id,
+            name,
+            node_count,
+            element_count,
+        });
+    }
+    out
+}
+
+fn extract_fea_node_sets(content: &str) -> Vec<StepFeaNodeSet> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_NODE_SET") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let model_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        out.push(StepFeaNodeSet {
+            entity_id: id,
+            name,
+            model_id,
+        });
+    }
+    out
+}
+
+fn extract_fea_element_sets(content: &str) -> Vec<StepFeaElementSet> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_ELEMENT_SET") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let model_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        let element_type = extract_nth_string_arg(args, 1);
+        out.push(StepFeaElementSet {
+            entity_id: id,
+            name,
+            model_id,
+            element_type,
+        });
+    }
+    out
+}
+
+fn extract_fea_material_properties(content: &str) -> Vec<StepFeaMaterialProperty> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MATERIAL_PROPERTY") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let property_type = extract_nth_string_arg(args, 1);
+        let value = parts.get(2).and_then(|p| parse_float_arg(p.trim()));
+        let unit = extract_nth_string_arg(args, 2);
+        out.push(StepFeaMaterialProperty {
+            entity_id: id,
+            name,
+            property_type,
+            value,
+            unit,
+        });
+    }
+    out
+}
+
+fn extract_fea_boundary_conditions(content: &str) -> Vec<StepFeaBoundaryCondition> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_BOUNDARY_CONDITION") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let condition_type = extract_nth_string_arg(args, 1);
+        let node_set_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepFeaBoundaryCondition {
+            entity_id: id,
+            name,
+            condition_type,
+            node_set_id,
+        });
+    }
+    out
+}
+
+fn extract_fea_loads(content: &str) -> Vec<StepFeaLoad> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("FEAMEDIAN_LOAD") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let load_type = extract_nth_string_arg(args, 1);
+        let magnitude = parts.get(2).and_then(|p| parse_float_arg(p.trim()));
+        // Direction is typically a reference to a DIRECTION entity or a list of 3 floats
+        let direction = parts.get(3).and_then(|p| parse_direction_tuple(p.trim()));
+        out.push(StepFeaLoad {
+            entity_id: id,
+            name,
+            load_type,
+            magnitude,
+            direction,
+        });
+    }
+    out
+}
+
+/// Parse a uint argument (either bare number or from a measure value).
+fn parse_uint_arg(s: &str) -> Option<u64> {
+    let s = s.trim();
+    // Try parsing as a direct integer
+    if let Ok(val) = s.parse::<u64>() {
+        return Some(val);
+    }
+    // Try extracting from parentheses like "(#100)" or "(100)"
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        return parse_uint_arg(inner);
+    }
+    None
+}
+
+/// Parse a float argument (bare number or wrapped).
+fn parse_float_arg(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if let Ok(val) = s.parse::<f64>() {
+        return Some(val);
+    }
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        return parse_float_arg(inner);
+    }
+    None
+}
+
+/// Parse a string argument (extracts from single quotes).
+fn parse_string_arg(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2 {
+        Some(s[1..s.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
+/// Parse a boolean argument (STEP format: .T. or .F.).
+fn parse_bool_arg(s: &str) -> Option<bool> {
+    let s = s.trim();
+    if s == ".T." {
+        Some(true)
+    } else if s == ".F." {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Parse a direction tuple like "(1.0,0.0,0.0)" or a reference to a direction entity.
+fn parse_direction_tuple(s: &str) -> Option<[f64; 3]> {
+    let s = s.trim();
+    // Skip entity references like #100
+    if s.starts_with('#') {
+        return None;
+    }
+    // Try parsing as a tuple (x,y,z)
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = &s[1..s.len() - 1];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() == 3 {
+            let x = parts[0].trim().parse::<f64>().ok()?;
+            let y = parts[1].trim().parse::<f64>().ok()?;
+            let z = parts[2].trim().parse::<f64>().ok()?;
+            return Some([x, y, z]);
+        }
+    }
+    None
+}
+
 fn extract_first_string_arg(args: &str) -> Option<String> {
     let q1 = args.find('\'')?;
     let rest = &args[q1 + 1..];
@@ -1536,6 +2638,23 @@ impl StepReader {
             shape_aspects: extract_shape_aspects(content),
             shape_aspect_definitions: extract_shape_aspect_definitions(content),
             derived_shape_aspects: extract_derived_shape_aspects(content),
+            dimensional_tolerances: extract_dimensional_tolerances(content),
+            tolerance_values: extract_tolerance_values(content),
+            position_tolerances: extract_position_tolerances(content),
+            orientation_tolerances: extract_orientation_tolerances(content),
+            form_tolerances: extract_form_tolerances(content),
+            runout_tolerances: extract_runout_tolerances(content),
+            profile_tolerances: extract_profile_tolerances(content),
+            datum_reference_frames: extract_datum_reference_frames(content),
+            datum_targets: extract_datum_targets(content),
+            tolerance_zone_definitions_enhanced: extract_tolerance_zone_definitions_enhanced(content),
+            fea_models: extract_fea_models(content),
+            fea_meshes: extract_fea_meshes(content),
+            fea_node_sets: extract_fea_node_sets(content),
+            fea_element_sets: extract_fea_element_sets(content),
+            fea_material_properties: extract_fea_material_properties(content),
+            fea_boundary_conditions: extract_fea_boundary_conditions(content),
+            fea_loads: extract_fea_loads(content),
         };
 
         Ok((brep, metadata))
@@ -6097,6 +7216,85 @@ END-ISO-10303-21;
         assert_eq!(aspects[0].base_shape_aspect_ids, vec![60, 70]);
     }
 
+    // ── FEA entity extraction tests ──────────────────────────────────────
+
+    #[test]
+    fn extract_fea_models_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=FEAMEDIAN_MODEL('bracket_fea','FEA model for bracket');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let models = extract_fea_models(step);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].entity_id, 100);
+        assert_eq!(models[0].name.as_deref(), Some("bracket_fea"));
+        assert_eq!(models[0].description.as_deref(), Some("FEA model for bracket"));
+    }
+
+    #[test]
+    fn extract_fea_meshes_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#200=FEAMEDIAN_MESH('mesh1',1000,500);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let meshes = extract_fea_meshes(step);
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(meshes[0].entity_id, 200);
+        assert_eq!(meshes[0].name.as_deref(), Some("mesh1"));
+        assert_eq!(meshes[0].node_count, Some(1000));
+        assert_eq!(meshes[0].element_count, Some(500));
+    }
+
+    #[test]
+    fn extract_fea_node_sets_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#300=FEAMEDIAN_NODE_SET('fixed_nodes',#100);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let node_sets = extract_fea_node_sets(step);
+        assert_eq!(node_sets.len(), 1);
+        assert_eq!(node_sets[0].entity_id, 300);
+        assert_eq!(node_sets[0].name.as_deref(), Some("fixed_nodes"));
+        assert_eq!(node_sets[0].model_id, Some(100));
+    }
+
+    #[test]
+    fn extract_fea_element_sets_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#400=FEAMEDIAN_ELEMENT_SET('shell_elements',#100,'QUAD4');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let element_sets = extract_fea_element_sets(step);
+        assert_eq!(element_sets.len(), 1);
+        assert_eq!(element_sets[0].entity_id, 400);
+        assert_eq!(element_sets[0].name.as_deref(), Some("shell_elements"));
+        assert_eq!(element_sets[0].model_id, Some(100));
+        assert_eq!(element_sets[0].element_type.as_deref(), Some("QUAD4"));
+    }
+
+    #[test]
+    fn extract_fea_material_properties_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#500=FEAMEDIAN_MATERIAL_PROPERTY('Steel_E','YoungsModulus',210000.0,'MPa');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let props = extract_fea_material_properties(step);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].entity_id, 500);
+        assert_eq!(props[0].name.as_deref(), Some("Steel_E"));
+        assert_eq!(props[0].property_type.as_deref(), Some("YoungsModulus"));
+        assert!((props[0].value.unwrap() - 210000.0).abs() < 1e-6);
+        assert_eq!(props[0].unit.as_deref(), Some("MPa"));
+    }
+
+    #[test]
+    fn extract_fea_boundary_conditions_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#600=FEAMEDIAN_BOUNDARY_CONDITION('fixed_bc','FIXED',#300);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let bcs = extract_fea_boundary_conditions(step);
+        assert_eq!(bcs.len(), 1);
+        assert_eq!(bcs[0].entity_id, 600);
+        assert_eq!(bcs[0].name.as_deref(), Some("fixed_bc"));
+        assert_eq!(bcs[0].condition_type.as_deref(), Some("FIXED"));
+        assert_eq!(bcs[0].node_set_id, Some(300));
+    }
+
+    #[test]
+    fn extract_fea_loads_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#700=FEAMEDIAN_LOAD('pressure_load','PRESSURE',100.0,(0.0,0.0,-1.0));\nENDSEC;\nEND-ISO-10303-21;\n";
+        let loads = extract_fea_loads(step);
+        assert_eq!(loads.len(), 1);
+        assert_eq!(loads[0].entity_id, 700);
+        assert_eq!(loads[0].name.as_deref(), Some("pressure_load"));
+        assert_eq!(loads[0].load_type.as_deref(), Some("PRESSURE"));
+        assert!((loads[0].magnitude.unwrap() - 100.0).abs() < 1e-6);
+        assert_eq!(loads[0].direction.unwrap(), [0.0, 0.0, -1.0]);
+    }
+
     #[test]
     fn metadata_summary_reports_all_entity_counts() {
         // Test extraction functions directly
@@ -6163,6 +7361,24 @@ END-ISO-10303-21;
         assert_eq!(a_md.shape_aspects.len(), b_md.shape_aspects.len());
         assert_eq!(a_md.shape_aspect_definitions.len(), b_md.shape_aspect_definitions.len());
         assert_eq!(a_md.derived_shape_aspects.len(), b_md.derived_shape_aspects.len());
+        assert_eq!(a_md.fea_models.len(), b_md.fea_models.len());
+        assert_eq!(a_md.fea_meshes.len(), b_md.fea_meshes.len());
+        assert_eq!(a_md.fea_node_sets.len(), b_md.fea_node_sets.len());
+        assert_eq!(a_md.fea_element_sets.len(), b_md.fea_element_sets.len());
+        assert_eq!(a_md.fea_material_properties.len(), b_md.fea_material_properties.len());
+        assert_eq!(a_md.fea_boundary_conditions.len(), b_md.fea_boundary_conditions.len());
+        assert_eq!(a_md.fea_loads.len(), b_md.fea_loads.len());
+        // GDT extended fields
+        assert_eq!(a_md.dimensional_tolerances.len(), b_md.dimensional_tolerances.len());
+        assert_eq!(a_md.tolerance_values.len(), b_md.tolerance_values.len());
+        assert_eq!(a_md.position_tolerances.len(), b_md.position_tolerances.len());
+        assert_eq!(a_md.orientation_tolerances.len(), b_md.orientation_tolerances.len());
+        assert_eq!(a_md.form_tolerances.len(), b_md.form_tolerances.len());
+        assert_eq!(a_md.runout_tolerances.len(), b_md.runout_tolerances.len());
+        assert_eq!(a_md.profile_tolerances.len(), b_md.profile_tolerances.len());
+        assert_eq!(a_md.datum_reference_frames.len(), b_md.datum_reference_frames.len());
+        assert_eq!(a_md.datum_targets.len(), b_md.datum_targets.len());
+        assert_eq!(a_md.tolerance_zone_definitions_enhanced.len(), b_md.tolerance_zone_definitions_enhanced.len());
     }
 
     #[test]
@@ -6310,5 +7526,214 @@ END-ISO-10303-21;
         let report = validate_export_readiness(&brep);
         let s = report.summary();
         assert!(s.contains("export-ready"), "summary should say export-ready: {s}");
+    }
+
+    // ── GDT Extended entity extraction tests ──────────────────────────────────────
+
+    #[test]
+    fn extract_dimensional_tolerances_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#10=DIMENSIONAL_TOLERANCE('diam_tol','diameter tolerance',#100,0.05,-0.05,'mm');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_dimensional_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 10);
+        assert_eq!(tols[0].name.as_deref(), Some("diam_tol"));
+        assert_eq!(tols[0].description.as_deref(), Some("diameter tolerance"));
+        assert_eq!(tols[0].dimensional_characteristic_id, Some(100));
+        assert!((tols[0].upper_tolerance.unwrap() - 0.05).abs() < 1e-9);
+        assert!((tols[0].lower_tolerance.unwrap() - (-0.05)).abs() < 1e-9);
+        assert_eq!(tols[0].unit.as_deref(), Some("mm"));
+    }
+
+    #[test]
+    fn extract_tolerance_values_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#20=MEASURE_REPRESENTATION_ITEM('tol_value',0.025,'mm');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let vals = extract_tolerance_values(step);
+        assert_eq!(vals.len(), 1);
+        assert_eq!(vals[0].entity_id, 20);
+        assert_eq!(vals[0].name.as_deref(), Some("tol_value"));
+        assert!((vals[0].value - 0.025).abs() < 1e-9);
+        assert_eq!(vals[0].unit.as_deref(), Some("mm"));
+    }
+
+    #[test]
+    fn extract_position_tolerances_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#30=POSITION_TOLERANCE('pos_tol','positional tolerance',#20,#30,#40,.T.,10.0);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_position_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 30);
+        assert_eq!(tols[0].name.as_deref(), Some("pos_tol"));
+        assert_eq!(tols[0].description.as_deref(), Some("positional tolerance"));
+        assert_eq!(tols[0].value_entity_id, Some(20));
+        assert_eq!(tols[0].shape_aspect_id, Some(30));
+        assert_eq!(tols[0].datum_system_id, Some(40));
+        assert!(tols[0].projected);
+        assert!((tols[0].projected_height.unwrap() - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn extract_orientation_tolerances_parses_angularity() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#40=ANGULARITY_TOLERANCE('ang_tol','angularity tolerance',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_orientation_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 40);
+        assert_eq!(tols[0].name.as_deref(), Some("ang_tol"));
+        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Angularity);
+    }
+
+    #[test]
+    fn extract_orientation_tolerances_parses_perpendicularity() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#41=PERPENDICULARITY_TOLERANCE('perp_tol','perpendicularity tolerance',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_orientation_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 41);
+        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Perpendicularity);
+    }
+
+    #[test]
+    fn extract_orientation_tolerances_parses_parallelism() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#42=PARALLELISM_TOLERANCE('para_tol','parallelism tolerance',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_orientation_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 42);
+        assert_eq!(tols[0].orientation_type, OrientationToleranceType::Parallelism);
+    }
+
+    #[test]
+    fn extract_form_tolerances_parses_flatness() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#50=FLATNESS_TOLERANCE('flat_tol','flatness tolerance',#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_form_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 50);
+        assert_eq!(tols[0].name.as_deref(), Some("flat_tol"));
+        assert_eq!(tols[0].form_type, FormToleranceType::Flatness);
+    }
+
+    #[test]
+    fn extract_form_tolerances_parses_straightness() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#51=STRAIGHTNESS_TOLERANCE('str_tol','straightness tolerance',#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_form_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].form_type, FormToleranceType::Straightness);
+    }
+
+    #[test]
+    fn extract_form_tolerances_parses_circularity() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#52=CIRCULARITY_TOLERANCE('cir_tol','circularity tolerance',#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_form_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].form_type, FormToleranceType::Circularity);
+    }
+
+    #[test]
+    fn extract_form_tolerances_parses_cylindricity() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#53=CYLINDRICITY_TOLERANCE('cyl_tol','cylindricity tolerance',#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_form_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].form_type, FormToleranceType::Cylindricity);
+    }
+
+    #[test]
+    fn extract_runout_tolerances_parses_circular_runout() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#60=CIRCULAR_RUNOUT_TOLERANCE('cr_tol','circular runout tolerance',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_runout_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 60);
+        assert_eq!(tols[0].runout_type, RunoutToleranceType::CircularRunout);
+    }
+
+    #[test]
+    fn extract_runout_tolerances_parses_total_runout() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#61=TOTAL_RUNOUT_TOLERANCE('tr_tol','total runout tolerance',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_runout_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].runout_type, RunoutToleranceType::TotalRunout);
+    }
+
+    #[test]
+    fn extract_profile_tolerances_parses_profile_of_line() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#70=LINE_PROFILE_TOLERANCE('lin_tol','profile of a line',#20,#30);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_profile_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].entity_id, 70);
+        assert_eq!(tols[0].profile_type, ProfileToleranceType::ProfileOfALine);
+    }
+
+    #[test]
+    fn extract_profile_tolerances_parses_profile_of_surface() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#71=SURFACE_PROFILE_TOLERANCE('surf_tol','profile of a surface',#20,#30,#40);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let tols = extract_profile_tolerances(step);
+        assert_eq!(tols.len(), 1);
+        assert_eq!(tols[0].profile_type, ProfileToleranceType::ProfileOfASurface);
+    }
+
+    #[test]
+    fn extract_datum_reference_frames_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#80=DATUM_REFERENCE_FRAME('DRF1','primary datum reference frame',(#50,#51,#52));\nENDSEC;\nEND-ISO-10303-21;\n";
+        let frames = extract_datum_reference_frames(step);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].entity_id, 80);
+        assert_eq!(frames[0].name.as_deref(), Some("DRF1"));
+        assert_eq!(frames[0].description.as_deref(), Some("primary datum reference frame"));
+        assert_eq!(frames[0].datum_system_ids, vec![50, 51, 52]);
+    }
+
+    #[test]
+    fn extract_datum_targets_parses_point_target() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#90=DATUM_TARGET_POINT('A1','datum target A1','A1',#80,#100);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let targets = extract_datum_targets(step);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].entity_id, 90);
+        assert_eq!(targets[0].name.as_deref(), Some("A1"));
+        assert_eq!(targets[0].target_identifier.as_deref(), Some("A1"));
+        assert_eq!(targets[0].datum_id, Some(80));
+        assert_eq!(targets[0].target_type, DatumTargetType::Point);
+    }
+
+    #[test]
+    fn extract_datum_targets_parses_line_target() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#91=DATUM_TARGET_LINE('B1','datum target line B1','B1',#80,#100);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let targets = extract_datum_targets(step);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].target_type, DatumTargetType::Line);
+    }
+
+    #[test]
+    fn extract_datum_targets_parses_area_target() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#92=DATUM_TARGET_AREA('C1','datum target area C1','C1',#80,#100);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let targets = extract_datum_targets(step);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].target_type, DatumTargetType::Area);
+    }
+
+    #[test]
+    fn extract_tolerance_zone_definitions_enhanced_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=TOLERANCE_ZONE_DEFINITION('cylindrical','symmetric',#90,#110,#120);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_tolerance_zone_definitions_enhanced(step);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].entity_id, 100);
+        assert_eq!(defs[0].name.as_deref(), Some("cylindrical"));
+        assert_eq!(defs[0].tolerance_zone_id, Some(90));
+        assert_eq!(defs[0].shape_aspect_id, Some(110));
+        assert_eq!(defs[0].zone_shape, ToleranceZoneShape::Cylindrical);
+        assert_eq!(defs[0].zone_position, ToleranceZonePosition::Symmetric);
+        assert_eq!(defs[0].defining_shape_aspect_id, Some(120));
+    }
+
+    #[test]
+    fn extract_tolerance_zone_definitions_enhanced_detects_zone_shapes() {
+        // Test spherical shape
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#101=TOLERANCE_ZONE_DEFINITION('spherical',$,#90,#110);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_tolerance_zone_definitions_enhanced(step);
+        assert_eq!(defs[0].zone_shape, ToleranceZoneShape::Spherical);
+
+        // Test two parallel planes shape
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#102=TOLERANCE_ZONE_DEFINITION('two parallel planes',$,#90,#110);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_tolerance_zone_definitions_enhanced(step);
+        assert_eq!(defs[0].zone_shape, ToleranceZoneShape::TwoParallelPlanes);
+
+        // Test two coaxial cylinders shape
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#103=TOLERANCE_ZONE_DEFINITION('two coaxial cylinders',$,#90,#110);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let defs = extract_tolerance_zone_definitions_enhanced(step);
+        assert_eq!(defs[0].zone_shape, ToleranceZoneShape::TwoCoaxialCylinders);
     }
 }

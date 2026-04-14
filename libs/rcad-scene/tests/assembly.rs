@@ -41,6 +41,7 @@ fn flatten_world_transforms() {
         name: "parent".to_string(),
         transform: parent_xform,
         content: NodeContent::Assembly(vec![child]),
+        metadata: Default::default(),
     };
 
     let mut asm = Assembly::new("test");
