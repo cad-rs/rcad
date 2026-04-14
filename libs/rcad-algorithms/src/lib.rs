@@ -411,6 +411,16 @@ pub struct BooleanRobustAttemptReport {
     pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
     /// Effective history ring depth configured for this attempt.
     pub make_connected_scope_history_ring_depth: Option<usize>,
+    /// Effective scoped seed source observed during this attempt.
+    pub make_connected_scope_seed_source: Option<MakeConnectedScopeSeedSource>,
+    /// Number of history-derived scoped seed edges observed during this attempt.
+    pub make_connected_scope_history_seed_edge_count: Option<usize>,
+    /// Number of heuristic-derived scoped seed edges observed during this attempt.
+    pub make_connected_scope_heuristic_seed_edge_count: Option<usize>,
+    /// Number of scoped seed vertices observed during this attempt.
+    pub make_connected_scope_seed_vertex_count: Option<usize>,
+    /// Number of scoped seed edges observed during this attempt.
+    pub make_connected_scope_seed_edge_count: Option<usize>,
     /// Retry classification for a failed attempt.
     pub retry_class: Option<BooleanRetryClass>,
     /// Debug message for a failed attempt.
@@ -1271,6 +1281,19 @@ pub fn boolean_op_robust(
                     make_connected_scope_seed_mode: report.make_connected_scope_seed_mode,
                     make_connected_scope_history_ring_depth: report
                         .make_connected_scope_history_ring_depth,
+                    make_connected_scope_seed_source: report.make_connected_scope_seed_source,
+                    make_connected_scope_history_seed_edge_count: Some(
+                        report.make_connected_scope_history_seed_edge_count,
+                    ),
+                    make_connected_scope_heuristic_seed_edge_count: Some(
+                        report.make_connected_scope_heuristic_seed_edge_count,
+                    ),
+                    make_connected_scope_seed_vertex_count: Some(
+                        report.make_connected_scope_seed_vertices.len(),
+                    ),
+                    make_connected_scope_seed_edge_count: Some(
+                        report.make_connected_scope_seed_edges.len(),
+                    ),
                     retry_class: None,
                     error_message: None,
                     output_faces: Some(report.output_faces),
@@ -1301,6 +1324,11 @@ pub fn boolean_op_robust(
                     origin_retry_class,
                     make_connected_scope_seed_mode: attempt_scope_seed_mode,
                     make_connected_scope_history_ring_depth: attempt_scope_history_ring_depth,
+                    make_connected_scope_seed_source: None,
+                    make_connected_scope_history_seed_edge_count: None,
+                    make_connected_scope_heuristic_seed_edge_count: None,
+                    make_connected_scope_seed_vertex_count: None,
+                    make_connected_scope_seed_edge_count: None,
                     retry_class: Some(retry_class),
                     error_message: Some(format!("{err:?}")),
                     output_faces: None,
@@ -3885,6 +3913,93 @@ mod tests {
             .robust_attempts
             .iter()
             .all(|a| !a.success || a.make_connected_scope_seed_mode.is_none()));
+        assert!(report
+            .robust_attempts
+            .iter()
+            .all(|a| !a.success || a.make_connected_scope_seed_source.is_none()));
+    }
+
+    #[test]
+    fn boolean_op_robust_reports_scoped_seed_diagnostics_for_successful_attempt() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let (_out, report) = boolean_op_robust(
+            BooleanOpType::Union,
+            &a,
+            &b,
+            BooleanRobustOptions {
+                base: BooleanOptions {
+                    use_bvh: true,
+                    run_healing: false,
+                    healing: HealingOptions::default(),
+                    run_simplify: false,
+                    simplify: SimplifyOptions::default(),
+                    include_history: false,
+                    run_make_connected: true,
+                    make_connected_tolerance: tolerance::TOLERANCE_ABS,
+                    make_connected_max_passes: 3,
+                    make_connected_tolerance_growth: 1.0,
+                    make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
+                    make_connected_scoped: true,
+                    make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+                    make_connected_scope_history_ring_depth: 1,
+                    make_connected_scope_fallback_to_global: true,
+                    make_connected_scope_fallback_min_seed_vertices: 1,
+                    make_connected_scope_fallback_min_seed_edge_coverage: 0.0,
+                    make_connected_scope_fallback_min_seed_face_coverage: 0.0,
+                    make_connected_scope_global_fallback_tolerance_multiplier: 1.0,
+                    make_connected_scope_global_fallback_max_passes: 0,
+                    make_connected_scope_global_fallback_tolerance_growth: 0.0,
+                    make_connected_scope_global_fallback_tolerance_cap: 0.0,
+                    make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+                    make_connected_scope_min_history_edges: 2,
+                    fuzzy_tol: 0.0,
+                    use_glue: false,
+                    glue_tolerance: tolerance::TOLERANCE_ABS,
+                },
+                fuzzy_retry_ladder: vec![1e-6, 1e-5],
+                retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+            },
+        )
+        .expect("robust union with scoped make-connected should succeed");
+
+        assert_eq!(report.robust_attempts.len(), 1);
+        let attempt = report.robust_attempts.last().expect("expected attempt report");
+        assert!(attempt.success);
+        assert_eq!(
+            attempt.make_connected_scope_seed_mode,
+            Some(MakeConnectedScopeSeedMode::Hybrid)
+        );
+        assert_eq!(attempt.make_connected_scope_history_ring_depth, Some(1));
+        assert_eq!(
+            attempt.make_connected_scope_seed_source,
+            report.make_connected_scope_seed_source
+        );
+        assert_eq!(
+            attempt.make_connected_scope_history_seed_edge_count,
+            Some(report.make_connected_scope_history_seed_edge_count)
+        );
+        assert_eq!(
+            attempt.make_connected_scope_heuristic_seed_edge_count,
+            Some(report.make_connected_scope_heuristic_seed_edge_count)
+        );
+        assert_eq!(
+            attempt.make_connected_scope_seed_vertex_count,
+            Some(report.make_connected_scope_seed_vertices.len())
+        );
+        assert_eq!(
+            attempt.make_connected_scope_seed_edge_count,
+            Some(report.make_connected_scope_seed_edges.len())
+        );
+        assert_eq!(
+            attempt.make_connected_scope_seed_edge_coverage,
+            report.make_connected_scope_seed_edge_coverage
+        );
+        assert_eq!(
+            attempt.make_connected_scope_seed_face_coverage,
+            report.make_connected_scope_seed_face_coverage
+        );
     }
 
     #[test]
