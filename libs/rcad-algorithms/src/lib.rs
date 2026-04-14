@@ -355,6 +355,8 @@ pub struct BooleanExecutionReport {
     pub persistent_edge_labels: Vec<String>,
     pub persistent_shell_labels: Vec<String>,
     pub persistent_solid_labels: Vec<String>,
+    /// Per-attempt diagnostics recorded by `boolean_op_robust`.
+    pub robust_attempts: Vec<BooleanRobustAttemptReport>,
     /// Number of retry attempts performed before success.
     pub retry_count: usize,
     /// Fuzzy tolerance value that produced the final result.
@@ -394,6 +396,31 @@ pub enum BooleanRetryPolicy {
     AdaptiveByFailureClass,
     /// Aggressive: retry ladder values plus multiplicative fuzzy boosts.
     Aggressive,
+}
+
+/// Per-attempt diagnostics for robust boolean retry execution.
+#[derive(Debug, Clone)]
+pub struct BooleanRobustAttemptReport {
+    /// Fuzzy tolerance used for this attempt.
+    pub fuzzy_tol: f64,
+    /// Whether this attempt succeeded.
+    pub success: bool,
+    /// Retry classification for a failed attempt.
+    pub retry_class: Option<BooleanRetryClass>,
+    /// Debug message for a failed attempt.
+    pub error_message: Option<String>,
+    /// Face count of the successful result.
+    pub output_faces: Option<usize>,
+    /// Whether make-connected ran during this attempt.
+    pub made_connected: bool,
+    /// Whether scoped make-connected escalated to global fallback.
+    pub make_connected_scope_fallback_applied: bool,
+    /// Scoped fallback reason, when present.
+    pub make_connected_scope_fallback_reason: Option<MakeConnectedScopeFallbackReason>,
+    /// Scoped seed edge coverage ratio for this attempt.
+    pub make_connected_scope_seed_edge_coverage: Option<f64>,
+    /// Scoped seed face coverage ratio for this attempt.
+    pub make_connected_scope_seed_face_coverage: Option<f64>,
 }
 
 impl Default for BooleanRobustOptions {
@@ -1103,6 +1130,7 @@ pub fn boolean_op_robust(
     let mut pending = std::collections::VecDeque::new();
     pending.push_back(options.base.fuzzy_tol.max(0.0));
     let mut tried: Vec<f64> = Vec::new();
+    let mut attempt_reports: Vec<BooleanRobustAttemptReport> = Vec::new();
     let mut last_err: Option<BooleanError> = None;
 
     while let Some(fuzzy) = pending.pop_front() {
@@ -1115,11 +1143,40 @@ pub fn boolean_op_robust(
         attempt_options.fuzzy_tol = fuzzy;
         match boolean_op_with_options(op, a, b, attempt_options) {
             Ok((brep, mut report)) => {
+                attempt_reports.push(BooleanRobustAttemptReport {
+                    fuzzy_tol: fuzzy,
+                    success: true,
+                    retry_class: None,
+                    error_message: None,
+                    output_faces: Some(report.output_faces),
+                    made_connected: report.made_connected,
+                    make_connected_scope_fallback_applied: report
+                        .make_connected_scope_fallback_applied,
+                    make_connected_scope_fallback_reason: report
+                        .make_connected_scope_fallback_reason,
+                    make_connected_scope_seed_edge_coverage: report
+                        .make_connected_scope_seed_edge_coverage,
+                    make_connected_scope_seed_face_coverage: report
+                        .make_connected_scope_seed_face_coverage,
+                });
+                report.robust_attempts = attempt_reports;
                 report.retry_count = tried.len().saturating_sub(1);
                 report.effective_fuzzy_tol = fuzzy;
                 return Ok((brep, report));
             }
             Err(err) => {
+                attempt_reports.push(BooleanRobustAttemptReport {
+                    fuzzy_tol: fuzzy,
+                    success: false,
+                    retry_class: Some(classify_boolean_retry(&err)),
+                    error_message: Some(format!("{err:?}")),
+                    output_faces: None,
+                    made_connected: false,
+                    make_connected_scope_fallback_applied: false,
+                    make_connected_scope_fallback_reason: None,
+                    make_connected_scope_seed_edge_coverage: None,
+                    make_connected_scope_seed_face_coverage: None,
+                });
                 for candidate in boolean_retry_ladder_for_error_with_policy(
                     fuzzy,
                     &options.fuzzy_retry_ladder,
@@ -3598,6 +3655,12 @@ mod tests {
         assert!(face_count(&out) > 0);
         assert!(report.retry_count <= 2);
         assert!(report.effective_fuzzy_tol >= 0.0);
+        assert_eq!(report.robust_attempts.len(), report.retry_count + 1);
+        assert!(report.robust_attempts.last().map(|a| a.success).unwrap_or(false));
+        assert!(report
+            .robust_attempts
+            .iter()
+            .all(|a| a.success || a.retry_class.is_some()));
     }
 
     #[test]
