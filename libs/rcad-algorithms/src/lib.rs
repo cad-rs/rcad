@@ -405,6 +405,8 @@ pub struct BooleanRobustAttemptReport {
     pub fuzzy_tol: f64,
     /// Whether this attempt succeeded.
     pub success: bool,
+    /// Escalation round used for this attempt.
+    pub retry_round: usize,
     /// Failure class that scheduled this retry attempt.
     pub origin_retry_class: Option<BooleanRetryClass>,
     /// Effective scoped seed mode configured for this attempt.
@@ -595,6 +597,7 @@ pub fn boolean_retry_ladder_for_error_with_policy(
 fn tune_boolean_options_for_retry_class(
     options: &mut BooleanOptions,
     retry_class: Option<BooleanRetryClass>,
+    retry_round: usize,
 ) {
     let Some(retry_class) = retry_class else {
         return;
@@ -609,21 +612,29 @@ fn tune_boolean_options_for_retry_class(
         BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => {}
         BooleanRetryClass::DegenerateTopology => {
             options.use_glue = true;
-            options.glue_tolerance = options.glue_tolerance.max(base_tol * 10.0);
+            options.glue_tolerance = options
+                .glue_tolerance
+                .max(base_tol * 10.0 * (retry_round as f64 + 1.0));
 
             if !options.run_make_connected {
                 return;
             }
 
-            options.make_connected_max_passes = options.make_connected_max_passes.max(4);
+            options.make_connected_max_passes = options
+                .make_connected_max_passes
+                .max(4 + retry_round);
             options.make_connected_tolerance_growth =
-                options.make_connected_tolerance_growth.max(2.0);
+                options.make_connected_tolerance_growth.max(2.0 + retry_round as f64);
             options.make_connected_tolerance_cap =
-                options.make_connected_tolerance_cap.max(base_tol * 1000.0);
+                options
+                    .make_connected_tolerance_cap
+                    .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped {
                 options.make_connected_scope_history_ring_depth =
-                    options.make_connected_scope_history_ring_depth.max(2);
+                    options
+                        .make_connected_scope_history_ring_depth
+                        .max(2 + retry_round);
                 options.make_connected_scope_seed_mode = match options.make_connected_scope_seed_mode
                 {
                     MakeConnectedScopeSeedMode::ShortEdges
@@ -638,64 +649,80 @@ fn tune_boolean_options_for_retry_class(
                 };
                 options.make_connected_scope_fallback_to_global = true;
                 options.make_connected_scope_fallback_min_seed_vertices =
-                    options.make_connected_scope_fallback_min_seed_vertices.max(2);
+                    options
+                        .make_connected_scope_fallback_min_seed_vertices
+                        .max(2 + retry_round);
                 options.make_connected_scope_fallback_min_seed_edge_coverage = options
                     .make_connected_scope_fallback_min_seed_edge_coverage
-                    .max(0.25);
+                    .max((0.25 + 0.1 * retry_round as f64).min(1.0));
                 options.make_connected_scope_fallback_min_seed_face_coverage = options
                     .make_connected_scope_fallback_min_seed_face_coverage
-                    .max(0.25);
+                    .max((0.25 + 0.1 * retry_round as f64).min(1.0));
                 options.make_connected_scope_global_fallback_tolerance_multiplier = options
                     .make_connected_scope_global_fallback_tolerance_multiplier
-                    .max(10.0);
+                    .max(10.0 * (retry_round as f64 + 1.0));
                 options.make_connected_scope_global_fallback_max_passes =
-                    options.make_connected_scope_global_fallback_max_passes.max(4);
+                    options
+                        .make_connected_scope_global_fallback_max_passes
+                        .max(4 + retry_round);
                 options.make_connected_scope_global_fallback_tolerance_growth = options
                     .make_connected_scope_global_fallback_tolerance_growth
-                    .max(2.0);
+                    .max(2.0 + retry_round as f64);
                 options.make_connected_scope_global_fallback_tolerance_cap = options
                     .make_connected_scope_global_fallback_tolerance_cap
-                    .max(base_tol * 1000.0);
+                    .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
             }
         }
         BooleanRetryClass::NumericalInstability => {
             options.use_glue = true;
-            options.glue_tolerance = options.glue_tolerance.max(base_tol * 100.0);
+            options.glue_tolerance = options
+                .glue_tolerance
+                .max(base_tol * 100.0 * (retry_round as f64 + 1.0));
 
             if !options.run_make_connected {
                 return;
             }
 
-            options.make_connected_max_passes = options.make_connected_max_passes.max(5);
+            options.make_connected_max_passes = options
+                .make_connected_max_passes
+                .max(5 + retry_round);
             options.make_connected_tolerance_growth =
-                options.make_connected_tolerance_growth.max(10.0);
+                options.make_connected_tolerance_growth.max(10.0 + 5.0 * retry_round as f64);
             options.make_connected_tolerance_cap =
-                options.make_connected_tolerance_cap.max(base_tol * 10_000.0);
+                options
+                    .make_connected_tolerance_cap
+                    .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped {
                 options.make_connected_scope_history_ring_depth =
-                    options.make_connected_scope_history_ring_depth.max(3);
+                    options
+                        .make_connected_scope_history_ring_depth
+                        .max(3 + retry_round);
                 options.make_connected_scope_seed_mode = MakeConnectedScopeSeedMode::Hybrid;
                 options.make_connected_scope_fallback_to_global = true;
                 options.make_connected_scope_fallback_min_seed_vertices =
-                    options.make_connected_scope_fallback_min_seed_vertices.max(2);
+                    options
+                        .make_connected_scope_fallback_min_seed_vertices
+                        .max(2 + retry_round);
                 options.make_connected_scope_fallback_min_seed_edge_coverage = options
                     .make_connected_scope_fallback_min_seed_edge_coverage
-                    .max(0.5);
+                    .max((0.5 + 0.1 * retry_round as f64).min(1.0));
                 options.make_connected_scope_fallback_min_seed_face_coverage = options
                     .make_connected_scope_fallback_min_seed_face_coverage
-                    .max(0.5);
+                    .max((0.5 + 0.1 * retry_round as f64).min(1.0));
                 options.make_connected_scope_global_fallback_tolerance_multiplier = options
                     .make_connected_scope_global_fallback_tolerance_multiplier
-                    .max(100.0);
+                    .max(100.0 * (retry_round as f64 + 1.0));
                 options.make_connected_scope_global_fallback_max_passes =
-                    options.make_connected_scope_global_fallback_max_passes.max(5);
+                    options
+                        .make_connected_scope_global_fallback_max_passes
+                        .max(5 + retry_round);
                 options.make_connected_scope_global_fallback_tolerance_growth = options
                     .make_connected_scope_global_fallback_tolerance_growth
-                    .max(10.0);
+                    .max(10.0 + 5.0 * retry_round as f64);
                 options.make_connected_scope_global_fallback_tolerance_cap = options
                     .make_connected_scope_global_fallback_tolerance_cap
-                    .max(base_tol * 10_000.0);
+                    .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
             }
         }
     }
@@ -1260,21 +1287,29 @@ pub fn boolean_op_robust(
     b: &BRep,
     options: BooleanRobustOptions,
 ) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+    const MAX_RETRY_ESCALATION_ROUNDS: usize = 2;
+
     let mut pending = std::collections::VecDeque::new();
-    pending.push_back((options.base.fuzzy_tol.max(0.0), None));
-    let mut tried: Vec<f64> = Vec::new();
+    pending.push_back((options.base.fuzzy_tol.max(0.0), None, 0usize));
+    let mut tried: Vec<(f64, Option<BooleanRetryClass>, usize)> = Vec::new();
     let mut attempt_reports: Vec<BooleanRobustAttemptReport> = Vec::new();
     let mut last_err: Option<BooleanError> = None;
 
-    while let Some((fuzzy, origin_retry_class)) = pending.pop_front() {
-        if tried.iter().any(|v| (*v - fuzzy).abs() <= 1e-15) {
+    while let Some((fuzzy, origin_retry_class, retry_round)) = pending.pop_front() {
+        if tried.iter().any(|(v, cls, round)| {
+            (*v - fuzzy).abs() <= 1e-15 && *cls == origin_retry_class && *round == retry_round
+        }) {
             continue;
         }
-        tried.push(fuzzy);
+        tried.push((fuzzy, origin_retry_class, retry_round));
 
         let mut attempt_options = options.base;
         attempt_options.fuzzy_tol = fuzzy;
-        tune_boolean_options_for_retry_class(&mut attempt_options, origin_retry_class);
+        tune_boolean_options_for_retry_class(
+            &mut attempt_options,
+            origin_retry_class,
+            retry_round,
+        );
         let attempt_scope_seed_mode = if attempt_options.run_make_connected
             && attempt_options.make_connected_scoped
         {
@@ -1294,6 +1329,7 @@ pub fn boolean_op_robust(
                 attempt_reports.push(BooleanRobustAttemptReport {
                     fuzzy_tol: fuzzy,
                     success: true,
+                    retry_round,
                     origin_retry_class,
                     make_connected_scope_seed_mode: report.make_connected_scope_seed_mode,
                     make_connected_scope_history_ring_depth: report
@@ -1340,6 +1376,7 @@ pub fn boolean_op_robust(
                 attempt_reports.push(BooleanRobustAttemptReport {
                     fuzzy_tol: fuzzy,
                     success: false,
+                    retry_round,
                     origin_retry_class,
                     make_connected_scope_seed_mode: attempt_scope_seed_mode,
                     make_connected_scope_history_ring_depth: attempt_scope_history_ring_depth,
@@ -1367,10 +1404,43 @@ pub fn boolean_op_robust(
                     &err,
                     options.retry_policy,
                 ) {
-                    let seen = tried.iter().any(|v| (*v - candidate).abs() <= 1e-15)
-                        || pending.iter().any(|(v, _)| (*v - candidate).abs() <= 1e-15);
+                    let next_round = if origin_retry_class == Some(retry_class) {
+                        (retry_round + 1).min(MAX_RETRY_ESCALATION_ROUNDS)
+                    } else {
+                        0
+                    };
+                    let seen = tried.iter().any(|(v, cls, round)| {
+                        (*v - candidate).abs() <= 1e-15
+                            && *cls == Some(retry_class)
+                            && *round == next_round
+                    }) || pending.iter().any(|(v, cls, round)| {
+                        (*v - candidate).abs() <= 1e-15
+                            && *cls == Some(retry_class)
+                            && *round == next_round
+                    });
                     if !seen {
-                        pending.push_back((candidate, Some(retry_class)));
+                        pending.push_back((candidate, Some(retry_class), next_round));
+                    }
+                }
+                if !matches!(retry_class, BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData)
+                    && retry_round < MAX_RETRY_ESCALATION_ROUNDS
+                {
+                    let next_round = if origin_retry_class == Some(retry_class) {
+                        retry_round + 1
+                    } else {
+                        1
+                    };
+                    let seen = tried.iter().any(|(v, cls, round)| {
+                        (*v - fuzzy).abs() <= 1e-15
+                            && *cls == Some(retry_class)
+                            && *round == next_round
+                    }) || pending.iter().any(|(v, cls, round)| {
+                        (*v - fuzzy).abs() <= 1e-15
+                            && *cls == Some(retry_class)
+                            && *round == next_round
+                    });
+                    if !seen {
+                        pending.push_back((fuzzy, Some(retry_class), next_round));
                     }
                 }
                 last_err = Some(err);
@@ -3821,6 +3891,7 @@ mod tests {
         tune_boolean_options_for_retry_class(
             &mut options,
             Some(BooleanRetryClass::DegenerateTopology),
+            0,
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
@@ -3870,6 +3941,7 @@ mod tests {
         tune_boolean_options_for_retry_class(
             &mut options,
             Some(BooleanRetryClass::NumericalInstability),
+            0,
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
@@ -3907,11 +3979,50 @@ mod tests {
         tune_boolean_options_for_retry_class(
             &mut options,
             Some(BooleanRetryClass::NumericalInstability),
+            0,
         );
 
         assert!(options.use_glue);
         assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
         assert_eq!(options.make_connected_max_passes, BooleanOptions::default().make_connected_max_passes);
+    }
+
+    #[test]
+    fn retry_round_intensifies_same_failure_class_tuning() {
+        let mut round0 = BooleanOptions {
+            run_make_connected: true,
+            make_connected_scoped: true,
+            make_connected_tolerance: 1e-6,
+            make_connected_max_passes: 1,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: 1e-6,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::ShortEdges,
+            make_connected_scope_history_ring_depth: 0,
+            ..BooleanOptions::default()
+        };
+        let mut round2 = round0;
+
+        tune_boolean_options_for_retry_class(
+            &mut round0,
+            Some(BooleanRetryClass::DegenerateTopology),
+            0,
+        );
+        tune_boolean_options_for_retry_class(
+            &mut round2,
+            Some(BooleanRetryClass::DegenerateTopology),
+            2,
+        );
+
+        assert!(round2.glue_tolerance > round0.glue_tolerance);
+        assert!(round2.make_connected_max_passes > round0.make_connected_max_passes);
+        assert!(
+            round2.make_connected_scope_history_ring_depth
+                > round0.make_connected_scope_history_ring_depth
+        );
+        assert!(
+            round2.make_connected_scope_global_fallback_tolerance_multiplier
+                > round0.make_connected_scope_global_fallback_tolerance_multiplier
+        );
     }
 
     #[test]
@@ -3964,6 +4075,7 @@ mod tests {
         assert!(report.effective_fuzzy_tol >= 0.0);
         assert_eq!(report.robust_attempts.len(), report.retry_count + 1);
         assert!(report.robust_attempts.last().map(|a| a.success).unwrap_or(false));
+        assert!(report.robust_attempts.iter().all(|a| a.retry_round == 0));
         assert!(report
             .robust_attempts
             .iter()
@@ -4032,6 +4144,7 @@ mod tests {
         assert_eq!(report.robust_attempts.len(), 1);
         let attempt = report.robust_attempts.last().expect("expected attempt report");
         assert!(attempt.success);
+        assert_eq!(attempt.retry_round, 0);
         assert_eq!(
             attempt.make_connected_scope_seed_mode,
             Some(MakeConnectedScopeSeedMode::Hybrid)
