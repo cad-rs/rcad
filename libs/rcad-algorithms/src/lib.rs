@@ -188,6 +188,11 @@ pub struct BooleanOptions {
     pub make_connected_scoped: bool,
     /// Seed edge length threshold used to derive local scope vertices.
     pub make_connected_scope_seed_length: f64,
+    /// Ring depth used when expanding history-derived seed edges in scoped mode.
+    ///
+    /// `0` keeps raw history edges only.
+    /// `1` includes edges on faces adjacent to history edges (previous behavior).
+    pub make_connected_scope_history_ring_depth: usize,
     /// Seed derivation strategy for scoped mode.
     pub make_connected_scope_seed_mode: MakeConnectedScopeSeedMode,
     /// Minimum history-seed edge count before skipping heuristic augmentation.
@@ -230,6 +235,7 @@ impl Default for BooleanOptions {
             make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_history_ring_depth: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             fuzzy_tol: 0.0,
@@ -812,6 +818,7 @@ pub fn boolean_op_with_options(
                     history_opt.as_ref(),
                     seed,
                     options.make_connected_scope_seed_mode,
+                    options.make_connected_scope_history_ring_depth,
                     options.make_connected_scope_min_history_edges,
                 );
             let mut scope_vertices = make_connected_seed_vertices(
@@ -1577,14 +1584,16 @@ fn select_scoped_seed_edges(
     history: Option<&BooleanHistory>,
     seed_length: f64,
     mode: MakeConnectedScopeSeedMode,
+    history_ring_depth: usize,
     min_history_edges: usize,
 ) -> (Vec<usize>, usize, usize, MakeConnectedScopeSeedSource) {
     let history_seed_edges_raw = history
         .map(|h| make_connected_seed_edges_from_boolean_history(brep, h))
         .unwrap_or_default();
-    // Expand history-derived seeds to one-ring adjacency so scoped make-connected
-    // can touch immediate neighborhood edges around boolean interface topology.
-    let history_seed_edges = expand_seed_edges_with_one_ring(brep, &history_seed_edges_raw);
+    // Expand history-derived seeds to configurable ring depth around boolean
+    // interface topology while preserving raw-history count semantics for reports.
+    let history_seed_edges =
+        expand_seed_edges_with_ring_depth(brep, &history_seed_edges_raw, history_ring_depth);
     let heuristic_seed_edges = make_connected_seed_edges(brep, seed_length, mode);
 
     if history_seed_edges_raw.is_empty() {
@@ -1620,15 +1629,45 @@ fn select_scoped_seed_edges(
     )
 }
 
-fn expand_seed_edges_with_one_ring(brep: &BRep, seed_edges: &[usize]) -> Vec<usize> {
+fn expand_seed_edges_with_ring_depth(
+    brep: &BRep,
+    seed_edges: &[usize],
+    ring_depth: usize,
+) -> Vec<usize> {
     let mut out: std::collections::BTreeSet<usize> = seed_edges.iter().copied().collect();
+    if ring_depth == 0 || seed_edges.is_empty() {
+        return out.into_iter().collect();
+    }
+
+    let mut visited_faces = std::collections::BTreeSet::new();
+    let mut frontier = std::collections::BTreeSet::new();
     for &ei in seed_edges {
         for fi in rcad_kernel::edge_adjacent_faces(brep, ei) {
-            for fei in rcad_kernel::face_edges(brep, fi) {
-                out.insert(fei);
+            if visited_faces.insert(fi) {
+                frontier.insert(fi);
             }
         }
     }
+
+    for _ in 0..ring_depth {
+        if frontier.is_empty() {
+            break;
+        }
+        let current: Vec<usize> = frontier.iter().copied().collect();
+        frontier.clear();
+
+        for fi in current {
+            for fei in rcad_kernel::face_edges(brep, fi) {
+                out.insert(fei);
+                for nfi in rcad_kernel::edge_adjacent_faces(brep, fei) {
+                    if visited_faces.insert(nfi) {
+                        frontier.insert(nfi);
+                    }
+                }
+            }
+        }
+    }
+
     out.into_iter().collect()
 }
 
@@ -3337,6 +3376,7 @@ mod tests {
                     make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
                     make_connected_scoped: false,
                     make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+                      make_connected_scope_history_ring_depth: 1,
                     make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
                     make_connected_scope_min_history_edges: 2,
                     fuzzy_tol: 0.0,
@@ -5015,6 +5055,7 @@ mod tests {
             make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_history_ring_depth: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: true,
@@ -5097,6 +5138,7 @@ mod tests {
             make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 100.0,
             make_connected_scoped: true,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_history_ring_depth: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5154,6 +5196,7 @@ mod tests {
             make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
+            make_connected_scope_history_ring_depth: 1,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5441,6 +5484,7 @@ mod tests {
             Some(&history),
             1e-6,
             MakeConnectedScopeSeedMode::ShortEdges,
+            1,
             2,
         );
 
@@ -5504,6 +5548,7 @@ mod tests {
             1e-6,
             MakeConnectedScopeSeedMode::ShortEdges,
             1,
+            1,
         );
 
         // Raw history count stays semantic (interface edge count), while selected
@@ -5512,6 +5557,66 @@ mod tests {
         assert_eq!(source, MakeConnectedScopeSeedSource::History);
         assert!(seed_edges.contains(&0));
         assert!(seed_edges.len() > 1, "expected one-ring history expansion");
+    }
+
+    #[test]
+    fn select_scoped_seed_edges_with_zero_ring_depth_keeps_raw_history_edges() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 3
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0 interface edge
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2
+        brep.edges.push(Edge { start: 1, end: 3 }); // e3
+        brep.edges.push(Edge { start: 3, end: 0 }); // e4
+
+        let f0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        let f1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::rev(0), WireEdge::fwd(3), WireEdge::fwd(4)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![f0, f1] }],
+        });
+
+        let history = BooleanHistory {
+            face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+            edge_origins: vec![],
+            vertex_origins: vec![],
+            shell_origins: vec![],
+            solid_origins: vec![],
+        };
+
+        let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(
+            &brep,
+            Some(&history),
+            1e-6,
+            MakeConnectedScopeSeedMode::ShortEdges,
+            0,
+            1,
+        );
+
+        assert_eq!(history_count, 1);
+        assert_eq!(source, MakeConnectedScopeSeedSource::History);
+        assert_eq!(seed_edges, vec![0]);
     }
 
     #[test]
