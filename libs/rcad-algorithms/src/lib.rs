@@ -407,6 +407,10 @@ pub struct BooleanRobustAttemptReport {
     pub success: bool,
     /// Failure class that scheduled this retry attempt.
     pub origin_retry_class: Option<BooleanRetryClass>,
+    /// Effective scoped seed mode configured for this attempt.
+    pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
+    /// Effective history ring depth configured for this attempt.
+    pub make_connected_scope_history_ring_depth: Option<usize>,
     /// Retry classification for a failed attempt.
     pub retry_class: Option<BooleanRetryClass>,
     /// Debug message for a failed attempt.
@@ -598,6 +602,20 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_tolerance_cap.max(base_tol * 1000.0);
 
             if options.make_connected_scoped {
+                options.make_connected_scope_history_ring_depth =
+                    options.make_connected_scope_history_ring_depth.max(2);
+                options.make_connected_scope_seed_mode = match options.make_connected_scope_seed_mode
+                {
+                    MakeConnectedScopeSeedMode::ShortEdges
+                    | MakeConnectedScopeSeedMode::NearDuplicateVertices
+                    | MakeConnectedScopeSeedMode::ToleranceTaggedEdges => {
+                        MakeConnectedScopeSeedMode::TopologySeamCandidates
+                    }
+                    MakeConnectedScopeSeedMode::MultiPcurveEdges => {
+                        MakeConnectedScopeSeedMode::Hybrid
+                    }
+                    mode => mode,
+                };
                 options.make_connected_scope_fallback_to_global = true;
                 options.make_connected_scope_fallback_min_seed_vertices =
                     options.make_connected_scope_fallback_min_seed_vertices.max(2);
@@ -628,6 +646,9 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_tolerance_cap.max(base_tol * 10_000.0);
 
             if options.make_connected_scoped {
+                options.make_connected_scope_history_ring_depth =
+                    options.make_connected_scope_history_ring_depth.max(3);
+                options.make_connected_scope_seed_mode = MakeConnectedScopeSeedMode::Hybrid;
                 options.make_connected_scope_fallback_to_global = true;
                 options.make_connected_scope_fallback_min_seed_vertices =
                     options.make_connected_scope_fallback_min_seed_vertices.max(2);
@@ -1227,12 +1248,29 @@ pub fn boolean_op_robust(
         let mut attempt_options = options.base;
         attempt_options.fuzzy_tol = fuzzy;
         tune_boolean_options_for_retry_class(&mut attempt_options, origin_retry_class);
+        let attempt_scope_seed_mode = if attempt_options.run_make_connected
+            && attempt_options.make_connected_scoped
+        {
+            Some(attempt_options.make_connected_scope_seed_mode)
+        } else {
+            None
+        };
+        let attempt_scope_history_ring_depth = if attempt_options.run_make_connected
+            && attempt_options.make_connected_scoped
+        {
+            Some(attempt_options.make_connected_scope_history_ring_depth)
+        } else {
+            None
+        };
         match boolean_op_with_options(op, a, b, attempt_options) {
             Ok((brep, mut report)) => {
                 attempt_reports.push(BooleanRobustAttemptReport {
                     fuzzy_tol: fuzzy,
                     success: true,
                     origin_retry_class,
+                    make_connected_scope_seed_mode: report.make_connected_scope_seed_mode,
+                    make_connected_scope_history_ring_depth: report
+                        .make_connected_scope_history_ring_depth,
                     retry_class: None,
                     error_message: None,
                     output_faces: Some(report.output_faces),
@@ -1261,6 +1299,8 @@ pub fn boolean_op_robust(
                     fuzzy_tol: fuzzy,
                     success: false,
                     origin_retry_class,
+                    make_connected_scope_seed_mode: attempt_scope_seed_mode,
+                    make_connected_scope_history_ring_depth: attempt_scope_history_ring_depth,
                     retry_class: Some(retry_class),
                     error_message: Some(format!("{err:?}")),
                     output_faces: None,
@@ -3711,6 +3751,8 @@ mod tests {
             make_connected_max_passes: 1,
             make_connected_tolerance_growth: 1.0,
             make_connected_tolerance_cap: 1e-6,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::ShortEdges,
+            make_connected_scope_history_ring_depth: 0,
             make_connected_scope_fallback_to_global: false,
             make_connected_scope_fallback_min_seed_vertices: 0,
             make_connected_scope_fallback_min_seed_edge_coverage: 0.0,
@@ -3728,6 +3770,11 @@ mod tests {
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
+        assert_eq!(
+            options.make_connected_scope_seed_mode,
+            MakeConnectedScopeSeedMode::TopologySeamCandidates
+        );
+        assert!(options.make_connected_scope_history_ring_depth >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_vertices >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_edge_coverage >= 0.25);
         assert!(options.make_connected_scope_fallback_min_seed_face_coverage >= 0.25);
@@ -3746,6 +3793,8 @@ mod tests {
             make_connected_max_passes: 1,
             make_connected_tolerance_growth: 1.0,
             make_connected_tolerance_cap: 1e-6,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::TopologySeamCandidates,
+            make_connected_scope_history_ring_depth: 0,
             make_connected_scope_fallback_to_global: false,
             make_connected_scope_fallback_min_seed_vertices: 0,
             make_connected_scope_fallback_min_seed_edge_coverage: 0.0,
@@ -3763,6 +3812,11 @@ mod tests {
         );
 
         assert!(options.make_connected_scope_fallback_to_global);
+        assert_eq!(
+            options.make_connected_scope_seed_mode,
+            MakeConnectedScopeSeedMode::Hybrid
+        );
+        assert!(options.make_connected_scope_history_ring_depth >= 3);
         assert!(options.make_connected_scope_fallback_min_seed_vertices >= 2);
         assert!(options.make_connected_scope_fallback_min_seed_edge_coverage >= 0.5);
         assert!(options.make_connected_scope_fallback_min_seed_face_coverage >= 0.5);
@@ -3827,6 +3881,10 @@ mod tests {
             .iter()
             .all(|a| a.success || a.retry_class.is_some()));
         assert!(report.robust_attempts.iter().all(|a| a.success || a.origin_retry_class.is_none() || a.retry_class.is_some()));
+        assert!(report
+            .robust_attempts
+            .iter()
+            .all(|a| !a.success || a.make_connected_scope_seed_mode.is_none()));
     }
 
     #[test]
