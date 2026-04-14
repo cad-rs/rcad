@@ -409,6 +409,8 @@ pub struct BooleanRobustAttemptReport {
     pub retry_round: usize,
     /// Failure class that scheduled this retry attempt.
     pub origin_retry_class: Option<BooleanRetryClass>,
+    /// Whether scoped make-connected was enabled for this attempt.
+    pub make_connected_scoped_enabled: bool,
     /// Effective scoped seed mode configured for this attempt.
     pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
     /// Effective history ring depth configured for this attempt.
@@ -634,6 +636,10 @@ fn tune_boolean_options_for_retry_class(
                     .make_connected_tolerance_cap
                     .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
 
+            if options.make_connected_scoped && retry_round >= 2 {
+                options.make_connected_scoped = false;
+            }
+
             if options.make_connected_scoped {
                 options.make_connected_scope_seed_length = options
                     .make_connected_scope_seed_length
@@ -702,6 +708,10 @@ fn tune_boolean_options_for_retry_class(
                 options
                     .make_connected_tolerance_cap
                     .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
+
+            if options.make_connected_scoped && retry_round >= 2 {
+                options.make_connected_scoped = false;
+            }
 
             if options.make_connected_scoped {
                 options.make_connected_scope_seed_length = options
@@ -1326,6 +1336,8 @@ pub fn boolean_op_robust(
             origin_retry_class,
             retry_round,
         );
+        let attempt_make_connected_scoped_enabled =
+            attempt_options.run_make_connected && attempt_options.make_connected_scoped;
         let attempt_scope_seed_mode = if attempt_options.run_make_connected
             && attempt_options.make_connected_scoped
         {
@@ -1361,6 +1373,7 @@ pub fn boolean_op_robust(
                     success: true,
                     retry_round,
                     origin_retry_class,
+                    make_connected_scoped_enabled: attempt_make_connected_scoped_enabled,
                     make_connected_scope_seed_mode: report.make_connected_scope_seed_mode,
                     make_connected_scope_history_ring_depth: report
                         .make_connected_scope_history_ring_depth,
@@ -1410,6 +1423,7 @@ pub fn boolean_op_robust(
                     success: false,
                     retry_round,
                     origin_retry_class,
+                    make_connected_scoped_enabled: attempt_make_connected_scoped_enabled,
                     make_connected_scope_seed_mode: attempt_scope_seed_mode,
                     make_connected_scope_history_ring_depth: attempt_scope_history_ring_depth,
                     make_connected_scope_seed_length: attempt_scope_seed_length,
@@ -4048,7 +4062,7 @@ mod tests {
             make_connected_scope_history_ring_depth: 0,
             ..BooleanOptions::default()
         };
-        let mut round2 = round0;
+        let mut round1 = round0;
 
         tune_boolean_options_for_retry_class(
             &mut round0,
@@ -4056,26 +4070,53 @@ mod tests {
             0,
         );
         tune_boolean_options_for_retry_class(
-            &mut round2,
+            &mut round1,
             Some(BooleanRetryClass::DegenerateTopology),
-            2,
+            1,
         );
 
-        assert!(round2.glue_tolerance > round0.glue_tolerance);
-        assert!(round2.make_connected_max_passes > round0.make_connected_max_passes);
-        assert!(round2.make_connected_scope_seed_length > round0.make_connected_scope_seed_length);
+        assert!(round1.glue_tolerance > round0.glue_tolerance);
+        assert!(round1.make_connected_max_passes > round0.make_connected_max_passes);
+        assert!(round1.make_connected_scoped);
+        assert!(round1.make_connected_scope_seed_length > round0.make_connected_scope_seed_length);
         assert!(
-            round2.make_connected_scope_history_ring_depth
+            round1.make_connected_scope_history_ring_depth
                 > round0.make_connected_scope_history_ring_depth
         );
         assert!(
-            round2.make_connected_scope_min_history_edges
+            round1.make_connected_scope_min_history_edges
                 > round0.make_connected_scope_min_history_edges
         );
         assert!(
-            round2.make_connected_scope_global_fallback_tolerance_multiplier
+            round1.make_connected_scope_global_fallback_tolerance_multiplier
                 > round0.make_connected_scope_global_fallback_tolerance_multiplier
         );
+    }
+
+    #[test]
+    fn high_retry_round_switches_scoped_make_connected_to_global_bias() {
+        let mut options = BooleanOptions {
+            run_make_connected: true,
+            make_connected_scoped: true,
+            make_connected_tolerance: 1e-6,
+            make_connected_max_passes: 1,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: 1e-6,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
+            make_connected_scope_history_ring_depth: 1,
+            ..BooleanOptions::default()
+        };
+
+        tune_boolean_options_for_retry_class(
+            &mut options,
+            Some(BooleanRetryClass::NumericalInstability),
+            2,
+        );
+
+        assert!(options.run_make_connected);
+        assert!(!options.make_connected_scoped);
+        assert!(options.use_glue);
+        assert!(options.make_connected_max_passes >= 7);
     }
 
     #[test]
@@ -4129,6 +4170,7 @@ mod tests {
         assert_eq!(report.robust_attempts.len(), report.retry_count + 1);
         assert!(report.robust_attempts.last().map(|a| a.success).unwrap_or(false));
         assert!(report.robust_attempts.iter().all(|a| a.retry_round == 0));
+        assert!(report.robust_attempts.iter().all(|a| !a.make_connected_scoped_enabled));
         assert!(report
             .robust_attempts
             .iter()
@@ -4202,6 +4244,7 @@ mod tests {
         let attempt = report.robust_attempts.last().expect("expected attempt report");
         assert!(attempt.success);
         assert_eq!(attempt.retry_round, 0);
+        assert!(attempt.make_connected_scoped_enabled);
         assert_eq!(
             attempt.make_connected_scope_seed_mode,
             Some(MakeConnectedScopeSeedMode::Hybrid)
