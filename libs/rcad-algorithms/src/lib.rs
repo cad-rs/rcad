@@ -600,6 +600,86 @@ pub fn boolean_retry_ladder_for_error_with_policy(
     out
 }
 
+fn boolean_retry_followup_attempts(
+    attempted_fuzzy: f64,
+    ladder: &[f64],
+    err: &BooleanError,
+    policy: BooleanRetryPolicy,
+    origin_retry_class: Option<BooleanRetryClass>,
+    retry_round: usize,
+    max_retry_escalation_rounds: usize,
+    attempted_scoped_cleanup_enabled: bool,
+) -> Vec<(f64, Option<BooleanRetryClass>, usize)> {
+    let retry_class = classify_boolean_retry(err);
+    if matches!(
+        retry_class,
+        BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData
+    ) {
+        return Vec::new();
+    }
+
+    let fuzzy_candidate_round = if origin_retry_class == Some(retry_class) {
+        (retry_round + 1).min(max_retry_escalation_rounds)
+    } else {
+        0
+    };
+    let strategy_candidate_round = if origin_retry_class == Some(retry_class) {
+        retry_round + 1
+    } else {
+        1
+    };
+    let can_escalate_strategy = retry_round < max_retry_escalation_rounds;
+    let strategy_already_global_biased = origin_retry_class.is_some() && !attempted_scoped_cleanup_enabled;
+    let fuzzy_candidates = boolean_retry_ladder_for_error_with_policy(
+        attempted_fuzzy,
+        ladder,
+        err,
+        policy,
+    );
+
+    let mut out: Vec<(f64, Option<BooleanRetryClass>, usize)> = Vec::new();
+    let mut push_unique = |candidate: (f64, Option<BooleanRetryClass>, usize)| {
+        if candidate.0 <= 0.0 {
+            return;
+        }
+        if !out.iter().any(|existing| {
+            (existing.0 - candidate.0).abs() <= 1e-15
+                && existing.1 == candidate.1
+                && existing.2 == candidate.2
+        }) {
+            out.push(candidate);
+        }
+    };
+
+    if matches!(retry_class, BooleanRetryClass::DegenerateTopology)
+        && can_escalate_strategy
+        && !strategy_already_global_biased
+    {
+        push_unique((
+            attempted_fuzzy,
+            Some(retry_class),
+            strategy_candidate_round,
+        ));
+    }
+
+    for candidate in fuzzy_candidates {
+        push_unique((candidate, Some(retry_class), fuzzy_candidate_round));
+    }
+
+    if matches!(retry_class, BooleanRetryClass::NumericalInstability)
+        && can_escalate_strategy
+        && !strategy_already_global_biased
+    {
+        push_unique((
+            attempted_fuzzy,
+            Some(retry_class),
+            strategy_candidate_round,
+        ));
+    }
+
+    out
+}
+
 fn tune_boolean_options_for_retry_class(
     options: &mut BooleanOptions,
     retry_class: Option<BooleanRetryClass>,
@@ -1446,49 +1526,27 @@ pub fn boolean_op_robust(
                     make_connected_scope_global_fallback_initial_tolerance: None,
                     make_connected_scope_global_fallback_max_passes: None,
                 });
-                for candidate in boolean_retry_ladder_for_error_with_policy(
+                for candidate in boolean_retry_followup_attempts(
                     fuzzy,
                     &options.fuzzy_retry_ladder,
                     &err,
                     options.retry_policy,
+                    origin_retry_class,
+                    retry_round,
+                    MAX_RETRY_ESCALATION_ROUNDS,
+                    attempt_make_connected_scoped_enabled,
                 ) {
-                    let next_round = if origin_retry_class == Some(retry_class) {
-                        (retry_round + 1).min(MAX_RETRY_ESCALATION_ROUNDS)
-                    } else {
-                        0
-                    };
                     let seen = tried.iter().any(|(v, cls, round)| {
-                        (*v - candidate).abs() <= 1e-15
-                            && *cls == Some(retry_class)
-                            && *round == next_round
+                        (*v - candidate.0).abs() <= 1e-15
+                            && *cls == candidate.1
+                            && *round == candidate.2
                     }) || pending.iter().any(|(v, cls, round)| {
-                        (*v - candidate).abs() <= 1e-15
-                            && *cls == Some(retry_class)
-                            && *round == next_round
+                        (*v - candidate.0).abs() <= 1e-15
+                            && *cls == candidate.1
+                            && *round == candidate.2
                     });
                     if !seen {
-                        pending.push_back((candidate, Some(retry_class), next_round));
-                    }
-                }
-                if !matches!(retry_class, BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData)
-                    && retry_round < MAX_RETRY_ESCALATION_ROUNDS
-                {
-                    let next_round = if origin_retry_class == Some(retry_class) {
-                        retry_round + 1
-                    } else {
-                        1
-                    };
-                    let seen = tried.iter().any(|(v, cls, round)| {
-                        (*v - fuzzy).abs() <= 1e-15
-                            && *cls == Some(retry_class)
-                            && *round == next_round
-                    }) || pending.iter().any(|(v, cls, round)| {
-                        (*v - fuzzy).abs() <= 1e-15
-                            && *cls == Some(retry_class)
-                            && *round == next_round
-                    });
-                    if !seen {
-                        pending.push_back((fuzzy, Some(retry_class), next_round));
+                        pending.push_back(candidate);
                     }
                 }
                 last_err = Some(err);
@@ -3907,6 +3965,87 @@ mod tests {
         );
         assert!(vals.contains(&1e-5));
         assert!(vals.iter().any(|v| (*v - 1e-4).abs() <= 1e-14));
+    }
+
+    #[test]
+    fn degenerate_retry_followups_prefer_same_fuzzy_strategy_before_fuzzy_growth() {
+        let vals = boolean_retry_followup_attempts(
+            1e-6,
+            &[1e-5, 1e-4],
+            &BooleanError::DegenerateResult,
+            BooleanRetryPolicy::AdaptiveByFailureClass,
+            None,
+            0,
+            2,
+            true,
+        );
+        assert_eq!(vals.first().copied(), Some((1e-6, Some(BooleanRetryClass::DegenerateTopology), 1)));
+        assert!(vals.contains(&(1e-5, Some(BooleanRetryClass::DegenerateTopology), 0)));
+    }
+
+    #[test]
+    fn numerical_retry_followups_prefer_fuzzy_growth_before_same_fuzzy_strategy() {
+        let vals = boolean_retry_followup_attempts(
+            1e-6,
+            &[1e-5],
+            &BooleanError::NumericalFailure("test"),
+            BooleanRetryPolicy::AdaptiveByFailureClass,
+            None,
+            0,
+            2,
+            true,
+        );
+        let first = vals.first().copied().expect("expected fuzzy-growth candidate");
+        assert_eq!(first.1, Some(BooleanRetryClass::NumericalInstability));
+        assert_eq!(first.2, 0);
+        assert!(first.0 > 1e-6);
+
+        let last = vals.last().copied().expect("expected same-fuzzy strategy candidate");
+        assert_eq!(last.1, Some(BooleanRetryClass::NumericalInstability));
+        assert_eq!(last.2, 1);
+        assert!((last.0 - 1e-6).abs() <= 1e-15);
+    }
+
+    #[test]
+    fn global_biased_degenerate_retry_followups_skip_same_fuzzy_strategy_repeat() {
+        let vals = boolean_retry_followup_attempts(
+            1e-6,
+            &[1e-5, 1e-4],
+            &BooleanError::DegenerateResult,
+            BooleanRetryPolicy::AdaptiveByFailureClass,
+            Some(BooleanRetryClass::DegenerateTopology),
+            2,
+            2,
+            false,
+        );
+
+        assert!(vals.iter().all(|candidate| {
+            !((candidate.0 - 1e-6).abs() <= 1e-15
+                && candidate.1 == Some(BooleanRetryClass::DegenerateTopology)
+                && candidate.2 > 2)
+        }));
+        assert!(vals.iter().any(|candidate| candidate.0 > 1e-6));
+    }
+
+    #[test]
+    fn global_biased_numerical_retry_followups_skip_same_fuzzy_strategy_repeat() {
+        let vals = boolean_retry_followup_attempts(
+            1e-6,
+            &[1e-5],
+            &BooleanError::NumericalFailure("test"),
+            BooleanRetryPolicy::AdaptiveByFailureClass,
+            Some(BooleanRetryClass::NumericalInstability),
+            2,
+            2,
+            false,
+        );
+
+        assert!(vals.iter().all(|candidate| {
+            !((candidate.0 - 1e-6).abs() <= 1e-15
+                && candidate.1 == Some(BooleanRetryClass::NumericalInstability)
+                && candidate.2 > 2)
+        }));
+        assert!(vals.iter().any(|candidate| candidate.0 > 1e-6));
     }
 
     #[test]
