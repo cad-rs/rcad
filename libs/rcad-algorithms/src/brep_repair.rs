@@ -21,6 +21,25 @@ use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::brep_check::{diagnose_same_parameter, diagnose_same_range};
 use crate::tolerance::TOLERANCE_ABS;
 
+fn make_connected_has_future_tolerance_increase(
+    pass_idx: usize,
+    pass_limit: usize,
+    current_tolerance: f64,
+    base_tolerance: f64,
+    tolerance_growth: f64,
+    tolerance_cap: f64,
+) -> bool {
+    if pass_idx + 1 >= pass_limit {
+        return false;
+    }
+    if tolerance_growth <= 1.0 {
+        return false;
+    }
+    let next_grown_tolerance = base_tolerance * tolerance_growth.powi((pass_idx + 1) as i32);
+    let next_tolerance = next_grown_tolerance.min(tolerance_cap);
+    next_tolerance > current_tolerance + 1e-15
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,6 +189,16 @@ pub fn make_connected_iterative_with_growth_cap(
         }
 
         if merged == 0 && removed == 0 {
+            if make_connected_has_future_tolerance_increase(
+                pass_idx,
+                pass_limit,
+                pass_tol,
+                tol,
+                growth,
+                tol_cap,
+            ) {
+                continue;
+            }
             report.converged = true;
             break;
         }
@@ -237,6 +266,16 @@ pub fn make_connected_iterative_scoped_with_growth_cap(
         }
 
         if merged == 0 && removed == 0 {
+            if make_connected_has_future_tolerance_increase(
+                pass_idx,
+                pass_limit,
+                pass_tol,
+                tol,
+                growth,
+                tol_cap,
+            ) {
+                continue;
+            }
             report.converged = true;
             break;
         }
@@ -1611,6 +1650,91 @@ mod tests {
         assert!(report.passes_run >= 2);
         assert!(report.tolerance_cap_applied);
         assert!((report.final_tolerance - 2e-6).abs() <= 1e-15);
+    }
+
+    #[test]
+    fn make_connected_iterative_growth_can_recover_after_initial_no_op_pass() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (fixed, report) = make_connected_iterative_with_growth_cap(
+            &brep,
+            1e-6,
+            2,
+            10.0,
+            1e-5,
+        );
+
+        assert_eq!(report.passes_run, 2);
+        assert!(report.vertices_merged >= 1);
+        assert!(fixed.vertices.len() < brep.vertices.len());
+        assert!((report.final_tolerance - 1e-5).abs() <= 1e-15);
+    }
+
+    #[test]
+    fn make_connected_scoped_growth_can_recover_after_initial_no_op_pass() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let (fixed, report) = make_connected_iterative_scoped_with_growth_cap(
+            &brep,
+            &[0],
+            1e-6,
+            2,
+            10.0,
+            1e-5,
+        );
+
+        assert_eq!(report.passes_run, 2);
+        assert!(report.vertices_merged >= 1);
+        assert!(fixed.vertices.len() < brep.vertices.len());
+        assert!((report.final_tolerance - 1e-5).abs() <= 1e-15);
     }
 
     #[test]
