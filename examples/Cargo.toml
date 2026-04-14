@@ -9,6 +9,7 @@ rcad-modeling = { path = "../libs/rcad-modeling" }
 rcad-algorithms = { path = "../libs/rcad-algorithms" }
 rcad-step = { path = "../libs/rcad-step" }
 rcad-scene = { path = "../libs/rcad-scene" }
+rcad-render = { path = "../libs/rcad-render" }
 glam = { workspace = true }
 
 [[example]]
@@ -106,3 +107,7 @@ path = "boolean_imprint.rs"
 [[example]]
 name = "obj_iges_io"
 path = "obj_iges_io.rs"
+
+[[example]]
+name = "diagnose_step_mesh"
+path = "diagnose_step_mesh.rs"

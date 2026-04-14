@@ -43,7 +43,20 @@ RCAD is a generic, high-performance CAD engine written entirely in Rust. It aims
 	- Ray-casting based face picking.
 	- Screen-space edge picking.
 	- Shared `SelectionState` for mode, additive select, and hover state.
-	- Camera orbit + zoom + middle-mouse pan.
+	- Camera orbit (`Alt + Left drag`) + zoom + middle-mouse pan.
+	- Viewport axis gizmo for snapping to X / Y / Z / isometric views.
+	- Adaptive XZ background grid with major/minor lines.
+
+### 5.1 Creator App Runtime Behavior
+- Both [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced) now start with an empty scene when no STEP file is provided.
+- Both desktop creator apps support command-line STEP loading (`cargo run -p creator-* -- path/to/file.step`).
+- Both desktop creator apps expose the same file actions at runtime:
+	- `Open STEP...`
+	- `Reload`
+	- `Open Recent` (session-scoped list)
+	- `Export STEP`
+	- `Reset Camera`
+- `creator-egui` implements the file menu with egui menu widgets; `creator-iced` implements the file menu with `iced_aw`.
 
 ## 6. WASM Integration
 - All libraries must be `no_std` compatible where possible or at least `wasm32-unknown-unknown` compatible.
@@ -143,6 +156,12 @@ The following rules are mandatory for all current and future rendering work. The
 - Default render behavior (camera update path, lighting model, depth-test policy, clear color, picking behavior) MUST be defined centrally in [libs/rcad-render](libs/rcad-render).
 - [apps/creator-egui](apps/creator-egui) and [apps/creator-iced](apps/creator-iced) MUST use the same rcad-render defaults unless there is an explicitly documented exception.
 - Any intentional visual difference between apps MUST be documented in this specification before merge.
+- Current shared defaults include:
+	- `DisplayMode::Solid` as the desktop creator default.
+	- Adaptive major/minor XZ grid enabled by default.
+	- World axes and viewport axis gizmo enabled by default.
+	- Identical camera bindings: `Alt + Left drag` orbit, `Middle drag` pan, `Wheel` zoom.
+	- Empty-scene startup instead of loading a built-in sample box.
 
 ### 10.5 Definition of Done for Rendering Changes
 - A rendering-related change is complete only if all conditions are satisfied:

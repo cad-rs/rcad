@@ -51,11 +51,13 @@ pub fn intersect_line_cone(
     t_range: [f64; 2],
     cone: &ConicalSurface,
 ) -> Vec<CurveSurfaceHit> {
-    let co = line.origin - cone.apex;
+    let apex = cone.apex_point();
+    let axis = cone.axis_dir();
+    let co = line.origin - apex;
     let cos2 = cone.half_angle_rad.cos().powi(2);
 
-    let d_dot_a = line.direction.dot(cone.axis);
-    let co_dot_a = co.dot(cone.axis);
+    let d_dot_a = line.direction.dot(axis);
+    let co_dot_a = co.dot(axis);
 
     // Point P on cone satisfies:
     //   ((P-apex)·axis)² = cos²(half_angle) * |P-apex|²
@@ -72,8 +74,8 @@ pub fn intersect_line_cone(
     // (same side as cone.axis from apex), and the cone has positive height direction.
     let mut hits = solve_quadratic_hits(a, b, c, line, t_range);
     hits.retain(|hit| {
-        let v = hit.point - cone.apex;
-        v.dot(cone.axis) > -TOLERANCE_ABS // on the positive nappe
+        let v = hit.point - apex;
+        v.dot(axis) > -TOLERANCE_ABS // on the positive nappe
     });
     hits
 }
@@ -180,12 +182,14 @@ pub fn intersect_circle_cone(
     cone: &ConicalSurface,
 ) -> Vec<CurveSurfaceHit> {
     let cos2 = cone.half_angle_rad.cos().powi(2);
+    let apex = cone.apex_point();
+    let axis = cone.axis_dir();
     circle_vs_implicit_surface(
         circle,
         t_range,
         |p: DVec3| -> f64 {
-            let v = p - cone.apex;
-            let along = v.dot(cone.axis);
+            let v = p - apex;
+            let along = v.dot(axis);
             let along2 = along * along;
             let len2 = v.length_squared();
             // Cone implicit: (v·axis)² = cos²(half) * |v|²

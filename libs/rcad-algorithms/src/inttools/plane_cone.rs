@@ -26,6 +26,7 @@ pub enum PlaneConicalResult {
 pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConicalResult {
     let axis_n = cone.axis.normalize();
     let plane_n = plane.normal.normalize();
+    let apex = cone.apex_point();
 
     // cos of angle between plane normal and cone axis
     let cos_angle = plane_n.dot(axis_n).abs();
@@ -33,15 +34,15 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
     let sin_angle = (1.0 - cos_angle * cos_angle).sqrt().max(0.0);
 
     // Signed distance from apex to plane along plane normal direction
-    let apex_to_plane = (plane.origin - cone.apex).dot(plane.normal);
+    let apex_to_plane = (plane.origin - apex).dot(plane.normal);
 
     // ── Plane ⊥ axis → circle ─────────────────────────────────────────────────
     if (cos_angle - 1.0).abs() < TOLERANCE_ANG {
         if apex_to_plane.abs() < TOLERANCE_ABS {
-            return PlaneConicalResult::Point(cone.apex);
+            return PlaneConicalResult::Point(apex);
         }
         let t = apex_to_plane / axis_n.dot(plane.normal);
-        let center = cone.apex + axis_n * t;
+        let center = apex + axis_n * t;
         let radius = (t * cone.half_angle_rad.tan()).abs();
         if radius < TOLERANCE_ABS {
             return PlaneConicalResult::Point(center);
@@ -63,7 +64,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
             let dir = plane_n.cross(axis_n).normalize();
             let gen_dir = (axis_n * half.cos() + dir * half.sin()).normalize();
             return PlaneConicalResult::SingleLine(Line3 {
-                origin: cone.apex,
+                origin: apex,
                 direction: gen_dir,
             });
         }
@@ -72,23 +73,23 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
             // Two generators
             let cross = plane_n.cross(axis_n);
             if is_zero_vec(cross) {
-                return PlaneConicalResult::Point(cone.apex);
+                return PlaneConicalResult::Point(apex);
             }
             let perp_in_plane = cross.normalize();
             let projected_axis =
                 (axis_n - plane_n * axis_n.dot(plane_n)).normalize_or_zero();
             if projected_axis.length_squared() < 1e-12 {
-                return PlaneConicalResult::Point(cone.apex);
+                return PlaneConicalResult::Point(apex);
             }
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
             let d2 = (projected_axis * half.cos() - perp_in_plane * half.sin()).normalize();
             return PlaneConicalResult::TwoLines(
-                Line3 { origin: cone.apex, direction: d1 },
-                Line3 { origin: cone.apex, direction: d2 },
+                Line3 { origin: apex, direction: d1 },
+                Line3 { origin: apex, direction: d2 },
             );
         }
 
-        return PlaneConicalResult::Point(cone.apex);
+        return PlaneConicalResult::Point(apex);
     }
 
     // ── General case: conic type via Dandelin criterion ───────────────────────
@@ -148,7 +149,8 @@ fn build_ellipse(
 
     // Must be on the same nappe as the apex_to_plane sign
     // (t > 0: upper nappe; t < 0: lower nappe)
-    let center = cone.apex + axis_n * t;
+    let apex = cone.apex_point();
+    let center = apex + axis_n * t;
     let base_radius = (t * tan_beta).abs();
 
     if base_radius < TOLERANCE_ABS {
@@ -217,11 +219,11 @@ fn build_parabola(
     let denom = gen_dir.dot(plane.normal);
     let vertex = if denom.abs() > 1e-12 {
         let t = apex_to_plane / denom;
-        cone.apex + gen_dir * t
+        cone.apex_point() + gen_dir * t
     } else {
         // Generator is parallel to plane; use foot of axis on plane
         let t = apex_to_plane / axis_n.dot(plane.normal).max(1e-12);
-        cone.apex + axis_n * t
+        cone.apex_point() + axis_n * t
     };
 
     // Axis direction of the parabola: projection of cone axis onto the plane
@@ -236,7 +238,7 @@ fn build_parabola(
     // For a cone with half-angle β and unit-speed cut at vertex distance d_v from apex:
     //   d_v = apex_to_plane / (gen_dir · plane_n)  (already computed above)
     // p = 2 * r_v * tan_beta where r_v = d_v * sin_beta
-    let d_v = (vertex - cone.apex).length().max(TOLERANCE_ABS);
+    let d_v = (vertex - cone.apex_point()).length().max(TOLERANCE_ABS);
     let r_v = d_v * cone.half_angle_rad.sin();
     let focal_param = (2.0 * r_v * tan_beta).max(TOLERANCE_ABS);
 
@@ -265,7 +267,7 @@ fn build_hyperbola(
     // The apex is on the hyperbola's transverse axis.
     //
     // Center: projection of apex onto the cutting plane.
-    let center = cone.apex + plane.normal * apex_to_plane;
+    let center = cone.apex_point() + plane.normal * apex_to_plane;
 
     // Major direction in the plane: projection of cone axis onto the plane.
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
@@ -342,7 +344,7 @@ mod tests {
         ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Y,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: std::f64::consts::FRAC_PI_4, // 45°
         }
     }

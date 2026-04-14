@@ -1,15 +1,23 @@
 #![allow(clippy::missing_transmute_annotations, clippy::useless_transmute)]
 use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length, Task};
+use iced_aw::menu::{self, Item, Menu};
+use iced_aw::{menu_bar, menu_items};
 use rcad_kernel::BRep;
 use rcad_render::{
-    AxisGizmoHit, Camera, Mesh, SelectionMode, SelectionState, Tessellator, WgpuRenderer,
-    axis_gizmo_hit_test, build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
+    AxisGizmoHit, Camera, DisplayMode, Mesh, SelectionMode, SelectionState,
+    TessellationOptions, Tessellator, WgpuRenderer, axis_gizmo_hit_test,
+    build_edges_highlight_mesh, build_faces_highlight_mesh, merge_meshes,
 };
 use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
 
-const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
+#[derive(Debug, Clone)]
+pub enum StepLoadResult {
+    Loaded { path: String, content: String },
+    Cancelled,
+    Error(String),
+}
 
 pub struct RCadApp {
     brep: BRep,
@@ -17,7 +25,9 @@ pub struct RCadApp {
     camera: Camera,
     selection: SelectionState,
     creation: CreationController,
-    export_status: Option<String>,
+    status_message: Option<String>,
+    current_step_path: Option<String>,
+    recent_step_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,42 +50,31 @@ pub enum Message {
     SelectFaceBoundaryEdges,
     SelectEdgeIncidentFaces,
     ClearSelection,
+    OpenStep,
+    OpenRecent(String),
+    ReloadCurrentStep,
+    StepOpenFinished(StepLoadResult),
     ExportStep,
     ResetCamera,
 }
 
 impl RCadApp {
     pub fn new(step_content: Option<String>) -> (Self, Task<Message>) {
-        let parse_result = if let Some(content) = step_content {
-            rcad_step::StepReader::parse_string(&content)
+        let mut status_message = None;
+        let mut brep = if let Some(content) = step_content {
+            match load_step_brep(&content) {
+                Ok(brep) => brep,
+                Err(err) => {
+                    eprintln!("[rcad-step][iced] parse failed, keeping empty scene: {err}");
+                    status_message = Some(format!("Initial STEP load failed: {err}"));
+                    BRep::new()
+                }
+            }
         } else {
-            rcad_step::StepReader::parse_string(SAMPLE_STEP)
+            BRep::new()
         };
-
-        let brep = match parse_result {
-            Ok(brep) => {
-                eprintln!(
-                    "[rcad-step][iced] parsed STEP: vertices={}, edges={}, solids={}",
-                    brep.vertices.len(),
-                    brep.edges.len(),
-                    brep.solids.len()
-                );
-                brep
-            }
-            Err(err) => {
-                eprintln!("[rcad-step][iced] parse failed, fallback to box: {err}");
-                rcad_modeling::make_box_brep(
-                    glam::DVec3::ZERO,
-                    glam::DVec3::X,
-                    glam::DVec3::Y,
-                    1.0,
-                    1.0,
-                    1.0,
-                )
-                .expect("default fallback box should be valid")
-            }
-        };
-        let mesh = Tessellator::tessellate(&brep);
+        let tess_opts = TessellationOptions::default();
+        let mesh = Tessellator::tessellate_with_options(&mut brep, &tess_opts);
 
         (
             Self {
@@ -84,7 +83,9 @@ impl RCadApp {
                 camera: Camera::new(),
                 selection: SelectionState::default(),
                 creation: CreationController::default(),
-                export_status: None,
+                status_message,
+                current_step_path: None,
+                recent_step_paths: Vec::new(),
             },
             Task::none(),
         )
@@ -153,8 +154,48 @@ impl RCadApp {
             Message::ClearSelection => {
                 self.creation.clear_selection(&mut self.selection);
             }
+            Message::OpenStep => {
+                self.status_message = Some("Opening STEP file...".to_string());
+                return Task::perform(open_step_file_dialog(), Message::StepOpenFinished);
+            }
+            Message::OpenRecent(path) => {
+                self.status_message = Some(format!("Loading STEP: {path}"));
+                return Task::perform(open_step_file_path(path), Message::StepOpenFinished);
+            }
+            Message::ReloadCurrentStep => {
+                if let Some(path) = self.current_step_path.clone() {
+                    self.status_message = Some(format!("Loading STEP: {path}"));
+                    return Task::perform(open_step_file_path(path), Message::StepOpenFinished);
+                }
+                self.status_message = Some("No STEP file is currently loaded from disk".to_string());
+            }
+            Message::StepOpenFinished(result) => match result {
+                StepLoadResult::Loaded { path, content } => match load_step_brep(&content) {
+                    Ok(mut brep) => {
+                        let tess_opts = TessellationOptions::default();
+                        let mesh = Tessellator::tessellate_with_options(&mut brep, &tess_opts);
+                        self.brep = brep;
+                        self.mesh = mesh;
+                        self.camera = Camera::new();
+                        self.selection = SelectionState::default();
+                        self.creation = CreationController::default();
+                        self.current_step_path = Some(path.clone());
+                        push_recent_path(&mut self.recent_step_paths, &path);
+                        self.status_message = Some(format!("Loaded STEP: {path}"));
+                    }
+                    Err(err) => {
+                        self.status_message = Some(format!("Open failed: {err}"));
+                    }
+                },
+                StepLoadResult::Cancelled => {
+                    self.status_message = Some("Open STEP cancelled".to_string());
+                }
+                StepLoadResult::Error(err) => {
+                    self.status_message = Some(format!("Open failed: {err}"));
+                }
+            },
             Message::ExportStep => {
-                self.export_status = Some(match export_step_file(&self.brep, &self.selection) {
+                self.status_message = Some(match export_step_file(&self.brep, &self.selection) {
                     Ok(path) => format!("Exported: {}", path),
                     Err(err) => format!("Export failed: {}", err),
                 });
@@ -175,8 +216,48 @@ impl RCadApp {
             .map(|sh| sh.faces.len())
             .sum();
 
+        let mut file_menu_items = menu_items!(
+            (button("Open STEP...").on_press(Message::OpenStep)),
+            (
+                if self.current_step_path.is_some() {
+                    button("Reload").on_press(Message::ReloadCurrentStep)
+                } else {
+                    button("Reload")
+                }
+            ),
+            (button("Export STEP").on_press(Message::ExportStep)),
+            (button("Reset Camera").on_press(Message::ResetCamera)),
+        );
+        if !self.recent_step_paths.is_empty() {
+            let recent_menu = Menu::new(
+                self.recent_step_paths
+                    .iter()
+                    .cloned()
+                    .map(|path| {
+                        Item::new(button(text(path.clone())).on_press(Message::OpenRecent(path)))
+                    })
+                    .collect(),
+            )
+            .width(Length::Fixed(260.0));
+            file_menu_items.insert(
+                2,
+                Item::with_menu(container(text("Open Recent")).padding([4, 8]), recent_menu),
+            );
+        }
+
+        let file_menu = Menu::new(file_menu_items).width(Length::Fixed(170.0));
+
+        let file_menu_bar = menu_bar!((
+            container(text("File")).padding([4, 8]),
+            file_menu
+        ))
+        .draw_path(menu::DrawPath::Backdrop)
+        .close_on_item_click_global(true)
+        .close_on_background_click_global(true);
+
         let toolbar = container(
             row![
+                file_menu_bar,
                 text("Tools"),
                 button("Select Face").on_press(Message::SetTool(Tool::SelectFace)),
                 button("Select Edge").on_press(Message::SetTool(Tool::SelectEdge)),
@@ -206,6 +287,10 @@ impl RCadApp {
                 text(format!("Triangles: {}", self.mesh.indices.len() / 3)),
                 text(format!("Curves   : {}", self.brep.geom.curves.len())),
                 text(format!("Surfaces : {}", self.brep.geom.surfaces.len())),
+                text(format!(
+                    "Loaded   : {}",
+                    self.current_step_path.as_deref().unwrap_or("empty scene")
+                )),
                 text("─────────────────"),
                 text("Selection Mode"),
                 row![
@@ -260,8 +345,7 @@ impl RCadApp {
                 text(format!("Active Tool: {}", self.creation.tool_name())),
                 text("Left click: select/create, Alt+Left drag: rotate"),
                 text("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish"),
-                button("Export STEP").on_press(Message::ExportStep),
-                text(self.export_status.clone().unwrap_or_default()),
+                text(self.status_message.clone().unwrap_or_default()),
                 button("Reset Camera").on_press(Message::ResetCamera),
             ]
             .spacing(8),
@@ -280,7 +364,11 @@ impl RCadApp {
                 preview_mesh: self
                     .creation
                     .preview_brep(self.camera.distance)
-                    .map(|brep| Tessellator::tessellate(&brep)),
+                    .map(|brep| {
+                        let mut brep = brep;
+                        let tess_opts = TessellationOptions::default();
+                        Tessellator::tessellate_with_options(&mut brep, &tess_opts)
+                    }),
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -315,7 +403,8 @@ impl RCadApp {
             viewport,
         ) {
             append_brep(&mut self.brep, new_brep);
-            self.mesh = Tessellator::tessellate(&self.brep);
+            let tess_opts = TessellationOptions::default();
+            self.mesh = Tessellator::tessellate_with_options(&mut self.brep, &tess_opts);
         }
     }
 
@@ -341,9 +430,65 @@ impl RCadApp {
     fn commit_active_command(&mut self) {
         if let Some(new_brep) = self.creation.confirm_active_command(&self.camera) {
             append_brep(&mut self.brep, new_brep);
-            self.mesh = Tessellator::tessellate(&self.brep);
+            let tess_opts = TessellationOptions::default();
+            self.mesh = Tessellator::tessellate_with_options(&mut self.brep, &tess_opts);
         }
     }
+}
+
+fn load_step_brep(content: &str) -> Result<BRep, String> {
+    let brep = rcad_step::StepReader::parse_string(content).map_err(|err| err.to_string())?;
+    eprintln!(
+        "[rcad-step][iced] parsed STEP: vertices={}, edges={}, solids={}",
+        brep.vertices.len(),
+        brep.edges.len(),
+        brep.solids.len()
+    );
+    Ok(brep)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn open_step_file_dialog() -> StepLoadResult {
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .add_filter("STEP", &["step", "stp"])
+        .pick_file()
+        .await
+    else {
+        return StepLoadResult::Cancelled;
+    };
+
+    let path = file.path().display().to_string();
+    let bytes = file.read().await;
+    match String::from_utf8(bytes) {
+        Ok(content) => StepLoadResult::Loaded { path, content },
+        Err(err) => StepLoadResult::Error(format!("failed to decode STEP file as UTF-8: {err}")),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn open_step_file_path(path: String) -> StepLoadResult {
+    match std::fs::read_to_string(&path) {
+        Ok(content) => StepLoadResult::Loaded { path, content },
+        Err(err) => StepLoadResult::Error(format!("failed to read STEP file '{path}': {err}")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn open_step_file_path(_path: String) -> StepLoadResult {
+    StepLoadResult::Error("Open STEP is only available in the native app".to_string())
+}
+
+fn push_recent_path(paths: &mut Vec<String>, path: &str) {
+    paths.retain(|existing| existing != path);
+    paths.insert(0, path.to_string());
+    if paths.len() > 8 {
+        paths.truncate(8);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn open_step_file_dialog() -> StepLoadResult {
+    StepLoadResult::Error("Open STEP is only available in the native app".to_string())
 }
 
 struct Scene<'a> {
@@ -396,10 +541,12 @@ impl iced::widget::shader::Pipeline for RCadPipeline {
         _queue: &iced::wgpu::Queue,
         format: iced::wgpu::TextureFormat,
     ) -> Self {
+        let renderer = WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe {
+            std::mem::transmute(format)
+        });
+        renderer.set_display_mode(DisplayMode::Solid);
         Self {
-            renderer: WgpuRenderer::new(unsafe { std::mem::transmute(device) }, unsafe {
-                std::mem::transmute(format)
-            }),
+            renderer,
         }
     }
 }

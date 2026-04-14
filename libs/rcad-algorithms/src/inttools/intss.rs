@@ -25,18 +25,22 @@ use rcad_kernel::geom::{
 };
 
 use crate::inttools::{
+    cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
     cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance},
-    cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     pcurve_derive::{
-        circle_pcurve_on_cylinder, circle_pcurve_on_plane, circle_pcurve_on_sphere,
-        ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
-        line_pcurve_on_plane, polyline_pcurve_by_projection,
+        circle_pcurve_on_cone, circle_pcurve_on_cylinder, circle_pcurve_on_plane,
+        circle_pcurve_on_sphere, ellipse_pcurve_on_cone, ellipse_pcurve_on_plane,
+        fallback_pcurve_by_projection, line_pcurve_on_cone, line_pcurve_on_cylinder,
+        line_pcurve_on_plane, polyline_pcurve_by_projection, sampled_pcurve_on_cone,
     },
     plane_cone::{PlaneConicalResult, intersect_plane_cone},
     plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
     plane_plane::{PlanePlaneResult, intersect_plane_plane},
     plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
+    sphere_cone::{SphereConeResult, intersect_sphere_cone_with_tolerance},
+    torus_cone::{TorusConeResult, intersect_torus_cone_with_tolerance},
+    torus_torus::{TorusTorusResult, intersect_torus_torus_with_tolerance},
 };
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
 
@@ -100,8 +104,8 @@ pub fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceInterse
 /// Like [`intersect_surfaces`] but allows fuzzy geometric tolerance routing for
 /// selected analytic cases.
 ///
-/// Currently this applies to `Cone × Cone` near-coaxial handling. Other pairs
-/// keep existing behavior.
+/// Currently this applies to `Cone x Cone`, `Sphere x Cone`, `Torus x Cone`,
+/// and `Torus x Torus` near-coaxial handling. Other pairs keep existing behavior.
 pub fn intersect_surfaces_with_tolerance(
     s1: &Surface3,
     s2: &Surface3,
@@ -121,6 +125,17 @@ pub fn intersect_surfaces_with_tolerance(
         (Surface3::Sphere(s), Surface3::Cylinder(c))
         | (Surface3::Cylinder(c), Surface3::Sphere(s)) => {
             sphere_x_cylinder_with_tolerance(s, c, fuzzy_tol)
+        }
+        (Surface3::Sphere(s), Surface3::Cone(k))
+        | (Surface3::Cone(k), Surface3::Sphere(s)) => {
+            sphere_x_cone_with_tolerance(s, k, fuzzy_tol)
+        }
+        (Surface3::Torus(t), Surface3::Cone(k))
+        | (Surface3::Cone(k), Surface3::Torus(t)) => {
+            torus_x_cone_with_tolerance(t, k, fuzzy_tol)
+        }
+        (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+            torus_x_torus_with_tolerance(t1, t2, fuzzy_tol)
         }
         _ => intersect_surfaces(s1, s2),
     }
@@ -291,13 +306,11 @@ fn plane_x_cylinder(p: &Plane, c: &CylindricalSurface) -> SurfaceSurfaceIntersec
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
-    use std::f64::consts::TAU;
     let mut out = SurfaceSurfaceIntersection::default();
-    let cone_surf = Surface3::Cone(*c);
     match intersect_plane_cone(p, c) {
         PlaneConicalResult::Circle(circ) => {
             let pca = circle_pcurve_on_plane(&circ, p);
-            let pcb = fallback_pcurve_by_projection(&Curve3::Circle(circ), &[0.0, TAU], &cone_surf);
+            let pcb = circle_pcurve_on_cone(&circ, c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Circle(circ),
                 pcurve_on_a: Some(pca),
@@ -306,7 +319,7 @@ fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
         }
         PlaneConicalResult::Ellipse(e) => {
             let pca = ellipse_pcurve_on_plane(&e, p);
-            let pcb = fallback_pcurve_by_projection(&Curve3::Ellipse(e), &[0.0, TAU], &cone_surf);
+            let pcb = ellipse_pcurve_on_cone(&e, c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Ellipse(e),
                 pcurve_on_a: Some(pca),
@@ -315,7 +328,7 @@ fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
         }
         PlaneConicalResult::SingleLine(l) => {
             let pca = line_pcurve_on_plane(&l, p);
-            let pcb = fallback_pcurve_by_projection(&Curve3::Line(l), &[-10.0, 10.0], &cone_surf);
+            let pcb = line_pcurve_on_cone(&l, c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Line(l),
                 pcurve_on_a: Some(pca),
@@ -324,14 +337,14 @@ fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
         }
         PlaneConicalResult::TwoLines(l1, l2) => {
             let pca1 = line_pcurve_on_plane(&l1, p);
-            let pcb1 = fallback_pcurve_by_projection(&Curve3::Line(l1), &[-10.0, 10.0], &cone_surf);
+            let pcb1 = line_pcurve_on_cone(&l1, c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Line(l1),
                 pcurve_on_a: Some(pca1),
                 pcurve_on_b: Some(pcb1),
             });
             let pca2 = line_pcurve_on_plane(&l2, p);
-            let pcb2 = fallback_pcurve_by_projection(&Curve3::Line(l2), &[-10.0, 10.0], &cone_surf);
+            let pcb2 = line_pcurve_on_cone(&l2, c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Line(l2),
                 pcurve_on_a: Some(pca2),
@@ -341,7 +354,7 @@ fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
         PlaneConicalResult::Parabola(par) => {
             // Sample over a reasonable bounded domain for the PCurves
             let pca = fallback_pcurve_by_projection(&Curve3::Parabola(par), &[-20.0, 20.0], &Surface3::Plane(*p));
-            let pcb = fallback_pcurve_by_projection(&Curve3::Parabola(par), &[-20.0, 20.0], &cone_surf);
+            let pcb = sampled_pcurve_on_cone(&Curve3::Parabola(par), &[-20.0, 20.0], c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Parabola(par),
                 pcurve_on_a: Some(pca),
@@ -351,7 +364,7 @@ fn plane_x_cone(p: &Plane, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
         PlaneConicalResult::Hyperbola(hyp) => {
             // Each branch sampled separately; use the principal branch domain
             let pca = fallback_pcurve_by_projection(&Curve3::Hyperbola(hyp), &[-10.0, 10.0], &Surface3::Plane(*p));
-            let pcb = fallback_pcurve_by_projection(&Curve3::Hyperbola(hyp), &[-10.0, 10.0], &cone_surf);
+            let pcb = sampled_pcurve_on_cone(&Curve3::Hyperbola(hyp), &[-10.0, 10.0], c);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Hyperbola(hyp),
                 pcurve_on_a: Some(pca),
@@ -512,98 +525,66 @@ fn sphere_x_cylinder_with_tolerance(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Sphere × Cone
+// Sphere x Cone
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Sphere-cone intersection.
 ///
-/// Analytic case: sphere centre on cone axis → circles at intersecting heights.
-/// General case → numerical.
+/// Analytic case: sphere centre on cone axis -> circles at intersecting heights.
+/// General case -> numerical.
 fn sphere_x_cone(s: &SphericalSurface, c: &ConicalSurface) -> SurfaceSurfaceIntersection {
-    // Project sphere centre onto cone axis
-    let t = (s.center - c.apex).dot(c.axis);
-    let foot = c.apex + c.axis * t;
-    let d_perp = (s.center - foot).length();
+    sphere_x_cone_with_tolerance(s, c, 0.0)
+}
 
-    if d_perp < TOLERANCE_ABS {
-        // Sphere centre on cone axis.
-        // Cone radius at axial parameter t: r(t) = t * tan(half_angle) + c.radius
-        // Points on intersection satisfy: distance from axis = r(t_z) AND on sphere.
-        // In local frame z along axis from apex, sphere centre at z = t:
-        //   r_cone(z) = c.radius + z * tan(α)
-        //   r_sphere(z) = sqrt(R² - (z-t)²) ... component perpendicular to axis
-        // Points on both surfaces: sqrt(R²-(z-t)²) = c.radius + z*tan(α)
-        // Let u = z - t:
-        //   sqrt(R²-u²) = c.radius + (u+t)*tan(α)
-        //   R²-u² = (c.radius + (u+t)*tan(α))²
-        // Solve numerically (at most 2 solutions) — emit circles.
-        let mut out = SurfaceSurfaceIntersection::default();
-        let ta = c.half_angle_rad.tan();
-        // Sample z from (t-R) to (t+R), find sign changes of f(z)
-        let z_c = t; // sphere centre axial coord (from apex)
-        let r_s = s.radius;
-        let n = 64usize;
-        let mut prev_f = f64::NAN;
-        let mut prev_z = 0.0f64;
-        for i in 0..=n {
-            let frac = i as f64 / n as f64;
-            let z = z_c - r_s + 2.0 * r_s * frac;
-            let dz = z - z_c;
-            let r_sphere_sq = r_s * r_s - dz * dz;
-            if r_sphere_sq < 0.0 {
-                prev_f = f64::NAN;
-                prev_z = z;
-                continue;
-            }
-            let r_sphere = r_sphere_sq.sqrt();
-            let r_cone = c.radius + z * ta;
-            let f = r_sphere - r_cone;
-            if !prev_f.is_nan() && prev_f * f < 0.0 {
-                // Bisect
-                let mut lo = prev_z;
-                let mut hi = z;
-                for _ in 0..32 {
-                    let mid = (lo + hi) * 0.5;
-                    let dm = mid - z_c;
-                    let rsm = (r_s * r_s - dm * dm).max(0.0).sqrt();
-                    let rcm = c.radius + mid * ta;
-                    if (rsm - rcm) * (rsm - (c.radius + lo * ta)) < 0.0 {
-                        hi = mid;
-                    } else {
-                        lo = mid;
-                    }
-                }
-                let z_sol = (lo + hi) * 0.5;
-                let r_sol = (c.radius + z_sol * ta).max(0.0);
-                let center = c.apex + c.axis * z_sol;
-                if r_sol > TOLERANCE_ABS {
-                    let circle = Circle3 {
-                        center,
-                        normal: c.axis,
-                        radius: r_sol,
-                    };
-                    let pca = circle_pcurve_on_sphere(&circle, s);
-                    let pcb = fallback_pcurve_by_projection(
-                        &Curve3::Circle(circle),
-                        &[0.0, std::f64::consts::TAU],
-                        &Surface3::Cone(*c),
-                    );
-                    out.curves.push(SurfaceIntersectionResult {
-                        curve_3d: SurfaceCurve::Circle(circle),
-                        pcurve_on_a: Some(pca),
-                        pcurve_on_b: Some(pcb),
-                    });
-                }
-            }
-            prev_f = f;
-            prev_z = z;
+fn sphere_x_cone_with_tolerance(
+    s: &SphericalSurface,
+    c: &ConicalSurface,
+    fuzzy_tol: f64,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let mut out = SurfaceSurfaceIntersection::default();
+    match intersect_sphere_cone_with_tolerance(s, c, fuzzy_tol) {
+        SphereConeResult::NoIntersection => {}
+        SphereConeResult::SingleCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Sphere(*s),
+            );
+            let pcb = circle_pcurve_on_cone(&circ, c);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
-        if !out.curves.is_empty() {
-            return out;
+        SphereConeResult::TwoCircles(circ1, circ2) => {
+            for circ in [circ1, circ2] {
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &Surface3::Sphere(*s),
+                );
+                let pcb = circle_pcurve_on_cone(&circ, c);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circ),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        SphereConeResult::TangentPoint(pt) => {
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Point(pt),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
+        }
+        SphereConeResult::General => {
+            return numeric_intss(&Surface3::Sphere(*s), &Surface3::Cone(*c));
         }
     }
-
-    numeric_intss(&Surface3::Sphere(*s), &Surface3::Cone(*c))
+    out
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -775,11 +756,7 @@ fn cylinder_x_cone(
                 &[0.0, TAU],
                 &Surface3::Cylinder(*cyl),
             );
-            let pcb = fallback_pcurve_by_projection(
-                &Curve3::Circle(circ),
-                &[0.0, TAU],
-                &Surface3::Cone(*cone),
-            );
+            let pcb = circle_pcurve_on_cone(&circ, cone);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Circle(circ),
                 pcurve_on_a: Some(pca),
@@ -825,22 +802,13 @@ fn cone_x_cone_from_result(
     k2: &ConicalSurface,
     cc: ConeConeResult,
 ) -> SurfaceSurfaceIntersection {
-    use std::f64::consts::TAU;
     let mut out = SurfaceSurfaceIntersection::default();
     match cc {
         ConeConeResult::NoIntersection => {}
         ConeConeResult::Coaxial => {} // identical cones — infinite overlap
         ConeConeResult::CoaxialCircle(circ) => {
-            let pca = fallback_pcurve_by_projection(
-                &Curve3::Circle(circ),
-                &[0.0, TAU],
-                &Surface3::Cone(*k1),
-            );
-            let pcb = fallback_pcurve_by_projection(
-                &Curve3::Circle(circ),
-                &[0.0, TAU],
-                &Surface3::Cone(*k2),
-            );
+            let pca = circle_pcurve_on_cone(&circ, k1);
+            let pcb = circle_pcurve_on_cone(&circ, k2);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Circle(circ),
                 pcurve_on_a: Some(pca),
@@ -1227,237 +1195,178 @@ fn torus_x_cylinder_coaxial(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Torus × Cone
+// Torus x Cone
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Torus-cone intersection.
 ///
-/// **Analytic case — cone apex on torus axis, cone axis = torus axis**:
+/// **Analytic case -- cone apex on torus axis, cone axis = torus axis**:
 ///   By rotational symmetry, intersections are circles. Solve
-///   torus tube equation vs cone surface in the (ρ, z) half-plane.
+///   torus tube equation vs cone surface in the (rho, z) half-plane.
 ///
 /// **All other cases** fall back to numerical marching.
 fn torus_x_cone(
     torus: &rcad_kernel::geom::ToroidalSurface,
     cone: &ConicalSurface,
 ) -> SurfaceSurfaceIntersection {
-    let t_axis = torus.axis.normalize();
-    let c_axis = cone.axis.normalize();
-    let cross = t_axis.cross(c_axis);
-    let sin_angle = cross.length();
-
-    // Project cone apex onto torus axis
-    let t = (cone.apex - torus.center).dot(t_axis);
-    let foot = torus.center + t_axis * t;
-    let d_apex = (cone.apex - foot).length();
-
-    // Coaxial: same axis line
-    if sin_angle < TOLERANCE_ANG && d_apex < TOLERANCE_ABS {
-        return torus_x_cone_coaxial(torus, cone, t_axis);
-    }
-
-    numeric_intss(&Surface3::Torus(*torus), &Surface3::Cone(*cone))
+    torus_x_cone_with_tolerance(torus, cone, 0.0)
 }
 
-#[allow(non_snake_case)]
-fn torus_x_cone_coaxial(
+fn torus_x_cone_with_tolerance(
     torus: &rcad_kernel::geom::ToroidalSurface,
     cone: &ConicalSurface,
-    axis: DVec3,
+    fuzzy_tol: f64,
 ) -> SurfaceSurfaceIntersection {
     use std::f64::consts::TAU;
-    let R = torus.major_radius;
-    let r = torus.minor_radius;
-    let ta = cone.half_angle_rad.tan();
-    let z_apex = (cone.apex - torus.center).dot(axis);
-
-    // Torus tube in (ρ, z): (ρ - R)² + z² = r²  (tube center at (R, 0))
-    // Cone in (ρ, z): ρ = (z - z_apex) * ta  (for z > z_apex on nappe)
-    // Substitute: ((z-z_apex)*ta - R)² + z² = r²
-    // Quadratic in z: (ta²+1)z² - 2*ta*(z_apex*ta+R)*z + (z_apex*ta+R)² - r² = 0
-    let a_q = ta * ta + 1.0;
-    let b_q = -2.0 * ta * (z_apex * ta + R);
-    let c_q = (z_apex * ta + R).powi(2) - r * r;
-
-    let disc = b_q * b_q - 4.0 * a_q * c_q;
     let mut out = SurfaceSurfaceIntersection::default();
-
-    if disc < 0.0 {
-        return out; // no real solutions
-    }
-
-    let sqrt_disc = disc.max(0.0).sqrt();
-    for &sign in &[-1.0f64, 1.0f64] {
-        let z_sol = (-b_q + sign * sqrt_disc) / (2.0 * a_q);
-        let rho_sol = (z_sol - z_apex) * ta;
-        if rho_sol < TOLERANCE_ABS {
-            continue; // not on cone nappe
+    match intersect_torus_cone_with_tolerance(torus, cone, fuzzy_tol) {
+        TorusConeResult::NoIntersection => {}
+        TorusConeResult::SingleCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Torus(*torus),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cone(*cone),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
         }
-
-        let center = torus.center + axis * z_sol;
-        let circle = Circle3 {
-            center,
-            normal: axis,
-            radius: rho_sol,
-        };
-        let pca = fallback_pcurve_by_projection(
-            &Curve3::Circle(circle),
-            &[0.0, TAU],
-            &Surface3::Torus(*torus),
-        );
-        let pcb = fallback_pcurve_by_projection(
-            &Curve3::Circle(circle),
-            &[0.0, TAU],
-            &Surface3::Cone(*cone),
-        );
-        out.curves.push(SurfaceIntersectionResult {
-            curve_3d: SurfaceCurve::Circle(circle),
-            pcurve_on_a: Some(pca),
-            pcurve_on_b: Some(pcb),
-        });
+        TorusConeResult::TwoCircles(circ1, circ2) => {
+            for circ in [circ1, circ2] {
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &Surface3::Torus(*torus),
+                );
+                let pcb = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &Surface3::Cone(*cone),
+                );
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circ),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        TorusConeResult::TangentCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Torus(*torus),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Cone(*cone),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        TorusConeResult::General => {
+            return numeric_intss(&Surface3::Torus(*torus), &Surface3::Cone(*cone));
+        }
     }
     out
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Torus × Torus
+// Torus x Torus
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Torus-torus intersection.
 ///
-/// **Analytic case — coaxial tori (same axis line)**:
+/// **Analytic case -- coaxial tori (same axis line)**:
 ///   By rotational symmetry, intersections are circles at heights where
-///   the torus tube circles (in the ρ-z half-plane) meet.
+///   the torus tube circles (in the rho-z half-plane) meet.
 ///
 /// **All other cases** fall back to numerical marching.
 fn torus_x_torus(
     t1: &rcad_kernel::geom::ToroidalSurface,
     t2: &rcad_kernel::geom::ToroidalSurface,
 ) -> SurfaceSurfaceIntersection {
-    let a1 = t1.axis.normalize();
-    let a2 = t2.axis.normalize();
-    let cross = a1.cross(a2);
-    let sin_angle = cross.length();
-
-    // Project t2 center onto t1 axis
-    let delta = t2.center - t1.center;
-    let d_perp = (delta - a1 * delta.dot(a1)).length();
-
-    // Coaxial
-    if sin_angle < TOLERANCE_ANG && d_perp < TOLERANCE_ABS {
-        return torus_x_torus_coaxial(t1, t2, a1);
-    }
-
-    numeric_intss(&Surface3::Torus(*t1), &Surface3::Torus(*t2))
+    torus_x_torus_with_tolerance(t1, t2, 0.0)
 }
 
-#[allow(non_snake_case)]
-fn torus_x_torus_coaxial(
+fn torus_x_torus_with_tolerance(
     t1: &rcad_kernel::geom::ToroidalSurface,
     t2: &rcad_kernel::geom::ToroidalSurface,
-    axis: DVec3,
+    fuzzy_tol: f64,
 ) -> SurfaceSurfaceIntersection {
     use std::f64::consts::TAU;
-    let R1 = t1.major_radius;
-    let r1 = t1.minor_radius;
-    let R2 = t2.major_radius;
-    let r2 = t2.minor_radius;
-    let dz_centers = (t2.center - t1.center).dot(axis);
-
-    // Two circles in (ρ, z) plane:
-    // Circle 1: (ρ - R1)² + (z - 0)² = r1²   (center at (R1, 0))
-    // Circle 2: (ρ - R2)² + (z - dz)² = r2²  (center at (R2, dz))
-    // Solve for intersection of two circles.
-    // Let u = ρ, v = z. Then:
-    //   (u-R1)² + v² = r1²
-    //   (u-R2)² + (v-dz)² = r2²
-    //
-    // Expand both:
-    //   u² - 2R1*u + R1² + v² = r1²
-    //   u² - 2R2*u + R2² + v² - 2*dz*v + dz² = r2²
-    //
-    // Subtract: -2(R1-R2)*u + R1²-R2² + 2*dz*v - dz² = r1²-r2²
-    //   v = (r1²-r2² + 2(R1-R2)*u + dz² - R1²+R2²) / (2*dz)  [if dz ≠ 0]
-    //
-    // If dz = 0: circles are concentric in (ρ, z) → no intersection unless r1=r2 and R1=R2.
     let mut out = SurfaceSurfaceIntersection::default();
-
-    if dz_centers.abs() < TOLERANCE_ABS {
-        // Concentric tori: intersection only if tubes touch
-        // Distance between tube centers in (ρ,z) plane is |R1-R2|
-        let d_tube = (R1 - R2).abs();
-        if (d_tube - (r1 + r2)).abs() < TOLERANCE_ABS {
-            // Tubes touch at one circle at z=0, ρ = midpoint
-            let rho = (R1 + R2) / 2.0;
-            let center = t1.center;
-            let circle = Circle3 {
-                center,
-                normal: axis,
-                radius: rho,
-            };
+    match intersect_torus_torus_with_tolerance(t1, t2, fuzzy_tol) {
+        TorusTorusResult::NoIntersection => {}
+        TorusTorusResult::SingleCircle(circ) => {
             let pca = fallback_pcurve_by_projection(
-                &Curve3::Circle(circle),
+                &Curve3::Circle(circ),
                 &[0.0, TAU],
                 &Surface3::Torus(*t1),
             );
             let pcb = fallback_pcurve_by_projection(
-                &Curve3::Circle(circle),
+                &Curve3::Circle(circ),
                 &[0.0, TAU],
                 &Surface3::Torus(*t2),
             );
             out.curves.push(SurfaceIntersectionResult {
-                curve_3d: SurfaceCurve::Circle(circle),
+                curve_3d: SurfaceCurve::Circle(circ),
                 pcurve_on_a: Some(pca),
                 pcurve_on_b: Some(pcb),
             });
         }
-        return out;
-    }
-
-    // Linear relation: v = A*u + B
-    let A = (R1 - R2) / dz_centers;
-    let B = (r1 * r1 - r2 * r2 + dz_centers * dz_centers - R1 * R1 + R2 * R2) / (2.0 * dz_centers);
-
-    // Substitute into circle 1: (u-R1)² + (A*u+B)² = r1²
-    // (1+A²)*u² + (-2R1 + 2AB)*u + (R1² + B² - r1²) = 0
-    let a_q = 1.0 + A * A;
-    let b_q = -2.0 * R1 + 2.0 * A * B;
-    let c_q = R1 * R1 + B * B - r1 * r1;
-
-    let disc = b_q * b_q - 4.0 * a_q * c_q;
-    if disc < 0.0 {
-        return out;
-    }
-
-    let sqrt_disc = disc.max(0.0).sqrt();
-    for &sign in &[-1.0f64, 1.0f64] {
-        let u = (-b_q + sign * sqrt_disc) / (2.0 * a_q);
-        let v = A * u + B;
-        if u < TOLERANCE_ABS {
-            continue; // ρ must be positive
+        TorusTorusResult::TwoCircles(circ1, circ2) => {
+            for circ in [circ1, circ2] {
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &Surface3::Torus(*t1),
+                );
+                let pcb = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &Surface3::Torus(*t2),
+                );
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circ),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
         }
-
-        let center = t1.center + axis * v;
-        let circle = Circle3 {
-            center,
-            normal: axis,
-            radius: u,
-        };
-        let pca = fallback_pcurve_by_projection(
-            &Curve3::Circle(circle),
-            &[0.0, TAU],
-            &Surface3::Torus(*t1),
-        );
-        let pcb = fallback_pcurve_by_projection(
-            &Curve3::Circle(circle),
-            &[0.0, TAU],
-            &Surface3::Torus(*t2),
-        );
-        out.curves.push(SurfaceIntersectionResult {
-            curve_3d: SurfaceCurve::Circle(circle),
-            pcurve_on_a: Some(pca),
-            pcurve_on_b: Some(pcb),
-        });
+        TorusTorusResult::TangentCircle(circ) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Torus(*t1),
+            );
+            let pcb = fallback_pcurve_by_projection(
+                &Curve3::Circle(circ),
+                &[0.0, TAU],
+                &Surface3::Torus(*t2),
+            );
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(circ),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        TorusTorusResult::Coaxial => {
+            // Identical tori - infinite overlap, return empty
+        }
+        TorusTorusResult::General => {
+            return numeric_intss(&Surface3::Torus(*t1), &Surface3::Torus(*t2));
+        }
     }
     out
 }
@@ -1805,7 +1714,10 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
 mod tests {
     use super::*;
     use glam::DVec3;
-    use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface};
+    use rcad_kernel::geom::{
+        ConicalSurface, Curve2d, Curve2dEval, CylindricalSurface, Plane, SphericalSurface,
+        SurfaceEval,
+    };
 
     #[test]
     fn plane_plane_parallel() {
@@ -1956,6 +1868,60 @@ mod tests {
     }
 
     #[test]
+    fn plane_cone_circle_provides_cone_pcurve() {
+        let plane_height = 3.0;
+        let half_angle = (0.5_f64).atan();
+        let expected_slant = plane_height / half_angle.cos();
+        let plane = Surface3::Plane(Plane {
+            origin: DVec3::new(0.0, 0.0, plane_height),
+            normal: DVec3::Z,
+        });
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 0.0,
+            half_angle_rad: half_angle,
+        });
+
+        let r = intersect_surfaces(&plane, &cone);
+        assert_eq!(r.curves.len(), 1, "plane-cone circle should give one component");
+
+        let circle = match &r.curves[0].curve_3d {
+            SurfaceCurve::Circle(circle) => circle,
+            other => panic!("expected Circle, got {other:?}"),
+        };
+        let pcurve = r.curves[0]
+            .pcurve_on_b
+            .as_ref()
+            .expect("cone-side pcurve should be present");
+
+        match pcurve {
+            Curve2d::Line(line) => {
+                assert!((line.origin.y - expected_slant).abs() < 1e-9);
+                assert!((line.direction.x - 1.0).abs() < 1e-9);
+                assert!(line.direction.y.abs() < 1e-9);
+            }
+            other => panic!("expected analytic cone pcurve line, got {other:?}"),
+        }
+
+        for t in [0.0, std::f64::consts::FRAC_PI_2, std::f64::consts::PI] {
+            let uv = pcurve.point_at(t);
+            let p3 = match &cone {
+                Surface3::Cone(surface) => surface.point_at(uv.x, uv.y),
+                _ => unreachable!(),
+            };
+            assert!((p3.z - plane_height).abs() < 1e-6, "lifted point z={} at t={}", p3.z, t);
+            assert!(
+                (p3.distance(circle.center) - circle.radius).abs() < 1e-6,
+                "lifted point radius mismatch at t={}: got {}, expected {}",
+                t,
+                p3.distance(circle.center),
+                circle.radius
+            );
+        }
+    }
+
+    #[test]
     fn cylinder_cylinder_perpendicular_steinmetz() {
         // Two perpendicular cylinders r=1 — Steinmetz configuration
         let c1 = Surface3::Cylinder(CylindricalSurface {
@@ -2043,7 +2009,7 @@ mod tests {
         let cone = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
-            radius: 1.0, // not used by the intersection logic
+            radius: 0.0,
             half_angle_rad: 45.0_f64.to_radians(),
         });
 
@@ -2065,13 +2031,13 @@ mod tests {
         let k1 = Surface3::Cone(ConicalSurface {
             apex: DVec3::new(0.0, 0.0, 2.0),
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 45.0_f64.to_radians(),
         });
         let k2 = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 30.0_f64.to_radians(),
         });
 
@@ -2096,13 +2062,13 @@ mod tests {
         let k1 = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 45.0_f64.to_radians(),
         });
         let k2 = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 30.0_f64.to_radians(),
         });
 
@@ -2118,13 +2084,13 @@ mod tests {
         let k1 = Surface3::Cone(ConicalSurface {
             apex: DVec3::new(0.0, 0.0, 2.0),
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 45.0_f64.to_radians(),
         });
         let k2 = Surface3::Cone(ConicalSurface {
             apex: DVec3::new(2.5e-7, 0.0, 0.0),
             axis: DVec3::Z,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: 30.0_f64.to_radians(),
         });
 
@@ -2285,6 +2251,26 @@ mod tests {
         let r = intersect_surfaces(&torus, &cone);
         assert!(!r.is_empty(), "torus ∩ coaxial cone should have intersection");
         assert!(matches!(&r.curves[0].curve_3d, SurfaceCurve::Circle(_)));
+    }
+
+    #[test]
+    fn torus_cone_reference_circle_coaxial_still_gives_circles() {
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 4.0,
+        });
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, -3.0),
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        });
+
+        let r = intersect_surfaces(&torus, &cone);
+        assert_eq!(r.curves.len(), 2, "reference-circle cone should yield the expected two coaxial circles");
+        assert!(r.curves.iter().all(|curve| matches!(&curve.curve_3d, SurfaceCurve::Circle(_))));
     }
 
     #[test]

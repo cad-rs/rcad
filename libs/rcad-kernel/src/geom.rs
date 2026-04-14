@@ -159,10 +159,52 @@ pub struct SphericalSurface {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ConicalSurface {
+    /// Point on the cone axis where the surface radius equals `radius`.
+    ///
+    /// Historically this field was used as an apex for zero-radius primitive
+    /// cones. For general conical surfaces, the true apex is derived from this
+    /// reference point, `radius`, and `half_angle_rad`.
     pub apex: Point3,
     pub axis: Vec3,
+    /// Radius of the reference circle at `apex`.
     pub radius: f64,
     pub half_angle_rad: f64,
+}
+
+impl ConicalSurface {
+    pub fn axis_dir(&self) -> DVec3 {
+        self.axis.normalize_or_zero()
+    }
+
+    pub fn apex_point(&self) -> DVec3 {
+        let tan_half = self.half_angle_rad.tan();
+        if tan_half.abs() < 1e-12 {
+            self.apex
+        } else {
+            self.apex - self.axis_dir() * (self.radius / tan_half)
+        }
+    }
+
+    pub fn axial_from_slant(&self, slant: f64) -> f64 {
+        slant * self.half_angle_rad.cos()
+    }
+
+    pub fn slant_from_axial(&self, axial: f64) -> f64 {
+        let cos_half = self.half_angle_rad.cos();
+        if cos_half.abs() < 1e-12 {
+            0.0
+        } else {
+            axial / cos_half
+        }
+    }
+
+    pub fn radius_at_slant(&self, slant: f64) -> f64 {
+        self.radius + slant * self.half_angle_rad.sin()
+    }
+
+    pub fn radius_at_axial(&self, axial: f64) -> f64 {
+        self.radius + axial * self.half_angle_rad.tan()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -171,6 +213,51 @@ pub struct ToroidalSurface {
     pub axis: Vec3,
     pub major_radius: f64,
     pub minor_radius: f64,
+}
+
+/// An ellipsoidal surface aligned to a local orthonormal frame.
+///
+/// Parameterization matches sphere-like angles:
+/// - `u` = longitude `[0, 2π]`
+/// - `v` = colatitude `[0, π]` (0 at +axis pole)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct EllipsoidalSurface {
+    pub center: Point3,
+    pub axis: Vec3,
+    /// Reference direction used to derive the local X axis.
+    pub ref_dir: Vec3,
+    pub radius_x: f64,
+    pub radius_y: f64,
+    pub radius_z: f64,
+}
+
+/// A classical helicoid surface around an axis.
+///
+/// Parameterization:
+/// `S(u, v) = origin + v * (cos(u) * x_axis + sin(u) * y_axis) + (pitch/(2*pi))*u * axis`
+///
+/// `u` is the azimuth / screw parameter and `v` is the signed radial distance.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HelicoidSurface {
+    pub origin: Point3,
+    pub axis: Vec3,
+    /// Reference direction used to derive the local X axis.
+    pub ref_dir: Vec3,
+    /// Axial advance per full revolution.
+    pub pitch: f64,
+}
+
+/// A circular pipe/tube surface around a spine curve.
+///
+/// `u` is the azimuth angle around the local section frame and `v` follows the
+/// natural parameter of the spine curve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipeSurface {
+    pub spine: Box<Curve3>,
+    /// Initial/reference direction projected onto the normal plane of the
+    /// spine tangent at evaluation time.
+    pub ref_dir: Vec3,
+    pub radius: f64,
 }
 
 /// A non-uniform rational B-spline surface.
@@ -197,6 +284,15 @@ pub struct BezierSurface {
     /// Control point grid [u_count][v_count].
     pub control_points: Vec<Vec<DVec3>>,
     /// Weight grid [u_count][v_count]; 1.0 for non-rational.
+    pub weights: Vec<Vec<f64>>,
+}
+
+/// A triangular rational Bezier surface using barycentric coordinates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriBezierSurface {
+    /// Triangular control net rows. Row `i` has `degree + 1 - i` points.
+    pub control_points: Vec<Vec<DVec3>>,
+    /// Weight rows with the same triangular layout as `control_points`.
     pub weights: Vec<Vec<f64>>,
 }
 
@@ -273,6 +369,27 @@ pub struct RevolutionSurface {
     pub axis_dir: Vec3,
 }
 
+/// Surface linearly interpolating between two 3D curves with a shared parameter domain.
+/// S(u,v) = lerp(start.point_at(u), end.point_at(u), v)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuledSurface {
+    pub start: Box<Curve3>,
+    pub end: Box<Curve3>,
+}
+
+/// A Coons patch blending four boundary curves over `[0,1] x [0,1]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoonsSurface {
+    /// Boundary curve at `v = 0`, parameterized by `u`.
+    pub south: Box<Curve3>,
+    /// Boundary curve at `v = 1`, parameterized by `u`.
+    pub north: Box<Curve3>,
+    /// Boundary curve at `u = 0`, parameterized by `v`.
+    pub west: Box<Curve3>,
+    /// Boundary curve at `u = 1`, parameterized by `v`.
+    pub east: Box<Curve3>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Surface3 {
     Plane(Plane),
@@ -280,10 +397,16 @@ pub enum Surface3 {
     Sphere(SphericalSurface),
     Cone(ConicalSurface),
     Torus(ToroidalSurface),
+    Ellipsoid(EllipsoidalSurface),
+    Helicoid(HelicoidSurface),
+    Pipe(PipeSurface),
     BSpline(BSplineSurface),
     LinearExtrusion(LinearExtrusionSurface), // Phase K
     Revolution(RevolutionSurface),           // Phase K
+    Ruled(RuledSurface),                     // Phase U
+    Coons(CoonsSurface),                     // Phase V
     Bezier(BezierSurface),                   // Phase M
+    TriBezier(TriBezierSurface),             // Phase T
     Offset(OffsetSurface),                   // Phase M
     Trimmed(TrimmedSurface),                 // Phase Q
     Gordon(GordonSurface),                   // Phase R
@@ -473,6 +596,18 @@ pub fn any_perpendicular(v: DVec3) -> DVec3 {
         DVec3::Z
     };
     v.cross(candidate).normalize()
+}
+
+fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
+    let axis = axis.normalize_or_zero();
+    let mut x_axis = ref_dir - axis * ref_dir.dot(axis);
+    if x_axis.length_squared() <= 1e-24 {
+        x_axis = any_perpendicular(axis);
+    } else {
+        x_axis = x_axis.normalize();
+    }
+    let y_axis = axis.cross(x_axis).normalize_or_zero();
+    (axis, x_axis, y_axis)
 }
 
 /// Parametric evaluation of a 3D curve: `t 鈫?Point3`.
@@ -734,19 +869,23 @@ impl SurfaceEval for SphericalSurface {
 }
 
 impl SurfaceEval for ConicalSurface {
-    /// u = azimuth [0, 2蟺], v = distance along slant from apex (v 鈮?0).
+    /// u = azimuth [0, 2π], v = distance along the cone generatrix from the
+    /// reference circle at `self.apex`.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
-        let y_ax = self.axis.cross(x_ax).normalize();
-        let r = v * self.half_angle_rad.tan();
-        self.apex + v * self.axis + r * (u.cos() * x_ax + u.sin() * y_ax)
+        let axis = self.axis_dir();
+        let x_ax = any_perpendicular(axis);
+        let y_ax = axis.cross(x_ax).normalize();
+        let radial = self.radius_at_slant(v);
+        let axial = self.axial_from_slant(v);
+        self.apex + axial * axis + radial * (u.cos() * x_ax + u.sin() * y_ax)
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
-        let y_ax = self.axis.cross(x_ax).normalize();
+        let axis = self.axis_dir();
+        let x_ax = any_perpendicular(axis);
+        let y_ax = axis.cross(x_ax).normalize();
         let radial = u.cos() * x_ax + u.sin() * y_ax;
         let half = self.half_angle_rad;
-        (radial * half.cos() - self.axis * half.sin()).normalize()
+        (radial * half.cos() - axis * half.sin()).normalize()
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, f64::INFINITY]
@@ -770,6 +909,48 @@ impl SurfaceEval for ToroidalSurface {
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, 2.0 * PI]
+    }
+}
+
+impl SurfaceEval for EllipsoidalSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
+        self.center
+            + self.radius_x * v.sin() * u.cos() * x_axis
+            + self.radius_y * v.sin() * u.sin() * y_axis
+            + self.radius_z * v.cos() * axis
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
+        let p = self.point_at(u, v) - self.center;
+        let x = p.dot(x_axis);
+        let y = p.dot(y_axis);
+        let z = p.dot(axis);
+        let grad = (x / (self.radius_x * self.radius_x)) * x_axis
+            + (y / (self.radius_y * self.radius_y)) * y_axis
+            + (z / (self.radius_z * self.radius_z)) * axis;
+        grad.normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        [0.0, 2.0 * PI, 0.0, PI]
+    }
+}
+
+impl SurfaceEval for HelicoidSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
+        let lead = self.pitch / (2.0 * PI);
+        self.origin + v * (u.cos() * x_axis + u.sin() * y_axis) + (lead * u) * axis
+    }
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);
+        let lead = self.pitch / (2.0 * PI);
+        let du = v * (-u.sin() * x_axis + u.cos() * y_axis) + lead * axis;
+        let dv = u.cos() * x_axis + u.sin() * y_axis;
+        du.cross(dv).normalize_or_zero()
+    }
+    fn default_domain(&self) -> [f64; 4] {
+        [-2.0 * PI, 2.0 * PI, -10.0, 10.0]
     }
 }
 
@@ -837,10 +1018,16 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.point_at(u, v),
             Surface3::Cone(s) => s.point_at(u, v),
             Surface3::Torus(s) => s.point_at(u, v),
+            Surface3::Ellipsoid(s) => s.point_at(u, v),
+            Surface3::Helicoid(s) => s.point_at(u, v),
+            Surface3::Pipe(s) => s.point_at(u, v),
             Surface3::BSpline(s) => s.point_at(u, v),
             Surface3::LinearExtrusion(s) => s.point_at(u, v),
             Surface3::Revolution(s) => s.point_at(u, v),
+            Surface3::Ruled(s) => s.point_at(u, v),
+            Surface3::Coons(s) => s.point_at(u, v),
             Surface3::Bezier(s) => s.point_at(u, v),
+            Surface3::TriBezier(s) => s.point_at(u, v),
             Surface3::Offset(s) => s.point_at(u, v),
             Surface3::Trimmed(s) => s.point_at(u, v),
             Surface3::Gordon(s) => s.point_at(u, v),
@@ -853,10 +1040,16 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.normal_at(u, v),
             Surface3::Cone(s) => s.normal_at(u, v),
             Surface3::Torus(s) => s.normal_at(u, v),
+            Surface3::Ellipsoid(s) => s.normal_at(u, v),
+            Surface3::Helicoid(s) => s.normal_at(u, v),
+            Surface3::Pipe(s) => s.normal_at(u, v),
             Surface3::BSpline(s) => s.normal_at(u, v),
             Surface3::LinearExtrusion(s) => s.normal_at(u, v),
             Surface3::Revolution(s) => s.normal_at(u, v),
+            Surface3::Ruled(s) => s.normal_at(u, v),
+            Surface3::Coons(s) => s.normal_at(u, v),
             Surface3::Bezier(s) => s.normal_at(u, v),
+            Surface3::TriBezier(s) => s.normal_at(u, v),
             Surface3::Offset(s) => s.normal_at(u, v),
             Surface3::Trimmed(s) => s.normal_at(u, v),
             Surface3::Gordon(s) => s.normal_at(u, v),
@@ -869,10 +1062,16 @@ impl SurfaceEval for Surface3 {
             Surface3::Sphere(s) => s.default_domain(),
             Surface3::Cone(s) => s.default_domain(),
             Surface3::Torus(s) => s.default_domain(),
+            Surface3::Ellipsoid(s) => s.default_domain(),
+            Surface3::Helicoid(s) => s.default_domain(),
+            Surface3::Pipe(s) => s.default_domain(),
             Surface3::BSpline(s) => s.default_domain(),
             Surface3::LinearExtrusion(s) => s.default_domain(),
             Surface3::Revolution(s) => s.default_domain(),
+            Surface3::Ruled(s) => s.default_domain(),
+            Surface3::Coons(s) => s.default_domain(),
             Surface3::Bezier(s) => s.default_domain(),
+            Surface3::TriBezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
             Surface3::Gordon(s) => s.default_domain(),
@@ -928,6 +1127,82 @@ impl SurfaceEval for GordonSurface {
         if len < 1e-15 { DVec3::Z } else { n / len }
     }
     fn default_domain(&self) -> [f64; 4] { [0.0, 1.0, 0.0, 1.0] }
+}
+
+fn remap_unit_to_curve_domain(curve: &Curve3, t: f64) -> f64 {
+    let [t0, t1] = curve.default_domain();
+    if !t0.is_finite() || !t1.is_finite() {
+        return t;
+    }
+    t0 + (t1 - t0) * t
+}
+
+fn projected_frame_from_tangent(tangent: DVec3, ref_dir: DVec3) -> (DVec3, DVec3) {
+    let tangent = tangent.normalize_or_zero();
+    let mut x_axis = ref_dir - tangent * ref_dir.dot(tangent);
+    if x_axis.length_squared() <= 1e-24 {
+        x_axis = any_perpendicular(tangent);
+    } else {
+        x_axis = x_axis.normalize();
+    }
+    let y_axis = tangent.cross(x_axis).normalize_or_zero();
+    (x_axis, y_axis)
+}
+
+impl SurfaceEval for PipeSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let center = self.spine.point_at(v);
+        let tangent = self.spine.tangent_at(v);
+        let (x_axis, y_axis) = projected_frame_from_tangent(tangent, self.ref_dir);
+        center + self.radius * (u.cos() * x_axis + u.sin() * y_axis)
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = self.point_at(u + eps, v) - self.point_at(u - eps, v);
+        let dv = self.point_at(u, v + eps) - self.point_at(u, v - eps);
+        du.cross(dv).normalize_or_zero()
+    }
+
+    fn default_domain(&self) -> [f64; 4] {
+        let [v0, v1] = self.spine.default_domain();
+        [0.0, 2.0 * PI, v0, v1]
+    }
+}
+
+impl SurfaceEval for CoonsSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let south = self.south.point_at(remap_unit_to_curve_domain(&self.south, u));
+        let north = self.north.point_at(remap_unit_to_curve_domain(&self.north, u));
+        let west = self.west.point_at(remap_unit_to_curve_domain(&self.west, v));
+        let east = self.east.point_at(remap_unit_to_curve_domain(&self.east, v));
+
+        let p00 = self.south.point_at(remap_unit_to_curve_domain(&self.south, 0.0));
+        let p10 = self.south.point_at(remap_unit_to_curve_domain(&self.south, 1.0));
+        let p01 = self.north.point_at(remap_unit_to_curve_domain(&self.north, 0.0));
+        let p11 = self.north.point_at(remap_unit_to_curve_domain(&self.north, 1.0));
+
+        let linear_u = south * (1.0 - v) + north * v;
+        let linear_v = west * (1.0 - u) + east * u;
+        let bilinear = p00 * ((1.0 - u) * (1.0 - v))
+            + p10 * (u * (1.0 - v))
+            + p01 * ((1.0 - u) * v)
+            + p11 * (u * v);
+        linear_u + linear_v - bilinear
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = self.point_at((u + eps).clamp(0.0, 1.0), v)
+            - self.point_at((u - eps).clamp(0.0, 1.0), v);
+        let dv = self.point_at(u, (v + eps).clamp(0.0, 1.0))
+            - self.point_at(u, (v - eps).clamp(0.0, 1.0));
+        du.cross(dv).normalize_or_zero()
+    }
+
+    fn default_domain(&self) -> [f64; 4] {
+        [0.0, 1.0, 0.0, 1.0]
+    }
 }
 
 // 鈹€鈹€ BSpline evaluation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1616,6 +1891,80 @@ impl SurfaceEval for BezierSurface {
     }
 }
 
+fn factorial(n: usize) -> f64 {
+    (1..=n).fold(1.0, |acc, v| acc * v as f64)
+}
+
+fn trinomial_coeff(n: usize, i: usize, j: usize, k: usize) -> f64 {
+    factorial(n) / (factorial(i) * factorial(j) * factorial(k))
+}
+
+impl SurfaceEval for TriBezierSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let degree = self.control_points.len().saturating_sub(1);
+        if self.control_points.is_empty() || self.weights.len() != self.control_points.len() {
+            return DVec3::ZERO;
+        }
+
+        let w = 1.0 - u - v;
+        let mut homo = [0.0; 4];
+        for (i, row) in self.control_points.iter().enumerate() {
+            if row.len() != degree + 1 - i || self.weights.get(i).map(|r| r.len()) != Some(row.len()) {
+                return DVec3::ZERO;
+            }
+            for (j, point) in row.iter().enumerate() {
+                let k = degree - i - j;
+                let basis = trinomial_coeff(degree, i, j, k)
+                    * u.powi(i as i32)
+                    * v.powi(j as i32)
+                    * w.powi(k as i32);
+                let weight = self.weights[i][j];
+                homo[0] += basis * weight * point.x;
+                homo[1] += basis * weight * point.y;
+                homo[2] += basis * weight * point.z;
+                homo[3] += basis * weight;
+            }
+        }
+
+        if homo[3].abs() < 1e-15 {
+            DVec3::ZERO
+        } else {
+            DVec3::new(homo[0] / homo[3], homo[1] / homo[3], homo[2] / homo[3])
+        }
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = (self.point_at(u + eps, v) - self.point_at(u - eps, v)) / (2.0 * eps);
+        let dv = (self.point_at(u, v + eps) - self.point_at(u, v - eps)) / (2.0 * eps);
+        du.cross(dv).normalize_or_zero()
+    }
+
+    fn default_domain(&self) -> [f64; 4] {
+        [0.0, 1.0, 0.0, 1.0]
+    }
+}
+
+impl SurfaceEval for RuledSurface {
+    fn point_at(&self, u: f64, v: f64) -> DVec3 {
+        let start = self.start.point_at(u);
+        let end = self.end.point_at(u);
+        start.lerp(end, v)
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
+        let eps = 1e-5;
+        let du = (self.point_at(u + eps, v) - self.point_at(u - eps, v)) / (2.0 * eps);
+        let dv = self.end.point_at(u) - self.start.point_at(u);
+        du.cross(dv).normalize_or_zero()
+    }
+
+    fn default_domain(&self) -> [f64; 4] {
+        let [u0, u1] = self.start.default_domain();
+        [u0, u1, 0.0, 1.0]
+    }
+}
+
 impl Curve2dEval for BezierCurve2 {
     fn point_at(&self, t: f64) -> DVec2 {
         de_casteljau_2d(&self.control_points, &self.weights, t)
@@ -1812,6 +2161,202 @@ mod eval_tests {
                 assert!((p - tube_center).length() - 1.0 < 1e-9, "u={u} v={v}");
             }
         }
+    }
+
+    #[test]
+    fn ellipsoid_surface_satisfies_implicit_equation() {
+        let s = EllipsoidalSurface {
+            center: DVec3::new(1.0, -2.0, 0.5),
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 4.0,
+            radius_y: 2.0,
+            radius_z: 1.5,
+        };
+        let p = s.point_at(0.7, 1.2) - s.center;
+        let value = (p.x / s.radius_x).powi(2)
+            + (p.y / s.radius_y).powi(2)
+            + (p.z / s.radius_z).powi(2);
+        assert!((value - 1.0).abs() < 1e-9, "implicit value should be 1, got {value}");
+    }
+
+    #[test]
+    fn ellipsoid_surface_normal_matches_gradient_direction() {
+        let s = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+        let u = 0.9;
+        let v = 1.1;
+        let p = s.point_at(u, v);
+        let expected = DVec3::new(
+            p.x / (s.radius_x * s.radius_x),
+            p.y / (s.radius_y * s.radius_y),
+            p.z / (s.radius_z * s.radius_z),
+        )
+        .normalize();
+        let n = s.normal_at(u, v);
+        assert!((n - expected).length() < 1e-9, "n={n:?} expected={expected:?}");
+    }
+
+    #[test]
+    fn helicoid_surface_advances_by_pitch_per_turn() {
+        let s = HelicoidSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            pitch: 6.0,
+        };
+        let p0 = s.point_at(0.0, 2.0);
+        let p1 = s.point_at(2.0 * PI, 2.0);
+        let delta = p1 - p0;
+        assert!((delta - DVec3::new(0.0, 0.0, 6.0)).length() < 1e-9, "delta={delta:?}");
+    }
+
+    #[test]
+    fn helicoid_surface_normal_is_perpendicular_to_parametric_tangents() {
+        let s = HelicoidSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            pitch: 4.0,
+        };
+        let u = 0.6;
+        let v = 1.75;
+        let n = s.normal_at(u, v);
+        let eps = 1e-6;
+        let du = (s.point_at(u + eps, v) - s.point_at(u - eps, v)) / (2.0 * eps);
+        let dv = (s.point_at(u, v + eps) - s.point_at(u, v - eps)) / (2.0 * eps);
+        assert!(n.dot(du).abs() < 1e-6, "n·du={} should be near 0", n.dot(du));
+        assert!(n.dot(dv).abs() < 1e-6, "n·dv={} should be near 0", n.dot(dv));
+        assert!(n.length() > 0.99, "normal should be unit-length: {n:?}");
+    }
+
+    #[test]
+    fn pipe_surface_with_line_spine_matches_cylindrical_section() {
+        let surface = PipeSurface {
+            spine: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::Z,
+            })),
+            ref_dir: DVec3::X,
+            radius: 2.0,
+        };
+
+        assert!((surface.point_at(0.0, 0.0) - DVec3::new(2.0, 0.0, 0.0)).length() < 1e-9);
+        assert!((surface.point_at(PI * 0.5, 0.5) - DVec3::new(0.0, 2.0, 0.5)).length() < 1e-9);
+        assert!((surface.default_domain()[0] - 0.0).abs() < 1e-12);
+        assert!((surface.default_domain()[1] - 2.0 * PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn tri_bezier_surface_hits_triangle_corners() {
+        let surface = TriBezierSurface {
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)],
+                vec![DVec3::new(1.0, 0.0, 0.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0]],
+        };
+        assert!((surface.point_at(0.0, 0.0) - DVec3::new(0.0, 0.0, 0.0)).length() < 1e-12);
+        assert!((surface.point_at(1.0, 0.0) - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-12);
+        assert!((surface.point_at(0.0, 1.0) - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn tri_bezier_surface_dispatches_through_surface3() {
+        let surface = Surface3::TriBezier(TriBezierSurface {
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0)],
+                vec![DVec3::new(1.0, 0.0, 0.0)],
+            ],
+            weights: vec![vec![1.0, 1.0], vec![1.0]],
+        });
+        let p = surface.point_at(0.25, 0.5);
+        assert!(p.x >= -1e-12 && p.y >= -1e-12);
+        assert!(surface.normal_at(0.2, 0.2).length() > 0.99);
+    }
+
+    #[test]
+    fn ruled_surface_interpolates_between_curves() {
+        let surface = RuledSurface {
+            start: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            })),
+            end: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::Y,
+                direction: DVec3::X,
+            })),
+        };
+        assert!((surface.point_at(0.25, 0.0) - DVec3::new(0.25, 0.0, 0.0)).length() < 1e-12);
+        assert!((surface.point_at(0.25, 1.0) - DVec3::new(0.25, 1.0, 0.0)).length() < 1e-12);
+        assert!((surface.point_at(0.25, 0.5) - DVec3::new(0.25, 0.5, 0.0)).length() < 1e-12);
+        assert!(surface.normal_at(0.25, 0.5).length() > 0.99);
+    }
+
+    #[test]
+    fn coons_surface_interpolates_all_four_boundaries() {
+        let surface = CoonsSurface {
+            south: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::new(0.0, 0.0, 0.0),
+                direction: DVec3::X,
+            })),
+            north: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::new(0.0, 1.0, 1.0),
+                direction: DVec3::X,
+            })),
+            west: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::new(0.0, 0.0, 0.0),
+                direction: DVec3::new(0.0, 1.0, 1.0),
+            })),
+            east: Box::new(Curve3::Line(Line3 {
+                origin: DVec3::new(1.0, 0.0, 0.0),
+                direction: DVec3::new(0.0, 1.0, 1.0),
+            })),
+        };
+
+        assert!((surface.point_at(0.3, 0.0) - DVec3::new(0.3, 0.0, 0.0)).length() < 1e-9);
+        assert!((surface.point_at(0.3, 1.0) - DVec3::new(0.3, 1.0, 1.0)).length() < 1e-9);
+        assert!((surface.point_at(0.0, 0.4) - DVec3::new(0.0, 0.4, 0.4)).length() < 1e-9);
+        assert!((surface.point_at(1.0, 0.4) - DVec3::new(1.0, 0.4, 0.4)).length() < 1e-9);
+        assert!((surface.point_at(0.5, 0.5) - DVec3::new(0.5, 0.5, 0.5)).length() < 1e-9);
+    }
+
+    #[test]
+    fn conical_surface_uses_slant_distance_from_reference_circle() {
+        let surface = ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            half_angle_rad: 30.0_f64.to_radians(),
+        };
+
+        let p0 = surface.point_at(0.0, 0.0);
+        assert!(p0.dot(surface.axis_dir()).abs() < 1e-9);
+        assert!((p0.length() - 2.0).abs() < 1e-9);
+
+        let slant = 4.0;
+        let p1 = surface.point_at(0.0, slant);
+        assert!((p1.z - slant * surface.half_angle_rad.cos()).abs() < 1e-9);
+        let radial = p1 - surface.axis_dir() * p1.dot(surface.axis_dir());
+        assert!((radial.length() - (2.0 + slant * surface.half_angle_rad.sin())).abs() < 1e-9);
+    }
+
+    #[test]
+    fn conical_surface_derives_true_apex_from_reference_circle() {
+        let surface = ConicalSurface {
+            apex: DVec3::new(0.0, 0.0, 5.0),
+            axis: DVec3::Z,
+            radius: 2.0,
+            half_angle_rad: 45.0_f64.to_radians(),
+        };
+
+        assert!((surface.apex_point() - DVec3::new(0.0, 0.0, 3.0)).length() < 1e-9);
     }
 
     // 鈹€鈹€ Analytic derivative tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

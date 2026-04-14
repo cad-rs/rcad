@@ -88,6 +88,7 @@ fn intersect_parallel_cylinder_cone(
     a_cyl: DVec3,
     a_cone: DVec3,
 ) -> CylinderConeResult {
+    let apex = cone.apex_point();
     // Make sure a_cone points the same direction as a_cyl for height arithmetic.
     // (The cross product is ~0 so they are parallel; they may anti-parallel.)
     let _a_cone = if a_cyl.dot(a_cone) >= 0.0 { a_cone } else { -a_cone };
@@ -96,14 +97,14 @@ fn intersect_parallel_cylinder_cone(
     let tan_beta = cone.half_angle_rad.tan();
 
     // Perpendicular distance between the two axes.
-    let delta = cone.apex - cyl.origin;
+    let delta = apex - cyl.origin;
     let delta_perp = delta - a_cyl * delta.dot(a_cyl);
     let d_perp = delta_perp.length();
 
     // ── Coaxial ──────────────────────────────────────────────────────────────
     if d_perp < TOLERANCE_ABS {
         // Height of apex above cyl.origin along shared axis.
-        let h_apex = (cone.apex - cyl.origin).dot(a_cyl);
+        let h_apex = (apex - cyl.origin).dot(a_cyl);
 
         // At height h (measured from cyl.origin), cone radius = (h - h_apex)*tan_beta
         // (only positive when h > h_apex, i.e. above the apex in axis direction).
@@ -168,7 +169,7 @@ mod tests {
         ConicalSurface {
             apex,
             axis,
-            radius: 1.0, // not used in this module
+            radius: 0.0,
             half_angle_rad: half_angle_deg.to_radians(),
         }
     }

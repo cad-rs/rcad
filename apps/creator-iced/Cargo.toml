@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 glam.workspace = true
+iced_aw = { version = "0.13.1", default-features = false, features = ["menu"] }
 rcad-kernel = { path = "../../libs/rcad-kernel" }
 rcad-modeling = { path = "../../libs/rcad-modeling" }
 rcad-render  = { path = "../../libs/rcad-render" }
@@ -22,6 +23,7 @@ rcad-step    = { path = "../../libs/rcad-step" }
 # Native: use iced defaults (wgpu + tiny-skia both available)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 iced = { workspace = true }
+rfd = "0.15"
 
 # WASM: use only tiny-skia renderer.
 # With both wgpu and tiny-skia compiled in, iced_wgpu acquires a WebGL/WebGPU

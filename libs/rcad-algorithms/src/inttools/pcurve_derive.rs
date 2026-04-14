@@ -8,8 +8,8 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
-    Circle2d, Circle3, Curve2d, CurveEval, CylindricalSurface, Ellipse2d, Ellipse3, Line2d, Line3,
-    Plane, SphericalSurface, Surface3, any_perpendicular,
+    Circle2d, Circle3, ConicalSurface, Curve2d, CurveEval, CylindricalSurface, Ellipse2d,
+    Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3, any_perpendicular,
 };
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -192,6 +192,94 @@ pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2
         origin: DVec2::new(theta, h),
         direction: DVec2::new(0.0, 1.0),
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cone functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn cone_uv_from_point(point: DVec3, cone: &ConicalSurface) -> DVec2 {
+    let axis = cone.axis_dir();
+    let u_axis = any_perpendicular(axis);
+    let v_axis = axis.cross(u_axis).normalize();
+    let local = point - cone.apex;
+    let axial = local.dot(axis);
+    let radial = local - axis * axial;
+    let mut u = radial.dot(v_axis).atan2(radial.dot(u_axis));
+    if u < 0.0 {
+        u += std::f64::consts::TAU;
+    }
+    DVec2::new(u, cone.slant_from_axial(axial))
+}
+
+fn sampled_curve_pcurve_on_cone(
+    curve: &rcad_kernel::geom::Curve3,
+    t_range: &[f64; 2],
+    cone: &ConicalSurface,
+) -> Curve2d {
+    let n = 33_usize;
+    let mut pts: Vec<DVec2> = (0..n)
+        .map(|i| {
+            let t = t_range[0] + (t_range[1] - t_range[0]) * i as f64 / (n - 1) as f64;
+            let p3 = curve.point_at(t);
+            cone_uv_from_point(p3, cone)
+        })
+        .collect();
+
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x -= std::f64::consts::TAU;
+            }
+        } else if du < -std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x += std::f64::consts::TAU;
+            }
+        }
+    }
+
+    let bspline = interpolate_points_2d(&pts).expect("cone curve samples should not be degenerate");
+    Curve2d::BSpline(bspline)
+}
+
+pub fn circle_pcurve_on_cone(circle: &Circle3, cone: &ConicalSurface) -> Curve2d {
+    let axis = cone.axis_dir();
+    let normal_dot = circle.normal.normalize().dot(axis).abs();
+    if (normal_dot - 1.0).abs() < 1e-6 {
+        let slant = cone.slant_from_axial((circle.center - cone.apex).dot(axis));
+        return Curve2d::Line(Line2d {
+            origin: DVec2::new(0.0, slant),
+            direction: DVec2::new(1.0, 0.0),
+        });
+    }
+    sampled_curve_pcurve_on_cone(&rcad_kernel::geom::Curve3::Circle(*circle), &[0.0, std::f64::consts::TAU], cone)
+}
+
+pub fn line_pcurve_on_cone(line: &Line3, cone: &ConicalSurface) -> Curve2d {
+    let uv0 = cone_uv_from_point(line.origin, cone);
+    let uv1 = cone_uv_from_point(line.origin + line.direction, cone);
+    let du = (uv1.x - uv0.x).abs().min((uv1.x - uv0.x + std::f64::consts::TAU).abs());
+    if du < 1e-6 {
+        let dir_v = if uv1.y >= uv0.y { 1.0 } else { -1.0 };
+        return Curve2d::Line(Line2d {
+            origin: uv0,
+            direction: DVec2::new(0.0, dir_v),
+        });
+    }
+    sampled_curve_pcurve_on_cone(&rcad_kernel::geom::Curve3::Line(*line), &[-10.0, 10.0], cone)
+}
+
+pub fn ellipse_pcurve_on_cone(ellipse: &Ellipse3, cone: &ConicalSurface) -> Curve2d {
+    sampled_curve_pcurve_on_cone(&rcad_kernel::geom::Curve3::Ellipse(*ellipse), &[0.0, std::f64::consts::TAU], cone)
+}
+
+pub fn sampled_pcurve_on_cone(
+    curve: &rcad_kernel::geom::Curve3,
+    t_range: &[f64; 2],
+    cone: &ConicalSurface,
+) -> Curve2d {
+    sampled_curve_pcurve_on_cone(curve, t_range, cone)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -378,6 +466,59 @@ mod tests {
                 );
                 assert!((l.direction.x - 1.0).abs() < 1e-9);
                 assert!(l.direction.y.abs() < 1e-9);
+            }
+            other => panic!("expected Line2d, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn circle_on_cone_is_h_line() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 0.0,
+            half_angle_rad: (1.0_f64 / 2.0).atan(),
+        };
+        let h = 3.0;
+        let slant = cone.slant_from_axial(h);
+        let circle = Circle3 {
+            center: DVec3::new(0.0, 0.0, h),
+            normal: DVec3::Z,
+            radius: h * cone.half_angle_rad.tan(),
+        };
+
+        let pcurve = circle_pcurve_on_cone(&circle, &cone);
+        match pcurve {
+            Curve2d::Line(l) => {
+                assert!((l.origin.y - slant).abs() < 1e-9);
+                assert!((l.direction.x - 1.0).abs() < 1e-9);
+                assert!(l.direction.y.abs() < 1e-9);
+            }
+            other => panic!("expected Line2d, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn line_on_cone_is_v_line() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 0.0,
+            half_angle_rad: (1.0_f64 / 2.0).atan(),
+        };
+        let line = Line3 {
+            origin: DVec3::new(1.0, 0.0, 2.0),
+            direction: DVec3::new(0.5, 0.0, 1.0).normalize(),
+        };
+
+        let pcurve = line_pcurve_on_cone(&line, &cone);
+        match pcurve {
+            Curve2d::Line(l) => {
+                // The origin's u coordinate depends on the arbitrary perpendicular chosen,
+                // so we only verify that the line is a v-line (direction purely in v)
+                // by checking that the x direction is zero.
+                assert!(l.direction.x.abs() < 1e-9, "v-line should have zero u direction");
+                assert!((l.direction.y - 1.0).abs() < 1e-9, "v-line should have unit v direction");
             }
             other => panic!("expected Line2d, got {other:?}"),
         }

@@ -1,16 +1,23 @@
 use eframe::{egui, egui_wgpu};
-use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_modeling::make_box_brep;
 use rcad_render::{
-    AxisGizmoHit, Camera, Mesh, SelectionMode, SelectionState, TessellationOptions,
-    Tessellator, WgpuRenderer, axis_gizmo_hit_test, build_edges_highlight_mesh,
+    AxisGizmoHit, Camera, DisplayMode, Mesh, SelectionMode, SelectionState,
+    TessellationOptions, Tessellator, WgpuRenderer, axis_gizmo_hit_test,
+    build_edges_highlight_mesh,
     build_faces_highlight_mesh, merge_meshes,
 };
 use rcad_scene::{CreationController, Tool, WorkPlane, append_brep};
 use rcad_step::writer::{ExportSelection, StepWriter};
+use std::sync::mpsc::{self, Receiver};
 
-const SAMPLE_STEP: &str = include_str!("../../../assets/box.step");
+#[cfg(not(target_arch = "wasm32"))]
+use rfd::AsyncFileDialog;
+
+enum StepLoadResult {
+    Loaded { path: String, content: String },
+    Cancelled,
+    Error(String),
+}
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -21,32 +28,26 @@ pub struct RCadApp {
     has_renderer: bool,
     selection: SelectionState,
     creation: CreationController,
-    export_status: Option<String>,
+    status_message: Option<String>,
+    current_step_path: Option<String>,
+    recent_step_paths: Vec<String>,
+    step_load_rx: Option<Receiver<StepLoadResult>>,
 }
 
 impl RCadApp {
     pub fn new(cc: &eframe::CreationContext<'_>, step_content: Option<String>) -> Self {
-        let parse_result = if let Some(content) = step_content {
-            rcad_step::StepReader::parse_string(&content)
+        let mut status_message = None;
+        let mut brep = if let Some(content) = step_content.as_deref() {
+            match load_step_brep(content) {
+                Ok(brep) => brep,
+                Err(err) => {
+                    eprintln!("[rcad-step][egui] parse failed, keeping empty scene: {err}");
+                    status_message = Some(format!("Initial STEP load failed: {err}"));
+                    BRep::new()
+                }
+            }
         } else {
-            rcad_step::StepReader::parse_string(SAMPLE_STEP)
-        };
-
-        let mut brep = match parse_result {
-            Ok(brep) => {
-                eprintln!(
-                    "[rcad-step][egui] parsed STEP: vertices={}, edges={}, solids={}",
-                    brep.vertices.len(),
-                    brep.edges.len(),
-                    brep.solids.len()
-                );
-                brep
-            }
-            Err(err) => {
-                eprintln!("[rcad-step][egui] parse failed, fallback to box: {err}");
-                make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
-                    .expect("default fallback box should be valid")
-            }
+            BRep::new()
         };
         let tess_opts = TessellationOptions::default();
         let mesh = Tessellator::tessellate_with_options(&mut brep, &tess_opts);
@@ -56,6 +57,7 @@ impl RCadApp {
         if let Some(rs) = &cc.wgpu_render_state {
             // In egui 0.33 / wgpu 27, we use the device and queue from the render state
             let renderer = WgpuRenderer::new(&rs.device, rs.target_format);
+            renderer.set_display_mode(DisplayMode::Solid);
             renderer.upload_mesh(&rs.device, &mesh);
             rs.renderer.write().callback_resources.insert(renderer);
             has_renderer = true;
@@ -68,7 +70,10 @@ impl RCadApp {
             has_renderer,
             selection: SelectionState::default(),
             creation: CreationController::default(),
-            export_status: None,
+            status_message,
+            current_step_path: None,
+            recent_step_paths: Vec::new(),
+            step_load_rx: None,
         }
     }
 }
@@ -139,6 +144,8 @@ use wasm_bindgen::JsCast as _;
 
 impl eframe::App for RCadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_step_load(ctx);
+
         // Handle scroll zoom
         let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
         if scroll != 0.0 {
@@ -158,6 +165,47 @@ impl eframe::App for RCadApp {
         }
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open STEP...").clicked() {
+                        self.begin_open_step();
+                        ui.close();
+                    }
+                    let can_reload = self.current_step_path.is_some() && self.step_load_rx.is_none();
+                    if ui
+                        .add_enabled(can_reload, egui::Button::new("Reload"))
+                        .clicked()
+                    {
+                        self.reload_current_step();
+                        ui.close();
+                    }
+                    if !self.recent_step_paths.is_empty() {
+                        ui.separator();
+                        ui.menu_button("Open Recent", |ui| {
+                            for path in self.recent_step_paths.clone() {
+                                if ui.button(&path).clicked() {
+                                    self.begin_load_step_path(path.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
+                    ui.separator();
+                    if ui.button("Export STEP").clicked() {
+                        self.status_message =
+                            Some(match export_step_file(&self.brep, &self.selection) {
+                                Ok(path) => format!("Exported: {path}"),
+                                Err(err) => format!("Export failed: {err}"),
+                            });
+                        ui.close();
+                    }
+                });
+                if let Some(path) = &self.current_step_path {
+                    ui.separator();
+                    ui.label(format!("Loaded: {path}"));
+                }
+            });
+
             ui.horizontal_wrapped(|ui| {
                 ui.label("Tools");
                 if ui
@@ -319,14 +367,7 @@ impl eframe::App for RCadApp {
                 ui.label("Left click: select/create, Alt+Left drag: rotate");
                 ui.label("Middle drag: pan, Wheel: zoom, Esc: cancel, Enter: finish");
 
-                if ui.button("Export STEP").clicked() {
-                    self.export_status =
-                        Some(match export_step_file(&self.brep, &self.selection) {
-                            Ok(path) => format!("Exported: {}", path),
-                            Err(err) => format!("Export failed: {}", err),
-                        });
-                }
-                if let Some(status) = &self.export_status {
+                if let Some(status) = &self.status_message {
                     ui.label(status);
                 }
 
@@ -578,6 +619,121 @@ impl eframe::App for RCadApp {
 }
 
 impl RCadApp {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_open_step(&mut self) {
+        if self.step_load_rx.is_some() {
+            self.status_message = Some("STEP load already in progress...".to_string());
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.step_load_rx = Some(rx);
+        self.status_message = Some("Opening STEP file...".to_string());
+        std::thread::spawn(move || {
+            let result = pollster::block_on(async {
+                let file = AsyncFileDialog::new()
+                    .add_filter("STEP", &["step", "stp"])
+                    .pick_file()
+                    .await;
+                let Some(file) = file else {
+                    return StepLoadResult::Cancelled;
+                };
+                let path = file.path().display().to_string();
+                let bytes = file.read().await;
+                match String::from_utf8(bytes) {
+                    Ok(content) => StepLoadResult::Loaded { path, content },
+                    Err(err) => StepLoadResult::Error(format!("failed to decode STEP file as UTF-8: {err}")),
+                }
+            });
+            let _ = tx.send(result);
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_load_step_path(&mut self, path: String) {
+        if self.step_load_rx.is_some() {
+            self.status_message = Some("STEP load already in progress...".to_string());
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.step_load_rx = Some(rx);
+        self.status_message = Some(format!("Loading STEP: {path}"));
+        std::thread::spawn(move || {
+            let result = match std::fs::read_to_string(&path) {
+                Ok(content) => StepLoadResult::Loaded { path, content },
+                Err(err) => StepLoadResult::Error(format!("failed to read STEP file '{path}': {err}")),
+            };
+            let _ = tx.send(result);
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn begin_load_step_path(&mut self, _path: String) {
+        self.status_message = Some("Open STEP is only available in the native app".to_string());
+    }
+
+    fn reload_current_step(&mut self) {
+        let Some(path) = self.current_step_path.clone() else {
+            self.status_message = Some("No STEP file is currently loaded from disk".to_string());
+            return;
+        };
+        self.begin_load_step_path(path);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn begin_open_step(&mut self) {
+        self.status_message = Some("Open STEP is only available in the native app".to_string());
+    }
+
+    fn poll_step_load(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.step_load_rx.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(StepLoadResult::Loaded { path, content }) => {
+                self.step_load_rx = None;
+                match load_step_brep(&content) {
+                    Ok(mut brep) => {
+                        let tess_opts = TessellationOptions::default();
+                        let mesh = Tessellator::tessellate_with_options(&mut brep, &tess_opts);
+                        self.brep = brep;
+                        self.mesh = mesh;
+                        self.camera = Camera::new();
+                        self.selection = SelectionState::default();
+                        self.creation = CreationController::default();
+                        self.current_step_path = Some(path.clone());
+                        push_recent_path(&mut self.recent_step_paths, &path);
+                        self.status_message = Some(format!("Loaded STEP: {path}"));
+                    }
+                    Err(err) => {
+                        self.status_message = Some(format!("Open failed: {err}"));
+                    }
+                }
+                ctx.request_repaint();
+            }
+            Ok(StepLoadResult::Cancelled) => {
+                self.step_load_rx = None;
+                self.status_message = Some("Open STEP cancelled".to_string());
+                ctx.request_repaint();
+            }
+            Ok(StepLoadResult::Error(err)) => {
+                self.step_load_rx = None;
+                self.status_message = Some(format!("Open failed: {err}"));
+                ctx.request_repaint();
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.step_load_rx = None;
+                self.status_message = Some("Open STEP failed: background task disconnected".to_string());
+                ctx.request_repaint();
+            }
+        }
+    }
+
     fn set_tool(&mut self, tool: Tool) {
         self.creation.set_tool(tool, &mut self.selection);
     }
@@ -621,6 +777,25 @@ impl RCadApp {
             let tess_opts = TessellationOptions::default();
             self.mesh = Tessellator::tessellate_with_options(&mut self.brep, &tess_opts);
         }
+    }
+}
+
+fn load_step_brep(content: &str) -> Result<BRep, String> {
+    let brep = rcad_step::StepReader::parse_string(content).map_err(|err| err.to_string())?;
+    eprintln!(
+        "[rcad-step][egui] parsed STEP: vertices={}, edges={}, solids={}",
+        brep.vertices.len(),
+        brep.edges.len(),
+        brep.solids.len()
+    );
+    Ok(brep)
+}
+
+fn push_recent_path(paths: &mut Vec<String>, path: &str) {
+    paths.retain(|existing| existing != path);
+    paths.insert(0, path.to_string());
+    if paths.len() > 8 {
+        paths.truncate(8);
     }
 }
 

@@ -79,11 +79,13 @@ fn intersect_parallel_cones(
     a1: DVec3,
     a2: DVec3,
 ) -> ConeConeResult {
+    let apex1 = cone1.apex_point();
+    let apex2 = cone2.apex_point();
     // Ensure both axis vectors point in the same direction.
     let _a2 = if a1.dot(a2) >= 0.0 { a2 } else { -a2 };
 
     // Perpendicular distance between the two axes.
-    let delta = cone2.apex - cone1.apex;
+    let delta = apex2 - apex1;
     let delta_along = delta.dot(a1);
     let delta_perp = delta - a1 * delta_along;
     let d_perp = delta_perp.length();
@@ -98,7 +100,7 @@ fn intersect_parallel_cones(
         // Axes coincide.  The apex of cone2 may be different from cone1's apex.
 
         // Check for identical geometry (same apex, same half-angle).
-        if (cone2.apex - cone1.apex).length() < TOLERANCE_ABS
+        if (apex2 - apex1).length() < TOLERANCE_ABS
             && (beta1 - beta2).abs() < TOLERANCE_ANG
         {
             return ConeConeResult::Coaxial;
@@ -133,17 +135,17 @@ fn intersect_parallel_cones(
         if h < -TOLERANCE_ABS || (h - delta_along) < -TOLERANCE_ABS {
             // Check if the intersection is at a shared apex.
             if h.abs() < TOLERANCE_ABS {
-                return ConeConeResult::CoaxialPoint(cone1.apex);
+                return ConeConeResult::CoaxialPoint(apex1);
             }
             return ConeConeResult::NoIntersection;
         }
 
         let radius = h * tan1;
         if radius < TOLERANCE_ABS {
-            return ConeConeResult::CoaxialPoint(cone1.apex + a1 * h);
+            return ConeConeResult::CoaxialPoint(apex1 + a1 * h);
         }
 
-        let center = cone1.apex + a1 * h;
+        let center = apex1 + a1 * h;
         return ConeConeResult::CoaxialCircle(Circle3 { center, normal: a1, radius });
     }
 
@@ -238,7 +240,7 @@ mod tests {
         ConicalSurface {
             apex,
             axis,
-            radius: 1.0,
+            radius: 0.0,
             half_angle_rad: half_angle_deg.to_radians(),
         }
     }

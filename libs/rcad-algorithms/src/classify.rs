@@ -24,6 +24,60 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
     let on_surface_tol = tol.tolerance(ToleranceLevel::Relaxed);
 
+    if let Some(class) = classify_analytic_cylinder_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return class;
+    }
+
+    if let Some(class) = classify_analytic_cone_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return class;
+    }
+
+    // Fast path for an analytic torus solid: if all faces belong to the same torus
+    // surface, classify by the torus implicit equation instead of ray casting.
+    let mut analytic_torus: Option<rcad_kernel::geom::ToroidalSurface> = None;
+    let mut all_same_torus = true;
+    for &fi in solid_face_indices {
+        match &ds.faces[fi].surface {
+            Surface3::Torus(t) => {
+                if let Some(base) = analytic_torus {
+                    let same = (base.center - t.center).length() <= on_surface_tol * 10.0
+                        && (base.axis.normalize_or_zero().dot(t.axis.normalize_or_zero())).abs() >= 0.9999
+                        && (base.major_radius - t.major_radius).abs() <= on_surface_tol * 10.0
+                        && (base.minor_radius - t.minor_radius).abs() <= on_surface_tol * 10.0;
+                    if !same {
+                        all_same_torus = false;
+                        break;
+                    }
+                } else {
+                    analytic_torus = Some(*t);
+                }
+            }
+            _ => {
+                all_same_torus = false;
+                break;
+            }
+        }
+    }
+    if all_same_torus {
+        if let Some(torus) = analytic_torus {
+            let axis = torus.axis.normalize_or_zero();
+            let delta = point - torus.center;
+            let z = delta.dot(axis);
+            let radial = delta - z * axis;
+            let rho = radial.length();
+            let tube_dist = ((rho - torus.major_radius).powi(2) + z * z).sqrt();
+            let signed = tube_dist - torus.minor_radius;
+            if signed.abs() <= on_surface_tol {
+                return Classification::On;
+            }
+            return if signed < 0.0 {
+                Classification::In
+            } else {
+                Classification::Out
+            };
+        }
+    }
+
     // First check: is the point ON any face surface within face bounds?
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
@@ -51,10 +105,11 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
                 }
             }
             Surface3::Cone(c) => {
-                let v = point - c.apex;
-                let along = v.dot(c.axis);
-                let perp = (v - c.axis * along).length();
-                if (perp - along * c.half_angle_rad.tan()).abs() < on_surface_tol {
+                let axis = c.axis_dir();
+                let v = point - c.apex_point();
+                let along = v.dot(axis);
+                let perp = (v - axis * along).length();
+                if along >= -on_surface_tol && (perp - along.max(0.0) * c.half_angle_rad.tan()).abs() < on_surface_tol {
                     return Classification::On;
                 }
             }
@@ -79,6 +134,133 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
 
     // Fallback
     Classification::Out
+}
+
+fn classify_analytic_cylinder_solid(
+    point: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    on_surface_tol: f64,
+) -> Option<Classification> {
+    let mut cylinder: Option<rcad_kernel::geom::CylindricalSurface> = None;
+    for &fi in solid_face_indices {
+        match &ds.faces[fi].surface {
+            Surface3::Cylinder(c) => {
+                if let Some(base) = cylinder {
+                    let same = (base.origin - c.origin).length() <= on_surface_tol * 10.0
+                        && (base.axis.normalize_or_zero().dot(c.axis.normalize_or_zero())).abs() >= 0.9999
+                        && (base.radius - c.radius).abs() <= on_surface_tol * 10.0;
+                    if !same {
+                        return None;
+                    }
+                } else {
+                    cylinder = Some(*c);
+                }
+            }
+            Surface3::Plane(_) => {}
+            _ => return None,
+        }
+    }
+
+    let cylinder = cylinder?;
+    let axis = cylinder.axis.normalize_or_zero();
+    let mut h_min = f64::INFINITY;
+    let mut h_max = f64::NEG_INFINITY;
+    for &fi in solid_face_indices {
+        for v in ds.face_boundary_points(fi) {
+            let h = (v - cylinder.origin).dot(axis);
+            h_min = h_min.min(h);
+            h_max = h_max.max(h);
+        }
+    }
+    if !h_min.is_finite() || !h_max.is_finite() {
+        return None;
+    }
+
+    let local = point - cylinder.origin;
+    let along = local.dot(axis);
+    let radial = (local - axis * along).length();
+
+    if along < h_min - on_surface_tol || along > h_max + on_surface_tol {
+        return Some(Classification::Out);
+    }
+    if radial > cylinder.radius + on_surface_tol {
+        return Some(Classification::Out);
+    }
+    if (radial - cylinder.radius).abs() <= on_surface_tol
+        || (along - h_min).abs() <= on_surface_tol
+        || (along - h_max).abs() <= on_surface_tol
+    {
+        return Some(Classification::On);
+    }
+    Some(Classification::In)
+}
+
+fn classify_analytic_cone_solid(
+    point: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    on_surface_tol: f64,
+) -> Option<Classification> {
+    let mut cone: Option<rcad_kernel::geom::ConicalSurface> = None;
+    for &fi in solid_face_indices {
+        match &ds.faces[fi].surface {
+            Surface3::Cone(c) => {
+                if let Some(base) = cone {
+                    let same = (base.apex_point() - c.apex_point()).length() <= on_surface_tol * 10.0
+                        && (base.axis_dir().dot(c.axis_dir())).abs() >= 0.9999
+                        && (base.half_angle_rad - c.half_angle_rad).abs() <= 1e-9;
+                    if !same {
+                        return None;
+                    }
+                } else {
+                    cone = Some(*c);
+                }
+            }
+            Surface3::Plane(_) => {}
+            _ => return None,
+        }
+    }
+
+    let cone = cone?;
+    let axis = cone.axis_dir();
+    let apex = cone.apex_point();
+    let tan_half = cone.half_angle_rad.tan();
+    if tan_half.abs() < 1e-12 {
+        return None;
+    }
+
+    let mut along_min = f64::INFINITY;
+    let mut along_max = f64::NEG_INFINITY;
+    for &fi in solid_face_indices {
+        for v in ds.face_boundary_points(fi) {
+            let along = (v - apex).dot(axis);
+            along_min = along_min.min(along);
+            along_max = along_max.max(along);
+        }
+    }
+    if !along_min.is_finite() || !along_max.is_finite() {
+        return None;
+    }
+
+    let local = point - apex;
+    let along = local.dot(axis);
+    let radial = (local - axis * along).length();
+    let allowed = along.max(0.0) * tan_half;
+
+    if along < along_min - on_surface_tol || along > along_max + on_surface_tol {
+        return Some(Classification::Out);
+    }
+    if radial > allowed + on_surface_tol {
+        return Some(Classification::Out);
+    }
+    if (radial - allowed).abs() <= on_surface_tol
+        || (along - along_min).abs() <= on_surface_tol
+        || (along - along_max).abs() <= on_surface_tol
+    {
+        return Some(Classification::On);
+    }
+    Some(Classification::In)
 }
 
 /// Cast a single ray and count face crossings. Returns None if the ray hits
@@ -204,12 +386,14 @@ fn ray_cast_classify(
             }
             Surface3::Cone(c) => {
                 // Ray-cone intersection (finite cone approximated by AABB test)
+                let axis = c.axis_dir();
                 let tan_a = c.half_angle_rad.tan();
-                let co = point - c.apex;
-                let d_along = ray_dir.dot(c.axis);
-                let co_along = co.dot(c.axis);
-                let d_perp = ray_dir - c.axis * d_along;
-                let co_perp = co - c.axis * co_along;
+                let apex = c.apex_point();
+                let co = point - apex;
+                let d_along = ray_dir.dot(axis);
+                let co_along = co.dot(axis);
+                let d_perp = ray_dir - axis * d_along;
+                let co_perp = co - axis * co_along;
                 let a = d_perp.length_squared() - tan_a * tan_a * d_along * d_along;
                 let b = 2.0 * (d_perp.dot(co_perp) - tan_a * tan_a * d_along * co_along);
                 let cc = co_perp.length_squared() - tan_a * tan_a * co_along * co_along;
@@ -221,7 +405,7 @@ fn ray_cast_classify(
                 for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
                     if t > ray_tol {
                         let hit = point + ray_dir * t;
-                        let along = (hit - c.apex).dot(c.axis);
+                        let along = (hit - apex).dot(axis);
                         if along >= 0.0 {
                             let face_verts = ds.face_boundary_points(fi);
                             if point_in_face_aabb(hit, &face_verts, boundary_tol) {
@@ -229,6 +413,75 @@ fn ray_cast_classify(
                             }
                         }
                     }
+                }
+            }
+            Surface3::Torus(t) => {
+                // Algebraic ray-torus intersection via quartic polynomial.
+                // For torus at center C, axis A, major radius R, minor radius r:
+                //   (|X|² + R² − r²)² = 4R²·|X_radial|²   where X = P_local + tt·D
+                let p_local = point - t.center;
+                let axis = t.axis.normalize();
+                let za = ray_dir.dot(axis);
+                let zp = p_local.dot(axis);
+                let p2 = p_local.length_squared();
+                let hf = p_local.dot(ray_dir);
+                let r_maj = t.major_radius;
+                let r_min = t.minor_radius;
+
+                let r2 = r_maj * r_maj;
+                let e1 = p2 + r2 - r_min * r_min;
+                let a1c = 1.0 - za * za;
+                let b1 = 2.0 * (hf - za * zp);
+                let c1 = p2 - zp * zp;
+
+                let coeff3 = 4.0 * hf;
+                let coeff2 = 4.0 * hf * hf + 2.0 * e1 - 4.0 * r2 * a1c;
+                let coeff1_q = 4.0 * hf * e1 - 4.0 * r2 * b1;
+                let coeff0 = e1 * e1 - 4.0 * r2 * c1;
+
+                let q = |tt: f64| -> f64 {
+                    (((tt + coeff3) * tt + coeff2) * tt + coeff1_q) * tt + coeff0
+                };
+
+                let face_verts = ds.face_boundary_points(fi);
+                let t_max = if face_verts.is_empty() {
+                    (r_maj + r_min) * 6.0
+                } else {
+                    face_verts
+                        .iter()
+                        .map(|&v| (v - point).length())
+                        .fold(0.0_f64, f64::max)
+                        + r_min * 2.0
+                };
+
+                const N_SCAN: usize = 64;
+                let step = (t_max - ray_tol) / N_SCAN as f64;
+                let mut t_prev = ray_tol;
+                let mut q_prev = q(t_prev);
+
+                for i in 1..=N_SCAN {
+                    let tt = ray_tol + step * i as f64;
+                    let q_curr = q(tt);
+                    if q_prev * q_curr <= 0.0 {
+                        let mut lo = t_prev;
+                        let mut hi = tt;
+                        for _ in 0..32 {
+                            let mid = 0.5 * (lo + hi);
+                            if q(lo) * q(mid) <= 0.0 { hi = mid; } else { lo = mid; }
+                        }
+                        let root = 0.5 * (lo + hi);
+                        let hit = point + ray_dir * root;
+                        let h_loc = hit - t.center;
+                        let z_hit = h_loc.dot(axis);
+                        let radial_sq = h_loc.length_squared() - z_hit * z_hit;
+                        if radial_sq >= -1e-9
+                            && point_in_face_aabb(hit, &face_verts, boundary_tol)
+                        {
+                            crossings += 1;
+                        }
+                    }
+                    t_prev = tt;
+                    q_prev = q_curr;
                 }
             }
             _ => {}

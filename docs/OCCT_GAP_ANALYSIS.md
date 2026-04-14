@@ -16,7 +16,7 @@ RCAD still trails OCCT most in:
 - topology representation depth: OCCT 8.0.0 adds BRepGraph as a second, richer topology layer
 - healing and tolerance management (partially improved in P3–P4)
 - industrial-grade data exchange depth
-- geometry evaluation breadth: helicoids, spirals, ellipsoids, Gordon surfaces
+- geometry evaluation breadth: generalized Bezier / broader parametric evaluators remain behind OCCT
 
 ## OCCT Version Reference
 
@@ -54,10 +54,10 @@ RCAD still trails OCCT most in:
 - **Boolean robustness** on curved solids and near-coincident geometry remains the largest practical gap. Splitter/CellsBuilder/fuzzy tolerance are now baseline-present (including adaptive retry escalation with per-attempt diagnostics), and MakeConnected-style cleanup now has iterative growth-aware baseline passes with tolerance-cap safety that no longer stop prematurely before higher tolerance passes are tried, plus scoped mode with semantic seed strategies (short-edge / near-duplicate / tolerance-tagged / multi-PCurve / topology-seam-candidates / hybrid), configurable history ring-depth expansion, and scoped fallback to global cleanup on insufficient seed coverage (now considering seed-vertex count plus seed-edge and seed-face coverage ratios) or no-op scoped passes, with phase-level reporting and independently tunable global-fallback tolerance/pass ladder. Robust retries now also tune make-connected aggressiveness by failure class, including retry-class-aware scoped seed-mode, seed-length, history-augmentation threshold, and ring-depth retuning, and now widen/enable glue path settings on retry-class escalation as well; repeated same-class retries can escalate through bounded retry rounds instead of reusing a single fallback profile, with higher rounds allowed to switch from scoped cleanup to global-biased make-connected. Retry candidate ordering is now class-specific too: degenerate-topology retries prefer same-fuzzy strategy escalation before fuzzy growth, while numerical-instability retries still prioritize larger fuzzy values first, and once a failing attempt is already global-biased the next follow-ups suppress redundant same-fuzzy cleanup escalation. Per-attempt diagnostics preserve the retry round, whether scoped make-connected remained enabled, effective scoped seed source, configured scoped seed-length/history-threshold, seed-count/coverage summaries, and glue configuration for successful attempts, so degenerate-topology and numerical-instability retries can be inspected as targeted cleanup escalations instead of only fuzzy-tolerance bumps; defeaturing and richer connectivity rebuilding semantics are still absent.
 - **BRepGraph depth**: OCCT 8.0.0 ships an extensive graph-based BRep API (49 000+ lines) with history tracking, mutation guards, deduplication, and validation. RCAD now has a baseline topology graph with history events, a full RAII `BRepGraphMutGuard` (checkpoint/commit/rollback/validate), `validate_invariants`, and compact/dedup primitives. The remaining gap is rich persistent-history naming.
 - **Healing pipeline depth**: same-domain unification now has Phase 1 baseline (plane/cylinder/cone/torus/sphere) and Phase 2 double-validation (topological edge-continuity + geometric UV-region checks); healing orchestration now includes issue-driven pre-make-connected, SameRange/SameParameter parametric consistency prepass with iterative reconciliation, plus stalled fallback, but broader ShapeFix/ShapeProcess coverage remains missing.
-- **Exchange**: STEP AP242 write is present and AP242 read now covers an expanded metadata baseline (GDT/DimTol + DATUM / DATUM_SYSTEM + kinematic pair entities), but full semantic AP242 import and FEA entities are still not covered.
-- **Geometry evaluation breadth**: OCCT 8.0.0 adds helicoid, spiral, ellipsoid, and parametric curve evaluation classes not present in RCAD.
+- **Exchange**: STEP AP242 write is present and AP242 read now covers an expanded metadata baseline (structured PRODUCT records, product-definition/assembly usage chains, plus GDT/DimTol + DATUM / DATUM_SYSTEM + kinematic pair entities), but full semantic AP242 import and FEA entities are still not covered.
+- **Geometry evaluation breadth**: RCAD now has baseline helicoid, ellipsoid, helix, spiral, involute, sine-wave, pipe, ruled, Coons, and Gordon evaluators, but still trails OCCT in generalized Bezier / broader evaluator breadth and production tuning.
 - **Gordon surface robustness**: N×M transfinite interpolation baseline exists in RCAD, but OCCT's GeomFill_Gordon remains richer and more production-tuned.
-- **Topology containers**: No Compound / CompSolid; no non-manifold topology.
+- **Topology containers**: `Compound` / `CompSolid` baselines exist, but non-manifold topology is still missing.
 - **Feature library**: Prism, draft prism, revolution feature, cylindrical hole, rib/slot baseline, and SplitShape baseline are present; advanced constraints and robustness remain.
 
 ## Capability Matrix
@@ -65,10 +65,10 @@ RCAD still trails OCCT most in:
 | Domain | RCAD today | OCCT reference | Gap level | Recommended direction |
 |---|---|---|---|---|
 | Geometry kernel | Strong analytic + spline coverage | TKG2d / TKG3d / TKGeomBase | Low | Maintain correctness; helix curves now in OCCT TKHelix |
-| Geometry evaluation breadth | Basic D0/D1 on standard types | GeomEval/Geom2dEval (helicoids, spirals, ellipsoids, parametric) | Medium | Add helicoid, spiral, ellipsoid eval classes |
+| Geometry evaluation breadth | Standard analytic + spline evaluators, plus helix/spiral/involute/sine-wave, pipe/ruled/Coons/Gordon, ellipsoid, and helicoid baselines | GeomEval/Geom2dEval (helicoids, spirals, ellipsoids, parametric) | Medium-Low | Add generalized Bezier / richer parametric evaluator breadth and production tuning |
 | Gordon / N×M surface fill | Baseline transfinite Gordon support | GeomFill_Gordon (8.0) | Medium | Improve robustness and continuity controls |
 | Point cloud analysis | Missing | PointSetLib (8.0) -- PCA, inertia, dimensionality | Low | Low priority; add if needed for import QC |
-| Core B-Rep model | Vertex/Edge/Wire/Face/Shell/Solid | TKBRep | Medium | Add Compound, CompSolid, non-manifold support |
+| Core B-Rep model | Vertex/Edge/Wire/Face/Shell/Solid + Compound/CompSolid baselines | TKBRep | Medium | Add non-manifold support and deepen container semantics |
 | Graph-based topology layer | Baseline traversal + **graph-native mutation history (`BRepGraphHistory`)** + **RAII mutation guard (`BRepGraphMutGuard`)** + checkpoint/rollback + `validate_invariants` + validate/compact/dedup primitives | BRepGraph (8.0, 49k lines) -- history, mutation, dedup, validate | Medium | Add richer persistent-history semantics and persistent naming |
 | Primitive and sweep modeling | Good breadth (extrude/revolve/loft/sweep) | TKPrim + TKOffset | Low | Edge cases; N-sided fill, normal projection |
 | Fillet / chamfer | Variable-radius fillet, chamfer | TKFillet | Medium | Angle-mode chamfer, 2-D fillet API, corner cases |
@@ -146,8 +146,8 @@ OCCT's TKShHealing comprises 10 packages. After P3–P4, RCAD has improved from 
 | ShapeFix_Face | Repair degenerated/invalid faces | Partial (brep_repair.rs) |
 | ShapeFix_Wire | Reorder wires, close gaps, remove degenerate edges | Partial |
 | ShapeFix_Edge | SameParameter, SameRange, degenerated edges | **SameParameter: Present (P4)**; **SameRange: Present (baseline scan+repair)** |
-| ShapeFix_Shell | Repair shell orientation, manifoldness | **Shell analyzer: Present (P4)**; fix: Missing |
-| ShapeFix_Solid | Solid closure, shell orientation | Missing |
+| ShapeFix_Shell | Repair shell orientation, manifoldness | **Partial** (shell/orientation analysis + face orientation repair baseline present) |
+| ShapeFix_Solid | Solid closure, shell orientation | Partial (face orientation repair baseline; closure semantics still missing) |
 | ShapeAnalysis_Surface | UV consistency, surface bounds analysis | Missing |
 | ShapeAnalysis_Wire | Wire gap, self-intersection, area | **Partial (gap/self-intersection report present)** |
 | ShapeUpgrade_UnifySameDomain | Merge co-planar/co-cylindrical faces | **Done (Phase 1: plane/cylinder/cone/torus/sphere; Phase 2: topological guards)** |
@@ -200,11 +200,12 @@ For STEP AP242 round-trip:
 | AP242 area | RCAD status |
 |---|---|
 | Geometry + topology write | Present |
+| Higher-level surface write | Ellipsoid / helicoid / extrusion / revolution / Gordon / offset surfaces now fall back to `B_SPLINE_SURFACE_WITH_KNOTS` export |
 | Color/style write | Present |
 | Assembly write | Present |
 | Material/layer write | **Present (P6)** |
 | AP242 GDT write | Missing |
-| AP242 read (import) | Basic + expanded metadata-chain baseline (property-definition representation + dimensional location/size + geometric tolerance entities + DATUM / DATUM_SYSTEM / kinematic pair entities) |
+| AP242 read (import) | Basic + expanded metadata-chain baseline (PRODUCT + product-definition/assembly usage chains + property-definition representation + dimensional location/size + geometric tolerance entities + DATUM / DATUM_SYSTEM / kinematic pair entities) |
 | Kinematics read/write | Partial (metadata-level read/write baseline for pair entities) |
 | FEA entity read | Missing |
 
@@ -233,11 +234,13 @@ OCCT 8.0.0 introduces `GeomEval` / `Geom2dEval` evaluation classes that extend t
 | `Geom2dEval_ArchimedeanSpiralCurve` | Archimedean spiral | **Present (P7 partial)** |
 | `Geom2dEval_LogarithmicSpiralCurve` | Logarithmic spiral | **Present (P7 partial)** |
 | `Geom2dEval_CircleInvoluteCurve` | Circle involute (gear tooth profile) | **Present (P7 partial)** |
-| `GeomEval_TBezierSurface` / `AHTBezierSurface` | Parametric generalized Bezier surfaces | Missing |
+| `GeomEval_EllipsoidSurface` | Ellipsoid evaluator | **Present (2026-04 baseline)** |
+| `GeomEval_HelicoidSurface` | Helicoid evaluator | **Present (2026-04 baseline)** |
+| `GeomEval_TBezierSurface` / `AHTBezierSurface` | Parametric generalized Bezier surfaces | **Present (2026-04 baseline: TriBezier evaluator)** |
 | `GeomFill_Gordon` | N×M transfinite surface from curve network | **Present (baseline)** |
 | `ExtremaPC` | Point-to-curve extrema with per-type dispatch | **Partial → improved** (analytic O(1) dispatch for Line/Circle/Ellipse; Newton-Raphson fallback for all other curve types; 11 unit tests) |
 
-The gear-tooth involute curve is particularly important for mechanical design. Gordon surface and helix are the others most likely to be demanded by RCAD users in production scenarios.
+The gear-tooth involute curve is particularly important for mechanical design. The remaining evaluator gap is now less about headline primitive coverage and more about generalized surface families, broader dispatch depth, and production hardening.
 
 ## Roadmap
 

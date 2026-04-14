@@ -43,9 +43,15 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 - wgpu-based renderer with Blinn-Phong lighting (configurable light direction, headlight mode)
 - Display modes: SolidWithEdges, Solid, Wireframe, Transparent
 - Coordinate axes visualization (RGB arrows with cone heads)
-- Background grid (XZ plane, major/minor lines)
+- Viewport axis gizmo and adaptive/infinite-style background grid (XZ plane, major/minor lines)
 - Face/edge picking (ray-cast) and selection highlighting
 - Per-object color (`set_model_color`), screenshot export (`screenshot_to_file`)
+
+**Desktop creator apps (`creator-egui`, `creator-iced`)**
+- Start with an empty scene by default; optional STEP file can still be passed on the command line
+- File menu actions: Open STEP, Reload, Open Recent, Export STEP, Reset Camera
+- Shared camera controls: `Alt + Left drag` orbit, `Middle drag` pan, `Wheel` zoom
+- Shared overlays: adaptive grid, world axes, viewport axis gizmo, face/edge highlight rendering
 
 ## Workspace Layout
 
@@ -86,8 +92,9 @@ trunk serve --port 8080 --open
 Then open <http://localhost:8080>.
 
 - Left panel shows model info and selection state.
-- Right panel renders the loaded model with face/edge highlight overlays.
-- Controls: Left drag rotate, Middle drag pan, Wheel zoom, Click select.
+- Right panel renders the current model with face/edge highlight overlays.
+- Starts with an empty scene; load STEP from the File menu.
+- Controls: `Alt + Left drag` orbit, `Middle drag` pan, `Wheel` zoom, `Click` select.
 
 ### creator-iced
 
@@ -99,8 +106,9 @@ trunk serve --port 8081 --open
 Then open <http://localhost:8081>.
 
 - Left panel shows model info and selection state.
-- Right panel renders the loaded model with face/edge highlight overlays.
-- Controls: Left drag rotate, Middle drag pan, Wheel zoom, Click select.
+- Right panel renders the current model with face/edge highlight overlays.
+- Starts with an empty scene; load STEP from the File menu.
+- Controls: `Alt + Left drag` orbit, `Middle drag` pan, `Wheel` zoom, `Click` select.
 
 > **Note — release builds**: `trunk build --release` runs `wasm-opt` which is downloaded from GitHub. If the network blocks GitHub, build in dev mode (omit `--release`) or install `wasm-opt` manually and add it to `PATH`.
 
@@ -113,10 +121,12 @@ cargo run -p creator-egui
 # iced app
 cargo run -p creator-iced
 
-# load a specific STEP file
+# load a specific STEP file directly
 cargo run -p creator-egui -- assets/hfss.step
 cargo run -p creator-iced -- assets/hfss.step
 ```
+
+Native desktop apps now start with an empty scene when no STEP file is provided. You can load models later via the `File` menu (`Open STEP...`, `Reload`, `Open Recent`).
 
 ## Check / test all crates
 
@@ -134,7 +144,14 @@ Integration tests live in `libs/*/tests/`:
 - `rcad-render/tests/smoke.rs` — CPU tessellation smoke tests
 
 Useful examples:
-- `cargo run -p rcad-examples --example obj_iges_io` — OBJ / IGES mesh import-export demo using bundled sample assets in `assets/`
+- `cargo run -p rcad-examples --example primitives` — generate the analytic primitive gallery used by the project outputs.
+- `cargo run -p rcad-examples --example boolean_ops` — boolean union / difference / intersection walkthrough.
+- `cargo run -p rcad-examples --example loft_and_sweep` — loft, sweep, and variable-section sweep examples.
+- `cargo run -p rcad-examples --example properties_gallery` — area, volume, centroid, and inertia examples.
+- `cargo run -p rcad-examples --example section_gallery` — section curves / section polyline output examples.
+- `cargo run -p rcad-examples --example step_color_hlr` — colored STEP export and HLR SVG generation.
+- `cargo run -p rcad-examples --example obj_iges_io` — OBJ / IGES mesh import-export demo using bundled sample assets in `assets/`.
+- `cargo run -p rcad-examples --example diagnose_step_mesh -- --step assets/hfss.step` — inspect imported STEP mesh topology and renderer normals.
 
 ## WASM-specific notes
 

@@ -1,6 +1,6 @@
 # RCAD 功能文档
 
-> 版本：2026-04 · Phase P5 完成（镜像 + 阵列/环形阵列），容差统一 + BVH 加速布尔运算
+> 当前快照：2026-04 · 几何/建模/STEP/渲染/双 Creator UI 功能已同步到当前实现
 
 ---
 
@@ -84,10 +84,16 @@ CylindricalSurface     — 圆柱面（origin + axis + radius；u=方位角，v=
 SphericalSurface       — 球面（center + axis + radius；u=经度，v=纬度余角）
 ConicalSurface         — 锥面（apex + axis + half_angle）
 ToroidalSurface        — 环面（center + axis + R + r）
+EllipsoidalSurface     — 椭球面（center + axis + ref_dir + rx + ry + rz）
+HelicoidSurface        — 螺旋面（origin + axis + ref_dir + pitch；u=旋角，v=半径）
+PipeSurface            — 管面/扫掠管面（脊线曲线 + 参考方向 + 半径；u=截面方位角，v=脊线参数）
 BSplineSurface         — 张量积 B-Spline 曲面（双向 de Boor）
 BezierSurface          — 张量积 Bezier 曲面（de Casteljau）
+TriBezierSurface       — 三角 Bezier 曲面（重心参数 Bernstein 基）
 LinearExtrusionSurface — 线性拉伸面（轮廓曲线 + 方向向量）
 RevolutionSurface      — 旋转面（轮廓曲线 + 轴）
+RuledSurface           — 直纹面（两条同参边界曲线线性插值）
+CoonsSurface           — Coons 边界混合曲面（四条边界曲线跨界插值）
 OffsetSurface          — 偏移面（基面 + 法向偏移距离）
 TrimmedSurface         — 矩形裁剪面（基面 + [u1,u2,v1,v2] 参数框）
 ```
@@ -415,7 +421,8 @@ repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport)
 | 删除退化面 | `remove_degenerate_faces(brep)` | <3 边或 Newell 面积≈0 | `ShapeFix_Shape` |
 | 重算面法向 | `recompute_face_normals(brep)` | Newell 方法，返回修改计数 | `BRepLib` 法向修复 |
 | 修复线框方向 | `fix_wire_orientation(brep, tol)` | 翻转断链处的边方向 | `ShapeFix_Wire::FixClosed` |
-| 全部修复 | `repair(brep, tol)` | 四步合一，返回 `RepairReport` | `ShapeFix_Shape::Perform` |
+| 修复面朝向 | `fix_face_orientation(brep)` | 识别朝内面并翻转线框/法向 | `ShapeFix_Shell` / `ShapeFix_Solid` |
+| 全部修复 | `repair(brep, tol)` | 五步合一，返回 `RepairReport` | `ShapeFix_Shape::Perform` |
 
 ---
 
@@ -665,6 +672,8 @@ pub fn circular_pattern(brep: &BRep, params: &CircularPatternParams) -> Result<B
 | `SURFACE_CURVE` / PCurve 链 | `GEOMETRIC_CURVE_SET` |
 | `UNCERTAINTY_MEASURE_WITH_UNIT` → 容差字段 | |
 
+说明：对 `EllipsoidalSurface`、`HelicoidSurface` 以及其他暂未提供专有 STEP 曲面实体写出器的高阶曲面，`StepWriter` 现会先转换为 `BSplineSurface`，再以 `B_SPLINE_SURFACE_WITH_KNOTS` 路径导出，而不是退化成平面。
+
 **颜色导入：**
 
 ```rust
@@ -766,15 +775,25 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 | 实体着色 | 三角面片渲染，Blinn-Phong 光照（可配置光照方向） |
 | 线框 | 边的可见性着色（选中/悬停/普通）|
 | 显示模式 | SolidWithEdges / Solid / Wireframe / Transparent 四种模式 |
-| 坐标系可视化 | XYZ 轴箭头（红/绿/蓝），带锥形箭头和线段轴杆 |
-| 背景网格 | XZ 平面网格，主线/次线区分，可开关 |
+| 坐标系可视化 | 世界坐标 XYZ 轴箭头（红/绿/蓝），带锥形箭头和线段轴杆 |
+| 视口 Gizmo | 右上角 axis gizmo，支持点击切换 X/Y/Z / 等轴视图 |
+| 背景网格 | XZ 平面自适应网格，主线/次线区分，随视图缩放与平移更新，可开关 |
 | 拾取 | 鼠标点击 → face/edge 索引（光线投射拾取）|
 | 多选 | 累积选择模式（additive_select）|
-| 相机 | 透视投影，左键旋转，中键平移，滚轮缩放 |
+| 相机 | 透视投影，`Alt + 左键拖拽` 环绕，`中键拖拽` 平移，滚轮缩放 |
 | 可配置光照 | 光照方向通过 uniform 传入，支持 headlight 模式（光跟随相机）|
 | Per-object 颜色 | 动态设置模型颜色（set_model_color）|
 | 截图导出 | 离屏渲染到 RGBA 纹理 → PNG 文件（screenshot_to_file）|
 | HLR 描边 | `hlr_to_svg` 生成工程图风格 SVG |
+
+### Creator 应用当前交互
+
+| 应用 | 当前能力 |
+|------|----------|
+| `creator-egui` | 空场景启动；`File` 菜单支持 Open STEP / Reload / Open Recent / Export STEP / Reset Camera |
+| `creator-iced` | 空场景启动；使用 `iced_aw` 的 `File` 菜单，支持 Open STEP / Reload / Open Recent / Export STEP / Reset Camera |
+
+两套桌面 UI 当前共享同一套默认渲染行为：`Solid` 显示模式、自适应网格、axis gizmo、相同相机键位和一致的 STEP 加载流程。
 
 ---
 
@@ -822,6 +841,8 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 | 球面 | `Geom_SphericalSurface` | `SphericalSurface` | ✅ |
 | 锥面 | `Geom_ConicalSurface` | `ConicalSurface` | ✅ |
 | 环面 | `Geom_ToroidalSurface` | `ToroidalSurface` | ✅ |
+| 椭球面 | `Geom_Ellipsoid` / `GeomEval` 椭球求值 | `EllipsoidalSurface` | ✅ |
+| 螺旋面 | `Geom_Helicoid` / `GeomEval` 螺旋面求值 | `HelicoidSurface` | ✅ |
 | B-Spline 曲面 | `Geom_BSplineSurface` | `BSplineSurface` | ✅ |
 | Bezier 曲面 | `Geom_BezierSurface` | `BezierSurface` | ✅ |
 | 裁剪曲面 | `Geom_RectangularTrimmedSurface` | `TrimmedSurface` | ✅ |

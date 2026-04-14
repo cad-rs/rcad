@@ -597,6 +597,13 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
 
     let surface = face.surface.clone();
     let normal = face.normal;
+    let is_periodic_u = matches!(&surface, Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_));
+    let is_sphere = matches!(&surface, Surface3::Sphere(_));
+    let u_period = if is_periodic_u || is_sphere {
+        std::f64::consts::TAU
+    } else {
+        0.0
+    };
 
     // Collect 2D trim polylines from PCurves for each intersection curve
     let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
@@ -605,7 +612,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             let ic = &ds.intersection_curves[ci];
             let [t0, t1] = ic.t_range;
             const N: usize = 32;
-            let pts: Vec<DVec2> = match &pcurve {
+            let raw_pts: Vec<DVec2> = match &pcurve {
                 // BSpline PCurves from polyline_pcurve_by_projection use
                 // chord-length parameterization normalized to [0,1].
                 rcad_kernel::geom::Curve2d::BSpline(_) => (0..=N)
@@ -621,6 +628,26 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                         pcurve.point_at(t)
                     })
                     .collect(),
+            };
+            let pts = if u_period > 0.0 {
+                let pts = unwrap_u_polyline(raw_pts, u_period);
+                if pts.len() >= 2 {
+                    let u_span = pts.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
+                        - pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    if u_span > std::f64::consts::PI {
+                        let u_mid = pts.iter().map(|p| p.x).sum::<f64>() / pts.len() as f64;
+                        let offset = (u_mid / u_period).floor() * u_period;
+                        pts.into_iter()
+                            .map(|p| DVec2::new(p.x - offset, p.y))
+                            .collect::<Vec<_>>()
+                    } else {
+                        pts
+                    }
+                } else {
+                    pts
+                }
+            } else {
+                raw_pts
             };
             if pts.len() >= 2 {
                 trim_polylines.push(pts);
@@ -639,7 +666,13 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     for trim in &trim_polylines {
         let mut next: Vec<Vec<DVec2>> = Vec::new();
         for poly in uv_polygons.drain(..) {
-            let halves = split_uv_polygon_by_trim(&poly, trim);
+            let effective_trim = if u_period > 0.0 {
+                periodic_trim_to_open_isoline(&poly, trim, u_period)
+                    .unwrap_or_else(|| trim.clone())
+            } else {
+                trim.clone()
+            };
+            let halves = split_uv_polygon_by_trim(&poly, &effective_trim);
             next.extend(halves);
         }
         uv_polygons = next;
@@ -940,6 +973,70 @@ fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
         }
     }
     false
+}
+
+fn unwrap_u_polyline(pts: Vec<DVec2>, period: f64) -> Vec<DVec2> {
+    if pts.len() < 2 {
+        return pts;
+    }
+    let mut result = Vec::with_capacity(pts.len());
+    result.push(pts[0]);
+    let mut offset = 0.0_f64;
+    for i in 1..pts.len() {
+        let prev_u = result[i - 1].x;
+        let curr_u = pts[i].x + offset;
+        let diff = curr_u - prev_u;
+        if diff > period * 0.5 {
+            offset -= period;
+        } else if diff < -period * 0.5 {
+            offset += period;
+        }
+        result.push(DVec2::new(pts[i].x + offset, pts[i].y));
+    }
+    result
+}
+
+fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) -> Option<Vec<DVec2>> {
+    if poly.len() < 3 || trim.len() < 3 || u_period <= 0.0 {
+        return None;
+    }
+
+    let trim_start = trim[0];
+    let trim_end = trim[trim.len() - 1];
+    let is_closed = (trim_start - trim_end).length_squared() < 1e-6;
+    if !is_closed {
+        return None;
+    }
+
+    let u_min_trim = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let u_max_trim = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let v_min_trim = trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let v_max_trim = trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let u_span = u_max_trim - u_min_trim;
+    let v_span = v_max_trim - v_min_trim;
+
+    let poly_u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let poly_u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let poly_v_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let poly_v_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let poly_v_span = poly_v_max - poly_v_min;
+
+    if u_span < 0.9 * u_period {
+        return None;
+    }
+    if poly_v_span <= 1e-12 || v_span > 0.1 * poly_v_span {
+        return None;
+    }
+
+    let v_level = trim.iter().map(|p| p.y).sum::<f64>() / trim.len() as f64;
+    if v_level <= poly_v_min + 1e-9 || v_level >= poly_v_max - 1e-9 {
+        return None;
+    }
+
+    Some(vec![
+        DVec2::new(poly_u_min, v_level),
+        DVec2::new(poly_u_max, v_level),
+    ])
 }
 
 // Split a 2D UV polygon by a 2D trim polyline.

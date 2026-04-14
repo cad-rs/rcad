@@ -21,6 +21,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::geom::Curve2dEval;
 
 /// A single validity issue found during checking.
 #[derive(Debug, Clone, PartialEq)]
@@ -1353,6 +1354,441 @@ pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
         orientation,
         is_fully_valid,
     }
+}
+
+// ── Surface UV Analysis (ShapeAnalysis_Surface equivalent) ───────────────────────
+
+/// Report from surface UV domain analysis.
+///
+/// Analogous to OCCT's `ShapeAnalysis_Surface` which checks UV bounds,
+/// periodicity, and parameter space consistency.
+#[derive(Debug, Clone, Default)]
+pub struct SurfaceAnalysisReport {
+    /// Number of faces analyzed.
+    pub faces_analyzed: usize,
+    /// Faces whose PCurve parameter ranges violate expected surface bounds.
+    pub faces_with_uv_bounds_violation: Vec<UvBoundsViolation>,
+    /// Total number of issues detected.
+    pub total_issues: usize,
+}
+
+impl SurfaceAnalysisReport {
+    pub fn is_clean(&self) -> bool {
+        self.total_issues == 0
+    }
+
+    pub fn summary(&self) -> String {
+        if self.is_clean() {
+            format!("{} faces analyzed, no UV issues", self.faces_analyzed)
+        } else {
+            format!(
+                "{} faces analyzed, {} UV bounds violations",
+                self.faces_analyzed,
+                self.faces_with_uv_bounds_violation.len()
+            )
+        }
+    }
+}
+
+/// UV bounds violation for a single face.
+#[derive(Debug, Clone)]
+pub struct UvBoundsViolation {
+    pub solid: usize,
+    pub shell: usize,
+    pub face: usize,
+    /// Surface type (Plane, Cylinder, etc.)
+    pub surface_type: String,
+    /// Expected UV bounds [u_min, u_max, v_min, v_max] for the surface.
+    pub expected_bounds: [f64; 4],
+    /// Actual UV bounds of the face's PCurves.
+    pub actual_bounds: [f64; 4],
+    /// Maximum violation distance.
+    pub violation: f64,
+}
+
+/// Analyze surface UV consistency for all faces in `brep`.
+///
+/// Checks PCurve parameter ranges against the surface's natural domain bounds.
+/// For periodic surfaces like Cylinder and Cone, checks U bounds.
+/// For bounded surfaces like Sphere, checks both U and V bounds.
+///
+/// Analogous to `ShapeAnalysis_Surface::CheckUVBounds` in OCCT.
+pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAnalysisReport {
+    use rcad_kernel::geom::Surface3;
+
+    let mut report = SurfaceAnalysisReport::default();
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, _face) in shell.faces.iter().enumerate() {
+                report.faces_analyzed += 1;
+
+                // Get face's surface
+                let flat_face_idx = {
+                    let mut idx = 0usize;
+                    for s in 0..si {
+                        for sh in &brep.solids[s].shells {
+                            idx += sh.faces.len();
+                        }
+                    }
+                    for sh in 0..shi {
+                        idx += brep.solids[si].shells[sh].faces.len();
+                    }
+                    idx + fi
+                };
+
+                let surface_idx = match brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                let surface = match brep.geom.surfaces.get(surface_idx) {
+                    Some(s) => s,
+                    None => continue,
+                };
+
+                // Get expected UV bounds for the surface type
+                let expected_bounds = match surface {
+                    Surface3::Plane(_) => {
+                        // Plane has unbounded UV: [-∞, ∞, -∞, ∞]
+                        // No bounds check needed
+                        continue;
+                    }
+                    Surface3::Cylinder(_) => {
+                        // Cylinder: U ∈ [-π, π] (periodic), V ∈ [-∞, ∞]
+                        // Only check U bounds
+                        [-std::f64::consts::PI, std::f64::consts::PI, f64::NEG_INFINITY, f64::INFINITY]
+                    }
+                    Surface3::Sphere(_) => {
+                        // Sphere: U ∈ [-π, π], V ∈ [0, π]
+                        [-std::f64::consts::PI, std::f64::consts::PI, 0.0, std::f64::consts::PI]
+                    }
+                    Surface3::Cone(_) => {
+                        // Cone: U ∈ [-π, π] (periodic), V ∈ [0, ∞]
+                        [-std::f64::consts::PI, std::f64::consts::PI, 0.0, f64::INFINITY]
+                    }
+                    Surface3::Torus(_) => {
+                        // Torus: U ∈ [-π, π], V ∈ [-π, π] (both periodic)
+                        [-std::f64::consts::PI, std::f64::consts::PI, -std::f64::consts::PI, std::f64::consts::PI]
+                    }
+                    _ => continue, // BSpline and others: no simple bounds check
+                };
+
+                // Collect UV ranges from face's PCurves
+                let mut u_min = f64::INFINITY;
+                let mut u_max = f64::NEG_INFINITY;
+                let mut v_min = f64::INFINITY;
+                let mut v_max = f64::NEG_INFINITY;
+                let mut has_pcurve_data = false;
+
+                // Get the face's wire edges and check their PCurves
+                let face_ref = &brep.solids[si].shells[shi].faces[fi];
+                for we in &face_ref.outer_wire.edges {
+                    if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
+                        for pc in pcurves {
+                            if pc.surface_idx == surface_idx {
+                                if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
+                                    has_pcurve_data = true;
+                                    // Sample the curve
+                                    for i in 0..=16 {
+                                        let t = i as f64 / 16.0;
+                                        let uv = curve2d.point_at(t);
+                                        u_min = u_min.min(uv.x);
+                                        u_max = u_max.max(uv.x);
+                                        v_min = v_min.min(uv.y);
+                                        v_max = v_max.max(uv.y);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !has_pcurve_data {
+                    continue; // No PCurve data to check
+                }
+
+                let actual_bounds = [u_min, u_max, v_min, v_max];
+
+                // Check for bounds violation (only for bounded parameters)
+                let mut violation = 0.0_f64;
+
+                // Check U bounds if bounded
+                if expected_bounds[0].is_finite() && u_min < expected_bounds[0] - tolerance {
+                    violation = violation.max(expected_bounds[0] - u_min);
+                }
+                if expected_bounds[1].is_finite() && u_max > expected_bounds[1] + tolerance {
+                    violation = violation.max(u_max - expected_bounds[1]);
+                }
+
+                // Check V bounds if bounded
+                if expected_bounds[2].is_finite() && v_min < expected_bounds[2] - tolerance {
+                    violation = violation.max(expected_bounds[2] - v_min);
+                }
+                if expected_bounds[3].is_finite() && v_max > expected_bounds[3] + tolerance {
+                    violation = violation.max(v_max - expected_bounds[3]);
+                }
+
+                if violation > tolerance {
+                    let surface_type = match surface {
+                        Surface3::Plane(_) => "Plane",
+                        Surface3::Cylinder(_) => "Cylinder",
+                        Surface3::Sphere(_) => "Sphere",
+                        Surface3::Cone(_) => "Cone",
+                        Surface3::Torus(_) => "Torus",
+                        _ => "Unknown",
+                    };
+                    report.faces_with_uv_bounds_violation.push(UvBoundsViolation {
+                        solid: si,
+                        shell: shi,
+                        face: fi,
+                        surface_type: surface_type.to_string(),
+                        expected_bounds,
+                        actual_bounds,
+                        violation,
+                    });
+                    report.total_issues += 1;
+                }
+            }
+        }
+    }
+
+    report
+}
+
+// ── Wire Quality Metrics (ShapeAnalysis_Wire enhancement) ───────────────────────
+
+/// Extended wire quality metrics for a single wire.
+///
+/// Analogous to OCCT's `ShapeAnalysis_Wire` which provides area, orientation,
+/// and closure quality metrics.
+#[derive(Debug, Clone, Default)]
+pub struct WireQualityMetrics {
+    pub solid: usize,
+    pub shell: usize,
+    pub face: usize,
+    pub wire_idx: usize, // 0 = outer wire, 1+ = inner wire index
+    /// Number of edges in the wire.
+    pub edge_count: usize,
+    /// 3D length of the wire (sum of edge lengths).
+    pub total_length: f64,
+    /// Whether the wire is closed (end vertex of last edge = start vertex of first edge).
+    pub is_closed: bool,
+    /// Whether the wire is self-intersecting (topologically).
+    pub has_self_intersection: bool,
+    /// Number of gap locations where consecutive edges don't share vertices.
+    pub gap_count: usize,
+    /// Maximum gap size (distance between non-connected vertices).
+    pub max_gap: f64,
+    /// Quality score (0-100, higher is better).
+    pub quality_score: f64,
+}
+
+/// Aggregated wire quality report for all wires in a BRep.
+#[derive(Debug, Clone, Default)]
+pub struct WireQualityReport {
+    pub wires_analyzed: usize,
+    pub closed_wires: usize,
+    pub open_wires: usize,
+    pub self_intersecting_wires: usize,
+    pub wires_with_gaps: usize,
+    pub total_gap_count: usize,
+    pub avg_quality_score: f64,
+    pub metrics: Vec<WireQualityMetrics>,
+}
+
+impl WireQualityReport {
+    pub fn is_clean(&self) -> bool {
+        self.open_wires == 0 && self.self_intersecting_wires == 0 && self.wires_with_gaps == 0
+    }
+
+    pub fn summary(&self) -> String {
+        if self.is_clean() {
+            format!("{} wires analyzed, all closed and clean, avg quality {:.1}", self.wires_analyzed, self.avg_quality_score)
+        } else {
+            format!(
+                "{} wires: {} open, {} self-intersecting, {} with gaps ({} total), avg quality {:.1}",
+                self.wires_analyzed,
+                self.open_wires,
+                self.self_intersecting_wires,
+                self.wires_with_gaps,
+                self.total_gap_count,
+                self.avg_quality_score
+            )
+        }
+    }
+}
+
+/// Analyze wire quality metrics for all wires in `brep`.
+///
+/// Provides detailed metrics including length, closure, self-intersection
+/// detection, and quality scoring.
+///
+/// Analogous to `ShapeAnalysis_Wire` in OCCT.
+pub fn analyze_wire_quality(brep: &BRep, tolerance: f64) -> WireQualityReport {
+    let mut report = WireQualityReport::default();
+    let mut total_quality = 0.0_f64;
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                // Analyze outer wire
+                let outer_metrics = analyze_single_wire_quality(
+                    brep, si, shi, fi, 0, &face.outer_wire, tolerance,
+                );
+                let outer_closed = outer_metrics.is_closed;
+                total_quality += outer_metrics.quality_score;
+                report.wires_analyzed += 1;
+                if outer_closed { report.closed_wires += 1; } else { report.open_wires += 1; }
+                if outer_metrics.has_self_intersection { report.self_intersecting_wires += 1; }
+                if outer_metrics.gap_count > 0 { report.wires_with_gaps += 1; }
+                report.total_gap_count += outer_metrics.gap_count;
+                report.metrics.push(outer_metrics);
+
+                // Analyze inner wires
+                for (wi, wire) in face.inner_wires.iter().enumerate() {
+                    let metrics = analyze_single_wire_quality(
+                        brep, si, shi, fi, wi + 1, wire, tolerance,
+                    );
+                    total_quality += metrics.quality_score;
+                    report.wires_analyzed += 1;
+                    if metrics.is_closed { report.closed_wires += 1; } else { report.open_wires += 1; }
+                    if metrics.has_self_intersection { report.self_intersecting_wires += 1; }
+                    if metrics.gap_count > 0 { report.wires_with_gaps += 1; }
+                    report.total_gap_count += metrics.gap_count;
+                    report.metrics.push(metrics);
+                }
+            }
+        }
+    }
+
+    report.avg_quality_score = if report.wires_analyzed > 0 {
+        total_quality / report.wires_analyzed as f64
+    } else {
+        0.0
+    };
+
+    report
+}
+
+fn analyze_single_wire_quality(
+    brep: &BRep,
+    solid: usize,
+    shell: usize,
+    face: usize,
+    wire_idx: usize,
+    wire: &rcad_kernel::topology::Wire,
+    tolerance: f64,
+) -> WireQualityMetrics {
+    let mut metrics = WireQualityMetrics {
+        solid,
+        shell,
+        face,
+        wire_idx,
+        edge_count: wire.edges.len(),
+        ..Default::default()
+    };
+
+    if wire.edges.is_empty() {
+        metrics.quality_score = 0.0;
+        return metrics;
+    }
+
+    // Compute total length and check closure
+    let mut total_length = 0.0_f64;
+    let mut gap_count = 0usize;
+    let mut max_gap = 0.0_f64;
+
+    for (i, we) in wire.edges.iter().enumerate() {
+        let edge = match brep.edges.get(we.idx) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // Compute edge length
+        let start_pt = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or_default();
+        let end_pt = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or_default();
+        let edge_len = (end_pt - start_pt).length();
+        total_length += edge_len;
+
+        // Check gap to next edge
+        let next_i = (i + 1) % wire.edges.len();
+        let next_edge = match brep.edges.get(wire.edges[next_i].idx) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // The end vertex of this edge should equal the start vertex of the next edge
+        // (accounting for orientation via .forward)
+        let this_end = if we.forward { edge.end } else { edge.start };
+        let next_start = if wire.edges[next_i].forward {
+            next_edge.start
+        } else {
+            next_edge.end
+        };
+
+        if this_end != next_start {
+            let gap_pt1 = brep.vertices.get(this_end).map(|v| v.point).unwrap_or_default();
+            let gap_pt2 = brep.vertices.get(next_start).map(|v| v.point).unwrap_or_default();
+            let gap = (gap_pt2 - gap_pt1).length();
+            if gap > tolerance {
+                gap_count += 1;
+                max_gap = max_gap.max(gap);
+            }
+        }
+    }
+
+    metrics.total_length = total_length;
+    metrics.gap_count = gap_count;
+    metrics.max_gap = max_gap;
+    metrics.is_closed = gap_count == 0;
+
+    // Check for self-intersection (topological: shared vertices except at junctions)
+    let mut vertex_occurrences: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    for (i, we) in wire.edges.iter().enumerate() {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            let (start, end) = if we.forward {
+                (edge.start, edge.end)
+            } else {
+                (edge.end, edge.start)
+            };
+            vertex_occurrences.entry(start).or_default().push(i);
+            vertex_occurrences.entry(end).or_default().push(i);
+        }
+    }
+
+    // A vertex should appear at most twice: once as end of one edge, once as start of next
+    for (_, occurrences) in &vertex_occurrences {
+        if occurrences.len() > 2 {
+            metrics.has_self_intersection = true;
+            break;
+        }
+    }
+
+    // Compute quality score (0-100)
+    let mut score = 100.0_f64;
+
+    // Penalize gaps
+    if gap_count > 0 {
+        score -= (gap_count as f64).min(30.0) * 3.0;
+        score -= (max_gap / tolerance).min(10.0) * 2.0;
+    }
+
+    // Penalize self-intersection
+    if metrics.has_self_intersection {
+        score -= 40.0;
+    }
+
+    // Penalize very short wires
+    if metrics.edge_count < 3 {
+        score -= 20.0;
+    }
+
+    metrics.quality_score = score.max(0.0).min(100.0);
+
+    metrics
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

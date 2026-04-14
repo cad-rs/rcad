@@ -410,32 +410,28 @@ pub fn closest_point_on_surface(
         }
 
         Surface3::Cone(cone) => {
-            // Project onto the cone: find the closest generator line.
-            let v = query - cone.apex;
-            let along = v.dot(cone.axis);
-            let radial = v - cone.axis * along;
+            // Project onto the cone's reference-circle parameterization.
+            let axis = cone.axis_dir();
+            let x_axis = any_perpendicular(axis);
+            let y_axis = axis.cross(x_axis).normalize_or_zero();
+            let local = query - cone.apex;
+            let along = local.dot(axis);
+            let radial = local - axis * along;
             let radial_len = radial.length();
             let half = cone.half_angle_rad;
-            // The foot on the cone satisfies r = s·tan(half), z = s
-            // Minimize |Q - (apex + s*axis + s*tan(half)*r_hat)|²
-            // → s = (along + radial_len*tan(half)) / (1 + tan(half)²)
             let tan_h = half.tan();
-            let s = (along + radial_len * tan_h) / (1.0 + tan_h * tan_h);
-            let s = s.max(0.0);
+            let axial = (along + (radial_len - cone.radius) * tan_h) / (1.0 + tan_h * tan_h);
             let r_hat = if radial_len < 1e-14 {
-                any_perpendicular(cone.axis)
+                x_axis
             } else {
                 radial / radial_len
             };
-            let point = cone.apex + cone.axis * s + r_hat * s * tan_h;
+            let point = cone.apex + axis * axial + r_hat * cone.radius_at_axial(axial);
+            let slant = cone.slant_from_axial(axial);
+            let theta = r_hat.dot(y_axis).atan2(r_hat.dot(x_axis));
             SurfaceProjection {
                 point,
-                params: (
-                    s,
-                    r_hat
-                        .dot(any_perpendicular(cone.axis))
-                        .atan2(r_hat.dot(cone.axis.cross(any_perpendicular(cone.axis)))),
-                ),
+                params: (theta, slant),
                 distance: (point - query).length(),
             }
         }
@@ -617,6 +613,35 @@ mod tests {
         let r = closest_point_on_surface(&torus, q, 16);
         // Nearest should be at (4, 0, 0)
         assert!((r.point - DVec3::new(4.0, 0.0, 0.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn project_onto_cone_returns_theta_and_slant_params() {
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+            half_angle_rad: 30.0_f64.to_radians(),
+        });
+        let expected_slant = 4.0;
+        let on_surface = match &cone {
+            Surface3::Cone(surface) => surface.point_at(0.0, expected_slant),
+            _ => unreachable!(),
+        };
+        let query_normal = match &cone {
+            Surface3::Cone(surface) => surface.normal_at(0.0, expected_slant),
+            _ => unreachable!(),
+        };
+        let q = on_surface + query_normal * 0.25;
+        let r = closest_point_on_surface(&cone, q, 16);
+
+        assert!((r.point - on_surface).length() < 5e-3, "projected point={}", r.point);
+        assert!((r.params.1 - expected_slant).abs() < 5e-3, "slant={}", r.params.1);
+        let lifted = match &cone {
+            Surface3::Cone(surface) => surface.point_at(r.params.0, r.params.1),
+            _ => unreachable!(),
+        };
+        assert!((lifted - r.point).length() < 1e-6, "lifted point={lifted} projected={}", r.point);
     }
 
     #[test]

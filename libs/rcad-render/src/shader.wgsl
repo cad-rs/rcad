@@ -45,15 +45,12 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
         return vec4<f32>(material.color.xyz, material.color.w);
     }
 
-    // Use interpolated vertex normal for smooth (Phong) shading when available;
-    // fall back to the screen-space derivative (flat shading) for meshes that
-    // were uploaded without per-vertex normals.
-    var normal: vec3<f32>;
-    let vn_len = length(in.world_normal);
-    if (vn_len > 0.1) {
-        normal = normalize(in.world_normal);
-    } else {
-        normal = normalize(cross(dpdx(in.world_position), dpdy(in.world_position)));
+    // Imported model meshes are expected to carry explicit normals.
+    // Keep a simple geometric fallback instead of screen-space derivatives so
+    // triangle diagonals do not turn into visible shading seams.
+    var normal = normalize(in.world_normal);
+    if (length(normal) < 0.1) {
+        normal = vec3<f32>(0.0, 0.0, 1.0);
     }
     if (!front_facing) {
         normal = -normal;

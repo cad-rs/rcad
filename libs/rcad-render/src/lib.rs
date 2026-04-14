@@ -1,4 +1,7 @@
-use rcad_kernel::{BRep, BRepGraph, Curve3, CurveEval, any_perpendicular, seam_edge_candidates};
+use rcad_kernel::{
+    BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
+    seam_edge_candidates,
+};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
@@ -64,6 +67,11 @@ const AXIS_GIZMO_MAX_SIDE_PX: u32 = 160;
 const AXIS_GIZMO_PADDING_RATIO: f32 = 0.12;
 const AXIS_GIZMO_AXIS_LENGTH: f32 = 0.78;
 const AXIS_GIZMO_CENTER_HALF_EXTENT: f32 = 0.22;
+const GRID_MAJOR_LINE_EVERY: i32 = 5;
+const GRID_BUFFER_HALF_CELLS: i32 = 64;
+const GRID_TARGET_HALF_MINOR_LINES: f32 = 12.0;
+const GRID_MIN_MINOR_SPACING: f32 = 0.02;
+const GRID_FOV_Y_RADIANS: f32 = 45.0_f32.to_radians();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AxisGizmoLayout {
@@ -675,9 +683,17 @@ impl Tessellator {
 
         // ── Per-vertex smooth normal computation (area-weighted face normal avg) ──
         let mut normal_accum = vec![[0.0f64; 3]; n_verts];
+        let mut face_flat_idx = 0usize;
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
+                    let face_surface = brep
+                        .geom
+                        .face_surface
+                        .get(face_flat_idx)
+                        .and_then(|value| *value)
+                        .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx));
+
                     for tri in &face.triangles {
                         let a = brep.vertices[tri[0]].point;
                         let b = brep.vertices[tri[1]].point;
@@ -686,14 +702,21 @@ impl Tessellator {
                         let e2 = c - a;
                         // Area-weighted face normal (magnitude = 2× triangle area)
                         let fn_ = e1.cross(e2);
+                        let weight = fn_.length().max(1e-12);
                         for &vi in tri.iter() {
                             if vi < n_verts {
-                                normal_accum[vi][0] += fn_.x;
-                                normal_accum[vi][1] += fn_.y;
-                                normal_accum[vi][2] += fn_.z;
+                                let analytic = face_surface.and_then(|surface| {
+                                    analytic_surface_normal_at_point(surface, brep.vertices[vi].point)
+                                });
+                                let contribution = analytic.unwrap_or(fn_.normalize_or_zero()) * weight;
+                                normal_accum[vi][0] += contribution.x;
+                                normal_accum[vi][1] += contribution.y;
+                                normal_accum[vi][2] += contribution.z;
                             }
                         }
                     }
+
+                    face_flat_idx += 1;
                 }
             }
         }
@@ -708,6 +731,11 @@ impl Tessellator {
                 }
             })
             .collect();
+
+        // STEP imports can split one visually smooth surface into multiple faces
+        // with duplicate vertex positions. If the split-face normals are already
+        // closely aligned, smooth them together to avoid artificial seam lines.
+        smooth_normals_across_coincident_vertices(&flat_verts, &mut normals, 1e-5, 0.95);
 
         let mut seam_edges: std::collections::HashSet<usize> =
             seam_edge_candidates(brep).into_iter().collect();
@@ -958,6 +986,149 @@ impl Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn smooth_normals_across_coincident_vertices(
+    vertices: &[[f32; 3]],
+    normals: &mut [[f32; 3]],
+    tolerance: f32,
+    min_dot: f32,
+) {
+    use std::collections::HashMap;
+
+    let scale = 1.0 / tolerance.max(1e-9);
+    let mut groups: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    for (index, &[x, y, z]) in vertices.iter().enumerate() {
+        let key = [
+            (x * scale).round() as i64,
+            (y * scale).round() as i64,
+            (z * scale).round() as i64,
+        ];
+        groups.entry(key).or_default().push(index);
+    }
+
+    for indices in groups.values() {
+        if indices.len() < 2 {
+            continue;
+        }
+
+        let mut valid_normals = Vec::new();
+        for &index in indices {
+            let normal = glam::Vec3::from_array(normals[index]);
+            if normal.length_squared() > 1e-8 {
+                valid_normals.push((index, normal.normalize()));
+            }
+        }
+        if valid_normals.len() < 2 {
+            continue;
+        }
+
+        let mut should_smooth = true;
+        for left in 0..valid_normals.len() {
+            for right in (left + 1)..valid_normals.len() {
+                if valid_normals[left].1.dot(valid_normals[right].1) < min_dot {
+                    should_smooth = false;
+                    break;
+                }
+            }
+            if !should_smooth {
+                break;
+            }
+        }
+        if !should_smooth {
+            continue;
+        }
+
+        let averaged = valid_normals
+            .iter()
+            .fold(glam::Vec3::ZERO, |acc, (_, normal)| acc + *normal)
+            .normalize_or_zero();
+        if averaged.length_squared() <= 1e-8 {
+            continue;
+        }
+
+        for &index in indices {
+            normals[index] = averaged.to_array();
+        }
+    }
+}
+
+fn analytic_surface_normal_at_point(surface: &Surface3, point: glam::DVec3) -> Option<glam::DVec3> {
+    match surface {
+        Surface3::Plane(plane) => Some(plane.normal.normalize_or_zero()),
+        Surface3::Cylinder(cylinder) => {
+            let axis = cylinder.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let x_axis = any_perpendicular(axis);
+            let y_axis = axis.cross(x_axis).normalize_or_zero();
+            let delta = point - cylinder.origin;
+            let radial = delta - axis * delta.dot(axis);
+            if radial.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u = radial.dot(y_axis).atan2(radial.dot(x_axis));
+            let v = delta.dot(axis);
+            Some(cylinder.normal_at(u, v).normalize_or_zero())
+        }
+        Surface3::Sphere(sphere) => {
+            let axis = sphere.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let x_axis = any_perpendicular(axis);
+            let y_axis = axis.cross(x_axis).normalize_or_zero();
+            let radial = (point - sphere.center).normalize_or_zero();
+            if radial.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u = radial.dot(y_axis).atan2(radial.dot(x_axis));
+            let v = radial.dot(axis).clamp(-1.0, 1.0).acos();
+            Some(sphere.normal_at(u, v).normalize_or_zero())
+        }
+        Surface3::Cone(cone) => {
+            let axis = cone.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let x_axis = any_perpendicular(axis);
+            let y_axis = axis.cross(x_axis).normalize_or_zero();
+            let delta = point - cone.apex;
+            let height = delta.dot(axis);
+            let radial = delta - axis * height;
+            if radial.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u = radial.dot(y_axis).atan2(radial.dot(x_axis));
+            Some(cone.normal_at(u, height.max(0.0)).normalize_or_zero())
+        }
+        Surface3::Torus(torus) => {
+            let axis = torus.axis.normalize_or_zero();
+            if axis.length_squared() <= 1e-20 {
+                return None;
+            }
+            let x_axis = any_perpendicular(axis);
+            let y_axis = axis.cross(x_axis).normalize_or_zero();
+            let delta = point - torus.center;
+            let planar = delta - axis * delta.dot(axis);
+            if planar.length_squared() <= 1e-20 {
+                return None;
+            }
+            let u = planar.dot(y_axis).atan2(planar.dot(x_axis));
+            let major_dir = (u.cos() * x_axis + u.sin() * y_axis).normalize_or_zero();
+            let tube_center = torus.center + torus.major_radius * major_dir;
+            let tube_vec = (point - tube_center).normalize_or_zero();
+            if tube_vec.length_squared() <= 1e-20 {
+                return None;
+            }
+            let v = tube_vec.dot(axis).atan2(tube_vec.dot(major_dir));
+            Some(torus.normal_at(u, v).normalize_or_zero())
+        }
+        Surface3::Offset(offset) => analytic_surface_normal_at_point(&offset.basis, point),
+        Surface3::Trimmed(trimmed) => analytic_surface_normal_at_point(&trimmed.basis, point),
+        _ => None,
     }
 }
 
@@ -1365,9 +1536,9 @@ fn interleave_positions_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> 
 struct GridBuffers {
     vertex_buffer: wgpu::Buffer,
     major_index_buffer: wgpu::Buffer,
-    major_index_count: u32,
+    major_index_count: std::sync::Mutex<u32>,
     minor_index_buffer: wgpu::Buffer,
-    minor_index_count: u32,
+    minor_index_count: std::sync::Mutex<u32>,
 }
 
 /// Interleave vertex positions and normals into a flat `Vec<[f32; 6]>` for GPU upload.
@@ -1384,32 +1555,89 @@ fn interleave_verts_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<
         .collect()
 }
 
-/// Build a grid on the XZ plane (Y=0). Returns (vertices, major_line_indices, minor_line_indices).
+fn snap_grid_spacing(raw_spacing: f32) -> f32 {
+    let raw_spacing = raw_spacing.max(GRID_MIN_MINOR_SPACING);
+    let magnitude = 10.0_f32.powf(raw_spacing.log10().floor());
+    let normalized = raw_spacing / magnitude;
+    let snapped = if normalized <= 1.0 {
+        1.0
+    } else if normalized <= 2.0 {
+        2.0
+    } else if normalized <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    snapped * magnitude
+}
+
+fn grid_focus_point(camera: &Camera) -> glam::Vec3 {
+    let eye = camera.eye_position();
+    let forward = (camera.target - eye).normalize_or_zero();
+    if forward.length_squared() <= 1e-8 || forward.y.abs() <= 1e-4 {
+        return camera.target;
+    }
+
+    let t = -eye.y / forward.y;
+    if t.is_finite() && t > 0.0 {
+        eye + forward * t
+    } else {
+        camera.target
+    }
+}
+
+fn adaptive_grid_minor_spacing(camera: &Camera, aspect: f32) -> f32 {
+    let half_view_width = camera.distance.max(0.1)
+        * (GRID_FOV_Y_RADIANS * 0.5).tan()
+        * aspect.max(1.0);
+    let raw_spacing = half_view_width / GRID_TARGET_HALF_MINOR_LINES;
+    snap_grid_spacing(raw_spacing)
+}
+
+fn grid_material_uniforms(minor_spacing: f32) -> (MaterialUniform, MaterialUniform) {
+    let fade = (1.0 / (1.0 + minor_spacing * 6.0)).clamp(0.0, 1.0);
+    let major_alpha = 0.26 + 0.18 * fade;
+    let minor_alpha = 0.04 + 0.12 * fade;
+    (
+        MaterialUniform {
+            color: [0.44, 0.46, 0.50, major_alpha],
+            flags: [1.0, 0.0, 0.0, 0.0],
+        },
+        MaterialUniform {
+            color: [0.32, 0.34, 0.38, minor_alpha],
+            flags: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+}
+
+/// Build an adaptive grid on the XZ plane (Y=0). Returns (vertices, major_line_indices, minor_line_indices).
 fn build_grid_mesh(
-    extent: f32,
-    major_spacing: f32,
+    center: glam::Vec2,
     minor_spacing: f32,
+    half_cells: i32,
 ) -> (Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
     let mut vertices = Vec::new();
     let mut major_indices = Vec::new();
     let mut minor_indices = Vec::new();
+    let spacing = minor_spacing.max(GRID_MIN_MINOR_SPACING);
+    let center_step_x = (center.x / spacing).round() as i32;
+    let center_step_z = (center.y / spacing).round() as i32;
+    let start_x = center_step_x - half_cells;
+    let end_x = center_step_x + half_cells;
+    let start_z = center_step_z - half_cells;
+    let end_z = center_step_z + half_cells;
 
     // Generate lines along X (varying Z)
-    let steps = ((extent * 2.0 / minor_spacing).round() as i32).max(1);
-    for i in 0..=steps {
-        let z = -extent + i as f32 * minor_spacing;
-        // Snap to avoid floating point drift
-        let z = (z / minor_spacing).round() * minor_spacing;
-        if z.abs() > extent + 0.001 {
-            continue;
-        }
+    for step_z in start_z..=end_z {
+        let z = step_z as f32 * spacing;
+        let x0 = start_x as f32 * spacing;
+        let x1 = end_x as f32 * spacing;
 
         let idx = vertices.len() as u32;
-        vertices.push([-extent, 0.0, z]);
-        vertices.push([extent, 0.0, z]);
+        vertices.push([x0, 0.0, z]);
+        vertices.push([x1, 0.0, z]);
 
-        let is_major = (z / major_spacing).round() * major_spacing - z < minor_spacing * 0.1
-            && z.abs() > 0.001; // skip origin (drawn by axes)
+        let is_major = step_z.rem_euclid(GRID_MAJOR_LINE_EVERY) == 0 && z.abs() > 0.001;
         let is_origin_line = z.abs() < 0.001;
 
         if is_origin_line {
@@ -1424,19 +1652,16 @@ fn build_grid_mesh(
     }
 
     // Generate lines along Z (varying X)
-    for i in 0..=steps {
-        let x = -extent + i as f32 * minor_spacing;
-        let x = (x / minor_spacing).round() * minor_spacing;
-        if x.abs() > extent + 0.001 {
-            continue;
-        }
+    for step_x in start_x..=end_x {
+        let x = step_x as f32 * spacing;
+        let z0 = start_z as f32 * spacing;
+        let z1 = end_z as f32 * spacing;
 
         let idx = vertices.len() as u32;
-        vertices.push([x, 0.0, -extent]);
-        vertices.push([x, 0.0, extent]);
+        vertices.push([x, 0.0, z0]);
+        vertices.push([x, 0.0, z1]);
 
-        let is_major = (x / major_spacing).round() * major_spacing - x < minor_spacing * 0.1
-            && x.abs() > 0.001;
+        let is_major = step_x.rem_euclid(GRID_MAJOR_LINE_EVERY) == 0 && x.abs() > 0.001;
         let is_origin_line = x.abs() < 0.001;
 
         if is_origin_line {
@@ -1484,6 +1709,8 @@ pub struct WgpuRenderer {
     material_transparent_bind_group: wgpu::BindGroup,
     material_buffer: wgpu::Buffer,
     grid: GridBuffers,
+    grid_major_material_buffer: wgpu::Buffer,
+    grid_minor_material_buffer: wgpu::Buffer,
     grid_major_material_bind_group: wgpu::BindGroup,
     grid_minor_material_bind_group: wgpu::BindGroup,
     gizmo_camera_buffer: wgpu::Buffer,
@@ -1768,23 +1995,18 @@ impl WgpuRenderer {
         );
 
         // Build background grid
+        let (grid_major_material, grid_minor_material) = grid_material_uniforms(0.2);
         let grid_major_material_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Grid Major Material Buffer"),
-                contents: bytemuck::cast_slice(&[MaterialUniform {
-                    color: [0.35, 0.35, 0.35, 0.5],
-                    flags: [1.0, 0.0, 0.0, 0.0], // unlit
-                }]),
-                usage: wgpu::BufferUsages::UNIFORM,
+                contents: bytemuck::cast_slice(&[grid_major_material]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
         let grid_minor_material_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Grid Minor Material Buffer"),
-                contents: bytemuck::cast_slice(&[MaterialUniform {
-                    color: [0.25, 0.25, 0.25, 0.3],
-                    flags: [1.0, 0.0, 0.0, 0.0], // unlit
-                }]),
-                usage: wgpu::BufferUsages::UNIFORM,
+                contents: bytemuck::cast_slice(&[grid_minor_material]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
         let grid_major_material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Grid Major Material Bind Group"),
@@ -1803,26 +2025,30 @@ impl WgpuRenderer {
             }],
         });
 
-        let (grid_verts, grid_major_idx, grid_minor_idx) = build_grid_mesh(5.0, 1.0, 0.2);
-        let grid_verts_padded: Vec<[f32; 6]> = grid_verts.iter().map(|&[x, y, z]| [x, y, z, 0.0, 0.0, 0.0]).collect();
+        let max_grid_lines = ((GRID_BUFFER_HALF_CELLS * 2 + 1) * 2) as u64;
+        let max_grid_vertices = max_grid_lines * 2;
+        let max_grid_indices = max_grid_vertices;
         let grid = GridBuffers {
-            vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            vertex_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Grid Vertex Buffer"),
-                contents: bytemuck::cast_slice(&grid_verts_padded),
-                usage: wgpu::BufferUsages::VERTEX,
+                size: max_grid_vertices * std::mem::size_of::<[f32; 6]>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             }),
-            major_index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            major_index_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Grid Major Index Buffer"),
-                contents: bytemuck::cast_slice(&grid_major_idx),
-                usage: wgpu::BufferUsages::INDEX,
+                size: max_grid_indices * std::mem::size_of::<u32>() as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             }),
-            major_index_count: grid_major_idx.len() as u32,
-            minor_index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            major_index_count: std::sync::Mutex::new(0),
+            minor_index_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Grid Minor Index Buffer"),
-                contents: bytemuck::cast_slice(&grid_minor_idx),
-                usage: wgpu::BufferUsages::INDEX,
+                size: max_grid_indices * std::mem::size_of::<u32>() as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             }),
-            minor_index_count: grid_minor_idx.len() as u32,
+            minor_index_count: std::sync::Mutex::new(0),
         };
 
         // Build axis arrows (X=red, Y=green, Z=blue)
@@ -2016,6 +2242,8 @@ impl WgpuRenderer {
             material_transparent_bind_group,
             material_buffer,
             grid,
+            grid_major_material_buffer,
+            grid_minor_material_buffer,
             grid_major_material_bind_group,
             grid_minor_material_bind_group,
             gizmo_camera_buffer,
@@ -2187,6 +2415,44 @@ impl WgpuRenderer {
             light_dir: [ld.x, ld.y, ld.z, 0.0],
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
+
+        let grid_minor_spacing = adaptive_grid_minor_spacing(camera, aspect);
+        let grid_focus = grid_focus_point(camera);
+        let (grid_major_material, grid_minor_material) = grid_material_uniforms(grid_minor_spacing);
+        let (grid_vertices, grid_major_indices, grid_minor_indices) = build_grid_mesh(
+            glam::Vec2::new(grid_focus.x, grid_focus.z),
+            grid_minor_spacing,
+            GRID_BUFFER_HALF_CELLS,
+        );
+        let padded_vertices: Vec<[f32; 6]> = grid_vertices
+            .iter()
+            .map(|&[x, y, z]| [x, y, z, 0.0, 0.0, 0.0])
+            .collect();
+        queue.write_buffer(&self.grid.vertex_buffer, 0, bytemuck::cast_slice(&padded_vertices));
+        queue.write_buffer(
+            &self.grid.major_index_buffer,
+            0,
+            bytemuck::cast_slice(&grid_major_indices),
+        );
+        queue.write_buffer(
+            &self.grid.minor_index_buffer,
+            0,
+            bytemuck::cast_slice(&grid_minor_indices),
+        );
+        queue.write_buffer(
+            &self.grid_major_material_buffer,
+            0,
+            bytemuck::cast_slice(&[grid_major_material]),
+        );
+        queue.write_buffer(
+            &self.grid_minor_material_buffer,
+            0,
+            bytemuck::cast_slice(&[grid_minor_material]),
+        );
+        *self.grid.major_index_count.lock().expect("render mutex poisoned") =
+            grid_major_indices.len() as u32;
+        *self.grid.minor_index_count.lock().expect("render mutex poisoned") =
+            grid_minor_indices.len() as u32;
     }
 
     fn update_axis_gizmo_camera(&self, queue: &wgpu::Queue, camera: &Camera) {
@@ -2461,6 +2727,8 @@ impl WgpuRenderer {
         render_pass: &mut wgpu::RenderPass<'_>,
         use_depth_pipeline: bool,
     ) {
+        let minor_index_count = *self.grid.minor_index_count.lock().expect("render mutex poisoned");
+        let major_index_count = *self.grid.major_index_count.lock().expect("render mutex poisoned");
         if use_depth_pipeline {
             render_pass.set_pipeline(&self.pipeline_line_depth);
         } else {
@@ -2470,23 +2738,23 @@ impl WgpuRenderer {
         render_pass.set_vertex_buffer(0, self.grid.vertex_buffer.slice(..));
 
         // Draw minor lines first (thinner/dimmer)
-        if self.grid.minor_index_count > 0 {
+        if minor_index_count > 0 {
             render_pass.set_bind_group(1, &self.grid_minor_material_bind_group, &[]);
             render_pass.set_index_buffer(
                 self.grid.minor_index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
-            render_pass.draw_indexed(0..self.grid.minor_index_count, 0, 0..1);
+            render_pass.draw_indexed(0..minor_index_count, 0, 0..1);
         }
 
         // Draw major lines on top
-        if self.grid.major_index_count > 0 {
+        if major_index_count > 0 {
             render_pass.set_bind_group(1, &self.grid_major_material_bind_group, &[]);
             render_pass.set_index_buffer(
                 self.grid.major_index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
-            render_pass.draw_indexed(0..self.grid.major_index_count, 0, 0..1);
+            render_pass.draw_indexed(0..major_index_count, 0, 0..1);
         }
     }
 
