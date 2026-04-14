@@ -193,6 +193,12 @@ pub struct BooleanOptions {
     /// `0` keeps raw history edges only.
     /// `1` includes edges on faces adjacent to history edges (previous behavior).
     pub make_connected_scope_history_ring_depth: usize,
+    /// When scoped make-connected makes no changes, retry with global scope.
+    ///
+    /// This keeps localized cleanup as the first attempt while preserving a
+    /// broader recovery path for cases where scoped seeds miss the stressed
+    /// region.
+    pub make_connected_scope_fallback_to_global: bool,
     /// Seed derivation strategy for scoped mode.
     pub make_connected_scope_seed_mode: MakeConnectedScopeSeedMode,
     /// Minimum history-seed edge count before skipping heuristic augmentation.
@@ -236,6 +242,7 @@ impl Default for BooleanOptions {
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             fuzzy_tol: 0.0,
@@ -260,8 +267,12 @@ pub struct BooleanExecutionReport {
     pub make_connected_report: Option<MakeConnectedReport>,
     /// Seed mode used for scoped make-connected, if scoped mode was enabled.
     pub make_connected_scope_seed_mode: Option<MakeConnectedScopeSeedMode>,
+    /// Configured history-ring depth used in scoped mode.
+    pub make_connected_scope_history_ring_depth: Option<usize>,
     /// Seed source used in scoped mode.
     pub make_connected_scope_seed_source: Option<MakeConnectedScopeSeedSource>,
+    /// Whether scoped make-connected escalated to a global fallback pass.
+    pub make_connected_scope_fallback_applied: bool,
     /// Number of history-derived seed edges before union.
     pub make_connected_scope_history_seed_edge_count: usize,
     /// Number of heuristic-derived seed edges before union.
@@ -465,6 +476,98 @@ pub fn boolean_retry_ladder_for_error_with_policy(
     }
 
     out
+}
+
+fn merge_make_connected_reports(
+    mut initial: MakeConnectedReport,
+    fallback: MakeConnectedReport,
+) -> MakeConnectedReport {
+    initial.vertices_merged += fallback.vertices_merged;
+    initial.small_edges_removed += fallback.small_edges_removed;
+    initial.passes_run += fallback.passes_run;
+    initial.converged = fallback.converged;
+    initial.final_tolerance = fallback.final_tolerance;
+    initial.tolerance_cap_applied |= fallback.tolerance_cap_applied;
+    initial
+}
+
+fn run_make_connected_for_boolean_output(
+    brep: &BRep,
+    history: Option<&BooleanHistory>,
+    options: &BooleanOptions,
+    report: &mut BooleanExecutionReport,
+) -> (BRep, MakeConnectedReport) {
+    if !options.make_connected_scoped {
+        return make_connected_iterative_with_growth_cap(
+            brep,
+            options.make_connected_tolerance,
+            options.make_connected_max_passes,
+            options.make_connected_tolerance_growth,
+            options.make_connected_tolerance_cap,
+        );
+    }
+
+    let seed = options
+        .make_connected_scope_seed_length
+        .max(options.make_connected_tolerance);
+    let (mut scope_seed_edges, history_seed_edges, heuristic_seed_edges, seed_source) =
+        select_scoped_seed_edges(
+            brep,
+            history,
+            seed,
+            options.make_connected_scope_seed_mode,
+            options.make_connected_scope_history_ring_depth,
+            options.make_connected_scope_min_history_edges,
+        );
+    let mut scope_vertices =
+        make_connected_seed_vertices(brep, seed, options.make_connected_scope_seed_mode);
+    scope_vertices.extend(make_connected_seed_vertices_from_edge_ids(
+        brep,
+        &scope_seed_edges,
+    ));
+    scope_vertices.sort_unstable();
+    scope_vertices.dedup();
+    scope_seed_edges.sort_unstable();
+    scope_seed_edges.dedup();
+
+    report.make_connected_scope_seed_mode = Some(options.make_connected_scope_seed_mode);
+    report.make_connected_scope_history_ring_depth =
+        Some(options.make_connected_scope_history_ring_depth);
+    report.make_connected_scope_seed_source = Some(seed_source);
+    report.make_connected_scope_history_seed_edge_count = history_seed_edges;
+    report.make_connected_scope_heuristic_seed_edge_count = heuristic_seed_edges;
+    report.make_connected_scope_seed_vertices = scope_vertices.clone();
+    report.make_connected_scope_seed_edge_labels =
+        make_connected_seed_edge_labels(brep, &scope_seed_edges);
+    report.make_connected_scope_seed_edges = scope_seed_edges;
+
+    let (scoped_connected, scoped_report) = make_connected_iterative_scoped_with_growth_cap(
+        brep,
+        &scope_vertices,
+        options.make_connected_tolerance,
+        options.make_connected_max_passes,
+        options.make_connected_tolerance_growth,
+        options.make_connected_tolerance_cap,
+    );
+    let scoped_no_changes =
+        scoped_report.vertices_merged == 0 && scoped_report.small_edges_removed == 0;
+
+    if options.make_connected_scope_fallback_to_global && scoped_no_changes {
+        let (global_connected, global_report) = make_connected_iterative_with_growth_cap(
+            &scoped_connected,
+            options.make_connected_tolerance,
+            options.make_connected_max_passes,
+            options.make_connected_tolerance_growth,
+            options.make_connected_tolerance_cap,
+        );
+        report.make_connected_scope_fallback_applied = true;
+        return (
+            global_connected,
+            merge_make_connected_reports(scoped_report, global_report),
+        );
+    }
+
+    (scoped_connected, scoped_report)
 }
 
 /// Options for split-first workflows.
@@ -808,57 +911,12 @@ pub fn boolean_op_with_options(
     }
 
     if options.run_make_connected {
-        let (connected, connected_report) = if options.make_connected_scoped {
-            let seed = options
-                .make_connected_scope_seed_length
-                .max(options.make_connected_tolerance);
-            let (mut scope_seed_edges, history_seed_edges, heuristic_seed_edges, seed_source) =
-                select_scoped_seed_edges(
-                    &out,
-                    history_opt.as_ref(),
-                    seed,
-                    options.make_connected_scope_seed_mode,
-                    options.make_connected_scope_history_ring_depth,
-                    options.make_connected_scope_min_history_edges,
-                );
-            let mut scope_vertices = make_connected_seed_vertices(
-                &out,
-                seed,
-                options.make_connected_scope_seed_mode,
-            );
-            scope_vertices.extend(make_connected_seed_vertices_from_edge_ids(
-                &out,
-                &scope_seed_edges,
-            ));
-            scope_vertices.sort_unstable();
-            scope_vertices.dedup();
-            scope_seed_edges.sort_unstable();
-            scope_seed_edges.dedup();
-            report.make_connected_scope_seed_mode = Some(options.make_connected_scope_seed_mode);
-            report.make_connected_scope_seed_source = Some(seed_source);
-            report.make_connected_scope_history_seed_edge_count = history_seed_edges;
-            report.make_connected_scope_heuristic_seed_edge_count = heuristic_seed_edges;
-            report.make_connected_scope_seed_vertices = scope_vertices.clone();
-            report.make_connected_scope_seed_edge_labels =
-                make_connected_seed_edge_labels(&out, &scope_seed_edges);
-            report.make_connected_scope_seed_edges = scope_seed_edges;
-            make_connected_iterative_scoped_with_growth_cap(
-                &out,
-                &scope_vertices,
-                options.make_connected_tolerance,
-                options.make_connected_max_passes,
-                options.make_connected_tolerance_growth,
-                options.make_connected_tolerance_cap,
-            )
-        } else {
-            make_connected_iterative_with_growth_cap(
-                &out,
-                options.make_connected_tolerance,
-                options.make_connected_max_passes,
-                options.make_connected_tolerance_growth,
-                options.make_connected_tolerance_cap,
-            )
-        };
+        let (connected, connected_report) = run_make_connected_for_boolean_output(
+            &out,
+            history_opt.as_ref(),
+            &options,
+            &mut report,
+        );
         out = connected;
         report.made_connected = true;
         report.make_connected_report = Some(connected_report);
@@ -3376,12 +3434,13 @@ mod tests {
                     make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
                     make_connected_scoped: false,
                     make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
-                      make_connected_scope_history_ring_depth: 1,
+                                        make_connected_scope_history_ring_depth: 1,
+                                        make_connected_scope_fallback_to_global: true,
                     make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
                     make_connected_scope_min_history_edges: 2,
                     fuzzy_tol: 0.0,
-                       use_glue: false,
-                       glue_tolerance: tolerance::TOLERANCE_ABS,
+                                        use_glue: false,
+                                        glue_tolerance: tolerance::TOLERANCE_ABS,
                 },
                 fuzzy_retry_ladder: vec![1e-6, 1e-5],
                 retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
@@ -5056,6 +5115,7 @@ mod tests {
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: true,
@@ -5139,6 +5199,7 @@ mod tests {
             make_connected_scoped: true,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5163,6 +5224,7 @@ mod tests {
             report.make_connected_scope_seed_mode,
             Some(MakeConnectedScopeSeedMode::Hybrid)
         );
+        assert_eq!(report.make_connected_scope_history_ring_depth, Some(1));
         assert_eq!(
             report.make_connected_scope_seed_source,
             Some(MakeConnectedScopeSeedSource::Heuristic)
@@ -5197,6 +5259,7 @@ mod tests {
             make_connected_scoped: false,
             make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
             make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
             make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
             make_connected_scope_min_history_edges: 2,
             run_simplify: false,
@@ -5617,6 +5680,114 @@ mod tests {
         assert_eq!(history_count, 1);
         assert_eq!(source, MakeConnectedScopeSeedSource::History);
         assert_eq!(seed_edges, vec![0]);
+    }
+
+    #[test]
+    fn scoped_make_connected_falls_back_to_global_when_scope_is_empty() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let options = BooleanOptions {
+            run_make_connected: true,
+            make_connected_tolerance: 1e-6,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: 1e-4,
+            make_connected_scoped: true,
+            make_connected_scope_seed_length: 1e-6,
+            make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: true,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::MultiPcurveEdges,
+            make_connected_scope_min_history_edges: 1,
+            ..BooleanOptions::default()
+        };
+        let mut report = BooleanExecutionReport::default();
+
+        let (connected, mc_report) =
+            run_make_connected_for_boolean_output(&brep, None, &options, &mut report);
+
+        assert!(report.make_connected_scope_fallback_applied);
+        assert_eq!(report.make_connected_scope_history_ring_depth, Some(1));
+        assert_eq!(report.make_connected_scope_seed_vertices.len(), 0);
+        assert_eq!(report.make_connected_scope_seed_edges.len(), 0);
+        assert!(mc_report.vertices_merged >= 1);
+        assert!(connected.vertices.len() < brep.vertices.len());
+    }
+
+    #[test]
+    fn scoped_make_connected_can_disable_global_fallback() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+        brep.edges.push(Edge { start: 0, end: 3 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        let options = BooleanOptions {
+            run_make_connected: true,
+            make_connected_tolerance: 1e-6,
+            make_connected_max_passes: 3,
+            make_connected_tolerance_growth: 1.0,
+            make_connected_tolerance_cap: 1e-4,
+            make_connected_scoped: true,
+            make_connected_scope_seed_length: 1e-6,
+            make_connected_scope_history_ring_depth: 1,
+            make_connected_scope_fallback_to_global: false,
+            make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::MultiPcurveEdges,
+            make_connected_scope_min_history_edges: 1,
+            ..BooleanOptions::default()
+        };
+        let mut report = BooleanExecutionReport::default();
+
+        let (connected, mc_report) =
+            run_make_connected_for_boolean_output(&brep, None, &options, &mut report);
+
+        assert!(!report.make_connected_scope_fallback_applied);
+        assert_eq!(mc_report.vertices_merged, 0);
+        assert_eq!(mc_report.small_edges_removed, 0);
+        assert_eq!(connected.vertices.len(), brep.vertices.len());
     }
 
     #[test]
