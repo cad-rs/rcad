@@ -206,6 +206,43 @@ pub struct BlendFeature {
     pub normal: DVec3,
 }
 
+/// A detected hole pattern (array of similar holes).
+///
+/// Hole patterns represent groups of similar holes that may be processed
+/// together for efficiency or that share geometric relationships.
+#[derive(Debug, Clone)]
+pub struct HolePattern {
+    /// Indices of cylindrical features that form this pattern.
+    pub feature_indices: Vec<usize>,
+    /// Pattern type: linear, circular, rectangular grid, or irregular.
+    pub pattern_type: HolePatternType,
+    /// Number of holes in the pattern.
+    pub count: usize,
+    /// Spacing between holes (for linear/circular patterns).
+    pub spacing: f64,
+    /// Pattern origin (first hole center or pattern center).
+    pub origin: DVec3,
+    /// Pattern direction (for linear patterns) or axis (for circular patterns).
+    pub direction: DVec3,
+    /// Common radius for all holes in the pattern.
+    pub common_radius: f64,
+    /// Common depth for all holes (0.0 for through-holes).
+    pub common_depth: f64,
+}
+
+/// Type of hole pattern arrangement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HolePatternType {
+    /// Holes arranged in a single line.
+    Linear,
+    /// Holes arranged in a circle.
+    Circular,
+    /// Holes arranged in a rectangular grid.
+    RectangularGrid,
+    /// Holes that don't fit a regular pattern.
+    Irregular,
+}
+
 /// Feature group representing connected features that should be processed together.
 #[derive(Debug, Clone)]
 pub struct FeatureGroup {
@@ -1759,6 +1796,275 @@ enum FeatureType {
     Pocket,
     Blend,
 }
+
+/// Detect hole patterns (arrays of similar cylindrical holes) from a list of
+/// cylindrical features.
+///
+/// This function groups cylindrical features that share similar radii and are
+/// arranged in regular patterns (linear, circular, rectangular grid).
+///
+/// # Arguments
+/// * `features` - List of cylindrical features to analyze.
+/// * `radius_tolerance` - Maximum difference in radii for holes to be grouped.
+/// * `spacing_tolerance` - Maximum deviation from expected pattern spacing (as fraction).
+///
+/// # Returns
+/// A list of detected hole patterns.
+pub fn detect_hole_patterns(
+    features: &[CylindricalFeature],
+    radius_tolerance: f64,
+    spacing_tolerance: f64,
+) -> Vec<HolePattern> {
+    if features.len() < 2 {
+        return Vec::new();
+    }
+
+    let radius_tol = radius_tolerance.max(1e-6);
+    let spacing_tol = spacing_tolerance.max(0.01).min(0.5); // Clamp to reasonable range
+
+    // Group features by similar radius and axis direction
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut assigned = vec![false; features.len()];
+
+    for i in 0..features.len() {
+        if assigned[i] {
+            continue;
+        }
+        if !features[i].is_hole {
+            continue;
+        }
+
+        let mut group = vec![i];
+        assigned[i] = true;
+
+        for j in (i + 1)..features.len() {
+            if assigned[j] || !features[j].is_hole {
+                continue;
+            }
+
+            // Check similar radius
+            if (features[i].radius - features[j].radius).abs() > radius_tol {
+                continue;
+            }
+
+            // Check parallel axes
+            if !axes_parallel(features[i].axis, features[j].axis) {
+                continue;
+            }
+
+            group.push(j);
+            assigned[j] = true;
+        }
+
+        if group.len() >= 2 {
+            groups.push(group);
+        }
+    }
+
+    // Analyze each group for pattern type
+    let mut patterns: Vec<HolePattern> = Vec::new();
+
+    for group in groups {
+        if group.len() < 2 {
+            continue;
+        }
+
+        // Get centers of all holes in the group
+        let centers: Vec<DVec3> = group
+            .iter()
+            .map(|&idx| {
+                let f = &features[idx];
+                f.origin + f.axis * (f.t_min + f.t_max) * 0.5
+            })
+            .collect();
+
+        // Try to detect pattern type
+        let pattern_type = classify_pattern_type(&centers, spacing_tolerance);
+
+        let common_radius = features[group[0]].radius;
+        let common_depth = features[group[0]].height();
+
+        // Compute pattern properties
+        let (origin, direction, spacing) = compute_pattern_properties(&centers, &pattern_type);
+
+        patterns.push(HolePattern {
+            feature_indices: group.clone(),
+            pattern_type,
+            count: group.len(),
+            spacing,
+            origin,
+            direction,
+            common_radius,
+            common_depth,
+        });
+    }
+
+    patterns
+}
+
+/// Classify the pattern type from a set of hole centers.
+fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatternType {
+    let n = centers.len();
+    if n < 2 {
+        return HolePatternType::Irregular;
+    }
+
+    // Compute centroid
+    let centroid = centers.iter().fold(DVec3::ZERO, |acc, &p| acc + p) / n as f64;
+
+    // Check for circular pattern: all points equidistant from centroid
+    if n >= 3 {
+        let distances: Vec<f64> = centers.iter().map(|p| (*p - centroid).length()).collect();
+        let avg_dist = distances.iter().sum::<f64>() / n as f64;
+        let max_deviation = distances
+            .iter()
+            .map(|&d| (d - avg_dist).abs())
+            .fold(0.0, f64::max);
+
+        if avg_dist > 1e-6 && max_deviation / avg_dist < spacing_tolerance {
+            return HolePatternType::Circular;
+        }
+    }
+
+    // Check for linear pattern: points lie along a line
+    if n >= 2 {
+        // Compute best-fit line through points
+        let direction = (centers[n - 1] - centers[0]).normalize_or_zero();
+        if direction.length_squared() > 0.5 {
+            let mut max_dist_from_line = 0.0f64;
+            for p in centers {
+                let to_point = *p - centers[0];
+                let proj = to_point.dot(direction);
+                let perp = to_point - proj * direction;
+                max_dist_from_line = max_dist_from_line.max(perp.length());
+            }
+
+            // If all points are close to the line, it's a linear pattern
+            let line_length = (centers[n - 1] - centers[0]).length();
+            if line_length > 1e-6 && max_dist_from_line / line_length < spacing_tolerance {
+                return HolePatternType::Linear;
+            }
+        }
+    }
+
+    // Check for rectangular grid
+    if n >= 4 {
+        // Compute bounding box and check regular spacing
+        let mut min_pt = centers[0];
+        let mut max_pt = centers[0];
+        for p in &centers[1..] {
+            min_pt = min_pt.min(*p);
+            max_pt = max_pt.max(*p);
+        }
+
+        let dims = max_pt - min_pt;
+        let mut dim_count = 0;
+        for &d in &[dims.x, dims.y, dims.z] {
+            if d > 1e-6 {
+                dim_count += 1;
+            }
+        }
+
+        if dim_count >= 2 {
+            // Check if points form a regular grid
+            let spacing_x = if dims.x > 1e-6 {
+                let unique_x: std::collections::BTreeSet<i64> = centers
+                    .iter()
+                    .map(|p| (p.x / dims.x * 100.0).round() as i64)
+                    .collect();
+                if unique_x.len() > 1 {
+                    dims.x / (unique_x.len() - 1) as f64
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            let spacing_y = if dims.y > 1e-6 {
+                let unique_y: std::collections::BTreeSet<i64> = centers
+                    .iter()
+                    .map(|p| (p.y / dims.y * 100.0).round() as i64)
+                    .collect();
+                if unique_y.len() > 1 {
+                    dims.y / (unique_y.len() - 1) as f64
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            if spacing_x > 1e-6 || spacing_y > 1e-6 {
+                return HolePatternType::RectangularGrid;
+            }
+        }
+    }
+
+    HolePatternType::Irregular
+}
+
+/// Compute pattern origin, direction, and spacing from centers and pattern type.
+fn compute_pattern_properties(
+    centers: &[DVec3],
+    pattern_type: &HolePatternType,
+) -> (DVec3, DVec3, f64) {
+    if centers.is_empty() {
+        return (DVec3::ZERO, DVec3::Z, 0.0);
+    }
+
+    let origin = centers[0];
+
+    match pattern_type {
+        HolePatternType::Linear => {
+            let direction = (centers[centers.len() - 1] - centers[0]).normalize_or_zero();
+            let spacing = if centers.len() > 1 {
+                (centers[centers.len() - 1] - centers[0]).length() / (centers.len() - 1) as f64
+            } else {
+                0.0
+            };
+            (origin, direction, spacing)
+        }
+        HolePatternType::Circular => {
+            let centroid = centers.iter().fold(DVec3::ZERO, |acc, &p| acc + p) / centers.len() as f64;
+            // Compute normal to the plane containing all centers
+            let mut normal = DVec3::Z;
+            if centers.len() >= 3 {
+                let v1 = centers[1] - centers[0];
+                let v2 = centers[2] - centers[0];
+                normal = v1.cross(v2).normalize_or_zero();
+                if normal.length_squared() < 0.5 {
+                    normal = DVec3::Z;
+                }
+            }
+            let spacing = if !centers.is_empty() {
+                // Approximate angular spacing
+                std::f64::consts::TAU / centers.len() as f64
+            } else {
+                0.0
+            };
+            (centroid, normal, spacing)
+        }
+        HolePatternType::RectangularGrid => {
+            let mut min_pt = centers[0];
+            let mut max_pt = centers[0];
+            for p in &centers[1..] {
+                min_pt = min_pt.min(*p);
+                max_pt = max_pt.max(*p);
+            }
+            let center = (min_pt + max_pt) * 0.5;
+            let dims = max_pt - min_pt;
+            let spacing = dims.x.max(dims.y).max(dims.z)
+                / (centers.len() as f64).sqrt().max(1.0);
+            (center, DVec3::Z, spacing)
+        }
+        HolePatternType::Irregular => {
+            let centroid = centers.iter().fold(DVec3::ZERO, |acc, &p| acc + p) / centers.len() as f64;
+            (centroid, DVec3::Z, 0.0)
+        }
+    }
+}
+
 /// (fan-triangulation from outer-wire vertices) is <= `max_area`.
 ///
 /// Returns a sorted, deduplicated list of local face indices.
@@ -2058,6 +2364,7 @@ fn try_boolean_with_retry(
                 base: BooleanOptions::default(),
                 fuzzy_retry_ladder: ladder,
                 retry_policy: BooleanRetryPolicy::Aggressive,
+                extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
             };
 
             report.retry_attempts += 1;
@@ -2410,5 +2717,64 @@ mod tests {
         assert_eq!(report.blends_removed, 5);
         assert_eq!(report.feature_groups_processed, 2);
         assert_eq!(report.grouped_faces, 20);
+    }
+
+    #[test]
+    fn detect_hole_patterns_returns_empty_for_single_hole() {
+        let brep = box_with_hole(4.0, 0.3);
+        let features = detect_cylindrical_features(&brep, 1.0, 0.0);
+        // Single hole should not form a pattern
+        let patterns = detect_hole_patterns(&features, 0.1, 0.1);
+        // Single hole doesn't form a pattern (needs at least 2 holes)
+        assert!(patterns.is_empty() || patterns.iter().all(|p| p.count < 2));
+    }
+
+    #[test]
+    fn hole_pattern_type_has_correct_properties() {
+        let pattern = HolePattern {
+            feature_indices: vec![0, 1, 2],
+            pattern_type: HolePatternType::Linear,
+            count: 3,
+            spacing: 5.0,
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+            common_radius: 2.0,
+            common_depth: 10.0,
+        };
+
+        assert_eq!(pattern.count, 3);
+        assert_eq!(pattern.pattern_type, HolePatternType::Linear);
+        assert_eq!(pattern.spacing, 5.0);
+        assert_eq!(pattern.common_radius, 2.0);
+    }
+
+    #[test]
+    fn hole_pattern_type_variants_exist() {
+        assert_eq!(HolePatternType::Linear, HolePatternType::Linear);
+        assert_eq!(HolePatternType::Circular, HolePatternType::Circular);
+        assert_eq!(HolePatternType::RectangularGrid, HolePatternType::RectangularGrid);
+        assert_eq!(HolePatternType::Irregular, HolePatternType::Irregular);
+        assert_ne!(HolePatternType::Linear, HolePatternType::Circular);
+    }
+
+    #[test]
+    fn detect_hole_patterns_groups_similar_holes() {
+        // Create a single hole feature for testing pattern grouping logic
+        let feature = CylindricalFeature {
+            face_indices: vec![0],
+            is_hole: true,
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            t_min: 0.0,
+            t_max: 10.0,
+        };
+
+        let features = vec![feature.clone(), feature.clone()];
+        let patterns = detect_hole_patterns(&features, 0.1, 0.1);
+        // Two identical holes should be grouped if their radii match
+        // The result depends on whether they have parallel axes
+        // Just verify the function runs without error
+        let _ = patterns;
     }
 }

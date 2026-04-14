@@ -1,4 +1,27 @@
-use rcad_kernel::{BRep, PersistentNamingHooks, TopoEntityRef};
+use rcad_kernel::{
+    persistent_naming::{
+        NamingEvent, OperationStats, PersistentId, PersistentNamingEngine,
+    },
+    BRep, PersistentNamingHooks, TopoEntityRef,
+};
+
+/// Types of boolean operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanOperationType {
+    Union,
+    Intersection,
+    Difference,
+}
+
+impl From<BooleanOperationType> for rcad_kernel::persistent_naming::OperationType {
+    fn from(op: BooleanOperationType) -> Self {
+        match op {
+            BooleanOperationType::Union => rcad_kernel::persistent_naming::OperationType::BooleanUnion,
+            BooleanOperationType::Intersection => rcad_kernel::persistent_naming::OperationType::BooleanIntersection,
+            BooleanOperationType::Difference => rcad_kernel::persistent_naming::OperationType::BooleanDifference,
+        }
+    }
+}
 
 /// Tracks the origin of each face in a boolean operation result.
 ///
@@ -183,6 +206,216 @@ impl BooleanHistory {
             .iter()
             .filter(|o| matches!(o, SolidOrigin::Mixed))
             .count()
+    }
+
+    /// Convert this boolean history to naming events for integration with PersistentNamingEngine.
+    ///
+    /// This creates a sequence of naming events that represent the entity mappings
+    /// captured by this history. The events can be applied to a PersistentNamingEngine
+    /// to update its naming context.
+    ///
+    /// # Arguments
+    /// * `_result_brep` - The result BRep (used for entity counts in future extensions).
+    /// * `_entity_count_before_a` - Total entity count in solid A before the operation (for future use).
+    /// * `_entity_count_before_b` - Total entity count in solid B before the operation (for future use).
+    ///
+    /// # Returns
+    /// A vector of naming events representing the boolean operation's effect on naming.
+    pub fn to_naming_events(
+        &self,
+        _result_brep: &BRep,
+        _entity_count_before_a: usize,
+        _entity_count_before_b: usize,
+    ) -> Vec<NamingEvent> {
+        let mut events = Vec::new();
+
+        // Process face origins - create propagation events for faces from A/B.
+        for (result_idx, origin) in self.face_origins.iter().enumerate() {
+            let result_entity_id = Self::face_entity_id(result_idx);
+            match origin {
+                FaceOrigin::FromA(source_idx) => {
+                    let source_entity_id = Self::face_entity_id(*source_idx);
+                    // We'll create a generic propagation event.
+                    // The persistent ID will be assigned by the engine.
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL, // Placeholder - engine will assign
+                    });
+                }
+                FaceOrigin::FromB(source_idx) => {
+                    let source_entity_id = Self::face_entity_id(*source_idx);
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+                FaceOrigin::Generated => {
+                    // Generated faces get new names.
+                    events.push(NamingEvent::Assigned {
+                        entity_id: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+            }
+        }
+
+        // Process edge origins - handle splits specially.
+        let mut split_sources: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        for (result_idx, origin) in self.edge_origins.iter().enumerate() {
+            let result_entity_id = Self::edge_entity_id(result_idx);
+            match origin {
+                EdgeOrigin::FromA(source_idx) => {
+                    let source_entity_id = Self::edge_entity_id(*source_idx);
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+                EdgeOrigin::FromB(source_idx) => {
+                    let source_entity_id = Self::edge_entity_id(*source_idx);
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+                EdgeOrigin::SplitFromA(source_idx) => {
+                    split_sources.entry(*source_idx).or_default().push(result_idx);
+                }
+                EdgeOrigin::SplitFromB(source_idx) => {
+                    split_sources.entry(*source_idx).or_default().push(result_idx);
+                }
+                EdgeOrigin::Generated => {
+                    events.push(NamingEvent::Assigned {
+                        entity_id: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+            }
+        }
+
+        // Create split events for edges that were split.
+        for (source_idx, target_indices) in split_sources {
+            let source_entity_id = Self::edge_entity_id(source_idx);
+            let target_entity_ids: Vec<u64> = target_indices.iter()
+                .map(|&idx| Self::edge_entity_id(idx))
+                .collect();
+            // Create placeholder persistent IDs - engine will assign actual IDs.
+            let target_persistent_ids: Vec<PersistentId> = target_indices.iter()
+                .map(|_| PersistentId::NULL)
+                .collect();
+            events.push(NamingEvent::Split {
+                source_entity: source_entity_id,
+                target_entities: target_entity_ids,
+                source_persistent_id: PersistentId::NULL,
+                target_persistent_ids,
+            });
+        }
+
+        // Process vertex origins.
+        for (result_idx, origin) in self.vertex_origins.iter().enumerate() {
+            let result_entity_id = Self::vertex_entity_id(result_idx);
+            match origin {
+                VertexOrigin::FromA(source_idx) => {
+                    let source_entity_id = Self::vertex_entity_id(*source_idx);
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+                VertexOrigin::FromB(source_idx) => {
+                    let source_entity_id = Self::vertex_entity_id(*source_idx);
+                    events.push(NamingEvent::Propagated {
+                        from_entity: source_entity_id,
+                        to_entity: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+                VertexOrigin::Intersection => {
+                    events.push(NamingEvent::Assigned {
+                        entity_id: result_entity_id,
+                        persistent_id: PersistentId::NULL,
+                    });
+                }
+            }
+        }
+
+        events
+    }
+
+    /// Helper to compute entity ID for a face index.
+    /// Uses a simple encoding: entity_type * 1e9 + index.
+    fn face_entity_id(idx: usize) -> u64 {
+        1_000_000_000 + idx as u64
+    }
+
+    /// Helper to compute entity ID for an edge index.
+    fn edge_entity_id(idx: usize) -> u64 {
+        2_000_000_000 + idx as u64
+    }
+
+    /// Helper to compute entity ID for a vertex index.
+    fn vertex_entity_id(idx: usize) -> u64 {
+        3_000_000_000 + idx as u64
+    }
+
+    /// Apply this boolean history to a PersistentNamingEngine.
+    ///
+    /// This method begins an operation on the engine, applies all naming events,
+    /// and finalizes the operation with statistics.
+    ///
+    /// # Arguments
+    /// * `engine` - The naming engine to update.
+    /// * `result_brep` - The result BRep.
+    /// * `operation_type` - The type of boolean operation.
+    /// * `entity_count_before_a` - Entity count in solid A before operation.
+    /// * `entity_count_before_b` - Entity count in solid B before operation.
+    ///
+    /// # Returns
+    /// The operation ID assigned by the engine.
+    pub fn apply_to_naming_engine(
+        &self,
+        engine: &mut PersistentNamingEngine,
+        result_brep: &BRep,
+        operation_type: BooleanOperationType,
+        entity_count_before_a: usize,
+        entity_count_before_b: usize,
+    ) -> rcad_kernel::persistent_naming::OperationId {
+        let op_type = operation_type.into();
+
+        let op_id = engine.begin_operation(op_type, None);
+
+        let events = self.to_naming_events(
+            result_brep,
+            entity_count_before_a,
+            entity_count_before_b,
+        );
+
+        // Apply events to the engine's context.
+        for event in &events {
+            engine.apply_and_track(event.clone());
+        }
+
+        let stats = OperationStats {
+            entity_count_before: entity_count_before_a + entity_count_before_b,
+            entity_count_after: result_brep.vertices.len() + result_brep.edges.len() +
+                result_brep.solids.iter()
+                    .flat_map(|s| s.shells.iter())
+                    .map(|sh| sh.faces.len())
+                    .sum::<usize>(),
+            names_preserved: events.iter().filter(|e| matches!(e, NamingEvent::Propagated { .. })).count(),
+            names_lost: 0, // Would need before context to determine
+            names_generated: events.iter().filter(|e| matches!(e, NamingEvent::Assigned { .. })).count(),
+            conflicts_resolved: 0,
+        };
+
+        engine.finalize_operation(stats);
+
+        op_id
     }
 
     /// Propagate source persistent names through this boolean history into the

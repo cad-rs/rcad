@@ -52,7 +52,8 @@
 
 use crate::{BRep, Edge, Face, PCurve, Vertex};
 use glam::DVec3;
-use std::collections::{HashSet, VecDeque};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BRepGraph
@@ -1079,7 +1080,7 @@ pub struct BRepGraphCheckpoint {
 /// committed.
 ///
 /// Analogous to OCCT `BRepGraph_History` event entries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BRepGraphHistoryEvent {
     /// Optional user-provided label, for example "boolean_post_cleanup".
     pub label: Option<String>,
@@ -1096,6 +1097,11 @@ pub struct BRepGraphHistoryEvent {
     pub face_count_after: usize,
     /// True if any adjacency table changed.
     pub topology_changed: bool,
+    /// Naming events recorded during this mutation (optional).
+    ///
+    /// Use `BRepGraphHistory::replay_with_naming` to reconstruct the naming
+    /// context from these events.
+    pub naming_events: Vec<crate::persistent_naming::NamingEvent>,
 }
 
 /// In-memory history log for graph mutations.
@@ -1104,6 +1110,50 @@ pub struct BRepGraphHistoryEvent {
 #[derive(Debug, Clone, Default)]
 pub struct BRepGraphHistory {
     pub events: Vec<BRepGraphHistoryEvent>,
+    /// Optional index by label for fast lookup.
+    label_index: HashMap<String, Vec<usize>>,
+}
+
+/// Filter predicate for history replay.
+#[derive(Debug, Clone)]
+pub enum HistoryFilter {
+    /// Include only events with the specified label.
+    WithLabel(String),
+    /// Include only events where topology changed.
+    TopologyChanged,
+    /// Include only events affecting specific vertices.
+    AffectsVertices(Vec<usize>),
+    /// Include only events affecting specific edges.
+    AffectsEdges(Vec<usize>),
+    /// Include only events affecting specific faces.
+    AffectsFaces(Vec<usize>),
+    /// Include only events with naming events.
+    HasNamingEvents,
+    /// Combine multiple filters (AND logic).
+    And(Vec<HistoryFilter>),
+    /// Combine multiple filters (OR logic).
+    Or(Vec<HistoryFilter>),
+}
+
+/// Summary statistics for a BRepGraphHistory.
+#[derive(Debug, Clone, Default)]
+pub struct BRepGraphHistorySummary {
+    /// Total number of events.
+    pub total_events: usize,
+    /// Number of events where topology changed.
+    pub topology_changes: usize,
+    /// Number of events with naming changes.
+    pub naming_changes: usize,
+    /// Total vertices touched across all events.
+    pub total_vertices_touched: usize,
+    /// Total edges touched across all events.
+    pub total_edges_touched: usize,
+    /// Total faces touched across all events.
+    pub total_faces_touched: usize,
+    /// Unique labels used.
+    pub unique_labels: Vec<String>,
+    /// Event index range where topology changes occurred.
+    pub topology_change_indices: Vec<usize>,
 }
 
 impl BRepGraphHistory {
@@ -1112,6 +1162,13 @@ impl BRepGraphHistory {
     }
 
     pub fn push(&mut self, event: BRepGraphHistoryEvent) {
+        // Update label index.
+        if let Some(ref label) = event.label {
+            self.label_index
+                .entry(label.clone())
+                .or_default()
+                .push(self.events.len());
+        }
         self.events.push(event);
     }
 
@@ -1126,6 +1183,257 @@ impl BRepGraphHistory {
     pub fn last(&self) -> Option<&BRepGraphHistoryEvent> {
         self.events.last()
     }
+
+    /// Get an event by index.
+    pub fn get(&self, index: usize) -> Option<&BRepGraphHistoryEvent> {
+        self.events.get(index)
+    }
+
+    /// Get all events with a specific label.
+    pub fn events_by_label(&self, label: &str) -> Vec<&BRepGraphHistoryEvent> {
+        self.label_index
+            .get(label)
+            .map(|indices| indices.iter().filter_map(|&i| self.events.get(i)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all events where topology changed.
+    pub fn topology_change_events(&self) -> impl Iterator<Item = &BRepGraphHistoryEvent> {
+        self.events.iter().filter(|e| e.topology_changed)
+    }
+
+    /// Get all events with naming events attached.
+    pub fn events_with_naming(&self) -> impl Iterator<Item = &BRepGraphHistoryEvent> {
+        self.events.iter().filter(|e| !e.naming_events.is_empty())
+    }
+
+    /// Generate a summary of the history.
+    pub fn summary(&self) -> BRepGraphHistorySummary {
+        let mut summary = BRepGraphHistorySummary::default();
+        let mut label_set = HashSet::new();
+
+        for (idx, event) in self.events.iter().enumerate() {
+            summary.total_events += 1;
+
+            if event.topology_changed {
+                summary.topology_changes += 1;
+                summary.topology_change_indices.push(idx);
+            }
+
+            if !event.naming_events.is_empty() {
+                summary.naming_changes += 1;
+            }
+
+            summary.total_vertices_touched += event.touched_vertices.len();
+            summary.total_edges_touched += event.touched_edges.len();
+            summary.total_faces_touched += event.touched_faces.len();
+
+            if let Some(ref label) = event.label {
+                label_set.insert(label.clone());
+            }
+        }
+
+        summary.unique_labels = label_set.into_iter().collect();
+        summary.unique_labels.sort();
+
+        summary
+    }
+
+    /// Check if a filter matches an event.
+    fn matches_filter(&self, event: &BRepGraphHistoryEvent, filter: &HistoryFilter) -> bool {
+        match filter {
+            HistoryFilter::WithLabel(label) => event.label.as_ref() == Some(label),
+            HistoryFilter::TopologyChanged => event.topology_changed,
+            HistoryFilter::AffectsVertices(vertices) => {
+                event.touched_vertices.iter().any(|v| vertices.contains(v))
+            }
+            HistoryFilter::AffectsEdges(edges) => {
+                event.touched_edges.iter().any(|e| edges.contains(e))
+            }
+            HistoryFilter::AffectsFaces(faces) => {
+                event.touched_faces.iter().any(|f| faces.contains(f))
+            }
+            HistoryFilter::HasNamingEvents => !event.naming_events.is_empty(),
+            HistoryFilter::And(filters) => {
+                filters.iter().all(|f| self.matches_filter(event, f))
+            }
+            HistoryFilter::Or(filters) => {
+                filters.iter().any(|f| self.matches_filter(event, f))
+            }
+        }
+    }
+
+    /// Filter events matching the given predicate.
+    pub fn filter(&self, filter: &HistoryFilter) -> Vec<&BRepGraphHistoryEvent> {
+        self.events
+            .iter()
+            .filter(|e| self.matches_filter(e, filter))
+            .collect()
+    }
+
+    /// Replay all naming events in the history to reconstruct a naming engine.
+    ///
+    /// This iterates through all events in chronological order and applies
+    /// their `naming_events` to a fresh `PersistentNamingEngine`.
+    ///
+    /// Returns the reconstructed engine with the final naming context.
+    pub fn replay_with_naming(&self) -> crate::persistent_naming::PersistentNamingEngine {
+        use crate::persistent_naming::{NamingRule, PersistentNamingEngine};
+
+        let mut engine = PersistentNamingEngine::new(NamingRule::Hybrid);
+
+        for event in &self.events {
+            for naming_event in &event.naming_events {
+                engine.apply_event(naming_event);
+            }
+        }
+
+        engine
+    }
+
+    /// Replay naming events from a specific event index.
+    ///
+    /// This is useful for partial replays or undo operations.
+    pub fn replay_naming_from(&self, start_index: usize) -> crate::persistent_naming::PersistentNamingEngine {
+        use crate::persistent_naming::{NamingRule, PersistentNamingEngine};
+
+        let mut engine = PersistentNamingEngine::new(NamingRule::Hybrid);
+
+        for event in self.events.iter().skip(start_index) {
+            for naming_event in &event.naming_events {
+                engine.apply_event(naming_event);
+            }
+        }
+
+        engine
+    }
+
+    /// Replay naming events matching a filter.
+    pub fn replay_naming_with_filter(&self, filter: &HistoryFilter) -> crate::persistent_naming::PersistentNamingEngine {
+        use crate::persistent_naming::{NamingRule, PersistentNamingEngine};
+
+        let mut engine = PersistentNamingEngine::new(NamingRule::Hybrid);
+
+        for event in self.events.iter().filter(|e| self.matches_filter(e, filter)) {
+            for naming_event in &event.naming_events {
+                engine.apply_event(naming_event);
+            }
+        }
+
+        engine
+    }
+
+    /// Replay to a specific point in history (for undo support).
+    ///
+    /// Returns the engine state as it was after applying events up to (but not including)
+    /// the event at `stop_before_index`.
+    pub fn replay_until(&self, stop_before_index: usize) -> crate::persistent_naming::PersistentNamingEngine {
+        use crate::persistent_naming::{NamingRule, PersistentNamingEngine};
+
+        let mut engine = PersistentNamingEngine::new(NamingRule::Hybrid);
+
+        for event in self.events.iter().take(stop_before_index) {
+            for naming_event in &event.naming_events {
+                engine.apply_event(naming_event);
+            }
+        }
+
+        engine
+    }
+
+    /// Extract all naming events into a separate `NamingHistory`.
+    pub fn extract_naming_history(&self) -> crate::persistent_naming::NamingHistory {
+        let mut history = crate::persistent_naming::NamingHistory::new();
+
+        for event in &self.events {
+            for naming_event in &event.naming_events {
+                history.push(naming_event.clone());
+            }
+        }
+
+        history
+    }
+
+    /// Extract naming events within a range.
+    pub fn extract_naming_history_range(&self, start: usize, end: usize) -> crate::persistent_naming::NamingHistory {
+        let mut history = crate::persistent_naming::NamingHistory::new();
+
+        for event in self.events.iter().take(end).skip(start) {
+            for naming_event in &event.naming_events {
+                history.push(naming_event.clone());
+            }
+        }
+
+        history
+    }
+
+    /// Merge another history into this one.
+    ///
+    /// All events from `other` are appended to this history.
+    /// Label indices are updated accordingly.
+    pub fn merge(&mut self, other: &BRepGraphHistory) {
+        let offset = self.events.len();
+
+        // Append all events.
+        for event in &other.events {
+            self.events.push(event.clone());
+        }
+
+        // Merge label indices from other with correct offset.
+        for (label, indices) in &other.label_index {
+            let entry = self.label_index.entry(label.clone()).or_default();
+            for &idx in indices {
+                entry.push(offset + idx);
+            }
+        }
+    }
+
+    /// Clear all history.
+    pub fn clear(&mut self) {
+        self.events.clear();
+        self.label_index.clear();
+    }
+
+    /// Truncate history to the first N events (for undo support).
+    pub fn truncate(&mut self, len: usize) {
+        if len >= self.events.len() {
+            return;
+        }
+
+        self.events.truncate(len);
+
+        // Rebuild label index.
+        self.label_index.clear();
+        for (idx, event) in self.events.iter().enumerate() {
+            if let Some(ref label) = event.label {
+                self.label_index
+                    .entry(label.clone())
+                    .or_default()
+                    .push(idx);
+            }
+        }
+    }
+
+    /// Create a checkpoint that can be used to restore history state.
+    pub fn checkpoint(&self) -> BRepGraphHistoryCheckpoint {
+        BRepGraphHistoryCheckpoint {
+            events: self.events.clone(),
+            label_index: self.label_index.clone(),
+        }
+    }
+
+    /// Restore from a checkpoint.
+    pub fn restore(&mut self, checkpoint: &BRepGraphHistoryCheckpoint) {
+        self.events = checkpoint.events.clone();
+        self.label_index = checkpoint.label_index.clone();
+    }
+}
+
+/// A checkpoint of history state for undo/redo support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BRepGraphHistoryCheckpoint {
+    events: Vec<BRepGraphHistoryEvent>,
+    label_index: HashMap<String, Vec<usize>>,
 }
 
 impl BRepGraph {
@@ -1440,6 +1748,7 @@ impl<'g> BRepGraphMutGuard<'g> {
                 || self.checkpoint.vertex_to_edges != self.graph.vertex_to_edges
                 || self.checkpoint.vertex_to_faces != self.graph.vertex_to_faces
                 || self.checkpoint.edge_endpoints != self.graph.edge_endpoints,
+            naming_events: Vec::new(),
         }
     }
 }
@@ -2126,5 +2435,305 @@ mod tests {
         let (start_point, end_point) = tool.edge_points(0).expect("edge 0 should have endpoints");
         assert_eq!(start_point, brep.vertices[brep.edges[0].start].point);
         assert_eq!(end_point, brep.vertices[brep.edges[0].end].point);
+    }
+
+    // ── BRepGraphHistory advanced tests ────────────────────────────────────────
+
+    #[test]
+    fn history_events_by_label() {
+        let mut history = BRepGraphHistory::new();
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("operation_a".to_string()),
+            touched_vertices: vec![0],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("operation_b".to_string()),
+            touched_vertices: vec![1],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("operation_a".to_string()),
+            touched_vertices: vec![2],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let op_a_events = history.events_by_label("operation_a");
+        assert_eq!(op_a_events.len(), 2);
+
+        let op_b_events = history.events_by_label("operation_b");
+        assert_eq!(op_b_events.len(), 1);
+    }
+
+    #[test]
+    fn history_summary() {
+        let mut history = BRepGraphHistory::new();
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("op1".to_string()),
+            touched_vertices: vec![0, 1],
+            touched_edges: vec![0],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: true,
+            naming_events: vec![crate::persistent_naming::NamingEvent::Assigned {
+                entity_id: 1,
+                persistent_id: crate::persistent_naming::PersistentId(1),
+            }],
+        });
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("op2".to_string()),
+            touched_vertices: vec![2],
+            touched_edges: vec![1, 2],
+            touched_faces: vec![0],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let summary = history.summary();
+        assert_eq!(summary.total_events, 2);
+        assert_eq!(summary.topology_changes, 1);
+        assert_eq!(summary.naming_changes, 1);
+        assert_eq!(summary.total_vertices_touched, 3);
+        assert_eq!(summary.total_edges_touched, 3);
+        assert_eq!(summary.total_faces_touched, 1);
+        assert_eq!(summary.unique_labels, vec!["op1".to_string(), "op2".to_string()]);
+    }
+
+    #[test]
+    fn history_filter_topology_changed() {
+        let mut history = BRepGraphHistory::new();
+
+        history.push(BRepGraphHistoryEvent {
+            label: None,
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: true,
+            naming_events: vec![],
+        });
+
+        history.push(BRepGraphHistoryEvent {
+            label: None,
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let filtered = history.filter(&HistoryFilter::TopologyChanged);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn history_filter_affects_faces() {
+        let mut history = BRepGraphHistory::new();
+
+        history.push(BRepGraphHistoryEvent {
+            label: None,
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![0, 1],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        history.push(BRepGraphHistoryEvent {
+            label: None,
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![2, 3],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let filtered = history.filter(&HistoryFilter::AffectsFaces(vec![1, 3]));
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn history_truncate() {
+        let mut history = BRepGraphHistory::new();
+
+        for i in 0..5 {
+            history.push(BRepGraphHistoryEvent {
+                label: Some(format!("op_{}", i)),
+                touched_vertices: vec![],
+                touched_edges: vec![],
+                touched_faces: vec![],
+                vertex_count_before: 8,
+                vertex_count_after: 8,
+                edge_count_before: 12,
+                edge_count_after: 12,
+                face_count_before: 6,
+                face_count_after: 6,
+                topology_changed: false,
+                naming_events: vec![],
+            });
+        }
+
+        assert_eq!(history.len(), 5);
+
+        history.truncate(3);
+        assert_eq!(history.len(), 3);
+
+        // Verify label index is rebuilt correctly.
+        let op_2_events = history.events_by_label("op_2");
+        assert_eq!(op_2_events.len(), 1);
+
+        let op_4_events = history.events_by_label("op_4");
+        assert!(op_4_events.is_empty());
+    }
+
+    #[test]
+    fn history_checkpoint_and_restore() {
+        let mut history = BRepGraphHistory::new();
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("first".to_string()),
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let checkpoint = history.checkpoint();
+
+        history.push(BRepGraphHistoryEvent {
+            label: Some("second".to_string()),
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        assert_eq!(history.len(), 2);
+
+        history.restore(&checkpoint);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.events_by_label("first").len(), 1);
+        assert!(history.events_by_label("second").is_empty());
+    }
+
+    #[test]
+    fn history_merge() {
+        let mut history1 = BRepGraphHistory::new();
+        history1.push(BRepGraphHistoryEvent {
+            label: Some("from_h1".to_string()),
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        let mut history2 = BRepGraphHistory::new();
+        history2.push(BRepGraphHistoryEvent {
+            label: Some("from_h2".to_string()),
+            touched_vertices: vec![],
+            touched_edges: vec![],
+            touched_faces: vec![],
+            vertex_count_before: 8,
+            vertex_count_after: 8,
+            edge_count_before: 12,
+            edge_count_after: 12,
+            face_count_before: 6,
+            face_count_after: 6,
+            topology_changed: false,
+            naming_events: vec![],
+        });
+
+        history1.merge(&history2);
+
+        assert_eq!(history1.len(), 2);
+        assert_eq!(history1.events_by_label("from_h1").len(), 1);
+        assert_eq!(history1.events_by_label("from_h2").len(), 1);
     }
 }

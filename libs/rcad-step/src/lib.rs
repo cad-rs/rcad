@@ -349,6 +349,8 @@ pub struct StepDocumentMetadata {
     pub fea_boundary_conditions: Vec<StepFeaBoundaryCondition>,
     /// FEA loads (AP242 FEAMEDIAN_LOAD).
     pub fea_loads: Vec<StepFeaLoad>,
+    /// FEA node groups (AP242 FEA_NODE_GROUP).
+    pub fea_node_groups: Vec<StepFeaNodeGroup>,
 }
 
 impl StepDocumentMetadata {
@@ -394,6 +396,7 @@ impl StepDocumentMetadata {
         lines.push(format!("FEA material properties: {}", self.fea_material_properties.len()));
         lines.push(format!("FEA boundary conditions: {}", self.fea_boundary_conditions.len()));
         lines.push(format!("FEA loads: {}", self.fea_loads.len()));
+        lines.push(format!("FEA node groups: {}", self.fea_node_groups.len()));
         lines.join("\n")
     }
 }
@@ -859,7 +862,7 @@ pub struct StepDerivedShapeAspect {
 
 // ── FEA (Finite Element Analysis) entities (AP242) ────────────────────────────
 
-/// FEA model definition (AP242 FEAMEDIAN_MODEL).
+/// FEA model definition (AP242 FEA_MODEL, FEA_MODEL_3D, or FEAMEDIAN_MODEL).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaModel {
     pub entity_id: u64,
@@ -867,7 +870,7 @@ pub struct StepFeaModel {
     pub description: Option<String>,
 }
 
-/// FEA mesh (AP242 FEAMEDIAN_MESH).
+/// FEA mesh (AP242 FEA_MESH, FEA_MESH_3D, or FEAMEDIAN_MESH).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaMesh {
     pub entity_id: u64,
@@ -876,7 +879,7 @@ pub struct StepFeaMesh {
     pub element_count: Option<u64>,
 }
 
-/// FEA node set (AP242 FEAMEDIAN_NODE_SET).
+/// FEA node set (AP242 FEA_NODE_SET or FEAMEDIAN_NODE_SET).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaNodeSet {
     pub entity_id: u64,
@@ -884,7 +887,7 @@ pub struct StepFeaNodeSet {
     pub model_id: Option<u64>,
 }
 
-/// FEA element set (AP242 FEAMEDIAN_ELEMENT_SET).
+/// FEA element set (AP242 FEA_ELEMENT_SET or FEAMEDIAN_ELEMENT_SET).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaElementSet {
     pub entity_id: u64,
@@ -893,7 +896,16 @@ pub struct StepFeaElementSet {
     pub element_type: Option<String>,
 }
 
-/// FEA material property (AP242 FEAMEDIAN_MATERIAL_PROPERTY).
+/// FEA node group (AP242 FEA_NODE_GROUP).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaNodeGroup {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub model_id: Option<u64>,
+    pub node_count: Option<u64>,
+}
+
+/// FEA material property (AP242 FEA_MATERIAL_PROPERTY or FEAMEDIAN_MATERIAL_PROPERTY).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaMaterialProperty {
     pub entity_id: u64,
@@ -903,7 +915,7 @@ pub struct StepFeaMaterialProperty {
     pub unit: Option<String>,
 }
 
-/// FEA boundary condition (AP242 FEAMEDIAN_BOUNDARY_CONDITION).
+/// FEA boundary condition (AP242 FEA_BOUNDARY_CONDITION or FEAMEDIAN_BOUNDARY_CONDITION).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaBoundaryCondition {
     pub entity_id: u64,
@@ -912,7 +924,7 @@ pub struct StepFeaBoundaryCondition {
     pub node_set_id: Option<u64>,
 }
 
-/// FEA load (AP242 FEAMEDIAN_LOAD).
+/// FEA load (AP242 FEA_LOAD or FEAMEDIAN_LOAD).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StepFeaLoad {
     pub entity_id: u64,
@@ -2237,7 +2249,11 @@ fn extract_fea_models(content: &str) -> Vec<StepFeaModel> {
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MODEL") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_MODEL" | "FEA_MODEL_3D" | "FEAMEDIAN_MODEL"
+        ) {
             continue;
         }
         let name = extract_nth_string_arg(args, 0);
@@ -2263,7 +2279,11 @@ fn extract_fea_meshes(content: &str) -> Vec<StepFeaMesh> {
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MESH") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_MESH" | "FEA_MESH_3D" | "FEAMEDIAN_MESH"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2292,7 +2312,11 @@ fn extract_fea_node_sets(content: &str) -> Vec<StepFeaNodeSet> {
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_NODE_SET") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_NODE_SET" | "FEAMEDIAN_NODE_SET"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2319,7 +2343,11 @@ fn extract_fea_element_sets(content: &str) -> Vec<StepFeaElementSet> {
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_ELEMENT_SET") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_ELEMENT_SET" | "FEAMEDIAN_ELEMENT_SET"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2348,7 +2376,11 @@ fn extract_fea_material_properties(content: &str) -> Vec<StepFeaMaterialProperty
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_MATERIAL_PROPERTY") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_MATERIAL_PROPERTY" | "FEAMEDIAN_MATERIAL_PROPERTY"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2379,7 +2411,11 @@ fn extract_fea_boundary_conditions(content: &str) -> Vec<StepFeaBoundaryConditio
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_BOUNDARY_CONDITION") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_BOUNDARY_CONDITION" | "FEAMEDIAN_BOUNDARY_CONDITION"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2408,7 +2444,11 @@ fn extract_fea_loads(content: &str) -> Vec<StepFeaLoad> {
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if !entity.eq_ignore_ascii_case("FEAMEDIAN_LOAD") {
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_LOAD" | "FEAMEDIAN_LOAD"
+        ) {
             continue;
         }
         let parts = split_top_level(args, ',');
@@ -2423,6 +2463,37 @@ fn extract_fea_loads(content: &str) -> Vec<StepFeaLoad> {
             load_type,
             magnitude,
             direction,
+        });
+    }
+    out
+}
+
+
+fn extract_fea_node_groups(content: &str) -> Vec<StepFeaNodeGroup> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("FEA_NODE_GROUP") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let model_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        let node_count = parts.get(2).and_then(|p| parse_uint_arg(p.trim()));
+        out.push(StepFeaNodeGroup {
+            entity_id: id,
+            name,
+            model_id,
+            node_count,
         });
     }
     out
@@ -2655,6 +2726,7 @@ impl StepReader {
             fea_material_properties: extract_fea_material_properties(content),
             fea_boundary_conditions: extract_fea_boundary_conditions(content),
             fea_loads: extract_fea_loads(content),
+            fea_node_groups: extract_fea_node_groups(content),
         };
 
         Ok((brep, metadata))
@@ -7293,6 +7365,95 @@ END-ISO-10303-21;
         assert_eq!(loads[0].load_type.as_deref(), Some("PRESSURE"));
         assert!((loads[0].magnitude.unwrap() - 100.0).abs() < 1e-6);
         assert_eq!(loads[0].direction.unwrap(), [0.0, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn extract_fea_models_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=FEA_MODEL('model1','Standard FEA model');\n#101=FEA_MODEL_3D('model2','3D FEA model');\n#102=FEAMEDIAN_MODEL('model3','Median model');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let models = extract_fea_models(step);
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].name.as_deref(), Some("model1"));
+        assert_eq!(models[1].name.as_deref(), Some("model2"));
+        assert_eq!(models[2].name.as_deref(), Some("model3"));
+    }
+
+    #[test]
+    fn extract_fea_meshes_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#200=FEA_MESH('mesh1',1000,500);\n#201=FEA_MESH_3D('mesh2',2000,800);\n#202=FEAMEDIAN_MESH('mesh3',500,200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let meshes = extract_fea_meshes(step);
+        assert_eq!(meshes.len(), 3);
+        assert_eq!(meshes[0].name.as_deref(), Some("mesh1"));
+        assert_eq!(meshes[1].name.as_deref(), Some("mesh2"));
+        assert_eq!(meshes[2].name.as_deref(), Some("mesh3"));
+        assert_eq!(meshes[0].node_count, Some(1000));
+        assert_eq!(meshes[1].node_count, Some(2000));
+        assert_eq!(meshes[2].node_count, Some(500));
+    }
+
+    #[test]
+    fn extract_fea_node_sets_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#300=FEA_NODE_SET('nodes1',#100);\n#301=FEAMEDIAN_NODE_SET('nodes2',#101);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let node_sets = extract_fea_node_sets(step);
+        assert_eq!(node_sets.len(), 2);
+        assert_eq!(node_sets[0].name.as_deref(), Some("nodes1"));
+        assert_eq!(node_sets[1].name.as_deref(), Some("nodes2"));
+    }
+
+    #[test]
+    fn extract_fea_element_sets_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#400=FEA_ELEMENT_SET('elements1',#100,'TETRAHEDRON');\n#401=FEAMEDIAN_ELEMENT_SET('elements2',#101,'HEXAHEDRON');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let element_sets = extract_fea_element_sets(step);
+        assert_eq!(element_sets.len(), 2);
+        assert_eq!(element_sets[0].name.as_deref(), Some("elements1"));
+        assert_eq!(element_sets[1].name.as_deref(), Some("elements2"));
+        assert_eq!(element_sets[0].element_type.as_deref(), Some("TETRAHEDRON"));
+        assert_eq!(element_sets[1].element_type.as_deref(), Some("HEXAHEDRON"));
+    }
+
+    #[test]
+    fn extract_fea_material_properties_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#500=FEA_MATERIAL_PROPERTY('YoungsModulus','ELASTIC_MODULUS',210000.0,'MPa');\n#501=FEAMEDIAN_MATERIAL_PROPERTY('Density','DENSITY',7850.0,'kg/m3');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let props = extract_fea_material_properties(step);
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].name.as_deref(), Some("YoungsModulus"));
+        assert_eq!(props[1].name.as_deref(), Some("Density"));
+        assert!((props[0].value.unwrap() - 210000.0).abs() < 1e-6);
+        assert!((props[1].value.unwrap() - 7850.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extract_fea_boundary_conditions_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#600=FEA_BOUNDARY_CONDITION('fixed','FIXED',#300);\n#601=FEAMEDIAN_BOUNDARY_CONDITION('symmetry','SYMMETRY',#301);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let bcs = extract_fea_boundary_conditions(step);
+        assert_eq!(bcs.len(), 2);
+        assert_eq!(bcs[0].name.as_deref(), Some("fixed"));
+        assert_eq!(bcs[1].name.as_deref(), Some("symmetry"));
+        assert_eq!(bcs[0].condition_type.as_deref(), Some("FIXED"));
+        assert_eq!(bcs[1].condition_type.as_deref(), Some("SYMMETRY"));
+    }
+
+    #[test]
+    fn extract_fea_loads_parses_multiple_entity_types() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#700=FEA_LOAD('force1','FORCE',1000.0,(1.0,0.0,0.0));\n#701=FEAMEDIAN_LOAD('pressure1','PRESSURE',500.0,(0.0,0.0,-1.0));\nENDSEC;\nEND-ISO-10303-21;\n";
+        let loads = extract_fea_loads(step);
+        assert_eq!(loads.len(), 2);
+        assert_eq!(loads[0].name.as_deref(), Some("force1"));
+        assert_eq!(loads[1].name.as_deref(), Some("pressure1"));
+        assert_eq!(loads[0].load_type.as_deref(), Some("FORCE"));
+        assert_eq!(loads[1].load_type.as_deref(), Some("PRESSURE"));
+    }
+
+    #[test]
+    fn extract_fea_node_groups_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#800=FEA_NODE_GROUP('boundary_nodes',#100,50);\n#801=FEA_NODE_GROUP('internal_nodes',#100,200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let groups = extract_fea_node_groups(step);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].entity_id, 800);
+        assert_eq!(groups[0].name.as_deref(), Some("boundary_nodes"));
+        assert_eq!(groups[0].model_id, Some(100));
+        assert_eq!(groups[0].node_count, Some(50));
+        assert_eq!(groups[1].name.as_deref(), Some("internal_nodes"));
+        assert_eq!(groups[1].node_count, Some(200));
     }
 
     #[test]

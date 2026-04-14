@@ -66,6 +66,9 @@ pub use brep_repair::{
     make_connected_iterative_with_growth_cap,
     make_connected_iterative_scoped_with_growth_cap,
     propagate_tolerances, propagate_tolerances_post_boolean,
+    // Enhanced edge sewing and adaptive tolerance
+    EdgeSewConfig, EnhancedEdgeSewReport, sew_edges_enhanced,
+    AdaptiveToleranceConfig, AdaptiveToleranceMergeReport, merge_vertices_adaptive,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
@@ -76,8 +79,8 @@ pub use healing::{
 };
 pub use builder::{BooleanError, BooleanOpType};
 pub use history::{
-    BooleanHistory, BooleanNamingPropagationReport, EdgeOrigin, FaceOrigin, ShellOrigin,
-    SolidOrigin, VertexOrigin,
+    BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
+    ShellOrigin, SolidOrigin, VertexOrigin,
 };
 pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
 pub use imprint::{

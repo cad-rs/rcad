@@ -120,6 +120,52 @@ impl SubFace {
                 // Use inward offset so the sample is just inside the cylinder surface
                 centroid + inward * (TOLERANCE_ABS * 10.0)
             }
+            Surface3::Torus(t) => {
+                use rcad_kernel::geom::SurfaceEval;
+                // Use UV centroid for a precise point on the torus surface.
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    t.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    t.center + (t.major_radius + t.minor_radius) * DVec3::X
+                };
+                // Offset toward the tube center so the sample is inside regardless of face normal orientation.
+                let axis = t.axis.normalize_or_zero();
+                let local = surface_pt - t.center;
+                let axial = local.dot(axis);
+                let radial = local - axial * axis;
+                let inward = if radial.length_squared() > 1e-18 {
+                    let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
+                    (tube_center - surface_pt).normalize_or_zero()
+                } else {
+                    -self.normal
+                };
+                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+            }
+            Surface3::Cone(c) => {
+                use rcad_kernel::geom::SurfaceEval;
+                // Use UV centroid for a precise point on the cone surface.
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    c.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    c.point_at(0.0, 1.0)
+                };
+                // Offset toward the cone axis so the sample is inside regardless of face normal orientation.
+                let axis = c.axis_dir();
+                let local = surface_pt - c.apex;
+                let axial = local.dot(axis);
+                let axis_pt = c.apex + axis * axial;
+                let inward = (axis_pt - surface_pt).normalize_or_zero();
+                let inward = if inward.length_squared() > 0.5 {
+                    inward
+                } else {
+                    -self.normal
+                };
+                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+            }
             _ => {
                 let centroid = if self.boundary.is_empty() {
                     DVec3::ZERO
@@ -480,6 +526,55 @@ impl<'a> BooleanBuilder<'a> {
         self
     }
 
+    fn pcurve_matches_face_surface(
+        &self,
+        pcurve: &rcad_kernel::geom::Curve2d,
+        surface: &Surface3,
+        ic: &IntersectionCurve,
+    ) -> bool {
+        let samples: Vec<DVec3> = if ic.polyline.len() >= 3 {
+            let mid = ic.polyline.len() / 2;
+            vec![ic.polyline[0], ic.polyline[mid], *ic.polyline.last().unwrap()]
+        } else if ic.polyline.len() == 2 {
+            vec![ic.polyline[0], ic.polyline[1]]
+        } else {
+            let [t0, t1] = ic.t_range;
+            let tm = 0.5 * (t0 + t1);
+            vec![ic.curve.point_at(t0), ic.curve.point_at(tm), ic.curve.point_at(t1)]
+        };
+
+        let params: Vec<f64> = match pcurve {
+            rcad_kernel::geom::Curve2d::BSpline(_) => {
+                if samples.len() <= 1 {
+                    vec![0.0]
+                } else {
+                    (0..samples.len())
+                        .map(|i| i as f64 / (samples.len() - 1) as f64)
+                        .collect()
+                }
+            }
+            _ => {
+                let [t0, t1] = ic.t_range;
+                if samples.len() <= 1 {
+                    vec![t0]
+                } else {
+                    (0..samples.len())
+                        .map(|i| t0 + (t1 - t0) * i as f64 / (samples.len() - 1) as f64)
+                        .collect()
+                }
+            }
+        };
+
+        let mut max_err: f64 = 0.0;
+        for (sample, t) in samples.iter().zip(params.iter().copied()) {
+            let uv = pcurve.point_at(t);
+            let lifted = surface.point_at(uv.x, uv.y);
+            max_err = max_err.max((lifted - *sample).length());
+        }
+
+        max_err.is_finite() && max_err <= 1e-3
+    }
+
     pub fn build(&self) -> Result<BRep, BooleanError> {
         let (brep, _) = self.build_with_history()?;
         Ok(brep)
@@ -529,7 +624,9 @@ impl<'a> BooleanBuilder<'a> {
 
                 let keep = match self.op {
                     BooleanOpType::Union => class == Classification::Out,
-                    BooleanOpType::Intersection => class == Classification::In,
+                    BooleanOpType::Intersection => {
+                        class == Classification::In || class == Classification::On
+                    }
                     BooleanOpType::Difference => class == Classification::In,
                 };
 
@@ -633,7 +730,9 @@ impl<'a> BooleanBuilder<'a> {
 
                         let keep = match self.op {
                             BooleanOpType::Union => class == Classification::Out,
-                            BooleanOpType::Intersection => class == Classification::In,
+                            BooleanOpType::Intersection => {
+                                class == Classification::In || class == Classification::On
+                            }
                             BooleanOpType::Difference => class == Classification::In,
                         };
 
@@ -703,7 +802,9 @@ impl<'a> BooleanBuilder<'a> {
             Surface3::Cylinder(_)
             | Surface3::Sphere(_)
             | Surface3::Cone(_)
-            | Surface3::Torus(_) => self.split_curved_face_parametric(face_idx),
+            | Surface3::Torus(_)
+            | Surface3::BSpline(_)
+            | Surface3::Bezier(_) => self.split_curved_face_parametric(face_idx),
             _ => {
                 // Other curved surfaces — return whole face for now
                 let boundary = face
@@ -940,8 +1041,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             (Surface3::Cone(c1), Surface3::Cone(c2)) => {
                 axis_parallel(c1.axis, c2.axis)
-                    && (c1.apex - c2.apex).length() <= tol * 2.0
-                    && (c1.radius - c2.radius).abs() <= tol
+                    && (c1.apex_point() - c2.apex_point()).length() <= tol * 2.0
                     && (c1.half_angle_rad - c2.half_angle_rad).abs() <= tol
             }
             (Surface3::Torus(t1), Surface3::Torus(t2)) => {
@@ -979,6 +1079,102 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
         true
+    }
+
+    /// Fast check for potential glued face pairs using bounding box pre-filter.
+    ///
+    /// This optimization reduces the number of full boundary comparisons by
+    /// first checking if face bounding boxes overlap.
+    fn fast_glue_candidate_check(&self, f1: usize, f2: usize) -> bool {
+        let a = &self.ds.faces[f1];
+        let b = &self.ds.faces[f2];
+
+        // Quick origin check
+        if a.origin == b.origin {
+            return false;
+        }
+
+        // Quick normal check (must be anti-parallel for glue)
+        let na_len2 = a.normal.length_squared();
+        let nb_len2 = b.normal.length_squared();
+        if na_len2 <= TOLERANCE_ABS || nb_len2 <= TOLERANCE_ABS {
+            return false;
+        }
+        let na = a.normal / na_len2.sqrt();
+        let nb = b.normal / nb_len2.sqrt();
+        if na.dot(nb) > -0.95 {
+            return false;
+        }
+
+        // Bounding box overlap check
+        let pts1 = self.ds.face_boundary_points(f1);
+        let pts2 = self.ds.face_boundary_points(f2);
+
+        if pts1.is_empty() || pts2.is_empty() {
+            return false;
+        }
+
+        // Compute bounding boxes
+        let mut min1 = pts1[0];
+        let mut max1 = pts1[0];
+        for p in &pts1[1..] {
+            min1 = min1.min(*p);
+            max1 = max1.max(*p);
+        }
+
+        let mut min2 = pts2[0];
+        let mut max2 = pts2[0];
+        for p in &pts2[1..] {
+            min2 = min2.min(*p);
+            max2 = max2.max(*p);
+        }
+
+        // Check for bounding box overlap with tolerance margin
+        let tol = self.glue_tolerance;
+        let overlap = min1.x - tol <= max2.x && max1.x + tol >= min2.x
+            && min1.y - tol <= max2.y && max1.y + tol >= min2.y
+            && min1.z - tol <= max2.z && max1.z + tol >= min2.z;
+
+        overlap
+    }
+
+    /// Detect all glued face pairs using optimized algorithm.
+    ///
+    /// This function uses bounding box pre-filtering to reduce the number
+    /// of expensive boundary comparisons.
+    fn detect_all_glued_pairs(&self, a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize)> {
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+        for &fi in a_faces {
+            for &fj in b_faces {
+                // Fast pre-filter
+                if !self.fast_glue_candidate_check(fi, fj) {
+                    continue;
+                }
+
+                // Full compatibility check
+                if self.faces_form_glued_pair(fi, fj) {
+                    pairs.push((fi, fj));
+                }
+            }
+        }
+
+        pairs
+    }
+
+    /// Build glued pairs information for fast path processing.
+    ///
+    /// Returns a map from face index to its glued counterpart.
+    fn build_glue_map(&self, a_faces: &[usize], b_faces: &[usize]) -> HashMap<usize, usize> {
+        let pairs = self.detect_all_glued_pairs(a_faces, b_faces);
+        let mut glue_map: HashMap<usize, usize> = HashMap::new();
+
+        for (fi, fj) in pairs {
+            glue_map.insert(fi, fj);
+            glue_map.insert(fj, fi);
+        }
+
+        glue_map
     }
 
     /// Split a curved face (Cylinder, Sphere, Cone, Torus) by intersection polylines.
@@ -1270,16 +1466,41 @@ impl<'a> BooleanBuilder<'a> {
         for trim in &trim_polylines {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
-                let halves = split_uv_polygon_by_trim(&poly, trim);
+                // Skip invalid polygons
+                if !is_valid_uv_polygon(&poly) {
+                    continue;
+                }
+                let effective_trim = if u_period > 0.0 {
+                    periodic_trim_to_open_isoline(&poly, trim, u_period)
+                        .unwrap_or_else(|| trim.clone())
+                } else {
+                    trim.clone()
+                };
+                let halves = split_uv_polygon_by_trim(&poly, &effective_trim);
                 next.extend(halves);
             }
             uv_polygons = next;
         }
 
+        // Handle seam crossings for periodic surfaces
+        if u_period > 0.0 {
+            let seam_u = 0.0; // Standard seam at u=0 (or u=-π for sphere)
+            uv_polygons = uv_polygons
+                .into_iter()
+                .flat_map(|poly| {
+                    if is_valid_uv_polygon(&poly) {
+                        handle_periodic_seam_crossing(&poly, u_period, seam_u)
+                    } else {
+                        vec![]
+                    }
+                })
+                .collect();
+        }
+
         // Map each UV sub-polygon back to 3D
         uv_polygons
             .into_iter()
-            .filter(|p| p.len() >= 3)
+            .filter(|p| p.len() >= 3 && is_valid_uv_polygon(p))
             .map(|uv_poly| {
                 let n = uv_poly.len() as f64;
                 let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
@@ -1301,7 +1522,19 @@ impl<'a> BooleanBuilder<'a> {
 
                 let boundary: Vec<DVec3> = match &surface {
                     Surface3::Sphere(_) | Surface3::Cone(_) => {
-                        curved_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                        // Use enhanced degenerate point handling for sphere poles and cone apex
+                        let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                        let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                        let near_degenerate = match &surface {
+                            Surface3::Sphere(_) => v_min < 0.01 || v_max > std::f64::consts::PI - 0.01,
+                            Surface3::Cone(_) => v_min < 0.01,
+                            _ => false,
+                        };
+                        if near_degenerate {
+                            handle_degenerate_points(&uv_poly, &surface)
+                        } else {
+                            curved_subface_boundary_3d(&uv_poly, &trim_polylines, &surface)
+                        }
                     }
                     _ => uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect(),
                 };
@@ -1373,6 +1606,19 @@ impl<'a> BooleanBuilder<'a> {
                     return ic.pcurve_on_b.clone();
                 }
             }
+        }
+
+        let ic = &self.ds.intersection_curves[curve_idx];
+        let surface = &self.ds.faces[face_idx].surface;
+        if let Some(pcurve) = &ic.pcurve_on_a
+            && self.pcurve_matches_face_surface(pcurve, surface, ic)
+        {
+            return Some(pcurve.clone());
+        }
+        if let Some(pcurve) = &ic.pcurve_on_b
+            && self.pcurve_matches_face_surface(pcurve, surface, ic)
+        {
+            return Some(pcurve.clone());
         }
         None
     }
@@ -1472,6 +1718,311 @@ fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
     false
 }
 
+/// Detect and handle UV seam crossings for periodic surfaces.
+/// Returns a list of split polygons if the UV polygon crosses the seam.
+fn handle_periodic_seam_crossing(
+    uv_poly: &[DVec2],
+    u_period: f64,
+    seam_u: f64,
+) -> Vec<Vec<DVec2>> {
+    let n = uv_poly.len();
+    if n < 3 || u_period <= 0.0 {
+        return vec![uv_poly.to_vec()];
+    }
+
+    // Find all edges that cross the seam
+    let mut seam_crossings: Vec<(usize, f64, DVec2)> = Vec::new();
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let u_i = uv_poly[i].x;
+        let u_j = uv_poly[j].x;
+
+        // Check for seam crossing (jump > period/2)
+        let du = u_j - u_i;
+        if du.abs() > u_period * 0.5 {
+            // Compute intersection point with seam
+            let t = if du > 0.0 {
+                (seam_u + u_period - u_i) / du
+            } else {
+                (seam_u - u_i) / du
+            };
+
+            if t > 0.0 && t < 1.0 {
+                let v_i = uv_poly[i].y;
+                let v_j = uv_poly[j].y;
+                let seam_v = v_i + t * (v_j - v_i);
+                let seam_pt = DVec2::new(seam_u, seam_v);
+                seam_crossings.push((i, t, seam_pt));
+            }
+        }
+    }
+
+    // If no crossings or odd number of crossings (invalid), return original
+    if seam_crossings.is_empty() || seam_crossings.len() % 2 != 0 {
+        return vec![uv_poly.to_vec()];
+    }
+
+    // Sort crossings by edge index
+    seam_crossings.sort_by_key(|&(idx, _, _)| idx);
+
+    // For now, handle the simple case of exactly 2 crossings
+    if seam_crossings.len() == 2 {
+        let (idx1, _, pt1) = seam_crossings[0];
+        let (idx2, _, pt2) = seam_crossings[1];
+
+        // Build two sub-polygons
+        let mut poly1: Vec<DVec2> = Vec::new();
+        let mut poly2: Vec<DVec2> = Vec::new();
+
+        // poly1: from crossing1 to crossing2 (wrapping the other way)
+        poly1.push(pt1);
+        for i in (idx1 + 1)..=idx2 {
+            if i < n {
+                poly1.push(uv_poly[i]);
+            }
+        }
+        poly1.push(pt2);
+
+        // poly2: from crossing2 back to crossing1
+        poly2.push(pt2);
+        for i in (idx2 + 1)..n {
+            poly2.push(uv_poly[i]);
+        }
+        for i in 0..=idx1 {
+            poly2.push(uv_poly[i]);
+        }
+        poly2.push(pt1);
+
+        let mut result = Vec::new();
+        if poly1.len() >= 3 {
+            result.push(poly1);
+        }
+        if poly2.len() >= 3 {
+            result.push(poly2);
+        }
+
+        if result.is_empty() {
+            vec![uv_poly.to_vec()]
+        } else {
+            result
+        }
+    } else {
+        // Multiple crossing pairs - complex case, return original for now
+        vec![uv_poly.to_vec()]
+    }
+}
+
+/// Detect degenerate points (poles, apex) and handle them in UV polygon.
+/// Returns a modified 3D boundary that correctly handles surface singularities.
+fn handle_degenerate_points(
+    uv_poly: &[DVec2],
+    surface: &Surface3,
+) -> Vec<DVec3> {
+    match surface {
+        Surface3::Sphere(s) => {
+            // Sphere has two poles at v=0 and v=π
+            let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+            let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+            let mut boundary_3d = Vec::new();
+            let pole_tol = 0.01; // Tolerance for detecting near-pole
+
+            // Check if polygon touches the north pole (v ≈ 0)
+            let touches_north_pole = v_min < pole_tol;
+            // Check if polygon touches the south pole (v ≈ π)
+            let touches_south_pole = v_max > std::f64::consts::PI - pole_tol;
+
+            if touches_north_pole || touches_south_pole {
+                // Sample the UV polygon edges more densely near poles
+                let pole_point = if touches_north_pole {
+                    s.center + s.axis * s.radius // North pole
+                } else {
+                    s.center - s.axis * s.radius // South pole
+                };
+
+                // Sample UV edges
+                let n = uv_poly.len();
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    let a = uv_poly[i];
+                    let b = uv_poly[j];
+
+                    // More samples if edge is near pole
+                    let near_pole = (a.y < pole_tol || a.y > std::f64::consts::PI - pole_tol)
+                        || (b.y < pole_tol || b.y > std::f64::consts::PI - pole_tol);
+                    let n_samples = if near_pole { 16 } else { 4 };
+
+                    for k in 0..n_samples {
+                        let t = k as f64 / n_samples as f64;
+                        let uv = DVec2::new(
+                            a.x + t * (b.x - a.x),
+                            a.y + t * (b.y - a.y),
+                        );
+
+                        // Clamp v to avoid pole singularity
+                        let v_clamped = uv.y.clamp(0.001, std::f64::consts::PI - 0.001);
+                        let pt = s.point_at(uv.x, v_clamped);
+
+                        // Skip points very close to pole (will add pole point separately)
+                        if (pt - pole_point).length() > s.radius * 0.1 {
+                            boundary_3d.push(pt);
+                        }
+                    }
+                }
+
+                // Add pole point if polygon contains it
+                if touches_north_pole || touches_south_pole {
+                    // Check if pole is inside the UV polygon
+                    let pole_uv = if touches_north_pole {
+                        DVec2::new(0.0, 0.0)
+                    } else {
+                        DVec2::new(0.0, std::f64::consts::PI)
+                    };
+
+                    // Add pole point at appropriate location
+                    boundary_3d.push(pole_point);
+                }
+            } else {
+                // No pole involvement - standard sampling
+                for &uv in uv_poly {
+                    boundary_3d.push(surface.point_at(uv.x, uv.y));
+                }
+            }
+
+            // Deduplicate
+            dedup_3d_points(&boundary_3d)
+        }
+        Surface3::Cone(c) => {
+            // Cone has apex at v=0
+            let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+
+            if v_min < 0.01 {
+                // Near apex - need special handling
+                let apex = c.apex_point();
+                let mut boundary_3d = Vec::new();
+
+                let n = uv_poly.len();
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    let a = uv_poly[i];
+                    let b = uv_poly[j];
+
+                    // Check if edge crosses near apex
+                    let near_apex = a.y < 0.1 || b.y < 0.1;
+                    let n_samples = if near_apex { 16 } else { 4 };
+
+                    for k in 0..n_samples {
+                        let t = k as f64 / n_samples as f64;
+                        let uv = DVec2::new(
+                            a.x + t * (b.x - a.x),
+                            a.y + t * (b.y - a.y),
+                        );
+
+                        // Clamp v to avoid apex singularity
+                        let v_clamped = uv.y.max(0.001);
+                        let pt = c.point_at(uv.x, v_clamped);
+
+                        // Skip points very close to apex
+                        if (pt - apex).length() > 0.01 {
+                            boundary_3d.push(pt);
+                        }
+                    }
+                }
+
+                // Add apex if polygon contains it
+                boundary_3d.push(apex);
+
+                dedup_3d_points(&boundary_3d)
+            } else {
+                // Standard case
+                uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect()
+            }
+        }
+        _ => {
+            // No degenerate points - standard mapping
+            uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect()
+        }
+    }
+}
+
+/// Deduplicate 3D points within tolerance.
+fn dedup_3d_points(points: &[DVec3]) -> Vec<DVec3> {
+    let mut result: Vec<DVec3> = Vec::new();
+    let tol_sq = TOLERANCE_ABS * TOLERANCE_ABS;
+
+    for &p in points {
+        if result.iter().all(|q: &DVec3| (p - *q).length_squared() > tol_sq) {
+            result.push(p);
+        }
+    }
+
+    result
+}
+
+/// Check if a UV polygon is valid (has sufficient area and no degenerate edges).
+fn is_valid_uv_polygon(poly: &[DVec2]) -> bool {
+    if poly.len() < 3 {
+        return false;
+    }
+
+    // Check for sufficient area (shoelace formula)
+    let mut area = 0.0;
+    let n = poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        area += poly[i].x * poly[j].y;
+        area -= poly[j].x * poly[i].y;
+    }
+    area = area.abs() * 0.5;
+
+    // Area should be significant
+    area > 1e-10
+}
+
+fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) -> Option<Vec<DVec2>> {
+    if poly.len() < 3 || trim.len() < 3 || u_period <= 0.0 {
+        return None;
+    }
+
+    let trim_start = trim[0];
+    let trim_end = trim[trim.len() - 1];
+    let is_closed = (trim_start - trim_end).length_squared() < 1e-6;
+    if !is_closed {
+        return None;
+    }
+
+    let u_min_trim = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let u_max_trim = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let v_min_trim = trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let v_max_trim = trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let u_span = u_max_trim - u_min_trim;
+    let v_span = v_max_trim - v_min_trim;
+
+    let poly_u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let poly_u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let poly_v_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let poly_v_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let poly_v_span = poly_v_max - poly_v_min;
+
+    if u_span < 0.9 * u_period {
+        return None;
+    }
+    if poly_v_span <= 1e-12 || v_span > 0.1 * poly_v_span {
+        return None;
+    }
+
+    let v_level = trim.iter().map(|p| p.y).sum::<f64>() / trim.len() as f64;
+    if v_level <= poly_v_min + 1e-9 || v_level >= poly_v_max - 1e-9 {
+        return None;
+    }
+
+    Some(vec![
+        DVec2::new(poly_u_min, v_level),
+        DVec2::new(poly_u_max, v_level),
+    ])
+}
+
 /// Split a 2D UV polygon by a 2D trim polyline.
 ///
 /// Algorithm:
@@ -1519,14 +2070,13 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         return vec![poly.to_vec()];
     }
 
-    // Find closest point on each polygon edge for trim_start and trim_end,
-    // returning (edge_index, parameter t in [0,1], projected point).
+    // Find closest point on each polygon edge for a query point.
+    // Returns (edge_index, t_param, projected_point).
     let closest_on_boundary = |q: DVec2| -> (usize, f64, DVec2) {
         let mut best_edge = 0usize;
         let mut best_t = 0.0f64;
         let mut best_pt = poly[0];
         let mut best_dist = f64::INFINITY;
-
         for i in 0..n {
             let j = (i + 1) % n;
             let a = poly[i];
@@ -1550,8 +2100,80 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         (best_edge, best_t, best_pt)
     };
 
-    let (edge_s, _t_s, pt_s) = closest_on_boundary(trim_start);
-    let (edge_e, _t_e, pt_e) = closest_on_boundary(trim_end);
+    // Cast a 2D ray from `origin` along `dir` and return the first boundary edge
+    // intersection with t > -eps (including slightly behind for on-boundary starts).
+    // Returns None if no intersection is found within a reasonable range.
+    let ray_to_boundary = |origin: DVec2, dir: DVec2| -> Option<(usize, DVec2)> {
+        let dir_len = dir.length();
+        if dir_len < 1e-12 {
+            return None;
+        }
+        let dir = dir / dir_len;
+        let mut best_t = f64::INFINITY;
+        let mut best_edge = 0usize;
+        let mut best_pt = poly[0];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = poly[i];
+            let b = poly[j];
+            let ab = b - a;
+            // Solve: origin + t*dir = a + s*ab
+            // => t*(dir×ab) = (a-origin)×ab  (2D cross: x.x*y.y - x.y*y.x)
+            let denom = dir.x * ab.y - dir.y * ab.x;
+            if denom.abs() < 1e-14 {
+                continue; // parallel
+            }
+            let oa = a - origin;
+            let t_ray = (oa.x * ab.y - oa.y * ab.x) / denom;
+            let s_seg = (oa.x * dir.y - oa.y * dir.x) / denom;
+            if t_ray > -1e-9 && s_seg >= -1e-9 && s_seg <= 1.0 + 1e-9 && t_ray < best_t {
+                best_t = t_ray;
+                best_edge = i;
+                best_pt = a + s_seg.clamp(0.0, 1.0) * ab;
+            }
+        }
+        if best_t.is_finite() {
+            Some((best_edge, best_pt))
+        } else {
+            None
+        }
+    };
+
+    // Compute UV polygon bounding box to compute a "near-boundary" threshold
+    let u_span = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
+        - poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let v_span = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
+        - poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let boundary_snap_tol = (u_span + v_span) * 0.05;
+
+    // For each trim endpoint: if it lies close to the boundary already, use closest_on_boundary.
+    // Otherwise, extrapolate along the trim tangent to find the proper boundary edge.
+    let locate_endpoint =
+        |endpoint: DVec2, tangent_from: DVec2| -> (usize, DVec2) {
+            let (_, _, proj) = closest_on_boundary(endpoint);
+            let dist_to_bnd = (endpoint - proj).length();
+            if dist_to_bnd <= boundary_snap_tol {
+                // Already on/near boundary
+                let (edge, _, pt) = closest_on_boundary(endpoint);
+                (edge, pt)
+            } else {
+                // Interior endpoint — cast ray along trim tangent toward boundary
+                let tang = (endpoint - tangent_from).normalize_or_zero();
+                if let Some((edge, pt)) = ray_to_boundary(endpoint, tang) {
+                    (edge, pt)
+                } else {
+                    // Fallback to closest projection
+                    let (edge, _, pt) = closest_on_boundary(endpoint);
+                    (edge, pt)
+                }
+            }
+        };
+
+    let interior_from_start = if trim.len() >= 2 { trim[1] } else { trim_end };
+    let interior_from_end = if trim.len() >= 2 { trim[trim.len() - 2] } else { trim_start };
+
+    let (edge_s, pt_s) = locate_endpoint(trim_start, interior_from_start);
+    let (edge_e, pt_e) = locate_endpoint(trim_end, interior_from_end);
 
     // Ensure ia <= ib for consistent polygon walking
     let (ia, ib, p_a, p_b, trim_forward) = if edge_s <= edge_e {

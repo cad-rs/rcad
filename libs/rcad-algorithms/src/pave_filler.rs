@@ -54,6 +54,96 @@ impl<'a> PaveFiller<'a> {
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
     }
 
+    /// Configure glue with adaptive tolerance based on input geometry.
+    ///
+    /// This function analyzes the input shapes and computes an appropriate
+    /// glue tolerance based on geometry characteristics such as:
+    /// - Minimum feature size
+    /// - Face area distribution
+    /// - Edge length distribution
+    ///
+    /// # Arguments
+    /// * `enable` - Whether to enable glue detection.
+    /// * `base_tolerance` - Base tolerance to start with.
+    /// * `adaptive` - Whether to use adaptive tolerance adjustment.
+    ///
+    /// # Returns
+    /// The computed adaptive glue tolerance.
+    pub fn configure_glue_adaptive(&mut self, enable: bool, base_tolerance: f64, adaptive: bool) -> f64 {
+        if !enable {
+            self.use_glue = false;
+            return TOLERANCE_ABS;
+        }
+
+        self.use_glue = true;
+
+        if !adaptive {
+            self.glue_tolerance = base_tolerance.max(TOLERANCE_ABS);
+            return self.glue_tolerance;
+        }
+
+        // Compute adaptive tolerance based on geometry
+        let adaptive_tol = self.compute_adaptive_glue_tolerance(base_tolerance);
+        self.glue_tolerance = adaptive_tol;
+        adaptive_tol
+    }
+
+    /// Compute adaptive glue tolerance based on geometry characteristics.
+    fn compute_adaptive_glue_tolerance(&self, base_tolerance: f64) -> f64 {
+        let mut min_feature_size = f64::INFINITY;
+        let mut min_edge_length = f64::INFINITY;
+        let mut min_face_area = f64::INFINITY;
+
+        // Analyze edge lengths
+        for edge in &self.ds.edges {
+            let p1 = edge.curve.point_at(edge.t_range[0]);
+            let p2 = edge.curve.point_at(edge.t_range[1]);
+            let length = (p2 - p1).length();
+            if length > 1e-10 {
+                min_edge_length = min_edge_length.min(length);
+            }
+        }
+
+        // Analyze face areas (approximate from bounding box)
+        for face in &self.ds.faces {
+            let pts = self.ds.face_boundary_points(
+                self.ds.faces.iter().position(|f| std::ptr::eq(f, face)).unwrap_or(0)
+            );
+            if pts.len() >= 3 {
+                // Compute bounding box diagonal as area proxy
+                let mut min_pt = pts[0];
+                let mut max_pt = pts[0];
+                for p in &pts[1..] {
+                    min_pt = min_pt.min(*p);
+                    max_pt = max_pt.max(*p);
+                }
+                let diag = (max_pt - min_pt).length();
+                if diag > 1e-10 {
+                    min_face_area = min_face_area.min(diag * diag);
+                }
+            }
+        }
+
+        // Use minimum feature size to bound tolerance
+        if min_edge_length.is_finite() {
+            min_feature_size = min_feature_size.min(min_edge_length);
+        }
+        if min_face_area.is_finite() {
+            min_feature_size = min_feature_size.min(min_face_area.sqrt());
+        }
+
+        // Compute adaptive tolerance
+        let adaptive_tol = if min_feature_size.is_finite() && min_feature_size > 0.0 {
+            // Use a fraction of minimum feature size, but at least base tolerance
+            let feature_based = min_feature_size * 0.01;
+            base_tolerance.max(feature_based).min(min_feature_size * 0.1)
+        } else {
+            base_tolerance
+        };
+
+        adaptive_tol.max(TOLERANCE_ABS)
+    }
+
     /// Effective tolerance for coincidence tests in all passes.
     ///
     /// Returns the DS `fuzzy_tol` (already clamped to ≥ `TOLERANCE_ABS`).

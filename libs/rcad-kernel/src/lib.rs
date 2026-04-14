@@ -141,12 +141,19 @@ pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
-pub use brep_graph::{BRepGraph, BRepGraphBuilder, BRepGraphCheckpoint, BRepGraphHistory, BRepGraphHistoryEvent, BRepGraphMutGuard, BRepGraphTool, BfsFaces, DfsFaces, DfsEdgesFromVertex, NonManifoldSummary, ManifoldRepairHints, RepairHint};
+pub use brep_graph::{
+    BfsFaces, BRepGraph, BRepGraphBuilder, BRepGraphCheckpoint, BRepGraphHistory,
+    BRepGraphHistoryCheckpoint, BRepGraphHistoryEvent, BRepGraphHistorySummary, BRepGraphMutGuard,
+    BRepGraphTool, DfsEdgesFromVertex, DfsFaces, HistoryFilter, ManifoldRepairHints,
+    NonManifoldSummary, RepairHint,
+};
 pub use naming::{PersistentNamingHooks, TopoEntityRef};
 pub use persistent_naming::{
-    ConflictResolution, NamingConflictResolution, NamingContext, NamingEvent, NamingHistory,
-    NamingRule, NamingStabilityReport, NamePropagationPolicy, PersistentId,
-    PersistentNamingEngine, PersistentNamingHooksExt,
+    ConflictResolution, CrossOperationHistory, CrossOperationStabilityReport, EntityGenealogy,
+    EntityType, EntityTypeStability, IssueSeverity, NamingConflictResolution, NamingContext,
+    NamingEvent, NamingHistory, NamingIssue, NamingRule, NamingStabilityReport,
+    NamePropagationPolicy, OperationId, OperationRecord, OperationStats, OperationType,
+    PersistentId, PersistentNamingEngine, PersistentNamingHooksExt,
 };
 pub use topology::{Compound, CompSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
