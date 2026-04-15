@@ -143,6 +143,7 @@ impl std::fmt::Display for CheckIssue {
 
 /// Result of a BRep validity check.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct CheckResult {
     pub issues: Vec<CheckIssue>,
 }

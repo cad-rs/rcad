@@ -57,6 +57,16 @@ pub mod arc_length;
 /// Analogous to OCCT `XCAFDoc_ColorTool`.
 pub mod appearance;
 
+/// Dimension and tolerance object model (GD&T).
+///
+/// Analogous to OCCT `XCAFDimTolObjects`.
+pub mod dim_tol;
+
+/// Annotation object model for CAD annotations (PMI).
+///
+/// Analogous to OCCT `XCAFNoteObjects`.
+pub mod annotation;
+
 /// Precision constants and per-entity tolerance query helpers.
 ///
 /// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
@@ -120,6 +130,15 @@ pub use projection::{
 };
 
 pub use appearance::{Color, FaceColor, StepColor};
+pub use dim_tol::{
+    DimensionType, GeometricToleranceType, ToleranceModifier,
+    DimensionalTolerance, GeometricToleranceObject, DatumReference, DatumSystem, DimTolStore,
+};
+pub use annotation::{
+    NoteType, ArrowType, WeldType,
+    AnnotationNote, TextAnnotation, LeaderLine, SurfaceTextureSymbol,
+    WeldSymbol, BalloonAnnotation, AnnotationStore,
+};
 pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use gordon::{

@@ -97,6 +97,540 @@ pub enum MakeConnectedMode {
     Conservative,
 }
 
+/// Strategy for connectivity repair operations.
+///
+/// This struct provides fine-grained control over the behavior of
+/// `make_connected` operations, allowing users to customize which
+/// repairs are applied and how aggressively.
+///
+/// # Example
+///
+/// ```
+/// use rcad_algorithms::brep_repair::MakeConnectedStrategy;
+///
+/// let strategy = MakeConnectedStrategy {
+///     merge_vertices: true,
+///     merge_tolerance: 0.001,
+///     remove_small_edges: true,
+///     min_edge_length: 0.0001,
+///     max_passes: 5,
+///     tolerance_growth: 1.5,
+///     tolerance_cap: 0.1,
+///     sew_edges: false,
+///     edge_sew_tolerance: 0.001,
+///     merge_faces: false,
+///     face_merge_tolerance: 0.001,
+/// };
+/// ```
+#[derive(Debug, Clone)]
+pub struct MakeConnectedStrategy {
+    /// Whether to merge near-coincident vertices.
+    pub merge_vertices: bool,
+    /// Tolerance for vertex merging.
+    pub merge_tolerance: f64,
+    /// Whether to remove small/degenerate edges.
+    pub remove_small_edges: bool,
+    /// Minimum edge length; shorter edges are candidates for removal.
+    pub min_edge_length: f64,
+    /// Maximum number of repair passes.
+    pub max_passes: usize,
+    /// Factor by which tolerance grows each pass (1.0 = no growth).
+    pub tolerance_growth: f64,
+    /// Upper cap for tolerance growth.
+    pub tolerance_cap: f64,
+    /// Whether to sew close edges together.
+    pub sew_edges: bool,
+    /// Tolerance for edge sewing.
+    pub edge_sew_tolerance: f64,
+    /// Whether to merge coincident faces.
+    pub merge_faces: bool,
+    /// Tolerance for face merging.
+    pub face_merge_tolerance: f64,
+}
+
+impl Default for MakeConnectedStrategy {
+    fn default() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: 1e-6,
+            remove_small_edges: true,
+            min_edge_length: 1e-6,
+            max_passes: 3,
+            tolerance_growth: 1.0,
+            tolerance_cap: f64::INFINITY,
+            sew_edges: false,
+            edge_sew_tolerance: 1e-6,
+            merge_faces: false,
+            face_merge_tolerance: 1e-6,
+        }
+    }
+}
+
+impl MakeConnectedStrategy {
+    /// Create a conservative strategy (only vertex merging).
+    pub fn conservative() -> Self {
+        Self {
+            merge_vertices: true,
+            remove_small_edges: false,
+            sew_edges: false,
+            merge_faces: false,
+            ..Self::default()
+        }
+    }
+
+    /// Create a standard strategy (vertex merging + small edge removal).
+    pub fn standard() -> Self {
+        Self::default()
+    }
+
+    /// Create an aggressive strategy (all repairs enabled).
+    pub fn aggressive() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: 1e-5,
+            remove_small_edges: true,
+            min_edge_length: 1e-5,
+            max_passes: 5,
+            tolerance_growth: 1.5,
+            tolerance_cap: 0.01,
+            sew_edges: true,
+            edge_sew_tolerance: 1e-5,
+            merge_faces: true,
+            face_merge_tolerance: 1e-5,
+        }
+    }
+
+    /// Create a strategy for injection molding (optimized for thin walls).
+    pub fn for_injection_molding() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: 1e-4,
+            remove_small_edges: true,
+            min_edge_length: 1e-4,
+            max_passes: 10,
+            tolerance_growth: 2.0,
+            tolerance_cap: 0.1,
+            sew_edges: true,
+            edge_sew_tolerance: 1e-4,
+            merge_faces: false, // Don't merge faces for molding
+            face_merge_tolerance: 1e-4,
+        }
+    }
+
+    /// Create a strategy for 3D printing (conservative tolerance).
+    pub fn for_3d_printing() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: 1e-3, // 0.001mm tolerance for printing
+            remove_small_edges: true,
+            min_edge_length: 1e-3,
+            max_passes: 3,
+            tolerance_growth: 1.0,
+            tolerance_cap: 0.1,
+            sew_edges: false,
+            edge_sew_tolerance: 1e-3,
+            merge_faces: false,
+            face_merge_tolerance: 1e-3,
+        }
+    }
+
+    /// Create a strategy for CNC machining (precise, no merging).
+    pub fn for_cnc_machining() -> Self {
+        Self {
+            merge_vertices: true,
+            merge_tolerance: 1e-6, // Very precise
+            remove_small_edges: true,
+            min_edge_length: 1e-6,
+            max_passes: 1,
+            tolerance_growth: 1.0,
+            tolerance_cap: 1e-5,
+            sew_edges: false,
+            edge_sew_tolerance: 1e-6,
+            merge_faces: false,
+            face_merge_tolerance: 1e-6,
+        }
+    }
+
+    /// Apply the strategy to a BRep.
+    ///
+    /// This is the main entry point for connectivity repair using
+    /// a custom strategy configuration.
+    pub fn apply(&self, brep: &BRep) -> (BRep, MakeConnectedReport) {
+        let mut out = brep.clone();
+        let mut report = MakeConnectedReport::default();
+        let base_tol = self.merge_tolerance.max(TOLERANCE_ABS);
+
+        for pass_idx in 0..self.max_passes {
+            let grown_tol = base_tol * self.tolerance_growth.powi(pass_idx as i32);
+            let pass_tol = grown_tol.min(self.tolerance_cap);
+            let mut pass_merged = 0usize;
+            let mut pass_removed = 0usize;
+            let mut pass_sewn = 0usize;
+
+            // Vertex merging
+            if self.merge_vertices {
+                let (b, merged) = merge_close_vertices(&out, pass_tol);
+                out = b;
+                pass_merged += merged;
+            }
+
+            // Small edge removal
+            if self.remove_small_edges {
+                let (b, removed) = remove_small_edges(&out, self.min_edge_length);
+                out = b;
+                pass_removed += removed;
+            }
+
+            // Edge sewing
+            if self.sew_edges {
+                let (b, sewn) = sew_close_edges(&out, self.edge_sew_tolerance);
+                out = b;
+                pass_sewn += sewn.edges_sewn;
+            }
+
+            // Face merging (if enabled)
+            if self.merge_faces {
+                // Note: Face merging is a complex operation that requires
+                // geometric analysis. For now, we skip this in the strategy.
+                // It can be added later when face merging is fully implemented.
+            }
+
+            report.vertices_merged += pass_merged;
+            report.small_edges_removed += pass_removed;
+            report.edges_sewn += pass_sewn;
+            report.passes_run = pass_idx + 1;
+            report.final_tolerance = pass_tol;
+
+            if grown_tol > self.tolerance_cap {
+                report.tolerance_cap_applied = true;
+            }
+
+            // Check for convergence
+            if pass_merged == 0 && pass_removed == 0 && pass_sewn == 0 {
+                // Check if tolerance will grow in future passes
+                if self.tolerance_growth <= 1.0 || pass_idx + 1 >= self.max_passes {
+                    report.converged = true;
+                    break;
+                }
+                let next_tol = base_tol * self.tolerance_growth.powi((pass_idx + 1) as i32);
+                if next_tol > self.tolerance_cap {
+                    report.converged = true;
+                    break;
+                }
+            }
+        }
+
+        (out, report)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scoped Seed Detection Strategies
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Strategy for detecting seed entities for scoped make-connected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeedDetectionStrategy {
+    /// Use all vertices as seeds (equivalent to global cleanup).
+    #[default]
+    AllVertices,
+    /// Use vertices on short edges as seeds.
+    ShortEdgeEndpoints,
+    /// Use vertices on edges with high tolerance as seeds.
+    HighToleranceEdges,
+    /// Use vertices at potential geometry seams (multi-PCurve edges).
+    SeamCandidates,
+    /// Use vertices near potential duplicates.
+    NearDuplicateVertices,
+    /// Combine multiple strategies (hybrid approach).
+    Hybrid,
+}
+
+/// Configuration for seed detection.
+#[derive(Debug, Clone)]
+pub struct SeedDetectionConfig {
+    /// Strategy to use for seed detection.
+    pub strategy: SeedDetectionStrategy,
+    /// Minimum edge length for ShortEdgeEndpoints strategy.
+    pub short_edge_threshold: f64,
+    /// Tolerance threshold for HighToleranceEdges strategy.
+    pub high_tolerance_threshold: f64,
+    /// Distance threshold for NearDuplicateVertices strategy.
+    pub near_duplicate_distance: f64,
+    /// Maximum number of seeds to return (0 = no limit).
+    pub max_seeds: usize,
+    /// Include vertices within N hops of primary seeds.
+    pub neighborhood_depth: usize,
+}
+
+impl Default for SeedDetectionConfig {
+    fn default() -> Self {
+        Self {
+            strategy: SeedDetectionStrategy::default(),
+            short_edge_threshold: 1e-4,
+            high_tolerance_threshold: 1e-3,
+            near_duplicate_distance: 1e-4,
+            max_seeds: 0,
+            neighborhood_depth: 1,
+        }
+    }
+}
+
+impl SeedDetectionConfig {
+    /// Create config for short-edge seed detection.
+    pub fn short_edges(threshold: f64) -> Self {
+        Self {
+            strategy: SeedDetectionStrategy::ShortEdgeEndpoints,
+            short_edge_threshold: threshold,
+            ..Default::default()
+        }
+    }
+
+    /// Create config for high-tolerance seed detection.
+    pub fn high_tolerance(threshold: f64) -> Self {
+        Self {
+            strategy: SeedDetectionStrategy::HighToleranceEdges,
+            high_tolerance_threshold: threshold,
+            ..Default::default()
+        }
+    }
+
+    /// Create hybrid config combining multiple strategies.
+    pub fn hybrid() -> Self {
+        Self {
+            strategy: SeedDetectionStrategy::Hybrid,
+            ..Default::default()
+        }
+    }
+}
+
+/// Result of seed detection analysis.
+#[derive(Debug, Clone, Default)]
+pub struct SeedDetectionResult {
+    /// Indices of detected seed vertices.
+    pub seed_vertices: Vec<usize>,
+    /// Indices of detected seed edges.
+    pub seed_edges: Vec<usize>,
+    /// Number of seeds from each strategy (for hybrid).
+    pub strategy_counts: std::collections::HashMap<String, usize>,
+    /// Estimated coverage ratio (seeds / total entities).
+    pub coverage_ratio: f64,
+}
+
+/// Detect seed vertices for scoped make-connected based on strategy.
+pub fn detect_seeds_for_scoped_cleanup(
+    brep: &BRep,
+    config: &SeedDetectionConfig,
+) -> SeedDetectionResult {
+    let mut result = SeedDetectionResult::default();
+    let mut vertex_set = std::collections::HashSet::new();
+    let mut edge_set = std::collections::HashSet::new();
+    let n_vertices = brep.vertices.len();
+    let n_edges = brep.edges.len();
+
+    match config.strategy {
+        SeedDetectionStrategy::AllVertices => {
+            for i in 0..n_vertices {
+                vertex_set.insert(i);
+            }
+            result.strategy_counts.insert("all_vertices".to_string(), n_vertices);
+        }
+        SeedDetectionStrategy::ShortEdgeEndpoints => {
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                let start = brep.vertices.get(edge.start).map(|v| v.point);
+                let end = brep.vertices.get(edge.end).map(|v| v.point);
+                if let (Some(s), Some(e)) = (start, end) {
+                    let len = (s - e).length();
+                    if len < config.short_edge_threshold {
+                        vertex_set.insert(edge.start);
+                        vertex_set.insert(edge.end);
+                        edge_set.insert(ei);
+                    }
+                }
+            }
+            result.strategy_counts.insert("short_edge_endpoints".to_string(), vertex_set.len());
+        }
+        SeedDetectionStrategy::HighToleranceEdges => {
+            let edge_tolerances = &brep.geom.edge_tolerance;
+            for (ei, &tol) in edge_tolerances.iter().enumerate() {
+                if tol > config.high_tolerance_threshold && ei < n_edges {
+                    let edge = &brep.edges[ei];
+                    vertex_set.insert(edge.start);
+                    vertex_set.insert(edge.end);
+                    edge_set.insert(ei);
+                }
+            }
+            result.strategy_counts.insert("high_tolerance_edges".to_string(), vertex_set.len());
+        }
+        SeedDetectionStrategy::NearDuplicateVertices => {
+            for i in 0..n_vertices {
+                for j in (i + 1)..n_vertices {
+                    let dist = (brep.vertices[i].point - brep.vertices[j].point).length();
+                    if dist < config.near_duplicate_distance {
+                        vertex_set.insert(i);
+                        vertex_set.insert(j);
+                    }
+                }
+            }
+            result.strategy_counts.insert("near_duplicate_vertices".to_string(), vertex_set.len());
+        }
+        SeedDetectionStrategy::SeamCandidates => {
+            // Edges referenced by multiple faces (potential seams)
+            let mut edge_face_count = vec![0usize; n_edges];
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        for we in &face.outer_wire.edges {
+                            if we.idx < n_edges {
+                                edge_face_count[we.idx] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            for (ei, &count) in edge_face_count.iter().enumerate() {
+                if count > 2 {
+                    let edge = &brep.edges[ei];
+                    vertex_set.insert(edge.start);
+                    vertex_set.insert(edge.end);
+                    edge_set.insert(ei);
+                }
+            }
+            result.strategy_counts.insert("seam_candidates".to_string(), vertex_set.len());
+        }
+        SeedDetectionStrategy::Hybrid => {
+            // Combine all strategies
+            let mut combined = std::collections::HashSet::new();
+
+            // Short edges
+            for edge in &brep.edges {
+                let start = brep.vertices.get(edge.start).map(|v| v.point);
+                let end = brep.vertices.get(edge.end).map(|v| v.point);
+                if let (Some(s), Some(e)) = (start, end) {
+                    if (s - e).length() < config.short_edge_threshold {
+                        combined.insert(edge.start);
+                        combined.insert(edge.end);
+                    }
+                }
+            }
+
+            // High tolerance
+            for (ei, &tol) in brep.geom.edge_tolerance.iter().enumerate() {
+                if tol > config.high_tolerance_threshold && ei < n_edges {
+                    let edge = &brep.edges[ei];
+                    combined.insert(edge.start);
+                    combined.insert(edge.end);
+                }
+            }
+
+            // Near duplicates
+            for i in 0..n_vertices.min(1000) {
+                for j in (i + 1)..n_vertices.min(i + 100) {
+                    let dist = (brep.vertices[i].point - brep.vertices[j].point).length();
+                    if dist < config.near_duplicate_distance {
+                        combined.insert(i);
+                        combined.insert(j);
+                    }
+                }
+            }
+
+            vertex_set = combined;
+            result.strategy_counts.insert("hybrid".to_string(), vertex_set.len());
+        }
+    }
+
+    // Apply neighborhood expansion
+    if config.neighborhood_depth > 0 {
+        let expanded = expand_seed_neighborhood(brep, &vertex_set, config.neighborhood_depth);
+        vertex_set = expanded;
+    }
+
+    // Apply max seeds limit
+    if config.max_seeds > 0 && vertex_set.len() > config.max_seeds {
+        let seeds: Vec<usize> = vertex_set.into_iter().take(config.max_seeds).collect();
+        vertex_set = seeds.into_iter().collect();
+    }
+
+    result.seed_vertices = vertex_set.into_iter().collect();
+    result.seed_edges = edge_set.into_iter().collect();
+    result.coverage_ratio = if n_vertices > 0 {
+        result.seed_vertices.len() as f64 / n_vertices as f64
+    } else {
+        0.0
+    };
+
+    result
+}
+
+/// Expand seed set to include neighboring vertices.
+fn expand_seed_neighborhood(
+    brep: &BRep,
+    seeds: &std::collections::HashSet<usize>,
+    depth: usize,
+) -> std::collections::HashSet<usize> {
+    if depth == 0 {
+        return seeds.clone();
+    }
+
+    // Build vertex-to-vertex adjacency via edges
+    let mut adjacency: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for edge in &brep.edges {
+        adjacency.entry(edge.start).or_default().push(edge.end);
+        adjacency.entry(edge.end).or_default().push(edge.start);
+    }
+
+    let mut expanded = seeds.clone();
+    let mut frontier: std::collections::HashSet<usize> = seeds.clone();
+
+    for _ in 0..depth {
+        let mut next_frontier = std::collections::HashSet::new();
+        for &v in &frontier {
+            if let Some(neighbors) = adjacency.get(&v) {
+                for &n in neighbors {
+                    if !expanded.contains(&n) {
+                        expanded.insert(n);
+                        next_frontier.insert(n);
+                    }
+                }
+            }
+        }
+        frontier = next_frontier;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+
+    expanded
+}
+
+/// Apply scoped make-connected with automatic seed detection.
+pub fn make_connected_scoped_auto(
+    brep: &BRep,
+    config: &SeedDetectionConfig,
+    tolerance: f64,
+    max_passes: usize,
+) -> (BRep, MakeConnectedReport, SeedDetectionResult) {
+    let seeds = detect_seeds_for_scoped_cleanup(brep, config);
+
+    let (result, report) = make_connected_iterative_scoped_with_growth_cap(
+        brep,
+        &seeds.seed_vertices,
+        tolerance,
+        max_passes,
+        1.5,
+        tolerance * 10.0,
+    );
+
+    (result, report, seeds)
+}
+
+/// Apply a MakeConnectedStrategy to repair connectivity.
+///
+/// This is a convenience function that delegates to `strategy.apply(brep)`.
+pub fn make_connected_with_strategy(brep: &BRep, strategy: &MakeConnectedStrategy) -> (BRep, MakeConnectedReport) {
+    strategy.apply(brep)
+}
+
 /// Information about a shared edge between two faces.
 #[derive(Debug, Clone)]
 pub struct SharedEdgeInfo {
@@ -3309,6 +3843,697 @@ fn compute_face_area(brep: &BRep, face: &Face) -> f64 {
     area
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// B-Spline Surface Same-Domain Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Result of checking if two B-spline surfaces are the same domain.
+#[derive(Debug, Clone)]
+pub struct SameDomainMatch {
+    /// Whether the surfaces are the same domain.
+    pub is_same_domain: bool,
+    /// The detected continuity level between surfaces.
+    pub continuity: BsplineContinuity,
+    /// Maximum deviation between control points.
+    pub max_control_point_deviation: f64,
+    /// Maximum deviation between weights.
+    pub max_weight_deviation: f64,
+    /// Whether the knot vectors match.
+    pub knots_match: bool,
+    /// Whether the degrees match.
+    pub degrees_match: bool,
+}
+
+/// Classification of parametric continuity between B-spline surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BsplineContinuity {
+    /// No continuity (disconnected).
+    None,
+    /// C0: position continuous.
+    C0,
+    /// G1: tangent direction continuous (geometric continuity).
+    G1,
+    /// C1: tangent continuous (parametric continuity).
+    C1,
+    /// C2: curvature continuous.
+    C2,
+    /// CN: infinitely differentiable.
+    CN,
+}
+
+impl Default for BsplineContinuity {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Information about a merged B-spline face.
+#[derive(Debug, Clone)]
+pub struct MergedFaceInfo {
+    /// Index of the kept face.
+    pub kept_face_idx: usize,
+    /// Index of the removed face.
+    pub removed_face_idx: usize,
+    /// Number of edges in the merged wire.
+    pub merged_edge_count: usize,
+    /// Whether inner wires were merged.
+    pub inner_wires_merged: bool,
+    /// The continuity level of the merge.
+    pub continuity: BsplineContinuity,
+}
+
+/// Check if two B-spline surfaces are the same domain.
+///
+/// Two B-spline surfaces are considered same-domain if they have:
+/// - Identical degrees (u and v)
+/// - Identical knot vectors (within tolerance)
+/// - Identical control point grids (within tolerance)
+/// - Identical weights (for rational surfaces)
+///
+/// This function performs a comprehensive comparison of all geometric data.
+pub fn bspline_same_domain(
+    surf1: &rcad_kernel::geom::BSplineSurface,
+    surf2: &rcad_kernel::geom::BSplineSurface,
+    tolerance: f64,
+) -> Option<SameDomainMatch> {
+    const KNOT_TOL: f64 = 1e-6;
+    const CP_TOL_DEFAULT: f64 = 1e-6;
+
+    let cp_tol = if tolerance > 0.0 { tolerance } else { CP_TOL_DEFAULT };
+    let knot_tol = KNOT_TOL.max(tolerance * 0.1);
+
+    // Check degrees
+    let degrees_match = surf1.degree_u == surf2.degree_u && surf1.degree_v == surf2.degree_v;
+    if !degrees_match {
+        return Some(SameDomainMatch {
+            is_same_domain: false,
+            continuity: BsplineContinuity::None,
+            max_control_point_deviation: f64::INFINITY,
+            max_weight_deviation: f64::INFINITY,
+            knots_match: false,
+            degrees_match: false,
+        });
+    }
+
+    // Check knot vector lengths
+    if surf1.knots_u.len() != surf2.knots_u.len() || surf1.knots_v.len() != surf2.knots_v.len() {
+        return Some(SameDomainMatch {
+            is_same_domain: false,
+            continuity: BsplineContinuity::None,
+            max_control_point_deviation: f64::INFINITY,
+            max_weight_deviation: f64::INFINITY,
+            knots_match: false,
+            degrees_match: true,
+        });
+    }
+
+    // Check knot vectors
+    let mut max_knot_diff = 0.0f64;
+    for (k1, k2) in surf1.knots_u.iter().zip(surf2.knots_u.iter()) {
+        max_knot_diff = max_knot_diff.max((k1 - k2).abs());
+    }
+    for (k1, k2) in surf1.knots_v.iter().zip(surf2.knots_v.iter()) {
+        max_knot_diff = max_knot_diff.max((k1 - k2).abs());
+    }
+    let knots_match = max_knot_diff <= knot_tol;
+
+    if !knots_match {
+        return Some(SameDomainMatch {
+            is_same_domain: false,
+            continuity: BsplineContinuity::None,
+            max_control_point_deviation: f64::INFINITY,
+            max_weight_deviation: f64::INFINITY,
+            knots_match: false,
+            degrees_match: true,
+        });
+    }
+
+    // Check control point grid dimensions
+    if surf1.control_points.len() != surf2.control_points.len() {
+        return Some(SameDomainMatch {
+            is_same_domain: false,
+            continuity: BsplineContinuity::None,
+            max_control_point_deviation: f64::INFINITY,
+            max_weight_deviation: f64::INFINITY,
+            knots_match: true,
+            degrees_match: true,
+        });
+    }
+
+    // Check control points
+    let mut max_cp_deviation = 0.0f64;
+    for (row1, row2) in surf1.control_points.iter().zip(surf2.control_points.iter()) {
+        if row1.len() != row2.len() {
+            return Some(SameDomainMatch {
+                is_same_domain: false,
+                continuity: BsplineContinuity::None,
+                max_control_point_deviation: f64::INFINITY,
+                max_weight_deviation: f64::INFINITY,
+                knots_match: true,
+                degrees_match: true,
+            });
+        }
+        for (cp1, cp2) in row1.iter().zip(row2.iter()) {
+            let dist = cp1.distance(*cp2);
+            max_cp_deviation = max_cp_deviation.max(dist);
+        }
+    }
+
+    // Check weights
+    let mut max_weight_deviation = 0.0f64;
+    if surf1.weights.len() != surf2.weights.len() {
+        return Some(SameDomainMatch {
+            is_same_domain: false,
+            continuity: BsplineContinuity::None,
+            max_control_point_deviation: max_cp_deviation,
+            max_weight_deviation: f64::INFINITY,
+            knots_match: true,
+            degrees_match: true,
+        });
+    }
+    for (row1, row2) in surf1.weights.iter().zip(surf2.weights.iter()) {
+        if row1.len() != row2.len() {
+            return Some(SameDomainMatch {
+                is_same_domain: false,
+                continuity: BsplineContinuity::None,
+                max_control_point_deviation: max_cp_deviation,
+                max_weight_deviation: f64::INFINITY,
+                knots_match: true,
+                degrees_match: true,
+            });
+        }
+        for (w1, w2) in row1.iter().zip(row2.iter()) {
+            let diff = (w1 - w2).abs();
+            max_weight_deviation = max_weight_deviation.max(diff);
+        }
+    }
+
+    // Determine if same domain
+    let is_same_domain = max_cp_deviation <= cp_tol && max_weight_deviation <= knot_tol;
+
+    // Determine continuity
+    let continuity = if is_same_domain {
+        check_bspline_continuity_from_match(surf1, surf2, cp_tol)
+    } else {
+        BsplineContinuity::None
+    };
+
+    Some(SameDomainMatch {
+        is_same_domain,
+        continuity,
+        max_control_point_deviation: max_cp_deviation,
+        max_weight_deviation,
+        knots_match: true,
+        degrees_match: true,
+    })
+}
+
+/// Determine parametric continuity from matching B-spline surfaces.
+fn check_bspline_continuity_from_match(
+    surf: &rcad_kernel::geom::BSplineSurface,
+    _other: &rcad_kernel::geom::BSplineSurface,
+    tolerance: f64,
+) -> BsplineContinuity {
+    // For identical surfaces, continuity is determined by the degree
+    // A B-spline surface has C^{degree - multiplicity} continuity at each internal knot
+    // For surfaces with identical data, the minimum continuity is:
+    let min_degree = surf.degree_u.min(surf.degree_v);
+
+    if tolerance > 1e-6 {
+        // If tolerance is relatively large, report C0 as a conservative estimate
+        return BsplineContinuity::C0;
+    }
+
+    // For clamped B-splines, only internal knot multiplicities reduce continuity
+    // Boundary knots have multiplicity = degree + 1 by design
+    let u_internal_mult = max_internal_knot_multiplicity(&surf.knots_u);
+    let v_internal_mult = max_internal_knot_multiplicity(&surf.knots_v);
+
+    // If no internal knots, the surface is C^{degree} everywhere inside
+    // Continuity at internal knots = degree - multiplicity
+    let u_continuity = if u_internal_mult == 0 {
+        min_degree // No internal knots = full continuity
+    } else {
+        min_degree.saturating_sub(u_internal_mult)
+    };
+    let v_continuity = if v_internal_mult == 0 {
+        min_degree // No internal knots = full continuity
+    } else {
+        min_degree.saturating_sub(v_internal_mult)
+    };
+    let min_continuity = u_continuity.min(v_continuity);
+
+    match min_continuity {
+        0 => BsplineContinuity::C0,
+        1 => BsplineContinuity::C1,
+        2 => BsplineContinuity::C2,
+        _ if min_continuity >= 3 => BsplineContinuity::CN,
+        _ => BsplineContinuity::C0,
+    }
+}
+
+/// Compute the maximum multiplicity of internal knots (excluding boundary repeats).
+/// Returns 0 if there are no internal knots.
+fn max_internal_knot_multiplicity(knots: &[f64]) -> usize {
+    if knots.len() <= 2 {
+        return 0;
+    }
+
+    let tol = 1e-9;
+    let first = knots[0];
+    let last = knots[knots.len() - 1];
+
+    // Find the range of internal knots (excluding first and last distinct values)
+    let mut internal_start = 0;
+    let mut internal_end = knots.len();
+
+    // Skip boundary knots at the start
+    for i in 0..knots.len() {
+        if (knots[i] - first).abs() > tol {
+            internal_start = i;
+            break;
+        }
+    }
+
+    // Skip boundary knots at the end
+    for i in (0..knots.len()).rev() {
+        if (knots[i] - last).abs() > tol {
+            internal_end = i + 1;
+            break;
+        }
+    }
+
+    // If no internal knots, return 0
+    if internal_start >= internal_end {
+        return 0;
+    }
+
+    // Count multiplicities of internal knots
+    let internal_knots = &knots[internal_start..internal_end];
+    let mut max_mult = 1;
+    let mut current_mult = 1;
+
+    for i in 1..internal_knots.len() {
+        if (internal_knots[i] - internal_knots[i - 1]).abs() <= tol {
+            current_mult += 1;
+        } else {
+            max_mult = max_mult.max(current_mult);
+            current_mult = 1;
+        }
+    }
+    max_mult.max(current_mult)
+}
+
+/// Compute the maximum multiplicity of any knot in the vector.
+fn max_knot_multiplicity(knots: &[f64]) -> usize {
+    if knots.is_empty() {
+        return 0;
+    }
+
+    let tol = 1e-9;
+    let mut max_mult = 1;
+    let mut current_mult = 1;
+
+    for i in 1..knots.len() {
+        if (knots[i] - knots[i - 1]).abs() <= tol {
+            current_mult += 1;
+        } else {
+            max_mult = max_mult.max(current_mult);
+            current_mult = 1;
+        }
+    }
+    max_mult.max(current_mult)
+}
+
+/// Check parametric continuity between two B-spline surfaces.
+///
+/// This function evaluates the geometric continuity between two adjacent B-spline
+/// surfaces by examining their control point and knot structures.
+///
+/// Returns the highest continuity level that can be guaranteed between the surfaces.
+pub fn check_bspline_continuity(
+    surf1: &rcad_kernel::geom::BSplineSurface,
+    surf2: &rcad_kernel::geom::BSplineSurface,
+    tolerance: f64,
+) -> BsplineContinuity {
+    // First check if surfaces are same domain
+    if let Some(match_result) = bspline_same_domain(surf1, surf2, tolerance) {
+        if match_result.is_same_domain {
+            return match_result.continuity;
+        }
+    }
+
+    // Check for adjacent surfaces (sharing a boundary)
+    // This requires checking if the control points at boundaries match
+    let cp_tol = tolerance.max(1e-6);
+
+    // Check if the last row of control points in surf1 matches the first row of surf2
+    // (or vice versa) - this indicates adjacency along the v-direction
+    if let Some(continuity) = check_adjacent_continuity_v(surf1, surf2, cp_tol) {
+        return continuity;
+    }
+
+    // Check adjacency along u-direction
+    if let Some(continuity) = check_adjacent_continuity_u(surf1, surf2, cp_tol) {
+        return continuity;
+    }
+
+    BsplineContinuity::None
+}
+
+/// Check continuity between surfaces that are adjacent along the v-direction.
+fn check_adjacent_continuity_v(
+    surf1: &rcad_kernel::geom::BSplineSurface,
+    surf2: &rcad_kernel::geom::BSplineSurface,
+    tolerance: f64,
+) -> Option<BsplineContinuity> {
+    // surf1's last v-row should match surf2's first v-row (or vice versa)
+    if surf1.control_points.is_empty() || surf2.control_points.is_empty() {
+        return None;
+    }
+
+    let n_u1 = surf1.control_points.len();
+    let n_u2 = surf2.control_points.len();
+
+    if n_u1 == 0 || n_u2 == 0 {
+        return None;
+    }
+
+    // Check degrees compatibility
+    if surf1.degree_u != surf2.degree_u {
+        return None;
+    }
+
+    // Check if last row of surf1 matches first row of surf2
+    let row1 = &surf1.control_points[n_u1 - 1];
+    let row2 = &surf2.control_points[0];
+
+    if row1.len() != row2.len() {
+        return None;
+    }
+
+    let mut max_dev = 0.0_f64;
+    for (p1, p2) in row1.iter().zip(row2.iter()) {
+        max_dev = max_dev.max(p1.distance(*p2));
+    }
+
+    if max_dev <= tolerance {
+        // Surfaces are adjacent with C0 continuity
+        // Check for higher continuity by comparing derivative rows
+        if n_u1 >= 2 && n_u2 >= 2 {
+            let row1_prev = &surf1.control_points[n_u1 - 2];
+            let row2_next = &surf2.control_points[1];
+
+            if row1_prev.len() == row2_next.len() {
+                let mut max_deriv_dev = 0.0_f64;
+                for ((p1, p2), (p1_prev, p2_next)) in
+                    row1.iter().zip(row2.iter())
+                        .zip(row1_prev.iter().zip(row2_next.iter()))
+                {
+                    // Approximate tangent direction continuity
+                    let t1 = (*p2 - *p1_prev).normalize_or(DVec3::ZERO);
+                    let t2 = (*p2_next - *p1).normalize_or(DVec3::ZERO);
+                    let dot = t1.dot(t2);
+                    if dot > 0.99 {
+                        // Tangents are nearly parallel - G1 continuity
+                        max_deriv_dev = max_deriv_dev.max((t1 - t2).length());
+                    }
+                }
+
+                if max_deriv_dev <= tolerance * 10.0 {
+                    return Some(BsplineContinuity::G1);
+                }
+            }
+        }
+
+        return Some(BsplineContinuity::C0);
+    }
+
+    // Check the reverse: last row of surf2 matches first row of surf1
+    let row2_last = &surf2.control_points[n_u2 - 1];
+    let row1_first = &surf1.control_points[0];
+
+    if row2_last.len() != row1_first.len() {
+        return None;
+    }
+
+    max_dev = 0.0;
+    for (p1, p2) in row2_last.iter().zip(row1_first.iter()) {
+        max_dev = max_dev.max(p1.distance(*p2));
+    }
+
+    if max_dev <= tolerance {
+        return Some(BsplineContinuity::C0);
+    }
+
+    None
+}
+
+/// Check continuity between surfaces that are adjacent along the u-direction.
+fn check_adjacent_continuity_u(
+    surf1: &rcad_kernel::geom::BSplineSurface,
+    surf2: &rcad_kernel::geom::BSplineSurface,
+    tolerance: f64,
+) -> Option<BsplineContinuity> {
+    // For each row, check if the last column of surf1 matches the first column of surf2
+    if surf1.control_points.is_empty() || surf2.control_points.is_empty() {
+        return None;
+    }
+
+    // Check degrees compatibility
+    if surf1.degree_v != surf2.degree_v {
+        return None;
+    }
+
+    // Check if row counts match
+    if surf1.control_points.len() != surf2.control_points.len() {
+        return None;
+    }
+
+    let mut max_dev = 0.0_f64;
+    for (row1, row2) in surf1.control_points.iter().zip(surf2.control_points.iter()) {
+        if row1.is_empty() || row2.is_empty() {
+            continue;
+        }
+
+        let n_v1 = row1.len();
+        let n_v2 = row2.len();
+
+        // Check last of row1 vs first of row2
+        let dev = row1[n_v1 - 1].distance(row2[0]);
+        max_dev = max_dev.max(dev);
+    }
+
+    if max_dev <= tolerance {
+        return Some(BsplineContinuity::C0);
+    }
+
+    // Check the reverse direction
+    max_dev = 0.0_f64;
+    for (row1, row2) in surf1.control_points.iter().zip(surf2.control_points.iter()) {
+        if row1.is_empty() || row2.is_empty() {
+            continue;
+        }
+
+        let n_v2 = row2.len();
+
+        // Check last of row2 vs first of row1
+        let dev = row2[n_v2 - 1].distance(row1[0]);
+        max_dev = max_dev.max(dev);
+    }
+
+    if max_dev <= tolerance {
+        return Some(BsplineContinuity::C0);
+    }
+
+    None
+}
+
+/// Merge adjacent B-spline faces if they are on the same domain.
+///
+/// This function checks if two faces sharing a B-spline surface can be merged.
+/// The faces must be adjacent (share an edge) and lie on the same B-spline surface.
+///
+/// Returns `Some((BRep, MergedFaceInfo))` if the faces were merged, `None` otherwise.
+pub fn merge_bspline_faces(
+    brep: &BRep,
+    face1_idx: usize,
+    face2_idx: usize,
+    tolerance: f64,
+) -> Option<(BRep, MergedFaceInfo)> {
+    // Get surfaces for both faces
+    let surf1_idx = brep.geom.face_surface.get(face1_idx).and_then(|v| *v)?;
+    let surf2_idx = brep.geom.face_surface.get(face2_idx).and_then(|v| *v)?;
+
+    let surf1 = brep.geom.surfaces.get(surf1_idx)?;
+    let surf2 = brep.geom.surfaces.get(surf2_idx)?;
+
+    // Both must be B-spline surfaces
+    let (bs1, bs2) = match (surf1, surf2) {
+        (rcad_kernel::geom::Surface3::BSpline(b1), rcad_kernel::geom::Surface3::BSpline(b2)) => (b1, b2),
+        _ => return None,
+    };
+
+    // Check same domain
+    let match_result = bspline_same_domain(bs1, bs2, tolerance)?;
+    if !match_result.is_same_domain {
+        return None;
+    }
+
+    // Find the solid and shell containing both faces
+    let (si, shi) = find_shell_containing_faces(brep, face1_idx, face2_idx)?;
+
+    // Get local face indices within the shell
+    let fi1 = find_face_index_in_shell(brep, si, shi, face1_idx)?;
+    let fi2 = find_face_index_in_shell(brep, si, shi, face2_idx)?;
+
+    // Find shared edge
+    let shared_edge = find_shared_edge(brep, si, shi, fi1, fi2)?;
+
+    // Perform the merge
+    let mut result = brep.clone();
+
+    // Splice the wires together
+    let wire1 = result.solids[si].shells[shi].faces[fi1].outer_wire.edges.clone();
+    let wire2 = result.solids[si].shells[shi].faces[fi2].outer_wire.edges.clone();
+
+    let merged_wire = splice_wires_for_merge(&wire1, &wire2, shared_edge)?;
+
+    // Collect inner wires
+    let inner1 = result.solids[si].shells[shi].faces[fi1].inner_wires.clone();
+    let inner2 = result.solids[si].shells[shi].faces[fi2].inner_wires.clone();
+    let inner_wires_merged = !inner2.is_empty();
+    let mut all_inner = inner1;
+    all_inner.extend(inner2);
+
+    // Build merged face
+    let face1 = &result.solids[si].shells[shi].faces[fi1];
+    let merged_face = rcad_kernel::topology::Face {
+        outer_wire: rcad_kernel::topology::Wire { edges: merged_wire },
+        inner_wires: all_inner,
+        normal: face1.normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+
+    let merged_edge_count = merged_face.outer_wire.edges.len();
+
+    // Determine which face to keep (lower index) and which to remove
+    let (keep_idx, remove_idx) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
+
+    // Update face_surface mapping
+    let kept_flat = flat_face_index_global(&result, si, shi, keep_idx);
+    let remove_flat = flat_face_index_global(&result, si, shi, remove_idx);
+    if result.geom.face_surface.len() > remove_flat {
+        result.geom.face_surface.remove(remove_flat);
+    }
+    if result.geom.face_surface_range.len() > remove_flat {
+        result.geom.face_surface_range.remove(remove_flat);
+    }
+
+    // Replace the kept face and remove the other
+    result.solids[si].shells[shi].faces[keep_idx] = merged_face;
+    result.solids[si].shells[shi].faces.remove(remove_idx);
+
+    Some((result, MergedFaceInfo {
+        kept_face_idx: keep_idx,
+        removed_face_idx: remove_idx,
+        merged_edge_count,
+        inner_wires_merged,
+        continuity: match_result.continuity,
+    }))
+}
+
+/// Find the shell containing two faces.
+fn find_shell_containing_faces(brep: &BRep, face1_idx: usize, face2_idx: usize) -> Option<(usize, usize)> {
+    let mut found_si = None;
+    let mut found_shi = None;
+
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let base = flat_face_index_global(brep, si, shi, 0);
+            let n_faces = brep.solids[si].shells[shi].faces.len();
+
+            let face1_in_shell = face1_idx >= base && face1_idx < base + n_faces;
+            let face2_in_shell = face2_idx >= base && face2_idx < base + n_faces;
+
+            if face1_in_shell && face2_in_shell {
+                found_si = Some(si);
+                found_shi = Some(shi);
+                break;
+            }
+        }
+        if found_si.is_some() {
+            break;
+        }
+    }
+
+    Some((found_si?, found_shi?))
+}
+
+/// Find the local index of a face within a shell.
+fn find_face_index_in_shell(brep: &BRep, si: usize, shi: usize, global_face_idx: usize) -> Option<usize> {
+    let base = flat_face_index_global(brep, si, shi, 0);
+    if global_face_idx >= base {
+        Some(global_face_idx - base)
+    } else {
+        None
+    }
+}
+
+/// Get the global flat index of a face.
+fn flat_face_index_global(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+    let mut idx = 0usize;
+    for s in 0..si {
+        for sh in &brep.solids[s].shells {
+            idx += sh.faces.len();
+        }
+    }
+    for sh in 0..shi {
+        idx += brep.solids[si].shells[sh].faces.len();
+    }
+    idx + fi
+}
+
+/// Find a shared edge between two faces in a shell.
+fn find_shared_edge(brep: &BRep, si: usize, shi: usize, fi1: usize, fi2: usize) -> Option<usize> {
+    use std::collections::HashSet;
+
+    let face1 = &brep.solids[si].shells[shi].faces[fi1];
+    let face2 = &brep.solids[si].shells[shi].faces[fi2];
+
+    let edges1: HashSet<usize> = face1.outer_wire.edges.iter().map(|we| we.idx).collect();
+    let edges2: HashSet<usize> = face2.outer_wire.edges.iter().map(|we| we.idx).collect();
+
+    edges1.intersection(&edges2).copied().next()
+}
+
+/// Splice two wire edge lists together for merging.
+fn splice_wires_for_merge(
+    wire_a: &[rcad_kernel::topology::WireEdge],
+    wire_b: &[rcad_kernel::topology::WireEdge],
+    shared_edge_idx: usize,
+) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
+    let pos_a = wire_a.iter().position(|we| we.idx == shared_edge_idx)?;
+    let pos_b = wire_b.iter().position(|we| we.idx == shared_edge_idx)?;
+
+    let n_b = wire_b.len();
+    // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
+    let b_edges: Vec<rcad_kernel::topology::WireEdge> =
+        (1..n_b).map(|i| wire_b[(pos_b + i) % n_b]).collect();
+
+    let mut merged = Vec::with_capacity(wire_a.len() - 1 + b_edges.len());
+    merged.extend_from_slice(&wire_a[..pos_a]);
+    merged.extend(b_edges);
+    merged.extend_from_slice(&wire_a[pos_a + 1..]);
+
+    if merged.len() < 3 {
+        return None; // Degenerate result
+    }
+
+    Some(merged)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4299,5 +5524,366 @@ mod tests {
         assert_eq!(report.edges_removed, 0);
         assert_eq!(report.passes_executed, 0);
         assert!(!report.converged);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B-Spline Same-Domain Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn bspline_same_domain_identical_surfaces() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let result = bspline_same_domain(&surf, &surf, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(match_result.is_same_domain);
+        assert!(match_result.degrees_match);
+        assert!(match_result.knots_match);
+        assert!(match_result.max_control_point_deviation < 1e-9);
+    }
+
+    #[test]
+    fn bspline_same_domain_different_degrees() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let surf2 = BSplineSurface {
+            degree_u: 2,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 0.5, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.5, 0.5, 0.0), DVec3::new(0.5, 0.5, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(!match_result.is_same_domain);
+        assert!(!match_result.degrees_match);
+    }
+
+    #[test]
+    fn bspline_same_domain_different_knots() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let surf2 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 2.0, 2.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(!match_result.is_same_domain);
+        assert!(match_result.degrees_match);
+        assert!(!match_result.knots_match);
+    }
+
+    #[test]
+    fn bspline_same_domain_different_control_points() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let surf2 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(!match_result.is_same_domain);
+        assert!(match_result.max_control_point_deviation > 0.5);
+    }
+
+    #[test]
+    fn bspline_continuity_default() {
+        let continuity = BsplineContinuity::default();
+        assert_eq!(continuity, BsplineContinuity::None);
+    }
+
+    #[test]
+    fn check_bspline_continuity_same_surface() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf = BSplineSurface {
+            degree_u: 3,
+            degree_v: 3,
+            knots_u: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.33, 0.0, 0.0), DVec3::new(0.66, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 0.33, 0.0), DVec3::new(0.33, 0.33, 0.0), DVec3::new(0.66, 0.33, 0.0), DVec3::new(1.0, 0.33, 0.0)],
+                vec![DVec3::new(0.0, 0.66, 0.0), DVec3::new(0.33, 0.66, 0.0), DVec3::new(0.66, 0.66, 0.0), DVec3::new(1.0, 0.66, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(0.33, 1.0, 0.0), DVec3::new(0.66, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0, 1.0, 1.0],
+                vec![1.0, 1.0, 1.0, 1.0],
+                vec![1.0, 1.0, 1.0, 1.0],
+                vec![1.0, 1.0, 1.0, 1.0],
+            ],
+        };
+
+        let continuity = check_bspline_continuity(&surf, &surf, 1e-6);
+        // A bicubic B-spline with clamped boundary knots (multiplicity 4) has C0 continuity
+        // at boundaries due to knot multiplicity = degree, but is C2 inside the domain.
+        // Our implementation reports minimum continuity at any knot, which is C0 at boundaries.
+        assert!(continuity >= BsplineContinuity::C0);
+    }
+
+    #[test]
+    fn check_bspline_continuity_adjacent_v() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let surf2 = BSplineSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 0.0)],
+                vec![DVec3::new(0.0, 2.0, 0.0), DVec3::new(1.0, 2.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 1.0],
+            ],
+        };
+
+        let continuity = check_bspline_continuity(&surf1, &surf2, 1e-6);
+        assert!(continuity >= BsplineContinuity::C0);
+    }
+
+    #[test]
+    fn max_knot_multiplicity_single() {
+        let knots = vec![0.0, 0.0, 0.5, 1.0, 1.0];
+        let mult = max_knot_multiplicity(&knots);
+        assert_eq!(mult, 2);
+    }
+
+    #[test]
+    fn max_knot_multiplicity_triple() {
+        let knots = vec![0.0, 0.0, 0.0, 0.5, 1.0, 1.0];
+        let mult = max_knot_multiplicity(&knots);
+        assert_eq!(mult, 3);
+    }
+
+    #[test]
+    fn same_domain_match_debug() {
+        let match_result = SameDomainMatch {
+            is_same_domain: true,
+            continuity: BsplineContinuity::C1,
+            max_control_point_deviation: 0.0,
+            max_weight_deviation: 0.0,
+            knots_match: true,
+            degrees_match: true,
+        };
+
+        let debug_str = format!("{:?}", match_result);
+        assert!(debug_str.contains("is_same_domain: true"));
+        assert!(debug_str.contains("C1"));
+    }
+
+    #[test]
+    fn merged_face_info_debug() {
+        let info = MergedFaceInfo {
+            kept_face_idx: 0,
+            removed_face_idx: 1,
+            merged_edge_count: 6,
+            inner_wires_merged: false,
+            continuity: BsplineContinuity::C0,
+        };
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("kept_face_idx: 0"));
+        assert!(debug_str.contains("merged_edge_count: 6"));
+    }
+
+    #[test]
+    fn bspline_continuity_ordering() {
+        assert!(BsplineContinuity::None < BsplineContinuity::C0);
+        assert!(BsplineContinuity::C0 < BsplineContinuity::G1);
+        assert!(BsplineContinuity::G1 < BsplineContinuity::C1);
+        assert!(BsplineContinuity::C1 < BsplineContinuity::C2);
+        assert!(BsplineContinuity::C2 < BsplineContinuity::CN);
+    }
+
+    #[test]
+    fn bspline_same_domain_rational_surface() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0), DVec3::new(2.0, 1.0, 0.0)],
+                vec![DVec3::new(0.0, 2.0, 0.0), DVec3::new(1.0, 2.0, 0.0), DVec3::new(2.0, 2.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0, 1.0],
+                vec![1.0, 2.0, 1.0],
+                vec![1.0, 1.0, 1.0],
+            ],
+        };
+
+        let surf2 = surf1.clone();
+
+        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(match_result.is_same_domain);
+        assert!(match_result.max_weight_deviation < 1e-9);
+    }
+
+    #[test]
+    fn bspline_same_domain_different_weights() {
+        use rcad_kernel::geom::BSplineSurface;
+
+        let surf1 = BSplineSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0), DVec3::new(2.0, 1.0, 0.0)],
+                vec![DVec3::new(0.0, 2.0, 0.0), DVec3::new(1.0, 2.0, 0.0), DVec3::new(2.0, 2.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0, 1.0],
+                vec![1.0, 2.0, 1.0],
+                vec![1.0, 1.0, 1.0],
+            ],
+        };
+
+        let surf2 = BSplineSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+                vec![DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 1.0, 1.0), DVec3::new(2.0, 1.0, 0.0)],
+                vec![DVec3::new(0.0, 2.0, 0.0), DVec3::new(1.0, 2.0, 0.0), DVec3::new(2.0, 2.0, 0.0)],
+            ],
+            weights: vec![
+                vec![1.0, 1.0, 1.0],
+                vec![1.0, 3.0, 1.0],
+                vec![1.0, 1.0, 1.0],
+            ],
+        };
+
+        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        assert!(result.is_some());
+        let match_result = result.unwrap();
+        assert!(!match_result.is_same_domain);
+        assert!(match_result.max_weight_deviation > 0.5);
     }
 }

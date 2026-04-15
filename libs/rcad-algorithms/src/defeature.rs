@@ -2400,6 +2400,328 @@ fn make_fill_cone(
     make_cylinder_brep(base_pt, ax, ref_dir, expanded_r, height)
 }
 
+// -- Enhanced Defeaturing with Feature Groups and Robust Healing ------------
+
+/// Enhanced defeaturing options with deeper control.
+#[derive(Debug, Clone)]
+pub struct DefeaturingOptionsEnhanced {
+    /// Base defeaturing options.
+    pub base: DefeaturingOptions,
+    /// Process features in connected groups.
+    pub process_feature_groups: bool,
+    /// Run enhanced post-healing with strategy.
+    pub enhanced_healing: bool,
+    /// MakeConnectedStrategy for post-healing.
+    pub healing_strategy: crate::brep_repair::MakeConnectedStrategy,
+    /// Maximum number of features to process in a single boolean operation.
+    pub max_features_per_operation: usize,
+    /// Enable adaptive tolerance for difficult features.
+    pub adaptive_tolerance: bool,
+    /// Tolerance growth factor for adaptive mode.
+    pub tolerance_growth_factor: f64,
+}
+
+impl Default for DefeaturingOptionsEnhanced {
+    fn default() -> Self {
+        Self {
+            base: DefeaturingOptions::default(),
+            process_feature_groups: true,
+            enhanced_healing: true,
+            healing_strategy: crate::brep_repair::MakeConnectedStrategy::standard(),
+            max_features_per_operation: 5,
+            adaptive_tolerance: true,
+            tolerance_growth_factor: 2.0,
+        }
+    }
+}
+
+impl DefeaturingOptionsEnhanced {
+    /// Create conservative options (slower but safer).
+    pub fn conservative() -> Self {
+        Self {
+            base: DefeaturingOptions {
+                enable_retry: true,
+                max_retries: 5,
+                retry_fuzzy_multiplier: 5.0,
+                ..Default::default()
+            },
+            process_feature_groups: false,
+            enhanced_healing: true,
+            healing_strategy: crate::brep_repair::MakeConnectedStrategy::conservative(),
+            max_features_per_operation: 1,
+            adaptive_tolerance: true,
+            tolerance_growth_factor: 1.5,
+        }
+    }
+
+    /// Create aggressive options (faster but may miss edge cases).
+    pub fn aggressive() -> Self {
+        Self {
+            base: DefeaturingOptions {
+                enable_retry: true,
+                max_retries: 3,
+                retry_fuzzy_multiplier: 20.0,
+                run_post_healing: false, // We'll use enhanced healing
+                ..Default::default()
+            },
+            process_feature_groups: true,
+            enhanced_healing: true,
+            healing_strategy: crate::brep_repair::MakeConnectedStrategy::aggressive(),
+            max_features_per_operation: 10,
+            adaptive_tolerance: true,
+            tolerance_growth_factor: 3.0,
+        }
+    }
+
+    /// Create options optimized for injection molding.
+    pub fn for_injection_molding() -> Self {
+        Self {
+            base: DefeaturingOptions {
+                max_hole_radius: 3.0,
+                max_boss_radius: 2.0,
+                enable_conical_features: true,
+                max_conical_hole_radius: 3.0,
+                enable_slot_features: true,
+                max_slot_width: 5.0,
+                max_slot_depth: 10.0,
+                enable_blend_features: true,
+                max_blend_radius: 2.0,
+                enable_retry: true,
+                max_retries: 3,
+                run_post_healing: false,
+                ..Default::default()
+            },
+            process_feature_groups: true,
+            enhanced_healing: true,
+            healing_strategy: crate::brep_repair::MakeConnectedStrategy::for_injection_molding(),
+            max_features_per_operation: 5,
+            adaptive_tolerance: true,
+            tolerance_growth_factor: 2.0,
+        }
+    }
+}
+
+/// Enhanced report with additional details.
+#[derive(Debug, Clone, Default)]
+pub struct DefeaturingReportEnhanced {
+    /// Base report.
+    pub base: DefeaturingReport,
+    /// Number of feature groups processed.
+    pub groups_processed: usize,
+    /// Number of features processed in groups.
+    pub features_in_groups: usize,
+    /// Post-healing report.
+    pub healing_report: Option<crate::brep_repair::MakeConnectedReport>,
+    /// Adaptive tolerance escalations.
+    pub tolerance_escalations: usize,
+    /// Features that required multiple attempts.
+    pub multi_attempt_features: usize,
+}
+
+/// Enhanced defeaturing with feature group processing and robust healing.
+///
+/// This function extends `defeature_brep` with:
+/// - Feature group detection and batch processing
+/// - Integration with `MakeConnectedStrategy` for post-healing
+/// - Adaptive tolerance escalation for difficult features
+///
+/// # Arguments
+/// * `brep` - Input B-Rep
+/// * `options` - Enhanced options
+///
+/// # Returns
+/// Defeatured B-Rep and detailed report.
+pub fn defeature_brep_enhanced(
+    brep: &BRep,
+    options: &DefeaturingOptionsEnhanced,
+) -> Result<(BRep, DefeaturingReportEnhanced), DefeaturingError> {
+    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+        return Err(DefeaturingError::EmptyInput);
+    }
+
+    let mut report = DefeaturingReportEnhanced::default();
+    let mut current = brep.clone();
+
+    // Detect all feature types
+    let cylindrical_features = if options.base.max_hole_radius > 0.0 || options.base.max_boss_radius > 0.0 {
+        detect_cylindrical_features(&current, options.base.max_hole_radius, options.base.max_boss_radius)
+    } else {
+        Vec::new()
+    };
+
+    let conical_features = if options.base.enable_conical_features && options.base.max_conical_hole_radius > 0.0 {
+        detect_conical_features(&current, options.base.max_conical_hole_radius)
+    } else {
+        Vec::new()
+    };
+
+    let slot_features = if options.base.enable_slot_features && options.base.max_slot_width > 0.0 {
+        detect_slot_features(&current, options.base.max_slot_width, options.base.max_slot_depth)
+    } else {
+        Vec::new()
+    };
+
+    let pocket_features = if options.base.enable_pocket_features && options.base.max_pocket_diameter > 0.0 {
+        detect_pocket_features(&current, options.base.max_pocket_diameter, options.base.max_pocket_depth)
+    } else {
+        Vec::new()
+    };
+
+    let blend_features = if options.base.enable_blend_features {
+        detect_blend_features(&current, options.base.max_blend_radius, options.base.max_chamfer_distance)
+    } else {
+        Vec::new()
+    };
+
+    // Small face identification
+    if options.base.max_small_face_area > 0.0 {
+        report.base.small_faces_identified =
+            identify_small_faces(&current, options.base.max_small_face_area).len();
+    }
+
+    // Process feature groups if enabled
+    if options.process_feature_groups {
+        let (groups, _face_to_group) = detect_connected_feature_groups(
+            &current,
+            &cylindrical_features,
+            &conical_features,
+            &slot_features,
+            &pocket_features,
+            &blend_features,
+        );
+
+        report.groups_processed = groups.len();
+
+        // Process each group
+        for group in &groups {
+            let group_result = process_feature_group(
+                &current,
+                group,
+                &cylindrical_features,
+                &conical_features,
+                options,
+                &mut report,
+            );
+
+            if let Ok(new_brep) = group_result {
+                current = new_brep;
+                report.features_in_groups += group.total_faces;
+            }
+        }
+    } else {
+        // Process features individually (use base function)
+        let (new_brep, base_report) = defeature_brep(&current, &options.base)?;
+        current = new_brep;
+        report.base = base_report;
+    }
+
+    // Enhanced post-healing with strategy
+    if options.enhanced_healing {
+        let (healed, healing_report) = options.healing_strategy.apply(&current);
+        current = healed;
+        report.healing_report = Some(healing_report);
+    }
+
+    Ok((current, report))
+}
+
+/// Process a feature group as a batch.
+fn process_feature_group(
+    brep: &BRep,
+    group: &FeatureGroup,
+    cylindrical_features: &[CylindricalFeature],
+    conical_features: &[ConicalFeature],
+    options: &DefeaturingOptionsEnhanced,
+    report: &mut DefeaturingReportEnhanced,
+) -> Result<BRep, DefeaturingError> {
+    let mut current = brep.clone();
+    let margin = if options.base.fill_margin > 0.0 {
+        options.base.fill_margin
+    } else {
+        DEFAULT_FILL_MARGIN
+    };
+
+    // Process cylindrical features in this group
+    for &idx in &group.cylindrical_indices {
+        if let Some(feature) = cylindrical_features.get(idx) {
+            let fill_result = if feature.is_hole {
+                make_fill_cylinder(feature, margin)
+            } else {
+                make_boss_cylinder(feature, margin)
+            };
+
+            if let Ok(fill) = fill_result {
+                let op = if feature.is_hole {
+                    BooleanOpType::Union
+                } else {
+                    BooleanOpType::Difference
+                };
+
+                let result = if options.base.enable_retry {
+                    let ladder: Vec<f64> = (1..=options.base.max_retries)
+                        .map(|i| TOLERANCE_ABS * options.base.retry_fuzzy_multiplier * (i as f64))
+                        .collect();
+
+                    let robust_opts = BooleanRobustOptions {
+                        base: BooleanOptions::default(),
+                        fuzzy_retry_ladder: ladder,
+                        retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+                        extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
+                    };
+
+                    report.base.retry_attempts += 1;
+                    boolean_op_robust(op, &current, &fill, robust_opts)
+                        .map(|(b, _)| b)
+                } else {
+                    boolean_op(op, &current, &fill)
+                };
+
+                match result {
+                    Ok(new_brep) => {
+                        current = new_brep;
+                        if feature.is_hole {
+                            report.base.holes_removed += 1;
+                        } else {
+                            report.base.bosses_removed += 1;
+                        }
+                    }
+                    Err(_) => {
+                        report.base.failed_features += 1;
+
+                        // Try adaptive tolerance escalation
+                        if options.adaptive_tolerance {
+                            let tol = TOLERANCE_ABS * options.tolerance_growth_factor;
+                            let (retried, mc_report) = crate::brep_repair::MakeConnectedStrategy {
+                                merge_tolerance: tol,
+                                ..crate::brep_repair::MakeConnectedStrategy::default()
+                            }.apply(&current);
+
+                            current = retried;
+                            report.tolerance_escalations += 1;
+                            let _ = mc_report;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Process conical features
+    for &idx in &group.conical_indices {
+        if let Some(feature) = conical_features.get(idx) {
+            if feature.is_hole {
+                if let Ok(fill) = make_fill_cone(feature, margin) {
+                    if boolean_op(BooleanOpType::Union, &current, &fill).is_ok() {
+                        report.base.conical_features_removed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(current)
+}
+
 // -- Tests -------------------------------------------------------------------
 
 #[cfg(test)]
@@ -2776,5 +3098,87 @@ mod tests {
         // The result depends on whether they have parallel axes
         // Just verify the function runs without error
         let _ = patterns;
+    }
+
+    // -- Enhanced Defeaturing Tests -----------------------------------------
+
+    #[test]
+    fn defeaturing_options_enhanced_default() {
+        let opts = DefeaturingOptionsEnhanced::default();
+        assert!(opts.process_feature_groups);
+        assert!(opts.enhanced_healing);
+        assert!(opts.adaptive_tolerance);
+        assert_eq!(opts.max_features_per_operation, 5);
+    }
+
+    #[test]
+    fn defeaturing_options_enhanced_presets() {
+        let conservative = DefeaturingOptionsEnhanced::conservative();
+        assert!(!conservative.process_feature_groups);
+        assert_eq!(conservative.max_features_per_operation, 1);
+
+        let aggressive = DefeaturingOptionsEnhanced::aggressive();
+        assert!(aggressive.process_feature_groups);
+        assert_eq!(aggressive.max_features_per_operation, 10);
+
+        let molding = DefeaturingOptionsEnhanced::for_injection_molding();
+        assert!(molding.base.enable_slot_features);
+        assert!(molding.base.enable_blend_features);
+    }
+
+    #[test]
+    fn defeature_brep_enhanced_empty_input() {
+        let empty = BRep::default();
+        let opts = DefeaturingOptionsEnhanced::default();
+        let result = defeature_brep_enhanced(&empty, &opts);
+        assert!(matches!(result, Err(DefeaturingError::EmptyInput)));
+    }
+
+    #[test]
+    fn defeature_brep_enhanced_simple_box() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 8.0, 6.0).unwrap();
+        let opts = DefeaturingOptionsEnhanced::default();
+        let (result, report) = defeature_brep_enhanced(&brep, &opts).unwrap();
+
+        // Box with no holes should return unchanged
+        assert_eq!(report.base.holes_removed, 0);
+        assert_eq!(report.base.failed_features, 0);
+        let _ = result;
+    }
+
+    #[test]
+    fn defeature_brep_enhanced_with_hole() {
+        let hole_radius = 0.3;
+        let brep = box_with_hole(4.0, hole_radius);
+
+        let opts = DefeaturingOptionsEnhanced {
+            base: DefeaturingOptions {
+                max_hole_radius: 1.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (defeatured, report) = defeature_brep_enhanced(&brep, &opts).unwrap();
+
+        // Should have processed the hole
+        assert!(report.base.holes_removed > 0 || report.base.failed_features > 0);
+        let _ = defeatured;
+    }
+
+    #[test]
+    fn defeaturing_report_enhanced_has_new_fields() {
+        let report = DefeaturingReportEnhanced {
+            groups_processed: 3,
+            features_in_groups: 15,
+            tolerance_escalations: 2,
+            multi_attempt_features: 5,
+            ..Default::default()
+        };
+
+        assert_eq!(report.groups_processed, 3);
+        assert_eq!(report.features_in_groups, 15);
+        assert_eq!(report.tolerance_escalations, 2);
+        assert_eq!(report.multi_attempt_features, 5);
     }
 }

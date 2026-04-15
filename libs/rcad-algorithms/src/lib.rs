@@ -1,5 +1,10 @@
+pub use brep_graph::{
+    BRepGraphHistory, NamedGraph, NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent,
+    TopoGraphValidationIssue, TopoNode,
+};
 pub mod bopds;
 pub mod brep_check;
+pub mod brep_check_parallel;
 pub mod brep_repair;
 pub mod builder;
 pub mod defeature;
@@ -20,6 +25,10 @@ pub mod non_manifold;
 pub use defeature::{
     CylindricalFeature, DefeaturingError, DefeaturingOptions, DefeaturingReport,
     defeature_brep, detect_cylindrical_features, identify_small_faces,
+    ConicalFeature, SlotFeature, PocketFeature, BlendFeature, HolePattern, HolePatternType,
+    FeatureGroup, detect_connected_feature_groups, detect_hole_patterns,
+    detect_conical_features, detect_slot_features, detect_pocket_features, detect_blend_features,
+    DefeaturingOptionsEnhanced, DefeaturingReportEnhanced, defeature_brep_enhanced,
 };
 pub use features::{
     FeatureError, SplitShapeError,
@@ -37,6 +46,7 @@ pub mod array;
 pub mod cells_builder;
 pub mod maker_volume;
 pub mod point_cloud;
+pub mod medial_axis;
 
 use serde::Serialize;
 
@@ -59,6 +69,10 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     // Wire quality metrics (ShapeAnalysis_Wire enhancement)
     WireQualityMetrics, WireQualityReport, analyze_wire_quality,
 };
+pub use brep_check_parallel::{
+    check_parallel, check_parallel_with_batch_size, check_many_parallel,
+    check_parallel_with_stats, ParallelCheckStats,
+};
 pub use brep_repair::{
     MakeConnectedReport, RepairReport, ToleranceFlowDirection,
     WireGapRepairReport, fix_wire_gaps,
@@ -75,6 +89,11 @@ pub use brep_repair::{
     // Enhanced edge sewing and adaptive tolerance
     EdgeSewConfig, EnhancedEdgeSewReport, sew_edges_enhanced,
     AdaptiveToleranceConfig, AdaptiveToleranceMergeReport, merge_vertices_adaptive,
+    // MakeConnectedStrategy for configurable connectivity repair
+    MakeConnectedStrategy, make_connected_with_strategy,
+    // Seed detection for scoped make-connected
+    SeedDetectionStrategy, SeedDetectionConfig, SeedDetectionResult, detect_seeds_for_scoped_cleanup,
+    make_connected_scoped_auto,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
@@ -82,8 +101,16 @@ pub use healing::{
     ParametricConsistencyReport, analyze_and_heal, diagnose_all, heal, run_healing_operator_chain,
     OperatorParams, OperatorReport, StageReport, ShapeProcessStats, ShapeProcessReport, ShapeProcessConfig,
     run_shape_process,
+    // ShapeFix_Solid and ShapeFix_Wire equivalents
+    fix_solid, fix_wire, heal_comprehensive,
+    SolidFixReport, WireFixReport, ComprehensiveHealingReport, WireIssueLocation,
 };
-pub use builder::{BooleanError, BooleanOpType};
+pub use builder::{
+    BooleanError, BooleanOpType,
+    // Glue path enhancement types
+    GlueConfig, GlueFacePair, GlueFaceCache,
+    detect_glue_faces, apply_glue_optimization, compute_adaptive_glue_tolerance,
+};
 pub use history::{
     BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
     ShellOrigin, SolidOrigin, VertexOrigin,
@@ -146,9 +173,12 @@ pub use point_cloud::{
     extract_points_from_brep_vertices, extract_points_from_brep_mesh, extract_points_from_mesh,
     sample_points_from_brep_surfaces,
 };
-pub use brep_graph::{
-    NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent, TopoGraphValidationIssue,
-    TopoNode,
+pub use medial_axis::{
+    MedialAxisOptions, MedialVertex, MedialEdge, MedialFace, MedialAxis,
+    ThinRegion, WallThicknessResult,
+    compute_medial_axis_2d, compute_medial_axis_3d, compute_wall_thickness,
+    detect_thin_regions, generate_rib_paths, point_in_polygon_2d,
+    compute_mat_2d, find_max_inscribed_circle, cluster_medial_vertices,
 };
 pub use non_manifold::{
     NonManifoldReport, NonManifoldTraversal,
