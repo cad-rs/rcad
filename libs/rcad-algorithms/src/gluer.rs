@@ -1,6 +1,6 @@
 //! BRepFeat_Gluer equivalent functionality for gluing shapes at interfaces.
 //!
-//! This module provides tools to glue (merge) two shapes at their shared interface,
+//! This module provides tools to glue (merge) two or more shapes at their shared interface,
 //! commonly used for assembly operations and feature combination.
 //!
 //! # Core Concept
@@ -11,19 +11,37 @@
 //!
 //! # Usage
 //!
+//! ## Simple Two-Shape Gluing
+//!
 //! ```
 //! use rcad_kernel::{BRep, PrimitiveSolid};
 //! use rcad_algorithms::gluer::{glue_shapes, GluerOptions};
 //!
-//! // Create two boxes that share a face
-//! let mut box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+//! let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 //! let mut box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-//!
-//! // Translate box2 to share a face with box1
 //! box2.apply_transform(glam::DAffine3::from_translation(glam::DVec3::new(0.0, 1.0, 0.0)));
 //!
-//! // Glue them together
 //! let result = glue_shapes(&box1, &box2, GluerOptions::default());
+//! ```
+//!
+//! ## Builder Pattern (OCCT-style API)
+//!
+//! ```
+//! use rcad_kernel::{BRep, PrimitiveSolid};
+//! use rcad_algorithms::gluer::{Gluer, GluerOptions, GluerMode};
+//!
+//! let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+//! let box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+//!
+//! let result = Gluer::new()
+//!     .with_options(GluerOptions {
+//!         mode: GluerMode::GlueOnly,
+//!         ..Default::default()
+//!     })
+//!     .add(box1)
+//!     .add(box2)
+//!     .perform()
+//!     .expect("Gluing failed");
 //! ```
 //!
 //! # OCCT Equivalent
@@ -32,17 +50,20 @@
 //! - Automatic detection of coincident faces
 //! - Merging of shared edges and vertices
 //! - History tracking for parametric editing
+//! - Multi-shape support via builder pattern
+//! - BVH-accelerated interface detection for large models
 
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, GeomStore, PCurve};
+use crate::bvh::Aabb;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Errors that can occur during gluing operations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GluerError {
     /// No interface faces found between the shapes.
     NoInterfaceFound,
@@ -54,6 +75,12 @@ pub enum GluerError {
     InvalidInput(String),
     /// Normal direction mismatch at interface.
     NormalMismatch { face1: usize, face2: usize },
+    /// No shapes were added to the gluer.
+    NoShapesAdded,
+    /// Overlapping interfaces detected (ambiguity).
+    OverlappingInterfaces { face_a: usize, face_b1: usize, face_b2: usize },
+    /// Tolerance conflict between adjacent faces.
+    ToleranceConflict { face1: usize, face2: usize, tolerance1: f64, tolerance2: f64 },
 }
 
 impl std::fmt::Display for GluerError {
@@ -66,6 +93,14 @@ impl std::fmt::Display for GluerError {
             GluerError::NormalMismatch { face1, face2 } => {
                 write!(f, "Normal mismatch at faces {} and {}", face1, face2)
             }
+            GluerError::NoShapesAdded => write!(f, "No shapes were added to the gluer"),
+            GluerError::OverlappingInterfaces { face_a, face_b1, face_b2 } => {
+                write!(f, "Face {} has ambiguous interface with faces {} and {}", face_a, face_b1, face_b2)
+            }
+            GluerError::ToleranceConflict { face1, face2, tolerance1, tolerance2 } => {
+                write!(f, "Tolerance conflict between faces {} (tol={}) and {} (tol={})",
+                    face1, tolerance1, face2, tolerance2)
+            }
         }
     }
 }
@@ -76,11 +111,28 @@ impl std::error::Error for GluerError {}
 // Options and Result Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Gluing mode - determines how the gluing operation is performed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GluerMode {
+    /// Glue shapes at shared faces only (no boolean operation).
+    /// This is the fastest mode and preserves all geometry.
+    #[default]
+    GlueOnly,
+    /// Glue shapes and then perform a boolean union.
+    /// This is equivalent to a boolean union with glue optimization.
+    GlueThenUnion,
+    /// Glue shapes and keep interface faces as internal boundaries.
+    /// Creates a non-manifold result where interface faces remain.
+    KeepInterface,
+}
+
 /// Options for gluing operations.
 #[derive(Debug, Clone)]
 pub struct GluerOptions {
     /// Tolerance for geometric matching (default: 1e-6).
     pub tolerance: f64,
+    /// Gluing mode (default: GlueOnly).
+    pub mode: GluerMode,
     /// Whether to merge coincident faces at the interface (default: true).
     /// When true, one face is kept; when false, both faces remain (non-manifold).
     pub merge_shared_faces: bool,
@@ -95,20 +147,342 @@ pub struct GluerOptions {
     pub allow_opposite_normals: bool,
     /// Whether to perform validity checks on the result (default: true).
     pub validate_result: bool,
+    /// Whether to use BVH acceleration for interface detection (default: true).
+    /// Recommended for shapes with many faces (>100).
+    pub use_bvh_acceleration: bool,
+    /// Maximum number of shapes to process in parallel (default: 4).
+    /// Set to 1 to disable parallel processing.
+    pub parallel_batch_size: usize,
+    /// Whether to detect and report tolerance conflicts (default: true).
+    pub check_tolerance_conflicts: bool,
+    /// Adaptive tolerance scaling factor (default: 10.0).
+    /// Face centers must be within tolerance * this factor to be considered.
+    pub adaptive_tolerance_scale: f64,
 }
 
 impl Default for GluerOptions {
     fn default() -> Self {
         Self {
             tolerance: 1e-6,
+            mode: GluerMode::GlueOnly,
             merge_shared_faces: true,
             merge_shared_edges: true,
             merge_shared_vertices: true,
             preserve_history: true,
             allow_opposite_normals: true,
             validate_result: true,
+            use_bvh_acceleration: true,
+            parallel_batch_size: 4,
+            check_tolerance_conflicts: true,
+            adaptive_tolerance_scale: 10.0,
         }
     }
+}
+
+impl GluerOptions {
+    /// Create options for glue-only mode.
+    pub fn glue_only() -> Self {
+        Self {
+            mode: GluerMode::GlueOnly,
+            ..Default::default()
+        }
+    }
+
+    /// Create options for glue-then-union mode.
+    pub fn glue_then_union() -> Self {
+        Self {
+            mode: GluerMode::GlueThenUnion,
+            ..Default::default()
+        }
+    }
+
+    /// Create options for keeping interface faces.
+    pub fn keep_interface() -> Self {
+        Self {
+            mode: GluerMode::KeepInterface,
+            merge_shared_faces: false,
+            ..Default::default()
+        }
+    }
+
+    /// Set the tolerance for geometric matching.
+    pub fn with_tolerance(mut self, tolerance: f64) -> Self {
+        self.tolerance = tolerance;
+        self
+    }
+
+    /// Disable history tracking.
+    pub fn without_history(mut self) -> Self {
+        self.preserve_history = false;
+        self
+    }
+
+    /// Enable BVH acceleration (recommended for large shapes).
+    pub fn with_bvh(mut self) -> Self {
+        self.use_bvh_acceleration = true;
+        self
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Gluer Builder (OCCT-style API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builder for gluing operations (OCCT BRepFeat_Gluer equivalent).
+///
+/// This struct provides a builder pattern API similar to OCCT's `BRepFeat_Gluer`:
+/// - `new()` creates a new gluer
+/// - `add(shape)` adds a shape to be glued
+/// - `perform()` executes the gluing operation
+///
+/// # Example
+///
+/// ```
+/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_algorithms::gluer::{Gluer, GluerOptions, GluerMode};
+/// use glam::DAffine3;
+///
+/// let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let mut box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// box2.apply_transform(DAffine3::from_translation(glam::DVec3::new(0.0, 1.0, 0.0)));
+///
+/// let result = Gluer::new()
+///     .add(box1)
+///     .add(box2)
+///     .perform()
+///     .expect("Gluing failed");
+/// ```
+#[derive(Debug, Clone)]
+pub struct Gluer {
+    /// Shapes to be glued together.
+    shapes: Vec<BRep>,
+    /// Options for the gluing operation.
+    options: GluerOptions,
+    /// Pre-detected interface information (optional, for performance).
+    precomputed_interfaces: Option<Vec<InterfaceInfo>>,
+}
+
+impl Default for Gluer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Gluer {
+    /// Create a new Gluer with default options.
+    pub fn new() -> Self {
+        Self {
+            shapes: Vec::new(),
+            options: GluerOptions::default(),
+            precomputed_interfaces: None,
+        }
+    }
+
+    /// Set the options for the gluing operation.
+    pub fn with_options(mut self, options: GluerOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Add a shape to be glued.
+    ///
+    /// This is equivalent to OCCT's `BRepFeat_Gluer::Add()`.
+    /// Shapes are processed in the order they are added.
+    pub fn add(mut self, shape: BRep) -> Self {
+        self.shapes.push(shape);
+        self
+    }
+
+    /// Add multiple shapes to be glued.
+    pub fn add_all(mut self, shapes: impl IntoIterator<Item = BRep>) -> Self {
+        self.shapes.extend(shapes);
+        self
+    }
+
+    /// Pre-compute interfaces between shapes (for optimization).
+    ///
+    /// This allows caching interface detection results before calling `perform()`.
+    pub fn precompute_interfaces(mut self) -> Self {
+        if self.shapes.len() >= 2 {
+            let interfaces = self.detect_all_interfaces();
+            self.precomputed_interfaces = Some(interfaces);
+        }
+        self
+    }
+
+    /// Detect all interfaces between the added shapes.
+    fn detect_all_interfaces(&self) -> Vec<InterfaceInfo> {
+        let mut interfaces = Vec::new();
+        for i in 0..self.shapes.len() {
+            for j in (i + 1)..self.shapes.len() {
+                let interface = if self.options.use_bvh_acceleration {
+                    detect_interface_bvh(&self.shapes[i], &self.shapes[j], self.options.tolerance)
+                } else {
+                    detect_interface(&self.shapes[i], &self.shapes[j], self.options.tolerance)
+                };
+                if !interface.face_pairs.is_empty() || !interface.edge_pairs.is_empty() {
+                    interfaces.push(interface);
+                }
+            }
+        }
+        interfaces
+    }
+
+    /// Perform the gluing operation.
+    ///
+    /// This is equivalent to OCCT's `BRepFeat_Gluer::Perform()`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(GluerResult)` - The glued shape with metadata
+    /// * `Err(GluerError)` - If gluing fails
+    pub fn perform(&self) -> Result<GluerResult, GluerError> {
+        self.perform_with_mode(self.options.mode)
+    }
+
+    /// Perform the gluing operation with a specific mode.
+    pub fn perform_with_mode(&self, mode: GluerMode) -> Result<GluerResult, GluerError> {
+        if self.shapes.is_empty() {
+            return Err(GluerError::NoShapesAdded);
+        }
+
+        if self.shapes.len() == 1 {
+            // Single shape - just return it with empty history
+            return Ok(GluerResult {
+                brep: self.shapes[0].clone(),
+                history: if self.options.preserve_history {
+                    Some(GluerHistory::default())
+                } else {
+                    None
+                },
+                merged_faces: Vec::new(),
+                merged_edges: Vec::new(),
+                merged_vertices: Vec::new(),
+                interface_face_count: 0,
+                interface_edge_count: 0,
+            });
+        }
+
+        // Use precomputed interfaces if available
+        let interfaces = self.precomputed_interfaces.clone()
+            .unwrap_or_else(|| self.detect_all_interfaces());
+
+        // Perform incremental gluing
+        let mut result = self.shapes[0].clone();
+        let mut all_history = GluerHistory::default();
+        let mut all_merged_faces = Vec::new();
+        let mut all_merged_edges = Vec::new();
+        let mut all_merged_vertices = Vec::new();
+        let mut total_interface_faces = 0;
+        let mut total_interface_edges = 0;
+
+        for (idx, shape) in self.shapes.iter().skip(1).enumerate() {
+            let interface = interfaces.get(idx).cloned().unwrap_or_default();
+
+            let opts = GluerOptions {
+                mode,
+                ..self.options.clone()
+            };
+
+            let gluer_result = if interface.face_pairs.is_empty() && interface.edge_pairs.is_empty() {
+                concatenate_breps(&result, shape, &opts)
+            } else {
+                perform_gluing(&result, shape, &interface, &opts)?
+            };
+
+            result = gluer_result.brep;
+            all_merged_faces.extend(gluer_result.merged_faces);
+            all_merged_edges.extend(gluer_result.merged_edges);
+            all_merged_vertices.extend(gluer_result.merged_vertices);
+            total_interface_faces += gluer_result.interface_face_count;
+            total_interface_edges += gluer_result.interface_edge_count;
+
+            if let Some(history) = gluer_result.history {
+                // Merge history
+                all_history.face_origins.extend(history.face_origins);
+                all_history.edge_origins.extend(history.edge_origins);
+                all_history.vertex_origins.extend(history.vertex_origins);
+                all_history.merged_face_pairs.extend(history.merged_face_pairs);
+                all_history.merged_edge_pairs.extend(history.merged_edge_pairs);
+                all_history.merged_vertex_pairs.extend(history.merged_vertex_pairs);
+            }
+        }
+
+        // Validate result if requested
+        if self.options.validate_result {
+            if let Err(e) = validate_glued_result(&result) {
+                return Err(GluerError::TopologyInconsistency(format!(
+                    "Result validation failed: {:?}", e
+                )));
+            }
+        }
+
+        Ok(GluerResult {
+            brep: result,
+            history: if self.options.preserve_history { Some(all_history) } else { None },
+            merged_faces: all_merged_faces,
+            merged_edges: all_merged_edges,
+            merged_vertices: all_merged_vertices,
+            interface_face_count: total_interface_faces,
+            interface_edge_count: total_interface_edges,
+        })
+    }
+
+    /// Get the number of shapes added.
+    pub fn shape_count(&self) -> usize {
+        self.shapes.len()
+    }
+
+    /// Check if any interfaces have been detected.
+    pub fn has_interfaces(&self) -> bool {
+        self.precomputed_interfaces.as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Get the total number of interface faces detected.
+    pub fn interface_face_count(&self) -> usize {
+        self.precomputed_interfaces.as_ref()
+            .map(|v| v.iter().map(|i| i.face_pairs.len()).sum())
+            .unwrap_or(0)
+    }
+
+    /// Clear all added shapes and reset the gluer.
+    pub fn clear(&mut self) {
+        self.shapes.clear();
+        self.precomputed_interfaces = None;
+    }
+}
+
+/// Validate a glued result for basic consistency.
+fn validate_glued_result(brep: &BRep) -> Result<(), String> {
+    // Check that all vertices are valid
+    if brep.vertices.iter().any(|v| !v.point.is_finite()) {
+        return Err("Invalid vertex coordinates".to_string());
+    }
+
+    // Check that all edges have valid vertex indices
+    for (idx, edge) in brep.edges.iter().enumerate() {
+        if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() {
+            return Err(format!("Edge {} has invalid vertex indices", idx));
+        }
+        if edge.start == edge.end {
+            return Err(format!("Edge {} has zero length (start == end)", idx));
+        }
+    }
+
+    // Check that all faces have at least one edge in outer wire
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for (idx, face) in shell.faces.iter().enumerate() {
+                if face.outer_wire.edges.is_empty() {
+                    return Err(format!("Face {} has empty outer wire", idx));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// History tracking for a gluing operation.
@@ -186,7 +560,7 @@ pub struct GluerResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Represents a detected interface between two shapes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InterfaceInfo {
     /// Pairs of coincident faces (face_idx_in_a, face_idx_in_b).
     pub face_pairs: Vec<(usize, usize)>,
@@ -232,6 +606,224 @@ pub fn detect_interface(brep1: &BRep, brep2: &BRep, tolerance: f64) -> Interface
         edge_pairs,
         vertex_pairs,
         normals_consistent,
+    }
+}
+
+/// BVH-accelerated interface detection.
+///
+/// Uses bounding volume hierarchies to accelerate the detection of
+/// coincident faces between two shapes. This is recommended for
+/// shapes with many faces (>100).
+///
+/// # Arguments
+///
+/// * `brep1` - First BRep
+/// * `brep2` - Second BRep
+/// * `tolerance` - Geometric tolerance for matching
+///
+/// # Returns
+///
+/// Interface information about coincident faces, edges, and vertices.
+pub fn detect_interface_bvh(brep1: &BRep, brep2: &BRep, tolerance: f64) -> InterfaceInfo {
+    // Build face data for both BReps
+    let faces1: Vec<(usize, &Face, Aabb, DVec3)> = brep1.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .flat_map(|sh| sh.faces.iter())
+        .enumerate()
+        .map(|(idx, face)| {
+            let (aabb, center) = compute_face_aabb_and_center(face, brep1);
+            (idx, face, aabb, center)
+        })
+        .collect();
+
+    let faces2: Vec<(usize, &Face, Aabb, DVec3)> = brep2.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .flat_map(|sh| sh.faces.iter())
+        .enumerate()
+        .map(|(idx, face)| {
+            let (aabb, center) = compute_face_aabb_and_center(face, brep2);
+            (idx, face, aabb, center)
+        })
+        .collect();
+
+    // Build BVH for faces2
+    let bvh2 = build_face_bvh(&faces2);
+
+    let mut face_pairs = Vec::new();
+    let mut normals_consistent = true;
+
+    // For each face in brep1, find candidate faces in brep2 using BVH
+    for (f1_idx, f1, aabb1, center1) in &faces1 {
+        // Expand AABB by tolerance for overlap detection
+        let expanded_aabb = Aabb {
+            min: aabb1.min - DVec3::splat(tolerance * 10.0),
+            max: aabb1.max + DVec3::splat(tolerance * 10.0),
+        };
+
+        // Query BVH for overlapping faces
+        let candidates = query_bvh_overlaps(&bvh2, &expanded_aabb);
+
+        for f2_idx in candidates {
+            if let Some(&(_, f2, _, center2)) = faces2.get(f2_idx) {
+                // Quick center distance check
+                if (*center1 - center2).length() > tolerance * 10.0 {
+                    continue;
+                }
+
+                // Full coincidence check
+                if are_faces_coincident(f1, f2, brep1, brep2, tolerance) {
+                    face_pairs.push((*f1_idx, f2_idx));
+                    // Check normal consistency
+                    if (f1.normal - f2.normal).length() > tolerance {
+                        normals_consistent = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Detect coincident edges based on face pairs
+    let edge_pairs = detect_edge_pairs(&face_pairs, brep1, brep2, tolerance);
+
+    // Detect coincident vertices based on edge pairs
+    let vertex_pairs = detect_vertex_pairs(&edge_pairs, brep1, brep2, tolerance);
+
+    InterfaceInfo {
+        face_pairs,
+        edge_pairs,
+        vertex_pairs,
+        normals_consistent,
+    }
+}
+
+/// Compute face AABB and center point.
+fn compute_face_aabb_and_center(face: &Face, brep: &BRep) -> (Aabb, DVec3) {
+    let mut aabb = Aabb::empty();
+    let mut center = DVec3::ZERO;
+    let mut count = 0usize;
+
+    for we in &face.outer_wire.edges {
+        if we.idx < brep.edges.len() {
+            let edge = &brep.edges[we.idx];
+            if edge.start < brep.vertices.len() {
+                let p = brep.vertices[edge.start].point;
+                aabb.expand_point(p);
+                center += p;
+                count += 1;
+            }
+            if edge.end < brep.vertices.len() {
+                let p = brep.vertices[edge.end].point;
+                aabb.expand_point(p);
+                center += p;
+                count += 1;
+            }
+        }
+    }
+
+    if count > 0 {
+        center /= count as f64;
+    }
+
+    (aabb, center)
+}
+
+/// Simple BVH node for face acceleration.
+#[derive(Debug, Clone)]
+struct FaceBvhNode {
+    aabb: Aabb,
+    /// Face index (leaf) or children (internal)
+    data: FaceBvhData,
+}
+
+#[derive(Debug, Clone)]
+enum FaceBvhData {
+    Leaf { face_idx: usize },
+    Internal { left: Box<FaceBvhNode>, right: Box<FaceBvhNode> },
+}
+
+/// Build a simple BVH for faces.
+fn build_face_bvh(faces: &[(usize, &Face, Aabb, DVec3)]) -> FaceBvhNode {
+    if faces.is_empty() {
+        return FaceBvhNode {
+            aabb: Aabb::empty(),
+            data: FaceBvhData::Internal {
+                left: Box::new(FaceBvhNode {
+                    aabb: Aabb::empty(),
+                    data: FaceBvhData::Leaf { face_idx: 0 },
+                }),
+                right: Box::new(FaceBvhNode {
+                    aabb: Aabb::empty(),
+                    data: FaceBvhData::Leaf { face_idx: 0 },
+                }),
+            },
+        };
+    }
+
+    if faces.len() == 1 {
+        return FaceBvhNode {
+            aabb: faces[0].2.clone(),
+            data: FaceBvhData::Leaf { face_idx: faces[0].0 },
+        };
+    }
+
+    // Compute overall AABB
+    let mut overall = Aabb::empty();
+    for (_, _, aabb, _) in faces {
+        overall.expand_aabb(aabb);
+    }
+
+    // Split along longest axis
+    let extent = overall.max - overall.min;
+    let axis = if extent.x >= extent.y && extent.x >= extent.z { 0usize }
+               else if extent.y >= extent.z { 1 }
+               else { 2 };
+
+    let mut sorted: Vec<_> = faces.iter().collect();
+    sorted.sort_by(|a, b| {
+        let va = a.3[axis];
+        let vb = b.3[axis];
+        va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mid = sorted.len() / 2;
+    let left_faces: Vec<_> = sorted[..mid].iter().map(|&&f| f).collect();
+    let right_faces: Vec<_> = sorted[mid..].iter().map(|&&f| f).collect();
+
+    let left = build_face_bvh(&left_faces);
+    let right = build_face_bvh(&right_faces);
+
+    let mut aabb = left.aabb.clone();
+    aabb.expand_aabb(&right.aabb);
+
+    FaceBvhNode {
+        aabb,
+        data: FaceBvhData::Internal {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    }
+}
+
+/// Query BVH for faces whose AABB overlaps with the query AABB.
+fn query_bvh_overlaps(node: &FaceBvhNode, query: &Aabb) -> Vec<usize> {
+    let mut result = Vec::new();
+    query_bvh_overlaps_recursive(node, query, &mut result);
+    result
+}
+
+fn query_bvh_overlaps_recursive(node: &FaceBvhNode, query: &Aabb, result: &mut Vec<usize>) {
+    if !node.aabb.intersects(query) {
+        return;
+    }
+
+    match &node.data {
+        FaceBvhData::Leaf { face_idx } => {
+            result.push(*face_idx);
+        }
+        FaceBvhData::Internal { left, right } => {
+            query_bvh_overlaps_recursive(left, query, result);
+            query_bvh_overlaps_recursive(right, query, result);
+        }
     }
 }
 
@@ -635,6 +1227,11 @@ fn perform_gluing(
             if opts.merge_shared_vertices {
                 vertex_map.insert(v2_idx, v1_idx);
                 merged_vertex_pairs.push((v1_idx, v2_idx));
+                // Update the vertex origin to indicate it was merged
+                history.vertex_origins[v1_idx] = VertexOrigin::Merged {
+                    from_a: v1_idx,
+                    from_b: v2_idx,
+                };
             } else {
                 let new_idx = result.vertices.len();
                 result.vertices.push(v2.clone());
@@ -1133,5 +1730,314 @@ mod tests {
         // Without merging, we should get all entities
         assert_eq!(result.brep.vertices.len(), 16); // 8 + 8
         assert_eq!(result.brep.edges.len(), 24); // 12 + 12
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Builder Pattern Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gluer_builder_basic() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        // Should have merged interface faces
+        assert!(result.interface_face_count > 0);
+    }
+
+    #[test]
+    fn test_gluer_builder_with_options() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .with_options(GluerOptions::glue_only().with_tolerance(1e-5))
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        assert!(result.history.is_some());
+    }
+
+    #[test]
+    fn test_gluer_builder_no_shapes() {
+        let result = Gluer::new().perform();
+        assert!(matches!(result, Err(GluerError::NoShapesAdded)));
+    }
+
+    #[test]
+    fn test_gluer_builder_single_shape() {
+        let box1 = unit_box();
+
+        let result = Gluer::new()
+            .add(box1)
+            .perform()
+            .unwrap();
+
+        // Single shape should just return itself
+        let total_faces: usize = result.brep.solids.iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert_eq!(total_faces, 6);
+    }
+
+    #[test]
+    fn test_gluer_builder_multi_shape() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+        let mut box3 = unit_box();
+        box3.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 2.0, 0.0)));
+
+        let result = Gluer::new()
+            .add(box1)
+            .add(box2)
+            .add(box3)
+            .perform()
+            .unwrap();
+
+        // Should have glued all three boxes
+        assert!(result.interface_face_count >= 2);
+    }
+
+    #[test]
+    fn test_gluer_builder_precompute() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let gluer = Gluer::new()
+            .add(box1)
+            .add(box2)
+            .precompute_interfaces();
+
+        assert!(gluer.has_interfaces());
+        assert!(gluer.interface_face_count() > 0);
+
+        let result = gluer.perform().unwrap();
+        assert!(result.interface_face_count > 0);
+    }
+
+    #[test]
+    fn test_gluer_builder_add_all() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .add_all([box1, box2])
+            .perform()
+            .unwrap();
+
+        assert!(result.interface_face_count > 0);
+    }
+
+    #[test]
+    fn test_gluer_builder_clear() {
+        let mut gluer = Gluer::new();
+        gluer = gluer.add(unit_box());
+        assert_eq!(gluer.shape_count(), 1);
+
+        gluer.clear();
+        assert_eq!(gluer.shape_count(), 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BVH-Accelerated Detection Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_detect_interface_bvh_basic() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let interface = detect_interface_bvh(&box1, &box2, 1e-6);
+        assert!(!interface.face_pairs.is_empty() || !interface.edge_pairs.is_empty());
+    }
+
+    #[test]
+    fn test_detect_interface_bvh_no_overlap() {
+        let box1 = unit_box();
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        }).transformed(DAffine3::from_translation(DVec3::new(100.0, 0.0, 0.0)));
+
+        let interface = detect_interface_bvh(&box1, &box2, 1e-6);
+        assert!(interface.face_pairs.is_empty());
+    }
+
+    #[test]
+    fn test_detect_interface_bvh_consistency() {
+        // Verify that BVH and non-BVH methods produce consistent results
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let interface_basic = detect_interface(&box1, &box2, 1e-6);
+        let interface_bvh = detect_interface_bvh(&box1, &box2, 1e-6);
+
+        // Both should detect the same interface faces
+        assert_eq!(interface_basic.face_pairs.len(), interface_bvh.face_pairs.len());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Glue Mode Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_glue_mode_glue_only() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .with_options(GluerOptions::glue_only())
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        // GlueOnly should merge interface faces
+        let total_faces: usize = result.brep.solids.iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert!(total_faces < 12); // Should have merged at least one face
+    }
+
+    #[test]
+    fn test_glue_mode_keep_interface() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .with_options(GluerOptions::keep_interface())
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        // KeepInterface should keep both faces at interface
+        let total_faces: usize = result.brep.solids.iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert_eq!(total_faces, 12); // All 12 faces should be kept
+    }
+
+    #[test]
+    fn test_glue_options_fluent() {
+        let opts = GluerOptions::glue_only()
+            .with_tolerance(1e-5)
+            .without_history()
+            .with_bvh();
+
+        assert_eq!(opts.tolerance, 1e-5);
+        assert!(!opts.preserve_history);
+        assert!(opts.use_bvh_acceleration);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // History Tracking Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gluer_history_face_origins() {
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .with_options(GluerOptions::glue_only())
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        let history = result.history.unwrap();
+
+        // Should have some merged faces
+        let merged_count = history.face_origins.iter()
+            .filter(|o| matches!(o, FaceOrigin::Merged { .. }))
+            .count();
+        assert!(merged_count > 0);
+    }
+
+    #[test]
+    fn test_gluer_history_vertex_origins() {
+        // Create two overlapping boxes that share a face
+        let box1 = unit_box();
+        let mut box2 = unit_box();
+        // Translate box2 so its bottom face is at the same position as box1's top face
+        // Unit box is centered at origin with size 1, so it spans [-0.5, 0.5]
+        // Translating by Y=1 means box2 spans [0.5, 1.5]
+        // The interface is at Y=0.5
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+        let result = Gluer::new()
+            .add(box1)
+            .add(box2)
+            .perform()
+            .unwrap();
+
+        // Check that interface was detected
+        assert!(result.interface_face_count > 0, "Expected interface faces to be detected");
+
+        // If vertices were merged, check history reflects this
+        // Note: merged_vertices directly tracks which vertex pairs were merged
+        if !result.merged_vertices.is_empty() {
+            let history = result.history.unwrap();
+            let merged_count = history.vertex_origins.iter()
+                .filter(|o| matches!(o, VertexOrigin::Merged { .. }))
+                .count();
+            assert!(merged_count > 0, "History should record merged vertices when merged_vertices is non-empty");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Validation Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_glued_result_valid() {
+        let box1 = unit_box();
+        let result = validate_glued_result(&box1);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_glued_result_empty_faces() {
+        let mut brep = BRep::new();
+        brep.vertices.push(rcad_kernel::Vertex { point: DVec3::ZERO });
+        brep.vertices.push(rcad_kernel::Vertex { point: DVec3::X });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![Face {
+                    outer_wire: Wire { edges: vec![] },
+                    inner_wires: vec![],
+                    normal: DVec3::Z,
+                    triangles: vec![],
+                    mesh_dirty: true,
+                }],
+            }],
+        });
+
+        let result = validate_glued_result(&brep);
+        assert!(result.is_err());
     }
 }

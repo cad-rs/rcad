@@ -190,9 +190,10 @@ pub use non_manifold::{
     merge_shells_at_interface,
 };
 pub use gluer::{
-    GluerError, GluerOptions, GluerResult, GluerHistory,
+    GluerError, GluerOptions, GluerResult, GluerHistory, GluerMode,
+    Gluer,
     FaceOrigin as GluerFaceOrigin, EdgeOrigin as GluerEdgeOrigin, VertexOrigin as GluerVertexOrigin,
-    InterfaceInfo, detect_interface, glue_shapes, glue_at_interface,
+    InterfaceInfo, detect_interface, detect_interface_bvh, glue_shapes, glue_at_interface,
 };
 pub use shape_analysis::{
     // Surface analysis (ShapeAnalysis_Surface)

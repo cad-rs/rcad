@@ -351,6 +351,22 @@ pub struct StepDocumentMetadata {
     pub fea_loads: Vec<StepFeaLoad>,
     /// FEA node groups (AP242 FEA_NODE_GROUP).
     pub fea_node_groups: Vec<StepFeaNodeGroup>,
+    /// FEA analysis definitions (AP242 FEA_ANALYSIS, ANALYSIS_3D).
+    pub fea_analyses: Vec<StepFeaAnalysis>,
+    /// FEA state definitions (AP242 FEA_STATE).
+    pub fea_states: Vec<StepFeaState>,
+    /// FEA material models (AP242 FEA_MATERIAL_MODEL, FEA_LINEAR_ELASTICITY).
+    pub fea_material_models: Vec<StepFeaMaterialModel>,
+    /// FEA nodes with coordinates (AP242 NODE_REPRESENTATION).
+    pub fea_nodes: Vec<StepFeaNode>,
+    /// FEA elements with connectivity (AP242 ELEMENT_REPRESENTATION).
+    pub fea_elements: Vec<StepFeaElement>,
+    /// FEA analysis steps (AP242 FEA_STEP).
+    pub fea_steps: Vec<StepFeaStep>,
+    /// FEA result data (AP242 FEA_RESULT).
+    pub fea_results: Vec<StepFeaResult>,
+    /// FEA case definitions (AP242 FEA_CASE).
+    pub fea_cases: Vec<StepFeaCase>,
     /// View definitions (AP242 VIEW, CAMERA_MODEL_D3).
     pub views: Vec<StepView>,
     /// Camera models (AP242 CAMERA_MODEL_D3).
@@ -415,6 +431,14 @@ impl StepDocumentMetadata {
         lines.push(format!("FEA boundary conditions: {}", self.fea_boundary_conditions.len()));
         lines.push(format!("FEA loads: {}", self.fea_loads.len()));
         lines.push(format!("FEA node groups: {}", self.fea_node_groups.len()));
+        lines.push(format!("FEA analyses: {}", self.fea_analyses.len()));
+        lines.push(format!("FEA states: {}", self.fea_states.len()));
+        lines.push(format!("FEA material models: {}", self.fea_material_models.len()));
+        lines.push(format!("FEA nodes: {}", self.fea_nodes.len()));
+        lines.push(format!("FEA elements: {}", self.fea_elements.len()));
+        lines.push(format!("FEA steps: {}", self.fea_steps.len()));
+        lines.push(format!("FEA results: {}", self.fea_results.len()));
+        lines.push(format!("FEA cases: {}", self.fea_cases.len()));
         lines.push(format!("Views: {}", self.views.len()));
         lines.push(format!("Cameras: {}", self.cameras.len()));
         lines.push(format!("View volumes: {}", self.view_volumes.len()));
@@ -959,6 +983,131 @@ pub struct StepFeaLoad {
     pub load_type: Option<String>,
     pub magnitude: Option<f64>,
     pub direction: Option<[f64; 3]>,
+}
+
+// ── Additional FEA entities (AP209/AP242 extended) ───────────────────────────────
+
+/// FEA analysis definition (AP242 FEA_ANALYSIS, ANALYSIS_3D).
+/// Represents a finite element analysis definition with associated model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaAnalysis {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the FEA model being analyzed.
+    pub model_id: Option<u64>,
+    /// Analysis type (e.g., "STATIC", "MODAL", "THERMAL", "BUCKLING").
+    pub analysis_type: Option<String>,
+    /// Creation time/date if specified.
+    pub creation_date: Option<String>,
+}
+
+/// FEA state definition (AP242 FEA_STATE).
+/// Represents a state of the model (e.g., initial conditions, results).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaState {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the FEA analysis this state belongs to.
+    pub analysis_id: Option<u64>,
+    /// State type (e.g., "INITIAL", "RESULT", "LOAD_CASE").
+    pub state_type: Option<String>,
+}
+
+/// FEA material model (AP242 FEA_MATERIAL_MODEL, FEA_LINEAR_ELASTICITY, etc.).
+/// Defines material constitutive model for FEA.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaMaterialModel {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Material model type (e.g., "LINEAR_ELASTIC", "ELASTIC_PLASTIC", "HYPERELASTIC").
+    pub model_type: String,
+    /// Young's modulus (for linear elastic materials).
+    pub youngs_modulus: Option<f64>,
+    /// Poisson's ratio.
+    pub poissons_ratio: Option<f64>,
+    /// Shear modulus.
+    pub shear_modulus: Option<f64>,
+    /// Density.
+    pub density: Option<f64>,
+    /// Thermal expansion coefficient.
+    pub thermal_expansion: Option<f64>,
+    /// Unit for modulus values (e.g., "MPa", "GPa", "psi").
+    pub modulus_unit: Option<String>,
+}
+
+/// FEA node with coordinates (AP242 NODE_REPRESENTATION or via FEAMEDIAN_NODE).
+/// Represents a single node in the FEA mesh with its coordinates.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaNode {
+    pub entity_id: u64,
+    /// Node number/label within the mesh (1-based indexing typically).
+    pub node_number: u64,
+    /// Cartesian coordinates (x, y, z).
+    pub coordinates: [f64; 3],
+    /// Reference to the mesh this node belongs to.
+    pub mesh_id: Option<u64>,
+}
+
+/// FEA element with connectivity (AP242 ELEMENT_REPRESENTATION or via FEAMEDIAN_ELEMENT).
+/// Represents a single element in the FEA mesh with its node connectivity.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaElement {
+    pub entity_id: u64,
+    /// Element number/label within the mesh.
+    pub element_number: u64,
+    /// Element type (e.g., "TETRA4", "TETRA10", "HEXA8", "HEXA20", "TRIA3", "QUAD4").
+    pub element_type: String,
+    /// Node IDs that define this element (connectivity).
+    pub node_ids: Vec<u64>,
+    /// Reference to the mesh this element belongs to.
+    pub mesh_id: Option<u64>,
+}
+
+/// FEA step/substep definition (AP242 FEA_STEP).
+/// Represents an analysis step or substep within an FEA analysis.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaStep {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the FEA analysis.
+    pub analysis_id: Option<u64>,
+    /// Step number within the analysis.
+    pub step_number: Option<u64>,
+    /// Step type (e.g., "LOAD", "TIME", "FREQUENCY").
+    pub step_type: Option<String>,
+}
+
+/// FEA result data (AP242 FEA_RESULT, NODAL_RESULT, ELEMENT_RESULT).
+/// Represents result data from FEA analysis.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaResult {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Result type (e.g., "DISPLACEMENT", "STRESS", "STRAIN", "REACTION_FORCE").
+    pub result_type: String,
+    /// Reference to the FEA state or analysis.
+    pub analysis_id: Option<u64>,
+    /// Reference to the result location (node set or element set).
+    pub location_id: Option<u64>,
+    /// Number of components (e.g., 3 for displacement vector, 6 for stress tensor).
+    pub component_count: Option<u64>,
+}
+
+/// FEA case definition (AP242 FEA_CASE).
+/// Represents an analysis case within an FEA model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepFeaCase {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the FEA model.
+    pub model_id: Option<u64>,
+    /// Case type (e.g., "LOAD_CASE", "BC_CASE", "COMBINATION").
+    pub case_type: Option<String>,
 }
 
 /// A material entry extracted from a STEP file.
@@ -2708,6 +2857,352 @@ fn extract_fea_node_groups(content: &str) -> Vec<StepFeaNodeGroup> {
     out
 }
 
+// ── Additional FEA entity extraction functions (AP209/AP242 extended) ──────────
+
+fn extract_fea_analyses(content: &str) -> Vec<StepFeaAnalysis> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_ANALYSIS" | "ANALYSIS_3D" | "FEAMEDIAN_ANALYSIS"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let model_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        // analysis_type is the 3rd string (index 2) in the arguments
+        let analysis_type = extract_nth_string_arg(args, 2);
+        // creation_date is the 4th string (index 3) in the arguments
+        let creation_date = extract_nth_string_arg(args, 3);
+        out.push(StepFeaAnalysis {
+            entity_id: id,
+            name,
+            description,
+            model_id,
+            analysis_type,
+            creation_date,
+        });
+    }
+    out
+}
+
+fn extract_fea_states(content: &str) -> Vec<StepFeaState> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_STATE" | "FEAMEDIAN_STATE"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let analysis_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        // state_type is the 3rd string (index 2) in the arguments
+        let state_type = extract_nth_string_arg(args, 2);
+        out.push(StepFeaState {
+            entity_id: id,
+            name,
+            description,
+            analysis_id,
+            state_type,
+        });
+    }
+    out
+}
+
+fn extract_fea_material_models(content: &str) -> Vec<StepFeaMaterialModel> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        let model_type = match entity_upper.as_str() {
+            "FEA_LINEAR_ELASTICITY" => "LINEAR_ELASTIC",
+            "FEA_MATERIAL_MODEL" => "GENERIC",
+            "FEA_ELASTIC_PLASTIC" => "ELASTIC_PLASTIC",
+            "FEA_HYPERELASTIC" => "HYPERELASTIC",
+            "FEAMEDIAN_MATERIAL_MODEL" => "MEDIAN_MODEL",
+            _ => continue,
+        };
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        // For FEA_LINEAR_ELASTICITY: name, description, Young's modulus, Poisson's ratio, ...
+        let youngs_modulus = parts.get(2).and_then(|p| parse_float_arg(p.trim()));
+        let poissons_ratio = parts.get(3).and_then(|p| parse_float_arg(p.trim()));
+        let shear_modulus = parts.get(4).and_then(|p| parse_float_arg(p.trim()));
+        let density = parts.get(5).and_then(|p| parse_float_arg(p.trim()));
+        let thermal_expansion = parts.get(6).and_then(|p| parse_float_arg(p.trim()));
+        // modulus_unit is the 3rd string (index 2) in the arguments
+        let modulus_unit = extract_nth_string_arg(args, 2);
+        out.push(StepFeaMaterialModel {
+            entity_id: id,
+            name,
+            description,
+            model_type: model_type.to_string(),
+            youngs_modulus,
+            poissons_ratio,
+            shear_modulus,
+            density,
+            thermal_expansion,
+            modulus_unit,
+        });
+    }
+    out
+}
+
+fn extract_fea_nodes(content: &str) -> Vec<StepFeaNode> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "NODE_REPRESENTATION" | "FEA_NODE" | "FEAMEDIAN_NODE"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        // NODE_REPRESENTATION(name, node_number, (x, y, z), mesh_ref)
+        // or FEA_NODE(node_number, (x, y, z), mesh_ref)
+        let node_number = if entity_upper == "NODE_REPRESENTATION" {
+            parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+        } else {
+            parts.get(0).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+        };
+        // Find the coordinates - could be a tuple or a reference to a CARTESIAN_POINT
+        let coords_str = if entity_upper == "NODE_REPRESENTATION" {
+            parts.get(2)
+        } else {
+            parts.get(1)
+        };
+        let coordinates = coords_str
+            .and_then(|s| parse_direction_tuple(s.trim()))
+            .unwrap_or([0.0, 0.0, 0.0]);
+        let mesh_id = if entity_upper == "NODE_REPRESENTATION" {
+            parts.get(3).and_then(|p| parse_ref(p.trim()))
+        } else {
+            parts.get(2).and_then(|p| parse_ref(p.trim()))
+        };
+        out.push(StepFeaNode {
+            entity_id: id,
+            node_number,
+            coordinates,
+            mesh_id,
+        });
+    }
+    out
+}
+
+fn extract_fea_elements(content: &str) -> Vec<StepFeaElement> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "ELEMENT_REPRESENTATION" | "FEA_ELEMENT" | "FEAMEDIAN_ELEMENT"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        // ELEMENT_REPRESENTATION(name, element_number, element_type, (node_ids), mesh_ref)
+        // or FEA_ELEMENT(element_number, element_type, (node_ids), mesh_ref)
+        let is_element_repr = entity_upper == "ELEMENT_REPRESENTATION";
+        // String indices: for ELEMENT_REPRESENTATION, strings are name(0) and element_type(1)
+        // For FEA_ELEMENT, only string is element_type(0)
+        let element_number = if is_element_repr {
+            parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+        } else {
+            parts.get(0).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+        };
+        // element_type is string index 1 for ELEMENT_REPRESENTATION, 0 for FEA_ELEMENT
+        let element_type = if is_element_repr {
+            extract_nth_string_arg(args, 1).unwrap_or_else(|| "UNKNOWN".to_string())
+        } else {
+            extract_nth_string_arg(args, 0).unwrap_or_else(|| "UNKNOWN".to_string())
+        };
+        // Parse node IDs from a list like (#1,#2,#3,#4) or (1,2,3,4)
+        let node_ids_str = if is_element_repr {
+            parts.get(3).map(|s| s.trim()).unwrap_or("")
+        } else {
+            parts.get(2).map(|s| s.trim()).unwrap_or("")
+        };
+        let node_ids = parse_ref_list(node_ids_str);
+        let mesh_id = if is_element_repr {
+            parts.get(4).and_then(|p| parse_ref(p.trim()))
+        } else {
+            parts.get(3).and_then(|p| parse_ref(p.trim()))
+        };
+        out.push(StepFeaElement {
+            entity_id: id,
+            element_number,
+            element_type,
+            node_ids,
+            mesh_id,
+        });
+    }
+    out
+}
+
+fn extract_fea_steps(content: &str) -> Vec<StepFeaStep> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_STEP" | "FEAMEDIAN_STEP"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let analysis_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let step_number = parts.get(3).and_then(|p| parse_uint_arg(p.trim()));
+        // step_type is the 3rd string (index 2) in the arguments
+        let step_type = extract_nth_string_arg(args, 2);
+        out.push(StepFeaStep {
+            entity_id: id,
+            name,
+            description,
+            analysis_id,
+            step_number,
+            step_type,
+        });
+    }
+    out
+}
+
+fn extract_fea_results(content: &str) -> Vec<StepFeaResult> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_RESULT" | "NODAL_RESULT" | "ELEMENT_RESULT" | "FEAMEDIAN_RESULT"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let result_type = extract_nth_string_arg(args, 1).unwrap_or_else(|| entity_upper.clone());
+        let analysis_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        let location_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let component_count = parts.get(4).and_then(|p| parse_uint_arg(p.trim()));
+        out.push(StepFeaResult {
+            entity_id: id,
+            name,
+            result_type,
+            analysis_id,
+            location_id,
+            component_count,
+        });
+    }
+    out
+}
+
+fn extract_fea_cases(content: &str) -> Vec<StepFeaCase> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "FEA_CASE" | "FEAMEDIAN_CASE"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let description = extract_nth_string_arg(args, 1);
+        let model_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        // case_type is the 3rd string (index 2) in the arguments
+        let case_type = extract_nth_string_arg(args, 2);
+        out.push(StepFeaCase {
+            entity_id: id,
+            name,
+            description,
+            model_id,
+            case_type,
+        });
+    }
+    out
+}
+
 // ── View and Camera extraction functions (AP242) ─────────────────────────────
 
 fn extract_views(content: &str) -> Vec<StepView> {
@@ -3242,6 +3737,14 @@ impl StepReader {
             fea_boundary_conditions: extract_fea_boundary_conditions(content),
             fea_loads: extract_fea_loads(content),
             fea_node_groups: extract_fea_node_groups(content),
+            fea_analyses: extract_fea_analyses(content),
+            fea_states: extract_fea_states(content),
+            fea_material_models: extract_fea_material_models(content),
+            fea_nodes: extract_fea_nodes(content),
+            fea_elements: extract_fea_elements(content),
+            fea_steps: extract_fea_steps(content),
+            fea_results: extract_fea_results(content),
+            fea_cases: extract_fea_cases(content),
             views: extract_views(content),
             cameras: extract_cameras(content),
             view_volumes: extract_view_volumes(content),
@@ -7978,6 +8481,132 @@ END-ISO-10303-21;
         assert_eq!(groups[0].node_count, Some(50));
         assert_eq!(groups[1].name.as_deref(), Some("internal_nodes"));
         assert_eq!(groups[1].node_count, Some(200));
+    }
+
+    // ── Additional FEA entity extraction tests (AP209/AP242 extended) ─────────────
+
+    #[test]
+    fn extract_fea_analyses_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=FEA_ANALYSIS('static_analysis','Static structural analysis',#50,'STATIC','2024-01-15');\n#101=ANALYSIS_3D('modal_analysis','Modal analysis',#51,'MODAL','2024-01-16');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let analyses = extract_fea_analyses(step);
+        assert_eq!(analyses.len(), 2);
+        assert_eq!(analyses[0].entity_id, 100);
+        assert_eq!(analyses[0].name.as_deref(), Some("static_analysis"));
+        assert_eq!(analyses[0].description.as_deref(), Some("Static structural analysis"));
+        assert_eq!(analyses[0].model_id, Some(50));
+        assert_eq!(analyses[0].analysis_type.as_deref(), Some("STATIC"));
+        assert_eq!(analyses[0].creation_date.as_deref(), Some("2024-01-15"));
+        assert_eq!(analyses[1].name.as_deref(), Some("modal_analysis"));
+        assert_eq!(analyses[1].analysis_type.as_deref(), Some("MODAL"));
+    }
+
+    #[test]
+    fn extract_fea_states_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#200=FEA_STATE('initial_state','Initial conditions',#100,'INITIAL');\n#201=FEA_STATE('result_state','Analysis results',#100,'RESULT');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let states = extract_fea_states(step);
+        assert_eq!(states.len(), 2);
+        assert_eq!(states[0].entity_id, 200);
+        assert_eq!(states[0].name.as_deref(), Some("initial_state"));
+        assert_eq!(states[0].analysis_id, Some(100));
+        assert_eq!(states[0].state_type.as_deref(), Some("INITIAL"));
+        assert_eq!(states[1].state_type.as_deref(), Some("RESULT"));
+    }
+
+    #[test]
+    fn extract_fea_material_models_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#300=FEA_LINEAR_ELASTICITY('Steel','Structural steel',210000.0,0.3,81000.0,7850.0,1.2e-5,'MPa');\n#301=FEA_MATERIAL_MODEL('CustomMaterial','Custom material');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let models = extract_fea_material_models(step);
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].entity_id, 300);
+        assert_eq!(models[0].name.as_deref(), Some("Steel"));
+        assert_eq!(models[0].model_type, "LINEAR_ELASTIC");
+        assert!((models[0].youngs_modulus.unwrap() - 210000.0).abs() < 1e-6);
+        assert!((models[0].poissons_ratio.unwrap() - 0.3).abs() < 1e-6);
+        assert!((models[0].density.unwrap() - 7850.0).abs() < 1e-6);
+        assert_eq!(models[0].modulus_unit.as_deref(), Some("MPa"));
+        assert_eq!(models[1].model_type, "GENERIC");
+    }
+
+    #[test]
+    fn extract_fea_nodes_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#400=NODE_REPRESENTATION('node1',1,(0.0,0.0,0.0),#500);\n#401=NODE_REPRESENTATION('node2',2,(10.0,0.0,0.0),#500);\n#402=NODE_REPRESENTATION('node3',3,(10.0,10.0,0.0),#500);\n#403=FEA_NODE(4,(5.0,5.0,5.0),#501);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let nodes = extract_fea_nodes(step);
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(nodes[0].entity_id, 400);
+        assert_eq!(nodes[0].node_number, 1);
+        assert_eq!(nodes[0].coordinates, [0.0, 0.0, 0.0]);
+        assert_eq!(nodes[0].mesh_id, Some(500));
+        assert_eq!(nodes[1].node_number, 2);
+        assert_eq!(nodes[1].coordinates, [10.0, 0.0, 0.0]);
+        assert_eq!(nodes[3].node_number, 4);
+        assert_eq!(nodes[3].coordinates, [5.0, 5.0, 5.0]);
+    }
+
+    #[test]
+    fn extract_fea_elements_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#600=ELEMENT_REPRESENTATION('elem1',1,'TETRA4',(#400,#401,#402,#403),#500);\n#601=FEA_ELEMENT(2,'HEXA8',(#410,#411,#412,#413,#414,#415,#416,#417),#501);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let elements = extract_fea_elements(step);
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0].entity_id, 600);
+        assert_eq!(elements[0].element_number, 1);
+        assert_eq!(elements[0].element_type, "TETRA4");
+        assert_eq!(elements[0].node_ids, vec![400, 401, 402, 403]);
+        assert_eq!(elements[0].mesh_id, Some(500));
+        assert_eq!(elements[1].element_number, 2);
+        assert_eq!(elements[1].element_type, "HEXA8");
+        assert_eq!(elements[1].node_ids.len(), 8);
+    }
+
+    #[test]
+    fn extract_fea_steps_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#700=FEA_STEP('load_step_1','Apply load',#100,1,'LOAD');\n#701=FEA_STEP('load_step_2','Increase load',#100,2,'LOAD');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let steps = extract_fea_steps(step);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].entity_id, 700);
+        assert_eq!(steps[0].name.as_deref(), Some("load_step_1"));
+        assert_eq!(steps[0].analysis_id, Some(100));
+        assert_eq!(steps[0].step_number, Some(1));
+        assert_eq!(steps[0].step_type.as_deref(), Some("LOAD"));
+    }
+
+    #[test]
+    fn extract_fea_results_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#800=FEA_RESULT('displacement_result','DISPLACEMENT',#100,#300,3);\n#801=NODAL_RESULT('stress_result','STRESS',#100,#301,6);\n#802=ELEMENT_RESULT('strain_result','STRAIN',#100,#302,6);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let results = extract_fea_results(step);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].entity_id, 800);
+        assert_eq!(results[0].name.as_deref(), Some("displacement_result"));
+        assert_eq!(results[0].result_type, "DISPLACEMENT");
+        assert_eq!(results[0].analysis_id, Some(100));
+        assert_eq!(results[0].component_count, Some(3));
+        assert_eq!(results[1].result_type, "STRESS");
+        assert_eq!(results[2].result_type, "STRAIN");
+    }
+
+    #[test]
+    fn extract_fea_cases_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#900=FEA_CASE('load_case_1','Gravity load case',#50,'LOAD_CASE');\n#901=FEA_CASE('bc_case_1','Fixed boundary conditions',#50,'BC_CASE');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let cases = extract_fea_cases(step);
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0].entity_id, 900);
+        assert_eq!(cases[0].name.as_deref(), Some("load_case_1"));
+        assert_eq!(cases[0].description.as_deref(), Some("Gravity load case"));
+        assert_eq!(cases[0].model_id, Some(50));
+        assert_eq!(cases[0].case_type.as_deref(), Some("LOAD_CASE"));
+        assert_eq!(cases[1].case_type.as_deref(), Some("BC_CASE"));
+    }
+
+    #[test]
+    fn fea_metadata_integration() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#10=FEA_MODEL('bracket_fea','FEA model for bracket');\n#20=FEA_MESH('mesh1',1000,500);\n#30=FEA_ANALYSIS('static','Static analysis',#10,'STATIC','2024-01-15');\n#40=FEA_LINEAR_ELASTICITY('Steel','Steel material',210000.0,0.3,81000.0,7850.0,1.2e-5,'MPa');\n#50=NODE_REPRESENTATION('n1',1,(0.0,0.0,0.0),#20);\n#51=NODE_REPRESENTATION('n2',2,(1.0,0.0,0.0),#20);\n#60=ELEMENT_REPRESENTATION('e1',1,'TETRA4',(#50,#51,#52,#53),#20);\n#70=FEA_RESULT('disp','DISPLACEMENT',#30,#20,3);\nENDSEC;\nEND-ISO-10303-21;\n";
+        // Use extraction functions directly since FEA-only files don't have B-Rep geometry
+        assert_eq!(extract_fea_models(step).len(), 1);
+        assert_eq!(extract_fea_meshes(step).len(), 1);
+        assert_eq!(extract_fea_analyses(step).len(), 1);
+        assert_eq!(extract_fea_material_models(step).len(), 1);
+        assert_eq!(extract_fea_nodes(step).len(), 2);
+        assert_eq!(extract_fea_elements(step).len(), 1);
+        assert_eq!(extract_fea_results(step).len(), 1);
     }
 
     #[test]

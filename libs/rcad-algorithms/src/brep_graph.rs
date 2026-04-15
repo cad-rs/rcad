@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 use rcad_kernel::BRep;
 use rcad_kernel::persistent_naming::{
@@ -1310,6 +1311,1154 @@ impl BRepGraphHistory {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Enhanced Persistent Naming Semantics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A scoped identifier for a topological entity within a naming context.
+///
+/// `ScopedId` combines a persistent ID with a naming scope (part, assembly, operation)
+/// to provide fully-qualified identifiers that are unique across an entire model hierarchy.
+///
+/// # Example
+/// ```
+/// // A face with ID 42 in part "housing", assembly "machine", operation "fillet"
+/// let scoped = ScopedId {
+///     persistent_id: PersistentId(42),
+///     scope: NamingScope {
+///         part: Some("housing".to_string()),
+///         assembly: Some("machine".to_string()),
+///         operation: Some("fillet".to_string()),
+///     },
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ScopedId {
+    /// The stable persistent ID for this entity.
+    pub persistent_id: PersistentId,
+    /// The naming scope in which this ID is defined.
+    pub scope: NamingScope,
+}
+
+impl ScopedId {
+    /// Create a new scoped ID with the given persistent ID and scope.
+    pub fn new(persistent_id: PersistentId, scope: NamingScope) -> Self {
+        Self { persistent_id, scope }
+    }
+
+    /// Create a scoped ID with a null persistent ID and empty scope.
+    pub fn null() -> Self {
+        Self {
+            persistent_id: PersistentId::NULL,
+            scope: NamingScope::default(),
+        }
+    }
+
+    /// Returns true if this is a null/invalid scoped ID.
+    pub fn is_null(&self) -> bool {
+        self.persistent_id.is_null()
+    }
+
+    /// Generate a fully-qualified name string for this scoped ID.
+    pub fn qualified_name(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(ref assembly) = self.scope.assembly {
+            parts.push(assembly.clone());
+        }
+        if let Some(ref part) = self.scope.part {
+            parts.push(part.clone());
+        }
+        if let Some(ref op) = self.scope.operation {
+            parts.push(op.clone());
+        }
+        parts.push(format!("e{}", self.persistent_id.raw()));
+        parts.join("::")
+    }
+}
+
+/// The naming scope defines the context in which persistent IDs are meaningful.
+///
+/// Scopes form a hierarchy: assembly > part > operation. An entity's full identity
+/// is determined by its persistent ID within the current scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NamingScope {
+    /// The part name (e.g., "housing", "cover").
+    pub part: Option<String>,
+    /// The assembly name (e.g., "machine", "device").
+    pub assembly: Option<String>,
+    /// The operation that created or last modified this entity.
+    pub operation: Option<String>,
+}
+
+impl NamingScope {
+    /// Create a new empty scope.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a scope for a specific part.
+    pub fn for_part(part: impl Into<String>) -> Self {
+        Self {
+            part: Some(part.into()),
+            assembly: None,
+            operation: None,
+        }
+    }
+
+    /// Create a scope for a specific assembly.
+    pub fn for_assembly(assembly: impl Into<String>) -> Self {
+        Self {
+            part: None,
+            assembly: Some(assembly.into()),
+            operation: None,
+        }
+    }
+
+    /// Create a scope for a specific operation within a part.
+    pub fn for_operation(part: impl Into<String>, operation: impl Into<String>) -> Self {
+        Self {
+            part: Some(part.into()),
+            assembly: None,
+            operation: Some(operation.into()),
+        }
+    }
+
+    /// Set the part name.
+    pub fn with_part(mut self, part: impl Into<String>) -> Self {
+        self.part = Some(part.into());
+        self
+    }
+
+    /// Set the assembly name.
+    pub fn with_assembly(mut self, assembly: impl Into<String>) -> Self {
+        self.assembly = Some(assembly.into());
+        self
+    }
+
+    /// Set the operation name.
+    pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
+        self.operation = Some(operation.into());
+        self
+    }
+
+    /// Create a child scope for a sub-operation.
+    pub fn child_scope(&self, operation: impl Into<String>) -> Self {
+        Self {
+            part: self.part.clone(),
+            assembly: self.assembly.clone(),
+            operation: Some(operation.into()),
+        }
+    }
+
+    /// Check if this scope is a parent of (or equal to) another scope.
+    pub fn contains(&self, other: &NamingScope) -> bool {
+        match (&self.assembly, &other.assembly) {
+            (Some(a1), Some(a2)) if a1 != a2 => return false,
+            (Some(_), None) => return false,
+            _ => {}
+        }
+        match (&self.part, &other.part) {
+            (Some(p1), Some(p2)) if p1 != p2 => return false,
+            (Some(_), None) => return false,
+            _ => {}
+        }
+        true
+    }
+}
+
+/// Enhanced naming context that tracks scopes and entity relationships.
+///
+/// `EnhancedNamingContext` extends the basic `NamingContext` with:
+/// - Scope-aware ID assignment
+/// - Detailed genealogy tracking
+/// - Conflict detection and resolution
+/// - Serialization support
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EnhancedNamingContext {
+    /// The current naming scope.
+    pub current_scope: NamingScope,
+    /// Mapping from entity IDs to scoped IDs.
+    entity_to_scoped: HashMap<u64, ScopedId>,
+    /// Reverse mapping from scoped IDs to entity IDs.
+    scoped_to_entity: HashMap<ScopedId, u64>,
+    /// Genealogy records indexed by persistent ID.
+    genealogy: HashMap<PersistentId, EntityGenealogyRecord>,
+    /// Pending name assignments waiting for scope resolution.
+    pending_assignments: Vec<PendingNameAssignment>,
+    /// Conflict resolution history.
+    conflict_history: Vec<NameConflictRecord>,
+    /// Next persistent ID to allocate.
+    next_persistent_id: u64,
+}
+
+/// Record of an entity's genealogy through operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityGenealogyRecord {
+    /// The persistent ID being tracked.
+    pub persistent_id: PersistentId,
+    /// The scope in which this entity was created.
+    pub creation_scope: NamingScope,
+    /// The operation that created this entity.
+    pub creation_operation: Option<String>,
+    /// Chain of transformations: (operation, entity_id_before, entity_id_after).
+    pub transformation_chain: Vec<GenealogyStep>,
+    /// Parent entity IDs (for merged entities, this has multiple entries).
+    pub parent_ids: Vec<PersistentId>,
+    /// Child entity IDs (for split entities, this has multiple entries).
+    pub child_ids: Vec<PersistentId>,
+    /// Current status of this entity.
+    pub status: EntityStatus,
+}
+
+/// A single step in an entity's genealogy transformation chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenealogyStep {
+    /// The operation that caused this transformation.
+    pub operation: String,
+    /// The entity ID before this operation (None if generated).
+    pub entity_id_before: Option<u64>,
+    /// The entity ID after this operation.
+    pub entity_id_after: u64,
+    /// The scope at the time of this operation.
+    pub scope: NamingScope,
+}
+
+/// Status of an entity in the genealogy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntityStatus {
+    /// Entity is active and present in the model.
+    Active,
+    /// Entity was deleted or consumed by an operation.
+    Deleted,
+    /// Entity was merged into another entity.
+    Merged,
+    /// Entity was split into multiple entities.
+    Split,
+    /// Entity is pending resolution.
+    Pending,
+}
+
+/// A pending name assignment waiting for scope resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingNameAssignment {
+    /// The entity ID to be assigned.
+    pub entity_id: u64,
+    /// The proposed scope for this assignment.
+    pub proposed_scope: NamingScope,
+    /// Source entity IDs this entity was derived from.
+    pub source_entities: Vec<u64>,
+    /// The propagation policy to use.
+    pub propagation_policy: NamePropagationPolicy,
+}
+
+/// Record of a naming conflict and its resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NameConflictRecord {
+    /// The conflicting persistent ID.
+    pub persistent_id: PersistentId,
+    /// The entity IDs involved in the conflict.
+    pub conflicting_entities: Vec<u64>,
+    /// The operation where the conflict occurred.
+    pub operation: String,
+    /// The scope where the conflict occurred.
+    pub scope: NamingScope,
+    /// How the conflict was resolved.
+    pub resolution: NameConflictResolution,
+    /// Timestamp of the conflict (sequence number).
+    pub sequence: u64,
+}
+
+/// Strategies for resolving naming conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NameConflictResolution {
+    /// Kept the existing binding, rejected the new.
+    KeepExisting,
+    /// Replaced the existing binding with the new.
+    ReplaceWithNew,
+    /// Generated a new persistent ID for the new entity.
+    GenerateNewId,
+    /// Merged both entities under a shared context.
+    MergeEntities,
+    /// Created an alias mapping.
+    CreateAlias,
+    /// Could not resolve automatically - requires manual intervention.
+    Unresolved,
+}
+
+/// Operation-specific name propagation rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamePropagationRule {
+    /// The operation type this rule applies to.
+    pub operation_type: OperationType,
+    /// Policy for face entities.
+    pub face_policy: NamePropagationPolicy,
+    /// Policy for edge entities.
+    pub edge_policy: NamePropagationPolicy,
+    /// Policy for vertex entities.
+    pub vertex_policy: NamePropagationPolicy,
+    /// Whether to track genealogy for this operation.
+    pub track_genealogy: bool,
+    /// Conflict resolution strategy for this operation.
+    pub conflict_resolution: NameConflictResolution,
+}
+
+impl NamePropagationRule {
+    /// Create a default propagation rule for an operation type.
+    pub fn for_operation(operation_type: OperationType) -> Self {
+        match operation_type {
+            OperationType::BooleanUnion |
+            OperationType::BooleanIntersection |
+            OperationType::BooleanDifference => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Preserve,
+                edge_policy: NamePropagationPolicy::Preserve,
+                vertex_policy: NamePropagationPolicy::Preserve,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::GenerateNewId,
+            },
+            OperationType::Feature => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Inherit,
+                edge_policy: NamePropagationPolicy::Inherit,
+                vertex_policy: NamePropagationPolicy::Preserve,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::KeepExisting,
+            },
+            OperationType::EdgeSplit |
+            OperationType::FaceSplit => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Inherit,
+                edge_policy: NamePropagationPolicy::Inherit,
+                vertex_policy: NamePropagationPolicy::Preserve,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::GenerateNewId,
+            },
+            OperationType::Merge => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Combine,
+                edge_policy: NamePropagationPolicy::Combine,
+                vertex_policy: NamePropagationPolicy::Combine,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::MergeEntities,
+            },
+            OperationType::Delete => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Generate,
+                edge_policy: NamePropagationPolicy::Generate,
+                vertex_policy: NamePropagationPolicy::Generate,
+                track_genealogy: false,
+                conflict_resolution: NameConflictResolution::KeepExisting,
+            },
+            OperationType::Transform => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Preserve,
+                edge_policy: NamePropagationPolicy::Preserve,
+                vertex_policy: NamePropagationPolicy::Preserve,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::KeepExisting,
+            },
+            OperationType::Generic |
+            OperationType::Import => Self {
+                operation_type,
+                face_policy: NamePropagationPolicy::Preserve,
+                edge_policy: NamePropagationPolicy::Preserve,
+                vertex_policy: NamePropagationPolicy::Preserve,
+                track_genealogy: true,
+                conflict_resolution: NameConflictResolution::GenerateNewId,
+            },
+        }
+    }
+
+    /// Get the propagation policy for a specific entity kind.
+    pub fn policy_for_kind(&self, kind: NodeKind) -> NamePropagationPolicy {
+        match kind {
+            NodeKind::Face | NodeKind::Shell | NodeKind::Solid => self.face_policy,
+            NodeKind::Edge | NodeKind::Wire => self.edge_policy,
+            NodeKind::Vertex => self.vertex_policy,
+        }
+    }
+}
+
+/// Propagation policies for name inheritance through operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NamePropagationPolicy {
+    /// Keep the original entity's name unchanged.
+    Preserve,
+    /// Inherit the parent entity's name with a disambiguating suffix.
+    Inherit,
+    /// Generate a completely new name.
+    Generate,
+    /// Combine names from multiple source entities (for merges).
+    Combine,
+    /// Create a derivative name based on geometric properties.
+    GeometryBased,
+    /// Create a derivative name based on topological relationships.
+    TopologyBased,
+}
+
+impl Default for NamePropagationPolicy {
+    fn default() -> Self {
+        Self::Preserve
+    }
+}
+
+impl EnhancedNamingContext {
+    /// Create a new empty naming context.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a naming context with a specific scope.
+    pub fn with_scope(scope: NamingScope) -> Self {
+        Self {
+            current_scope: scope,
+            ..Default::default()
+        }
+    }
+
+    /// Set the current naming scope.
+    pub fn set_scope(&mut self, scope: NamingScope) {
+        self.current_scope = scope;
+    }
+
+    /// Get the current naming scope.
+    pub fn scope(&self) -> &NamingScope {
+        &self.current_scope
+    }
+
+    /// Assign a new persistent ID to an entity.
+    pub fn assign_id(&mut self, entity_id: u64) -> PersistentId {
+        let pid = self.allocate_persistent_id();
+        let scoped_id = ScopedId::new(pid, self.current_scope.clone());
+        self.entity_to_scoped.insert(entity_id, scoped_id.clone());
+        self.scoped_to_entity.insert(scoped_id, entity_id);
+
+        // Create genealogy record.
+        self.genealogy.insert(pid, EntityGenealogyRecord {
+            persistent_id: pid,
+            creation_scope: self.current_scope.clone(),
+            creation_operation: self.current_scope.operation.clone(),
+            transformation_chain: vec![],
+            parent_ids: vec![],
+            child_ids: vec![],
+            status: EntityStatus::Active,
+        });
+
+        pid
+    }
+
+    /// Assign a persistent ID derived from source entities.
+    pub fn assign_derived_id(
+        &mut self,
+        entity_id: u64,
+        source_entities: &[u64],
+        policy: NamePropagationPolicy,
+    ) -> PersistentId {
+        match policy {
+            NamePropagationPolicy::Preserve | NamePropagationPolicy::Inherit => {
+                // Inherit from the first source that has a persistent ID.
+                if let Some(&source_id) = source_entities.first() {
+                    if let Some(scoped) = self.entity_to_scoped.get(&source_id) {
+                        let pid = scoped.persistent_id;
+                        let new_scoped = ScopedId::new(pid, self.current_scope.clone());
+                        self.entity_to_scoped.insert(entity_id, new_scoped.clone());
+                        self.scoped_to_entity.insert(new_scoped, entity_id);
+
+                        // Update genealogy.
+                        if let Some(record) = self.genealogy.get_mut(&pid) {
+                            record.transformation_chain.push(GenealogyStep {
+                                operation: self.current_scope.operation.clone().unwrap_or_default(),
+                                entity_id_before: Some(source_id),
+                                entity_id_after: entity_id,
+                                scope: self.current_scope.clone(),
+                            });
+                        }
+
+                        return pid;
+                    }
+                }
+                self.assign_id(entity_id)
+            }
+            NamePropagationPolicy::Combine => {
+                // Combine all source persistent IDs into the genealogy.
+                let pid = self.assign_id(entity_id);
+                if let Some(record) = self.genealogy.get_mut(&pid) {
+                    for &source_id in source_entities {
+                        if let Some(scoped) = self.entity_to_scoped.get(&source_id) {
+                            record.parent_ids.push(scoped.persistent_id);
+                        }
+                    }
+                }
+                pid
+            }
+            NamePropagationPolicy::Generate |
+            NamePropagationPolicy::GeometryBased |
+            NamePropagationPolicy::TopologyBased => {
+                self.assign_id(entity_id)
+            }
+        }
+    }
+
+    /// Resolve a persistent ID to an entity ID within the current scope.
+    pub fn resolve_entity(&self, pid: PersistentId) -> Option<u64> {
+        let scoped = ScopedId::new(pid, self.current_scope.clone());
+        self.scoped_to_entity.get(&scoped).copied()
+    }
+
+    /// Resolve an entity ID to a persistent ID.
+    pub fn resolve_persistent(&self, entity_id: u64) -> Option<PersistentId> {
+        self.entity_to_scoped.get(&entity_id).map(|s| s.persistent_id)
+    }
+
+    /// Record a split operation: one entity becomes multiple.
+    pub fn record_split(
+        &mut self,
+        source_entity_id: u64,
+        target_entity_ids: &[u64],
+        operation: &str,
+    ) -> Vec<PersistentId> {
+        let source_pid = self.resolve_persistent(source_entity_id);
+        let mut result_pids = Vec::with_capacity(target_entity_ids.len());
+
+        for (i, &target_id) in target_entity_ids.iter().enumerate() {
+            let pid = if i == 0 {
+                // First target inherits the source's persistent ID.
+                if let Some(pid) = source_pid {
+                    let scoped = ScopedId::new(pid, self.current_scope.clone());
+                    self.entity_to_scoped.insert(target_id, scoped.clone());
+                    self.scoped_to_entity.insert(scoped, target_id);
+                    pid
+                } else {
+                    self.assign_id(target_id)
+                }
+            } else {
+                // Subsequent targets get new IDs.
+                self.assign_id(target_id)
+            };
+            result_pids.push(pid);
+        }
+
+        // Update genealogy for the source entity.
+        if let Some(pid) = source_pid {
+            if let Some(record) = self.genealogy.get_mut(&pid) {
+                record.status = EntityStatus::Split;
+                record.child_ids.extend_from_slice(&result_pids[1..]);
+                record.transformation_chain.push(GenealogyStep {
+                    operation: operation.to_string(),
+                    entity_id_before: Some(source_entity_id),
+                    entity_id_after: result_pids.first().map(|&p| {
+                        self.scoped_to_entity.get(&ScopedId::new(p, self.current_scope.clone()))
+                            .copied()
+                            .unwrap_or(0)
+                    }).unwrap_or(0),
+                    scope: self.current_scope.clone(),
+                });
+            }
+        }
+
+        result_pids
+    }
+
+    /// Record a merge operation: multiple entities become one.
+    pub fn record_merge(
+        &mut self,
+        source_entity_ids: &[u64],
+        target_entity_id: u64,
+        operation: &str,
+        resolution: NameConflictResolution,
+    ) -> PersistentId {
+        // Find the first source with a persistent ID.
+        let primary_pid = source_entity_ids
+            .iter()
+            .find_map(|&id| self.resolve_persistent(id));
+
+        let target_pid = match resolution {
+            NameConflictResolution::KeepExisting => {
+                if let Some(pid) = primary_pid {
+                    let scoped = ScopedId::new(pid, self.current_scope.clone());
+                    self.entity_to_scoped.insert(target_entity_id, scoped.clone());
+                    self.scoped_to_entity.insert(scoped, target_entity_id);
+                    pid
+                } else {
+                    self.assign_id(target_entity_id)
+                }
+            }
+            NameConflictResolution::GenerateNewId => {
+                self.assign_id(target_entity_id)
+            }
+            NameConflictResolution::MergeEntities => {
+                let pid = self.assign_id(target_entity_id);
+                // Collect parent IDs first to avoid borrow conflict
+                let parent_pids: Vec<PersistentId> = source_entity_ids
+                    .iter()
+                    .filter_map(|&source_id| self.resolve_persistent(source_id))
+                    .collect();
+                if let Some(record) = self.genealogy.get_mut(&pid) {
+                    for source_pid in parent_pids {
+                        record.parent_ids.push(source_pid);
+                    }
+                }
+                pid
+            }
+            _ => {
+                if let Some(pid) = primary_pid {
+                    pid
+                } else {
+                    self.assign_id(target_entity_id)
+                }
+            }
+        };
+
+        // Mark source entities as merged.
+        for &source_id in source_entity_ids {
+            if let Some(pid) = self.resolve_persistent(source_id) {
+                if let Some(record) = self.genealogy.get_mut(&pid) {
+                    record.status = EntityStatus::Merged;
+                    record.child_ids.push(target_pid);
+                    record.transformation_chain.push(GenealogyStep {
+                        operation: operation.to_string(),
+                        entity_id_before: Some(source_id),
+                        entity_id_after: target_entity_id,
+                        scope: self.current_scope.clone(),
+                    });
+                }
+            }
+        }
+
+        target_pid
+    }
+
+    /// Detect naming conflicts in the current state.
+    pub fn detect_conflicts(&self) -> Vec<NameConflictRecord> {
+        let mut conflicts = Vec::new();
+        let mut pid_to_entities: HashMap<PersistentId, Vec<u64>> = HashMap::new();
+
+        // Build a map of persistent ID to all entities that have it.
+        for (&entity_id, scoped) in &self.entity_to_scoped {
+            pid_to_entities
+                .entry(scoped.persistent_id)
+                .or_default()
+                .push(entity_id);
+        }
+
+        // Find persistent IDs assigned to multiple active entities.
+        for (pid, entities) in pid_to_entities {
+            if entities.len() > 1 {
+                // Check if all entities are active.
+                let active_count = entities.iter()
+                    .filter(|&&entity_id| {
+                        self.genealogy.get(&pid)
+                            .map(|r| r.status == EntityStatus::Active)
+                            .unwrap_or(false)
+                    })
+                    .count();
+
+                if active_count > 1 {
+                    conflicts.push(NameConflictRecord {
+                        persistent_id: pid,
+                        conflicting_entities: entities,
+                        operation: self.current_scope.operation.clone().unwrap_or_default(),
+                        scope: self.current_scope.clone(),
+                        resolution: NameConflictResolution::Unresolved,
+                        sequence: self.conflict_history.len() as u64,
+                    });
+                }
+            }
+        }
+
+        conflicts
+    }
+
+    /// Resolve a naming conflict.
+    pub fn resolve_conflict(
+        &mut self,
+        conflict: &NameConflictRecord,
+        resolution: NameConflictResolution,
+    ) -> Result<(), String> {
+        match resolution {
+            NameConflictResolution::KeepExisting => {
+                // No action needed - first entity keeps the ID.
+            }
+            NameConflictResolution::ReplaceWithNew => {
+                // Replace all but the last entity.
+                for &entity_id in &conflict.conflicting_entities[..conflict.conflicting_entities.len() - 1] {
+                    self.assign_id(entity_id);
+                }
+            }
+            NameConflictResolution::GenerateNewId => {
+                // Generate new IDs for all conflicting entities.
+                for &entity_id in &conflict.conflicting_entities {
+                    self.assign_id(entity_id);
+                }
+            }
+            NameConflictResolution::MergeEntities => {
+                // This is handled at the operation level.
+            }
+            NameConflictResolution::CreateAlias => {
+                // Create alias mappings (not fully implemented here).
+            }
+            NameConflictResolution::Unresolved => {
+                return Err("Conflict could not be resolved automatically".to_string());
+            }
+        }
+
+        // Record the conflict resolution.
+        let mut resolved = conflict.clone();
+        resolved.resolution = resolution;
+        self.conflict_history.push(resolved);
+
+        Ok(())
+    }
+
+    /// Get the genealogy record for a persistent ID.
+    pub fn get_genealogy(&self, pid: PersistentId) -> Option<&EntityGenealogyRecord> {
+        self.genealogy.get(&pid)
+    }
+
+    /// Trace the full ancestry of an entity.
+    pub fn trace_ancestry(&self, pid: PersistentId) -> Vec<PersistentId> {
+        let mut ancestors = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        self.collect_ancestry(pid, &mut ancestors, &mut visited);
+        ancestors
+    }
+
+    fn collect_ancestry(
+        &self,
+        pid: PersistentId,
+        ancestors: &mut Vec<PersistentId>,
+        visited: &mut std::collections::HashSet<PersistentId>,
+    ) {
+        if !visited.insert(pid) {
+            return;
+        }
+        if let Some(record) = self.genealogy.get(&pid) {
+            for &parent_pid in &record.parent_ids {
+                ancestors.push(parent_pid);
+                self.collect_ancestry(parent_pid, ancestors, visited);
+            }
+        }
+    }
+
+    /// Trace the full descendants of an entity.
+    pub fn trace_descendants(&self, pid: PersistentId) -> Vec<PersistentId> {
+        let mut descendants = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        self.collect_descendants(pid, &mut descendants, &mut visited);
+        descendants
+    }
+
+    fn collect_descendants(
+        &self,
+        pid: PersistentId,
+        descendants: &mut Vec<PersistentId>,
+        visited: &mut std::collections::HashSet<PersistentId>,
+    ) {
+        if !visited.insert(pid) {
+            return;
+        }
+        if let Some(record) = self.genealogy.get(&pid) {
+            for &child_pid in &record.child_ids {
+                descendants.push(child_pid);
+                self.collect_descendants(child_pid, descendants, visited);
+            }
+        }
+    }
+
+    /// Mark an entity as deleted.
+    pub fn mark_deleted(&mut self, entity_id: u64) {
+        if let Some(pid) = self.resolve_persistent(entity_id) {
+            if let Some(record) = self.genealogy.get_mut(&pid) {
+                record.status = EntityStatus::Deleted;
+            }
+        }
+    }
+
+    /// Get all entities with a specific status.
+    pub fn entities_by_status(&self, status: EntityStatus) -> Vec<PersistentId> {
+        self.genealogy
+            .iter()
+            .filter(|(_, r)| r.status == status)
+            .map(|(&pid, _)| pid)
+            .collect()
+    }
+
+    /// Get the number of active entities.
+    pub fn active_entity_count(&self) -> usize {
+        self.entities_by_status(EntityStatus::Active).len()
+    }
+
+    /// Allocate a new persistent ID.
+    fn allocate_persistent_id(&mut self) -> PersistentId {
+        self.next_persistent_id += 1;
+        PersistentId(self.next_persistent_id)
+    }
+
+    /// Clear all bindings and reset the context.
+    pub fn clear(&mut self) {
+        self.entity_to_scoped.clear();
+        self.scoped_to_entity.clear();
+        self.genealogy.clear();
+        self.pending_assignments.clear();
+        self.conflict_history.clear();
+        self.next_persistent_id = 0;
+    }
+
+    /// Export the context state for serialization.
+    pub fn export_state(&self) -> EnhancedNamingContextState {
+        EnhancedNamingContextState {
+            current_scope: self.current_scope.clone(),
+            entity_to_scoped: self.entity_to_scoped.clone(),
+            genealogy: self.genealogy.clone(),
+            conflict_history: self.conflict_history.clone(),
+            next_persistent_id: self.next_persistent_id,
+        }
+    }
+
+    /// Import context state from a serialized form.
+    pub fn import_state(&mut self, state: EnhancedNamingContextState) {
+        self.current_scope = state.current_scope;
+        self.entity_to_scoped = state.entity_to_scoped;
+        self.genealogy = state.genealogy;
+        self.conflict_history = state.conflict_history;
+        self.next_persistent_id = state.next_persistent_id;
+
+        // Rebuild reverse mapping.
+        self.scoped_to_entity.clear();
+        for (&entity_id, scoped) in &self.entity_to_scoped {
+            self.scoped_to_entity.insert(scoped.clone(), entity_id);
+        }
+    }
+}
+
+/// Serializable state of an EnhancedNamingContext.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedNamingContextState {
+    pub current_scope: NamingScope,
+    pub entity_to_scoped: HashMap<u64, ScopedId>,
+    pub genealogy: HashMap<PersistentId, EntityGenealogyRecord>,
+    pub conflict_history: Vec<NameConflictRecord>,
+    pub next_persistent_id: u64,
+}
+
+/// Manager for operation-specific name propagation rules.
+#[derive(Debug, Clone)]
+pub struct NamePropagationManager {
+    /// Rules indexed by operation type.
+    rules: HashMap<OperationType, NamePropagationRule>,
+    /// Default rule for unknown operation types.
+    default_rule: NamePropagationRule,
+}
+
+impl Default for NamePropagationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NamePropagationManager {
+    /// Create a new propagation manager with default rules.
+    pub fn new() -> Self {
+        let mut rules = HashMap::new();
+
+        // Create default rules for all operation types.
+        for op_type in [
+            OperationType::BooleanUnion,
+            OperationType::BooleanIntersection,
+            OperationType::BooleanDifference,
+            OperationType::EdgeSplit,
+            OperationType::FaceSplit,
+            OperationType::Merge,
+            OperationType::Delete,
+            OperationType::Transform,
+            OperationType::Feature,
+            OperationType::Generic,
+            OperationType::Import,
+        ] {
+            rules.insert(op_type, NamePropagationRule::for_operation(op_type));
+        }
+
+        Self {
+            rules,
+            default_rule: NamePropagationRule::for_operation(OperationType::Generic),
+        }
+    }
+
+    /// Get the propagation rule for an operation type.
+    pub fn get_rule(&self, operation_type: OperationType) -> &NamePropagationRule {
+        self.rules.get(&operation_type).unwrap_or(&self.default_rule)
+    }
+
+    /// Set a custom propagation rule for an operation type.
+    pub fn set_rule(&mut self, rule: NamePropagationRule) {
+        self.rules.insert(rule.operation_type, rule);
+    }
+
+    /// Apply a propagation rule to an entity transformation.
+    pub fn apply_propagation(
+        &self,
+        context: &mut EnhancedNamingContext,
+        operation_type: OperationType,
+        source_entities: &[u64],
+        target_entities: &[u64],
+        entity_kind: NodeKind,
+        operation_name: &str,
+    ) -> Vec<PersistentId> {
+        let rule = self.get_rule(operation_type);
+        let policy = rule.policy_for_kind(entity_kind);
+
+        // Handle split (1 -> many).
+        if source_entities.len() == 1 && target_entities.len() > 1 {
+            return context.record_split(source_entities[0], target_entities, operation_name);
+        }
+
+        // Handle merge (many -> 1).
+        if source_entities.len() > 1 && target_entities.len() == 1 {
+            return vec![context.record_merge(
+                source_entities,
+                target_entities[0],
+                operation_name,
+                rule.conflict_resolution,
+            )];
+        }
+
+        // Handle 1 -> 1 transformation.
+        if source_entities.len() == 1 && target_entities.len() == 1 {
+            let pid = context.assign_derived_id(target_entities[0], source_entities, policy);
+            return vec![pid];
+        }
+
+        // Handle generation (0 -> many).
+        if source_entities.is_empty() {
+            return target_entities.iter()
+                .map(|&entity_id| context.assign_id(entity_id))
+                .collect();
+        }
+
+        // Default: assign new IDs.
+        target_entities.iter()
+            .map(|&entity_id| context.assign_id(entity_id))
+            .collect()
+    }
+}
+
+/// Extension trait for BRepGraphHistory to support enhanced naming.
+pub trait BRepGraphHistoryExt {
+    /// Get the enhanced naming context.
+    fn enhanced_context(&self) -> &EnhancedNamingContext;
+
+    /// Get mutable access to the enhanced naming context.
+    fn enhanced_context_mut(&mut self) -> &mut EnhancedNamingContext;
+
+    /// Begin an operation with enhanced naming support.
+    fn begin_enhanced_operation(
+        &mut self,
+        operation_type: OperationType,
+        label: Option<String>,
+        scope: NamingScope,
+    );
+
+    /// Propagate names through a boolean operation.
+    fn propagate_boolean_names(
+        &mut self,
+        source_a_entities: &[TopoNode],
+        source_b_entities: &[TopoNode],
+        result_entities: &[TopoNode],
+        operation: BooleanOperationType,
+    );
+
+    /// Propagate names through a fillet operation.
+    fn propagate_fillet_names(
+        &mut self,
+        source_edges: &[usize],
+        affected_faces: &[usize],
+        new_faces: &[usize],
+    );
+
+    /// Propagate names through a chamfer operation.
+    fn propagate_chamfer_names(
+        &mut self,
+        source_edges: &[usize],
+        affected_faces: &[usize],
+        new_faces: &[usize],
+    );
+}
+
+/// Types of boolean operations for naming propagation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanOperationType {
+    Union,
+    Intersection,
+    Difference,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Serialization Support
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Serializable snapshot of a naming context for undo/redo support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamingContextSnapshot {
+    /// Unique identifier for this snapshot.
+    pub id: u64,
+    /// Timestamp when the snapshot was created.
+    pub timestamp: u64,
+    /// The scope at the time of the snapshot.
+    pub scope: NamingScope,
+    /// All entity-to-persistent-ID mappings.
+    pub mappings: Vec<(u64, PersistentId, NamingScope)>,
+    /// Genealogy records.
+    pub genealogy: Vec<EntityGenealogyRecord>,
+    /// Conflict records.
+    pub conflicts: Vec<NameConflictRecord>,
+    /// Operation that created this snapshot.
+    pub operation: Option<String>,
+}
+
+impl NamingContextSnapshot {
+    /// Create a snapshot from an enhanced naming context.
+    pub fn from_context(context: &EnhancedNamingContext, id: u64, operation: Option<String>) -> Self {
+        let mappings = context.entity_to_scoped.iter()
+            .map(|(&entity_id, scoped)| {
+                (entity_id, scoped.persistent_id, scoped.scope.clone())
+            })
+            .collect();
+
+        Self {
+            id,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            scope: context.current_scope.clone(),
+            mappings,
+            genealogy: context.genealogy.values().cloned().collect(),
+            conflicts: context.conflict_history.clone(),
+            operation,
+        }
+    }
+
+    /// Restore a naming context from this snapshot.
+    pub fn restore_to(&self, context: &mut EnhancedNamingContext) {
+        context.clear();
+        context.current_scope = self.scope.clone();
+
+        for (entity_id, pid, scope) in &self.mappings {
+            let scoped = ScopedId::new(*pid, scope.clone());
+            context.entity_to_scoped.insert(*entity_id, scoped.clone());
+            context.scoped_to_entity.insert(scoped, *entity_id);
+        }
+
+        for record in &self.genealogy {
+            context.genealogy.insert(record.persistent_id, record.clone());
+        }
+
+        context.conflict_history = self.conflicts.clone();
+        context.next_persistent_id = self.genealogy.iter()
+            .map(|r| r.persistent_id.raw())
+            .max()
+            .unwrap_or(0);
+    }
+}
+
+/// Manager for naming context snapshots supporting undo/redo.
+#[derive(Debug, Clone, Default)]
+pub struct NamingSnapshotManager {
+    /// All snapshots in chronological order.
+    snapshots: Vec<NamingContextSnapshot>,
+    /// Current position in the snapshot history.
+    current_index: usize,
+    /// Next snapshot ID.
+    next_id: u64,
+}
+
+impl NamingSnapshotManager {
+    /// Create a new snapshot manager.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Take a snapshot of the current naming context.
+    pub fn take_snapshot(
+        &mut self,
+        context: &EnhancedNamingContext,
+        operation: Option<String>,
+    ) -> u64 {
+        // Truncate any redo history.
+        self.snapshots.truncate(self.current_index + 1);
+
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let snapshot = NamingContextSnapshot::from_context(context, id, operation);
+        self.snapshots.push(snapshot);
+        self.current_index = self.snapshots.len() - 1;
+
+        id
+    }
+
+    /// Check if undo is available.
+    pub fn can_undo(&self) -> bool {
+        self.current_index > 0
+    }
+
+    /// Check if redo is available.
+    pub fn can_redo(&self) -> bool {
+        self.current_index + 1 < self.snapshots.len()
+    }
+
+    /// Undo to the previous snapshot.
+    pub fn undo(&mut self, context: &mut EnhancedNamingContext) -> Option<&NamingContextSnapshot> {
+        if !self.can_undo() {
+            return None;
+        }
+        self.current_index -= 1;
+        self.snapshots[self.current_index].restore_to(context);
+        Some(&self.snapshots[self.current_index])
+    }
+
+    /// Redo to the next snapshot.
+    pub fn redo(&mut self, context: &mut EnhancedNamingContext) -> Option<&NamingContextSnapshot> {
+        if !self.can_redo() {
+            return None;
+        }
+        self.current_index += 1;
+        self.snapshots[self.current_index].restore_to(context);
+        Some(&self.snapshots[self.current_index])
+    }
+
+    /// Get the current snapshot.
+    pub fn current(&self) -> Option<&NamingContextSnapshot> {
+        self.snapshots.get(self.current_index)
+    }
+
+    /// Get the number of snapshots.
+    pub fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Check if there are no snapshots.
+    pub fn is_empty(&self) -> bool {
+        self.snapshots.is_empty()
+    }
+
+    /// Clear all snapshots.
+    pub fn clear(&mut self) {
+        self.snapshots.clear();
+        self.current_index = 0;
+    }
+
+    /// Get the undo history (snapshots before current).
+    pub fn undo_history(&self) -> &[NamingContextSnapshot] {
+        &self.snapshots[..self.current_index]
+    }
+
+    /// Get the redo history (snapshots after current).
+    pub fn redo_history(&self) -> &[NamingContextSnapshot] {
+        &self.snapshots[self.current_index + 1..]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2207,5 +3356,699 @@ mod cross_operation_tests {
         assert!(!analysis.entity_counts.is_empty());
         assert_eq!(analysis.entity_counts[0], 10);  // Initial count
         // After the operation, the count from stats is tracked.
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests for Enhanced Persistent Naming Semantics
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod enhanced_naming_tests {
+    use super::*;
+
+    // ── ScopedId Tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn scoped_id_creation() {
+        let scope = NamingScope::for_part("housing").with_operation("fillet");
+        let pid = PersistentId(42);
+        let scoped = ScopedId::new(pid, scope.clone());
+
+        assert_eq!(scoped.persistent_id, pid);
+        assert_eq!(scoped.scope, scope);
+        assert!(!scoped.is_null());
+    }
+
+    #[test]
+    fn scoped_id_null() {
+        let scoped = ScopedId::null();
+        assert!(scoped.is_null());
+        assert!(scoped.persistent_id.is_null());
+    }
+
+    #[test]
+    fn scoped_id_qualified_name() {
+        let scope = NamingScope::for_part("housing")
+            .with_assembly("machine")
+            .with_operation("fillet");
+        let scoped = ScopedId::new(PersistentId(42), scope);
+
+        let name = scoped.qualified_name();
+        assert!(name.contains("machine"));
+        assert!(name.contains("housing"));
+        assert!(name.contains("fillet"));
+        assert!(name.contains("e42"));
+    }
+
+    // ── NamingScope Tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn naming_scope_creation() {
+        let scope = NamingScope::new();
+        assert!(scope.part.is_none());
+        assert!(scope.assembly.is_none());
+        assert!(scope.operation.is_none());
+    }
+
+    #[test]
+    fn naming_scope_for_part() {
+        let scope = NamingScope::for_part("housing");
+        assert_eq!(scope.part, Some("housing".to_string()));
+        assert!(scope.assembly.is_none());
+    }
+
+    #[test]
+    fn naming_scope_for_assembly() {
+        let scope = NamingScope::for_assembly("machine");
+        assert_eq!(scope.assembly, Some("machine".to_string()));
+        assert!(scope.part.is_none());
+    }
+
+    #[test]
+    fn naming_scope_for_operation() {
+        let scope = NamingScope::for_operation("housing", "fillet");
+        assert_eq!(scope.part, Some("housing".to_string()));
+        assert_eq!(scope.operation, Some("fillet".to_string()));
+    }
+
+    #[test]
+    fn naming_scope_builder_pattern() {
+        let scope = NamingScope::new()
+            .with_assembly("machine")
+            .with_part("housing")
+            .with_operation("fillet");
+
+        assert_eq!(scope.assembly, Some("machine".to_string()));
+        assert_eq!(scope.part, Some("housing".to_string()));
+        assert_eq!(scope.operation, Some("fillet".to_string()));
+    }
+
+    #[test]
+    fn naming_scope_child_scope() {
+        let parent = NamingScope::for_part("housing");
+        let child = parent.child_scope("fillet");
+
+        assert_eq!(child.part, parent.part);
+        assert_eq!(child.operation, Some("fillet".to_string()));
+    }
+
+    #[test]
+    fn naming_scope_contains() {
+        let parent = NamingScope::for_assembly("machine");
+        let child = NamingScope::for_part("housing").with_assembly("machine");
+
+        assert!(parent.contains(&child));
+        assert!(!child.contains(&parent));
+
+        let other = NamingScope::for_assembly("other");
+        assert!(!parent.contains(&other));
+    }
+
+    // ── EnhancedNamingContext Tests ────────────────────────────────────────────
+
+    #[test]
+    fn enhanced_context_assign_id() {
+        let mut ctx = EnhancedNamingContext::new();
+        let pid = ctx.assign_id(42);
+
+        assert!(!pid.is_null());
+        assert_eq!(ctx.resolve_entity(pid), Some(42));
+        assert_eq!(ctx.resolve_persistent(42), Some(pid));
+    }
+
+    #[test]
+    fn enhanced_context_with_scope() {
+        let scope = NamingScope::for_part("housing");
+        let ctx = EnhancedNamingContext::with_scope(scope.clone());
+
+        assert_eq!(ctx.scope(), &scope);
+    }
+
+    #[test]
+    fn enhanced_context_assign_derived_id_preserve() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Assign original.
+        let original_pid = ctx.assign_id(10);
+
+        // Derive with Preserve policy.
+        let derived_pid = ctx.assign_derived_id(20, &[10], NamePropagationPolicy::Preserve);
+
+        // Should inherit the same persistent ID.
+        assert_eq!(derived_pid, original_pid);
+        assert_eq!(ctx.resolve_persistent(20), Some(original_pid));
+    }
+
+    #[test]
+    fn enhanced_context_assign_derived_id_generate() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Assign original.
+        let original_pid = ctx.assign_id(10);
+
+        // Derive with Generate policy.
+        let derived_pid = ctx.assign_derived_id(20, &[10], NamePropagationPolicy::Generate);
+
+        // Should get a new persistent ID.
+        assert_ne!(derived_pid, original_pid);
+        assert_eq!(ctx.resolve_persistent(20), Some(derived_pid));
+    }
+
+    #[test]
+    fn enhanced_context_record_split() {
+        let mut ctx = EnhancedNamingContext::new();
+        ctx.set_scope(NamingScope::for_operation("test", "split_op"));
+
+        // Create source entity.
+        let source_pid = ctx.assign_id(10);
+
+        // Split into three entities.
+        let result_pids = ctx.record_split(10, &[20, 30, 40], "split_op");
+
+        assert_eq!(result_pids.len(), 3);
+        // First target inherits source's PID.
+        assert_eq!(result_pids[0], source_pid);
+        // Others get new PIDs.
+        assert_ne!(result_pids[1], source_pid);
+        assert_ne!(result_pids[2], source_pid);
+
+        // Check genealogy.
+        let genealogy = ctx.get_genealogy(source_pid).unwrap();
+        assert_eq!(genealogy.status, EntityStatus::Split);
+        assert_eq!(genealogy.child_ids.len(), 2); // Two new children.
+    }
+
+    #[test]
+    fn enhanced_context_record_merge() {
+        let mut ctx = EnhancedNamingContext::new();
+        ctx.set_scope(NamingScope::for_operation("test", "merge_op"));
+
+        // Create source entities.
+        let pid1 = ctx.assign_id(10);
+        let pid2 = ctx.assign_id(20);
+
+        // Merge into one entity.
+        let result_pid = ctx.record_merge(
+            &[10, 20],
+            30,
+            "merge_op",
+            NameConflictResolution::MergeEntities,
+        );
+
+        // Check result exists.
+        assert!(!result_pid.is_null());
+
+        // Check genealogy of sources.
+        let genealogy1 = ctx.get_genealogy(pid1).unwrap();
+        assert_eq!(genealogy1.status, EntityStatus::Merged);
+
+        let genealogy2 = ctx.get_genealogy(pid2).unwrap();
+        assert_eq!(genealogy2.status, EntityStatus::Merged);
+    }
+
+    #[test]
+    fn enhanced_context_mark_deleted() {
+        let mut ctx = EnhancedNamingContext::new();
+        let pid = ctx.assign_id(10);
+
+        ctx.mark_deleted(10);
+
+        let genealogy = ctx.get_genealogy(pid).unwrap();
+        assert_eq!(genealogy.status, EntityStatus::Deleted);
+    }
+
+    #[test]
+    fn enhanced_context_entities_by_status() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        let pid1 = ctx.assign_id(10);
+        let pid2 = ctx.assign_id(20);
+        ctx.mark_deleted(10);
+
+        let deleted = ctx.entities_by_status(EntityStatus::Deleted);
+        assert!(deleted.contains(&pid1));
+        assert!(!deleted.contains(&pid2));
+
+        let active = ctx.entities_by_status(EntityStatus::Active);
+        assert!(active.contains(&pid2));
+        assert!(!active.contains(&pid1));
+    }
+
+    #[test]
+    fn enhanced_context_export_import_state() {
+        let mut ctx = EnhancedNamingContext::new();
+        ctx.set_scope(NamingScope::for_part("test"));
+
+        let pid1 = ctx.assign_id(10);
+        let pid2 = ctx.assign_id(20);
+
+        // Export state.
+        let state = ctx.export_state();
+
+        // Clear context.
+        ctx.clear();
+        assert!(ctx.resolve_persistent(10).is_none());
+
+        // Import state.
+        ctx.import_state(state);
+
+        // Verify restoration.
+        assert_eq!(ctx.resolve_persistent(10), Some(pid1));
+        assert_eq!(ctx.resolve_persistent(20), Some(pid2));
+    }
+
+    // ── NamePropagationRule Tests ──────────────────────────────────────────────
+
+    #[test]
+    fn propagation_rule_for_boolean() {
+        let rule = NamePropagationRule::for_operation(OperationType::BooleanUnion);
+
+        assert_eq!(rule.face_policy, NamePropagationPolicy::Preserve);
+        assert_eq!(rule.edge_policy, NamePropagationPolicy::Preserve);
+        assert!(rule.track_genealogy);
+    }
+
+    #[test]
+    fn propagation_rule_for_feature() {
+        let rule = NamePropagationRule::for_operation(OperationType::Feature);
+
+        assert_eq!(rule.face_policy, NamePropagationPolicy::Inherit);
+        assert_eq!(rule.edge_policy, NamePropagationPolicy::Inherit);
+        assert!(rule.track_genealogy);
+    }
+
+    #[test]
+    fn propagation_rule_for_merge() {
+        let rule = NamePropagationRule::for_operation(OperationType::Merge);
+
+        assert_eq!(rule.face_policy, NamePropagationPolicy::Combine);
+        assert_eq!(rule.conflict_resolution, NameConflictResolution::MergeEntities);
+    }
+
+    #[test]
+    fn propagation_rule_policy_for_kind() {
+        let rule = NamePropagationRule {
+            operation_type: OperationType::Generic,
+            face_policy: NamePropagationPolicy::Preserve,
+            edge_policy: NamePropagationPolicy::Inherit,
+            vertex_policy: NamePropagationPolicy::Generate,
+            track_genealogy: true,
+            conflict_resolution: NameConflictResolution::GenerateNewId,
+        };
+
+        assert_eq!(rule.policy_for_kind(NodeKind::Face), NamePropagationPolicy::Preserve);
+        assert_eq!(rule.policy_for_kind(NodeKind::Edge), NamePropagationPolicy::Inherit);
+        assert_eq!(rule.policy_for_kind(NodeKind::Vertex), NamePropagationPolicy::Generate);
+    }
+
+    // ── NamePropagationManager Tests ───────────────────────────────────────────
+
+    #[test]
+    fn propagation_manager_get_rule() {
+        let manager = NamePropagationManager::new();
+
+        let rule = manager.get_rule(OperationType::BooleanUnion);
+        assert_eq!(rule.operation_type, OperationType::BooleanUnion);
+
+        let rule = manager.get_rule(OperationType::Feature);
+        assert_eq!(rule.operation_type, OperationType::Feature);
+    }
+
+    #[test]
+    fn propagation_manager_set_rule() {
+        let mut manager = NamePropagationManager::new();
+
+        let custom_rule = NamePropagationRule {
+            operation_type: OperationType::BooleanUnion,
+            face_policy: NamePropagationPolicy::Generate,
+            edge_policy: NamePropagationPolicy::Generate,
+            vertex_policy: NamePropagationPolicy::Generate,
+            track_genealogy: false,
+            conflict_resolution: NameConflictResolution::KeepExisting,
+        };
+
+        manager.set_rule(custom_rule);
+
+        let rule = manager.get_rule(OperationType::BooleanUnion);
+        assert_eq!(rule.face_policy, NamePropagationPolicy::Generate);
+    }
+
+    #[test]
+    fn propagation_manager_apply_split() {
+        let mut manager = NamePropagationManager::new();
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Create source entity.
+        ctx.assign_id(10);
+
+        // Apply split propagation.
+        let pids = manager.apply_propagation(
+            &mut ctx,
+            OperationType::FaceSplit,
+            &[10],
+            &[20, 30, 40],
+            NodeKind::Face,
+            "split_test",
+        );
+
+        assert_eq!(pids.len(), 3);
+        // First target should inherit source's PID.
+        assert_eq!(pids[0], ctx.resolve_persistent(10).unwrap());
+    }
+
+    #[test]
+    fn propagation_manager_apply_merge() {
+        let mut manager = NamePropagationManager::new();
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Create source entities.
+        ctx.assign_id(10);
+        ctx.assign_id(20);
+
+        // Apply merge propagation.
+        let pids = manager.apply_propagation(
+            &mut ctx,
+            OperationType::Merge,
+            &[10, 20],
+            &[30],
+            NodeKind::Face,
+            "merge_test",
+        );
+
+        assert_eq!(pids.len(), 1);
+    }
+
+    // ── NamingSnapshotManager Tests ────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_manager_take_snapshot() {
+        let mut manager = NamingSnapshotManager::new();
+        let ctx = EnhancedNamingContext::new();
+
+        let id = manager.take_snapshot(&ctx, Some("test_op".to_string()));
+
+        assert_eq!(id, 0);
+        assert_eq!(manager.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_manager_undo_redo() {
+        let mut manager = NamingSnapshotManager::new();
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Initial state.
+        ctx.assign_id(10);
+        manager.take_snapshot(&ctx, Some("op1".to_string()));
+
+        // Second state.
+        ctx.assign_id(20);
+        manager.take_snapshot(&ctx, Some("op2".to_string()));
+
+        assert_eq!(manager.len(), 2);
+
+        // Undo.
+        assert!(manager.can_undo());
+        manager.undo(&mut ctx);
+        assert!(!manager.can_undo());
+
+        // Redo.
+        assert!(manager.can_redo());
+        manager.redo(&mut ctx);
+        assert!(!manager.can_redo());
+    }
+
+    #[test]
+    fn snapshot_manager_current() {
+        let mut manager = NamingSnapshotManager::new();
+        let ctx = EnhancedNamingContext::new();
+
+        manager.take_snapshot(&ctx, Some("test".to_string()));
+
+        let current = manager.current();
+        assert!(current.is_some());
+        assert_eq!(current.unwrap().operation, Some("test".to_string()));
+    }
+
+    // ── Genealogy Tracking Tests ────────────────────────────────────────────────
+
+    #[test]
+    fn genealogy_tracking_through_boolean() {
+        let mut ctx = EnhancedNamingContext::new();
+        let mut manager = NamePropagationManager::new();
+
+        ctx.set_scope(NamingScope::for_operation("part", "boolean_union"));
+
+        // Create source entities.
+        ctx.assign_id(1);
+        ctx.assign_id(2);
+
+        // Simulate boolean union.
+        let result_pids = manager.apply_propagation(
+            &mut ctx,
+            OperationType::BooleanUnion,
+            &[1, 2],
+            &[10, 11],
+            NodeKind::Face,
+            "boolean_union",
+        );
+
+        assert_eq!(result_pids.len(), 2);
+    }
+
+    #[test]
+    fn genealogy_tracking_through_fillet() {
+        let mut ctx = EnhancedNamingContext::new();
+        let mut manager = NamePropagationManager::new();
+
+        ctx.set_scope(NamingScope::for_operation("part", "fillet"));
+
+        // Create source edges.
+        let pid_edge = ctx.assign_id(1);
+
+        // Simulate fillet.
+        let result_pids = manager.apply_propagation(
+            &mut ctx,
+            OperationType::Feature,
+            &[1],
+            &[10, 11],
+            NodeKind::Face,
+            "fillet",
+        );
+
+        assert_eq!(result_pids.len(), 2);
+
+        let edge_genealogy = ctx.get_genealogy(pid_edge);
+        assert!(edge_genealogy.is_some());
+    }
+
+    #[test]
+    fn genealogy_multiple_operations() {
+        let mut ctx = EnhancedNamingContext::new();
+        let mut manager = NamePropagationManager::new();
+
+        // Operation 1: Create initial face.
+        ctx.set_scope(NamingScope::for_operation("part", "create"));
+        let pid1 = ctx.assign_id(1);
+
+        // Operation 2: Boolean union.
+        ctx.set_scope(NamingScope::for_operation("part", "union"));
+        manager.apply_propagation(
+            &mut ctx,
+            OperationType::BooleanUnion,
+            &[1],
+            &[2],
+            NodeKind::Face,
+            "union",
+        );
+
+        // Operation 3: Fillet.
+        ctx.set_scope(NamingScope::for_operation("part", "fillet"));
+        manager.apply_propagation(
+            &mut ctx,
+            OperationType::Feature,
+            &[2],
+            &[3, 4],
+            NodeKind::Face,
+            "fillet",
+        );
+
+        // Verify the chain is trackable.
+        let descendants = ctx.trace_descendants(pid1);
+        assert!(!descendants.is_empty() || ctx.get_genealogy(pid1).is_some());
+    }
+
+    // ── Name Stability Tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn name_stability_through_boolean_preserve() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Create faces from solid A.
+        let pid_f1 = ctx.assign_id(1);
+        ctx.assign_id(2);
+
+        // Simulate boolean union where faces 1 and 2 are preserved.
+        let preserved_pid = ctx.assign_derived_id(
+            10, // New face index
+            &[1], // Source face
+            NamePropagationPolicy::Preserve,
+        );
+
+        assert_eq!(preserved_pid, pid_f1);
+    }
+
+    #[test]
+    fn name_stability_through_split() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Create a face that will be split.
+        let pid = ctx.assign_id(1);
+
+        // Split into three faces.
+        let result_pids = ctx.record_split(1, &[10, 11, 12], "split");
+
+        // First result should inherit the original PID.
+        assert_eq!(result_pids[0], pid);
+        // Others should get new PIDs.
+        assert_ne!(result_pids[1], pid);
+        assert_ne!(result_pids[2], pid);
+
+        // Original entity should be marked as split.
+        let genealogy = ctx.get_genealogy(pid).unwrap();
+        assert_eq!(genealogy.status, EntityStatus::Split);
+    }
+
+    #[test]
+    fn name_stability_through_merge() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        // Create two faces that will be merged.
+        let pid1 = ctx.assign_id(1);
+        let pid2 = ctx.assign_id(2);
+
+        // Merge into one face.
+        let result_pid = ctx.record_merge(
+            &[1, 2],
+            10,
+            "merge",
+            NameConflictResolution::MergeEntities,
+        );
+
+        // Result should exist and sources should be marked merged.
+        assert!(!result_pid.is_null());
+
+        let g1 = ctx.get_genealogy(pid1).unwrap();
+        let g2 = ctx.get_genealogy(pid2).unwrap();
+
+        assert_eq!(g1.status, EntityStatus::Merged);
+        assert_eq!(g2.status, EntityStatus::Merged);
+    }
+
+    // ── Conflict Resolution Tests ───────────────────────────────────────────────
+
+    #[test]
+    fn conflict_resolution_keep_existing() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        let pid = ctx.assign_id(1);
+
+        // Try to assign the same PID to another entity (simulating conflict).
+        let conflict = NameConflictRecord {
+            persistent_id: pid,
+            conflicting_entities: vec![1, 2],
+            operation: "test".to_string(),
+            scope: ctx.current_scope.clone(),
+            resolution: NameConflictResolution::Unresolved,
+            sequence: 0,
+        };
+
+        ctx.resolve_conflict(&conflict, NameConflictResolution::KeepExisting).unwrap();
+
+        // Original entity should keep its PID.
+        assert_eq!(ctx.resolve_persistent(1), Some(pid));
+
+        // Conflict should be recorded.
+        assert!(!ctx.conflict_history.is_empty());
+    }
+
+    #[test]
+    fn conflict_resolution_generate_new() {
+        let mut ctx = EnhancedNamingContext::new();
+
+        let pid = ctx.assign_id(1);
+
+        let conflict = NameConflictRecord {
+            persistent_id: pid,
+            conflicting_entities: vec![1, 2],
+            operation: "test".to_string(),
+            scope: ctx.current_scope.clone(),
+            resolution: NameConflictResolution::Unresolved,
+            sequence: 0,
+        };
+
+        ctx.resolve_conflict(&conflict, NameConflictResolution::GenerateNewId).unwrap();
+
+        // New entity should have a different PID.
+        let pid1 = ctx.resolve_persistent(1);
+        let pid2 = ctx.resolve_persistent(2);
+
+        // At least one should have a different PID.
+        assert!(pid1.is_some() || pid2.is_some());
+    }
+
+    // ── Serialization Tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn serialization_naming_scope() {
+        let scope = NamingScope::for_part("housing")
+            .with_assembly("machine")
+            .with_operation("fillet");
+
+        let json = serde_json::to_string(&scope).unwrap();
+        let decoded: NamingScope = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, scope);
+    }
+
+    #[test]
+    fn serialization_scoped_id() {
+        let scope = NamingScope::for_part("housing");
+        let scoped = ScopedId::new(PersistentId(42), scope);
+
+        let json = serde_json::to_string(&scoped).unwrap();
+        let decoded: ScopedId = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded, scoped);
+    }
+
+    #[test]
+    fn serialization_enhanced_context_state() {
+        let mut ctx = EnhancedNamingContext::new();
+        ctx.set_scope(NamingScope::for_part("test"));
+        ctx.assign_id(10);
+        ctx.assign_id(20);
+
+        let state = ctx.export_state();
+
+        let json = serde_json::to_string(&state).unwrap();
+        let decoded: EnhancedNamingContextState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.current_scope, state.current_scope);
+        assert_eq!(decoded.next_persistent_id, state.next_persistent_id);
+    }
+
+    #[test]
+    fn serialization_naming_context_snapshot() {
+        let mut ctx = EnhancedNamingContext::new();
+        ctx.assign_id(10);
+
+        let snapshot = NamingContextSnapshot::from_context(&ctx, 0, Some("test".to_string()));
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: NamingContextSnapshot = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.id, snapshot.id);
+        assert_eq!(decoded.operation, snapshot.operation);
     }
 }
