@@ -2951,6 +2951,143 @@ pub fn general_fuse_par(parts: &[BRep]) -> Result<(BRep, GeneralFuseHistory), Bo
     Ok((acc, GeneralFuseHistory { steps }))
 }
 
+// ============================================================================
+// Compound-aware Boolean Operations
+// ============================================================================
+
+/// Perform a boolean operation on a compound shape.
+///
+/// When the input is a compound, the operation is applied to each constituent
+/// solid independently. The result is a compound of the individual results.
+///
+/// For union operations on compounds, all solids are fused together.
+/// For difference operations, each solid from A is subtracted by all solids from B.
+/// For intersection operations, each solid from A is intersected with all solids from B.
+pub fn boolean_op_compound(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+) -> Result<BRep, BooleanError> {
+    let a_solids = a.flatten_to_solids();
+    let b_solids = b.flatten_to_solids();
+
+    if a_solids.is_empty() || b_solids.is_empty() {
+        return Err(BooleanError::EmptyInput);
+    }
+
+    match op {
+        BooleanOpType::Union => {
+            // Union all solids from both shapes
+            let all_solids: Vec<BRep> = a_solids
+                .iter()
+                .chain(b_solids.iter())
+                .map(|solid| {
+                    let mut brep = BRep::new();
+                    brep.solids.push((*solid).clone());
+                    brep
+                })
+                .collect();
+            general_fuse(&all_solids)
+        }
+        BooleanOpType::Difference => {
+            // Each solid from A is subtracted by all solids from B
+            let mut results = Vec::new();
+            for solid_a in a_solids {
+                let mut brep_a = BRep::new();
+                brep_a.solids.push((*solid_a).clone());
+
+                let mut acc = brep_a;
+                for solid_b in &b_solids {
+                    let mut brep_b = BRep::new();
+                    brep_b.solids.push((*solid_b).clone());
+                    acc = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?;
+                }
+                results.push(acc);
+            }
+
+            if results.len() == 1 {
+                Ok(results.remove(0))
+            } else {
+                Ok(BRep::compound_from_shapes(&results))
+            }
+        }
+        BooleanOpType::Intersection => {
+            // Each solid from A is intersected with each solid from B
+            let mut results = Vec::new();
+            for solid_a in a_solids {
+                let mut brep_a = BRep::new();
+                brep_a.solids.push(solid_a.clone());
+
+                for solid_b in &b_solids {
+                    let mut brep_b = BRep::new();
+                    brep_b.solids.push((*solid_b).clone());
+
+                    if let Ok(result) = boolean_op(BooleanOpType::Intersection, &brep_a, &brep_b) {
+                        if !result.solids.is_empty() {
+                            results.push(result);
+                        }
+                    }
+                }
+            }
+
+            if results.is_empty() {
+                Err(BooleanError::DegenerateResult)
+            } else if results.len() == 1 {
+                Ok(results.remove(0))
+            } else {
+                Ok(BRep::compound_from_shapes(&results))
+            }
+        }
+    }
+}
+
+/// Perform a compound-aware boolean operation with options.
+pub fn boolean_op_compound_with_options(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    options: BooleanOptions,
+) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+    // For now, delegate to regular boolean with options
+    // A full implementation would track per-solid reports
+    let a_solids = a.flatten_to_solids();
+    let b_solids = b.flatten_to_solids();
+
+    if a_solids.len() <= 1 && b_solids.len() <= 1 {
+        return boolean_op_with_options(op, a, b, options);
+    }
+
+    let result = boolean_op_compound(op, a, b)?;
+    let report = BooleanExecutionReport::default();
+    Ok((result, report))
+}
+
+/// Fuse all solids in a compound into a single solid.
+///
+/// This is equivalent to a general fuse operation on the compound's constituents.
+pub fn fuse_compound(compound: &BRep) -> Result<BRep, BooleanError> {
+    let solids = compound.flatten_to_solids();
+    if solids.is_empty() {
+        return Err(BooleanError::EmptyInput);
+    }
+    if solids.len() == 1 {
+        let mut result = BRep::new();
+        result.solids.push(solids[0].clone());
+        return Ok(result);
+    }
+
+    let breps: Vec<BRep> = solids
+        .iter()
+        .map(|solid| {
+            let mut brep = BRep::new();
+            brep.solids.push((*solid).clone());
+            brep
+        })
+        .collect();
+
+    general_fuse(&breps)
+}
+
 /// Diagnostic serial N-ary fuse.
 ///
 /// Returns per-step face-count reports and step-indexed errors when a fold

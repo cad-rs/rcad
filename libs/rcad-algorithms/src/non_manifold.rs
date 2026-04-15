@@ -2277,6 +2277,8 @@ mod tests {
                 }],
             }],
             geom: Default::default(),
+            compound: None,
+            compsolid: None,
         }
     }
 
@@ -2337,6 +2339,8 @@ mod tests {
                 }],
             }],
             geom: Default::default(),
+            compound: None,
+            compsolid: None,
         }
     }
 

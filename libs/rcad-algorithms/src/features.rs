@@ -240,6 +240,8 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError
         edges: Vec::with_capacity(n),
         solids: Vec::new(),
         geom: GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
     for &p in profile_verts {
@@ -297,6 +299,8 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
         edges: Vec::new(),
         solids: Vec::new(),
         geom: GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
     // Add vertices: bot[0..n] then top[0..n]

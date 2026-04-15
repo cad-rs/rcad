@@ -2298,6 +2298,8 @@ mod tests {
                 face_surface: vec![None],
                 ..Default::default()
             },
+            compound: None,
+            compsolid: None,
         };
 
         mesh_brep(&mut brep, &TessellationParams::default());

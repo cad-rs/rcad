@@ -165,6 +165,8 @@ pub fn imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
             }],
         }],
         geom: target.geom.clone(),
+        compound: None,
+        compsolid: None,
     };
 
     ImprintResult { brep, seam_edges }
@@ -1292,6 +1294,8 @@ mod tests {
             edges: vec![],
             solids: vec![],
             geom: Default::default(),
+            compound: None,
+            compsolid: None,
         };
         let box_brep = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
         

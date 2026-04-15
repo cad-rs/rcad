@@ -1864,6 +1864,8 @@ mod tests {
                 }],
             }],
             geom: Default::default(),
+            compound: None,
+            compsolid: None,
         }
     }
 

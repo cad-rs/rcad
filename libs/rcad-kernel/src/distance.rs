@@ -530,6 +530,8 @@ mod tests {
                 edge_same_parameter: Vec::new(),
                 edge_same_range: Vec::new(),
             },
+            compound: None,
+            compsolid: None,
         }
     }
 

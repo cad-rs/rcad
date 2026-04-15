@@ -336,6 +336,8 @@ impl ResultBuilder {
                 shells: vec![Shell { faces }],
             }],
             geom,
+            compound: None,
+            compsolid: None,
         };
         (brep, history)
     }

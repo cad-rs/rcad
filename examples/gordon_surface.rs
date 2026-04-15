@@ -12,7 +12,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3};
 use rcad_kernel::gordon::{
-    GordonError, GordonOptions,
+    GordonError, GordonOptions, ParameterizationMethod,
     gordon_surface_curves, gordon_surface_with_params,
     eval_gordon_surface_safe, gordon_surface_normal_safe, gordon_to_bspline,
 };
@@ -90,10 +90,14 @@ fn demo_3x3_network() {
     let v1 = make_line(DVec3::new(0.5, 0.0, 0.0), DVec3::Y);
     let v2 = make_line(DVec3::X, DVec3::Y);
 
+    // Use uniform parameterization for uniformly spaced curves
+    let opts = GordonOptions::default()
+        .with_parameterization(ParameterizationMethod::Uniform);
+
     let surface = gordon_surface_curves(
         &[u0, u1, u2],
         &[v0, v1, v2],
-        GordonOptions::default(),
+        opts,
     ).expect("3x3 network should construct");
 
     // Verify interpolation at all grid points

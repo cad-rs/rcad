@@ -338,6 +338,8 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         edges: compact_edges,
         solids: vec![solid],
         geom,
+        compound: None,
+        compsolid: None,
     };
 
     SewingResult {

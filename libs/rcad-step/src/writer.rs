@@ -282,11 +282,17 @@ impl Part21Writer {
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
 
+        // Check if this is a compound BRep
+        let is_compound = brep.is_compound();
+        let is_compsolid = brep.is_compsolid();
+
         let mut face_items = Vec::new();
         let mut solid_items = Vec::new();
+        let mut compound_items = Vec::new();
+        let mut compsolid_items = Vec::new();
         let mut shell_face_groups: Vec<Vec<u64>> = Vec::new();
         let mut has_triangle_fallback = false;
-        // Map from face_index → list of STEP ADVANCED_FACE ids (for color assignment)
+        // Map from face_index -> list of STEP ADVANCED_FACE ids (for color assignment)
         let mut face_step_ids: Vec<(usize, Vec<u64>)> = Vec::new();
 
         let mut face_index = 0usize;
@@ -329,13 +335,27 @@ impl Part21Writer {
             }
         }
 
+        // Handle compound structure
+        if is_compound {
+            if let Some(compound) = brep.as_compound() {
+                compound_items = self.write_compound_structure(compound, &solid_items);
+            }
+        }
+
+        // Handle compsolid structure
+        if is_compsolid {
+            if let Some(compsolid) = brep.as_compsolid() {
+                compsolid_items = self.write_compsolid_structure(compsolid, &solid_items);
+            }
+        }
+
         if has_triangle_fallback {
             // Triangulated fallback faces may not form a topologically valid manifold solid.
             // Export as open shell representation to maximize interoperability.
             solid_items.clear();
         }
 
-        // Collect edge indices that belong to face boundaries — these are
+        // Collect edge indices that belong to face boundaries - these are
         // already part of the solid/shell representation and must NOT be
         // duplicated into the wireframe.
         let mut face_edge_set: BTreeSet<usize> = BTreeSet::new();
@@ -407,7 +427,18 @@ impl Part21Writer {
         let _shape_def = self.shape_definition_representation(product_shape, base_rep);
 
         let mut primary_rep = None;
-        if export_all && !solid_items.is_empty() {
+        // Handle compound structure
+        if export_all && !compound_items.is_empty() {
+            let brep_rep =
+                self.advanced_brep_shape_representation("rcad_export", &compound_items, context);
+            self.shape_representation_relationship("", "", base_rep, brep_rep);
+            primary_rep = Some(brep_rep);
+        } else if export_all && !compsolid_items.is_empty() {
+            let brep_rep =
+                self.advanced_brep_shape_representation("rcad_export", &compsolid_items, context);
+            self.shape_representation_relationship("", "", base_rep, brep_rep);
+            primary_rep = Some(brep_rep);
+        } else if export_all && !solid_items.is_empty() {
             let brep_rep =
                 self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
             self.shape_representation_relationship("", "", base_rep, brep_rep);
@@ -447,7 +478,7 @@ impl Part21Writer {
             }
         }
 
-        // ── Color / presentation styling ──────────────────────────────
+        // -- Color / presentation styling --
         if let Some(step_colors) = colors {
             for (fi, step_ids) in &face_step_ids {
                 if let Some(color) = step_colors.color_for_face(*fi) {
@@ -456,6 +487,81 @@ impl Part21Writer {
                     }
                 }
             }
+        }
+    }
+
+    /// Write a compound structure to STEP, returning the list of STEP entity IDs.
+    fn write_compound_structure(
+        &mut self,
+        compound: &rcad_kernel::topology::Compound,
+        existing_solids: &[u64],
+    ) -> Vec<u64> {
+        let mut element_ids = Vec::new();
+
+        // Use existing solids if available
+        let mut solid_iter = existing_solids.iter();
+
+        // Add solids
+        for (i, (_label, _solid)) in compound.solids.iter().enumerate() {
+            if let Some(&solid_id) = solid_iter.next() {
+                element_ids.push(solid_id);
+            } else {
+                // Create a placeholder solid ID
+                let id = self.manifold_solid_brep(&format!("compound_solid_{}", i), 0);
+                element_ids.push(id);
+            }
+        }
+
+        // Add comp_solids
+        for (i, (_label, compsolid)) in compound.comp_solids.iter().enumerate() {
+            let compsolid_id = self.write_compsolid_structure(compsolid, existing_solids);
+            if compsolid_id.len() == 1 {
+                element_ids.push(compsolid_id[0]);
+            } else {
+                let id = self.compsolid(&format!("compound_compsolid_{}", i), &compsolid_id);
+                element_ids.push(id);
+            }
+        }
+
+        // Add nested compounds recursively
+        for (i, (_label, nested)) in compound.compounds.iter().enumerate() {
+            let nested_items = self.write_compound_structure(nested, existing_solids);
+            let compound_id = self.compound(&format!("nested_compound_{}", i), &nested_items);
+            element_ids.push(compound_id);
+        }
+
+        // If we have multiple elements, wrap in a COMPOUND entity
+        if element_ids.len() > 1 {
+            let compound_id = self.compound("compound", &element_ids);
+            vec![compound_id]
+        } else {
+            element_ids
+        }
+    }
+
+    /// Write a compsolid structure to STEP, returning the list of STEP entity IDs.
+    fn write_compsolid_structure(
+        &mut self,
+        compsolid: &rcad_kernel::topology::CompSolid,
+        existing_solids: &[u64],
+    ) -> Vec<u64> {
+        let mut solid_ids = Vec::new();
+        let mut solid_iter = existing_solids.iter();
+
+        for (i, _solid) in compsolid.solids.iter().enumerate() {
+            if let Some(&solid_id) = solid_iter.next() {
+                solid_ids.push(solid_id);
+            } else {
+                let id = self.manifold_solid_brep(&format!("compsolid_solid_{}", i), 0);
+                solid_ids.push(id);
+            }
+        }
+
+        if solid_ids.len() > 1 {
+            let compsolid_id = self.compsolid("compsolid", &solid_ids);
+            vec![compsolid_id]
+        } else {
+            solid_ids
         }
     }
 
@@ -1690,6 +1796,14 @@ impl Part21Writer {
 
     fn manifold_solid_brep(&mut self, name: &str, outer: u64) -> u64 {
         self.push(format!("MANIFOLD_SOLID_BREP('{}',#{})", name, outer))
+    }
+
+    fn compound(&mut self, name: &str, elements: &[u64]) -> u64 {
+        self.push(format!("COMPOUND('{}',({}))", name, refs(elements)))
+    }
+
+    fn compsolid(&mut self, name: &str, solids: &[u64]) -> u64 {
+        self.push(format!("COMPSOLID('{}',({}))", name, refs(solids)))
     }
 
     fn geometric_curve_set(&mut self, name: &str, curves: &[u64]) -> u64 {

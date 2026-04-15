@@ -112,6 +112,12 @@ struct ParsedStep {
     shell_based_surface_models: Vec<Vec<u64>>,
     trimmed_curves: HashMap<u64, (u64, f64, f64)>,
     geometric_curve_sets: Vec<Vec<u64>>,
+    /// COMPOUND: maps entity id -> list of element references
+    compounds: HashMap<u64, Vec<u64>>,
+    /// COMPSOLID: maps entity id -> list of solid references
+    compsolids: HashMap<u64, Vec<u64>>,
+    /// Top-level compound references (from SHAPE_REPRESENTATION_RELATIONSHIP)
+    top_level_compounds: Vec<u64>,
     /// SURFACE_CURVE: maps step id 鈫?(3d_curve_ref, pcurve_ref_list, same_parameter)
     surface_curves: HashMap<u64, (u64, Vec<u64>, bool)>,
     /// PCURVE: maps step id 鈫?(surface_ref, definitional_rep_ref)
@@ -189,6 +195,9 @@ impl ParsedStep {
             shell_based_surface_models: Vec::new(),
             trimmed_curves: HashMap::new(),
             geometric_curve_sets: Vec::new(),
+            compounds: HashMap::new(),
+            compsolids: HashMap::new(),
+            top_level_compounds: Vec::new(),
             surface_curves: HashMap::new(),
             pcurves: HashMap::new(),
             definitional_reps: HashMap::new(),
@@ -385,6 +394,41 @@ pub struct StepDocumentMetadata {
     pub terminator_symbols: Vec<StepTerminatorSymbol>,
     /// Datum feature callouts (AP242 DATUM_FEATURE_CALLOUT).
     pub datum_feature_callouts: Vec<StepDatumFeatureCallout>,
+    // ── AP242 Product Definition Relationship Chains ─────────────────────────────
+    /// Product definition relationships (PRODUCT_DEFINITION_RELATIONSHIP).
+    pub product_definition_relationships: Vec<StepProductDefinitionRelationship>,
+    // ── AP242 Shape Representation Associations ──────────────────────────────────
+    /// Shape representation relationships (SHAPE_REPRESENTATION_RELATIONSHIP).
+    pub shape_representation_relationships: Vec<StepShapeRepresentationRelationship>,
+    /// Product definition shapes (PRODUCT_DEFINITION_SHAPE).
+    pub product_definition_shapes: Vec<StepProductDefinitionShape>,
+    // ── AP242 Configuration Management ───────────────────────────────────────────
+    /// Configuration designs (CONFIGURATION_DESIGN).
+    pub configuration_designs: Vec<StepConfigurationDesign>,
+    /// Configuration items (CONFIGURATION_ITEM).
+    pub configuration_items: Vec<StepConfigurationItem>,
+    /// Product concepts (PRODUCT_CONCEPT).
+    pub product_concepts: Vec<StepProductConcept>,
+    /// Configuration effectivities (CONFIGURATION_EFFECTIVITY).
+    pub configuration_effectivities: Vec<StepConfigurationEffectivity>,
+    // ── AP242 Approval and Security ──────────────────────────────────────────────
+    /// Approvals (APPROVAL).
+    pub approvals: Vec<StepApproval>,
+    /// Approval assignments (APPROVAL_ASSIGNMENT).
+    pub approval_assignments: Vec<StepApprovalAssignment>,
+    /// Security classifications (SECURITY_CLASSIFICATION).
+    pub security_classifications: Vec<StepSecurityClassification>,
+    /// Security classification assignments (SECURITY_CLASSIFICATION_ASSIGNMENT).
+    pub security_classification_assignments: Vec<StepSecurityClassificationAssignment>,
+    // ── AP242 Document References ────────────────────────────────────────────────
+    /// Documents (DOCUMENT).
+    pub documents: Vec<StepDocument>,
+    /// Document files (DOCUMENT_FILE).
+    pub document_files: Vec<StepDocumentFile>,
+    /// Document usage assignments (DOCUMENT_USAGE_ASSIGNMENT).
+    pub document_usage_assignments: Vec<StepDocumentUsageAssignment>,
+    /// Document representation relationships (DOCUMENT_REPRESENTATION_RELATIONSHIP).
+    pub document_representation_relationships: Vec<StepDocumentRepresentationRelationship>,
 }
 
 impl StepDocumentMetadata {
@@ -448,6 +492,26 @@ impl StepDocumentMetadata {
         lines.push(format!("Dimension curves: {}", self.dimension_curves.len()));
         lines.push(format!("Terminator symbols: {}", self.terminator_symbols.len()));
         lines.push(format!("Datum feature callouts: {}", self.datum_feature_callouts.len()));
+        // AP242 Product Definition Relationship Chains
+        lines.push(format!("Product definition relationships: {}", self.product_definition_relationships.len()));
+        // AP242 Shape Representation Associations
+        lines.push(format!("Shape representation relationships: {}", self.shape_representation_relationships.len()));
+        lines.push(format!("Product definition shapes: {}", self.product_definition_shapes.len()));
+        // AP242 Configuration Management
+        lines.push(format!("Configuration designs: {}", self.configuration_designs.len()));
+        lines.push(format!("Configuration items: {}", self.configuration_items.len()));
+        lines.push(format!("Product concepts: {}", self.product_concepts.len()));
+        lines.push(format!("Configuration effectivities: {}", self.configuration_effectivities.len()));
+        // AP242 Approval and Security
+        lines.push(format!("Approvals: {}", self.approvals.len()));
+        lines.push(format!("Approval assignments: {}", self.approval_assignments.len()));
+        lines.push(format!("Security classifications: {}", self.security_classifications.len()));
+        lines.push(format!("Security classification assignments: {}", self.security_classification_assignments.len()));
+        // AP242 Document References
+        lines.push(format!("Documents: {}", self.documents.len()));
+        lines.push(format!("Document files: {}", self.document_files.len()));
+        lines.push(format!("Document usage assignments: {}", self.document_usage_assignments.len()));
+        lines.push(format!("Document representation relationships: {}", self.document_representation_relationships.len()));
         lines.join("\n")
     }
 }
@@ -502,6 +566,234 @@ pub struct StepAssemblyUsageOccurrence {
     pub related_product_definition_id: Option<u64>,
     pub relating_product_name: Option<String>,
     pub related_product_name: Option<String>,
+}
+
+// ── AP242 Product Definition Relationship Chains ───────────────────────────────
+
+/// A `PRODUCT_DEFINITION_RELATIONSHIP` establishing parent-child relationships.
+/// Used to define assembly hierarchies and component relationships.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProductDefinitionRelationship {
+    pub entity_id: u64,
+    /// Identifier for this relationship.
+    pub relationship_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The product definition that owns or contains the related definition.
+    pub relating_product_definition_id: Option<u64>,
+    /// The product definition that is related or contained.
+    pub related_product_definition_id: Option<u64>,
+    /// Name of the relating product (resolved from product definition chain).
+    pub relating_product_name: Option<String>,
+    /// Name of the related product (resolved from product definition chain).
+    pub related_product_name: Option<String>,
+}
+
+// ── AP242 Shape Representation Associations ────────────────────────────────────
+
+/// A `SHAPE_REPRESENTATION_RELATIONSHIP` linking shape representations.
+/// Used to associate multiple representations with a single product definition.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepShapeRepresentationRelationship {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The primary shape representation.
+    pub relating_representation_id: Option<u64>,
+    /// The secondary/dependent shape representation.
+    pub related_representation_id: Option<u64>,
+    /// Optional transformation entity reference.
+    pub transformation_id: Option<u64>,
+}
+
+/// A `PRODUCT_DEFINITION_SHAPE` linking a product definition to its shape.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProductDefinitionShape {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The product definition this shape belongs to.
+    pub product_definition_id: Option<u64>,
+}
+
+// ── AP242 Configuration Management ─────────────────────────────────────────────
+
+/// A `CONFIGURATION_DESIGN` linking a configuration to a product definition.
+/// Used for variant management and configuration control.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepConfigurationDesign {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The configuration being referenced.
+    pub configuration_id: Option<u64>,
+    /// The product definition this configuration applies to.
+    pub product_definition_id: Option<u64>,
+}
+
+/// A `CONFIGURATION_ITEM` defining a configuration baseline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepConfigurationItem {
+    pub entity_id: u64,
+    /// Unique identifier for this configuration item.
+    pub item_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The product concept this configuration item belongs to.
+    pub product_concept_id: Option<u64>,
+}
+
+/// A `PRODUCT_CONCEPT` representing a product at a conceptual level.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepProductConcept {
+    pub entity_id: u64,
+    /// Unique identifier for this product concept.
+    pub concept_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The market context for this concept.
+    pub market_context_id: Option<u64>,
+}
+
+/// A `CONFIGURATION_EFFECTIVITY` defining when a configuration is effective.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepConfigurationEffectivity {
+    pub entity_id: u64,
+    pub configuration_id: Option<u64>,
+    pub usage_id: Option<u64>,
+    /// Effectivity start (e.g., serial number or date).
+    pub effectivity_start: Option<String>,
+    /// Effectivity end.
+    pub effectivity_end: Option<String>,
+}
+
+// ── AP242 Approval and Security ────────────────────────────────────────────────
+
+/// Approval status enumeration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ApprovalStatus {
+    /// Approval is pending.
+    Pending,
+    /// Approval has been granted.
+    Approved,
+    /// Approval has been rejected.
+    Rejected,
+    /// Approval status is unknown.
+    Unknown,
+}
+
+/// An `APPROVAL` entity tracking approval status.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepApproval {
+    pub entity_id: u64,
+    /// Approval status.
+    pub status: ApprovalStatus,
+    /// Approval level or type identifier.
+    pub level: Option<String>,
+    /// Date of approval.
+    pub date: Option<String>,
+    /// Approver name or identifier.
+    pub approver: Option<String>,
+}
+
+/// An `APPROVAL_ASSIGNMENT` linking approval to a product or document.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepApprovalAssignment {
+    pub entity_id: u64,
+    /// The approval being assigned.
+    pub approval_id: Option<u64>,
+    /// The entity (product, document, etc.) being approved.
+    pub approved_item_id: Option<u64>,
+    /// Role of this approval (e.g., "design", "manufacturing").
+    pub role: Option<String>,
+}
+
+/// Security classification level enumeration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum SecurityClassificationLevel {
+    /// Unclassified.
+    Unclassified,
+    /// Confidential.
+    Confidential,
+    /// Secret.
+    Secret,
+    /// Top Secret.
+    TopSecret,
+    /// Proprietary / Company Confidential.
+    Proprietary,
+    /// Unknown or unspecified.
+    Unknown,
+}
+
+/// A `SECURITY_CLASSIFICATION` entity tracking security level.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepSecurityClassification {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Security classification level.
+    pub security_level: SecurityClassificationLevel,
+}
+
+/// A `SECURITY_CLASSIFICATION_ASSIGNMENT` linking security to an item.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepSecurityClassificationAssignment {
+    pub entity_id: u64,
+    /// The security classification being assigned.
+    pub security_classification_id: Option<u64>,
+    /// The entity being classified.
+    pub classified_item_id: Option<u64>,
+}
+
+// ── AP242 Document References ──────────────────────────────────────────────────
+
+/// A `DOCUMENT` entity referencing external documents.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDocument {
+    pub entity_id: u64,
+    /// Document identifier (e.g., part number, drawing number).
+    pub document_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Document type (e.g., "drawing", "specification", "CAD model").
+    pub document_type: Option<String>,
+}
+
+/// A `DOCUMENT_FILE` representing a digital file attachment.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDocumentFile {
+    pub entity_id: u64,
+    pub document_id: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// File name including extension.
+    pub file_name: Option<String>,
+    /// MIME type or file format identifier.
+    pub file_format: Option<String>,
+}
+
+/// A `DOCUMENT_USAGE_ASSIGNMENT` linking a document to a product.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDocumentUsageAssignment {
+    pub entity_id: u64,
+    /// The document being assigned.
+    pub document_id: Option<u64>,
+    /// The product definition the document is assigned to.
+    pub product_definition_id: Option<u64>,
+    /// Role or purpose of this document (e.g., "reference", "specification").
+    pub role: Option<String>,
+}
+
+/// A `DOCUMENT_REPRESENTATION_RELATIONSHIP` linking document to representation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDocumentRepresentationRelationship {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The document being related.
+    pub document_id: Option<u64>,
+    /// The representation (e.g., shape) being related.
+    pub representation_id: Option<u64>,
 }
 
 /// Linkage from PROPERTY_DEFINITION to a representation via PROPERTY_DEFINITION_REPRESENTATION.
@@ -3509,6 +3801,533 @@ fn extract_datum_feature_callouts(content: &str) -> Vec<StepDatumFeatureCallout>
     out
 }
 
+// ── AP242 Product Definition Relationship Chains ───────────────────────────────
+
+fn extract_product_definition_relationships(content: &str) -> Vec<StepProductDefinitionRelationship> {
+    use std::collections::HashMap;
+
+    let product_defs_by_id: HashMap<u64, StepProductDefinitionInfo> = extract_product_definitions(content)
+        .into_iter()
+        .map(|definition| (definition.entity_id, definition))
+        .collect();
+
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION_RELATIONSHIP") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        let relating_product_definition_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
+        let related_product_definition_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
+
+        out.push(StepProductDefinitionRelationship {
+            entity_id: id,
+            relationship_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            relating_product_definition_id,
+            related_product_definition_id,
+            relating_product_name: relating_product_definition_id.and_then(|pd| {
+                product_defs_by_id.get(&pd).and_then(|d| d.product_name.clone())
+            }),
+            related_product_name: related_product_definition_id.and_then(|pd| {
+                product_defs_by_id.get(&pd).and_then(|d| d.product_name.clone())
+            }),
+        });
+    }
+
+    out
+}
+
+// ── AP242 Shape Representation Associations ────────────────────────────────────
+
+fn extract_shape_representation_relationships(content: &str) -> Vec<StepShapeRepresentationRelationship> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SHAPE_REPRESENTATION_RELATIONSHIP") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepShapeRepresentationRelationship {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            relating_representation_id: parts.get(2).and_then(|p| parse_ref(p.trim())),
+            related_representation_id: parts.get(3).and_then(|p| parse_ref(p.trim())),
+            transformation_id: parts.get(4).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+fn extract_product_definition_shapes(content: &str) -> Vec<StepProductDefinitionShape> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_DEFINITION_SHAPE") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepProductDefinitionShape {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            product_definition_id: parts.get(2).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+// ── AP242 Configuration Management ─────────────────────────────────────────────
+
+fn extract_configuration_designs(content: &str) -> Vec<StepConfigurationDesign> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("CONFIGURATION_DESIGN") {
+            continue;
+        }
+
+        // CONFIGURATION_DESIGN(name, configuration, product_definition)
+        let parts = split_top_level(args, ',');
+        out.push(StepConfigurationDesign {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: None,
+            configuration_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
+            product_definition_id: parts.get(2).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+fn extract_configuration_items(content: &str) -> Vec<StepConfigurationItem> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("CONFIGURATION_ITEM") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepConfigurationItem {
+            entity_id: id,
+            item_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            product_concept_id: parts.get(3).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+fn extract_product_concepts(content: &str) -> Vec<StepProductConcept> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("PRODUCT_CONCEPT") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepProductConcept {
+            entity_id: id,
+            concept_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            market_context_id: parts.get(3).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+fn extract_configuration_effectivities(content: &str) -> Vec<StepConfigurationEffectivity> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("CONFIGURATION_EFFECTIVITY") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepConfigurationEffectivity {
+            entity_id: id,
+            configuration_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            usage_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
+            effectivity_start: extract_nth_string_arg(args, 2),
+            effectivity_end: extract_nth_string_arg(args, 3),
+        });
+    }
+
+    out
+}
+
+// ── AP242 Approval and Security ────────────────────────────────────────────────
+
+fn parse_approval_status(s: &str) -> ApprovalStatus {
+    let s = s.trim().to_uppercase();
+    if s.contains("APPROVED") || s == ".APPROVED." {
+        ApprovalStatus::Approved
+    } else if s.contains("REJECTED") || s == ".REJECTED." {
+        ApprovalStatus::Rejected
+    } else if s.contains("PENDING") || s == ".PENDING." || s == ".NOT_YET_APPROVED." {
+        ApprovalStatus::Pending
+    } else {
+        ApprovalStatus::Unknown
+    }
+}
+
+fn extract_approvals(content: &str) -> Vec<StepApproval> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("APPROVAL") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        // APPROVAL(status, level)
+        // status is typically a reference to APPROVAL_STATUS
+        let status_str = parts.get(0).map(|s| s.trim()).unwrap_or("");
+        let status = parse_approval_status(status_str);
+
+        out.push(StepApproval {
+            entity_id: id,
+            status,
+            level: extract_nth_string_arg(args, 1),
+            date: None, // Populated from APPROVAL_DATE
+            approver: None, // Populated from APPROVAL_PERSON_ORGANIZATION
+        });
+    }
+
+    out
+}
+
+fn extract_approval_assignments(content: &str) -> Vec<StepApprovalAssignment> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.ends_with("APPROVAL_ASSIGNMENT")
+            && !entity_upper.eq_ignore_ascii_case("APPROVAL_ASSIGNMENT")
+        {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepApprovalAssignment {
+            entity_id: id,
+            approval_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            approved_item_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
+            role: extract_nth_string_arg(args, 2),
+        });
+    }
+
+    out
+}
+
+fn parse_security_level(s: &str) -> SecurityClassificationLevel {
+    let s = s.trim().to_uppercase();
+    if s.contains("TOP_SECRET") || s == ".TOP_SECRET." {
+        SecurityClassificationLevel::TopSecret
+    } else if s.contains("SECRET") || s == ".SECRET." {
+        SecurityClassificationLevel::Secret
+    } else if s.contains("CONFIDENTIAL") || s == ".CONFIDENTIAL." {
+        SecurityClassificationLevel::Confidential
+    } else if s.contains("PROPRIETARY") || s == ".PROPRIETARY." || s.contains("COMPANY_CONFIDENTIAL") {
+        SecurityClassificationLevel::Proprietary
+    } else if s.contains("UNCLASSIFIED") || s == ".UNCLASSIFIED." {
+        SecurityClassificationLevel::Unclassified
+    } else {
+        SecurityClassificationLevel::Unknown
+    }
+}
+
+fn extract_security_classifications(content: &str) -> Vec<StepSecurityClassification> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SECURITY_CLASSIFICATION") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        // SECURITY_CLASSIFICATION(name, description, security_level)
+        let security_level = parts.get(2)
+            .map(|s| parse_security_level(s))
+            .unwrap_or(SecurityClassificationLevel::Unknown);
+
+        out.push(StepSecurityClassification {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            security_level,
+        });
+    }
+
+    out
+}
+
+fn extract_security_classification_assignments(content: &str) -> Vec<StepSecurityClassificationAssignment> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("SECURITY_CLASSIFICATION_ASSIGNMENT") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepSecurityClassificationAssignment {
+            entity_id: id,
+            security_classification_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            classified_item_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
+// ── AP242 Document References ──────────────────────────────────────────────────
+
+fn extract_documents(content: &str) -> Vec<StepDocument> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DOCUMENT") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepDocument {
+            entity_id: id,
+            document_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            document_type: parts.get(3).and_then(|p| {
+                let s = p.trim();
+                if s.starts_with('#') {
+                    None // Reference to document_type entity
+                } else {
+                    parse_string_arg(s)
+                }
+            }),
+        });
+    }
+
+    out
+}
+
+fn extract_document_files(content: &str) -> Vec<StepDocumentFile> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DOCUMENT_FILE") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepDocumentFile {
+            entity_id: id,
+            document_id: extract_nth_string_arg(args, 0),
+            name: extract_nth_string_arg(args, 1),
+            description: extract_nth_string_arg(args, 2),
+            file_name: extract_nth_string_arg(args, 3),
+            file_format: parts.get(4).and_then(|p| parse_string_arg(p.trim())),
+        });
+    }
+
+    out
+}
+
+fn extract_document_usage_assignments(content: &str) -> Vec<StepDocumentUsageAssignment> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("DOCUMENT_USAGE_ASSIGNMENT")
+            && !entity_upper.eq_ignore_ascii_case("DOCUMENT_PRODUCT_EQUIVALENCE")
+        {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepDocumentUsageAssignment {
+            entity_id: id,
+            document_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            product_definition_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
+            role: extract_nth_string_arg(args, 2),
+        });
+    }
+
+    out
+}
+
+fn extract_document_representation_relationships(content: &str) -> Vec<StepDocumentRepresentationRelationship> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        if !entity.eq_ignore_ascii_case("DOCUMENT_REPRESENTATION_RELATIONSHIP") {
+            continue;
+        }
+
+        let parts = split_top_level(args, ',');
+        out.push(StepDocumentRepresentationRelationship {
+            entity_id: id,
+            name: extract_nth_string_arg(args, 0),
+            description: extract_nth_string_arg(args, 1),
+            document_id: parts.get(2).and_then(|p| parse_ref(p.trim())),
+            representation_id: parts.get(3).and_then(|p| parse_ref(p.trim())),
+        });
+    }
+
+    out
+}
+
 /// Parse a uint argument (either bare number or from a measure value).
 fn parse_uint_arg(s: &str) -> Option<u64> {
     let s = s.trim();
@@ -3754,6 +4573,26 @@ impl StepReader {
             dimension_curves: extract_dimension_curves(content),
             terminator_symbols: extract_terminator_symbols(content),
             datum_feature_callouts: extract_datum_feature_callouts(content),
+            // AP242 Product Definition Relationship Chains
+            product_definition_relationships: extract_product_definition_relationships(content),
+            // AP242 Shape Representation Associations
+            shape_representation_relationships: extract_shape_representation_relationships(content),
+            product_definition_shapes: extract_product_definition_shapes(content),
+            // AP242 Configuration Management
+            configuration_designs: extract_configuration_designs(content),
+            configuration_items: extract_configuration_items(content),
+            product_concepts: extract_product_concepts(content),
+            configuration_effectivities: extract_configuration_effectivities(content),
+            // AP242 Approval and Security
+            approvals: extract_approvals(content),
+            approval_assignments: extract_approval_assignments(content),
+            security_classifications: extract_security_classifications(content),
+            security_classification_assignments: extract_security_classification_assignments(content),
+            // AP242 Document References
+            documents: extract_documents(content),
+            document_files: extract_document_files(content),
+            document_usage_assignments: extract_document_usage_assignments(content),
+            document_representation_relationships: extract_document_representation_relationships(content),
         };
 
         Ok((brep, metadata))
@@ -4118,6 +4957,18 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         parsed.shell_based_surface_models.push(shell_refs);
                     }
                 }
+                "COMPOUND" => {
+                    // COMPOUND('name', #elem1, #elem2, ...)
+                    if let Some(elem_refs) = parse_ref_list_after_name(args) {
+                        parsed.compounds.insert(id, elem_refs);
+                    }
+                }
+                "COMPSOLID" => {
+                    // COMPSOLID('name', #solid1, #solid2, ...)
+                    if let Some(solid_refs) = parse_ref_list_after_name(args) {
+                        parsed.compsolids.insert(id, solid_refs);
+                    }
+                }
                 "UNCERTAINTY_MEASURE_WITH_UNIT" => {
                     // UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(value),...)
                     // Extract the length measure value for global tolerance
@@ -4188,7 +5039,226 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
 }
 
 fn build_brep_from_parsed(parsed: &ParsedStep) -> Result<BRep, StepError> {
+    // Check for compound structure first
+    if !parsed.compounds.is_empty() {
+        return build_compound_brep(parsed);
+    }
+    // Check for compsolid structure
+    if !parsed.compsolids.is_empty() {
+        return build_compsolid_brep(parsed);
+    }
     build_brep_with_face_map(parsed).map(|(brep, _)| brep)
+}
+
+/// Build a BRep representing a compound from STEP COMPOUND entities.
+fn build_compound_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
+    use rcad_kernel::topology::Compound;
+
+    let mut compound = Compound::new();
+
+    // Find all top-level compounds (those not referenced by other compounds)
+    let mut referenced: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    for elems in parsed.compounds.values() {
+        for &elem_ref in elems {
+            if parsed.compounds.contains_key(&elem_ref) || parsed.compsolids.contains_key(&elem_ref) {
+                referenced.insert(elem_ref);
+            }
+        }
+    }
+
+    // Process top-level compounds
+    for (&compound_id, elems) in &parsed.compounds {
+        if referenced.contains(&compound_id) {
+            continue; // Skip nested compounds - they'll be processed recursively
+        }
+
+        for &elem_ref in elems {
+            // Check if this is a manifold solid reference
+            if parsed.manifold_solids.contains(&elem_ref) {
+                // Build the solid from the manifold solid
+                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref) {
+                    if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+                        compound.add_solid(None, solid);
+                    }
+                }
+            }
+            // Check for nested compound
+            else if parsed.compounds.contains_key(&elem_ref) {
+                let nested = build_nested_compound(parsed, elem_ref)?;
+                compound.add_compound(None, nested);
+            }
+            // Check for compsolid
+            else if parsed.compsolids.contains_key(&elem_ref) {
+                if let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
+                    compound.add_comp_solid(None, compsolid);
+                }
+            }
+        }
+    }
+
+    // If no top-level compounds found, fall back to building from all solids
+    if compound.is_empty() {
+        return build_brep_with_face_map(parsed).map(|(brep, _)| brep);
+    }
+
+    Ok(BRep::from_compound(compound))
+}
+
+/// Build a nested compound recursively.
+fn build_nested_compound(parsed: &ParsedStep, compound_id: u64) -> Result<rcad_kernel::topology::Compound, StepError> {
+    use rcad_kernel::topology::Compound;
+
+    let mut compound = Compound::new();
+
+    if let Some(elems) = parsed.compounds.get(&compound_id) {
+        for &elem_ref in elems {
+            if parsed.manifold_solids.contains(&elem_ref) {
+                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref) {
+                    if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+                        compound.add_solid(None, solid);
+                    }
+                }
+            } else if parsed.compounds.contains_key(&elem_ref) {
+                let nested = build_nested_compound(parsed, elem_ref)?;
+                compound.add_compound(None, nested);
+            } else if parsed.compsolids.contains_key(&elem_ref) {
+                if let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
+                    compound.add_comp_solid(None, compsolid);
+                }
+            }
+        }
+    }
+
+    Ok(compound)
+}
+
+/// Build a BRep representing a CompSolid from STEP COMPSOLID entities.
+fn build_compsolid_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
+    use rcad_kernel::topology::CompSolid;
+
+    // For now, just use the first compsolid
+    if let Some((&id, _solid_refs)) = parsed.compsolids.iter().next() {
+        let compsolid = build_compsolid_from_step(parsed, id)?;
+        if let Some(cs) = compsolid {
+            return Ok(BRep::from_compsolid(cs));
+        }
+    }
+
+    build_brep_with_face_map(parsed).map(|(brep, _)| brep)
+}
+
+/// Build a CompSolid from STEP COMPSOLID element references.
+fn build_compsolid_from_step(parsed: &ParsedStep, compsolid_id: u64) -> Result<Option<rcad_kernel::topology::CompSolid>, StepError> {
+    use rcad_kernel::topology::CompSolid;
+
+    let Some(solid_refs) = parsed.compsolids.get(&compsolid_id) else {
+        return Ok(None);
+    };
+
+    let mut compsolid = CompSolid::new();
+
+    for &solid_ref in solid_refs {
+        if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref) {
+            if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+                compsolid.add(solid);
+            }
+        }
+    }
+
+    if compsolid.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(compsolid))
+    }
+}
+
+/// Get the shell reference for a MANIFOLD_SOLID_BREP by index.
+fn get_shell_for_solid(parsed: &ParsedStep, solid_ref: u64) -> Option<u64> {
+    // MANIFOLD_SOLID_BREP references a CLOSED_SHELL
+    // We need to find which shell this solid refers to
+    // In the current implementation, manifold_solids is a Vec of shell refs
+    let idx = parsed.manifold_solids.iter().position(|&r| r == solid_ref)?;
+    parsed.manifold_solids.get(idx).copied()
+}
+
+/// Build a Solid from a CLOSED_SHELL reference.
+fn build_solid_from_shell(parsed: &ParsedStep, shell_ref: u64) -> Result<Option<Solid>, StepError> {
+    let Some(face_refs) = parsed.closed_shells.get(&shell_ref) else {
+        return Ok(None);
+    };
+
+    // Build a mini-parsed containing just this shell's faces
+    let shell_face_sets = vec![face_refs.clone()];
+
+    // Use the existing face building logic
+    let mut vertices = Vec::new();
+    let mut vertex_index_by_id: HashMap<u64, usize> = HashMap::new();
+    let mut edges: Vec<Edge> = Vec::new();
+    let mut edge_index_by_curve: HashMap<u64, usize> = HashMap::new();
+    let mut geom = GeomStore::default();
+    let mut curve_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+    let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+    let mut faces: Vec<Face> = Vec::new();
+
+    // Collect vertices used by this shell
+    let used_vertex_ids = collect_used_vertices(parsed, &shell_face_sets)?;
+    let mut vertex_ids: Vec<u64> = used_vertex_ids.into_iter().collect();
+    vertex_ids.sort_unstable();
+
+    for (idx, vertex_id) in vertex_ids.iter().enumerate() {
+        let point_id = *parsed
+            .vertex_points
+            .get(vertex_id)
+            .ok_or(StepError::MissingEntity {
+                entity_type: "VERTEX_POINT",
+                id: Some(*vertex_id),
+            })?;
+        let point = *parsed
+            .cartesian_points
+            .get(&point_id)
+            .ok_or(StepError::MissingEntity {
+                entity_type: "CARTESIAN_POINT",
+                id: Some(point_id),
+            })?;
+        vertices.push(Vertex {
+            point: glam::DVec3::new(point[0], point[1], point[2]),
+        });
+        vertex_index_by_id.insert(*vertex_id, idx);
+    }
+
+    for &face_id in face_refs {
+        if let Some((face, surface_ref)) = build_face(
+            parsed,
+            face_id,
+            &mut vertices,
+            &vertex_index_by_id,
+            &mut edges,
+            &mut edge_index_by_curve,
+            &mut geom,
+            &mut curve_store_index_by_step,
+        ) {
+            let surface_binding = surface_ref.and_then(|step_surface| {
+                if let Some(idx) = surface_store_index_by_step.get(&step_surface) {
+                    return Some(*idx);
+                }
+                let surface = resolve_surface(parsed, step_surface)?;
+                let idx = geom.surfaces.len();
+                geom.surfaces.push(surface);
+                surface_store_index_by_step.insert(step_surface, idx);
+                Some(idx)
+            });
+            geom.face_surface.push(surface_binding);
+            faces.push(face);
+        }
+    }
+
+    if faces.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(Solid {
+        shells: vec![Shell { faces }],
+    }))
 }
 
 /// Build BRep and return the STEP face-id 鈫?flat-face-index mapping used for color resolution.
@@ -4417,6 +5487,8 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         edges,
         solids,
         geom,
+        compound: None,
+        compsolid: None,
     };
 
     // Populate per-entity tolerance vectors from UNCERTAINTY_MEASURE_WITH_UNIT.
@@ -9513,5 +10585,286 @@ END-ISO-10303-21;
         assert_eq!(metadata.cameras.len(), 2);
         assert_eq!(metadata.view_volumes.len(), 2);
         assert_eq!(metadata.notes.len(), 2); // One from xc_notes, one from annotation
+    }
+
+    // ── AP242 Semantic Parsing Tests ────────────────────────────────────────────
+
+    /// Minimal STEP with a vertex for tests that need geometry
+    const MINIMAL_STEP_PREFIX: &str = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+"#;
+
+    #[test]
+    fn extracts_product_definition_relationships() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=PRODUCT('P001','ParentProduct','',());
+#11=PRODUCT('P002','ChildProduct','',());
+#12=PRODUCT_DEFINITION_FORMATION('','',#10);
+#13=PRODUCT_DEFINITION_FORMATION('','',#11);
+#14=PRODUCT_DEFINITION('','',$,#12);
+#15=PRODUCT_DEFINITION('','',$,#13);
+#16=PRODUCT_DEFINITION_RELATIONSHIP('REL001','assembly relationship','desc',#14,#15);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.product_definition_relationships.len(), 1);
+        let rel = &metadata.product_definition_relationships[0];
+        assert_eq!(rel.entity_id, 16);
+        assert_eq!(rel.relationship_id.as_deref(), Some("REL001"));
+        assert_eq!(rel.name.as_deref(), Some("assembly relationship"));
+        assert_eq!(rel.relating_product_definition_id, Some(14));
+        assert_eq!(rel.related_product_definition_id, Some(15));
+    }
+
+    #[test]
+    fn extracts_shape_representation_relationships() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=SHAPE_REPRESENTATION('Shape1',(),$);
+#11=SHAPE_REPRESENTATION('Shape2',(),$);
+#12=SHAPE_REPRESENTATION_RELATIONSHIP('rel','description',#10,#11);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.shape_representation_relationships.len(), 1);
+        let rel = &metadata.shape_representation_relationships[0];
+        assert_eq!(rel.entity_id, 12);
+        assert_eq!(rel.name.as_deref(), Some("rel"));
+        assert_eq!(rel.relating_representation_id, Some(10));
+        assert_eq!(rel.related_representation_id, Some(11));
+    }
+
+    #[test]
+    fn extracts_configuration_designs() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=CONFIGURATION_ITEM('CI001','ConfigItem1','description',$);
+#11=PRODUCT_DEFINITION('','',$,$);
+#12=CONFIGURATION_DESIGN('','config',#10,#11);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.configuration_designs.len(), 1);
+        let cd = &metadata.configuration_designs[0];
+        assert_eq!(cd.entity_id, 12);
+        assert_eq!(cd.name.as_deref(), Some("config"));
+        assert_eq!(cd.configuration_id, Some(10));
+        assert_eq!(cd.product_definition_id, Some(11));
+    }
+
+    #[test]
+    fn extracts_configuration_items() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=CONFIGURATION_ITEM('CI001','ConfigItem1','description',$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.configuration_items.len(), 1);
+        let ci = &metadata.configuration_items[0];
+        assert_eq!(ci.entity_id, 10);
+        assert_eq!(ci.item_id.as_deref(), Some("CI001"));
+        assert_eq!(ci.name.as_deref(), Some("ConfigItem1"));
+    }
+
+    #[test]
+    fn extracts_product_concepts() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=PRODUCT_CONCEPT('PC001','ConceptName','description',$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.product_concepts.len(), 1);
+        let pc = &metadata.product_concepts[0];
+        assert_eq!(pc.entity_id, 10);
+        assert_eq!(pc.concept_id.as_deref(), Some("PC001"));
+        assert_eq!(pc.name.as_deref(), Some("ConceptName"));
+    }
+
+    #[test]
+    fn extracts_approvals() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=APPROVAL(.APPROVED.,'Design Approval');
+#11=APPROVAL(.PENDING.,'Review Pending');
+#12=APPROVAL(.REJECTED.,'Rejected Change');
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.approvals.len(), 3);
+        assert_eq!(metadata.approvals[0].status, ApprovalStatus::Approved);
+        assert_eq!(metadata.approvals[1].status, ApprovalStatus::Pending);
+        assert_eq!(metadata.approvals[2].status, ApprovalStatus::Rejected);
+        assert_eq!(metadata.approvals[0].level.as_deref(), Some("Design Approval"));
+    }
+
+    #[test]
+    fn extracts_security_classifications() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=SECURITY_CLASSIFICATION('Classified','Top secret doc',.TOP_SECRET.);
+#11=SECURITY_CLASSIFICATION('Internal','Company internal',.PROPRIETARY.);
+#12=SECURITY_CLASSIFICATION('Public','Public info',.UNCLASSIFIED.);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.security_classifications.len(), 3);
+        assert_eq!(metadata.security_classifications[0].security_level, SecurityClassificationLevel::TopSecret);
+        assert_eq!(metadata.security_classifications[1].security_level, SecurityClassificationLevel::Proprietary);
+        assert_eq!(metadata.security_classifications[2].security_level, SecurityClassificationLevel::Unclassified);
+    }
+
+    #[test]
+    fn extracts_documents() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=DOCUMENT('DOC001','Design Document','Product specification','drawing');
+#11=DOCUMENT('DOC002','Test Report','Validation results',$);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.documents.len(), 2);
+        assert_eq!(metadata.documents[0].document_id.as_deref(), Some("DOC001"));
+        assert_eq!(metadata.documents[0].name.as_deref(), Some("Design Document"));
+        assert_eq!(metadata.documents[0].document_type.as_deref(), Some("drawing"));
+        assert_eq!(metadata.documents[1].document_id.as_deref(), Some("DOC002"));
+    }
+
+    #[test]
+    fn extracts_document_files() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=DOCUMENT_FILE('DF001','CAD Model','3D geometry file','part.step','STEP AP242');
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.document_files.len(), 1);
+        let df = &metadata.document_files[0];
+        assert_eq!(df.document_id.as_deref(), Some("DF001"));
+        assert_eq!(df.file_name.as_deref(), Some("part.step"));
+        assert_eq!(df.file_format.as_deref(), Some("STEP AP242"));
+    }
+
+    #[test]
+    fn extracts_document_usage_assignments() {
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=DOCUMENT('DOC001','Reference Doc','',());
+#11=PRODUCT_DEFINITION('','',$,$);
+#12=DOCUMENT_USAGE_ASSIGNMENT(#10,#11,'reference');
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        assert_eq!(metadata.document_usage_assignments.len(), 1);
+        let dua = &metadata.document_usage_assignments[0];
+        assert_eq!(dua.document_id, Some(10));
+        assert_eq!(dua.product_definition_id, Some(11));
+        assert_eq!(dua.role.as_deref(), Some("reference"));
+    }
+
+    #[test]
+    fn metadata_summary_includes_ap242_fields() {
+        // Use a minimal valid STEP with geometry (a point as a vertex)
+        let step = r#"ISO-10303-21;
+HEADER;
+FILE_NAME('test','','','','','','');
+FILE_SCHEMA(('AP242'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=VERTEX_POINT('',#1);
+#10=DOCUMENT('DOC001','Test','',());
+#11=APPROVAL(.APPROVED.,'Approved');
+#12=SECURITY_CLASSIFICATION('Secret','',.SECRET.);
+#13=CONFIGURATION_ITEM('CI001','Config','',());
+#14=PRODUCT_DEFINITION_RELATIONSHIP('rel','name','',(),(),());
+ENDSEC;
+END-ISO-10303-21;
+"#;
+        let (_, metadata) = StepReader::parse_string_with_metadata(step).expect("parse");
+        let summary = metadata.summary();
+        assert!(summary.contains("Documents: 1"));
+        assert!(summary.contains("Approvals: 1"));
+        assert!(summary.contains("Security classifications: 1"));
+        assert!(summary.contains("Configuration items: 1"));
+        assert!(summary.contains("Product definition relationships: 1"));
     }
 }

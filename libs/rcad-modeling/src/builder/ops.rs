@@ -169,6 +169,8 @@ pub fn extrude_with_history(
         edges: Vec::new(),
         solids: Vec::new(),
         geom: rcad_kernel::GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
     // Add all vertices: bot[0..n], top[0..n]
@@ -411,6 +413,8 @@ pub fn revolve_with_history(
         edges: Vec::new(),
         solids: Vec::new(),
         geom: rcad_kernel::GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
     // Rotate each profile point
@@ -680,6 +684,8 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         edges: Vec::new(),
         solids: Vec::new(),
         geom: rcad_kernel::GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
     // Add all vertices; vi[section][vertex]

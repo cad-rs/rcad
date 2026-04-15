@@ -138,13 +138,18 @@ pub use annotation::{
     NoteType, ArrowType, WeldType,
     AnnotationNote, TextAnnotation, LeaderLine, SurfaceTextureSymbol,
     WeldSymbol, BalloonAnnotation, AnnotationStore,
+    Annotation, AnnotationKind, Note, NoteCategory, NoteTarget, View, ViewProjection,
 };
 pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use gordon::{
-    ContinuityLevel, GordonError, GordonOptions,
-    eval_gordon_surface_safe, gordon_surface_curves, gordon_surface_normal_safe,
-    gordon_surface_with_params, gordon_to_bspline,
+    BoundaryContinuityReport, BoundaryType, ContinuityLevel, FallbackStrategy, GordonError,
+    GordonOptions, GordonQualityReport, GordonResult, ParameterizationMethod, QualityIssue,
+    QualityIssueKind,
+    centripetal_parameterization, check_boundary_continuity, chord_length_parameterization,
+    coons_fallback, eval_gordon_surface_safe, gordon_surface_curves, gordon_surface_normal_safe,
+    gordon_surface_quality, gordon_surface_with_fallback, gordon_surface_with_params,
+    gordon_to_bspline,
 };
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
@@ -277,6 +282,15 @@ pub struct BRep {
     pub solids: Vec<Solid>,
     #[serde(default)]
     pub geom: GeomStore,
+    /// Optional compound container for multi-shape assemblies.
+    ///
+    /// When set, this BRep represents a compound shape. The `solids` field
+    /// contains flattened solids for backward compatibility.
+    #[serde(default)]
+    pub compound: Option<topology::Compound>,
+    /// Optional CompSolid container for connected multi-region solids.
+    #[serde(default)]
+    pub compsolid: Option<topology::CompSolid>,
 }
 
 impl Default for BRep {
@@ -292,6 +306,175 @@ impl BRep {
             edges: Vec::new(),
             solids: Vec::new(),
             geom: GeomStore::default(),
+            compound: None,
+            compsolid: None,
+        }
+    }
+
+    /// Create a BRep representing a compound of shapes.
+    ///
+    /// The compound's solids are also flattened into `self.solids` for
+    /// backward compatibility with code that expects `brep.solids`.
+    pub fn from_compound(compound: topology::Compound) -> Self {
+        let solids = compound.flatten_solids().into_iter().cloned().collect();
+        Self {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            solids,
+            geom: GeomStore::default(),
+            compound: Some(compound),
+            compsolid: None,
+        }
+    }
+
+    /// Create a BRep representing a CompSolid (connected multi-region solid).
+    pub fn from_compsolid(compsolid: topology::CompSolid) -> Self {
+        let solids = compsolid.solids.clone();
+        Self {
+            vertices: Vec::new(),
+            edges: Vec::new(),
+            solids,
+            geom: GeomStore::default(),
+            compound: None,
+            compsolid: Some(compsolid),
+        }
+    }
+
+    /// Create a compound from multiple BReps.
+    ///
+    /// Each input BRep's solids are extracted and added to the compound.
+    pub fn compound_from_shapes(shapes: &[BRep]) -> BRep {
+        let mut compound = topology::Compound::new();
+        for shape in shapes {
+            for solid in &shape.solids {
+                compound.add_solid(None, solid.clone());
+            }
+        }
+        Self::from_compound(compound)
+    }
+
+    /// Explode this BRep into constituent shapes.
+    ///
+    /// If this is a compound, returns one BRep per top-level shape.
+    /// If not a compound, returns a single-element Vec containing self.
+    pub fn explode(&self) -> Vec<BRep> {
+        if let Some(ref compound) = self.compound {
+            let mut result = Vec::new();
+
+            // Explode solids
+            for (_, solid) in &compound.solids {
+                let mut brep = BRep::new();
+                brep.solids.push(solid.clone());
+                result.push(brep);
+            }
+
+            // Explode comp_solids
+            for (_, cs) in &compound.comp_solids {
+                result.push(BRep::from_compsolid(cs.clone()));
+            }
+
+            // Explode shells
+            for (_, shell) in &compound.shells {
+                let mut brep = BRep::new();
+                brep.solids.push(topology::Solid {
+                    shells: vec![shell.clone()],
+                });
+                result.push(brep);
+            }
+
+            // Explode nested compounds
+            for (_, nested) in &compound.compounds {
+                result.push(BRep::from_compound(nested.clone()));
+            }
+
+            result
+        } else if let Some(ref cs) = self.compsolid {
+            // Explode CompSolid into individual solids
+            cs.solids
+                .iter()
+                .map(|solid| {
+                    let mut brep = BRep::new();
+                    brep.solids.push(solid.clone());
+                    brep
+                })
+                .collect()
+        } else {
+            vec![self.clone()]
+        }
+    }
+
+    /// Add a shape to this BRep's compound.
+    ///
+    /// If this BRep is not already a compound, it will be converted to one.
+    pub fn add_shape(&mut self, shape: BRep) {
+        // Ensure we have a compound
+        if self.compound.is_none() {
+            let mut compound = topology::Compound::new();
+            // Move existing solids into compound
+            for solid in std::mem::take(&mut self.solids) {
+                compound.add_solid(None, solid);
+            }
+            self.compound = Some(compound);
+        }
+
+        // Add the shape
+        if let Some(ref mut compound) = self.compound {
+            for solid in &shape.solids {
+                compound.add_solid(None, solid.clone());
+                self.solids.push(solid.clone());
+            }
+        }
+    }
+
+    /// Remove a shape from this BRep's compound by index.
+    ///
+    /// Returns `true` if a shape was removed.
+    pub fn remove_shape(&mut self, index: usize) -> bool {
+        if let Some(ref mut compound) = self.compound {
+            if index < compound.solids.len() {
+                compound.remove_solid(index);
+                // Rebuild flattened solids
+                self.solids = compound.flatten_solids().into_iter().cloned().collect();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns `true` if this BRep represents a compound.
+    pub fn is_compound(&self) -> bool {
+        self.compound.is_some()
+    }
+
+    /// Returns `true` if this BRep represents a CompSolid.
+    pub fn is_compsolid(&self) -> bool {
+        self.compsolid.is_some()
+    }
+
+    /// Get the compound if this BRep is one.
+    pub fn as_compound(&self) -> Option<&topology::Compound> {
+        self.compound.as_ref()
+    }
+
+    /// Get the CompSolid if this BRep is one.
+    pub fn as_compsolid(&self) -> Option<&topology::CompSolid> {
+        self.compsolid.as_ref()
+    }
+
+    /// Iterate over all solids, including those in compounds and compsolids.
+    pub fn iter_solids(&self) -> impl Iterator<Item = &topology::Solid> {
+        self.solids.iter()
+    }
+
+    /// Flatten all solids from this BRep.
+    ///
+    /// If this is a compound, returns all nested solids.
+    /// Otherwise returns the direct solids.
+    pub fn flatten_to_solids(&self) -> Vec<&topology::Solid> {
+        if let Some(ref compound) = self.compound {
+            compound.flatten_solids()
+        } else {
+            self.solids.iter().collect()
         }
     }
 
@@ -446,6 +629,8 @@ impl BRep {
                 shells: vec![Shell { faces }],
             }],
             geom: GeomStore::default(),
+            compound: None,
+            compsolid: None,
         }
     }
     ///
@@ -541,6 +726,8 @@ impl BRep {
             edges,
             solids: vec![solid],
             geom,
+            compound: None,
+            compsolid: None,
         }
     }
 
@@ -715,6 +902,8 @@ impl BRep {
             edges,
             solids: vec![solid],
             geom,
+            compound: None,
+            compsolid: None,
         }
     }
 
@@ -858,6 +1047,8 @@ impl BRep {
             edges,
             solids: vec![solid],
             geom,
+            compound: None,
+            compsolid: None,
         }
     }
 
@@ -1000,6 +1191,8 @@ impl BRep {
             edges,
             solids: vec![solid],
             geom,
+            compound: None,
+            compsolid: None,
         }
     }
 
