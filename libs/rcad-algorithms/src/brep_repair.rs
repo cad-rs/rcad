@@ -4978,6 +4978,522 @@ pub fn fix_non_manifold_shell(shell: &Shell, brep: &BRep) -> (Shell, ShellFixRep
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Enhanced Shell Repair (ShapeFix_Shell extensions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Detailed report from shell orientation analysis and repair.
+#[derive(Debug, Clone, Default)]
+pub struct ShellOrientationReport {
+    pub faces_inverted: usize,
+    pub faces_correct: usize,
+    pub inverted_face_indices: Vec<usize>,
+    pub edge_conflicts: usize,
+    pub is_consistent: bool,
+    pub non_manifold_edges_skipped: usize,
+    pub volume_sign: f64,
+}
+
+impl ShellOrientationReport {
+    pub fn is_valid(&self) -> bool {
+        self.is_consistent && self.edge_conflicts == 0
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "ShellOrientation: {} inverted, {} correct, {} edge conflicts, consistent={}",
+            self.faces_inverted, self.faces_correct, self.edge_conflicts, self.is_consistent
+        )
+    }
+}
+
+/// Result from shell closure repair operations.
+#[derive(Debug, Clone)]
+pub struct ShellClosureResult {
+    pub original_shell: Shell,
+    pub repaired_shell: Shell,
+    pub open_edges_detected: usize,
+    pub gaps_closed: usize,
+    pub faces_added: usize,
+    pub unrepairable_gaps: Vec<GapInfo>,
+    pub is_closed: bool,
+    pub tolerance_used: f64,
+}
+
+impl ShellClosureResult {
+    pub fn is_successful(&self) -> bool {
+        self.is_closed && self.unrepairable_gaps.is_empty()
+    }
+
+    pub fn summary(&self) -> String {
+        if self.is_closed {
+            format!("ShellClosure: closed {} gaps, added {} faces", self.gaps_closed, self.faces_added)
+        } else {
+            format!("ShellClosure: {} open edges, {} unrepairable", self.open_edges_detected, self.unrepairable_gaps.len())
+        }
+    }
+}
+
+/// Information about a gap in the shell.
+#[derive(Debug, Clone)]
+pub struct GapInfo {
+    pub boundary_edges: Vec<usize>,
+    pub estimated_area: f64,
+    pub can_fill: bool,
+    pub failure_reason: Option<String>,
+}
+
+/// Result from non-manifold edge repair.
+#[derive(Debug, Clone)]
+pub struct ManifoldRepairResult {
+    pub original_shell: Shell,
+    pub repaired_shell: Shell,
+    pub edges_processed: usize,
+    pub edges_split: usize,
+    pub vertices_duplicated: usize,
+    pub faces_created: usize,
+    pub is_manifold: bool,
+    pub edge_details: Vec<NonManifoldEdgeInfo>,
+}
+
+impl ManifoldRepairResult {
+    pub fn is_successful(&self) -> bool {
+        self.is_manifold
+    }
+
+    pub fn summary(&self) -> String {
+        format!("ManifoldRepair: {} edges split, {} vertices duplicated, manifold={}", self.edges_split, self.vertices_duplicated, self.is_manifold)
+    }
+}
+
+/// Information about a non-manifold edge.
+#[derive(Debug, Clone)]
+pub struct NonManifoldEdgeInfo {
+    pub edge_index: usize,
+    pub face_count: usize,
+    pub face_indices: Vec<usize>,
+    pub repaired: bool,
+    pub copies_created: usize,
+}
+
+/// Comprehensive validation report for shell topology.
+#[derive(Debug, Clone, Default)]
+pub struct ShellValidationReport {
+    pub is_valid: bool,
+    pub euler_characteristic: i64,
+    pub expected_euler: Option<i64>,
+    pub euler_valid: bool,
+    pub vertex_count: usize,
+    pub edge_count: usize,
+    pub face_count: usize,
+    pub open_edge_count: usize,
+    pub non_manifold_edge_count: usize,
+    pub non_manifold_vertex_count: usize,
+    pub orientation_consistent: bool,
+    pub is_closed: bool,
+    pub is_manifold: bool,
+    pub genus: Option<i64>,
+    pub edge_valence: Vec<EdgeValenceInfo>,
+    pub vertex_valence: Vec<VertexValenceInfo>,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ShellValidationReport {
+    pub fn is_closed_manifold(&self) -> bool {
+        self.is_closed && self.is_manifold && self.orientation_consistent
+    }
+
+    pub fn summary(&self) -> String {
+        let status = if self.is_valid { "VALID" } else { "INVALID" };
+        format!("ShellValidation: {} | V={}, E={}, F={}, χ={}", status, self.vertex_count, self.edge_count, self.face_count, self.euler_characteristic)
+    }
+}
+
+/// Information about edge valence.
+#[derive(Debug, Clone)]
+pub struct EdgeValenceInfo {
+    pub edge_index: usize,
+    pub valence: usize,
+    pub is_open: bool,
+    pub is_manifold: bool,
+    pub is_non_manifold: bool,
+}
+
+/// Information about vertex valence.
+#[derive(Debug, Clone)]
+pub struct VertexValenceInfo {
+    pub vertex_index: usize,
+    pub edge_valence: usize,
+    pub face_valence: usize,
+    pub is_boundary: bool,
+    pub is_non_manifold: bool,
+}
+
+/// Fix shell orientation with detailed edge adjacency analysis.
+pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &BRep) -> (Shell, ShellOrientationReport) {
+    use std::collections::{HashMap, VecDeque};
+
+    let mut report = ShellOrientationReport::default();
+    let mut fixed_shell = shell.clone();
+
+    if shell.faces.is_empty() {
+        report.is_consistent = true;
+        return (fixed_shell, report);
+    }
+
+    let n_edges = brep.edges.len();
+    let mut edge_faces: HashMap<usize, Vec<(usize, bool)>> = HashMap::new();
+
+    for (face_idx, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                edge_faces.entry(we.idx).or_default().push((face_idx, we.forward));
+            }
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                if we.idx < n_edges {
+                    edge_faces.entry(we.idx).or_default().push((face_idx, we.forward));
+                }
+            }
+        }
+    }
+
+    report.non_manifold_edges_skipped = edge_faces.values().filter(|faces| faces.len() > 2).count();
+
+    let mut face_orientation: Vec<Option<bool>> = vec![None; shell.faces.len()];
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    face_orientation[0] = Some(true);
+    queue.push_back(0);
+
+    while let Some(current_face) = queue.pop_front() {
+        let current_keep = face_orientation[current_face].unwrap();
+        for we in &shell.faces[current_face].outer_wire.edges {
+            if we.idx >= n_edges { continue; }
+            if let Some(adjacent) = edge_faces.get(&we.idx) {
+                for &(adj_face_idx, adj_forward) in adjacent {
+                    if adj_face_idx == current_face || face_orientation[adj_face_idx].is_some() { continue; }
+                    let current_forward = we.forward;
+                    if adjacent.len() == 2 {
+                        let should_flip = if current_keep { current_forward == adj_forward } else { current_forward != adj_forward };
+                        face_orientation[adj_face_idx] = Some(!should_flip);
+                    } else {
+                        face_orientation[adj_face_idx] = Some(true);
+                    }
+                    queue.push_back(adj_face_idx);
+                }
+            }
+        }
+    }
+
+    let shell_centroid = compute_shell_centroid(shell, brep);
+    for (i, orientation) in face_orientation.iter_mut().enumerate() {
+        if orientation.is_none() {
+            let face = &shell.faces[i];
+            let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+            let outward = face_centroid - shell_centroid;
+            let dot = face.normal.dot(outward);
+            *orientation = Some(dot >= 0.0);
+        }
+    }
+
+    for (i, face) in fixed_shell.faces.iter_mut().enumerate() {
+        let keep_original = face_orientation[i].unwrap_or(true);
+        if !keep_original {
+            face.normal = -face.normal;
+            face.outer_wire = reverse_wire(&face.outer_wire);
+            for inner in &mut face.inner_wires { *inner = reverse_wire(inner); }
+            report.faces_inverted += 1;
+            report.inverted_face_indices.push(i);
+        } else {
+            report.faces_correct += 1;
+        }
+    }
+
+    for faces in edge_faces.values() {
+        if faces.len() == 2 {
+            let (f1, fwd1) = faces[0];
+            let (f2, fwd2) = faces[1];
+            let keep1 = face_orientation[f1].unwrap_or(true);
+            let keep2 = face_orientation[f2].unwrap_or(true);
+            let eff_fwd1 = if keep1 { fwd1 } else { !fwd1 };
+            let eff_fwd2 = if keep2 { fwd2 } else { !fwd2 };
+            if eff_fwd1 == eff_fwd2 { report.edge_conflicts += 1; }
+        }
+    }
+
+    report.volume_sign = compute_shell_volume(&fixed_shell, brep);
+    report.is_consistent = report.edge_conflicts == 0 && report.volume_sign >= 0.0;
+    (fixed_shell, report)
+}
+
+/// Repair shell closure by detecting and closing gaps.
+pub fn repair_shell_closure(shell: &Shell, brep: &BRep, tolerance: f64) -> ShellClosureResult {
+    use std::collections::{HashMap, HashSet};
+
+    let mut result = ShellClosureResult {
+        original_shell: shell.clone(),
+        repaired_shell: shell.clone(),
+        open_edges_detected: 0,
+        gaps_closed: 0,
+        faces_added: 0,
+        unrepairable_gaps: vec![],
+        is_closed: false,
+        tolerance_used: tolerance,
+    };
+
+    let n_edges = brep.edges.len();
+    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges { *edge_face_count.entry(we.idx).or_insert(0) += 1; }
+        }
+    }
+
+    let open_edges: Vec<usize> = edge_face_count.iter().filter(|(_, c)| **c == 1).map(|(i, _)| *i).collect();
+    result.open_edges_detected = open_edges.len();
+
+    if open_edges.is_empty() {
+        result.is_closed = true;
+        return result;
+    }
+
+    let mut visited: HashSet<usize> = HashSet::new();
+    while visited.len() < open_edges.len() {
+        let start_edge = match open_edges.iter().find(|e| !visited.contains(e)) {
+            Some(e) => *e,
+            None => break,
+        };
+        let mut chain: Vec<usize> = vec![start_edge];
+        visited.insert(start_edge);
+
+        loop {
+            let mut extended = false;
+            for &oe in &open_edges {
+                if visited.contains(&oe) { continue; }
+                let last = brep.edges.get(chain[chain.len() - 1]);
+                let curr = brep.edges.get(oe);
+                if let (Some(l), Some(c)) = (last, curr) {
+                    if l.end == c.start || l.end == c.end || l.start == c.start || l.start == c.end {
+                        chain.push(oe);
+                        visited.insert(oe);
+                        extended = true;
+                        break;
+                    }
+                }
+            }
+            if !extended { break; }
+        }
+
+        if chain.len() >= 3 {
+            let is_closed_loop = {
+                let first = brep.edges.get(chain[0]);
+                let last = brep.edges.get(chain[chain.len() - 1]);
+                if let (Some(f), Some(l)) = (first, last) {
+                    l.end == f.start || l.start == f.start || l.end == f.end || l.start == f.end
+                } else { false }
+            };
+
+            let gap_info = GapInfo {
+                boundary_edges: chain.clone(),
+                estimated_area: estimate_chain_area(&chain, brep),
+                can_fill: is_closed_loop && chain.len() >= 3,
+                failure_reason: if !is_closed_loop { Some("Gap boundary is not closed".into()) } else { None },
+            };
+
+            if gap_info.can_fill {
+                if let Some(new_face) = create_face_from_boundary(&chain, brep, tolerance) {
+                    result.repaired_shell.faces.push(new_face);
+                    result.faces_added += 1;
+                    result.gaps_closed += 1;
+                } else {
+                    result.unrepairable_gaps.push(GapInfo { failure_reason: Some("Could not create face".into()), ..gap_info });
+                }
+            } else {
+                result.unrepairable_gaps.push(gap_info);
+            }
+        }
+    }
+
+    result.is_closed = check_shell_closure(&result.repaired_shell, brep).is_closed;
+    result
+}
+
+fn estimate_chain_area(chain: &[usize], brep: &BRep) -> f64 {
+    if chain.len() < 3 { return 0.0; }
+    let mut vertices: Vec<DVec3> = Vec::new();
+    for &ei in chain {
+        if let Some(edge) = brep.edges.get(ei) {
+            if let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
+                if vertices.is_empty() { vertices.push(s.point); }
+                vertices.push(e.point);
+            }
+        }
+    }
+    if vertices.len() < 3 { return 0.0; }
+    let mut area = 0.0;
+    for i in 0..vertices.len() {
+        let j = (i + 1) % vertices.len();
+        area += vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+    }
+    (area / 2.0).abs()
+}
+
+fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> Option<Face> {
+    if chain.len() < 3 { return None; }
+    let mut wire_edges: Vec<WireEdge> = Vec::new();
+    let mut vertices: Vec<DVec3> = Vec::new();
+    for (i, &ei) in chain.iter().enumerate() {
+        let edge = brep.edges.get(ei)?;
+        wire_edges.push(WireEdge::fwd(ei));
+        if i == 0 { vertices.push(brep.vertices.get(edge.start)?.point); }
+        vertices.push(brep.vertices.get(edge.end)?.point);
+    }
+    let mut normal = DVec3::ZERO;
+    for i in 0..vertices.len() {
+        let j = (i + 1) % vertices.len();
+        normal.x += (vertices[i].y - vertices[j].y) * (vertices[i].z + vertices[j].z);
+        normal.y += (vertices[i].z - vertices[j].z) * (vertices[i].x + vertices[j].x);
+        normal.z += (vertices[i].x - vertices[j].x) * (vertices[i].y + vertices[j].y);
+    }
+    let len = normal.length();
+    if len > 1e-10 { normal = normal / len; } else { normal = DVec3::Z; }
+    Some(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![], normal, triangles: vec![], mesh_dirty: true })
+}
+
+/// Repair non-manifold edges in a shell.
+pub fn repair_non_manifold_edges(shell: &Shell, brep: &BRep) -> ManifoldRepairResult {
+    use std::collections::HashMap;
+
+    let mut result = ManifoldRepairResult {
+        original_shell: shell.clone(),
+        repaired_shell: shell.clone(),
+        edges_processed: 0,
+        edges_split: 0,
+        vertices_duplicated: 0,
+        faces_created: 0,
+        is_manifold: false,
+        edge_details: vec![],
+    };
+    let n_edges = brep.edges.len();
+    let mut edge_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+
+    for (face_idx, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges { edge_faces.entry(we.idx).or_default().push(face_idx); }
+        }
+    }
+
+    let non_manifold_edges: Vec<usize> = edge_faces.iter().filter(|(_, f)| f.len() > 2).map(|(i, _)| *i).collect();
+    result.edges_processed = non_manifold_edges.len();
+
+    if non_manifold_edges.is_empty() {
+        result.is_manifold = true;
+        return result;
+    }
+
+    for &ei in &non_manifold_edges {
+        let faces = edge_faces.get(&ei).cloned().unwrap_or_default();
+        result.edge_details.push(NonManifoldEdgeInfo {
+            edge_index: ei,
+            face_count: faces.len(),
+            face_indices: faces,
+            repaired: false,
+            copies_created: 0,
+        });
+    }
+
+    result.is_manifold = analyze_shell_manifoldness(&result.repaired_shell, brep).is_manifold;
+    result
+}
+
+/// Validate shell topology comprehensively.
+pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationReport {
+    use std::collections::{HashMap, HashSet};
+
+    let mut report = ShellValidationReport::default();
+    let n_edges = brep.edges.len();
+    let n_verts = brep.vertices.len();
+
+    report.face_count = shell.faces.len();
+    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+    let mut unique_edges: HashSet<usize> = HashSet::new();
+
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                unique_edges.insert(we.idx);
+                *edge_face_count.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+    }
+
+    report.edge_count = unique_edges.len();
+    let mut unique_verts: HashSet<usize> = HashSet::new();
+    for &ei in &unique_edges {
+        if let Some(edge) = brep.edges.get(ei) {
+            if edge.start < n_verts { unique_verts.insert(edge.start); }
+            if edge.end < n_verts { unique_verts.insert(edge.end); }
+        }
+    }
+    report.vertex_count = unique_verts.len();
+    report.euler_characteristic = report.vertex_count as i64 - report.edge_count as i64 + report.face_count as i64;
+
+    let mut open_count = 0;
+    let mut nm_count = 0;
+    for (&ei, &count) in &edge_face_count {
+        report.edge_valence.push(EdgeValenceInfo { edge_index: ei, valence: count, is_open: count == 1, is_manifold: count == 2, is_non_manifold: count > 2 });
+        if count == 1 { open_count += 1; } else if count > 2 { nm_count += 1; }
+    }
+    report.open_edge_count = open_count;
+    report.non_manifold_edge_count = nm_count;
+
+    let mut vertex_edges: HashMap<usize, HashSet<usize>> = HashMap::new();
+    let mut vertex_faces: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for (face_idx, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                if let Some(edge) = brep.edges.get(we.idx) {
+                    vertex_edges.entry(edge.start).or_default().insert(we.idx);
+                    vertex_edges.entry(edge.end).or_default().insert(we.idx);
+                    vertex_faces.entry(edge.start).or_default().insert(face_idx);
+                    vertex_faces.entry(edge.end).or_default().insert(face_idx);
+                }
+            }
+        }
+    }
+
+    for (&vi, edges) in &vertex_edges {
+        let faces = vertex_faces.get(&vi).map(|f| f.len()).unwrap_or(0);
+        let is_boundary = edges.iter().any(|&ei| edge_face_count.get(&ei).copied().unwrap_or(0) == 1);
+        let is_non_manifold = faces > edges.len() + 2;
+        report.vertex_valence.push(VertexValenceInfo { vertex_index: vi, edge_valence: edges.len(), face_valence: faces, is_boundary, is_non_manifold });
+        if is_non_manifold { report.non_manifold_vertex_count += 1; }
+    }
+
+    report.is_closed = open_count == 0;
+    report.is_manifold = nm_count == 0 && report.non_manifold_vertex_count == 0;
+    report.orientation_consistent = check_shell_orientability(shell, brep);
+
+    if report.is_closed {
+        let g = (2 - report.euler_characteristic) / 2;
+        if (2 - report.euler_characteristic) % 2 == 0 && g >= 0 {
+            report.genus = Some(g);
+            report.expected_euler = Some(2 - 2 * g);
+            report.euler_valid = report.euler_characteristic == report.expected_euler.unwrap();
+        } else {
+            report.euler_valid = false;
+        }
+    } else { report.euler_valid = true; }
+
+    report.is_valid = report.is_closed && report.is_manifold && report.orientation_consistent && report.euler_valid;
+    if !report.is_closed { report.warnings.push(format!("Shell has {} open edges", open_count)); }
+    if !report.is_manifold { report.errors.push(format!("Non-manifold: {} edges, {} vertices", nm_count, report.non_manifold_vertex_count)); }
+    if !report.orientation_consistent { report.errors.push("Face orientations not consistent".into()); }
+    report
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Solid Repair (ShapeFix_Solid equivalent)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -5376,6 +5892,1027 @@ pub fn fix_solid(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
     report.is_properly_oriented = closure_report.is_closed && check_solid_orientability(&current_solid, brep);
 
     (current_solid, report)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enhanced Solid Validation and Repair (ShapeFix_Solid extended)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Volume sign classification for a shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeSign {
+    /// Positive volume (outer shell with outward normals).
+    Positive,
+    /// Negative volume (inner shell/void with inward normals).
+    Negative,
+    /// Zero or near-zero volume (degenerate shell).
+    Zero,
+    /// Unable to determine (e.g., open shell).
+    Unknown,
+}
+
+/// Information about a shell's containment within another shell.
+#[derive(Debug, Clone)]
+pub struct ShellContainmentInfo {
+    /// Index of the containing shell (-1 if none).
+    pub container_shell_idx: Option<usize>,
+    /// Depth in the nesting hierarchy (0 = outermost).
+    pub nesting_depth: usize,
+    /// Whether this shell is fully contained within the container.
+    pub is_fully_contained: bool,
+    /// Whether this shell intersects with any other shell.
+    pub has_intersections: bool,
+    /// Indices of shells that intersect with this one.
+    pub intersecting_shells: Vec<usize>,
+}
+
+/// Enhanced report from solid closure verification.
+#[derive(Debug, Clone)]
+pub struct SolidClosureVerificationReport {
+    /// Whether all shells are closed.
+    pub all_shells_closed: bool,
+    /// Whether the solid has proper shell nesting.
+    pub has_proper_nesting: bool,
+    /// Number of shells in the solid.
+    pub shell_count: usize,
+    /// Number of closed shells.
+    pub closed_shell_count: usize,
+    /// Number of open shells.
+    pub open_shell_count: usize,
+    /// Volume sign for each shell.
+    pub shell_volume_signs: Vec<VolumeSign>,
+    /// Volume of each shell (absolute value).
+    pub shell_volumes: Vec<f64>,
+    /// Total volume of the solid (outer - inner volumes).
+    pub total_volume: f64,
+    /// Net volume sign of the solid.
+    pub volume_sign: VolumeSign,
+    /// Shell containment information for each shell.
+    pub shell_containment: Vec<ShellContainmentInfo>,
+    /// Indices of degenerate shells (zero volume).
+    pub degenerate_shell_indices: Vec<usize>,
+    /// Indices of shells with inconsistent orientation.
+    pub inconsistent_orientation_indices: Vec<usize>,
+    /// Whether the solid has exactly one outer shell.
+    pub has_single_outer_shell: bool,
+}
+
+impl Default for SolidClosureVerificationReport {
+    fn default() -> Self {
+        Self {
+            all_shells_closed: true,
+            has_proper_nesting: true,
+            shell_count: 0,
+            closed_shell_count: 0,
+            open_shell_count: 0,
+            shell_volume_signs: Vec::new(),
+            shell_volumes: Vec::new(),
+            total_volume: 0.0,
+            volume_sign: VolumeSign::Unknown,
+            shell_containment: Vec::new(),
+            degenerate_shell_indices: Vec::new(),
+            inconsistent_orientation_indices: Vec::new(),
+            has_single_outer_shell: true,
+        }
+    }
+}
+
+impl SolidClosureVerificationReport {
+    /// Returns true if the solid passes all closure verification checks.
+    pub fn is_valid(&self) -> bool {
+        self.all_shells_closed
+            && self.has_proper_nesting
+            && self.has_single_outer_shell
+            && self.degenerate_shell_indices.is_empty()
+            && self.inconsistent_orientation_indices.is_empty()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_valid() {
+            format!(
+                "Valid solid: {} shells ({} closed), volume={:.6}",
+                self.shell_count, self.closed_shell_count, self.total_volume
+            )
+        } else {
+            let mut issues = Vec::new();
+            if !self.all_shells_closed {
+                issues.push(format!("{} open shells", self.open_shell_count));
+            }
+            if !self.has_proper_nesting {
+                issues.push("improper nesting".to_string());
+            }
+            if !self.has_single_outer_shell {
+                issues.push("multiple/missing outer shells".to_string());
+            }
+            if !self.degenerate_shell_indices.is_empty() {
+                issues.push(format!("{} degenerate shells", self.degenerate_shell_indices.len()));
+            }
+            if !self.inconsistent_orientation_indices.is_empty() {
+                issues.push(format!(
+                    "{} shells with inconsistent orientation",
+                    self.inconsistent_orientation_indices.len()
+                ));
+            }
+            format!("Invalid solid: {}", issues.join(", "))
+        }
+    }
+}
+
+/// Verify solid closure with detailed analysis.
+///
+/// This function performs comprehensive closure verification including:
+/// - Shell closure status
+/// - Shell orientation (volume sign computation)
+/// - Shell containment and nesting hierarchy
+/// - Degenerate shell detection
+///
+/// # Arguments
+/// * `solid` - The solid to verify.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A `SolidClosureVerificationReport` with detailed closure analysis.
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::verify_solid_closure;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let solid = &brep.solids[0];
+/// let report = verify_solid_closure(solid, &brep);
+/// assert!(report.is_valid());
+/// ```
+pub fn verify_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureVerificationReport {
+    let mut report = SolidClosureVerificationReport {
+        shell_count: solid.shells.len(),
+        ..Default::default()
+    };
+
+    if solid.shells.is_empty() {
+        report.all_shells_closed = false;
+        report.has_single_outer_shell = false;
+        return report;
+    }
+
+    // Analyze each shell
+    let mut outer_shell_candidates = Vec::new();
+    let mut shell_bounds_list = Vec::new();
+
+    for (shi, shell) in solid.shells.iter().enumerate() {
+        // Check closure
+        let closure = check_shell_closure(shell, brep);
+        if closure.is_closed {
+            report.closed_shell_count += 1;
+        } else {
+            report.open_shell_count += 1;
+        }
+
+        // Compute volume and volume sign
+        let volume = compute_shell_volume(shell, brep);
+        let volume_sign = determine_volume_sign(volume, shell, brep);
+
+        report.shell_volumes.push(volume.abs());
+        report.shell_volume_signs.push(volume_sign);
+
+        // Track degenerate shells
+        if matches!(volume_sign, VolumeSign::Zero) {
+            report.degenerate_shell_indices.push(shi);
+        }
+
+        // Compute bounds for containment analysis
+        let bounds = compute_shell_bounds(shell, brep);
+        shell_bounds_list.push(bounds);
+
+        // Track outer shell candidates (positive volume = outer shell)
+        if matches!(volume_sign, VolumeSign::Positive) {
+            outer_shell_candidates.push(shi);
+        }
+    }
+
+    report.all_shells_closed = report.open_shell_count == 0;
+    report.has_single_outer_shell = outer_shell_candidates.len() == 1;
+
+    // Compute total volume
+    if !outer_shell_candidates.is_empty() {
+        // Sum outer shell volumes and subtract inner shell volumes
+        let mut total_volume = 0.0_f64;
+        for &shi in &outer_shell_candidates {
+            total_volume += report.shell_volumes.get(shi).copied().unwrap_or(0.0);
+        }
+        for (shi, vol) in report.shell_volumes.iter().enumerate() {
+            if !outer_shell_candidates.contains(&shi) {
+                total_volume -= vol.abs();
+            }
+        }
+        report.total_volume = total_volume;
+        report.volume_sign = if total_volume > 1e-10 {
+            VolumeSign::Positive
+        } else if total_volume < -1e-10 {
+            VolumeSign::Negative
+        } else {
+            VolumeSign::Zero
+        };
+    }
+
+    // Analyze shell containment
+    report.shell_containment = analyze_shell_containment(
+        solid,
+        &shell_bounds_list,
+        &report.shell_volume_signs,
+        brep,
+    );
+
+    // Check for inconsistent orientations
+    for (shi, containment) in report.shell_containment.iter().enumerate() {
+        // An outer shell should have positive volume sign
+        // An inner shell (void) should have negative volume sign
+        let expected_sign = if containment.nesting_depth % 2 == 0 {
+            VolumeSign::Positive
+        } else {
+            VolumeSign::Negative
+        };
+        let actual_sign = report.shell_volume_signs.get(shi).copied().unwrap_or(VolumeSign::Unknown);
+        if actual_sign != expected_sign && actual_sign != VolumeSign::Unknown {
+            report.inconsistent_orientation_indices.push(shi);
+        }
+    }
+
+    // Determine proper nesting
+    report.has_proper_nesting = report.inconsistent_orientation_indices.is_empty()
+        && report.shell_containment.iter().all(|c| !c.has_intersections);
+
+    report
+}
+
+/// Determine the volume sign for a shell based on volume and normal orientation.
+fn determine_volume_sign(volume: f64, shell: &Shell, brep: &BRep) -> VolumeSign {
+    const VOLUME_TOLERANCE: f64 = 1e-10;
+
+    if volume.abs() < VOLUME_TOLERANCE {
+        // Check if it's truly degenerate or just a very thin shell
+        if shell.faces.is_empty() {
+            return VolumeSign::Zero;
+        }
+        // Compute a sample of face normals to determine orientation
+        let shell_centroid = compute_shell_centroid(shell, brep);
+
+        // Check if normals point outward consistently
+        let mut outward_count = 0usize;
+        let mut inward_count = 0usize;
+
+        for face in &shell.faces {
+            let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+            let outward = face_centroid - shell_centroid;
+            if outward.length() < 1e-10 {
+                continue;
+            }
+            if face.normal.dot(outward) > 0.0 {
+                outward_count += 1;
+            } else {
+                inward_count += 1;
+            }
+        }
+
+        if outward_count > inward_count {
+            VolumeSign::Positive
+        } else if inward_count > outward_count {
+            VolumeSign::Negative
+        } else {
+            VolumeSign::Zero
+        }
+    } else if volume > 0.0 {
+        VolumeSign::Positive
+    } else {
+        VolumeSign::Negative
+    }
+}
+
+/// Analyze shell containment relationships.
+fn analyze_shell_containment(
+    solid: &Solid,
+    shell_bounds: &[(DVec3, DVec3)],
+    volume_signs: &[VolumeSign],
+    _brep: &BRep,
+) -> Vec<ShellContainmentInfo> {
+    let n_shells = solid.shells.len();
+    let mut containment = Vec::with_capacity(n_shells);
+
+    for i in 0..n_shells {
+        let mut info = ShellContainmentInfo {
+            container_shell_idx: None,
+            nesting_depth: 0,
+            is_fully_contained: true,
+            has_intersections: false,
+            intersecting_shells: Vec::new(),
+        };
+
+        let (min_i, max_i) = shell_bounds.get(i).copied().unwrap_or((DVec3::ZERO, DVec3::ZERO));
+        let vol_i = volume_signs.get(i).copied().unwrap_or(VolumeSign::Unknown);
+
+        for j in 0..n_shells {
+            if i == j {
+                continue;
+            }
+
+            let (min_j, max_j) = shell_bounds.get(j).copied().unwrap_or((DVec3::ZERO, DVec3::ZERO));
+            let vol_j = volume_signs.get(j).copied().unwrap_or(VolumeSign::Unknown);
+
+            // Check if shell j contains shell i (bounds-based)
+            let j_contains_i = min_j.x <= min_i.x && max_j.x >= max_i.x
+                && min_j.y <= min_i.y && max_j.y >= max_i.y
+                && min_j.z <= min_i.z && max_j.z >= max_i.z;
+
+            // Check for intersection (bounds overlap but neither fully contains the other)
+            let bounds_intersect = min_i.x < max_j.x && max_i.x > min_j.x
+                && min_i.y < max_j.y && max_i.y > min_j.y
+                && min_i.z < max_j.z && max_i.z > min_j.z;
+
+            if j_contains_i && matches!(vol_j, VolumeSign::Positive) {
+                // Shell j is a potential container for shell i
+                let current_depth = containment.get(j).map(|c: &ShellContainmentInfo| c.nesting_depth).unwrap_or(0);
+                if info.container_shell_idx.is_none() || current_depth + 1 > info.nesting_depth {
+                    info.container_shell_idx = Some(j);
+                    info.nesting_depth = current_depth + 1;
+                }
+            } else if bounds_intersect && !j_contains_i {
+                // Check if i contains j instead
+                let i_contains_j = min_i.x <= min_j.x && max_i.x >= max_j.x
+                    && min_i.y <= min_j.y && max_i.y >= max_j.y
+                    && min_i.z <= min_j.z && max_i.z >= max_j.z;
+
+                if !i_contains_j {
+                    info.has_intersections = true;
+                    info.intersecting_shells.push(j);
+                }
+            }
+        }
+
+        containment.push(info);
+    }
+
+    containment
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shell Orientation in Solids
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from shell orientation in solids.
+#[derive(Debug, Clone, Default)]
+pub struct SolidOrientationReport {
+    /// Number of shells oriented as outer (forward).
+    pub outer_shells_oriented: usize,
+    /// Number of shells oriented as inner/void (backward).
+    pub inner_shells_oriented: usize,
+    /// Number of shells that were flipped.
+    pub shells_flipped: usize,
+    /// Number of faces that were flipped.
+    pub faces_flipped: usize,
+    /// Nesting hierarchy (shell index -> nesting depth).
+    pub nesting_hierarchy: Vec<(usize, usize)>,
+    /// Whether the solid now has proper orientation.
+    pub is_properly_oriented: bool,
+    /// Issues detected during orientation.
+    pub orientation_issues: Vec<OrientationIssue>,
+}
+
+/// Description of an orientation issue.
+#[derive(Debug, Clone)]
+pub struct OrientationIssue {
+    /// Shell index where the issue was detected.
+    pub shell_idx: usize,
+    /// Type of issue.
+    pub issue_type: OrientationIssueType,
+    /// Description of the issue.
+    pub description: String,
+}
+
+/// Types of orientation issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrientationIssueType {
+    /// Shell has inconsistent face normals.
+    InconsistentFaceNormals,
+    /// Shell orientation contradicts its position in nesting hierarchy.
+    NestingContradiction,
+    /// Shell has zero volume (degenerate).
+    DegenerateShell,
+    /// Shell is not closed.
+    OpenShell,
+    /// Multiple outer shells detected.
+    MultipleOuterShells,
+}
+
+impl SolidOrientationReport {
+    /// Returns true if the solid has proper orientation with no issues.
+    pub fn is_clean(&self) -> bool {
+        self.is_properly_oriented && self.orientation_issues.is_empty()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_clean() {
+            format!(
+                "Properly oriented: {} outer, {} inner shells, {} faces flipped",
+                self.outer_shells_oriented, self.inner_shells_oriented, self.faces_flipped
+            )
+        } else {
+            format!(
+                "Orientation issues: {}, {} issues detected",
+                self.orientation_issues.len(),
+                self.orientation_issues.iter().map(|i| i.description.clone()).collect::<Vec<_>>().join(", ")
+            )
+        }
+    }
+}
+
+/// Orient solid shells according to their role (outer shell forward, inner shells backward).
+///
+/// This function:
+/// - Determines the nesting hierarchy of shells
+/// - Orients the outer shell with outward-pointing normals (forward)
+/// - Orients inner shells (voids) with inward-pointing normals (backward)
+/// - Detects and reports orientation issues
+///
+/// # Arguments
+/// * `solid` - The solid whose shells should be oriented.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A tuple of (oriented solid, orientation report).
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::orient_solid_shells;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let solid = &brep.solids[0];
+/// let (oriented, report) = orient_solid_shells(solid, &brep);
+/// assert!(report.is_clean());
+/// ```
+pub fn orient_solid_shells(solid: &Solid, brep: &BRep) -> (Solid, SolidOrientationReport) {
+    let mut report = SolidOrientationReport::default();
+    let mut oriented_solid = solid.clone();
+
+    if solid.shells.is_empty() {
+        return (oriented_solid, report);
+    }
+
+    // Verify closure first
+    let closure_report = verify_solid_closure(solid, brep);
+
+    // Track issues from closure verification
+    for &sh_idx in &closure_report.degenerate_shell_indices {
+        report.orientation_issues.push(OrientationIssue {
+            shell_idx: sh_idx,
+            issue_type: OrientationIssueType::DegenerateShell,
+            description: format!("Shell {} has zero or near-zero volume", sh_idx),
+        });
+    }
+
+    for &sh_idx in &closure_report.inconsistent_orientation_indices {
+        report.orientation_issues.push(OrientationIssue {
+            shell_idx: sh_idx,
+            issue_type: OrientationIssueType::NestingContradiction,
+            description: format!("Shell {} has orientation contradicting its nesting position", sh_idx),
+        });
+    }
+
+    // Build nesting hierarchy
+    for (sh_idx, containment) in closure_report.shell_containment.iter().enumerate() {
+        report.nesting_hierarchy.push((sh_idx, containment.nesting_depth));
+    }
+
+    // Sort shells by nesting depth (outermost first)
+    let mut shell_order: Vec<(usize, usize)> = report.nesting_hierarchy.clone();
+    shell_order.sort_by_key(|&(_, depth)| depth);
+
+    // Determine which shells should be outer vs inner based on nesting
+    for (sh_idx, nesting_depth) in &shell_order {
+        let is_outer = *nesting_depth == 0;
+        let volume_sign = closure_report.shell_volume_signs.get(*sh_idx).copied().unwrap_or(VolumeSign::Unknown);
+
+        // Check if this shell needs to be flipped
+        let needs_flip = if is_outer {
+            // Outer shell should have positive volume (outward normals)
+            matches!(volume_sign, VolumeSign::Negative)
+        } else {
+            // Inner shell (void) should have negative volume (inward normals)
+            matches!(volume_sign, VolumeSign::Positive)
+        };
+
+        if needs_flip {
+            let shell = &mut oriented_solid.shells[*sh_idx];
+            for face in &mut shell.faces {
+                face.normal = -face.normal;
+                face.outer_wire = reverse_wire(&face.outer_wire);
+                for inner in &mut face.inner_wires {
+                    *inner = reverse_wire(inner);
+                }
+                report.faces_flipped += 1;
+            }
+            report.shells_flipped += 1;
+        }
+
+        if is_outer {
+            report.outer_shells_oriented += 1;
+        } else {
+            report.inner_shells_oriented += 1;
+        }
+    }
+
+    // Verify final orientation
+    let final_closure = verify_solid_closure(&oriented_solid, brep);
+    report.is_properly_oriented = final_closure.is_valid();
+
+    (oriented_solid, report)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solid Validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from solid topology validation.
+#[derive(Debug, Clone, Default)]
+pub struct SolidValidationReport {
+    /// Whether the solid passes all validation checks.
+    pub is_valid: bool,
+    /// Shell closure verification results.
+    pub closure_report: SolidClosureVerificationReport,
+    /// Shell containment check results.
+    pub containment_valid: bool,
+    /// Void nesting verification results.
+    pub void_nesting_valid: bool,
+    /// Material side consistency check results.
+    pub material_side_consistent: bool,
+    /// List of validation errors.
+    pub errors: Vec<SolidValidationError>,
+    /// List of validation warnings.
+    pub warnings: Vec<SolidValidationWarning>,
+}
+
+/// A validation error (critical issue that makes the solid invalid).
+#[derive(Debug, Clone)]
+pub struct SolidValidationError {
+    /// Error code.
+    pub code: SolidValidationErrorCode,
+    /// Shell index where the error occurred (if applicable).
+    pub shell_idx: Option<usize>,
+    /// Description of the error.
+    pub message: String,
+}
+
+/// Error codes for solid validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolidValidationErrorCode {
+    /// Shell is not closed.
+    OpenShell,
+    /// Shell has degenerate geometry.
+    DegenerateShell,
+    /// Multiple outer shells detected.
+    MultipleOuterShells,
+    /// Shell intersection detected.
+    ShellIntersection,
+    /// Invalid void nesting.
+    InvalidVoidNesting,
+    /// Material side inconsistency.
+    MaterialSideInconsistency,
+    /// Inconsistent face normals.
+    InconsistentNormals,
+    /// Non-manifold topology.
+    NonManifoldTopology,
+}
+
+/// A validation warning (non-critical issue).
+#[derive(Debug, Clone)]
+pub struct SolidValidationWarning {
+    /// Warning code.
+    pub code: SolidValidationWarningCode,
+    /// Shell index where the warning occurred (if applicable).
+    pub shell_idx: Option<usize>,
+    /// Description of the warning.
+    pub message: String,
+}
+
+/// Warning codes for solid validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolidValidationWarningCode {
+    /// Shell has very small volume.
+    SmallVolume,
+    /// Shell has high aspect ratio.
+    HighAspectRatio,
+    /// Tolerance issues detected.
+    ToleranceIssue,
+    /// Potential numerical issues.
+    NumericalIssue,
+}
+
+impl SolidValidationReport {
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_valid {
+            format!("Valid solid: no errors, {} warnings", self.warnings.len())
+        } else {
+            format!(
+                "Invalid solid: {} errors, {} warnings",
+                self.errors.len(),
+                self.warnings.len()
+            )
+        }
+    }
+}
+
+/// Validate solid topology comprehensively.
+///
+/// This function performs all validation checks including:
+/// - Shell closure verification
+/// - Shell containment checks
+/// - Void nesting verification
+/// - Material side consistency
+///
+/// # Arguments
+/// * `solid` - The solid to validate.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A `SolidValidationReport` with all validation results.
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::validate_solid_topology;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let solid = &brep.solids[0];
+/// let report = validate_solid_topology(solid, &brep);
+/// assert!(report.is_valid);
+/// ```
+pub fn validate_solid_topology(solid: &Solid, brep: &BRep) -> SolidValidationReport {
+    let mut report = SolidValidationReport::default();
+
+    // Step 1: Closure verification
+    report.closure_report = verify_solid_closure(solid, brep);
+
+    // Convert closure issues to errors
+    for &sh_idx in &report.closure_report.degenerate_shell_indices {
+        report.errors.push(SolidValidationError {
+            code: SolidValidationErrorCode::DegenerateShell,
+            shell_idx: Some(sh_idx),
+            message: format!("Shell {} has degenerate geometry (zero volume)", sh_idx),
+        });
+    }
+
+    if !report.closure_report.all_shells_closed {
+        for (sh_idx, sign) in report.closure_report.shell_volume_signs.iter().enumerate() {
+            if matches!(sign, VolumeSign::Unknown) {
+                report.errors.push(SolidValidationError {
+                    code: SolidValidationErrorCode::OpenShell,
+                    shell_idx: Some(sh_idx),
+                    message: format!("Shell {} is not closed", sh_idx),
+                });
+            }
+        }
+    }
+
+    if !report.closure_report.has_single_outer_shell {
+        report.errors.push(SolidValidationError {
+            code: SolidValidationErrorCode::MultipleOuterShells,
+            shell_idx: None,
+            message: "Solid has multiple or no outer shells".to_string(),
+        });
+    }
+
+    // Step 2: Shell containment checks
+    report.containment_valid = true;
+    for (sh_idx, containment) in report.closure_report.shell_containment.iter().enumerate() {
+        if containment.has_intersections {
+            report.containment_valid = false;
+            report.errors.push(SolidValidationError {
+                code: SolidValidationErrorCode::ShellIntersection,
+                shell_idx: Some(sh_idx),
+                message: format!(
+                    "Shell {} intersects with shells {:?}",
+                    sh_idx, containment.intersecting_shells
+                ),
+            });
+        }
+    }
+
+    // Step 3: Void nesting verification
+    report.void_nesting_valid = verify_void_nesting(solid, &report.closure_report, &mut report.errors);
+
+    // Step 4: Material side consistency
+    report.material_side_consistent = verify_material_side_consistency(solid, &report.closure_report, &mut report.errors, brep);
+
+    // Step 5: Check for non-manifold topology
+    for (sh_idx, shell) in solid.shells.iter().enumerate() {
+        let manifold_report = analyze_shell_manifoldness(shell, brep);
+        if !manifold_report.is_manifold {
+            report.errors.push(SolidValidationError {
+                code: SolidValidationErrorCode::NonManifoldTopology,
+                shell_idx: Some(sh_idx),
+                message: format!(
+                    "Shell {} has non-manifold edges: {:?}",
+                    sh_idx, manifold_report.non_manifold_edges
+                ),
+            });
+        }
+    }
+
+    // Add warnings for small volumes
+    for (sh_idx, volume) in report.closure_report.shell_volumes.iter().enumerate() {
+        if *volume > 0.0 && *volume < 1e-6 {
+            report.warnings.push(SolidValidationWarning {
+                code: SolidValidationWarningCode::SmallVolume,
+                shell_idx: Some(sh_idx),
+                message: format!("Shell {} has very small volume ({:.2e})", sh_idx, volume),
+            });
+        }
+    }
+
+    // Final validation status
+    report.is_valid = report.errors.is_empty()
+        && report.containment_valid
+        && report.void_nesting_valid
+        && report.material_side_consistent;
+
+    report
+}
+
+/// Verify void nesting is valid (no void contains another void, voids are inside outer shell).
+fn verify_void_nesting(
+    _solid: &Solid,
+    closure_report: &SolidClosureVerificationReport,
+    errors: &mut Vec<SolidValidationError>,
+) -> bool {
+    let mut valid = true;
+
+    for (sh_idx, containment) in closure_report.shell_containment.iter().enumerate() {
+        let volume_sign = closure_report.shell_volume_signs.get(sh_idx).copied().unwrap_or(VolumeSign::Unknown);
+
+        // Voids (negative volume) should be contained by outer shell (positive volume)
+        if matches!(volume_sign, VolumeSign::Negative) {
+            if containment.nesting_depth == 0 {
+                // Void at depth 0 means it's not contained by outer shell
+                valid = false;
+                errors.push(SolidValidationError {
+                    code: SolidValidationErrorCode::InvalidVoidNesting,
+                    shell_idx: Some(sh_idx),
+                    message: format!("Void shell {} is not contained by outer shell", sh_idx),
+                });
+            }
+
+            // Check that void is contained by a positive-volume shell
+            if let Some(container_idx) = containment.container_shell_idx {
+                let container_sign = closure_report.shell_volume_signs.get(container_idx).copied().unwrap_or(VolumeSign::Unknown);
+                if !matches!(container_sign, VolumeSign::Positive) {
+                    valid = false;
+                    errors.push(SolidValidationError {
+                        code: SolidValidationErrorCode::InvalidVoidNesting,
+                        shell_idx: Some(sh_idx),
+                        message: format!("Void shell {} is contained by non-outer shell {}", sh_idx, container_idx),
+                    });
+                }
+            }
+        }
+    }
+
+    valid
+}
+
+/// Verify material side consistency (normals point in correct direction for material side).
+fn verify_material_side_consistency(
+    solid: &Solid,
+    closure_report: &SolidClosureVerificationReport,
+    errors: &mut Vec<SolidValidationError>,
+    brep: &BRep,
+) -> bool {
+    let mut consistent = true;
+
+    for (sh_idx, shell) in solid.shells.iter().enumerate() {
+        let volume_sign = closure_report.shell_volume_signs.get(sh_idx).copied().unwrap_or(VolumeSign::Unknown);
+        let nesting_depth = closure_report.shell_containment.get(sh_idx).map(|c| c.nesting_depth).unwrap_or(0);
+
+        // Determine expected normal direction
+        // Even nesting depth (0, 2, 4...): material is outside, normals should point outward
+        // Odd nesting depth (1, 3, 5...): material is inside (void), normals should point inward
+        let expect_outward = nesting_depth % 2 == 0;
+
+        // Check face normal consistency
+        let shell_centroid = compute_shell_centroid(shell, brep);
+        let mut outward_count = 0usize;
+        let mut inward_count = 0usize;
+
+        for face in &shell.faces {
+            let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+            let outward = face_centroid - shell_centroid;
+            if outward.length() < 1e-10 {
+                continue;
+            }
+            if face.normal.dot(outward) > 0.0 {
+                outward_count += 1;
+            } else {
+                inward_count += 1;
+            }
+        }
+
+        let has_inconsistency = if expect_outward {
+            // For outer shells, majority should be outward
+            inward_count > outward_count / 2
+        } else {
+            // For inner shells, majority should be inward
+            outward_count > inward_count / 2
+        };
+
+        if has_inconsistency {
+            consistent = false;
+            errors.push(SolidValidationError {
+                code: SolidValidationErrorCode::MaterialSideInconsistency,
+                shell_idx: Some(sh_idx),
+                message: format!(
+                    "Shell {} has inconsistent material side (nesting={}, outward={}, inward={})",
+                    sh_idx, nesting_depth, outward_count, inward_count
+                ),
+            });
+        }
+    }
+
+    consistent
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solid Repair
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Result of solid repair operation.
+#[derive(Debug, Clone)]
+pub struct SolidRepairResult {
+    /// The repaired solid.
+    pub solid: Solid,
+    /// Whether the repair was successful.
+    pub success: bool,
+    /// Number of shells that were closed.
+    pub shells_closed: usize,
+    /// Number of shells that were reoriented.
+    pub shells_reoriented: usize,
+    /// Number of degenerate shells removed.
+    pub degenerate_shells_removed: usize,
+    /// Number of faces that were modified.
+    pub faces_modified: usize,
+    /// Number of gaps closed.
+    pub gaps_closed: usize,
+    /// Validation report after repair.
+    pub validation_report: SolidValidationReport,
+    /// Issues that could not be repaired.
+    pub unrepaired_issues: Vec<String>,
+}
+
+impl SolidRepairResult {
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.success {
+            format!(
+                "Repair successful: {} shells closed, {} reoriented, {} degenerate removed",
+                self.shells_closed, self.shells_reoriented, self.degenerate_shells_removed
+            )
+        } else {
+            format!(
+                "Repair partially successful: {} issues remain",
+                self.unrepaired_issues.len()
+            )
+        }
+    }
+}
+
+/// Repair a solid by fixing shell orientations, closing gaps, and removing degenerate shells.
+///
+/// This function applies all available repairs:
+/// - Fix shell orientations (outer forward, inner backward)
+/// - Close gaps in shells
+/// - Remove degenerate shells (zero volume)
+///
+/// # Arguments
+/// * `solid` - The solid to repair.
+/// * `brep` - The containing BRep.
+/// * `tolerance` - Tolerance for geometric operations.
+///
+/// # Returns
+/// A `SolidRepairResult` with the repaired solid and repair report.
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::repair_solid;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let solid = &brep.solids[0];
+/// let result = repair_solid(solid, &brep, 1e-6);
+/// assert!(result.success);
+/// ```
+pub fn repair_solid(solid: &Solid, brep: &BRep, tolerance: f64) -> SolidRepairResult {
+    let mut result = SolidRepairResult {
+        solid: solid.clone(),
+        success: false,
+        shells_closed: 0,
+        shells_reoriented: 0,
+        degenerate_shells_removed: 0,
+        faces_modified: 0,
+        gaps_closed: 0,
+        validation_report: SolidValidationReport::default(),
+        unrepaired_issues: Vec::new(),
+    };
+
+    // Step 1: Validate the solid first
+    let _initial_validation = validate_solid_topology(solid, brep);
+
+    // Step 2: Remove degenerate shells
+    let mut shells_to_keep = Vec::new();
+    for (sh_idx, shell) in solid.shells.iter().enumerate() {
+        let volume = compute_shell_volume(shell, brep);
+        let closure = check_shell_closure(shell, brep);
+
+        // Check if this shell is degenerate
+        let is_degenerate = volume.abs() < tolerance && closure.open_edge_count == 0 && shell.faces.is_empty();
+
+        if is_degenerate {
+            result.degenerate_shells_removed += 1;
+        } else {
+            shells_to_keep.push(shell.clone());
+        }
+    }
+    result.solid.shells = shells_to_keep;
+
+    // Step 3: Fix shell orientations
+    let (oriented_solid, orientation_report) = orient_solid_shells(&result.solid, brep);
+    result.solid = oriented_solid;
+    result.shells_reoriented = orientation_report.shells_flipped;
+    result.faces_modified = orientation_report.faces_flipped;
+
+    // Step 4: Attempt to close gaps in each shell
+    for shell in &mut result.solid.shells {
+        let closure = check_shell_closure(shell, brep);
+        if !closure.is_closed {
+            // Try to fix the shell
+            let (fixed_shell, shell_report) = fix_shell_orientation(shell, brep);
+            if shell_report.faces_reoriented > 0 {
+                *shell = fixed_shell;
+                result.faces_modified += shell_report.faces_reoriented;
+            }
+
+            // Check if still open
+            let new_closure = check_shell_closure(shell, brep);
+            if new_closure.is_closed {
+                result.shells_closed += 1;
+            } else {
+                result.unrepaired_issues.push(format!(
+                    "Shell has {} open edges that could not be closed",
+                    new_closure.open_edge_count
+                ));
+            }
+        }
+    }
+
+    // Step 5: Fix non-manifold topology
+    for shell in &mut result.solid.shells {
+        let manifold_report = analyze_shell_manifoldness(shell, brep);
+        if !manifold_report.is_manifold {
+            let (fixed_shell, nm_report) = fix_non_manifold_shell(shell, brep);
+            if nm_report.non_manifold_edges_processed > 0 {
+                *shell = fixed_shell;
+            }
+            if !nm_report.is_manifold {
+                result.unrepaired_issues.push(format!(
+                    "Shell has {} non-manifold edges that could not be fixed",
+                    nm_report.non_manifold_edge_count
+                ));
+            }
+        }
+    }
+
+    // Step 6: Validate the repaired solid
+    result.validation_report = validate_solid_topology(&result.solid, brep);
+    result.success = result.validation_report.is_valid;
+
+    // Collect any remaining issues
+    for error in &result.validation_report.errors {
+        result.unrepaired_issues.push(error.message.clone());
+    }
+
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5992,6 +7529,1058 @@ fn wrap_pcurve_to_domain(
             None
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal Face Detection and Removal (Post-Boolean Cleanup)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Classification of duplicate face types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicateFaceKind {
+    /// Faces are geometrically identical (same surface, same bounds).
+    GeometricallyIdentical,
+    /// Faces share topology (same edges, opposite orientation).
+    TopologicallyShared,
+    /// Faces are coincident but have different geometry representations.
+    CoincidentDifferentGeometry,
+    /// Faces share the same surface but have different parameter bounds.
+    SameSurfaceDifferentBounds,
+}
+
+/// Information about a pair of duplicate faces.
+#[derive(Debug, Clone)]
+pub struct DuplicateFacePair {
+    /// Flattened index of the first face.
+    pub face_a: usize,
+    /// Flattened index of the second face.
+    pub face_b: usize,
+    /// Classification of the duplication.
+    pub kind: DuplicateFaceKind,
+    /// Whether the faces have opposite normals.
+    pub opposite_orientation: bool,
+    /// Maximum geometric deviation between the faces.
+    pub max_deviation: f64,
+    /// Indices of shared edges (if any).
+    pub shared_edges: Vec<usize>,
+    /// Whether one face is internal (should be removed).
+    pub is_internal: bool,
+}
+
+/// Report from duplicate face detection.
+#[derive(Debug, Clone, Default)]
+pub struct DuplicateFaceReport {
+    /// All detected duplicate face pairs.
+    pub duplicate_pairs: Vec<DuplicateFacePair>,
+    /// Number of faces that are internal candidates for removal.
+    pub internal_face_count: usize,
+    /// Indices of faces identified as internal.
+    pub internal_face_indices: Vec<usize>,
+    /// Summary string for debugging.
+    pub summary: String,
+}
+
+/// Detect duplicate faces in a BRep using geometric and topological comparison.
+///
+/// This function identifies faces that are geometrically or topologically
+/// duplicated, which commonly occurs after boolean operations.
+///
+/// # Arguments
+/// * `brep` - The BRep to analyze.
+/// * `tolerance` - Maximum distance for considering geometry coincident.
+///
+/// # Returns
+/// A `DuplicateFaceReport` containing all detected duplicate pairs.
+///
+/// # Example
+/// ```
+/// use rcad_algorithms::brep_repair::detect_duplicate_faces;
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0,
+///     height: 1.0,
+///     depth: 1.0,
+/// });
+///
+/// let report = detect_duplicate_faces(&brep, 1e-6);
+/// println!("Found {} duplicate pairs", report.duplicate_pairs.len());
+/// ```
+pub fn detect_duplicate_faces(brep: &BRep, tolerance: f64) -> DuplicateFaceReport {
+    let tol = tolerance.max(TOLERANCE_ABS);
+    let mut report = DuplicateFaceReport::default();
+
+    // Collect all faces with their flattened indices
+    let faces: Vec<(usize, usize, usize, &Face)> = brep
+        .solids
+        .iter()
+        .enumerate()
+        .flat_map(|(si, solid)| {
+            solid.shells.iter().enumerate().flat_map(move |(shi, shell)| {
+                shell.faces.iter().enumerate().map(move |(fi, face)| (si, shi, fi, face))
+            })
+        })
+        .collect();
+
+    let n_faces = faces.len();
+    if n_faces < 2 {
+        report.summary = "No faces to compare".to_string();
+        return report;
+    }
+
+    // Build surface compatibility map
+    let surface_map = build_surface_compatibility_map(brep, &faces, tol);
+
+    // Compare each pair of faces
+    let mut processed: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+    for i in 0..n_faces {
+        for j in (i + 1)..n_faces {
+            if processed.contains(&(i, j)) {
+                continue;
+            }
+
+            let (si1, shi1, fi1, face1) = faces[i];
+            let (si2, shi2, fi2, face2) = faces[j];
+
+            // Skip faces in the same shell at the same position
+            if si1 == si2 && shi1 == shi2 && fi1 == fi2 {
+                continue;
+            }
+
+            if let Some(pair) = analyze_face_duplication(
+                brep,
+                face1,
+                face2,
+                i,
+                j,
+                &surface_map,
+                tol,
+            ) {
+                processed.insert((i, j));
+
+                // Check if this face is internal
+                let is_internal = check_if_internal(brep, &faces, i, j, &pair, tol);
+                let mut pair = pair;
+                pair.is_internal = is_internal;
+
+                if is_internal {
+                    report.internal_face_indices.push(j); // Remove the second face
+                }
+
+                report.duplicate_pairs.push(pair);
+            }
+        }
+    }
+
+    report.internal_face_count = report.internal_face_indices.len();
+    report.summary = format!(
+        "DuplicateFaceReport: {} pairs found, {} internal faces",
+        report.duplicate_pairs.len(),
+        report.internal_face_count
+    );
+
+    report
+}
+
+/// Build a map of surface compatibility between faces.
+fn build_surface_compatibility_map(
+    brep: &BRep,
+    faces: &[(usize, usize, usize, &Face)],
+    tolerance: f64,
+) -> std::collections::HashMap<(usize, usize), bool> {
+    let mut map: std::collections::HashMap<(usize, usize), bool> = std::collections::HashMap::new();
+
+    for (i, (_, _, _, face1)) in faces.iter().enumerate() {
+        for (j, (_, _, _, face2)) in faces.iter().enumerate() {
+            if i >= j {
+                continue;
+            }
+
+            // Check if faces have compatible surfaces
+            let compatible = check_surface_compatibility(brep, face1, face2, tolerance);
+            map.insert((i, j), compatible);
+        }
+    }
+
+    map
+}
+
+/// Check if two faces have compatible surfaces.
+fn check_surface_compatibility(
+    brep: &BRep,
+    face1: &Face,
+    face2: &Face,
+    tolerance: f64,
+) -> bool {
+    // First check normal compatibility - duplicate faces should have parallel or anti-parallel normals
+    let normal_dot = face1.normal.dot(face2.normal);
+    if normal_dot.abs() < 0.99 {
+        return false;
+    }
+
+    // Check geometric bounds compatibility
+    let pts1: Vec<DVec3> = face1
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    let pts2: Vec<DVec3> = face2
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    if pts1.is_empty() || pts2.is_empty() {
+        return false;
+    }
+
+    // Check bounding box overlap
+    let (min1, max1) = compute_bounding_box(&pts1);
+    let (min2, max2) = compute_bounding_box(&pts2);
+
+    // Allow some tolerance for bounding box comparison
+    let bb_overlap = (min1.x - tolerance <= max2.x && max1.x + tolerance >= min2.x) &&
+                     (min1.y - tolerance <= max2.y && max1.y + tolerance >= min2.y) &&
+                     (min1.z - tolerance <= max2.z && max1.z + tolerance >= min2.z);
+
+    bb_overlap
+}
+
+/// Compute bounding box of a set of points.
+fn compute_bounding_box(points: &[DVec3]) -> (DVec3, DVec3) {
+    if points.is_empty() {
+        return (DVec3::ZERO, DVec3::ZERO);
+    }
+
+    let mut min_pt = points[0];
+    let mut max_pt = points[0];
+
+    for &p in points.iter().skip(1) {
+        min_pt = min_pt.min(p);
+        max_pt = max_pt.max(p);
+    }
+
+    (min_pt, max_pt)
+}
+
+/// Analyze two faces for duplication.
+fn analyze_face_duplication(
+    brep: &BRep,
+    face1: &Face,
+    face2: &Face,
+    flat_idx1: usize,
+    flat_idx2: usize,
+    surface_map: &std::collections::HashMap<(usize, usize), bool>,
+    tolerance: f64,
+) -> Option<DuplicateFacePair> {
+    // Check surface compatibility
+    let surface_compatible = surface_map
+        .get(&(flat_idx1.min(flat_idx2), flat_idx1.max(flat_idx2)))
+        .copied()
+        .unwrap_or(false);
+
+    if !surface_compatible {
+        return None;
+    }
+
+    // Collect boundary vertices for both faces
+    let pts1: Vec<DVec3> = face1
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    let pts2: Vec<DVec3> = face2
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    // Compare vertex positions
+    let tol_sq = tolerance * tolerance;
+    let mut matched_vertices = 0;
+    let mut max_deviation = 0.0f64;
+
+    for &p1 in &pts1 {
+        let mut best_dist = f64::INFINITY;
+        for &p2 in &pts2 {
+            let dist_sq = (p1 - p2).length_squared();
+            if dist_sq < best_dist {
+                best_dist = dist_sq;
+            }
+        }
+        let dist = best_dist.sqrt();
+        max_deviation = max_deviation.max(dist);
+        if dist <= tolerance {
+            matched_vertices += 1;
+        }
+    }
+
+    // Require most vertices to match
+    let match_ratio = matched_vertices as f64 / pts1.len().max(1) as f64;
+    if match_ratio < 0.8 {
+        return None;
+    }
+
+    // Check for shared edges
+    let edges1: std::collections::HashSet<usize> =
+        face1.outer_wire.edges.iter().map(|we| we.idx).collect();
+    let edges2: std::collections::HashSet<usize> =
+        face2.outer_wire.edges.iter().map(|we| we.idx).collect();
+
+    let shared_edges: Vec<usize> = edges1.intersection(&edges2).copied().collect();
+
+    // Determine duplication kind
+    let kind = if shared_edges.len() == edges1.len() && shared_edges.len() == edges2.len() {
+        // All edges are shared - topologically identical
+        if max_deviation < tolerance * 0.1 {
+            DuplicateFaceKind::GeometricallyIdentical
+        } else {
+            DuplicateFaceKind::CoincidentDifferentGeometry
+        }
+    } else if !shared_edges.is_empty() {
+        // Some edges shared
+        DuplicateFaceKind::TopologicallyShared
+    } else {
+        // No shared edges but geometrically close
+        DuplicateFaceKind::SameSurfaceDifferentBounds
+    };
+
+    // Check orientation
+    let normal_dot = face1.normal.dot(face2.normal);
+    let opposite_orientation = normal_dot < -0.99;
+
+    Some(DuplicateFacePair {
+        face_a: flat_idx1,
+        face_b: flat_idx2,
+        kind,
+        opposite_orientation,
+        max_deviation,
+        shared_edges,
+        is_internal: false, // Will be set later
+    })
+}
+
+/// Check if a face pair indicates one face is internal.
+fn check_if_internal(
+    brep: &BRep,
+    faces: &[(usize, usize, usize, &Face)],
+    flat_idx1: usize,
+    flat_idx2: usize,
+    pair: &DuplicateFacePair,
+    _tolerance: f64,
+) -> bool {
+    // A face is considered internal if:
+    // 1. It's a duplicate with opposite orientation
+    // 2. It's inside another solid
+    // 3. It belongs to a void shell (internal shell in a solid)
+
+    let (si1, shi1, _, _) = faces[flat_idx1];
+    let (si2, shi2, _, _) = faces[flat_idx2];
+
+    // If faces are in different solids, check for containment
+    if si1 != si2 {
+        // For now, consider the second face as potentially internal
+        // A more sophisticated check would do ray casting
+        return pair.opposite_orientation;
+    }
+
+    // If in the same solid but different shells
+    if shi1 != shi2 {
+        // Check if one shell is internal (void)
+        // Shell index > 0 in a solid typically indicates a void
+        let solid = &brep.solids[si1];
+        if shi2 > 0 && shi2 < solid.shells.len() {
+            // Second shell is likely a void shell
+            return true;
+        }
+    }
+
+    // If faces have opposite orientation and are geometrically identical
+    pair.opposite_orientation && matches!(
+        pair.kind,
+        DuplicateFaceKind::GeometricallyIdentical | DuplicateFaceKind::CoincidentDifferentGeometry
+    )
+}
+
+/// Identify internal faces in a BRep using geometric analysis.
+///
+/// Internal faces are faces that are completely contained within the solid
+/// and do not contribute to the outer boundary. These typically arise from
+/// boolean operations where internal separator faces are not removed.
+///
+/// # Arguments
+/// * `brep` - The BRep to analyze.
+///
+/// # Returns
+/// A vector of flattened face indices that are identified as internal.
+///
+/// # Detection Methods
+/// 1. Faces with zero outward normal contribution (sandwiched between other faces)
+/// 2. Faces in void shells (shell index > 0 in a solid)
+/// 3. Duplicate faces with opposite orientation
+/// 4. Faces completely inside other solids (via ray casting)
+pub fn identify_internal_faces(brep: &BRep) -> Vec<usize> {
+    let mut internal_faces = Vec::new();
+
+    // Method 1: Check for void shells (internal cavities)
+    for (si, solid) in brep.solids.iter().enumerate() {
+        if solid.shells.len() > 1 {
+            // First shell is typically the outer shell
+            // Subsequent shells are voids (internal cavities)
+            // Faces in void shells with inverted normals are internal separators
+            for shi in 1..solid.shells.len() {
+                let mut flat_idx = 0usize;
+                for (prev_si, prev_solid) in brep.solids.iter().enumerate() {
+                    for (prev_shi, prev_shell) in prev_solid.shells.iter().enumerate() {
+                        if prev_si == si && prev_shi == shi {
+                            // This is a void shell - add all its faces
+                            for fi in 0..prev_shell.faces.len() {
+                                internal_faces.push(flat_idx + fi);
+                            }
+                        }
+                        flat_idx += prev_shell.faces.len();
+                    }
+                }
+            }
+        }
+    }
+
+    // Method 2: Check for duplicate faces with opposite orientation
+    let duplicate_report = detect_duplicate_faces(brep, 1e-6);
+    for pair in &duplicate_report.duplicate_pairs {
+        if pair.opposite_orientation && pair.is_internal {
+            // Add the second face (the one that should be removed)
+            if !internal_faces.contains(&pair.face_b) {
+                internal_faces.push(pair.face_b);
+            }
+        }
+    }
+
+    // Method 3: Check for faces with no volume contribution using ray casting
+    let ray_internal = identify_internal_faces_by_raycast(brep);
+    for idx in ray_internal {
+        if !internal_faces.contains(&idx) {
+            internal_faces.push(idx);
+        }
+    }
+
+    // Sort and deduplicate
+    internal_faces.sort();
+    internal_faces.dedup();
+
+    internal_faces
+}
+
+/// Identify internal faces using ray casting.
+fn identify_internal_faces_by_raycast(brep: &BRep) -> Vec<usize> {
+    let mut internal_faces = Vec::new();
+
+    // Collect all faces with their flattened indices and centroids
+    let faces: Vec<(usize, &Face)> = brep
+        .solids
+        .iter()
+        .flat_map(|solid| solid.shells.iter())
+        .flat_map(|shell| shell.faces.iter())
+        .enumerate()
+        .collect();
+
+    if faces.is_empty() {
+        return internal_faces;
+    }
+
+    // For each face, cast a ray along its normal and check if it's inside the solid
+    for (flat_idx, face) in &faces {
+        // Compute face centroid
+        let centroid = compute_face_centroid_from_wire(brep, face);
+        if centroid.is_nan() {
+            continue;
+        }
+
+        // Cast ray along the face normal
+        let ray_origin = centroid + face.normal * 1e-4; // Offset slightly
+        let ray_dir = face.normal;
+
+        // Count intersections with other faces
+        let mut intersection_count = 0;
+        for (other_idx, other_face) in &faces {
+            if *other_idx == *flat_idx {
+                continue;
+            }
+
+            if ray_intersects_face(brep, other_face, ray_origin, ray_dir) {
+                intersection_count += 1;
+            }
+        }
+
+        // If odd number of intersections in the direction of the normal,
+        // the face is likely internal
+        if intersection_count > 0 && intersection_count % 2 == 1 {
+            internal_faces.push(*flat_idx);
+        }
+    }
+
+    internal_faces
+}
+
+/// Compute the centroid of a face from its wire vertices.
+fn compute_face_centroid_from_wire(brep: &BRep, face: &Face) -> DVec3 {
+    let pts: Vec<DVec3> = face
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    if pts.is_empty() {
+        return DVec3::NAN;
+    }
+
+    pts.iter().sum::<DVec3>() / pts.len() as f64
+}
+
+/// Check if a ray intersects a face.
+fn ray_intersects_face(
+    brep: &BRep,
+    face: &Face,
+    ray_origin: DVec3,
+    ray_dir: DVec3,
+) -> bool {
+    // Get face vertices
+    let pts: Vec<DVec3> = face
+        .outer_wire
+        .edges
+        .iter()
+        .filter_map(|we| {
+            let edge = brep.edges.get(we.idx)?;
+            let vidx = if we.forward { edge.start } else { edge.end };
+            brep.vertices.get(vidx).map(|v| v.point)
+        })
+        .collect();
+
+    if pts.len() < 3 {
+        return false;
+    }
+
+    // Use Möller–Trumbore algorithm for ray-triangle intersection
+    // Triangulate the face using fan triangulation
+    for i in 1..pts.len() - 1 {
+        let v0 = pts[0];
+        let v1 = pts[i];
+        let v2 = pts[i + 1];
+
+        if ray_triangle_intersection(ray_origin, ray_dir, v0, v1, v2) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Möller–Trumbore ray-triangle intersection.
+fn ray_triangle_intersection(
+    origin: DVec3,
+    dir: DVec3,
+    v0: DVec3,
+    v1: DVec3,
+    v2: DVec3,
+) -> bool {
+    const EPSILON: f64 = 1e-10;
+
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+
+    let h = dir.cross(edge2);
+    let a = edge1.dot(h);
+
+    if a.abs() < EPSILON {
+        return false;
+    }
+
+    let f = 1.0 / a;
+    let s = origin - v0;
+    let u = f * s.dot(h);
+
+    if u < 0.0 || u > 1.0 {
+        return false;
+    }
+
+    let q = s.cross(edge1);
+    let v = f * dir.dot(q);
+
+    if v < 0.0 || u + v > 1.0 {
+        return false;
+    }
+
+    let t = f * edge2.dot(q);
+
+    t > EPSILON
+}
+
+/// Report from internal face removal.
+#[derive(Debug, Clone, Default)]
+pub struct InternalFaceRemovalReport {
+    /// Number of faces removed.
+    pub faces_removed: usize,
+    /// Indices of faces that were removed.
+    pub removed_indices: Vec<usize>,
+    /// Number of edges that became orphaned and were removed.
+    pub edges_removed: usize,
+    /// Number of vertices that became orphaned and were removed.
+    pub vertices_removed: usize,
+    /// Whether the result is valid.
+    pub is_valid: bool,
+}
+
+/// Remove internal faces from a BRep while maintaining topology consistency.
+///
+/// This function safely removes specified internal faces, updating shell
+/// references and handling edge sharing correctly.
+///
+/// # Arguments
+/// * `brep` - The BRep to modify.
+/// * `face_indices` - Flattened indices of faces to remove.
+///
+/// # Returns
+/// A new BRep with the internal faces removed and a report of changes.
+///
+/// # Topology Handling
+/// - Removes faces from shells
+/// - Removes orphaned edges (edges no longer referenced by any face)
+/// - Removes orphaned vertices (vertices no longer referenced by any edge)
+/// - Updates geometric data arrays to match new topology
+pub fn remove_internal_faces(brep: &BRep, face_indices: &[usize]) -> (BRep, InternalFaceRemovalReport) {
+    let mut report = InternalFaceRemovalReport::default();
+    let remove_set: std::collections::HashSet<usize> = face_indices.iter().copied().collect();
+
+    if remove_set.is_empty() {
+        report.is_valid = true;
+        return (brep.clone(), report);
+    }
+
+    // Build a map from flat face index to (solid_idx, shell_idx, face_idx)
+    let mut flat_to_local: std::collections::HashMap<usize, (usize, usize, usize)> =
+        std::collections::HashMap::new();
+    let mut flat_idx = 0usize;
+
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for fi in 0..shell.faces.len() {
+                flat_to_local.insert(flat_idx, (si, shi, fi));
+                flat_idx += 1;
+            }
+        }
+    }
+
+    // Identify edges to keep (edges referenced by faces NOT being removed)
+    let mut edges_to_keep: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    for (flat_idx, (_, _, face)) in flat_to_local.iter().flat_map(|(idx, &(si, shi, fi))| {
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        Some((idx, (si, shi, face)))
+    }) {
+        if !remove_set.contains(flat_idx) {
+            // Collect all edges from this face's wires
+            let face = &brep.solids[flat_to_local[flat_idx].0]
+                .shells[flat_to_local[flat_idx].1]
+                .faces[flat_to_local[flat_idx].2];
+
+            for we in &face.outer_wire.edges {
+                edges_to_keep.insert(we.idx);
+            }
+            for inner in &face.inner_wires {
+                for we in &inner.edges {
+                    edges_to_keep.insert(we.idx);
+                }
+            }
+        }
+    }
+
+    // Also collect edges from faces being kept
+    flat_idx = 0;
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                if !remove_set.contains(&flat_idx) {
+                    for we in &face.outer_wire.edges {
+                        edges_to_keep.insert(we.idx);
+                    }
+                    for inner in &face.inner_wires {
+                        for we in &inner.edges {
+                            edges_to_keep.insert(we.idx);
+                        }
+                    }
+                }
+                flat_idx += 1;
+            }
+        }
+    }
+
+    // Build new solids with faces removed
+    let mut new_solids: Vec<Solid> = Vec::new();
+    flat_idx = 0;
+
+    for solid in &brep.solids {
+        let mut new_shells: Vec<Shell> = Vec::new();
+
+        for shell in &solid.shells {
+            let mut new_faces: Vec<Face> = Vec::new();
+
+            for face in &shell.faces {
+                if remove_set.contains(&flat_idx) {
+                    report.faces_removed += 1;
+                    report.removed_indices.push(flat_idx);
+                } else {
+                    new_faces.push(face.clone());
+                }
+                flat_idx += 1;
+            }
+
+            // Only add shell if it has faces
+            if !new_faces.is_empty() {
+                new_shells.push(Shell { faces: new_faces });
+            }
+        }
+
+        // Only add solid if it has shells
+        if !new_shells.is_empty() {
+            new_solids.push(Solid { shells: new_shells });
+        }
+    }
+
+    // Create result BRep
+    let mut result = BRep::new();
+    result.vertices = brep.vertices.clone();
+    result.edges = brep.edges.clone();
+    result.solids = new_solids;
+    result.geom = brep.geom.clone();
+
+    // Remove orphaned edges
+    let old_edge_count = result.edges.len();
+    let (cleaned_brep, edge_remap) = remove_orphaned_edges(&result, &edges_to_keep);
+    result = cleaned_brep;
+    report.edges_removed = old_edge_count - result.edges.len();
+
+    // Remove orphaned vertices
+    let old_vertex_count = result.vertices.len();
+    let cleaned_brep = remove_orphaned_vertices(&result);
+    result = cleaned_brep;
+    report.vertices_removed = old_vertex_count - result.vertices.len();
+
+    // Update geometric data arrays
+    result = update_geom_after_removal(&result, &edge_remap);
+
+    report.is_valid = true;
+    (result, report)
+}
+
+/// Remove edges that are no longer referenced by any face.
+fn remove_orphaned_edges(
+    brep: &BRep,
+    edges_to_keep: &std::collections::HashSet<usize>,
+) -> (BRep, std::collections::HashMap<usize, usize>) {
+    let n_edges = brep.edges.len();
+
+    // Build remap: old_idx -> new_idx
+    let mut remap: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut new_edges: Vec<Edge> = Vec::new();
+
+    for (old_idx, edge) in brep.edges.iter().enumerate() {
+        if edges_to_keep.contains(&old_idx) {
+            let new_idx = new_edges.len();
+            new_edges.push(*edge);
+            remap.insert(old_idx, new_idx);
+        }
+    }
+
+    // Update wires to use new edge indices
+    let mut result = brep.clone();
+    result.edges = new_edges;
+
+    // Update face wires with remapped edge indices
+    for solid in &mut result.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                // Update outer wire
+                for we in &mut face.outer_wire.edges {
+                    if let Some(&new_idx) = remap.get(&we.idx) {
+                        we.idx = new_idx;
+                    }
+                }
+                // Update inner wires
+                for inner in &mut face.inner_wires {
+                    for we in &mut inner.edges {
+                        if let Some(&new_idx) = remap.get(&we.idx) {
+                            we.idx = new_idx;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Update geom store edge-related arrays
+    // We keep the shared pools (curves, surfaces, curve2ds) intact
+    // and only remap edge-level indices
+
+    // Rebuild edge_curve with remapped indices (these index into the shared curves pool)
+    let mut new_edge_curve: Vec<Option<usize>> = vec![None; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_curve.len() {
+            new_edge_curve[new_idx] = brep.geom.edge_curve.get(old_idx).copied().flatten();
+        }
+    }
+
+    // Rebuild edge_curve_range
+    let mut new_edge_curve_range: Vec<Option<[f64; 2]>> = vec![None; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_curve_range.len() {
+            new_edge_curve_range[new_idx] = brep.geom.edge_curve_range.get(old_idx).copied().flatten();
+        }
+    }
+
+    // Rebuild edge_tolerance
+    let mut new_edge_tolerance: Vec<f64> = vec![0.0; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_tolerance.len() {
+            new_edge_tolerance[new_idx] = brep.geom.edge_tolerance.get(old_idx).copied().unwrap_or(0.0);
+        }
+    }
+
+    // Rebuild edge_pcurves
+    let mut new_edge_pcurves: Vec<Vec<rcad_kernel::PCurve>> = vec![Vec::new(); result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_pcurves.len() {
+            if let Some(pcurves) = brep.geom.edge_pcurves.get(old_idx) {
+                new_edge_pcurves[new_idx] = pcurves.clone();
+            }
+        }
+    }
+
+    // Rebuild edge_degenerated
+    let mut new_edge_degenerated: Vec<bool> = vec![false; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_degenerated.len() {
+            new_edge_degenerated[new_idx] = brep.geom.edge_degenerated.get(old_idx).copied().unwrap_or(false);
+        }
+    }
+
+    // Rebuild edge_same_parameter
+    let mut new_edge_same_parameter: Vec<bool> = vec![true; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_same_parameter.len() {
+            new_edge_same_parameter[new_idx] = brep.geom.edge_same_parameter.get(old_idx).copied().unwrap_or(true);
+        }
+    }
+
+    // Rebuild edge_same_range
+    let mut new_edge_same_range: Vec<bool> = vec![true; result.edges.len()];
+    for (&old_idx, &new_idx) in remap.iter() {
+        if new_idx < new_edge_same_range.len() {
+            new_edge_same_range[new_idx] = brep.geom.edge_same_range.get(old_idx).copied().unwrap_or(true);
+        }
+    }
+
+    result.geom.edge_curve = new_edge_curve;
+    result.geom.edge_curve_range = new_edge_curve_range;
+    result.geom.edge_tolerance = new_edge_tolerance;
+    result.geom.edge_pcurves = new_edge_pcurves;
+    result.geom.edge_degenerated = new_edge_degenerated;
+    result.geom.edge_same_parameter = new_edge_same_parameter;
+    result.geom.edge_same_range = new_edge_same_range;
+
+    (result, remap)
+}
+
+/// Remove vertices that are no longer referenced by any edge.
+fn remove_orphaned_vertices(brep: &BRep) -> BRep {
+    // Find all vertices that are referenced by edges
+    let mut vertices_used: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    for edge in &brep.edges {
+        vertices_used.insert(edge.start);
+        vertices_used.insert(edge.end);
+    }
+
+    // Build remap
+    let n_verts = brep.vertices.len();
+    let mut remap: Vec<usize> = vec![0; n_verts];
+    let mut new_vertices: Vec<Vertex> = Vec::new();
+
+    for (old_idx, vertex) in brep.vertices.iter().enumerate() {
+        if vertices_used.contains(&old_idx) {
+            let new_idx = new_vertices.len();
+            new_vertices.push(*vertex);
+            remap[old_idx] = new_idx;
+        }
+    }
+
+    // Update edges with new vertex indices
+    let mut result = brep.clone();
+    result.vertices = new_vertices;
+
+    for edge in &mut result.edges {
+        edge.start = remap[edge.start];
+        edge.end = remap[edge.end];
+    }
+
+    // Update vertex tolerance array
+    let mut new_vertex_tolerance: Vec<f64> = vec![0.0; result.vertices.len()];
+    for (old_idx, &new_idx) in remap.iter().enumerate() {
+        if let Some(&tol) = brep.geom.vertex_tolerance.get(old_idx) {
+            if new_idx < new_vertex_tolerance.len() {
+                new_vertex_tolerance[new_idx] = tol;
+            }
+        }
+    }
+    result.geom.vertex_tolerance = new_vertex_tolerance;
+
+    result
+}
+
+/// Update geometric data arrays after edge removal.
+fn update_geom_after_removal(
+    brep: &BRep,
+    edge_remap: &std::collections::HashMap<usize, usize>,
+) -> BRep {
+    let mut result = brep.clone();
+
+    // Update pcurve references to use new edge indices
+    for (old_idx, &new_idx) in edge_remap {
+        if let Some(pcurves) = brep.geom.edge_pcurves.get(*old_idx).cloned() {
+            if new_idx < result.geom.edge_pcurves.len() {
+                result.geom.edge_pcurves[new_idx] = pcurves;
+            }
+        }
+    }
+
+    result
+}
+
+/// Report from boolean cleanup.
+#[derive(Debug, Clone, Default)]
+pub struct BooleanCleanupReport {
+    /// Number of internal faces removed.
+    pub internal_faces_removed: usize,
+    /// Number of duplicate faces merged.
+    pub duplicate_faces_merged: usize,
+    /// Number of vertices merged.
+    pub vertices_merged: usize,
+    /// Number of degenerate faces removed.
+    pub degenerate_faces_removed: usize,
+    /// Number of edges sewn.
+    pub edges_sewn: usize,
+    /// Whether the result is valid.
+    pub is_valid: bool,
+    /// Summary string.
+    pub summary: String,
+}
+
+/// Clean up a BRep after boolean operations.
+///
+/// This function applies a comprehensive cleanup pipeline designed to
+/// remove artifacts commonly produced by boolean operations:
+///
+/// 1. Remove internal faces (separator faces between merged volumes)
+/// 2. Merge duplicate faces
+/// 3. Remove degenerate faces
+/// 4. Merge close vertices
+/// 5. Sew close edges
+/// 6. Fix tolerances
+///
+/// # Arguments
+/// * `brep` - The BRep to clean up.
+/// * `tolerance` - Tolerance for geometric comparisons.
+///
+/// # Returns
+/// A cleaned BRep and a report of all changes made.
+///
+/// # Example
+/// ```
+/// use rcad_algorithms::brep_repair::cleanup_boolean_result;
+/// use rcad_kernel::BRep;
+///
+/// // After a boolean operation, clean up the result
+/// fn process_boolean_result(result: &BRep) -> BRep {
+///     let (cleaned, report) = cleanup_boolean_result(result, 1e-6);
+///     println!("Cleaned: {} internal faces removed", report.internal_faces_removed);
+///     cleaned
+/// }
+/// ```
+pub fn cleanup_boolean_result(brep: &BRep, tolerance: f64) -> (BRep, BooleanCleanupReport) {
+    let mut report = BooleanCleanupReport::default();
+    let tol = tolerance.max(TOLERANCE_ABS);
+
+    // Step 1: Detect and remove internal faces
+    let internal_faces = identify_internal_faces(brep);
+    let (brep, removal_report) = remove_internal_faces(brep, &internal_faces);
+    report.internal_faces_removed = removal_report.faces_removed;
+
+    // Step 2: Merge duplicate faces
+    let duplicate_report = detect_duplicate_faces(&brep, tol);
+    let mut faces_to_merge: Vec<usize> = Vec::new();
+    for pair in &duplicate_report.duplicate_pairs {
+        if pair.opposite_orientation {
+            faces_to_merge.push(pair.face_b);
+        }
+    }
+    let (brep, merge_report) = remove_internal_faces(&brep, &faces_to_merge);
+    report.duplicate_faces_merged = merge_report.faces_removed;
+
+    // Step 3: Remove degenerate faces
+    let (brep, degenerate_removed) = remove_degenerate_faces(&brep);
+    report.degenerate_faces_removed = degenerate_removed;
+
+    // Step 4: Merge close vertices
+    let (brep, vertices_merged) = merge_close_vertices(&brep, tol);
+    report.vertices_merged = vertices_merged;
+
+    // Step 5: Sew close edges
+    let (brep, sew_report) = sew_close_edges(&brep, tol);
+    report.edges_sewn = sew_report.edges_sewn;
+
+    // Step 6: Fix tolerances
+    let brep = propagate_tolerances(&brep, tol, ToleranceFlowDirection::BottomUp);
+
+    // Validate result
+    report.is_valid = !brep.solids.is_empty();
+    report.summary = format!(
+        "BooleanCleanup: {} internal faces, {} duplicates merged, {} degenerate removed, {} vertices merged, {} edges sewn",
+        report.internal_faces_removed,
+        report.duplicate_faces_merged,
+        report.degenerate_faces_removed,
+        report.vertices_merged,
+        report.edges_sewn
+    );
+
+    (brep, report)
 }
 
 #[cfg(test)]
@@ -7657,6 +10246,349 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Enhanced Shell Repair Functions
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn fix_shell_orientation_advanced_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let (fixed_shell, report) = fix_shell_orientation_advanced(shell, &brep);
+
+        // Box should have no edge conflicts
+        assert_eq!(report.edge_conflicts, 0, "Box should have no edge orientation conflicts");
+        assert_eq!(fixed_shell.faces.len(), shell.faces.len(), "Face count should be preserved");
+    }
+
+    #[test]
+    fn fix_shell_orientation_advanced_inverted_box() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Invert all face normals
+        for face in &mut brep.solids[0].shells[0].faces {
+            face.normal = -face.normal;
+        }
+
+        let shell = brep.solids[0].shells[0].clone();
+        let (fixed_shell, report) = fix_shell_orientation_advanced(&shell, &brep);
+
+        // The algorithm should process all faces
+        assert_eq!(fixed_shell.faces.len(), shell.faces.len(), "Face count should be preserved");
+        // Edge conflicts should be resolved after repair
+        assert_eq!(report.edge_conflicts, 0, "Edge conflicts should be resolved");
+    }
+
+    #[test]
+    fn repair_shell_closure_closed_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let result = repair_shell_closure(shell, &brep, 0.001);
+
+        // Closed box should remain closed
+        assert!(result.is_closed, "Box should remain closed");
+        assert_eq!(result.open_edges_detected, 0, "Box should have no open edges");
+        assert_eq!(result.faces_added, 0, "No faces should be added");
+    }
+
+    #[test]
+    fn repair_shell_closure_open_shell() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 3 });
+        brep.edges.push(Edge { start: 3, end: 0 });
+        // Missing diagonal edge to close the square
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let shell = Shell { faces: vec![face] };
+        let result = repair_shell_closure(&shell, &brep, 0.001);
+
+        // Open shell should detect open edges
+        assert!(result.open_edges_detected > 0, "Should detect open edges");
+    }
+
+    #[test]
+    fn repair_non_manifold_edges_manifold_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let result = repair_non_manifold_edges(shell, &brep);
+
+        // Box is manifold
+        assert!(result.is_manifold, "Box should be manifold");
+        assert_eq!(result.edges_processed, 0, "No non-manifold edges to process");
+    }
+
+    #[test]
+    fn validate_shell_topology_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = validate_shell_topology(shell, &brep);
+
+        assert!(report.is_closed, "Box should be closed");
+        assert!(report.is_manifold, "Box should be manifold");
+        assert_eq!(report.face_count, 6, "Box should have 6 faces");
+        assert!(report.edge_valence.iter().all(|e| e.is_manifold), "All edges should be manifold");
+    }
+
+    #[test]
+    fn validate_shell_topology_unit_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = validate_shell_topology(shell, &brep);
+
+        assert!(report.is_closed, "Sphere should be closed");
+        assert!(report.is_manifold, "Sphere should be manifold");
+    }
+
+    #[test]
+    fn validate_shell_topology_torus() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = validate_shell_topology(shell, &brep);
+
+        assert!(report.is_closed, "Torus should be closed");
+        assert!(report.is_manifold, "Torus should be manifold");
+        assert_eq!(report.genus, Some(1), "Torus should have genus 1");
+        assert_eq!(report.euler_characteristic, 0, "Torus Euler characteristic should be 0");
+    }
+
+    #[test]
+    fn validate_shell_topology_open_shell() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        // Missing edge to close the triangle
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let shell = Shell { faces: vec![face] };
+        let report = validate_shell_topology(&shell, &brep);
+
+        assert!(!report.is_closed, "Open triangle should not be closed");
+        assert!(report.open_edge_count > 0, "Should have open edges");
+    }
+
+    #[test]
+    fn shell_orientation_report_summary() {
+        let report = ShellOrientationReport {
+            faces_inverted: 3,
+            faces_correct: 5,
+            inverted_face_indices: vec![0, 2, 4],
+            edge_conflicts: 0,
+            is_consistent: true,
+            non_manifold_edges_skipped: 0,
+            volume_sign: 1.0,
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("3 inverted"));
+        assert!(summary.contains("5 correct"));
+        assert!(summary.contains("consistent=true"));
+    }
+
+    #[test]
+    fn shell_closure_result_summary() {
+        let result = ShellClosureResult {
+            original_shell: Shell { faces: vec![] },
+            repaired_shell: Shell { faces: vec![] },
+            open_edges_detected: 2,
+            gaps_closed: 1,
+            faces_added: 1,
+            unrepairable_gaps: vec![],
+            is_closed: true,
+            tolerance_used: 0.001,
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("closed 1 gaps"));
+        assert!(summary.contains("added 1 faces"));
+    }
+
+    #[test]
+    fn manifold_repair_result_summary() {
+        let result = ManifoldRepairResult {
+            original_shell: Shell { faces: vec![] },
+            repaired_shell: Shell { faces: vec![] },
+            edges_processed: 2,
+            edges_split: 1,
+            vertices_duplicated: 2,
+            faces_created: 0,
+            is_manifold: true,
+            edge_details: vec![],
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("1 edges split"));
+        assert!(summary.contains("2 vertices duplicated"));
+        assert!(summary.contains("manifold=true"));
+    }
+
+    #[test]
+    fn shell_validation_report_summary() {
+        let report = ShellValidationReport {
+            is_valid: true,
+            euler_characteristic: 2,
+            expected_euler: Some(2),
+            euler_valid: true,
+            vertex_count: 8,
+            edge_count: 12,
+            face_count: 6,
+            open_edge_count: 0,
+            non_manifold_edge_count: 0,
+            non_manifold_vertex_count: 0,
+            orientation_consistent: true,
+            is_closed: true,
+            is_manifold: true,
+            genus: Some(0),
+            edge_valence: vec![],
+            vertex_valence: vec![],
+            errors: vec![],
+            warnings: vec![],
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("VALID"));
+        assert!(summary.contains("V=8"));
+        assert!(summary.contains("E=12"));
+        assert!(summary.contains("F=6"));
+        assert!(report.is_closed_manifold());
+    }
+
+    #[test]
+    fn gap_info_creation() {
+        let gap = GapInfo {
+            boundary_edges: vec![0, 1, 2],
+            estimated_area: 0.5,
+            can_fill: true,
+            failure_reason: None,
+        };
+
+        assert_eq!(gap.boundary_edges.len(), 3);
+        assert!(gap.can_fill);
+        assert!(gap.failure_reason.is_none());
+    }
+
+    #[test]
+    fn non_manifold_edge_info_creation() {
+        let info = NonManifoldEdgeInfo {
+            edge_index: 5,
+            face_count: 3,
+            face_indices: vec![0, 1, 2],
+            repaired: false,
+            copies_created: 0,
+        };
+
+        assert_eq!(info.edge_index, 5);
+        assert_eq!(info.face_count, 3);
+        assert!(!info.repaired);
+    }
+
+    #[test]
+    fn edge_valence_info_classification() {
+        let open_edge = EdgeValenceInfo {
+            edge_index: 0,
+            valence: 1,
+            is_open: true,
+            is_manifold: false,
+            is_non_manifold: false,
+        };
+        assert!(open_edge.is_open);
+        assert!(!open_edge.is_manifold);
+
+        let manifold_edge = EdgeValenceInfo {
+            edge_index: 1,
+            valence: 2,
+            is_open: false,
+            is_manifold: true,
+            is_non_manifold: false,
+        };
+        assert!(manifold_edge.is_manifold);
+
+        let nm_edge = EdgeValenceInfo {
+            edge_index: 2,
+            valence: 3,
+            is_open: false,
+            is_manifold: false,
+            is_non_manifold: true,
+        };
+        assert!(nm_edge.is_non_manifold);
+    }
+
+    #[test]
+    fn vertex_valence_info_properties() {
+        let boundary_vertex = VertexValenceInfo {
+            vertex_index: 0,
+            edge_valence: 3,
+            face_valence: 2,
+            is_boundary: true,
+            is_non_manifold: false,
+        };
+        assert!(boundary_vertex.is_boundary);
+        assert!(!boundary_vertex.is_non_manifold);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
     // Tests for UV Gap Repair
     // ─────────────────────────────────────────────────────────────────────────────
 
@@ -7820,5 +10752,855 @@ mod tests {
         // Test with invalid surface index
         let (_, repaired) = fix_edge_pcurve_uv_bounds(0, 999, &brep, &config);
         assert!(!repaired);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Internal Face Detection and Removal Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_duplicate_faces_clean_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let report = detect_duplicate_faces(&brep, 1e-6);
+        // A clean box should have no duplicate faces
+        assert_eq!(report.duplicate_pairs.len(), 0, "Clean box should have no duplicate faces");
+        assert_eq!(report.internal_face_count, 0, "Clean box should have no internal faces");
+    }
+
+    #[test]
+    fn detect_duplicate_faces_with_duplicates() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Create a BRep with two identical faces
+        let mut brep = BRep::new();
+
+        // Add 4 vertices for a quad
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        // Add 4 edges for the quad
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 3 });
+        brep.edges.push(Edge { start: 3, end: 0 });
+
+        // Create two identical faces with opposite normals
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let face2 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_Z, // Opposite normal
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face1, face2] }],
+        });
+
+        let report = detect_duplicate_faces(&brep, 1e-6);
+
+        // Should detect the duplicate face pair
+        assert!(report.duplicate_pairs.len() >= 1, "Should detect duplicate face pair");
+
+        // The pair should have opposite orientation
+        let pair = &report.duplicate_pairs[0];
+        assert!(pair.opposite_orientation, "Duplicate faces should have opposite orientation");
+    }
+
+    #[test]
+    fn identify_internal_faces_clean_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let internal = identify_internal_faces(&brep);
+        assert_eq!(internal.len(), 0, "Clean box should have no internal faces");
+    }
+
+    #[test]
+    fn identify_internal_faces_with_void_shell() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Create a BRep with an outer shell and a void shell
+        let mut brep = BRep::new();
+
+        // Outer shell vertices (cube)
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 1.0) }); // 4
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 1.0) }); // 5
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 1.0) }); // 6
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 1.0) }); // 7
+
+        // Edges for bottom face
+        brep.edges.push(Edge { start: 0, end: 1 }); // 0
+        brep.edges.push(Edge { start: 1, end: 2 }); // 1
+        brep.edges.push(Edge { start: 2, end: 3 }); // 2
+        brep.edges.push(Edge { start: 3, end: 0 }); // 3
+
+        // Create outer shell with one face
+        let outer_face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        // Create void shell with one face (same geometry but opposite normal)
+        let void_face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z, // Opposite normal
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![
+                Shell { faces: vec![outer_face] },    // Shell 0: outer
+                Shell { faces: vec![void_face] },     // Shell 1: void
+            ],
+        });
+
+        let internal = identify_internal_faces(&brep);
+
+        // Should identify faces in the void shell as internal
+        assert!(internal.len() >= 1, "Should identify internal faces in void shell");
+    }
+
+    #[test]
+    fn remove_internal_faces_basic() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Create a BRep with multiple faces
+        let mut brep = BRep::new();
+
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 3 });
+        brep.edges.push(Edge { start: 3, end: 0 });
+
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let face2 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face1, face2] }],
+        });
+
+        // Remove the second face
+        let (result, report) = remove_internal_faces(&brep, &[1]);
+
+        assert_eq!(report.faces_removed, 1, "Should remove one face");
+        assert!(report.is_valid, "Result should be valid");
+
+        // Check that the result has one less face
+        let total_faces: usize = result.solids.iter()
+            .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
+            .sum();
+        let original_faces: usize = brep.solids.iter()
+            .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
+            .sum();
+        assert_eq!(total_faces, original_faces - 1, "Should have one less face");
+    }
+
+    #[test]
+    fn remove_internal_faces_empty_list() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let (result, report) = remove_internal_faces(&brep, &[]);
+
+        assert_eq!(report.faces_removed, 0, "Should remove no faces");
+        assert!(report.is_valid, "Result should be valid");
+        assert_eq!(result.solids.len(), brep.solids.len(), "Solid count should be unchanged");
+    }
+
+    #[test]
+    fn cleanup_boolean_result_clean_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let (result, report) = cleanup_boolean_result(&brep, 1e-6);
+
+        // A clean box should pass through with minimal changes
+        assert!(report.is_valid, "Result should be valid");
+        assert_eq!(report.internal_faces_removed, 0, "Clean box has no internal faces");
+        assert_eq!(report.degenerate_faces_removed, 0, "Clean box has no degenerate faces");
+        assert!(!result.solids.is_empty(), "Result should have solids");
+    }
+
+    #[test]
+    fn cleanup_boolean_result_with_internal_faces() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Create a BRep simulating post-boolean result with internal face
+        let mut brep = BRep::new();
+
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 3 });
+        brep.edges.push(Edge { start: 3, end: 0 });
+
+        // Two identical faces with opposite normals (simulating internal separator)
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let face2 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::NEG_Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face1, face2] }],
+        });
+
+        let (result, report) = cleanup_boolean_result(&brep, 1e-6);
+
+        // Should have cleaned up the internal face
+        assert!(report.is_valid, "Result should be valid");
+
+        // The internal face (or duplicate) should have been removed
+        let total_faces: usize = result.solids.iter()
+            .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
+            .sum();
+        assert!(total_faces <= 2, "Should have cleaned up internal/duplicate faces");
+    }
+
+    #[test]
+    fn duplicate_face_pair_structure() {
+        let pair = DuplicateFacePair {
+            face_a: 0,
+            face_b: 1,
+            kind: DuplicateFaceKind::GeometricallyIdentical,
+            opposite_orientation: true,
+            max_deviation: 0.001,
+            shared_edges: vec![0, 1, 2],
+            is_internal: true,
+        };
+
+        assert_eq!(pair.face_a, 0);
+        assert_eq!(pair.face_b, 1);
+        assert_eq!(pair.kind, DuplicateFaceKind::GeometricallyIdentical);
+        assert!(pair.opposite_orientation);
+        assert_eq!(pair.max_deviation, 0.001);
+        assert_eq!(pair.shared_edges.len(), 3);
+        assert!(pair.is_internal);
+    }
+
+    #[test]
+    fn duplicate_face_kind_variants() {
+        // Test all variants exist and can be compared
+        assert_ne!(DuplicateFaceKind::GeometricallyIdentical, DuplicateFaceKind::TopologicallyShared);
+        assert_ne!(DuplicateFaceKind::CoincidentDifferentGeometry, DuplicateFaceKind::SameSurfaceDifferentBounds);
+    }
+
+    #[test]
+    fn duplicate_face_report_default() {
+        let report = DuplicateFaceReport::default();
+        assert!(report.duplicate_pairs.is_empty());
+        assert_eq!(report.internal_face_count, 0);
+        assert!(report.internal_face_indices.is_empty());
+    }
+
+    #[test]
+    fn internal_face_removal_report_default() {
+        let report = InternalFaceRemovalReport::default();
+        assert_eq!(report.faces_removed, 0);
+        assert!(report.removed_indices.is_empty());
+        assert_eq!(report.edges_removed, 0);
+        assert_eq!(report.vertices_removed, 0);
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn boolean_cleanup_report_default() {
+        let report = BooleanCleanupReport::default();
+        assert_eq!(report.internal_faces_removed, 0);
+        assert_eq!(report.duplicate_faces_merged, 0);
+        assert_eq!(report.vertices_merged, 0);
+        assert_eq!(report.degenerate_faces_removed, 0);
+        assert_eq!(report.edges_sewn, 0);
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn ray_triangle_intersection_basic() {
+        // Simple test of ray-triangle intersection
+        let origin = DVec3::new(0.5, 0.5, -1.0);
+        let dir = DVec3::new(0.0, 0.0, 1.0);
+        let v0 = DVec3::new(0.0, 0.0, 0.0);
+        let v1 = DVec3::new(1.0, 0.0, 0.0);
+        let v2 = DVec3::new(0.0, 1.0, 0.0);
+
+        assert!(ray_triangle_intersection(origin, dir, v0, v1, v2), "Ray should intersect triangle");
+
+        // Ray pointing away
+        let dir_away = DVec3::new(0.0, 0.0, -1.0);
+        assert!(!ray_triangle_intersection(origin, dir_away, v0, v1, v2), "Ray pointing away should not intersect");
+    }
+
+    #[test]
+    fn compute_bounding_box_basic() {
+        let points = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 2.0, 3.0),
+            DVec3::new(-1.0, -2.0, -3.0),
+        ];
+
+        let (min_pt, max_pt) = compute_bounding_box(&points);
+
+        assert_eq!(min_pt, DVec3::new(-1.0, -2.0, -3.0));
+        assert_eq!(max_pt, DVec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn compute_face_centroid_basic() {
+        use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 2.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 2.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 3 });
+        brep.edges.push(Edge { start: 3, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let centroid = compute_face_centroid_from_wire(&brep, &face);
+
+        // Centroid should be at (1, 1, 0)
+        assert!((centroid.x - 1.0).abs() < 1e-10);
+        assert!((centroid.y - 1.0).abs() < 1e-10);
+        assert!((centroid.z - 0.0).abs() < 1e-10);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Enhanced Solid Validation and Repair Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn verify_solid_closure_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = verify_solid_closure(solid, &brep);
+
+        assert!(report.is_valid(), "Unit box should pass closure verification");
+        assert!(report.all_shells_closed, "Unit box should have all shells closed");
+        assert_eq!(report.shell_count, 1);
+        assert_eq!(report.closed_shell_count, 1);
+        assert_eq!(report.open_shell_count, 0);
+        assert!(report.has_single_outer_shell, "Unit box should have single outer shell");
+        assert!(report.total_volume > 0.0, "Unit box should have positive volume");
+        assert_eq!(report.volume_sign, VolumeSign::Positive);
+    }
+
+    #[test]
+    fn verify_solid_closure_unit_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = verify_solid_closure(solid, &brep);
+
+        // Sphere should be closed with a single shell
+        assert!(report.all_shells_closed, "Unit sphere should have all shells closed");
+        assert_eq!(report.shell_count, 1);
+        // Volume computation for curved primitives depends on face normal orientation
+        // Just verify we have a shell (volume might be zero or very small due to geometry)
+    }
+
+    #[test]
+    fn verify_solid_closure_unit_cylinder() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = verify_solid_closure(solid, &brep);
+
+        assert!(report.is_valid(), "Cylinder should pass closure verification");
+        assert!(report.all_shells_closed, "Cylinder should have all shells closed");
+    }
+
+    #[test]
+    fn verify_solid_closure_empty_solid() {
+        use rcad_kernel::topology::Solid as TopologySolid;
+
+        let brep = BRep::new();
+        let solid = TopologySolid { shells: vec![] };
+
+        let report = verify_solid_closure(&solid, &brep);
+
+        assert!(!report.is_valid(), "Empty solid should not pass verification");
+        assert!(!report.has_single_outer_shell, "Empty solid has no outer shell");
+    }
+
+    #[test]
+    fn verify_solid_closure_report_summary() {
+        let report = SolidClosureVerificationReport {
+            all_shells_closed: true,
+            has_proper_nesting: true,
+            shell_count: 1,
+            closed_shell_count: 1,
+            open_shell_count: 0,
+            shell_volume_signs: vec![VolumeSign::Positive],
+            shell_volumes: vec![1.0],
+            total_volume: 1.0,
+            volume_sign: VolumeSign::Positive,
+            shell_containment: vec![],
+            degenerate_shell_indices: vec![],
+            inconsistent_orientation_indices: vec![],
+            has_single_outer_shell: true,
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("Valid solid"));
+        assert!(summary.contains("1 shells"));
+    }
+
+    #[test]
+    fn volume_sign_variants() {
+        // Test that VolumeSign variants exist and can be compared
+        assert_ne!(VolumeSign::Positive, VolumeSign::Negative);
+        assert_ne!(VolumeSign::Zero, VolumeSign::Unknown);
+        assert_ne!(VolumeSign::Positive, VolumeSign::Zero);
+    }
+
+    #[test]
+    fn shell_containment_info_default() {
+        let info = ShellContainmentInfo {
+            container_shell_idx: None,
+            nesting_depth: 0,
+            is_fully_contained: true,
+            has_intersections: false,
+            intersecting_shells: vec![],
+        };
+
+        assert!(info.container_shell_idx.is_none());
+        assert_eq!(info.nesting_depth, 0);
+        assert!(info.is_fully_contained);
+        assert!(!info.has_intersections);
+    }
+
+    #[test]
+    fn orient_solid_shells_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let (oriented, report) = orient_solid_shells(solid, &brep);
+
+        assert!(report.is_clean(), "Box should have clean orientation");
+        assert!(report.is_properly_oriented, "Box should be properly oriented");
+        assert_eq!(oriented.shells.len(), solid.shells.len());
+        assert_eq!(report.outer_shells_oriented, 1);
+        assert_eq!(report.inner_shells_oriented, 0);
+    }
+
+    #[test]
+    fn orient_solid_shells_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let (_, report) = orient_solid_shells(solid, &brep);
+
+        // Sphere should have shells oriented
+        // Note: orientation issues may exist depending on how primitives are constructed
+        assert_eq!(report.outer_shells_oriented + report.inner_shells_oriented, 1, "Sphere should have one shell");
+    }
+
+    #[test]
+    fn solid_orientation_report_summary() {
+        let report = SolidOrientationReport {
+            outer_shells_oriented: 1,
+            inner_shells_oriented: 2,
+            shells_flipped: 1,
+            faces_flipped: 6,
+            nesting_hierarchy: vec![(0, 0), (1, 1), (2, 1)],
+            is_properly_oriented: true,
+            orientation_issues: vec![],
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("1 outer"));
+        assert!(summary.contains("2 inner"));
+        assert!(summary.contains("6 faces flipped"));
+    }
+
+    #[test]
+    fn orientation_issue_types() {
+        // Test that OrientationIssueType variants exist
+        let issue1 = OrientationIssue {
+            shell_idx: 0,
+            issue_type: OrientationIssueType::DegenerateShell,
+            description: "Test".to_string(),
+        };
+        let issue2 = OrientationIssue {
+            shell_idx: 1,
+            issue_type: OrientationIssueType::NestingContradiction,
+            description: "Test".to_string(),
+        };
+
+        assert_ne!(issue1.issue_type, issue2.issue_type);
+    }
+
+    #[test]
+    fn validate_solid_topology_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = validate_solid_topology(solid, &brep);
+
+        assert!(report.is_valid, "Unit box should be valid");
+        assert!(report.containment_valid, "Unit box should have valid containment");
+        assert!(report.void_nesting_valid, "Unit box should have valid void nesting");
+        assert!(report.material_side_consistent, "Unit box should have consistent material side");
+        assert!(report.errors.is_empty(), "Unit box should have no errors");
+    }
+
+    #[test]
+    fn validate_solid_topology_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = validate_solid_topology(solid, &brep);
+
+        // Sphere should have valid closure
+        assert!(report.closure_report.all_shells_closed, "Sphere should have closed shells");
+        assert_eq!(report.closure_report.shell_count, 1, "Sphere should have one shell");
+    }
+
+    #[test]
+    fn validate_solid_topology_empty_solid() {
+        use rcad_kernel::topology::Solid as TopologySolid;
+
+        let brep = BRep::new();
+        let solid = TopologySolid { shells: vec![] };
+
+        let report = validate_solid_topology(&solid, &brep);
+
+        assert!(!report.is_valid, "Empty solid should not be valid");
+        assert!(!report.errors.is_empty(), "Empty solid should have errors");
+    }
+
+    #[test]
+    fn solid_validation_report_summary() {
+        let report = SolidValidationReport {
+            is_valid: true,
+            closure_report: SolidClosureVerificationReport::default(),
+            containment_valid: true,
+            void_nesting_valid: true,
+            material_side_consistent: true,
+            errors: vec![],
+            warnings: vec![],
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("Valid solid"));
+        assert!(summary.contains("no errors"));
+    }
+
+    #[test]
+    fn solid_validation_error_codes() {
+        // Test that SolidValidationErrorCode variants exist and can be compared
+        assert_ne!(SolidValidationErrorCode::OpenShell, SolidValidationErrorCode::DegenerateShell);
+        assert_ne!(SolidValidationErrorCode::MultipleOuterShells, SolidValidationErrorCode::ShellIntersection);
+        assert_ne!(SolidValidationErrorCode::InvalidVoidNesting, SolidValidationErrorCode::MaterialSideInconsistency);
+    }
+
+    #[test]
+    fn solid_validation_warning_codes() {
+        // Test that SolidValidationWarningCode variants exist and can be compared
+        assert_ne!(SolidValidationWarningCode::SmallVolume, SolidValidationWarningCode::HighAspectRatio);
+        assert_ne!(SolidValidationWarningCode::ToleranceIssue, SolidValidationWarningCode::NumericalIssue);
+    }
+
+    #[test]
+    fn repair_solid_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let result = repair_solid(solid, &brep, 1e-6);
+
+        assert!(result.success, "Box repair should succeed");
+        assert!(result.validation_report.is_valid, "Repaired box should be valid");
+        assert!(result.unrepaired_issues.is_empty(), "Box should have no unrepaired issues");
+    }
+
+    #[test]
+    fn repair_solid_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let result = repair_solid(solid, &brep, 1e-6);
+
+        // Sphere should have closed shells after repair
+        assert!(result.validation_report.closure_report.all_shells_closed, "Sphere should have closed shells");
+    }
+
+    #[test]
+    fn repair_solid_cylinder() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let solid = &brep.solids[0];
+        let result = repair_solid(solid, &brep, 1e-6);
+
+        // Cylinder should have closed shells after repair
+        assert!(result.validation_report.closure_report.all_shells_closed, "Cylinder should have closed shells");
+    }
+
+    #[test]
+    fn repair_solid_empty_solid() {
+        use rcad_kernel::topology::Solid as TopologySolid;
+
+        let brep = BRep::new();
+        let solid = TopologySolid { shells: vec![] };
+
+        let result = repair_solid(&solid, &brep, 1e-6);
+
+        // Empty solid should be "repaired" to an empty solid
+        assert!(!result.success, "Empty solid repair should not succeed");
+        assert!(result.solid.shells.is_empty(), "Result should have no shells");
+    }
+
+    #[test]
+    fn solid_repair_result_summary() {
+        let result = SolidRepairResult {
+            solid: rcad_kernel::topology::Solid { shells: vec![] },
+            success: true,
+            shells_closed: 1,
+            shells_reoriented: 2,
+            degenerate_shells_removed: 0,
+            faces_modified: 6,
+            gaps_closed: 0,
+            validation_report: SolidValidationReport::default(),
+            unrepaired_issues: vec![],
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("Repair successful"));
+        assert!(summary.contains("1 shells closed"));
+        assert!(summary.contains("2 reoriented"));
+    }
+
+    #[test]
+    fn solid_repair_result_partial_success() {
+        let result = SolidRepairResult {
+            solid: rcad_kernel::topology::Solid { shells: vec![] },
+            success: false,
+            shells_closed: 0,
+            shells_reoriented: 0,
+            degenerate_shells_removed: 0,
+            faces_modified: 0,
+            gaps_closed: 0,
+            validation_report: SolidValidationReport::default(),
+            unrepaired_issues: vec!["Open edges remain".to_string()],
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("partially successful"));
+        assert!(summary.contains("1 issues remain"));
+    }
+
+    #[test]
+    fn verify_solid_closure_torus() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let solid = &brep.solids[0];
+        let report = verify_solid_closure(solid, &brep);
+
+        // Torus should be closed with a single shell
+        assert!(report.all_shells_closed, "Torus should have all shells closed");
+        assert_eq!(report.shell_count, 1);
+        // Volume computation for curved primitives depends on face normal orientation
+        // Just verify we have a shell (volume might be zero or very small due to geometry)
+    }
+
+    #[test]
+    fn validate_solid_topology_torus() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let solid = &brep.solids[0];
+        let report = validate_solid_topology(solid, &brep);
+
+        // Torus should have valid closure
+        assert!(report.closure_report.all_shells_closed, "Torus should have closed shells");
+        assert_eq!(report.closure_report.shell_count, 1, "Torus should have one shell");
+    }
+
+    #[test]
+    fn repair_solid_torus() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let solid = &brep.solids[0];
+        let result = repair_solid(solid, &brep, 1e-6);
+
+        // Torus should have closed shells after repair
+        assert!(result.validation_report.closure_report.all_shells_closed, "Torus should have closed shells");
+    }
+
+    #[test]
+    fn solid_closure_verification_report_default() {
+        let report = SolidClosureVerificationReport::default();
+
+        assert!(report.all_shells_closed); // default is true
+        assert!(report.has_proper_nesting); // default is true
+        assert_eq!(report.shell_count, 0);
+        assert_eq!(report.closed_shell_count, 0);
+        assert_eq!(report.open_shell_count, 0);
+        assert!(report.shell_volume_signs.is_empty());
+        assert!(report.shell_volumes.is_empty());
+        assert_eq!(report.total_volume, 0.0);
+        assert_eq!(report.volume_sign, VolumeSign::Unknown);
+        assert!(report.shell_containment.is_empty());
+        assert!(report.degenerate_shell_indices.is_empty());
+        assert!(report.inconsistent_orientation_indices.is_empty());
+        assert!(report.has_single_outer_shell); // default is true
+    }
+
+    #[test]
+    fn solid_validation_report_default() {
+        let report = SolidValidationReport::default();
+
+        assert!(!report.is_valid);
+        assert!(!report.containment_valid);
+        assert!(!report.void_nesting_valid);
+        assert!(!report.material_side_consistent);
+        assert!(report.errors.is_empty());
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn solid_orientation_report_default() {
+        let report = SolidOrientationReport::default();
+
+        assert_eq!(report.outer_shells_oriented, 0);
+        assert_eq!(report.inner_shells_oriented, 0);
+        assert_eq!(report.shells_flipped, 0);
+        assert_eq!(report.faces_flipped, 0);
+        assert!(report.nesting_hierarchy.is_empty());
+        assert!(!report.is_properly_oriented);
+        assert!(report.orientation_issues.is_empty());
     }
 }

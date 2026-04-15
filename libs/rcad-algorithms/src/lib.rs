@@ -99,6 +99,11 @@ pub use brep_repair::{
     // UV Gap Repair
     UvGapRepairConfig, UvGapRepairReport, UnrepairedGap, GapRepairFailureReason,
     fix_uv_gaps, fix_all_uv_gaps, fix_edge_pcurve_uv_bounds,
+    // Enhanced Shell Repair (ShapeFix_Shell extensions)
+    ShellOrientationReport, ShellClosureResult, GapInfo,
+    ManifoldRepairResult, NonManifoldEdgeInfo,
+    ShellValidationReport, EdgeValenceInfo, VertexValenceInfo,
+    fix_shell_orientation_advanced, repair_shell_closure, repair_non_manifold_edges, validate_shell_topology,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
@@ -220,6 +225,15 @@ pub use shape_analysis::{
     analyze_face,
     // Full BRep analysis
     BRepAnalysisReport, analyze_brep,
+    // Enhanced ShapeAnalysis_Surface equivalent
+    SurfaceBoundsAnalysis, OverTrimmedRegion, UnderTrimmedRegion,
+    analyze_surface_bounds_for_face,
+    UvConsistencyReport as FaceUvConsistencyReport,
+    ParamRangeIssue, UvFlipIssue, UvFlipType, SeamEdgeIssue,
+    check_face_uv_consistency_by_idx,
+    SurfaceDeviation, ToleranceViolation,
+    compute_surface_deviation,
+    detect_surface_self_intersection,
 };
 pub use shape_custom::{
     BSplineSimplifyOptions, SimplificationResult,
