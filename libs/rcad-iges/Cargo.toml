@@ -1,0 +1,13 @@
+[package]
+name = "rcad-iges"
+version = "0.1.0"
+edition = "2021"
+description = "IGES B-Rep parsing and writing support for RCAD"
+
+[dependencies]
+rcad-kernel = { path = "../rcad-kernel" }
+glam.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }

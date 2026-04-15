@@ -351,6 +351,24 @@ pub struct StepDocumentMetadata {
     pub fea_loads: Vec<StepFeaLoad>,
     /// FEA node groups (AP242 FEA_NODE_GROUP).
     pub fea_node_groups: Vec<StepFeaNodeGroup>,
+    /// View definitions (AP242 VIEW, CAMERA_MODEL_D3).
+    pub views: Vec<StepView>,
+    /// Camera models (AP242 CAMERA_MODEL_D3).
+    pub cameras: Vec<StepCameraModelD3>,
+    /// View volumes (AP242 VIEW_VOLUME).
+    pub view_volumes: Vec<StepViewVolume>,
+    /// Notes/annotations (AP242 ANNOTATION).
+    pub notes: Vec<StepNote>,
+    /// Annotation planes (AP242 ANNOTATION_PLANE).
+    pub annotation_planes: Vec<StepAnnotationPlane>,
+    /// Annotation occurrences (AP242 ANNOTATION_OCCURRENCE).
+    pub annotation_occurrences: Vec<StepAnnotationOccurrence>,
+    /// Dimension curves (AP242 DIMENSION_CURVE).
+    pub dimension_curves: Vec<StepDimensionCurve>,
+    /// Terminator symbols (AP242 TERMINATOR_SYMBOL).
+    pub terminator_symbols: Vec<StepTerminatorSymbol>,
+    /// Datum feature callouts (AP242 DATUM_FEATURE_CALLOUT).
+    pub datum_feature_callouts: Vec<StepDatumFeatureCallout>,
 }
 
 impl StepDocumentMetadata {
@@ -397,6 +415,15 @@ impl StepDocumentMetadata {
         lines.push(format!("FEA boundary conditions: {}", self.fea_boundary_conditions.len()));
         lines.push(format!("FEA loads: {}", self.fea_loads.len()));
         lines.push(format!("FEA node groups: {}", self.fea_node_groups.len()));
+        lines.push(format!("Views: {}", self.views.len()));
+        lines.push(format!("Cameras: {}", self.cameras.len()));
+        lines.push(format!("View volumes: {}", self.view_volumes.len()));
+        lines.push(format!("Notes: {}", self.notes.len()));
+        lines.push(format!("Annotation planes: {}", self.annotation_planes.len()));
+        lines.push(format!("Annotation occurrences: {}", self.annotation_occurrences.len()));
+        lines.push(format!("Dimension curves: {}", self.dimension_curves.len()));
+        lines.push(format!("Terminator symbols: {}", self.terminator_symbols.len()));
+        lines.push(format!("Datum feature callouts: {}", self.datum_feature_callouts.len()));
         lines.join("\n")
     }
 }
@@ -981,6 +1008,188 @@ pub struct StepPropertyDefinition {
     pub general_property_name: Option<String>,
     /// Linked GENERAL_PROPERTY description when resolvable.
     pub general_property_description: Option<String>,
+}
+
+// ── View and Camera entities (AP242) ─────────────────────────────────────────
+
+/// A view definition (AP242 VIEW, CAMERA_MODEL_D3, etc.).
+///
+/// Analogous to `XCAFView` / `XCAFDoc_ViewTool` in OCCT.
+/// Represents a named view with associated camera model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepView {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Reference to the camera model (CAMERA_MODEL_D3 or similar).
+    pub camera_model_id: Option<u64>,
+    /// View type (e.g., "front", "top", "isometric", "section").
+    pub view_type: Option<String>,
+}
+
+/// A camera model (AP242 CAMERA_MODEL_D3).
+///
+/// Defines the camera position, orientation, and projection parameters.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepCameraModel {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to the view volume.
+    pub view_volume_id: Option<u64>,
+    /// Reference to the perspective camera model (if perspective projection).
+    pub perspective_of_volume_id: Option<u64>,
+}
+
+/// A 3D camera model (AP242 CAMERA_MODEL_D3).
+///
+/// Provides complete camera definition including position and orientation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepCameraModelD3 {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to AXIS2_PLACEMENT_3D defining camera position and orientation.
+    pub view_reference_system_id: Option<u64>,
+    /// Reference to the view volume.
+    pub view_volume_id: Option<u64>,
+    /// Whether this is perspective projection (true) or orthographic (false).
+    pub perspective: bool,
+}
+
+/// A view volume (AP242 VIEW_VOLUME).
+///
+/// Defines the viewing frustum or orthographic view bounds.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepViewVolume {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// View volume type: orthographic or perspective.
+    pub volume_type: ViewVolumeType,
+    /// The point being viewed (center of interest).
+    pub view_center: Option<[f64; 3]>,
+    /// Distance from camera to view plane.
+    pub view_plane_distance: Option<f64>,
+    /// Up direction vector.
+    pub up_direction: Option<[f64; 3]>,
+    /// Width of view window (for orthographic).
+    pub view_window_width: Option<f64>,
+    /// Height of view window (for orthographic).
+    pub view_window_height: Option<f64>,
+}
+
+/// View volume projection type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ViewVolumeType {
+    /// Orthographic (parallel) projection.
+    Orthographic,
+    /// Perspective projection.
+    Perspective,
+    /// Unknown or unspecified type.
+    Unknown,
+}
+
+// ── Annotation and Note entities (AP242) ─────────────────────────────────────
+
+/// A note/annotation entity (AP242 ANNOTATION).
+///
+/// Analogous to `XCAFNoteObjects` / `XCAFDoc_NoteTool` in OCCT.
+/// Represents a textual or graphical annotation on the model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepNote {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// The annotation text content.
+    pub text: Option<String>,
+    /// Reference to the annotation plane.
+    pub annotation_plane_id: Option<u64>,
+    /// Reference to associated geometry.
+    pub associated_geometry_id: Option<u64>,
+}
+
+/// An annotation plane (AP242 ANNOTATION_PLANE).
+///
+/// Defines the plane on which annotations are placed.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepAnnotationPlane {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to AXIS2_PLACEMENT_3D defining the plane.
+    pub plane_id: Option<u64>,
+    /// Reference to associated annotation occurrence.
+    pub annotation_occurrence_id: Option<u64>,
+}
+
+/// An annotation occurrence (AP242 ANNOTATION_OCCURRENCE).
+///
+/// Represents a specific instance of an annotation in the model.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepAnnotationOccurrence {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to the annotation style.
+    pub style_id: Option<u64>,
+    /// Reference to the annotation fill area.
+    pub fill_area_id: Option<u64>,
+    /// Reference to the defining shape aspect.
+    pub shape_aspect_id: Option<u64>,
+}
+
+/// A dimension curve (AP242 DIMENSION_CURVE).
+///
+/// Represents a dimension line annotation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDimensionCurve {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to the curve geometry.
+    pub curve_id: Option<u64>,
+    /// Reference to associated annotation plane.
+    pub annotation_plane_id: Option<u64>,
+    /// Reference to terminators (start and end).
+    pub terminator_ids: Vec<u64>,
+}
+
+/// A terminator symbol (AP242 TERMINATOR_SYMBOL).
+///
+/// Represents arrowheads and other termination symbols on dimension lines.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepTerminatorSymbol {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// Reference to the annotated curve.
+    pub annotated_curve_id: Option<u64>,
+    /// The terminator type (arrow, dot, etc.).
+    pub terminator_type: TerminatorType,
+}
+
+/// Types of terminator symbols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum TerminatorType {
+    /// Arrowhead pointing away from dimension.
+    Arrow,
+    /// Filled dot.
+    Dot,
+    /// Open arrow.
+    OpenArrow,
+    /// Closed filled arrow.
+    ClosedArrow,
+    /// Origin symbol (circle).
+    Origin,
+    /// Unknown terminator type.
+    Unknown,
+}
+
+/// A datum feature callout (AP242 DATUM_FEATURE_CALLOUT).
+///
+/// Represents a datum label annotation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepDatumFeatureCallout {
+    pub entity_id: u64,
+    pub name: Option<String>,
+    /// The datum identifier text.
+    pub datum_identifier: Option<String>,
+    /// Reference to the annotation plane.
+    pub annotation_plane_id: Option<u64>,
 }
 
 fn extract_file_schema(content: &str) -> Option<String> {
@@ -2499,6 +2708,312 @@ fn extract_fea_node_groups(content: &str) -> Vec<StepFeaNodeGroup> {
     out
 }
 
+// ── View and Camera extraction functions (AP242) ─────────────────────────────
+
+fn extract_views(content: &str) -> Vec<StepView> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("CAMERA_MODEL_D3") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let _view_reference_system_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        let _view_volume_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        // Perspective flag is typically indicated by presence of PERSPECTIVE_OF_VOLUME
+        out.push(StepView {
+            entity_id: id,
+            name: name.clone(),
+            description: None,
+            camera_model_id: Some(id),
+            view_type: name,
+        });
+    }
+    out
+}
+
+fn extract_cameras(content: &str) -> Vec<StepCameraModelD3> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("CAMERA_MODEL_D3") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let view_reference_system_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        let view_volume_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        // Check for perspective by looking for PERSPECTIVE_OF_VOLUME in subsequent args
+        let perspective = parts.iter().any(|p| {
+            let p_upper = p.trim().to_uppercase();
+            p_upper.contains("PERSPECTIVE") || p_upper == ".T."
+        });
+        out.push(StepCameraModelD3 {
+            entity_id: id,
+            name,
+            view_reference_system_id,
+            view_volume_id,
+            perspective,
+        });
+    }
+    out
+}
+
+fn extract_view_volumes(content: &str) -> Vec<StepViewVolume> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("VIEW_VOLUME") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        // VIEW_VOLUME has complex structure - extract what we can
+        let volume_type = if parts.iter().any(|p| p.trim().to_uppercase().contains("PERSPECTIVE")) {
+            ViewVolumeType::Perspective
+        } else {
+            ViewVolumeType::Orthographic
+        };
+        // Try to extract view window dimensions
+        let view_window_width = parts.get(4).and_then(|p| parse_float_arg(p.trim()));
+        let view_window_height = parts.get(5).and_then(|p| parse_float_arg(p.trim()));
+        out.push(StepViewVolume {
+            entity_id: id,
+            name,
+            volume_type,
+            view_center: None,
+            view_plane_distance: None,
+            up_direction: None,
+            view_window_width,
+            view_window_height,
+        });
+    }
+    out
+}
+
+// ── Annotation extraction functions (AP242) ──────────────────────────────────
+
+fn extract_notes(content: &str) -> Vec<StepNote> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "ANNOTATION" | "ANNOTATION_TEXT" | "DESCRIPTIVE_REPRESENTATION_ITEM"
+        ) {
+            continue;
+        }
+        let name = extract_nth_string_arg(args, 0);
+        let text = extract_nth_string_arg(args, 1).or(extract_nth_string_arg(args, 0));
+        out.push(StepNote {
+            entity_id: id,
+            name,
+            description: None,
+            text,
+            annotation_plane_id: None,
+            associated_geometry_id: None,
+        });
+    }
+    out
+}
+
+fn extract_annotation_planes(content: &str) -> Vec<StepAnnotationPlane> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("ANNOTATION_PLANE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let plane_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        out.push(StepAnnotationPlane {
+            entity_id: id,
+            name,
+            plane_id,
+            annotation_occurrence_id: None,
+        });
+    }
+    out
+}
+
+fn extract_annotation_occurrences(content: &str) -> Vec<StepAnnotationOccurrence> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("ANNOTATION_OCCURRENCE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let style_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        out.push(StepAnnotationOccurrence {
+            entity_id: id,
+            name,
+            style_id,
+            fill_area_id: None,
+            shape_aspect_id: None,
+        });
+    }
+    out
+}
+
+fn extract_dimension_curves(content: &str) -> Vec<StepDimensionCurve> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("DIMENSION_CURVE") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let curve_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        let annotation_plane_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDimensionCurve {
+            entity_id: id,
+            name,
+            curve_id,
+            annotation_plane_id,
+            terminator_ids: Vec::new(),
+        });
+    }
+    out
+}
+
+fn extract_terminator_symbols(content: &str) -> Vec<StepTerminatorSymbol> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !matches!(
+            entity_upper.as_str(),
+            "TERMINATOR_SYMBOL" | "DIMENSION_CURVE_TERMINATOR" | "FILLED_ARROW"
+        ) {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let annotated_curve_id = parts.get(1).and_then(|p| parse_ref(p.trim()));
+        // Determine terminator type from entity name
+        let terminator_type = if entity_upper.contains("ARROW") {
+            TerminatorType::Arrow
+        } else if entity_upper.contains("DOT") {
+            TerminatorType::Dot
+        } else {
+            TerminatorType::Unknown
+        };
+        out.push(StepTerminatorSymbol {
+            entity_id: id,
+            name,
+            annotated_curve_id,
+            terminator_type,
+        });
+    }
+    out
+}
+
+fn extract_datum_feature_callouts(content: &str) -> Vec<StepDatumFeatureCallout> {
+    let Ok(data) = extract_data_section(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in split_records(data) {
+        let Ok(Some((id, body))) = parse_entity_record(&record) else {
+            continue;
+        };
+        let Some((entity, args)) = parse_entity_body(body) else {
+            continue;
+        };
+        let entity_upper = entity.to_uppercase();
+        if !entity_upper.eq_ignore_ascii_case("DATUM_FEATURE_CALLOUT") {
+            continue;
+        }
+        let parts = split_top_level(args, ',');
+        let name = extract_nth_string_arg(args, 0);
+        let datum_identifier = extract_nth_string_arg(args, 1);
+        let annotation_plane_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
+        out.push(StepDatumFeatureCallout {
+            entity_id: id,
+            name,
+            datum_identifier,
+            annotation_plane_id,
+        });
+    }
+    out
+}
+
 /// Parse a uint argument (either bare number or from a measure value).
 fn parse_uint_arg(s: &str) -> Option<u64> {
     let s = s.trim();
@@ -2727,6 +3242,15 @@ impl StepReader {
             fea_boundary_conditions: extract_fea_boundary_conditions(content),
             fea_loads: extract_fea_loads(content),
             fea_node_groups: extract_fea_node_groups(content),
+            views: extract_views(content),
+            cameras: extract_cameras(content),
+            view_volumes: extract_view_volumes(content),
+            notes: extract_notes(content),
+            annotation_planes: extract_annotation_planes(content),
+            annotation_occurrences: extract_annotation_occurrences(content),
+            dimension_curves: extract_dimension_curves(content),
+            terminator_symbols: extract_terminator_symbols(content),
+            datum_feature_callouts: extract_datum_feature_callouts(content),
         };
 
         Ok((brep, metadata))
@@ -7896,5 +8420,136 @@ END-ISO-10303-21;
         let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#103=TOLERANCE_ZONE_DEFINITION('two coaxial cylinders',$,#90,#110);\nENDSEC;\nEND-ISO-10303-21;\n";
         let defs = extract_tolerance_zone_definitions_enhanced(step);
         assert_eq!(defs[0].zone_shape, ToleranceZoneShape::TwoCoaxialCylinders);
+    }
+
+    // ── View and Camera extraction tests (AP242) ───────────────────────────────
+
+    #[test]
+    fn extract_views_parses_camera_model_d3() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=CAMERA_MODEL_D3('front_view',#200,#300);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let views = extract_views(step);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].entity_id, 100);
+        assert_eq!(views[0].name.as_deref(), Some("front_view"));
+        assert_eq!(views[0].camera_model_id, Some(100));
+    }
+
+    #[test]
+    fn extract_cameras_parses_camera_model_d3() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=CAMERA_MODEL_D3('isometric_view',#200,#300);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let cameras = extract_cameras(step);
+        assert_eq!(cameras.len(), 1);
+        assert_eq!(cameras[0].entity_id, 100);
+        assert_eq!(cameras[0].name.as_deref(), Some("isometric_view"));
+        assert_eq!(cameras[0].view_reference_system_id, Some(200));
+        assert_eq!(cameras[0].view_volume_id, Some(300));
+    }
+
+    #[test]
+    fn extract_view_volumes_parses_view_volume() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#300=VIEW_VOLUME('ortho_view',$,100.0,50.0,200.0);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let volumes = extract_view_volumes(step);
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0].entity_id, 300);
+        assert_eq!(volumes[0].name.as_deref(), Some("ortho_view"));
+        assert_eq!(volumes[0].volume_type, ViewVolumeType::Orthographic);
+    }
+
+    #[test]
+    fn extract_view_volumes_detects_perspective() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#300=VIEW_VOLUME('perspective_view',.PERSPECTIVE.,100.0,50.0,200.0);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let volumes = extract_view_volumes(step);
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0].volume_type, ViewVolumeType::Perspective);
+    }
+
+    // ── Annotation extraction tests (AP242) ────────────────────────────────────
+
+    #[test]
+    fn extract_notes_parses_annotation() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=DESCRIPTIVE_REPRESENTATION_ITEM('note1','This is a note');\nENDSEC;\nEND-ISO-10303-21;\n";
+        let notes = extract_notes(step);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].entity_id, 100);
+        assert_eq!(notes[0].name.as_deref(), Some("note1"));
+    }
+
+    #[test]
+    fn extract_annotation_planes_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=ANNOTATION_PLANE('top_annotation',#200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let planes = extract_annotation_planes(step);
+        assert_eq!(planes.len(), 1);
+        assert_eq!(planes[0].entity_id, 100);
+        assert_eq!(planes[0].name.as_deref(), Some("top_annotation"));
+        assert_eq!(planes[0].plane_id, Some(200));
+    }
+
+    #[test]
+    fn extract_annotation_occurrences_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=ANNOTATION_OCCURRENCE('dim_occurrence',#200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let occurrences = extract_annotation_occurrences(step);
+        assert_eq!(occurrences.len(), 1);
+        assert_eq!(occurrences[0].entity_id, 100);
+        assert_eq!(occurrences[0].name.as_deref(), Some("dim_occurrence"));
+        assert_eq!(occurrences[0].style_id, Some(200));
+    }
+
+    #[test]
+    fn extract_dimension_curves_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=DIMENSION_CURVE('dim_curve',#200,#300);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let curves = extract_dimension_curves(step);
+        assert_eq!(curves.len(), 1);
+        assert_eq!(curves[0].entity_id, 100);
+        assert_eq!(curves[0].name.as_deref(), Some("dim_curve"));
+        assert_eq!(curves[0].curve_id, Some(200));
+        assert_eq!(curves[0].annotation_plane_id, Some(300));
+    }
+
+    #[test]
+    fn extract_terminator_symbols_parses_arrow() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=FILLED_ARROW('arrow1',#200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let symbols = extract_terminator_symbols(step);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].entity_id, 100);
+        assert_eq!(symbols[0].name.as_deref(), Some("arrow1"));
+        assert_eq!(symbols[0].terminator_type, TerminatorType::Arrow);
+    }
+
+    #[test]
+    fn extract_terminator_symbols_parses_generic_terminator() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=TERMINATOR_SYMBOL('symbol1',#200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let symbols = extract_terminator_symbols(step);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].terminator_type, TerminatorType::Unknown);
+    }
+
+    #[test]
+    fn extract_datum_feature_callouts_parses_entry() {
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=DATUM_FEATURE_CALLOUT('datum_A','A',#200);\nENDSEC;\nEND-ISO-10303-21;\n";
+        let callouts = extract_datum_feature_callouts(step);
+        assert_eq!(callouts.len(), 1);
+        assert_eq!(callouts[0].entity_id, 100);
+        assert_eq!(callouts[0].name.as_deref(), Some("datum_A"));
+        assert_eq!(callouts[0].datum_identifier.as_deref(), Some("A"));
+        assert_eq!(callouts[0].annotation_plane_id, Some(200));
+    }
+
+    #[test]
+    fn metadata_includes_view_and_annotation_entities() {
+        // Test extraction functions directly since this STEP file has no geometry
+        let step = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF { 1 0 10303 442 1 1 4 }'));\nFILE_NAME('test','','','','','','');\nENDSEC;\nDATA;\n#100=CAMERA_MODEL_D3('front_view',#200,#300);\n#300=VIEW_VOLUME('ortho_view',$,100.0,50.0,200.0);\n#400=ANNOTATION_PLANE('annotation_plane',#500);\n#500=DIMENSION_CURVE('dim_curve',#600,#400);\nENDSEC;\nEND-ISO-10303-21;\n";
+
+        // Verify extraction functions work
+        let views = extract_views(step);
+        let cameras = extract_cameras(step);
+        let volumes = extract_view_volumes(step);
+        let planes = extract_annotation_planes(step);
+        let curves = extract_dimension_curves(step);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(cameras.len(), 1);
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(planes.len(), 1);
+        assert_eq!(curves.len(), 1);
     }
 }

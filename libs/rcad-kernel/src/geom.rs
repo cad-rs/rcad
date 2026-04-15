@@ -1080,21 +1080,46 @@ impl SurfaceEval for Surface3 {
 }
 
 /// Evaluate all Lagrange basis functions for the given nodes at t.
+///
+/// Uses safer numerical handling with explicit tolerance for near-singular cases.
+/// Returns basis functions that satisfy partition of unity (sum = 1).
 fn lagrange_basis(nodes: &[f64], t: f64) -> Vec<f64> {
     let n = nodes.len();
+    if n == 0 {
+        return vec![];
+    }
+
     let mut basis = vec![1.0; n];
+    let tol = 1e-14;
+
     for i in 0..n {
         for j in 0..n {
             if i != j {
                 let denom = nodes[i] - nodes[j];
-                if denom.abs() > 1e-15 {
+                if denom.abs() > tol {
                     basis[i] *= (t - nodes[j]) / denom;
                 } else {
+                    // Nodes too close - this indicates invalid input,
+                    // but we handle gracefully by setting to 0
                     basis[i] = 0.0;
                 }
             }
         }
+
+        // Guard against NaN/Inf
+        if !basis[i].is_finite() {
+            basis[i] = 0.0;
+        }
     }
+
+    // Ensure partition of unity for stability
+    let sum: f64 = basis.iter().sum();
+    if sum.abs() > tol {
+        for b in &mut basis {
+            *b /= sum;
+        }
+    }
+
     basis
 }
 
@@ -1102,31 +1127,108 @@ impl SurfaceEval for GordonSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let n = self.u_curves.len();
         let m = self.v_curves.len();
-        if n == 0 && m == 0 { return DVec3::ZERO; }
-        let lv = if n > 0 { lagrange_basis(&self.v_params, v) } else { vec![] };
-        let lu = if m > 0 { lagrange_basis(&self.u_params, u) } else { vec![] };
+        if n == 0 && m == 0 {
+            return DVec3::ZERO;
+        }
+
+        // Clamp parameters to valid range for stability
+        let u = u.clamp(0.0, 1.0);
+        let v = v.clamp(0.0, 1.0);
+
+        // Compute Lagrange basis functions
+        let lv = if n > 0 {
+            lagrange_basis(&self.v_params, v)
+        } else {
+            vec![]
+        };
+        let lu = if m > 0 {
+            lagrange_basis(&self.u_params, u)
+        } else {
+            vec![]
+        };
+
+        // Helper to evaluate a curve at a normalized parameter [0,1]
+        // by mapping to its natural parameter domain
+        let eval_curve_normalized = |curve: &Curve3, t_norm: f64| -> DVec3 {
+            let [t0, t1] = curve.default_domain();
+            if t0.is_finite() && t1.is_finite() && (t1 - t0).abs() > 1e-15 {
+                // Map normalized t to curve's natural domain
+                let t = t0 + t_norm * (t1 - t0);
+                curve.point_at(t)
+            } else {
+                // For unbounded curves, use the normalized parameter directly
+                curve.point_at(t_norm)
+            }
+        };
+
+        // Sum of u-direction loft: S_u(u,v) = sum_i L_v[i](v) * C_i(u)
         let mut s_u = DVec3::ZERO;
-        for i in 0..n { s_u += lv[i] * self.u_curves[i].point_at(u); }
+        for (i, curve) in self.u_curves.iter().enumerate() {
+            s_u += lv[i] * eval_curve_normalized(curve, u);
+        }
+
+        // Sum of v-direction loft: S_v(u,v) = sum_j L_u[j](u) * D_j(v)
         let mut s_v = DVec3::ZERO;
-        for j in 0..m { s_v += lu[j] * self.v_curves[j].point_at(v); }
+        for (j, curve) in self.v_curves.iter().enumerate() {
+            s_v += lu[j] * eval_curve_normalized(curve, v);
+        }
+
+        // Tensor product correction: S_t(u,v) = sum_{i,j} L_v[i](v) * L_u[j](u) * P_{ij}
+        // where P_{ij} is the intersection point = u_curve[i] evaluated at u_params[j]
         let mut s_t = DVec3::ZERO;
-        for i in 0..n {
-            for j in 0..m {
-                let p_ij = self.u_curves[i].point_at(self.u_params[j]);
+        for (i, u_curve) in self.u_curves.iter().enumerate() {
+            for (j, _v_curve) in self.v_curves.iter().enumerate() {
+                // P_ij = u_curve[i] at parameter u_params[j]
+                // (This should match v_curve[j] at parameter v_params[i])
+                let p_ij = eval_curve_normalized(u_curve, self.u_params[j]);
                 s_t += lv[i] * lu[j] * p_ij;
             }
         }
-        s_u + s_v - s_t
+
+        // Gordon surface formula: S = S_u + S_v - S_t
+        let result = s_u + s_v - s_t;
+
+        // Guard against NaN/Inf
+        if result.is_nan() || !result.is_finite() {
+            DVec3::ZERO
+        } else {
+            result
+        }
     }
+
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
         let eps = 1e-5;
-        let du = self.point_at(u + eps, v) - self.point_at(u - eps, v);
-        let dv = self.point_at(u, v + eps) - self.point_at(u, v - eps);
+
+        // Use one-sided differences near domain boundaries
+        let u_minus = (u - eps).max(0.0);
+        let u_plus = (u + eps).min(1.0);
+        let v_minus = (v - eps).max(0.0);
+        let v_plus = (v + eps).min(1.0);
+
+        let du = if u_plus > u_minus {
+            (self.point_at(u_plus, v) - self.point_at(u_minus, v)) / (u_plus - u_minus)
+        } else {
+            DVec3::ZERO
+        };
+
+        let dv = if v_plus > v_minus {
+            (self.point_at(u, v_plus) - self.point_at(u, v_minus)) / (v_plus - v_minus)
+        } else {
+            DVec3::ZERO
+        };
+
         let n = du.cross(dv);
         let len = n.length();
-        if len < 1e-15 { DVec3::Z } else { n / len }
+        if len < 1e-15 {
+            DVec3::Z
+        } else {
+            n / len
+        }
     }
-    fn default_domain(&self) -> [f64; 4] { [0.0, 1.0, 0.0, 1.0] }
+
+    fn default_domain(&self) -> [f64; 4] {
+        [0.0, 1.0, 0.0, 1.0]
+    }
 }
 
 fn remap_unit_to_curve_domain(curve: &Curve3, t: f64) -> f64 {

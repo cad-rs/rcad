@@ -12,6 +12,13 @@ use crate::{
     OrientationToleranceType, FormToleranceType, RunoutToleranceType, ProfileToleranceType,
     DatumTargetType, ToleranceZoneShape, ToleranceZonePosition,
 };
+// View and annotation types
+use crate::{
+    StepView, StepCameraModelD3, StepViewVolume, ViewVolumeType,
+    StepNote, StepAnnotationPlane, StepAnnotationOccurrence,
+    StepDimensionCurve, StepTerminatorSymbol, StepDatumFeatureCallout,
+    TerminatorType,
+};
 use rcad_kernel::surface_to_bspline;
 
 /// Selects which STEP application protocol to use when writing a file.
@@ -59,6 +66,16 @@ pub struct StepAp242Metadata {
     pub datum_reference_frames: Vec<StepDatumReferenceFrame>,
     pub datum_targets: Vec<StepDatumTarget>,
     pub tolerance_zone_definitions_enhanced: Vec<StepToleranceZoneDefinitionEnhanced>,
+    // View and annotation fields
+    pub views: Vec<StepView>,
+    pub cameras: Vec<StepCameraModelD3>,
+    pub view_volumes: Vec<StepViewVolume>,
+    pub notes: Vec<StepNote>,
+    pub annotation_planes: Vec<StepAnnotationPlane>,
+    pub annotation_occurrences: Vec<StepAnnotationOccurrence>,
+    pub dimension_curves: Vec<StepDimensionCurve>,
+    pub terminator_symbols: Vec<StepTerminatorSymbol>,
+    pub datum_feature_callouts: Vec<StepDatumFeatureCallout>,
 }
 
 pub struct StepWriter;
@@ -1935,6 +1952,35 @@ impl Part21Writer {
         for def in &metadata.tolerance_zone_definitions_enhanced {
             self.write_tolerance_zone_definition_enhanced(def);
         }
+        // Write view and camera entities
+        for view in &metadata.views {
+            self.write_view(view);
+        }
+        for camera in &metadata.cameras {
+            self.write_camera_model_d3(camera);
+        }
+        for volume in &metadata.view_volumes {
+            self.write_view_volume(volume);
+        }
+        // Write annotation entities
+        for note in &metadata.notes {
+            self.write_note(note);
+        }
+        for plane in &metadata.annotation_planes {
+            self.write_annotation_plane(plane);
+        }
+        for occurrence in &metadata.annotation_occurrences {
+            self.write_annotation_occurrence(occurrence);
+        }
+        for curve in &metadata.dimension_curves {
+            self.write_dimension_curve(curve);
+        }
+        for symbol in &metadata.terminator_symbols {
+            self.write_terminator_symbol(symbol);
+        }
+        for callout in &metadata.datum_feature_callouts {
+            self.write_datum_feature_callout(callout);
+        }
     }
 
     fn write_dimensional_tolerance(&mut self, tol: &StepDimensionalTolerance) {
@@ -2084,6 +2130,142 @@ impl Part21Writer {
         self.push(format!(
             "TOLERANCE_ZONE_DEFINITION({},{},{},{},{})",
             name, desc, zone, shape, defining_shape
+        ));
+    }
+
+    // ── View and Camera write functions (AP242) ───────────────────────────────
+
+    fn write_view(&mut self, view: &StepView) {
+        let name = opt_step_string(view.name.as_deref());
+        let desc = opt_step_string(view.description.as_deref());
+        let camera = opt_ref_token(view.camera_model_id);
+        let view_type = opt_step_string(view.view_type.as_deref());
+        self.push(format!(
+            "CAMERA_MODEL_D3({},{},{},{})",
+            name, desc, camera, view_type
+        ));
+    }
+
+    fn write_camera_model_d3(&mut self, camera: &StepCameraModelD3) {
+        let name = opt_step_string(camera.name.as_deref());
+        let view_ref = opt_ref_token(camera.view_reference_system_id);
+        let view_volume = opt_ref_token(camera.view_volume_id);
+        let perspective = if camera.perspective { ".T." } else { ".F." };
+        self.push(format!(
+            "CAMERA_MODEL_D3({},{},{},{})",
+            name, view_ref, view_volume, perspective
+        ));
+    }
+
+    fn write_view_volume(&mut self, volume: &StepViewVolume) {
+        let name = opt_step_string(volume.name.as_deref());
+        let vol_type = match volume.volume_type {
+            ViewVolumeType::Orthographic => ".F.",
+            ViewVolumeType::Perspective => ".T.",
+            ViewVolumeType::Unknown => "$",
+        };
+        let view_center = volume.view_center
+            .map(|v| format!("({},{},{})", v[0], v[1], v[2]))
+            .unwrap_or_else(|| "$".to_string());
+        let view_plane_dist = volume.view_plane_distance
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "$".to_string());
+        let up_dir = volume.up_direction
+            .map(|v| format!("({},{},{})", v[0], v[1], v[2]))
+            .unwrap_or_else(|| "$".to_string());
+        let width = volume.view_window_width
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "$".to_string());
+        let height = volume.view_window_height
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "$".to_string());
+        self.push(format!(
+            "VIEW_VOLUME({},{},{},{},{},{},{})",
+            name, vol_type, view_center, view_plane_dist, up_dir, width, height
+        ));
+    }
+
+    // ── Annotation write functions (AP242) ────────────────────────────────────
+
+    fn write_note(&mut self, note: &StepNote) {
+        let name = opt_step_string(note.name.as_deref());
+        let desc = opt_step_string(note.description.as_deref());
+        let text = opt_step_string(note.text.as_deref());
+        let plane = opt_ref_token(note.annotation_plane_id);
+        let geom = opt_ref_token(note.associated_geometry_id);
+        self.push(format!(
+            "DESCRIPTIVE_REPRESENTATION_ITEM({},{},{},{},{})",
+            name, desc, text, plane, geom
+        ));
+    }
+
+    fn write_annotation_plane(&mut self, plane: &StepAnnotationPlane) {
+        let name = opt_step_string(plane.name.as_deref());
+        let plane_id = opt_ref_token(plane.plane_id);
+        let occurrence = opt_ref_token(plane.annotation_occurrence_id);
+        self.push(format!(
+            "ANNOTATION_PLANE({},{},{})",
+            name, plane_id, occurrence
+        ));
+    }
+
+    fn write_annotation_occurrence(&mut self, occurrence: &StepAnnotationOccurrence) {
+        let name = opt_step_string(occurrence.name.as_deref());
+        let style = opt_ref_token(occurrence.style_id);
+        let fill = opt_ref_token(occurrence.fill_area_id);
+        let shape = opt_ref_token(occurrence.shape_aspect_id);
+        self.push(format!(
+            "ANNOTATION_OCCURRENCE({},{},{},{})",
+            name, style, fill, shape
+        ));
+    }
+
+    fn write_dimension_curve(&mut self, curve: &StepDimensionCurve) {
+        let name = opt_step_string(curve.name.as_deref());
+        let curve_id = opt_ref_token(curve.curve_id);
+        let plane = opt_ref_token(curve.annotation_plane_id);
+        let terminators = if curve.terminator_ids.is_empty() {
+            "$".to_string()
+        } else {
+            format!(
+                "({})",
+                curve.terminator_ids
+                    .iter()
+                    .map(|id| format!("#{}", id))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        self.push(format!(
+            "DIMENSION_CURVE({},{},{},{})",
+            name, curve_id, plane, terminators
+        ));
+    }
+
+    fn write_terminator_symbol(&mut self, symbol: &StepTerminatorSymbol) {
+        let name = opt_step_string(symbol.name.as_deref());
+        let curve = opt_ref_token(symbol.annotated_curve_id);
+        let term_type = match symbol.terminator_type {
+            TerminatorType::Arrow => "FILLED_ARROW",
+            TerminatorType::Dot => "FILLED_DOT",
+            TerminatorType::OpenArrow => "OPEN_ARROW",
+            TerminatorType::ClosedArrow => "FILLED_ARROW",
+            TerminatorType::Origin => "ORIGIN_SYMBOL",
+            TerminatorType::Unknown => "DIMENSION_CURVE_TERMINATOR",
+        };
+        self.push(format!(
+            "{}({},{})",
+            term_type, name, curve
+        ));
+    }
+
+    fn write_datum_feature_callout(&mut self, callout: &StepDatumFeatureCallout) {
+        let name = opt_step_string(callout.name.as_deref());
+        let datum_id = opt_step_string(callout.datum_identifier.as_deref());
+        let plane = opt_ref_token(callout.annotation_plane_id);
+        self.push(format!(
+            "DATUM_FEATURE_CALLOUT({},{},{})",
+            name, datum_id, plane
         ));
     }
 
@@ -2454,6 +2636,16 @@ mod tests {
             datum_reference_frames: vec![],
             datum_targets: vec![],
             tolerance_zone_definitions_enhanced: vec![],
+            // View and annotation fields
+            views: vec![],
+            cameras: vec![],
+            view_volumes: vec![],
+            notes: vec![],
+            annotation_planes: vec![],
+            annotation_occurrences: vec![],
+            dimension_curves: vec![],
+            terminator_symbols: vec![],
+            datum_feature_callouts: vec![],
         };
         let step = StepWriter::write_string_with_ap242_metadata(
             &brep,
@@ -2623,6 +2815,16 @@ mod tests {
                 zone_position: ToleranceZonePosition::Symmetric,
                 defining_shape_aspect_id: None,
             }],
+            // View and annotation fields
+            views: vec![],
+            cameras: vec![],
+            view_volumes: vec![],
+            notes: vec![],
+            annotation_planes: vec![],
+            annotation_occurrences: vec![],
+            dimension_curves: vec![],
+            terminator_symbols: vec![],
+            datum_feature_callouts: vec![],
         };
 
         let step = StepWriter::write_string_with_ap242_metadata(

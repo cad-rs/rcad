@@ -95,6 +95,14 @@ pub mod nurbs_convert;
 /// `GeomAPI_ExtendCurveToPoint`, and `Geom_RectangularTrimmedSurface`.
 pub mod extend;
 
+/// Gordon surface construction (N x M transfinite interpolation).
+///
+/// Provides robust Gordon/Coons-style surface construction from
+/// curve networks with comprehensive validation and error handling.
+///
+/// Analogous to OCCT `GeomFill_SectionGenerator` / Gordon surface.
+pub mod gordon;
+
 pub use distance::{ShapeDistance, min_distance, point_to_shape_distance};
 pub use extend::{
     CurveEnd, SurfaceBoundary, extend_bspline_surface, extend_curve_by_length,
@@ -114,6 +122,11 @@ pub use projection::{
 pub use appearance::{Color, FaceColor, StepColor};
 pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
+pub use gordon::{
+    ContinuityLevel, GordonError, GordonOptions,
+    eval_gordon_surface_safe, gordon_surface_curves, gordon_surface_normal_safe,
+    gordon_surface_with_params, gordon_to_bspline,
+};
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
 pub use geom::{

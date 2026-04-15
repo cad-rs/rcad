@@ -13,6 +13,7 @@ pub mod history;
 pub mod hlr;
 pub mod imprint;
 pub mod brep_graph;
+pub mod non_manifold;
 pub use defeature::{
     CylindricalFeature, DefeaturingError, DefeaturingOptions, DefeaturingReport,
     defeature_brep, detect_cylindrical_features, identify_small_faces,
@@ -27,6 +28,7 @@ pub mod pave_filler;
 pub mod section;
 pub mod thicken;
 pub mod tolerance;
+pub mod offset;
 pub mod triangulate;
 pub mod array;
 pub mod cells_builder;
@@ -102,6 +104,13 @@ pub use inttools::{
 };
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 pub use thicken::{ThickeningResult, thicken_shell};
+pub use offset::{
+    OffsetError, OffsetOptions, OffsetResult,
+    offset_surface, offset_shell, offset_shell_with_options,
+    offset_solid, offset_solid_with_options,
+    hollow_solid, hollow_solid_with_options,
+    offset_shape, detect_self_intersection,
+};
 pub use triangulate::{
     SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface,
     MeshQualityMetrics, compute_mesh_quality,
@@ -122,6 +131,15 @@ pub use maker_volume::{
 pub use brep_graph::{
     NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent, TopoGraphValidationIssue,
     TopoNode,
+};
+pub use non_manifold::{
+    NonManifoldReport, NonManifoldTraversal,
+    EdgeSplitReport, MakeManifoldOptions, MakeManifoldReport,
+    MergeShellsOptions, MergeShellsResult,
+    analyze_non_manifold, is_manifold, non_manifold_edges, non_manifold_vertices,
+    boundary_edges, multi_face_edges, orphan_edges,
+    split_non_manifold_edges, make_manifold, make_manifold_with_options,
+    merge_shells_at_interface,
 };
 
 /// Options for post-operation topology simplification.

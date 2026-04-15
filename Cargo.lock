@@ -3045,6 +3045,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcad-iges"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "glam 0.29.3",
+ "rcad-kernel",
+ "serde",
+]
+
+[[package]]
 name = "rcad-kernel"
 version = "0.1.0"
 dependencies = [
