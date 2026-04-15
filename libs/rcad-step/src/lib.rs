@@ -4069,14 +4069,14 @@ fn extract_approvals(content: &str) -> Vec<StepApproval> {
 
         let parts = split_top_level(args, ',');
         // APPROVAL(status, level)
-        // status is typically a reference to APPROVAL_STATUS
+        // status is typically .APPROVED. or a reference to APPROVAL_STATUS
         let status_str = parts.get(0).map(|s| s.trim()).unwrap_or("");
         let status = parse_approval_status(status_str);
 
         out.push(StepApproval {
             entity_id: id,
             status,
-            level: extract_nth_string_arg(args, 1),
+            level: extract_nth_string_arg(args, 0), // level is the first quoted string
             date: None, // Populated from APPROVAL_DATE
             approver: None, // Populated from APPROVAL_PERSON_ORGANIZATION
         });
@@ -4291,7 +4291,7 @@ fn extract_document_usage_assignments(content: &str) -> Vec<StepDocumentUsageAss
             entity_id: id,
             document_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
             product_definition_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
-            role: extract_nth_string_arg(args, 2),
+            role: extract_nth_string_arg(args, 0), // role is the first (and only) quoted string
         });
     }
 
@@ -10667,7 +10667,7 @@ DATA;
 #2=VERTEX_POINT('',#1);
 #10=CONFIGURATION_ITEM('CI001','ConfigItem1','description',$);
 #11=PRODUCT_DEFINITION('','',$,$);
-#12=CONFIGURATION_DESIGN('','config',#10,#11);
+#12=CONFIGURATION_DESIGN('config',#10,#11);
 ENDSEC;
 END-ISO-10303-21;
 "#;
