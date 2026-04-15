@@ -68,6 +68,18 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     analyze_surface_uv_consistency,
     // Wire quality metrics (ShapeAnalysis_Wire enhancement)
     WireQualityMetrics, WireQualityReport, analyze_wire_quality,
+    // Geometry validation (OCCT BRepCheck_Analyzer equivalent)
+    GeometryValidationReport, check_surface_continuity, check_curve_surface_consistency,
+    // Topology validation
+    TopologyValidationReport, validate_shell_orientation, validate_solid_closure,
+    validate_wire_orientation, validate_nested_wires,
+    // Tolerance checking
+    ToleranceValidationReport, check_tolerance_consistency, check_vertex_tolerance,
+    check_edge_tolerance,
+    // Quality metrics
+    QualityMetricsReport, QualityMetricsConfig, SmallFeatureType, analyze_quality_metrics,
+    // Comprehensive check
+    ComprehensiveCheckResult, check_comprehensive,
 };
 pub use brep_check_parallel::{
     check_parallel, check_parallel_with_batch_size, check_many_parallel,
@@ -147,6 +159,9 @@ pub use builder::{
 };
 pub use history::{
     BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
+    HistoryTracker, HistoryChain, HistoryStatistics, ChainStatistics,
+    DeletionReason, DeletionRecord, GenerationCause, GenerationRecord,
+    ModificationType, ModificationRecord, EntityType, InputSource,
     ShellOrigin, SolidOrigin, VertexOrigin,
 };
 pub use hlr::{
@@ -7039,6 +7054,10 @@ mod tests {
             vertex_origins: vec![],
             shell_origins: vec![],
             solid_origins: vec![],
+            tracker: HistoryTracker::new(),
+            deleted_from_a: vec![],
+            deleted_from_b: vec![],
+            deletion_reasons: std::collections::HashMap::new(),
         };
 
         let seeds = make_connected_seed_edges_from_boolean_history(&brep, &history);
@@ -7087,6 +7106,10 @@ mod tests {
             vertex_origins: vec![],
             shell_origins: vec![],
             solid_origins: vec![],
+            tracker: HistoryTracker::new(),
+            deleted_from_a: vec![],
+            deleted_from_b: vec![],
+            deletion_reasons: std::collections::HashMap::new(),
         };
 
         let (seed_edges, history_count, heuristic_count, source) = select_scoped_seed_edges(
@@ -7150,6 +7173,10 @@ mod tests {
             vertex_origins: vec![],
             shell_origins: vec![],
             solid_origins: vec![],
+            tracker: HistoryTracker::new(),
+            deleted_from_a: vec![],
+            deleted_from_b: vec![],
+            deletion_reasons: std::collections::HashMap::new(),
         };
 
         let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(
@@ -7213,6 +7240,10 @@ mod tests {
             vertex_origins: vec![],
             shell_origins: vec![],
             solid_origins: vec![],
+            tracker: HistoryTracker::new(),
+            deleted_from_a: vec![],
+            deleted_from_b: vec![],
+            deletion_reasons: std::collections::HashMap::new(),
         };
 
         let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(

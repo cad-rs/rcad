@@ -9,7 +9,7 @@ use rcad_kernel::topology::*;
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::history::{
-    BooleanHistory, EdgeOrigin, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin,
+    BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin,
 };
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
@@ -327,6 +327,10 @@ impl ResultBuilder {
             vertex_origins: Vec::new(),
             shell_origins: Vec::new(),
             solid_origins: Vec::new(),
+            tracker: HistoryTracker::new(),
+            deleted_from_a: Vec::new(),
+            deleted_from_b: Vec::new(),
+            deletion_reasons: std::collections::HashMap::new(),
         };
 
         let brep = BRep {

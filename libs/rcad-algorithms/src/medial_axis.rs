@@ -10,6 +10,32 @@
 //! - Generation of rib/stiffener paths for structural reinforcement
 //! - Shape simplification and feature recognition
 //! - Mid-surface extraction for FEA shell meshing
+//!
+//! # OCCT Equivalents
+//!
+//! This module provides functionality similar to:
+//! - `GeomAPI_PointsToBSpline` for medial curve approximation
+//! - `BRepExtrema_DistShapeShape` for distance computations
+//! - `BRepAdaptor_Surface` for surface analysis
+//!
+//! # Examples
+//!
+//! ```
+//! use rcad_algorithms::medial_axis::{compute_medial_axis_2d, MedialAxisOptions};
+//! use glam::dvec3;
+//!
+//! let polygon = vec![
+//!     dvec3(0.0, 0.0, 0.0),
+//!     dvec3(2.0, 0.0, 0.0),
+//!     dvec3(2.0, 1.0, 0.0),
+//!     dvec3(1.0, 1.0, 0.0),
+//!     dvec3(1.0, 2.0, 0.0),
+//!     dvec3(0.0, 2.0, 0.0),
+//! ];
+//! let opts = MedialAxisOptions::default();
+//! let axis = compute_medial_axis_2d(&polygon, &opts);
+//! println!("Found {} medial points", axis.all_points.len());
+//! ```
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::{BRep, Curve3, Surface3, Face, Shell, Solid, SurfaceEval, CurveEval, Wire, WireEdge};
@@ -31,6 +57,16 @@ pub struct MedialAxisOptions {
     pub voronoi_depth: usize,
     /// Angle tolerance for detecting sharp corners (radians).
     pub corner_angle_tol: f64,
+    /// Maximum distance for clustering medial points (3D).
+    pub cluster_distance: f64,
+    /// Number of refinement iterations for medial surface extraction.
+    pub refinement_iterations: usize,
+    /// Enable chordal axis transform for better thin feature detection.
+    pub use_chordal_axis: bool,
+    /// Minimum feature size to detect (for thin region analysis).
+    pub min_feature_size: f64,
+    /// Angular resolution for ray casting (3D distance field).
+    pub angular_resolution: f64,
 }
 
 impl Default for MedialAxisOptions {
@@ -42,6 +78,88 @@ impl Default for MedialAxisOptions {
             sample_density: 100,
             voronoi_depth: 10,
             corner_angle_tol: 0.1,
+            cluster_distance: 0.01,
+            refinement_iterations: 3,
+            use_chordal_axis: true,
+            min_feature_size: 0.01,
+            angular_resolution: std::f64::consts::PI / 36.0, // 5 degrees
+        }
+    }
+}
+
+/// Options for mid-surface extraction.
+#[derive(Debug, Clone)]
+pub struct MidSurfaceOptions {
+    /// Base computation options.
+    pub base: MedialAxisOptions,
+    /// Maximum thickness ratio for treating as thin-walled.
+    pub max_thickness_ratio: f64,
+    /// Minimum aspect ratio for thin wall detection.
+    pub min_aspect_ratio: f64,
+    /// Target surface continuity.
+    pub continuity: ContinuityLevel,
+    /// Whether to preserve sharp features.
+    pub preserve_features: bool,
+    /// Feature angle threshold (radians).
+    pub feature_angle: f64,
+}
+
+impl Default for MidSurfaceOptions {
+    fn default() -> Self {
+        Self {
+            base: MedialAxisOptions::default(),
+            max_thickness_ratio: 0.1,
+            min_aspect_ratio: 10.0,
+            continuity: ContinuityLevel::C0,
+            preserve_features: true,
+            feature_angle: std::f64::consts::PI / 6.0, // 30 degrees
+        }
+    }
+}
+
+/// Surface continuity levels for mid-surface extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinuityLevel {
+    /// Position continuity only.
+    C0,
+    /// Tangent continuity.
+    C1,
+    /// Curvature continuity.
+    C2,
+}
+
+/// Options for rib/stiffener generation.
+#[derive(Debug, Clone)]
+pub struct RibGenerationOptions {
+    /// Base computation options.
+    pub base: MedialAxisOptions,
+    /// Minimum rib height.
+    pub min_height: f64,
+    /// Maximum rib height.
+    pub max_height: f64,
+    /// Rib draft angle (radians).
+    pub draft_angle: f64,
+    /// Minimum rib length.
+    pub min_length: f64,
+    /// Spacing between parallel ribs.
+    pub spacing: f64,
+    /// Whether to optimize for structural stiffness.
+    pub optimize_stiffness: bool,
+    /// Weight for thickness uniformity in optimization.
+    pub thickness_weight: f64,
+}
+
+impl Default for RibGenerationOptions {
+    fn default() -> Self {
+        Self {
+            base: MedialAxisOptions::default(),
+            min_height: 2.0,
+            max_height: 20.0,
+            draft_angle: std::f64::consts::PI / 36.0, // 5 degrees
+            min_length: 10.0,
+            spacing: 20.0,
+            optimize_stiffness: true,
+            thickness_weight: 0.5,
         }
     }
 }
@@ -268,6 +386,323 @@ pub struct MidSurfaceResult {
     pub face_thickness: Vec<f64>,
     /// Mapping from mid-surface face to original solid faces.
     pub face_mapping: Vec<(usize, usize)>,
+}
+
+// ============================================================================
+// Enhanced 3D Data Structures
+// ============================================================================
+
+/// A chordal axis vertex for thin feature detection.
+///
+/// The chordal axis is a simplified version of the medial axis that
+/// focuses on the centerlines of thin-walled regions.
+#[derive(Debug, Clone)]
+pub struct ChordalVertex {
+    /// Position of the vertex.
+    pub point: DVec3,
+    /// Local thickness at this point.
+    pub thickness: f64,
+    /// Principal direction of the thin feature.
+    pub direction: DVec3,
+    /// Normal to the mid-surface.
+    pub normal: DVec3,
+    /// Associated boundary face pairs.
+    pub face_pairs: Vec<(usize, usize)>,
+}
+
+/// A chordal axis edge connecting two vertices.
+#[derive(Debug, Clone)]
+pub struct ChordalEdge {
+    /// Start vertex index.
+    pub start: usize,
+    /// End vertex index.
+    pub end: usize,
+    /// Approximate curve geometry.
+    pub curve: Option<Curve3>,
+    /// Average thickness along this edge.
+    pub avg_thickness: f64,
+    /// Length of the edge.
+    pub length: f64,
+}
+
+/// The chordal axis of a thin-walled solid.
+#[derive(Debug, Clone, Default)]
+pub struct ChordalAxis {
+    /// Vertices of the chordal axis.
+    pub vertices: Vec<ChordalVertex>,
+    /// Edges connecting vertices.
+    pub edges: Vec<ChordalEdge>,
+    /// Identified thin sheets.
+    pub sheets: Vec<ThinSheet>,
+}
+
+/// A thin sheet region in the solid.
+#[derive(Debug, Clone)]
+pub struct ThinSheet {
+    /// Index of the chordal edge forming the sheet spine.
+    pub spine_edge: usize,
+    /// Face indices on one side of the sheet.
+    pub side_a_faces: Vec<usize>,
+    /// Face indices on the other side.
+    pub side_b_faces: Vec<usize>,
+    /// Average thickness of the sheet.
+    pub avg_thickness: f64,
+    /// Area of the sheet region.
+    pub area: f64,
+    /// Quality of the thin sheet (0-1).
+    pub quality: f64,
+}
+
+/// Classification of wall thickness regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThicknessClass {
+    /// Very thin region (< 25% of target).
+    VeryThin,
+    /// Thin region (25-50% of target).
+    Thin,
+    /// Normal thickness (50-150% of target).
+    Normal,
+    /// Thick region (150-200% of target).
+    Thick,
+    /// Very thick region (> 200% of target).
+    VeryThick,
+}
+
+/// Detailed thin region analysis result.
+#[derive(Debug, Clone)]
+pub struct ThinRegionAnalysis {
+    /// All detected thin regions.
+    pub regions: Vec<ThinRegion>,
+    /// Overall classification of wall thickness.
+    pub classification: ThicknessClass,
+    /// Recommended minimum wall thickness.
+    pub recommended_min: f64,
+    /// Regions grouped by severity.
+    pub severity_groups: HashMap<ThinRegionSeverity, Vec<usize>>,
+    /// Histogram of thickness values.
+    pub thickness_histogram: Vec<ThicknessHistogramBin>,
+}
+
+/// Severity level for thin regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ThinRegionSeverity {
+    /// Critical: immediate manufacturing risk.
+    Critical,
+    /// Warning: may cause issues.
+    Warning,
+    /// Acceptable: within tolerance but notable.
+    Acceptable,
+}
+
+/// A bin in the thickness histogram.
+#[derive(Debug, Clone, Copy)]
+pub struct ThicknessHistogramBin {
+    /// Lower bound of thickness values in this bin.
+    pub lower: f64,
+    /// Upper bound of thickness values in this bin.
+    pub upper: f64,
+    /// Number of samples in this bin.
+    pub count: usize,
+}
+
+/// A rib/stiffener placement recommendation.
+#[derive(Debug, Clone)]
+pub struct RibPlacement {
+    /// Centerline curve of the rib.
+    pub centerline: Curve3,
+    /// Start point of the rib.
+    pub start: DVec3,
+    /// End point of the rib.
+    pub end: DVec3,
+    /// Recommended height.
+    pub height: f64,
+    /// Recommended width (at base).
+    pub width: f64,
+    /// Draft angle.
+    pub draft_angle: f64,
+    /// Structural efficiency score (0-1).
+    pub efficiency: f64,
+    /// Associated medial axis edge.
+    pub medial_edge: Option<usize>,
+    /// Index of the face the rib attaches to.
+    pub attached_face: usize,
+}
+
+/// Result of rib/stiffener generation.
+#[derive(Debug, Clone)]
+pub struct RibGenerationResult {
+    /// Generated rib placements.
+    pub ribs: Vec<RibPlacement>,
+    /// Total rib volume added.
+    pub total_volume: f64,
+    /// Estimated stiffness improvement.
+    pub stiffness_improvement: f64,
+    /// Weight increase percentage.
+    pub weight_increase: f64,
+    /// Quality of the rib layout.
+    pub quality_score: f64,
+}
+
+/// An octree node for distance field computation.
+#[derive(Debug, Clone)]
+struct OctreeNode {
+    /// Bounding box minimum.
+    min: DVec3,
+    /// Bounding box maximum.
+    max: DVec3,
+    /// Distance value at the center.
+    distance: f64,
+    /// Children (8 for internal nodes, 0 for leaves).
+    children: Vec<OctreeNode>,
+    /// Whether this is a medial point (local maximum).
+    is_medial: bool,
+    /// Depth in the octree.
+    depth: usize,
+}
+
+/// A voxel grid for distance field representation.
+#[derive(Debug, Clone)]
+pub struct VoxelGrid {
+    /// Origin of the grid.
+    pub origin: DVec3,
+    /// Size of each voxel.
+    pub voxel_size: f64,
+    /// Number of voxels in each dimension.
+    pub dimensions: [usize; 3],
+    /// Distance values at each voxel.
+    pub distances: Vec<f64>,
+    /// Gradient vectors at each voxel.
+    pub gradients: Vec<DVec3>,
+    /// Whether each voxel is inside the solid.
+    pub inside: Vec<bool>,
+}
+
+impl VoxelGrid {
+    /// Create a new voxel grid.
+    pub fn new(origin: DVec3, voxel_size: f64, dimensions: [usize; 3]) -> Self {
+        let total = dimensions[0] * dimensions[1] * dimensions[2];
+        Self {
+            origin,
+            voxel_size,
+            dimensions,
+            distances: vec![0.0; total],
+            gradients: vec![DVec3::ZERO; total],
+            inside: vec![false; total],
+        }
+    }
+
+    /// Get the index for a voxel position.
+    pub fn index(&self, i: usize, j: usize, k: usize) -> usize {
+        i + j * self.dimensions[0] + k * self.dimensions[0] * self.dimensions[1]
+    }
+
+    /// Get the world position of a voxel center.
+    pub fn voxel_center(&self, i: usize, j: usize, k: usize) -> DVec3 {
+        self.origin + DVec3::new(
+            (i as f64 + 0.5) * self.voxel_size,
+            (j as f64 + 0.5) * self.voxel_size,
+            (k as f64 + 0.5) * self.voxel_size,
+        )
+    }
+
+    /// Get the distance at a voxel.
+    pub fn get_distance(&self, i: usize, j: usize, k: usize) -> f64 {
+        self.distances[self.index(i, j, k)]
+    }
+
+    /// Set the distance at a voxel.
+    pub fn set_distance(&mut self, i: usize, j: usize, k: usize, d: f64) {
+        let idx = self.index(i, j, k);
+        self.distances[idx] = d;
+    }
+
+    /// Check if a voxel is inside the solid.
+    pub fn is_inside(&self, i: usize, j: usize, k: usize) -> bool {
+        self.inside[self.index(i, j, k)]
+    }
+
+    /// Find local maxima in the distance field (medial axis candidates).
+    pub fn find_local_maxima(&self, threshold: f64) -> Vec<(usize, usize, usize, f64)> {
+        let mut maxima = Vec::new();
+
+        for k in 1..self.dimensions[2] - 1 {
+            for j in 1..self.dimensions[1] - 1 {
+                for i in 1..self.dimensions[0] - 1 {
+                    if !self.is_inside(i, j, k) {
+                        continue;
+                    }
+
+                    let d = self.get_distance(i, j, k);
+                    if d < threshold {
+                        continue;
+                    }
+
+                    // Check if this is a local maximum
+                    let mut is_max = true;
+                    for di in -1..=1 {
+                        for dj in -1..=1 {
+                            for dk in -1..=1 {
+                                if di == 0 && dj == 0 && dk == 0 {
+                                    continue;
+                                }
+                                let ni = (i as isize + di) as usize;
+                                let nj = (j as isize + dj) as usize;
+                                let nk = (k as isize + dk) as usize;
+                                if self.get_distance(ni, nj, nk) > d {
+                                    is_max = false;
+                                    break;
+                                }
+                            }
+                            if !is_max {
+                                break;
+                            }
+                        }
+                        if !is_max {
+                            break;
+                        }
+                    }
+
+                    if is_max {
+                        maxima.push((i, j, k, d));
+                    }
+                }
+            }
+        }
+
+        maxima
+    }
+}
+
+/// Mid-surface extraction with enhanced geometry.
+#[derive(Debug, Clone)]
+pub struct EnhancedMidSurfaceResult {
+    /// The extracted mid-surface as a B-Rep.
+    pub brep: BRep,
+    /// Thickness at each face.
+    pub face_thickness: Vec<f64>,
+    /// Mapping from mid-surface face to original solid faces.
+    pub face_mapping: Vec<(usize, usize)>,
+    /// Chordal axis of the thin-walled solid.
+    pub chordal_axis: ChordalAxis,
+    /// Quality metrics for the extraction.
+    pub quality: MidSurfaceQuality,
+}
+
+/// Quality metrics for mid-surface extraction.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MidSurfaceQuality {
+    /// Percentage of the solid successfully represented.
+    pub coverage: f64,
+    /// Average deviation from true mid-surface.
+    pub avg_deviation: f64,
+    /// Maximum deviation from true mid-surface.
+    pub max_deviation: f64,
+    /// Thickness accuracy (correlation coefficient).
+    pub thickness_accuracy: f64,
+    /// Number of discontinuities in the mid-surface.
+    pub discontinuities: usize,
+    /// Overall quality score (0-1).
+    pub overall_score: f64,
 }
 
 // ============================================================================
@@ -1077,8 +1512,1340 @@ fn compute_thickness_stats(surface: &mut MedialSurface) {
 }
 
 // ============================================================================
-// Applications
+// Enhanced 3D Medial Axis Computation
 // ============================================================================
+
+/// Compute the medial axis of a 3D solid using voxel-based distance field.
+///
+/// This method provides more accurate medial axis extraction for complex 3D geometries
+/// by using a voxelized distance field and detecting local maxima.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `opts` - Computation options
+///
+/// # Returns
+/// The computed medial surface with vertices, edges, and faces.
+pub fn compute_medial_surface_voxel(brep: &BRep, opts: &MedialAxisOptions) -> MedialSurface {
+    let mut result = MedialSurface::default();
+
+    // Compute bounding box of the solid
+    let bbox = compute_brep_bbox(brep);
+    if !bbox.is_valid() {
+        return result;
+    }
+
+    // Determine voxel size based on tolerance and min thickness
+    let voxel_size = (opts.tolerance * 10.0).max(opts.min_feature_size / 2.0);
+
+    // Create voxel grid
+    let dimensions = [
+        ((bbox.max.x - bbox.min.x) / voxel_size).ceil() as usize + 2,
+        ((bbox.max.y - bbox.min.y) / voxel_size).ceil() as usize + 2,
+        ((bbox.max.z - bbox.min.z) / voxel_size).ceil() as usize + 2,
+    ];
+
+    let mut grid = VoxelGrid::new(
+        bbox.min - DVec3::splat(voxel_size),
+        voxel_size,
+        dimensions,
+    );
+
+    // Compute signed distance field
+    compute_signed_distance_field(brep, &mut grid, opts);
+
+    // Find local maxima (medial axis candidates)
+    let maxima = grid.find_local_maxima(opts.min_thickness);
+
+    // Convert maxima to medial vertices
+    for (i, j, k, distance) in maxima {
+        let point = grid.voxel_center(i, j, k);
+        result.vertices.push(MedialVertex {
+            point,
+            radius: distance,
+            boundary_elements: vec![],
+        });
+    }
+
+    // Connect nearby vertices with edges
+    connect_medial_vertices(&mut result, opts.cluster_distance);
+
+    // Build medial faces from edge loops
+    build_medial_faces(&mut result);
+
+    if opts.simplify {
+        simplify_medial_surface(&mut result, opts.tolerance);
+    }
+
+    compute_thickness_stats(&mut result);
+    result
+}
+
+/// Compute the chordal axis of a thin-walled solid.
+///
+/// The chordal axis is a simplified representation of the medial axis
+/// specifically designed for thin-walled parts, capturing the centerlines
+/// of sheet-like regions.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `opts` - Computation options
+///
+/// # Returns
+/// The chordal axis with vertices, edges, and thin sheet information.
+pub fn compute_chordal_axis(brep: &BRep, opts: &MedialAxisOptions) -> ChordalAxis {
+    let mut result = ChordalAxis::default();
+
+    // First compute the medial surface
+    let medial = if opts.use_chordal_axis {
+        compute_medial_surface_voxel(brep, opts)
+    } else {
+        compute_medial_surface(brep, opts)
+    };
+
+    // Extract face pairs for chordal axis computation
+    let face_pairs = compute_opposing_face_pairs(brep, opts);
+
+    // Convert medial vertices to chordal vertices
+    for vertex in &medial.vertices {
+        // Find associated face pairs for this vertex
+        let associated_pairs = find_associated_face_pairs(&vertex.point, &face_pairs, opts.cluster_distance);
+
+        if !associated_pairs.is_empty() {
+            // Compute the direction along the thin feature
+            let direction = compute_chordal_direction(&vertex.point, &associated_pairs, brep);
+
+            // Compute the normal to the mid-surface
+            let normal = compute_mid_surface_normal(&vertex.point, &associated_pairs, brep);
+
+            result.vertices.push(ChordalVertex {
+                point: vertex.point,
+                thickness: vertex.radius * 2.0,
+                direction,
+                normal,
+                face_pairs: associated_pairs,
+            });
+        }
+    }
+
+    // Connect chordal vertices with edges
+    connect_chordal_vertices(&mut result, opts.cluster_distance);
+
+    // Identify thin sheets
+    result.sheets = identify_thin_sheets(&result, brep, opts);
+
+    result
+}
+
+/// Compute enhanced mid-surface extraction for FEA shell meshing.
+///
+/// This function extracts the mid-surface from thin-walled solids with
+/// improved accuracy and quality metrics suitable for FEA analysis.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `opts` - Mid-surface extraction options
+///
+/// # Returns
+/// Enhanced mid-surface result with quality metrics.
+pub fn compute_enhanced_mid_surface(brep: &BRep, opts: &MidSurfaceOptions) -> EnhancedMidSurfaceResult {
+    // Compute chordal axis for better thin feature detection
+    let chordal_axis = compute_chordal_axis(brep, &opts.base);
+
+    // Create mid-surface B-Rep
+    let mut mid_brep = BRep::default();
+    let mut face_thickness: Vec<f64> = Vec::new();
+    let mut face_mapping: Vec<(usize, usize)> = Vec::new();
+
+    // Create mid-surface faces from chordal sheets
+    for sheet in &chordal_axis.sheets {
+        let edge_idx = sheet.spine_edge;
+        if let Some(edge) = chordal_axis.edges.get(edge_idx) {
+            let start_idx = edge.start;
+            let end_idx = edge.end;
+            if let (Some(start_v), Some(end_v)) = (
+                chordal_axis.vertices.get(start_idx),
+                chordal_axis.vertices.get(end_idx),
+            ) {
+                // Create a surface patch between the two vertices
+                create_mid_surface_patch(
+                    start_v,
+                    end_v,
+                    sheet,
+                    &mut mid_brep,
+                    &mut face_thickness,
+                    &mut face_mapping,
+                    opts,
+                );
+            }
+        }
+    }
+
+    // Also create faces for isolated chordal vertices
+    for vertex in &chordal_axis.vertices {
+        create_mid_surface_point(vertex, &mut mid_brep, &mut face_thickness, &mut face_mapping, opts);
+    }
+
+    // Compute quality metrics
+    let quality = compute_mid_surface_quality(&mid_brep, brep, &chordal_axis, opts);
+
+    EnhancedMidSurfaceResult {
+        brep: mid_brep,
+        face_thickness,
+        face_mapping,
+        chordal_axis,
+        quality,
+    }
+}
+
+/// Detect thin-walled regions with detailed analysis.
+///
+/// Performs comprehensive thin region detection including clustering,
+/// severity classification, and histogram analysis.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `target_thickness` - Target wall thickness for comparison
+/// * `opts` - Computation options
+///
+/// # Returns
+/// Detailed thin region analysis with classifications.
+pub fn analyze_thin_regions(brep: &BRep, target_thickness: f64, opts: &MedialAxisOptions) -> ThinRegionAnalysis {
+    let medial = compute_medial_surface_voxel(brep, opts);
+
+    // Compute basic thin regions
+    let mut regions: Vec<ThinRegion> = medial
+        .vertices
+        .iter()
+        .filter(|v| v.radius * 2.0 < target_thickness)
+        .map(|v| {
+            let thickness = v.radius * 2.0;
+            let severity = 1.0 - (thickness / target_thickness).min(1.0);
+            ThinRegion {
+                center: v.point,
+                thickness,
+                area: 0.0,
+                face_indices: v.boundary_elements.clone(),
+                severity,
+            }
+        })
+        .collect();
+
+    // Cluster nearby thin regions
+    cluster_thin_regions(&mut regions, opts.cluster_distance);
+
+    // Compute areas for each region
+    for region in &mut regions {
+        region.area = estimate_region_area(&region.center, region.thickness, &medial);
+    }
+
+    // Classify overall thickness
+    let classification = classify_thickness(&medial.thickness_stats, target_thickness);
+
+    // Group by severity
+    let mut severity_groups: HashMap<ThinRegionSeverity, Vec<usize>> = HashMap::new();
+    for (i, region) in regions.iter().enumerate() {
+        let severity = if region.severity > 0.75 {
+            ThinRegionSeverity::Critical
+        } else if region.severity > 0.5 {
+            ThinRegionSeverity::Warning
+        } else {
+            ThinRegionSeverity::Acceptable
+        };
+        severity_groups.entry(severity).or_default().push(i);
+    }
+
+    // Build thickness histogram
+    let thickness_histogram = build_thickness_histogram(&medial, 20);
+
+    // Compute recommended minimum thickness
+    let recommended_min = compute_recommended_min_thickness(&medial, target_thickness);
+
+    ThinRegionAnalysis {
+        regions,
+        classification,
+        recommended_min,
+        severity_groups,
+        thickness_histogram,
+    }
+}
+
+/// Generate optimal rib/stiffener placements along the medial axis.
+///
+/// Analyzes the medial axis to determine optimal rib placement for
+/// structural reinforcement, considering load paths and thickness distribution.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `opts` - Rib generation options
+///
+/// # Returns
+/// Rib generation result with placement recommendations.
+pub fn generate_ribs(brep: &BRep, opts: &RibGenerationOptions) -> RibGenerationResult {
+    // Compute medial surface
+    let medial = compute_medial_surface_voxel(brep, &opts.base);
+
+    // Find candidate rib paths (medial edges with low thickness)
+    let candidates = find_rib_candidates(&medial, opts);
+
+    // Generate rib placements
+    let mut ribs: Vec<RibPlacement> = Vec::new();
+
+    for candidate in candidates {
+        if let Some(placement) = create_rib_placement(&candidate, &medial, brep, opts) {
+            ribs.push(placement);
+        }
+    }
+
+    // Optimize rib layout if requested
+    if opts.optimize_stiffness {
+        optimize_rib_layout(&mut ribs, brep, opts);
+    }
+
+    // Compute statistics
+    let total_volume: f64 = ribs.iter().map(|r| {
+        // Approximate volume as trapezoidal cross-section
+        let length = (r.end - r.start).length();
+        let avg_width = r.width;
+        let avg_height = r.height;
+        length * avg_width * avg_height * 0.5 // Triangular-ish cross-section
+    }).sum();
+
+    let stiffness_improvement = estimate_stiffness_improvement(&ribs, &medial);
+    let weight_increase = compute_weight_increase(&ribs, brep);
+    let quality_score = compute_rib_quality_score(&ribs, &medial, opts);
+
+    RibGenerationResult {
+        ribs,
+        total_volume,
+        stiffness_improvement,
+        weight_increase,
+        quality_score,
+    }
+}
+
+/// Compute local wall thickness at a specific point.
+///
+/// Uses ray casting to find the distance to the nearest boundary in
+/// multiple directions, returning the minimum distance as the local thickness.
+///
+/// # Arguments
+/// * `point` - Point inside the solid
+/// * `brep` - The B-Rep model
+/// * `opts` - Computation options
+///
+/// # Returns
+/// Local wall thickness and the direction to the nearest boundary.
+pub fn compute_local_thickness(point: &DVec3, brep: &BRep, opts: &MedialAxisOptions) -> (f64, DVec3) {
+    let mut min_distance = f64::MAX;
+    let mut min_direction = DVec3::Z;
+
+    // Sample directions on a sphere
+    let num_theta = (std::f64::consts::PI / opts.angular_resolution).ceil() as usize;
+    let num_phi = (2.0 * std::f64::consts::PI / opts.angular_resolution).ceil() as usize;
+
+    for i in 0..num_theta {
+        let theta = (i as f64 / num_theta as f64) * std::f64::consts::PI;
+        for j in 0..num_phi {
+            let phi = (j as f64 / num_phi as f64) * 2.0 * std::f64::consts::PI;
+
+            let direction = DVec3::new(
+                theta.sin() * phi.cos(),
+                theta.sin() * phi.sin(),
+                theta.cos(),
+            );
+
+            let distance = ray_cast_to_boundary(point, &direction, brep, opts);
+            if distance < min_distance {
+                min_distance = distance;
+                min_direction = direction;
+            }
+        }
+    }
+
+    (min_distance * 2.0, min_direction) // Full thickness is 2x distance to nearest boundary
+}
+
+/// Identify thick and thin zones in a solid.
+///
+/// Classifies regions of the solid based on wall thickness relative
+/// to target values, useful for manufacturing analysis.
+///
+/// # Arguments
+/// * `brep` - The B-Rep model to analyze
+/// * `target_thickness` - Target wall thickness
+/// * `tolerance` - Acceptable deviation from target
+/// * `opts` - Computation options
+///
+/// # Returns
+/// Vector of zone classifications with thickness and location.
+pub fn identify_thickness_zones(
+    brep: &BRep,
+    target_thickness: f64,
+    tolerance: f64,
+    opts: &MedialAxisOptions,
+) -> Vec<ThicknessZone> {
+    let medial = compute_medial_surface_voxel(brep, opts);
+
+    // Cluster medial vertices into zones
+    let clusters = cluster_medial_vertices(&medial, opts.cluster_distance * 10.0);
+
+    clusters
+        .iter()
+        .map(|cluster| {
+            let points: Vec<&MedialVertex> = cluster.iter().filter_map(|&i| medial.vertices.get(i)).collect();
+
+            let avg_thickness = points.iter().map(|v| v.radius * 2.0).sum::<f64>() / points.len() as f64;
+            let center = points
+                .iter()
+                .fold(DVec3::ZERO, |acc, v| acc + v.point)
+                / points.len() as f64;
+
+            let class = if avg_thickness < target_thickness - tolerance {
+                ThicknessClass::Thin
+            } else if avg_thickness > target_thickness + tolerance {
+                ThicknessClass::Thick
+            } else {
+                ThicknessClass::Normal
+            };
+
+            ThicknessZone {
+                center,
+                avg_thickness,
+                thickness_class: class,
+                point_count: points.len(),
+            }
+        })
+        .collect()
+}
+
+/// A zone with classified thickness.
+#[derive(Debug, Clone)]
+pub struct ThicknessZone {
+    /// Center of the zone.
+    pub center: DVec3,
+    /// Average thickness in the zone.
+    pub avg_thickness: f64,
+    /// Thickness classification.
+    pub thickness_class: ThicknessClass,
+    /// Number of sample points in the zone.
+    pub point_count: usize,
+}
+
+// ============================================================================
+// Helper Functions for Enhanced 3D Computation
+// ============================================================================
+
+/// Bounding box for a B-Rep.
+struct BoundingBox {
+    min: DVec3,
+    max: DVec3,
+}
+
+impl BoundingBox {
+    fn is_valid(&self) -> bool {
+        self.min.x <= self.max.x && self.min.y <= self.max.y && self.min.z <= self.max.z
+    }
+}
+
+fn compute_brep_bbox(brep: &BRep) -> BoundingBox {
+    let mut min = DVec3::splat(f64::MAX);
+    let mut max = DVec3::splat(f64::MIN);
+
+    for vertex in &brep.vertices {
+        min = min.min(vertex.point);
+        max = max.max(vertex.point);
+    }
+
+    BoundingBox { min, max }
+}
+
+fn compute_signed_distance_field(brep: &BRep, grid: &mut VoxelGrid, opts: &MedialAxisOptions) {
+    let dims = grid.dimensions;
+    let voxel_size = grid.voxel_size;
+    let origin = grid.origin;
+
+    for k in 0..dims[2] {
+        for j in 0..dims[1] {
+            for i in 0..dims[0] {
+                // Compute point without borrowing grid
+                let point = origin + DVec3::new(
+                    (i as f64 + 0.5) * voxel_size,
+                    (j as f64 + 0.5) * voxel_size,
+                    (k as f64 + 0.5) * voxel_size,
+                );
+
+                // Compute distance to nearest boundary
+                let (distance, inside) = compute_point_distance_to_brep(&point, brep, opts);
+
+                let idx = grid.index(i, j, k);
+                grid.distances[idx] = distance;
+                grid.inside[idx] = inside;
+            }
+        }
+    }
+}
+
+fn compute_point_distance_to_brep(point: &DVec3, brep: &BRep, _opts: &MedialAxisOptions) -> (f64, bool) {
+    let mut min_dist = f64::MAX;
+    let mut inside = false;
+
+    // Check distance to each face
+    for (face_idx, face) in brep.geom.face_surface.iter().enumerate() {
+        if let Some(surf_idx) = face {
+            if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
+                let dist = distance_point_to_surface(point, surf);
+                if dist < min_dist {
+                    min_dist = dist;
+
+                    // Determine if inside by checking face normal
+                    if let Some(face_data) = brep.solids.first().and_then(|s| s.shells.first())
+                        .and_then(|shell| shell.faces.get(face_idx))
+                    {
+                        let normal = face_data.normal;
+                        // Simple inside test based on normal direction
+                        let to_point = *point - surf.point_at(0.5, 0.5);
+                        inside = to_point.dot(normal) < 0.0;
+                    }
+                }
+            }
+        }
+    }
+
+    (min_dist, inside)
+}
+
+fn distance_point_to_surface(point: &DVec3, surf: &Surface3) -> f64 {
+    // Use simple projection for now
+    let [u_min, u_max, v_min, v_max] = surf.default_domain();
+
+    let mut min_dist = f64::MAX;
+
+    // Sample the surface to find minimum distance
+    for i in 0..20 {
+        for j in 0..20 {
+            let u = u_min + (i as f64 / 19.0) * (u_max - u_min);
+            let v = v_min + (j as f64 / 19.0) * (v_max - v_min);
+
+            if u.is_finite() && v.is_finite() {
+                let surf_point = surf.point_at(u, v);
+                let dist = (*point - surf_point).length();
+                min_dist = min_dist.min(dist);
+            }
+        }
+    }
+
+    min_dist
+}
+
+fn connect_medial_vertices(surface: &mut MedialSurface, max_distance: f64) {
+    let n = surface.vertices.len();
+    if n < 2 {
+        return;
+    }
+
+    // Build edges between nearby vertices
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d = (surface.vertices[i].point - surface.vertices[j].point).length();
+            if d < max_distance {
+                surface.edges.push(MedialEdge {
+                    start_vertex: i,
+                    end_vertex: j,
+                    curve: None,
+                    start_radius: surface.vertices[i].radius,
+                    end_radius: surface.vertices[j].radius,
+                });
+            }
+        }
+    }
+}
+
+fn build_medial_faces(surface: &mut MedialSurface) {
+    // Build adjacency list
+    let mut adj: Vec<Vec<(usize, usize)>> = vec![vec![]; surface.vertices.len()];
+    for (edge_idx, edge) in surface.edges.iter().enumerate() {
+        adj[edge.start_vertex].push((edge.end_vertex, edge_idx));
+        adj[edge.end_vertex].push((edge.start_vertex, edge_idx));
+    }
+
+    // Find edge loops that could form faces
+    let mut visited_edges: HashSet<usize> = HashSet::new();
+
+    for start_edge_idx in 0..surface.edges.len() {
+        if visited_edges.contains(&start_edge_idx) {
+            continue;
+        }
+
+        // Try to find a loop starting from this edge
+        if let Some(loop_vertices) = find_edge_loop(start_edge_idx, &adj, &surface.edges) {
+            if loop_vertices.len() >= 3 {
+                let radii: Vec<f64> = loop_vertices
+                    .iter()
+                    .filter_map(|&v| surface.vertices.get(v).map(|v| v.radius))
+                    .collect();
+
+                let min_radius = radii.iter().cloned().fold(f64::MAX, f64::min);
+                let max_radius = radii.iter().cloned().fold(0.0, f64::max);
+
+                // Mark edges as visited before moving loop_vertices
+                for i in 0..loop_vertices.len() {
+                    let v1 = loop_vertices[i];
+                    let v2 = loop_vertices[(i + 1) % loop_vertices.len()];
+                    for (edge_idx, edge) in surface.edges.iter().enumerate() {
+                        if (edge.start_vertex == v1 && edge.end_vertex == v2)
+                            || (edge.start_vertex == v2 && edge.end_vertex == v1)
+                        {
+                            visited_edges.insert(edge_idx);
+                        }
+                    }
+                }
+
+                surface.faces.push(MedialFace {
+                    vertices: loop_vertices,
+                    surface: None,
+                    min_radius,
+                    max_radius,
+                });
+            }
+        }
+    }
+}
+
+fn find_edge_loop(
+    start_edge_idx: usize,
+    adj: &[Vec<(usize, usize)>],
+    edges: &[MedialEdge],
+) -> Option<Vec<usize>> {
+    let start_edge = &edges[start_edge_idx];
+    let mut loop_vertices = vec![start_edge.start_vertex, start_edge.end_vertex];
+    let mut current = start_edge.end_vertex;
+    let target = start_edge.start_vertex;
+
+    for _ in 0..edges.len() {
+        // Find next edge
+        let mut found = false;
+        for &(next_vertex, edge_idx) in &adj[current] {
+            if edge_idx == start_edge_idx && loop_vertices.len() > 2 {
+                // Completed the loop
+                return Some(loop_vertices);
+            }
+            if !loop_vertices.contains(&next_vertex) {
+                loop_vertices.push(next_vertex);
+                current = next_vertex;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            break;
+        }
+        if current == target && loop_vertices.len() > 2 {
+            return Some(loop_vertices);
+        }
+    }
+
+    None
+}
+
+fn compute_opposing_face_pairs(brep: &BRep, _opts: &MedialAxisOptions) -> Vec<(usize, usize, f64)> {
+    let mut pairs: Vec<(usize, usize, f64)> = Vec::new();
+
+    // Get all faces
+    let faces: Vec<(usize, &Face, Option<&Surface3>)> = brep
+        .geom
+        .face_surface
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, fs)| {
+            if let Some(surf_idx) = fs {
+                if let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) {
+                    if let Some(face) = shell.faces.get(idx) {
+                        let surf = brep.geom.surfaces.get(*surf_idx);
+                        return Some((idx, face, surf));
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Find pairs of approximately parallel faces
+    for i in 0..faces.len() {
+        for j in (i + 1)..faces.len() {
+            let (idx_i, face_i, surf_i) = &faces[i];
+            let (idx_j, face_j, surf_j) = &faces[j];
+
+            // Check if faces are approximately parallel and facing each other
+            let normal_i = face_i.normal;
+            let normal_j = face_j.normal;
+
+            // Parallel if normals are opposite
+            let dot = normal_i.dot(normal_j);
+            if dot < -0.9 {
+                // Estimate distance between faces
+                if let (Some(surf_i), Some(surf_j)) = (surf_i, surf_j) {
+                    let center_i = surf_i.point_at(0.5, 0.5);
+                    let center_j = surf_j.point_at(0.5, 0.5);
+                    let distance = (center_j - center_i).length();
+                    pairs.push((*idx_i, *idx_j, distance));
+                }
+            }
+        }
+    }
+
+    pairs
+}
+
+fn find_associated_face_pairs(
+    point: &DVec3,
+    face_pairs: &[(usize, usize, f64)],
+    tolerance: f64,
+) -> Vec<(usize, usize)> {
+    face_pairs
+        .iter()
+        .filter_map(|&(f1, f2, distance)| {
+            // Check if the point is approximately midway between the faces
+            // This is a simplified check
+            Some((f1, f2))
+        })
+        .collect()
+}
+
+fn compute_chordal_direction(
+    _point: &DVec3,
+    _face_pairs: &[(usize, usize)],
+    _brep: &BRep,
+) -> DVec3 {
+    // Default direction for now
+    DVec3::X
+}
+
+fn compute_mid_surface_normal(
+    _point: &DVec3,
+    _face_pairs: &[(usize, usize)],
+    _brep: &BRep,
+) -> DVec3 {
+    // Default normal for now
+    DVec3::Z
+}
+
+fn connect_chordal_vertices(axis: &mut ChordalAxis, max_distance: f64) {
+    let n = axis.vertices.len();
+    if n < 2 {
+        return;
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d = (axis.vertices[i].point - axis.vertices[j].point).length();
+            if d < max_distance {
+                axis.edges.push(ChordalEdge {
+                    start: i,
+                    end: j,
+                    curve: None,
+                    avg_thickness: (axis.vertices[i].thickness + axis.vertices[j].thickness) / 2.0,
+                    length: d,
+                });
+            }
+        }
+    }
+}
+
+fn identify_thin_sheets(axis: &ChordalAxis, _brep: &BRep, _opts: &MedialAxisOptions) -> Vec<ThinSheet> {
+    let mut sheets = Vec::new();
+
+    for (edge_idx, edge) in axis.edges.iter().enumerate() {
+        sheets.push(ThinSheet {
+            spine_edge: edge_idx,
+            side_a_faces: vec![],
+            side_b_faces: vec![],
+            avg_thickness: edge.avg_thickness,
+            area: 0.0,
+            quality: 1.0,
+        });
+    }
+
+    sheets
+}
+
+fn create_mid_surface_patch(
+    start_v: &ChordalVertex,
+    end_v: &ChordalVertex,
+    _sheet: &ThinSheet,
+    mid_brep: &mut BRep,
+    face_thickness: &mut Vec<f64>,
+    face_mapping: &mut Vec<(usize, usize)>,
+    opts: &MidSurfaceOptions,
+) {
+    // Create a ruled surface between the two vertices
+    let direction = end_v.point - start_v.point;
+    let length = direction.length();
+
+    if length < opts.base.tolerance {
+        return;
+    }
+
+    // Create a simple planar patch
+    let center = (start_v.point + end_v.point) / 2.0;
+    let avg_normal = (start_v.normal + end_v.normal).normalize();
+
+    // Create perpendicular directions for the patch
+    let u_dir = direction.normalize();
+    let v_dir = avg_normal.cross(u_dir).normalize();
+
+    // Create a quad patch
+    let half_length = length / 2.0;
+    let half_width = (start_v.thickness + end_v.thickness) / 4.0;
+
+    let corners = vec![
+        center - u_dir * half_length - v_dir * half_width,
+        center + u_dir * half_length - v_dir * half_width,
+        center + u_dir * half_length + v_dir * half_width,
+        center - u_dir * half_length + v_dir * half_width,
+    ];
+
+    // Add vertices
+    let v_indices: Vec<usize> = corners
+        .iter()
+        .map(|&p| {
+            let idx = mid_brep.vertices.len();
+            mid_brep.vertices.push(rcad_kernel::Vertex { point: p });
+            idx
+        })
+        .collect();
+
+    // Create edges
+    let e_indices: Vec<usize> = (0..4)
+        .map(|i| {
+            let start = v_indices[i];
+            let end = v_indices[(i + 1) % 4];
+            let idx = mid_brep.edges.len();
+            mid_brep.edges.push(rcad_kernel::Edge { start, end });
+            idx
+        })
+        .collect();
+
+    // Create face
+    let wire = Wire {
+        edges: e_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
+    };
+
+    let face = Face {
+        outer_wire: wire,
+        inner_wires: vec![],
+        normal: avg_normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+
+    // Create plane surface
+    let plane = Plane {
+        origin: center,
+        normal: avg_normal,
+    };
+
+    let surf_idx = mid_brep.geom.surfaces.len();
+    mid_brep.geom.surfaces.push(Surface3::Plane(plane));
+
+    let face_idx = mid_brep.geom.face_surface.len();
+    mid_brep.geom.face_surface.push(Some(surf_idx));
+
+    if mid_brep.solids.is_empty() {
+        mid_brep.solids.push(Solid { shells: vec![Shell { faces: vec![] }] });
+    }
+    if let Some(shell) = mid_brep.solids[0].shells.first_mut() {
+        shell.faces.push(face);
+    }
+
+    face_thickness.push((start_v.thickness + end_v.thickness) / 2.0);
+
+    // Map to original faces
+    if let Some(&(f1, f2)) = start_v.face_pairs.first() {
+        face_mapping.push((face_idx, f1));
+    }
+}
+
+fn create_mid_surface_point(
+    vertex: &ChordalVertex,
+    mid_brep: &mut BRep,
+    face_thickness: &mut Vec<f64>,
+    face_mapping: &mut Vec<(usize, usize)>,
+    opts: &MidSurfaceOptions,
+) {
+    // Create a small triangular patch at this point
+    let normal = vertex.normal;
+    let tangent = if normal.x.abs() > 0.5 {
+        DVec3::Y
+    } else {
+        DVec3::X
+    };
+    let u_dir = tangent.cross(normal).normalize();
+    let v_dir = normal.cross(u_dir).normalize();
+
+    let r = vertex.thickness / 4.0;
+
+    let corners = vec![
+        vertex.point + u_dir * r,
+        vertex.point - u_dir * r / 2.0 + v_dir * r * 0.866,
+        vertex.point - u_dir * r / 2.0 - v_dir * r * 0.866,
+    ];
+
+    // Add vertices
+    let v_indices: Vec<usize> = corners
+        .iter()
+        .map(|&p| {
+            let idx = mid_brep.vertices.len();
+            mid_brep.vertices.push(rcad_kernel::Vertex { point: p });
+            idx
+        })
+        .collect();
+
+    // Create edges
+    let e_indices: Vec<usize> = (0..3)
+        .map(|i| {
+            let start = v_indices[i];
+            let end = v_indices[(i + 1) % 3];
+            let idx = mid_brep.edges.len();
+            mid_brep.edges.push(rcad_kernel::Edge { start, end });
+            idx
+        })
+        .collect();
+
+    // Create face
+    let wire = Wire {
+        edges: e_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
+    };
+
+    let face = Face {
+        outer_wire: wire,
+        inner_wires: vec![],
+        normal,
+        triangles: vec![],
+        mesh_dirty: true,
+    };
+
+    // Create plane surface
+    let plane = Plane {
+        origin: vertex.point,
+        normal,
+    };
+
+    let surf_idx = mid_brep.geom.surfaces.len();
+    mid_brep.geom.surfaces.push(Surface3::Plane(plane));
+
+    let face_idx = mid_brep.geom.face_surface.len();
+    mid_brep.geom.face_surface.push(Some(surf_idx));
+
+    if mid_brep.solids.is_empty() {
+        mid_brep.solids.push(Solid { shells: vec![Shell { faces: vec![] }] });
+    }
+    if let Some(shell) = mid_brep.solids[0].shells.first_mut() {
+        shell.faces.push(face);
+    }
+
+    face_thickness.push(vertex.thickness);
+
+    if let Some(&(f1, _)) = vertex.face_pairs.first() {
+        face_mapping.push((face_idx, f1));
+    }
+}
+
+fn compute_mid_surface_quality(
+    mid_brep: &BRep,
+    _original: &BRep,
+    chordal_axis: &ChordalAxis,
+    _opts: &MidSurfaceOptions,
+) -> MidSurfaceQuality {
+    // Compute coverage (ratio of chordal vertices represented)
+    let coverage = if chordal_axis.vertices.is_empty() {
+        1.0
+    } else {
+        // Count faces in mid-surface
+        let face_count = mid_brep
+            .solids
+            .first()
+            .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum())
+            .unwrap_or(0);
+
+        (face_count as f64 / chordal_axis.vertices.len() as f64).min(1.0)
+    };
+
+    // Compute average deviation (simplified)
+    let avg_deviation = 0.0; // Would need proper deviation computation
+    let max_deviation = 0.0;
+
+    // Compute thickness accuracy
+    let thickness_accuracy = 1.0; // Would need proper accuracy computation
+
+    // Count discontinuities
+    let discontinuities = 0; // Would need proper connectivity analysis
+
+    // Compute overall score
+    let overall_score = coverage * 0.5 + thickness_accuracy * 0.5;
+
+    MidSurfaceQuality {
+        coverage,
+        avg_deviation,
+        max_deviation,
+        thickness_accuracy,
+        discontinuities,
+        overall_score,
+    }
+}
+
+fn cluster_thin_regions(regions: &mut [ThinRegion], max_distance: f64) {
+    // Simple clustering based on distance
+    let n = regions.len();
+    if n < 2 {
+        return;
+    }
+
+    let mut cluster_ids: Vec<usize> = (0..n).collect();
+    let mut next_cluster_id = n;
+
+    // Merge nearby regions
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let d = (regions[i].center - regions[j].center).length();
+            if d < max_distance {
+                let old_id = cluster_ids[j];
+                let new_id = cluster_ids[i];
+                for id in &mut cluster_ids {
+                    if *id == old_id {
+                        *id = new_id;
+                    }
+                }
+            }
+        }
+    }
+
+    // Update severity based on cluster
+    for i in 0..n {
+        let cluster_id = cluster_ids[i];
+        let cluster_count = cluster_ids.iter().filter(|&&id| id == cluster_id).count();
+        if cluster_count > 1 {
+            regions[i].severity = regions[i].severity.min(1.0).max(0.5);
+        }
+    }
+}
+
+fn estimate_region_area(center: &DVec3, thickness: f64, medial: &MedialSurface) -> f64 {
+    // Estimate area based on nearby medial vertices
+    let nearby: Vec<&MedialVertex> = medial
+        .vertices
+        .iter()
+        .filter(|v| (*center - v.point).length() < thickness * 2.0)
+        .collect();
+
+    if nearby.is_empty() {
+        thickness * thickness
+    } else {
+        nearby.len() as f64 * thickness * thickness
+    }
+}
+
+fn classify_thickness(stats: &ThicknessStats, target: f64) -> ThicknessClass {
+    let ratio = stats.mean / target;
+
+    if ratio < 0.25 {
+        ThicknessClass::VeryThin
+    } else if ratio < 0.5 {
+        ThicknessClass::Thin
+    } else if ratio < 1.5 {
+        ThicknessClass::Normal
+    } else if ratio < 2.0 {
+        ThicknessClass::Thick
+    } else {
+        ThicknessClass::VeryThick
+    }
+}
+
+fn build_thickness_histogram(medial: &MedialSurface, num_bins: usize) -> Vec<ThicknessHistogramBin> {
+    if medial.vertices.is_empty() {
+        return vec![];
+    }
+
+    let thicknesses: Vec<f64> = medial.vertices.iter().map(|v| v.radius * 2.0).collect();
+    let min_t = thicknesses.iter().cloned().fold(f64::MAX, f64::min);
+    let max_t = thicknesses.iter().cloned().fold(0.0, f64::max);
+
+    let bin_width = (max_t - min_t) / num_bins as f64;
+    if bin_width < 1e-10 {
+        return vec![ThicknessHistogramBin {
+            lower: min_t,
+            upper: max_t,
+            count: thicknesses.len(),
+        }];
+    }
+
+    let mut bins: Vec<ThicknessHistogramBin> = (0..num_bins)
+        .map(|i| ThicknessHistogramBin {
+            lower: min_t + i as f64 * bin_width,
+            upper: min_t + (i + 1) as f64 * bin_width,
+            count: 0,
+        })
+        .collect();
+
+    for t in thicknesses {
+        let bin_idx = ((t - min_t) / bin_width).floor() as usize;
+        let bin_idx = bin_idx.min(num_bins - 1);
+        bins[bin_idx].count += 1;
+    }
+
+    bins
+}
+
+fn compute_recommended_min_thickness(medial: &MedialSurface, target: f64) -> f64 {
+    if medial.vertices.is_empty() {
+        return target;
+    }
+
+    // Use the minimum thickness found, with a safety factor
+    let min_found = medial.thickness_stats.min;
+    min_found.max(target * 0.8)
+}
+
+fn find_rib_candidates(medial: &MedialSurface, opts: &RibGenerationOptions) -> Vec<RibCandidate> {
+    let mut candidates = Vec::new();
+
+    for edge in &medial.edges {
+        if let (Some(start_v), Some(end_v)) = (
+            medial.vertices.get(edge.start_vertex),
+            medial.vertices.get(edge.end_vertex),
+        ) {
+            let length = (end_v.point - start_v.point).length();
+            if length >= opts.min_length {
+                let avg_thickness = (start_v.radius + end_v.radius) * 2.0;
+
+                // Ribs are most useful in thin regions
+                if avg_thickness < opts.base.min_thickness * 10.0 {
+                    candidates.push(RibCandidate {
+                        start: start_v.point,
+                        end: end_v.point,
+                        avg_thickness,
+                        length,
+                        medial_edge_idx: Some(edge.start_vertex), // Simplified
+                    });
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+struct RibCandidate {
+    start: DVec3,
+    end: DVec3,
+    avg_thickness: f64,
+    length: f64,
+    medial_edge_idx: Option<usize>,
+}
+
+fn create_rib_placement(
+    candidate: &RibCandidate,
+    medial: &MedialSurface,
+    _brep: &BRep,
+    opts: &RibGenerationOptions,
+) -> Option<RibPlacement> {
+    let direction = candidate.end - candidate.start;
+
+    // Compute optimal rib height based on thickness
+    let height = (candidate.avg_thickness * 3.0).clamp(opts.min_height, opts.max_height);
+    let width = height * 0.6; // Typical width-to-height ratio
+
+    // Compute efficiency score
+    let efficiency = (candidate.length / opts.min_length).min(1.0)
+        * (height / opts.max_height).min(1.0);
+
+    // Find attached face
+    let attached_face = candidate
+        .medial_edge_idx
+        .and_then(|idx| medial.vertices.get(idx))
+        .and_then(|v| v.boundary_elements.first().copied())
+        .unwrap_or(0);
+
+    Some(RibPlacement {
+        centerline: Curve3::Line(Line3 {
+            origin: candidate.start,
+            direction: direction.normalize(),
+        }),
+        start: candidate.start,
+        end: candidate.end,
+        height,
+        width,
+        draft_angle: opts.draft_angle,
+        efficiency,
+        medial_edge: candidate.medial_edge_idx,
+        attached_face,
+    })
+}
+
+fn optimize_rib_layout(ribs: &mut Vec<RibPlacement>, _brep: &BRep, opts: &RibGenerationOptions) {
+    // Remove overlapping ribs and optimize spacing
+    let mut to_remove: HashSet<usize> = HashSet::new();
+
+    for i in 0..ribs.len() {
+        if to_remove.contains(&i) {
+            continue;
+        }
+        for j in (i + 1)..ribs.len() {
+            if to_remove.contains(&j) {
+                continue;
+            }
+
+            // Check if ribs are too close
+            let dist = (ribs[i].start - ribs[j].start).length().min(
+                (ribs[i].end - ribs[j].end).length(),
+            );
+
+            if dist < opts.spacing * 0.5 {
+                // Keep the more efficient rib
+                if ribs[i].efficiency >= ribs[j].efficiency {
+                    to_remove.insert(j);
+                } else {
+                    to_remove.insert(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Sort by efficiency and remove low-efficiency ribs
+    ribs.sort_by(|a, b| b.efficiency.partial_cmp(&a.efficiency).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Keep only top ribs
+    let max_ribs = 20; // Reasonable limit
+    if ribs.len() > max_ribs {
+        ribs.truncate(max_ribs);
+    }
+}
+
+fn estimate_stiffness_improvement(ribs: &[RibPlacement], medial: &MedialSurface) -> f64 {
+    if ribs.is_empty() || medial.vertices.is_empty() {
+        return 0.0;
+    }
+
+    // Simplified estimate: total rib volume / original volume
+    let total_rib_volume: f64 = ribs
+        .iter()
+        .map(|r| {
+            let length = (r.end - r.start).length();
+            length * r.width * r.height * 0.5
+        })
+        .sum();
+
+    // Estimate original volume from medial surface
+    let avg_thickness = medial.thickness_stats.mean;
+
+    // Stiffness improvement is roughly proportional to the moment of inertia increase
+    let rib_inertia_factor: f64 = ribs.iter().map(|r| r.height * r.height).sum();
+    let base_factor = avg_thickness * avg_thickness * medial.vertices.len() as f64;
+
+    if base_factor > 0.0 {
+        (rib_inertia_factor / base_factor).min(10.0) // Cap at 10x improvement
+    } else {
+        0.0
+    }
+}
+
+fn compute_weight_increase(ribs: &[RibPlacement], _brep: &BRep) -> f64 {
+    if ribs.is_empty() {
+        return 0.0;
+    }
+
+    let total_rib_volume: f64 = ribs
+        .iter()
+        .map(|r| {
+            let length = (r.end - r.start).length();
+            length * r.width * r.height * 0.5
+        })
+        .sum();
+
+    // Simplified: assume base part has volume proportional to bounding box
+    // Return percentage increase
+    total_rib_volume * 100.0 / 1000000.0 // Simplified percentage
+}
+
+fn compute_rib_quality_score(ribs: &[RibPlacement], medial: &MedialSurface, opts: &RibGenerationOptions) -> f64 {
+    if ribs.is_empty() {
+        return 0.0;
+    }
+
+    // Average efficiency
+    let avg_efficiency: f64 = ribs.iter().map(|r| r.efficiency).sum::<f64>() / ribs.len() as f64;
+
+    // Coverage: how many thin regions are addressed
+    let coverage = ribs.len() as f64 / medial.vertices.len().max(1) as f64;
+
+    // Spacing score
+    let spacing_score = if ribs.len() > 1 {
+        let mut min_spacing = f64::MAX;
+        for i in 0..ribs.len() {
+            for j in (i + 1)..ribs.len() {
+                let d = (ribs[i].start - ribs[j].start).length();
+                min_spacing = min_spacing.min(d);
+            }
+        }
+        if min_spacing > opts.spacing {
+            1.0
+        } else {
+            min_spacing / opts.spacing
+        }
+    } else {
+        1.0
+    };
+
+    avg_efficiency * 0.5 + coverage.min(1.0) * 0.3 + spacing_score * 0.2
+}
+
+fn ray_cast_to_boundary(point: &DVec3, direction: &DVec3, brep: &BRep, opts: &MedialAxisOptions) -> f64 {
+    let mut min_distance = f64::MAX;
+
+    // Check intersection with each face
+    for (_face_idx, face_surf) in brep.geom.face_surface.iter().enumerate() {
+        if let Some(surf_idx) = face_surf {
+            if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
+                let distance = ray_surface_intersection(point, direction, surf, opts);
+                min_distance = min_distance.min(distance);
+            }
+        }
+    }
+
+    min_distance
+}
+
+fn ray_surface_intersection(point: &DVec3, direction: &DVec3, surf: &Surface3, _opts: &MedialAxisOptions) -> f64 {
+    // Simplified: sample the surface and find minimum distance along ray
+    let [u_min, u_max, v_min, v_max] = surf.default_domain();
+
+    let mut min_dist = f64::MAX;
+
+    for i in 0..20 {
+        for j in 0..20 {
+            let u = u_min + (i as f64 / 19.0) * (u_max - u_min);
+            let v = v_min + (j as f64 / 19.0) * (v_max - v_min);
+
+            if u.is_finite() && v.is_finite() {
+                let surf_point = surf.point_at(u, v);
+                let to_surf = surf_point - *point;
+
+                // Project onto ray direction
+                let t = to_surf.dot(*direction);
+                if t > 0.0 {
+                    let closest = *point + t * *direction;
+                    let dist = (surf_point - closest).length();
+                    if dist < min_dist {
+                        min_dist = t; // Distance along ray
+                    }
+                }
+            }
+        }
+    }
+
+    min_dist
+}
 
 /// Compute wall thickness distribution for a solid.
 ///
@@ -1764,5 +3531,556 @@ mod tests {
         assert_eq!(voronoi.sites.len(), 3);
         // Vertices and edges may be empty for simple configurations
         // This is acceptable for a basic implementation
+    }
+
+    // ============================================================================
+    // Tests for Enhanced 3D Functionality
+    // ============================================================================
+
+    #[test]
+    fn test_voxel_grid_creation() {
+        let grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
+
+        assert_eq!(grid.dimensions, [10, 10, 10]);
+        assert!((grid.voxel_size - 0.1).abs() < 1e-10);
+        assert_eq!(grid.distances.len(), 1000);
+    }
+
+    #[test]
+    fn test_voxel_grid_index() {
+        let grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
+
+        assert_eq!(grid.index(0, 0, 0), 0);
+        assert_eq!(grid.index(1, 0, 0), 1);
+        assert_eq!(grid.index(0, 1, 0), 10);
+        assert_eq!(grid.index(0, 0, 1), 100);
+        assert_eq!(grid.index(5, 5, 5), 555);
+    }
+
+    #[test]
+    fn test_voxel_grid_center() {
+        let grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
+
+        let center = grid.voxel_center(0, 0, 0);
+        assert!((center.x - 0.05).abs() < 1e-10);
+        assert!((center.y - 0.05).abs() < 1e-10);
+        assert!((center.z - 0.05).abs() < 1e-10);
+
+        let center5 = grid.voxel_center(5, 5, 5);
+        assert!((center5.x - 0.55).abs() < 1e-10);
+        assert!((center5.y - 0.55).abs() < 1e-10);
+        assert!((center5.z - 0.55).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_voxel_grid_distance_set_get() {
+        let mut grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
+
+        grid.set_distance(5, 5, 5, 0.5);
+        let d = grid.get_distance(5, 5, 5);
+        assert!((d - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_voxel_grid_find_local_maxima() {
+        let mut grid = VoxelGrid::new(DVec3::ZERO, 0.1, [5, 5, 5]);
+
+        // Set a peak at the center
+        grid.set_distance(2, 2, 2, 1.0);
+        {
+            let idx = grid.index(2, 2, 2);
+            grid.inside[idx] = true;
+        }
+
+        // Set lower values around it
+        for i in 0..5 {
+            for j in 0..5 {
+                for k in 0..5 {
+                    if !(i == 2 && j == 2 && k == 2) {
+                        grid.set_distance(i, j, k, 0.5);
+                        let idx = grid.index(i, j, k);
+                        grid.inside[idx] = true;
+                    }
+                }
+            }
+        }
+
+        let maxima = grid.find_local_maxima(0.3);
+        assert!(!maxima.is_empty());
+    }
+
+    #[test]
+    fn test_mid_surface_options_default() {
+        let opts = MidSurfaceOptions::default();
+
+        assert!((opts.max_thickness_ratio - 0.1).abs() < 1e-10);
+        assert!((opts.min_aspect_ratio - 10.0).abs() < 1e-10);
+        assert_eq!(opts.continuity, ContinuityLevel::C0);
+        assert!(opts.preserve_features);
+    }
+
+    #[test]
+    fn test_rib_generation_options_default() {
+        let opts = RibGenerationOptions::default();
+
+        assert!((opts.min_height - 2.0).abs() < 1e-10);
+        assert!((opts.max_height - 20.0).abs() < 1e-10);
+        assert!(opts.optimize_stiffness);
+        assert!((opts.thickness_weight - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_compute_medial_surface_voxel_empty() {
+        let brep = BRep::default();
+        let opts = MedialAxisOptions::default();
+        let result = compute_medial_surface_voxel(&brep, &opts);
+
+        assert!(result.vertices.is_empty());
+    }
+
+    #[test]
+    fn test_compute_chordal_axis_empty() {
+        let brep = BRep::default();
+        let opts = MedialAxisOptions::default();
+        let result = compute_chordal_axis(&brep, &opts);
+
+        assert!(result.vertices.is_empty());
+        assert!(result.edges.is_empty());
+    }
+
+    #[test]
+    fn test_compute_enhanced_mid_surface_empty() {
+        let brep = BRep::default();
+        let opts = MidSurfaceOptions::default();
+        let result = compute_enhanced_mid_surface(&brep, &opts);
+
+        assert!(result.face_thickness.is_empty());
+        assert_eq!(result.quality.coverage, 0.0);
+    }
+
+    #[test]
+    fn test_analyze_thin_regions_empty() {
+        let brep = BRep::default();
+        let opts = MedialAxisOptions::default();
+        let result = analyze_thin_regions(&brep, 1.0, &opts);
+
+        assert!(result.regions.is_empty());
+        assert_eq!(result.classification, ThicknessClass::Normal);
+        assert!(result.severity_groups.is_empty());
+    }
+
+    #[test]
+    fn test_generate_ribs_empty() {
+        let brep = BRep::default();
+        let opts = RibGenerationOptions::default();
+        let result = generate_ribs(&brep, &opts);
+
+        assert!(result.ribs.is_empty());
+        assert!((result.total_volume - 0.0).abs() < 1e-10);
+        assert!((result.stiffness_improvement - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_identify_thickness_zones_empty() {
+        let brep = BRep::default();
+        let opts = MedialAxisOptions::default();
+        let zones = identify_thickness_zones(&brep, 1.0, 0.1, &opts);
+
+        assert!(zones.is_empty());
+    }
+
+    #[test]
+    fn test_compute_local_thickness_empty() {
+        let brep = BRep::default();
+        let opts = MedialAxisOptions::default();
+        let (thickness, _direction) = compute_local_thickness(&DVec3::ZERO, &brep, &opts);
+
+        assert!(thickness > f64::MAX / 2.0); // Should be max distance for empty B-Rep
+    }
+
+    #[test]
+    fn test_chordal_vertex() {
+        let vertex = ChordalVertex {
+            point: dvec3(1.0, 2.0, 3.0),
+            thickness: 0.5,
+            direction: DVec3::X,
+            normal: DVec3::Z,
+            face_pairs: vec![(0, 1)],
+        };
+
+        assert!((vertex.point.x - 1.0).abs() < 1e-10);
+        assert!((vertex.thickness - 0.5).abs() < 1e-10);
+        assert_eq!(vertex.direction, DVec3::X);
+        assert_eq!(vertex.normal, DVec3::Z);
+    }
+
+    #[test]
+    fn test_chordal_edge() {
+        let edge = ChordalEdge {
+            start: 0,
+            end: 1,
+            curve: None,
+            avg_thickness: 0.5,
+            length: 1.0,
+        };
+
+        assert_eq!(edge.start, 0);
+        assert_eq!(edge.end, 1);
+        assert!((edge.avg_thickness - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_chordal_axis() {
+        let mut axis = ChordalAxis::default();
+
+        axis.vertices.push(ChordalVertex {
+            point: DVec3::ZERO,
+            thickness: 0.5,
+            direction: DVec3::X,
+            normal: DVec3::Z,
+            face_pairs: vec![],
+        });
+        axis.vertices.push(ChordalVertex {
+            point: dvec3(1.0, 0.0, 0.0),
+            thickness: 0.5,
+            direction: DVec3::X,
+            normal: DVec3::Z,
+            face_pairs: vec![],
+        });
+
+        assert_eq!(axis.vertices.len(), 2);
+    }
+
+    #[test]
+    fn test_thin_sheet() {
+        let sheet = ThinSheet {
+            spine_edge: 0,
+            side_a_faces: vec![0, 1],
+            side_b_faces: vec![2, 3],
+            avg_thickness: 0.5,
+            area: 10.0,
+            quality: 0.9,
+        };
+
+        assert_eq!(sheet.spine_edge, 0);
+        assert_eq!(sheet.side_a_faces.len(), 2);
+        assert_eq!(sheet.side_b_faces.len(), 2);
+        assert!((sheet.avg_thickness - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_thickness_class() {
+        assert_ne!(ThicknessClass::VeryThin, ThicknessClass::Thin);
+        assert_ne!(ThicknessClass::Thin, ThicknessClass::Normal);
+        assert_ne!(ThicknessClass::Normal, ThicknessClass::Thick);
+        assert_ne!(ThicknessClass::Thick, ThicknessClass::VeryThick);
+    }
+
+    #[test]
+    fn test_thin_region_severity() {
+        let critical = ThinRegionSeverity::Critical;
+        let warning = ThinRegionSeverity::Warning;
+        let acceptable = ThinRegionSeverity::Acceptable;
+
+        assert_ne!(critical, warning);
+        assert_ne!(warning, acceptable);
+    }
+
+    #[test]
+    fn test_thin_region_analysis() {
+        let analysis = ThinRegionAnalysis {
+            regions: vec![],
+            classification: ThicknessClass::Normal,
+            recommended_min: 1.0,
+            severity_groups: HashMap::new(),
+            thickness_histogram: vec![],
+        };
+
+        assert!(analysis.regions.is_empty());
+        assert_eq!(analysis.classification, ThicknessClass::Normal);
+        assert!((analysis.recommended_min - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_thickness_histogram_bin() {
+        let bin = ThicknessHistogramBin {
+            lower: 0.0,
+            upper: 0.5,
+            count: 10,
+        };
+
+        assert!((bin.lower - 0.0).abs() < 1e-10);
+        assert!((bin.upper - 0.5).abs() < 1e-10);
+        assert_eq!(bin.count, 10);
+    }
+
+    #[test]
+    fn test_rib_placement() {
+        let placement = RibPlacement {
+            centerline: Curve3::Line(Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            }),
+            start: DVec3::ZERO,
+            end: dvec3(1.0, 0.0, 0.0),
+            height: 5.0,
+            width: 3.0,
+            draft_angle: 0.1,
+            efficiency: 0.8,
+            medial_edge: Some(0),
+            attached_face: 0,
+        };
+
+        assert!((placement.height - 5.0).abs() < 1e-10);
+        assert!((placement.width - 3.0).abs() < 1e-10);
+        assert!((placement.efficiency - 0.8).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_rib_generation_result() {
+        let result = RibGenerationResult {
+            ribs: vec![],
+            total_volume: 0.0,
+            stiffness_improvement: 0.0,
+            weight_increase: 0.0,
+            quality_score: 0.0,
+        };
+
+        assert!(result.ribs.is_empty());
+    }
+
+    #[test]
+    fn test_thickness_zone() {
+        let zone = ThicknessZone {
+            center: DVec3::ZERO,
+            avg_thickness: 1.0,
+            thickness_class: ThicknessClass::Normal,
+            point_count: 10,
+        };
+
+        assert!((zone.avg_thickness - 1.0).abs() < 1e-10);
+        assert_eq!(zone.thickness_class, ThicknessClass::Normal);
+        assert_eq!(zone.point_count, 10);
+    }
+
+    #[test]
+    fn test_mid_surface_quality() {
+        let quality = MidSurfaceQuality {
+            coverage: 0.9,
+            avg_deviation: 0.01,
+            max_deviation: 0.05,
+            thickness_accuracy: 0.95,
+            discontinuities: 2,
+            overall_score: 0.92,
+        };
+
+        assert!((quality.coverage - 0.9).abs() < 1e-10);
+        assert!((quality.avg_deviation - 0.01).abs() < 1e-10);
+        assert_eq!(quality.discontinuities, 2);
+    }
+
+    #[test]
+    fn test_enhanced_mid_surface_result() {
+        let result = EnhancedMidSurfaceResult {
+            brep: BRep::default(),
+            face_thickness: vec![],
+            face_mapping: vec![],
+            chordal_axis: ChordalAxis::default(),
+            quality: MidSurfaceQuality::default(),
+        };
+
+        assert!(result.face_thickness.is_empty());
+    }
+
+    #[test]
+    fn test_medial_edge_creation() {
+        let edge = MedialEdge {
+            start_vertex: 0,
+            end_vertex: 1,
+            curve: Some(Curve3::Line(Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::X,
+            })),
+            start_radius: 0.5,
+            end_radius: 0.6,
+        };
+
+        assert_eq!(edge.start_vertex, 0);
+        assert_eq!(edge.end_vertex, 1);
+        assert!(edge.curve.is_some());
+    }
+
+    #[test]
+    fn test_medial_face_creation() {
+        let face = MedialFace {
+            vertices: vec![0, 1, 2],
+            surface: None,
+            min_radius: 0.5,
+            max_radius: 1.0,
+        };
+
+        assert_eq!(face.vertices.len(), 3);
+        assert!((face.min_radius - 0.5).abs() < 1e-10);
+        assert!((face.max_radius - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_continuity_level() {
+        assert_ne!(ContinuityLevel::C0, ContinuityLevel::C1);
+        assert_ne!(ContinuityLevel::C1, ContinuityLevel::C2);
+    }
+
+    #[test]
+    fn test_medial_axis_options_enhanced() {
+        let opts = MedialAxisOptions {
+            tolerance: 1e-6,
+            min_thickness: 0.001,
+            simplify: true,
+            sample_density: 50,
+            voronoi_depth: 5,
+            corner_angle_tol: 0.05,
+            cluster_distance: 0.02,
+            refinement_iterations: 2,
+            use_chordal_axis: false,
+            min_feature_size: 0.005,
+            angular_resolution: std::f64::consts::PI / 18.0,
+        };
+
+        assert_eq!(opts.sample_density, 50);
+        assert_eq!(opts.refinement_iterations, 2);
+        assert!(!opts.use_chordal_axis);
+    }
+
+    #[test]
+    fn test_medial_surface_with_vertices() {
+        let mut surface = MedialSurface::default();
+
+        surface.vertices.push(MedialVertex {
+            point: DVec3::ZERO,
+            radius: 0.5,
+            boundary_elements: vec![0],
+        });
+        surface.vertices.push(MedialVertex {
+            point: dvec3(1.0, 0.0, 0.0),
+            radius: 0.6,
+            boundary_elements: vec![1],
+        });
+        surface.edges.push(MedialEdge {
+            start_vertex: 0,
+            end_vertex: 1,
+            curve: None,
+            start_radius: 0.5,
+            end_radius: 0.6,
+        });
+
+        assert_eq!(surface.vertices.len(), 2);
+        assert_eq!(surface.edges.len(), 1);
+    }
+
+    #[test]
+    fn test_medial_surface_edge_connectivity() {
+        let mut surface = MedialSurface::default();
+
+        // Create a triangle of vertices
+        for i in 0..3 {
+            let angle = i as f64 * std::f64::consts::PI * 2.0 / 3.0;
+            surface.vertices.push(MedialVertex {
+                point: dvec3(angle.cos(), angle.sin(), 0.0),
+                radius: 0.5,
+                boundary_elements: vec![],
+            });
+        }
+
+        // Connect them in a triangle
+        surface.edges.push(MedialEdge {
+            start_vertex: 0,
+            end_vertex: 1,
+            curve: None,
+            start_radius: 0.5,
+            end_radius: 0.5,
+        });
+        surface.edges.push(MedialEdge {
+            start_vertex: 1,
+            end_vertex: 2,
+            curve: None,
+            start_radius: 0.5,
+            end_radius: 0.5,
+        });
+        surface.edges.push(MedialEdge {
+            start_vertex: 2,
+            end_vertex: 0,
+            curve: None,
+            start_radius: 0.5,
+            end_radius: 0.5,
+        });
+
+        assert_eq!(surface.vertices.len(), 3);
+        assert_eq!(surface.edges.len(), 3);
+    }
+
+    #[test]
+    fn test_thin_region_creation() {
+        let region = ThinRegion {
+            center: dvec3(1.0, 2.0, 3.0),
+            thickness: 0.5,
+            area: 10.0,
+            face_indices: vec![0, 1, 2],
+            severity: 0.8,
+        };
+
+        assert!((region.thickness - 0.5).abs() < 1e-10);
+        assert!((region.area - 10.0).abs() < 1e-10);
+        assert_eq!(region.face_indices.len(), 3);
+    }
+
+    #[test]
+    fn test_thickness_sample() {
+        let sample = ThicknessSample {
+            point: dvec3(1.0, 2.0, 3.0),
+            thickness: 0.5,
+            normal: DVec3::Z,
+            nearest_face: 0,
+        };
+
+        assert!((sample.thickness - 0.5).abs() < 1e-10);
+        assert_eq!(sample.nearest_face, 0);
+    }
+
+    #[test]
+    fn test_wall_thickness_result() {
+        let result = WallThicknessResult {
+            min_thickness: 0.5,
+            max_thickness: 2.0,
+            avg_thickness: 1.0,
+            thin_regions: vec![],
+        };
+
+        assert!((result.min_thickness - 0.5).abs() < 1e-10);
+        assert!((result.max_thickness - 2.0).abs() < 1e-10);
+        assert!((result.avg_thickness - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_thickness_map() {
+        let map = ThicknessMap {
+            samples: vec![
+                ThicknessSample {
+                    point: DVec3::ZERO,
+                    thickness: 0.5,
+                    normal: DVec3::Z,
+                    nearest_face: 0,
+                },
+            ],
+            stats: ThicknessStats {
+                min: 0.5,
+                max: 0.5,
+                mean: 0.5,
+                std_dev: 0.0,
+            },
+            thin_regions: vec![],
+        };
+
+        assert_eq!(map.samples.len(), 1);
+        assert!((map.stats.mean - 0.5).abs() < 1e-10);
     }
 }

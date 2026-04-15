@@ -119,6 +119,8 @@ impl HealingIssueStats {
                 CheckIssue::NonManifoldEdge { .. } => s.non_manifold_edge += 1,
                 CheckIssue::SelfIntersectingWire { .. } => s.self_intersecting_wire += 1,
                 CheckIssue::GeometricSelfIntersection { .. } => s.geometric_self_intersection += 1,
+                // Handle all other variants - they don't have specific counters yet
+                _ => {}
             }
         }
         s
