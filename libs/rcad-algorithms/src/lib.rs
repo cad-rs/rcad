@@ -72,6 +72,8 @@ pub use brep_check::{CheckIssue, CheckResult, check,
 pub use brep_check_parallel::{
     check_parallel, check_parallel_with_batch_size, check_many_parallel,
     check_parallel_with_stats, ParallelCheckStats,
+    check_parallel_with_options, check_many_parallel_with_options,
+    ParallelCheckOptions, ParallelCheckResult, ParallelCheckIssue,
 };
 pub use brep_repair::{
     MakeConnectedReport, RepairReport, ToleranceFlowDirection,

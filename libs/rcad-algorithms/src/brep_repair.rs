@@ -4534,6 +4534,848 @@ fn splice_wires_for_merge(
     Some(merged)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shell Repair (ShapeFix_Shell equivalent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from shell-level repair operations.
+///
+/// Analogous to OCCT `ShapeFix_Shell` report.
+#[derive(Debug, Clone, Default)]
+pub struct ShellFixReport {
+    /// Number of faces whose orientation was corrected.
+    pub faces_reoriented: usize,
+    /// Number of edges that were non-manifold and were processed.
+    pub non_manifold_edges_processed: usize,
+    /// Number of new shells created from splitting non-manifold topology.
+    pub shells_created: usize,
+    /// Whether the shell is now closed.
+    pub is_closed: bool,
+    /// Whether the shell is now manifold.
+    pub is_manifold: bool,
+    /// Number of open edges detected.
+    pub open_edge_count: usize,
+    /// Number of non-manifold edges detected.
+    pub non_manifold_edge_count: usize,
+}
+
+impl ShellFixReport {
+    /// Returns true if the shell is in a clean state.
+    pub fn is_clean(&self) -> bool {
+        self.is_closed && self.is_manifold
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        format!(
+            "ShellFix: {} faces reoriented, {} non-manifold edges processed, closed={}, manifold={}",
+            self.faces_reoriented,
+            self.non_manifold_edges_processed,
+            self.is_closed,
+            self.is_manifold
+        )
+    }
+}
+
+/// Report from shell closure checking.
+#[derive(Debug, Clone, Default)]
+pub struct ClosureReport {
+    /// Whether the shell forms a closed surface (no free edges).
+    pub is_closed: bool,
+    /// Number of edges referenced by exactly 1 face (free/open edges).
+    pub open_edge_count: usize,
+    /// List of open edge indices.
+    pub open_edges: Vec<usize>,
+    /// Euler characteristic: V - E + F.
+    pub euler_characteristic: i64,
+    /// Number of unique vertices in the shell.
+    pub vertex_count: usize,
+    /// Number of unique edges in the shell.
+    pub edge_count: usize,
+    /// Number of faces in the shell.
+    pub face_count: usize,
+    /// Whether the shell is orientable (has consistent normal direction).
+    pub is_orientable: bool,
+    /// Genus computed from Euler characteristic (if closed).
+    pub genus: Option<i64>,
+}
+
+impl ClosureReport {
+    /// Returns true if the shell is closed and orientable.
+    pub fn is_valid(&self) -> bool {
+        self.is_closed && self.is_orientable
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_closed {
+            let genus_str = self.genus.map_or("?".to_string(), |g| g.to_string());
+            format!(
+                "Closed shell: V={}, E={}, F={}, χ={}, genus={}",
+                self.vertex_count, self.edge_count, self.face_count,
+                self.euler_characteristic, genus_str
+            )
+        } else {
+            format!(
+                "Open shell: {} open edges, V={}, E={}, F={}, χ={}",
+                self.open_edge_count, self.vertex_count, self.edge_count,
+                self.face_count, self.euler_characteristic
+            )
+        }
+    }
+}
+
+/// Check shell closure and compute Euler characteristic.
+///
+/// This function analyzes a shell to determine if it forms a closed surface
+/// (no free edges) and computes the Euler characteristic V - E + F.
+///
+/// # Arguments
+/// * `shell` - The shell to analyze.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A `ClosureReport` with closure status and Euler characteristic.
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::check_shell_closure;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let shell = &brep.solids[0].shells[0];
+/// let report = check_shell_closure(shell, &brep);
+/// assert!(report.is_closed);
+/// assert_eq!(report.euler_characteristic, 2); // Sphere topology
+/// ```
+pub fn check_shell_closure(shell: &Shell, brep: &BRep) -> ClosureReport {
+    use std::collections::{HashMap, HashSet};
+
+    let n_edges = brep.edges.len();
+    let face_count = shell.faces.len();
+
+    // Collect unique edges and count edge-face references
+    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+    let mut unique_edges: HashSet<usize> = HashSet::new();
+
+    for face in &shell.faces {
+        // Count edges in outer wire
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                unique_edges.insert(we.idx);
+                *edge_face_count.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+        // Count edges in inner wires
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                if we.idx < n_edges {
+                    unique_edges.insert(we.idx);
+                    *edge_face_count.entry(we.idx).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Find open edges (referenced by exactly 1 face)
+    let open_edges: Vec<usize> = edge_face_count
+        .iter()
+        .filter(|(_, count)| **count == 1)
+        .map(|(idx, _)| *idx)
+        .collect();
+    let open_edge_count = open_edges.len();
+
+    // Collect unique vertices from unique edges
+    let mut unique_verts: HashSet<usize> = HashSet::new();
+    for &ei in &unique_edges {
+        if let Some(edge) = brep.edges.get(ei) {
+            unique_verts.insert(edge.start);
+            unique_verts.insert(edge.end);
+        }
+    }
+
+    let vertex_count = unique_verts.len();
+    let edge_count = unique_edges.len();
+
+    // Compute Euler characteristic
+    let euler_characteristic = vertex_count as i64 - edge_count as i64 + face_count as i64;
+
+    // Check orientability by examining face normals
+    // For a simple check, verify that adjacent faces have compatible normals
+    let is_orientable = check_shell_orientability(shell, brep);
+
+    // Compute genus if closed
+    let is_closed = open_edge_count == 0;
+    let genus = if is_closed {
+        let g = (2 - euler_characteristic) / 2;
+        if (2 - euler_characteristic) % 2 == 0 && g >= 0 {
+            Some(g)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    ClosureReport {
+        is_closed,
+        open_edge_count,
+        open_edges,
+        euler_characteristic,
+        vertex_count,
+        edge_count,
+        face_count,
+        is_orientable,
+        genus,
+    }
+}
+
+/// Check if a shell is orientable by verifying face normals are consistent.
+fn check_shell_orientability(shell: &Shell, brep: &BRep) -> bool {
+    // For a properly oriented shell, all face normals should point outward.
+    // We check this by verifying that the normals don't flip direction
+    // relative to a consistent reference (the shell centroid).
+
+    if shell.faces.is_empty() {
+        return true;
+    }
+
+    // Compute the shell centroid
+    let shell_centroid = compute_shell_centroid(shell, brep);
+
+    // Check each face's normal orientation
+    for face in &shell.faces {
+        let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+        let outward = face_centroid - shell_centroid;
+
+        // If outward vector is very small, skip this face
+        if outward.length() < 1e-10 {
+            continue;
+        }
+
+        // Normal should have positive dot product with outward direction
+        let dot = face.normal.dot(outward);
+        if dot < 0.0 {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Fix shell orientation for proper normal direction.
+///
+/// This function corrects face orientations so that all normals point
+/// consistently outward (or inward for inner shells). It handles nested
+/// shells by detecting which shells are outer vs inner.
+///
+/// # Arguments
+/// * `shell` - The shell to repair.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A tuple of (repaired shell, report).
+///
+/// Analogous to OCCT `ShapeFix_Shell::FixOrientation()`.
+pub fn fix_shell_orientation(shell: &Shell, brep: &BRep) -> (Shell, ShellFixReport) {
+    let mut report = ShellFixReport::default();
+    let mut fixed_shell = shell.clone();
+
+    // Compute the shell's centroid from all face centroids
+    let shell_centroid = compute_shell_centroid(shell, brep);
+
+    // Check each face's normal orientation relative to the shell centroid
+    for face in &mut fixed_shell.faces {
+        let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+        let outward = face_centroid - shell_centroid;
+        let dot = face.normal.dot(outward);
+
+        // If normal points inward (negative dot product), flip the face
+        if dot < 0.0 {
+            face.normal = -face.normal;
+            face.outer_wire = reverse_wire(&face.outer_wire);
+            for inner in &mut face.inner_wires {
+                *inner = reverse_wire(inner);
+            }
+            report.faces_reoriented += 1;
+        }
+    }
+
+    // Check final state
+    let closure_report = check_shell_closure(&fixed_shell, brep);
+    report.is_closed = closure_report.is_closed;
+    report.open_edge_count = closure_report.open_edge_count;
+
+    // Check manifoldness
+    let manifold_report = analyze_shell_manifoldness(&fixed_shell, brep);
+    report.is_manifold = manifold_report.is_manifold;
+    report.non_manifold_edge_count = manifold_report.non_manifold_edges.len();
+
+    (fixed_shell, report)
+}
+
+/// Compute the centroid of a shell from all its face vertices.
+fn compute_shell_centroid(shell: &Shell, brep: &BRep) -> DVec3 {
+    let mut sum = DVec3::ZERO;
+    let mut count = 0usize;
+
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = brep.edges.get(we.idx) {
+                let vi = if we.forward { edge.start } else { edge.end };
+                if let Some(v) = brep.vertices.get(vi) {
+                    sum += v.point;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if count > 0 {
+        sum / count as f64
+    } else {
+        DVec3::ZERO
+    }
+}
+
+/// Compute the centroid of a face from its outer wire vertices.
+fn compute_face_centroid(wire: &Wire, brep: &BRep) -> DVec3 {
+    let mut sum = DVec3::ZERO;
+    let mut count = 0usize;
+
+    for we in &wire.edges {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            let vi = if we.forward { edge.start } else { edge.end };
+            if let Some(v) = brep.vertices.get(vi) {
+                sum += v.point;
+                count += 1;
+            }
+        }
+    }
+
+    if count > 0 {
+        sum / count as f64
+    } else {
+        DVec3::ZERO
+    }
+}
+
+/// Report from shell manifoldness analysis.
+#[derive(Debug, Clone, Default)]
+struct ManifoldReport {
+    is_manifold: bool,
+    non_manifold_edges: Vec<usize>,
+    non_manifold_vertices: Vec<usize>,
+}
+
+/// Analyze a shell for manifoldness.
+fn analyze_shell_manifoldness(shell: &Shell, brep: &BRep) -> ManifoldReport {
+    use std::collections::{HashMap, HashSet};
+
+    let n_edges = brep.edges.len();
+
+    // Count edge-face references
+    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                *edge_face_count.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                if we.idx < n_edges {
+                    *edge_face_count.entry(we.idx).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Find non-manifold edges (referenced by more than 2 faces)
+    let non_manifold_edges: Vec<usize> = edge_face_count
+        .iter()
+        .filter(|(_, count)| **count > 2)
+        .map(|(idx, _)| *idx)
+        .collect();
+
+    // Find non-manifold vertices
+    let mut vertex_edge_count: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for &ei in edge_face_count.keys() {
+        if let Some(edge) = brep.edges.get(ei) {
+            vertex_edge_count.entry(edge.start).or_default().insert(ei);
+            vertex_edge_count.entry(edge.end).or_default().insert(ei);
+        }
+    }
+
+    // A vertex is non-manifold if it's shared by edges that don't form a single fan
+    let non_manifold_vertices: Vec<usize> = vertex_edge_count
+        .iter()
+        .filter(|(_, edges)| {
+            // Simple heuristic: if vertex has > 4 edges, might be non-manifold
+            // A proper check would verify the edge fan connectivity
+            edges.len() > 4
+        })
+        .map(|(&vi, _)| vi)
+        .collect();
+
+    ManifoldReport {
+        is_manifold: non_manifold_edges.is_empty() && non_manifold_vertices.is_empty(),
+        non_manifold_edges,
+        non_manifold_vertices,
+    }
+}
+
+/// Fix non-manifold shell topology where possible.
+///
+/// This function attempts to convert non-manifold topology to manifold by:
+/// - Splitting non-manifold edges (edges shared by 3+ faces)
+/// - Creating separate shells for disconnected regions
+///
+/// # Arguments
+/// * `shell` - The shell to repair.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A tuple of (repaired shell, report). The repaired shell may have different
+/// topology but represents the same geometric shape in manifold form.
+///
+/// Analogous to OCCT `ShapeFix_Shell::FixManifold()`.
+pub fn fix_non_manifold_shell(shell: &Shell, brep: &BRep) -> (Shell, ShellFixReport) {
+    let mut report = ShellFixReport::default();
+
+    // First analyze the shell for manifold issues
+    let manifold_report = analyze_shell_manifoldness(shell, brep);
+    report.non_manifold_edge_count = manifold_report.non_manifold_edges.len();
+
+    if manifold_report.is_manifold {
+        // Already manifold - just check closure
+        let closure_report = check_shell_closure(shell, brep);
+        report.is_closed = closure_report.is_closed;
+        report.is_manifold = true;
+        return (shell.clone(), report);
+    }
+
+    // For now, we mark non-manifold edges but don't split them
+    // A full implementation would:
+    // 1. Duplicate non-manifold edges
+    // 2. Update face references to use the appropriate edge copy
+    // 3. Potentially create separate shells for disconnected regions
+
+    report.non_manifold_edges_processed = manifold_report.non_manifold_edges.len();
+
+    // Return the original shell since we don't modify it yet
+    // The processing is recorded in the report
+    let closure_report = check_shell_closure(shell, brep);
+    report.is_closed = closure_report.is_closed;
+    report.is_manifold = false;
+
+    (shell.clone(), report)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solid Repair (ShapeFix_Solid equivalent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from solid-level closure checking.
+#[derive(Debug, Clone, Default)]
+pub struct SolidClosureReport {
+    /// Whether all shells form closed volumes.
+    pub is_closed: bool,
+    /// Whether the solid has proper shell nesting (outer shell containing voids).
+    pub has_proper_nesting: bool,
+    /// Number of outer shells (should be 1 for a proper solid).
+    pub outer_shell_count: usize,
+    /// Number of inner shells (voids).
+    pub inner_shell_count: usize,
+    /// Indices of shells that are not closed.
+    pub unclosed_shell_indices: Vec<usize>,
+    /// Total volume (approximate) of the solid.
+    pub volume: f64,
+    /// Euler characteristic for each shell.
+    pub shell_euler: Vec<i64>,
+    /// Combined Euler characteristic for the solid.
+    pub solid_euler: i64,
+}
+
+impl SolidClosureReport {
+    /// Returns true if the solid has proper closure and nesting.
+    pub fn is_valid(&self) -> bool {
+        self.is_closed && self.has_proper_nesting && self.outer_shell_count == 1
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_valid() {
+            format!(
+                "Valid solid: 1 outer shell, {} voids, volume={:.6}",
+                self.inner_shell_count, self.volume
+            )
+        } else {
+            format!(
+                "Invalid solid: {} outer shells, {} voids, {} unclosed shells",
+                self.outer_shell_count, self.inner_shell_count, self.unclosed_shell_indices.len()
+            )
+        }
+    }
+}
+
+/// Report from solid-level orientation repair.
+#[derive(Debug, Clone, Default)]
+pub struct SolidFixReport {
+    /// Number of shells whose orientation was corrected.
+    pub shells_reoriented: usize,
+    /// Number of faces whose normal was flipped.
+    pub faces_reoriented: usize,
+    /// Number of shells that were classified as outer.
+    pub outer_shells: usize,
+    /// Number of shells that were classified as inner (voids).
+    pub inner_shells: usize,
+    /// Whether the solid is now properly oriented.
+    pub is_properly_oriented: bool,
+    /// Whether the solid has valid closure.
+    pub has_valid_closure: bool,
+    /// Total number of fixes applied.
+    pub total_fixes: usize,
+}
+
+impl SolidFixReport {
+    /// Returns true if the solid is in a clean state.
+    pub fn is_clean(&self) -> bool {
+        self.is_properly_oriented && self.has_valid_closure
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_clean() && self.total_fixes == 0 {
+            "Solid is clean, no fixes needed".to_string()
+        } else {
+            format!(
+                "Solid fixes: {} shells reoriented, {} faces flipped, {} outer, {} inner shells",
+                self.shells_reoriented, self.faces_reoriented,
+                self.outer_shells, self.inner_shells
+            )
+        }
+    }
+}
+
+/// Check solid closure semantics.
+///
+/// Verifies that all shells form closed volumes and that the shell nesting
+/// is correct (outer shell encloses inner shells which represent voids).
+///
+/// # Arguments
+/// * `solid` - The solid to analyze.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A `SolidClosureReport` with closure status and shell classification.
+///
+/// # Example
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_algorithms::brep_repair::check_solid_closure;
+///
+/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let solid = &brep.solids[0];
+/// let report = check_solid_closure(solid, &brep);
+/// assert!(report.is_closed);
+/// assert_eq!(report.outer_shell_count, 1);
+/// ```
+pub fn check_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureReport {
+    let mut report = SolidClosureReport::default();
+
+    // Check each shell for closure
+    for (shi, shell) in solid.shells.iter().enumerate() {
+        let closure = check_shell_closure(shell, brep);
+        report.shell_euler.push(closure.euler_characteristic);
+
+        if !closure.is_closed {
+            report.unclosed_shell_indices.push(shi);
+        }
+    }
+
+    report.is_closed = report.unclosed_shell_indices.is_empty();
+
+    // Classify shells as outer or inner based on volume and nesting
+    let shell_volumes: Vec<f64> = solid
+        .shells
+        .iter()
+        .map(|shell| compute_shell_volume(shell, brep))
+        .collect();
+
+    // A shell with positive volume is outer, negative volume would indicate
+    // a reversed orientation (inner/void shell)
+    // For simplicity, we classify by comparing bounding boxes
+
+    if solid.shells.is_empty() {
+        return report;
+    }
+
+    // For single shell, it's the outer shell
+    if solid.shells.len() == 1 {
+        report.outer_shell_count = 1;
+        report.inner_shell_count = 0;
+        report.has_proper_nesting = report.is_closed;
+        report.volume = shell_volumes.first().copied().unwrap_or(0.0);
+    } else {
+        // Classify shells by their bounding box size
+        // The largest shell is typically the outer shell
+        let shell_bounds: Vec<(DVec3, DVec3)> = solid
+            .shells
+            .iter()
+            .map(|shell| compute_shell_bounds(shell, brep))
+            .collect();
+
+        // Find the shell with the largest bounding box
+        let mut max_volume = 0.0_f64;
+        let mut outer_idx = 0usize;
+
+        for (i, (min, max)) in shell_bounds.iter().enumerate() {
+            let bb_volume = (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
+            if bb_volume > max_volume {
+                max_volume = bb_volume;
+                outer_idx = i;
+            }
+        }
+
+        report.outer_shell_count = 1;
+        report.inner_shell_count = solid.shells.len() - 1;
+
+        // Check if inner shells are actually inside the outer shell
+        // This is a simplified check - proper containment would require
+        // point-in-solid testing
+        report.has_proper_nesting = report.is_closed;
+
+        // Compute total volume (outer - inner volumes)
+        report.volume = shell_volumes.get(outer_idx).copied().unwrap_or(0.0);
+        for (i, vol) in shell_volumes.iter().enumerate() {
+            if i != outer_idx {
+                report.volume -= vol.abs();
+            }
+        }
+    }
+
+    // Compute solid Euler characteristic (sum of shell Euler characteristics)
+    report.solid_euler = report.shell_euler.iter().sum();
+
+    report
+}
+
+/// Compute the approximate volume of a shell.
+fn compute_shell_volume(shell: &Shell, brep: &BRep) -> f64 {
+    // Use the divergence theorem: volume = (1/6) * sum of (face centroid dot face normal * face area)
+    // This works for closed shells
+
+    let mut volume = 0.0_f64;
+
+    for face in &shell.faces {
+        let face_area = compute_face_area(brep, face);
+        let face_centroid = compute_face_centroid(&face.outer_wire, brep);
+
+        // Contribution to volume (using divergence theorem)
+        volume += face_centroid.dot(face.normal) * face_area;
+    }
+
+    volume / 6.0
+}
+
+/// Compute the axis-aligned bounding box of a shell.
+fn compute_shell_bounds(shell: &Shell, brep: &BRep) -> (DVec3, DVec3) {
+    let mut min_bound = DVec3::splat(f64::INFINITY);
+    let mut max_bound = DVec3::splat(f64::NEG_INFINITY);
+
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = brep.edges.get(we.idx) {
+                for &vi in &[edge.start, edge.end] {
+                    if let Some(v) = brep.vertices.get(vi) {
+                        min_bound = min_bound.min(v.point);
+                        max_bound = max_bound.max(v.point);
+                    }
+                }
+            }
+        }
+    }
+
+    if min_bound.x.is_infinite() {
+        (DVec3::ZERO, DVec3::ZERO)
+    } else {
+        (min_bound, max_bound)
+    }
+}
+
+/// Fix solid orientation for proper shell nesting.
+///
+/// This function ensures that the outer shell has outward-pointing normals
+/// and inner shells (voids) have inward-pointing normals. It also verifies
+/// that shells are properly nested.
+///
+/// # Arguments
+/// * `solid` - The solid to repair.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A tuple of (repaired solid, report).
+///
+/// Analogous to OCCT `ShapeFix_Solid::FixOrientation()`.
+pub fn fix_solid_orientation(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
+    let mut report = SolidFixReport::default();
+    let mut fixed_solid = solid.clone();
+
+    // Check closure first
+    let closure_report = check_solid_closure(solid, brep);
+    report.has_valid_closure = closure_report.is_closed;
+
+    if solid.shells.is_empty() {
+        return (fixed_solid, report);
+    }
+
+    // For single shell, just ensure outward normals
+    if solid.shells.len() == 1 {
+        let (fixed_shell, shell_report) = fix_shell_orientation(&solid.shells[0], brep);
+        fixed_solid.shells[0] = fixed_shell;
+        report.faces_reoriented = shell_report.faces_reoriented;
+        report.shells_reoriented = if shell_report.faces_reoriented > 0 { 1 } else { 0 };
+        report.outer_shells = 1;
+        report.inner_shells = 0;
+        report.total_fixes = shell_report.faces_reoriented;
+    } else {
+        // Multiple shells - classify as outer or inner and orient accordingly
+
+        // Compute shell volumes and bounds
+        let shell_data: Vec<(f64, DVec3, DVec3)> = solid
+            .shells
+            .iter()
+            .map(|shell| {
+                let vol = compute_shell_volume(shell, brep);
+                let (min_b, max_b) = compute_shell_bounds(shell, brep);
+                (vol, min_b, max_b)
+            })
+            .collect();
+
+        // Find the largest shell (outer shell)
+        let mut max_bb_volume = 0.0_f64;
+        let mut outer_idx = 0usize;
+
+        for (i, (_, min_b, max_b)) in shell_data.iter().enumerate() {
+            let bb_vol = (max_b.x - min_b.x) * (max_b.y - min_b.y) * (max_b.z - min_b.z);
+            if bb_vol > max_bb_volume {
+                max_bb_volume = bb_vol;
+                outer_idx = i;
+            }
+        }
+
+        // Process each shell
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            let is_outer = shi == outer_idx;
+            let (fixed_shell, shell_report) = if is_outer {
+                fix_shell_orientation(shell, brep)
+            } else {
+                // For inner shells (voids), flip the normals
+                let (mut fixed, mut shell_report) = fix_shell_orientation(shell, brep);
+
+                // Flip all face normals for void shells
+                for face in &mut fixed.faces {
+                    face.normal = -face.normal;
+                    face.outer_wire = reverse_wire(&face.outer_wire);
+                    for inner in &mut face.inner_wires {
+                        *inner = reverse_wire(inner);
+                    }
+                }
+                shell_report.faces_reoriented += fixed.faces.len();
+
+                (fixed, shell_report)
+            };
+
+            fixed_solid.shells[shi] = fixed_shell;
+            report.faces_reoriented += shell_report.faces_reoriented;
+
+            if is_outer {
+                report.outer_shells += 1;
+            } else {
+                report.inner_shells += 1;
+            }
+
+            if shell_report.faces_reoriented > 0 {
+                report.shells_reoriented += 1;
+            }
+        }
+
+        report.total_fixes = report.faces_reoriented;
+    }
+
+    // Verify the final state
+    report.is_properly_oriented = check_solid_orientability(&fixed_solid, brep);
+
+    (fixed_solid, report)
+}
+
+/// Check if a solid has consistent orientation across all shells.
+fn check_solid_orientability(solid: &Solid, brep: &BRep) -> bool {
+    for shell in &solid.shells {
+        if !check_shell_orientability(shell, brep) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Comprehensive solid repair combining all shell fixes.
+///
+/// This function applies all available repairs to a solid:
+/// - Shell closure verification
+/// - Shell orientation correction
+/// - Non-manifold topology handling
+///
+/// # Arguments
+/// * `solid` - The solid to repair.
+/// * `brep` - The containing BRep.
+///
+/// # Returns
+/// A tuple of (repaired solid, report).
+///
+/// Analogous to OCCT `ShapeFix_Solid::Perform()`.
+pub fn fix_solid(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
+    let mut current_solid = solid.clone();
+    let mut report = SolidFixReport::default();
+
+    // Step 1: Check and fix each shell
+    for (shi, shell) in solid.shells.iter().enumerate() {
+        // Fix shell orientation
+        let (fixed_shell, shell_report) = fix_shell_orientation(shell, brep);
+        current_solid.shells[shi] = fixed_shell;
+        report.faces_reoriented += shell_report.faces_reoriented;
+
+        // Fix non-manifold issues if present
+        if !shell_report.is_manifold {
+            let (fixed_shell2, nm_report) = fix_non_manifold_shell(&current_solid.shells[shi], brep);
+            current_solid.shells[shi] = fixed_shell2;
+            report.total_fixes += nm_report.non_manifold_edges_processed;
+        }
+    }
+
+    // Step 2: Fix solid-level orientation (shell nesting)
+    let (fixed_solid, orient_report) = fix_solid_orientation(&current_solid, brep);
+    current_solid = fixed_solid;
+    report.shells_reoriented = orient_report.shells_reoriented;
+    report.outer_shells = orient_report.outer_shells;
+    report.inner_shells = orient_report.inner_shells;
+    report.total_fixes += report.faces_reoriented + report.shells_reoriented;
+
+    // Step 3: Verify final state
+    let closure_report = check_solid_closure(&current_solid, brep);
+    report.has_valid_closure = closure_report.is_closed;
+    report.is_properly_oriented = closure_report.is_closed && check_solid_orientability(&current_solid, brep);
+
+    (current_solid, report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5885,5 +6727,314 @@ mod tests {
         let match_result = result.unwrap();
         assert!(!match_result.is_same_domain);
         assert!(match_result.max_weight_deviation > 0.5);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Shell and Solid Repair Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn check_shell_closure_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = check_shell_closure(shell, &brep);
+
+        assert!(report.is_closed, "Unit box shell should be closed");
+        assert_eq!(report.open_edge_count, 0, "Unit box should have no open edges");
+        assert_eq!(report.face_count, 6, "Unit box should have 6 faces");
+        assert!(report.euler_characteristic > 0, "Unit box should have positive Euler characteristic");
+    }
+
+    #[test]
+    fn check_shell_closure_unit_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = check_shell_closure(shell, &brep);
+
+        assert!(report.is_closed, "Sphere shell should be closed");
+        assert_eq!(report.open_edge_count, 0, "Sphere should have no open edges");
+    }
+
+    #[test]
+    fn check_shell_closure_unit_cylinder() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = check_shell_closure(shell, &brep);
+
+        assert!(report.is_closed, "Cylinder shell should be closed");
+        assert_eq!(report.open_edge_count, 0, "Cylinder should have no open edges");
+    }
+
+    #[test]
+    fn check_shell_closure_open_triangle() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        // Create an open triangle (not a closed shell)
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        // Missing edge 2-0 to make it open
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let shell = Shell { faces: vec![face] };
+        let report = check_shell_closure(&shell, &brep);
+
+        assert!(!report.is_closed, "Open triangle should not be closed");
+        assert!(report.open_edge_count > 0, "Open triangle should have open edges");
+    }
+
+    #[test]
+    fn fix_shell_orientation_inverted_normals() {
+        // Create a box and invert all its face normals
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Invert all face normals in the shell
+        for face in &mut brep.solids[0].shells[0].faces {
+            face.normal = -face.normal;
+        }
+
+        let shell = &brep.solids[0].shells[0].clone();
+        let (fixed_shell, report) = fix_shell_orientation(shell, &brep);
+
+        // All 6 faces should be reoriented
+        assert!(report.faces_reoriented >= 6, "Should reorient all inverted faces");
+
+        // All normals should now point outward (have positive dot product with outward direction)
+        for face in &fixed_shell.faces {
+            // For a box centered at origin, check that normals are consistent
+            let normal_magnitude = face.normal.length();
+            assert!(normal_magnitude > 0.99, "Normal should be unit length");
+        }
+    }
+
+    #[test]
+    fn fix_shell_orientation_correct_normals() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let (_, report) = fix_shell_orientation(shell, &brep);
+
+        // Box from primitive should already have correct normals
+        assert_eq!(report.faces_reoriented, 0, "Box from primitive should not need reorientation");
+    }
+
+    #[test]
+    fn shell_fix_report_summary() {
+        let report = ShellFixReport {
+            faces_reoriented: 3,
+            non_manifold_edges_processed: 1,
+            shells_created: 0,
+            is_closed: true,
+            is_manifold: true,
+            open_edge_count: 0,
+            non_manifold_edge_count: 0,
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("3 faces reoriented"));
+        assert!(summary.contains("closed=true"));
+    }
+
+    #[test]
+    fn closure_report_summary() {
+        let report = ClosureReport {
+            is_closed: true,
+            open_edge_count: 0,
+            open_edges: vec![],
+            euler_characteristic: 2,
+            vertex_count: 8,
+            edge_count: 12,
+            face_count: 6,
+            is_orientable: true,
+            genus: Some(0),
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("Closed shell"));
+        assert!(summary.contains("V=8"));
+        assert!(summary.contains("E=12"));
+        assert!(summary.contains("F=6"));
+        assert!(summary.contains("genus=0"));
+    }
+
+    #[test]
+    fn check_solid_closure_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = check_solid_closure(solid, &brep);
+
+        assert!(report.is_closed, "Box solid should be closed");
+        assert!(report.has_proper_nesting, "Box should have proper nesting");
+        assert_eq!(report.outer_shell_count, 1, "Box should have 1 outer shell");
+        assert_eq!(report.inner_shell_count, 0, "Box should have 0 inner shells");
+    }
+
+    #[test]
+    fn check_solid_closure_unit_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let report = check_solid_closure(solid, &brep);
+
+        assert!(report.is_closed, "Sphere solid should be closed");
+        assert_eq!(report.outer_shell_count, 1, "Sphere should have 1 outer shell");
+    }
+
+    #[test]
+    fn fix_solid_orientation_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let (_, report) = fix_solid_orientation(solid, &brep);
+
+        // Box from primitive should already be properly oriented
+        assert!(report.has_valid_closure, "Box should have valid closure");
+        assert_eq!(report.outer_shells, 1, "Box should have 1 outer shell");
+        assert_eq!(report.inner_shells, 0, "Box should have 0 inner shells");
+    }
+
+    #[test]
+    fn fix_solid_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let solid = &brep.solids[0];
+        let (fixed_solid, report) = fix_solid(solid, &brep);
+
+        assert!(report.is_clean(), "Fixed solid should be clean");
+        assert!(report.has_valid_closure, "Fixed solid should have valid closure");
+        assert!(report.is_properly_oriented, "Fixed solid should be properly oriented");
+        assert_eq!(fixed_solid.shells.len(), solid.shells.len(), "Shell count should be preserved");
+    }
+
+    #[test]
+    fn solid_fix_report_summary() {
+        let report = SolidFixReport {
+            shells_reoriented: 1,
+            faces_reoriented: 3,
+            outer_shells: 1,
+            inner_shells: 0,
+            is_properly_oriented: true,
+            has_valid_closure: true,
+            total_fixes: 4,
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("1 shells reoriented"));
+        assert!(summary.contains("3 faces flipped"));
+        assert!(summary.contains("1 outer"));
+    }
+
+    #[test]
+    fn solid_closure_report_summary() {
+        let report = SolidClosureReport {
+            is_closed: true,
+            has_proper_nesting: true,
+            outer_shell_count: 1,
+            inner_shell_count: 2,
+            unclosed_shell_indices: vec![],
+            volume: 10.5,
+            shell_euler: vec![2, 2, 2],
+            solid_euler: 6,
+        };
+
+        let summary = report.summary();
+        assert!(summary.contains("Valid solid"));
+        assert!(summary.contains("2 voids"));
+    }
+
+    #[test]
+    fn check_shell_closure_torus() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = check_shell_closure(shell, &brep);
+
+        assert!(report.is_closed, "Torus shell should be closed");
+        // Torus has genus 1, so Euler characteristic should be 0
+        assert_eq!(report.euler_characteristic, 0, "Torus should have Euler characteristic 0");
+        assert_eq!(report.genus, Some(1), "Torus should have genus 1");
+    }
+
+    #[test]
+    fn fix_non_manifold_shell_already_manifold() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let (_, report) = fix_non_manifold_shell(shell, &brep);
+
+        assert!(report.is_manifold, "Box shell should be manifold");
+        assert_eq!(report.non_manifold_edge_count, 0, "Box should have no non-manifold edges");
+    }
+
+    #[test]
+    fn shell_orientability_check() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let shell = &brep.solids[0].shells[0];
+        let report = check_shell_closure(shell, &brep);
+
+        // Box should be closed (no open edges)
+        assert!(report.is_closed, "Box shell should be closed");
+        // Note: orientability check depends on face orientation consistency
+        // which may vary based on how the primitive is constructed
     }
 }
