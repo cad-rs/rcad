@@ -113,6 +113,13 @@ pub use brep_repair::{
     TolerancePropagationEngine, TolerancePropagationReport,
     ToleranceViolation, ToleranceViolationType, ToleranceFix,
     ToleranceConsistencyReport, analyze_tolerance_consistency, apply_tolerance_fixes,
+    // Enhanced Internal Face Detection and Removal
+    InternalFaceDetectionConfig, InternalFaceDetectionReport,
+    detect_internal_faces, detect_internal_faces_with_config,
+    PostBooleanRemovalConfig, PostBooleanRemovalReport,
+    remove_internal_faces_post_boolean, remove_internal_faces_post_boolean_with_config,
+    InternalFaceRemovalValidation, validate_internal_face_removal,
+    merge_adjacent_faces_after_removal,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
