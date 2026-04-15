@@ -4765,14 +4765,14 @@ pub struct SurfaceDeviation {
     /// Number of samples taken.
     pub samples_taken: usize,
     /// Edges with tolerance violations.
-    pub tolerance_violations: Vec<ToleranceViolation>,
+    pub tolerance_violations: Vec<SurfaceDeviationViolation>,
     /// Whether all edges are within tolerance.
     pub within_tolerance: bool,
 }
 
 /// A tolerance violation detected during deviation analysis.
 #[derive(Debug, Clone)]
-pub struct ToleranceViolation {
+pub struct SurfaceDeviationViolation {
     /// Edge index.
     pub edge_idx: usize,
     /// Parameter where violation occurs.
@@ -4882,7 +4882,7 @@ pub fn compute_surface_deviation(face_idx: usize, brep: &BRep, samples: usize) -
 
             // Check for tolerance violation
             if deviation > tolerance {
-                result.tolerance_violations.push(ToleranceViolation {
+                result.tolerance_violations.push(SurfaceDeviationViolation {
                     edge_idx: *edge_idx,
                     param: t,
                     deviation,
@@ -6398,7 +6398,7 @@ mod tests {
 
     #[test]
     fn tolerance_violation_structure() {
-        let violation = ToleranceViolation {
+        let violation = SurfaceDeviationViolation {
             edge_idx: 2,
             param: 0.5,
             deviation: 0.01,

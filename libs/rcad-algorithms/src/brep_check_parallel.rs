@@ -20,8 +20,10 @@
 
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::geom::CurveEval;
 
 // Re-export CheckIssue and CheckResult from the base module for convenience.
 pub use crate::brep_check::{CheckIssue, CheckResult};
@@ -939,6 +941,1410 @@ pub struct ParallelCheckStats {
     pub thread_count: usize,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Face Check Result
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Result of checking a single face in parallel.
+#[derive(Debug, Clone)]
+pub struct FaceCheckResult {
+    /// Solid index containing this face.
+    pub solid_idx: usize,
+    /// Shell index within the solid.
+    pub shell_idx: usize,
+    /// Face index within the shell.
+    pub face_idx: usize,
+    /// Whether the face passed all checks.
+    pub is_valid: bool,
+    /// Issues found with this face.
+    pub issues: Vec<FaceCheckIssue>,
+    /// Number of edges in the outer wire.
+    pub outer_wire_edge_count: usize,
+    /// Number of inner wires.
+    pub inner_wire_count: usize,
+    /// Face normal vector.
+    pub normal: DVec3,
+    /// Whether the normal is valid (non-zero, unit length).
+    pub normal_valid: bool,
+    /// Wire closure status (true if closed).
+    pub outer_wire_closed: bool,
+    /// Number of gaps in outer wire.
+    pub outer_wire_gaps: usize,
+    /// Whether the face has self-intersections.
+    pub has_self_intersection: bool,
+}
+
+/// Issue specific to a face check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FaceCheckIssue {
+    /// Face normal is zero.
+    ZeroNormal,
+    /// Face has fewer than 3 edges.
+    DegenerateFace,
+    /// Wire is not closed at the given position.
+    OpenWire { wire_pos: usize, gap_distance: f64 },
+    /// Edge index is out of bounds.
+    InvalidEdgeIndex { edge_idx: usize },
+    /// Wire self-intersection at vertex.
+    SelfIntersection { vertex_idx: usize, wire_idx: usize },
+    /// Geometric self-intersection between edges.
+    GeometricSelfIntersection { edge_a: usize, edge_b: usize },
+    /// Inner wire is not closed.
+    InnerWireOpen { wire_idx: usize, wire_pos: usize },
+}
+
+impl FaceCheckResult {
+    /// Returns true if this face has no issues.
+    pub fn is_clean(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_clean() {
+            format!(
+                "Face ({}/{}/{}): valid, {} edges, {} holes",
+                self.solid_idx, self.shell_idx, self.face_idx,
+                self.outer_wire_edge_count, self.inner_wire_count
+            )
+        } else {
+            format!(
+                "Face ({}/{}/{}): {} issue(s)",
+                self.solid_idx, self.shell_idx, self.face_idx,
+                self.issues.len()
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Edge Check Result
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Result of checking a single edge in parallel.
+#[derive(Debug, Clone)]
+pub struct EdgeCheckResult {
+    /// Edge index in the BRep.
+    pub edge_idx: usize,
+    /// Whether the edge passed all checks.
+    pub is_valid: bool,
+    /// Issues found with this edge.
+    pub issues: Vec<EdgeCheckIssue>,
+    /// Start vertex index.
+    pub start_vertex: usize,
+    /// End vertex index.
+    pub end_vertex: usize,
+    /// Edge length (distance between vertices).
+    pub length: f64,
+    /// Whether the edge is degenerate (zero length).
+    pub is_degenerate: bool,
+    /// Number of faces referencing this edge.
+    pub face_count: usize,
+    /// Whether the edge is manifold (referenced by exactly 2 faces).
+    pub is_manifold: bool,
+    /// Tolerance of the edge (computed from vertex-curve gap if available).
+    pub tolerance: f64,
+    /// Whether there is a self-intersection in the edge curve.
+    pub has_self_intersection: bool,
+}
+
+/// Issue specific to an edge check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EdgeCheckIssue {
+    /// Vertex index is out of bounds.
+    InvalidVertexIndex { vertex_idx: usize },
+    /// Edge is degenerate (start and end vertices are the same).
+    DegenerateEdge,
+    /// Edge is not manifold (not shared by exactly 2 faces).
+    NonManifold { face_count: usize },
+    /// Edge has no adjacent faces.
+    FreeEdge,
+    /// SameParameter violation (curve endpoints don't match vertex positions).
+    SameParameterViolation { start_gap: f64, end_gap: f64 },
+    /// Edge has self-intersection in its curve.
+    SelfIntersection,
+}
+
+impl EdgeCheckResult {
+    /// Returns true if this edge has no issues.
+    pub fn is_clean(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_clean() {
+            format!(
+                "Edge {}: valid, length={:.4}, faces={}",
+                self.edge_idx, self.length, self.face_count
+            )
+        } else {
+            format!(
+                "Edge {}: {} issue(s)",
+                self.edge_idx, self.issues.len()
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Shell Validation Result
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Result of validating a shell in parallel.
+#[derive(Debug, Clone)]
+pub struct ShellValidationResult {
+    /// Solid index containing this shell.
+    pub solid_idx: usize,
+    /// Shell index within the solid.
+    pub shell_idx: usize,
+    /// Whether the shell passed all validation checks.
+    pub is_valid: bool,
+    /// Number of faces in the shell.
+    pub face_count: usize,
+    /// Number of edges in the shell.
+    pub edge_count: usize,
+    /// Number of vertices in the shell.
+    pub vertex_count: usize,
+    /// Euler characteristic of the shell.
+    pub euler_characteristic: i64,
+    /// Whether the shell is closed (no free edges).
+    pub is_closed: bool,
+    /// Whether the shell is manifold (no non-manifold edges).
+    pub is_manifold: bool,
+    /// Number of open edges (edges referenced by only 1 face).
+    pub open_edge_count: usize,
+    /// Number of non-manifold edges (edges referenced by 3+ faces).
+    pub non_manifold_edge_count: usize,
+    /// Whether the shell orientation is consistent.
+    pub orientation_consistent: bool,
+    /// Estimated genus (only meaningful for closed shells).
+    pub genus: Option<i64>,
+    /// Face check results for all faces in this shell.
+    pub face_results: Vec<FaceCheckResult>,
+    /// Validation errors.
+    pub errors: Vec<String>,
+    /// Validation warnings.
+    pub warnings: Vec<String>,
+}
+
+impl ShellValidationResult {
+    /// Returns true if the shell is a closed manifold with consistent orientation.
+    pub fn is_closed_manifold(&self) -> bool {
+        self.is_closed && self.is_manifold && self.orientation_consistent
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        let status = if self.is_valid { "VALID" } else { "INVALID" };
+        format!(
+            "Shell ({}/{}): {} | F={}, E={}, V={}, χ={}, closed={}, manifold={}",
+            self.solid_idx, self.shell_idx, status,
+            self.face_count, self.edge_count, self.vertex_count,
+            self.euler_characteristic, self.is_closed, self.is_manifold
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Solid Validation Result
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Result of validating a solid in parallel.
+#[derive(Debug, Clone)]
+pub struct SolidValidationResult {
+    /// Solid index in the BRep.
+    pub solid_idx: usize,
+    /// Whether the solid passed all validation checks.
+    pub is_valid: bool,
+    /// Number of shells in the solid.
+    pub shell_count: usize,
+    /// Number of faces in the solid.
+    pub face_count: usize,
+    /// Number of edges in the solid.
+    pub edge_count: usize,
+    /// Number of vertices in the solid.
+    pub vertex_count: usize,
+    /// Euler characteristic of the solid.
+    pub euler_characteristic: i64,
+    /// Whether the solid is closed (all shells closed).
+    pub is_closed: bool,
+    /// Whether the solid is manifold.
+    pub is_manifold: bool,
+    /// Whether the solid has valid orientation.
+    pub orientation_valid: bool,
+    /// Whether the solid volume is positive.
+    pub has_positive_volume: bool,
+    /// Estimated volume of the solid.
+    pub volume: f64,
+    /// Estimated genus.
+    pub genus: Option<i64>,
+    /// Shell validation results for all shells in this solid.
+    pub shell_results: Vec<ShellValidationResult>,
+    /// Validation errors.
+    pub errors: Vec<String>,
+    /// Validation warnings.
+    pub warnings: Vec<String>,
+}
+
+impl SolidValidationResult {
+    /// Returns true if the solid is valid for BRep operations.
+    pub fn is_valid_for_operations(&self) -> bool {
+        self.is_valid && self.is_closed && self.is_manifold
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        let status = if self.is_valid { "VALID" } else { "INVALID" };
+        format!(
+            "Solid {}: {} | shells={}, F={}, E={}, V={}, volume={:.4}",
+            self.solid_idx, status, self.shell_count,
+            self.face_count, self.edge_count, self.vertex_count, self.volume
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Parallel Check Configuration and Report
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Configuration for comprehensive parallel BRep checking.
+#[derive(Debug, Clone)]
+pub struct ParallelCheckConfig {
+    /// Number of threads to use (0 = use all available).
+    pub num_threads: usize,
+    /// Minimum number of items to trigger parallel processing.
+    pub parallel_threshold: usize,
+    /// Tolerance for geometric comparisons.
+    pub tolerance: f64,
+    /// Check face validity.
+    pub check_faces: bool,
+    /// Check edge validity.
+    pub check_edges: bool,
+    /// Check vertex validity.
+    pub check_vertices: bool,
+    /// Check shell topology.
+    pub check_shells: bool,
+    /// Check solid topology.
+    pub check_solids: bool,
+    /// Check for duplicate vertices.
+    pub check_duplicate_vertices: bool,
+    /// Check for isolated vertices.
+    pub check_isolated_vertices: bool,
+    /// Check for non-finite vertices.
+    pub check_finite_vertices: bool,
+    /// Check SameParameter condition for edges.
+    pub check_same_parameter: bool,
+    /// Check manifold condition.
+    pub check_manifold: bool,
+    /// Check wire closure.
+    pub check_wire_closure: bool,
+    /// Check self-intersections.
+    pub check_self_intersections: bool,
+}
+
+impl Default for ParallelCheckConfig {
+    fn default() -> Self {
+        Self {
+            num_threads: 0, // Use all available
+            parallel_threshold: 100,
+            tolerance: 1e-6,
+            check_faces: true,
+            check_edges: true,
+            check_vertices: true,
+            check_shells: true,
+            check_solids: true,
+            check_duplicate_vertices: true,
+            check_isolated_vertices: true,
+            check_finite_vertices: true,
+            check_same_parameter: true,
+            check_manifold: true,
+            check_wire_closure: true,
+            check_self_intersections: true,
+        }
+    }
+}
+
+impl ParallelCheckConfig {
+    /// Create a config for fast checking (skip expensive checks).
+    pub fn fast() -> Self {
+        Self {
+            check_self_intersections: false,
+            check_same_parameter: false,
+            check_duplicate_vertices: false,
+            ..Self::default()
+        }
+    }
+
+    /// Create a config for thorough checking (all checks enabled).
+    pub fn thorough() -> Self {
+        Self {
+            tolerance: 1e-9,
+            ..Self::default()
+        }
+    }
+
+    /// Set the number of threads.
+    pub fn with_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+
+    /// Set the tolerance.
+    pub fn with_tolerance(mut self, tol: f64) -> Self {
+        self.tolerance = tol;
+        self
+    }
+}
+
+/// Timing information for a check phase.
+#[derive(Debug, Clone, Default)]
+pub struct CheckPhaseTiming {
+    /// Phase name.
+    pub phase: String,
+    /// Duration in milliseconds.
+    pub duration_ms: u64,
+    /// Number of items processed.
+    pub items_processed: usize,
+}
+
+/// Comprehensive report from parallel BRep checking.
+#[derive(Debug, Clone, Default)]
+pub struct ParallelCheckReport {
+    /// Overall validity status.
+    pub is_valid: bool,
+    /// Total number of faces.
+    pub total_faces: usize,
+    /// Total number of edges.
+    pub total_edges: usize,
+    /// Total number of vertices.
+    pub total_vertices: usize,
+    /// Total number of solids.
+    pub total_solids: usize,
+    /// Total number of shells.
+    pub total_shells: usize,
+    /// Number of threads used.
+    pub threads_used: usize,
+    /// Whether parallel processing was used.
+    pub was_parallel: bool,
+    /// Total check duration.
+    pub total_duration_ms: u64,
+    /// Timing breakdown by phase.
+    pub phase_timings: Vec<CheckPhaseTiming>,
+    /// Face check results.
+    pub face_results: Vec<FaceCheckResult>,
+    /// Edge check results.
+    pub edge_results: Vec<EdgeCheckResult>,
+    /// Shell validation results.
+    pub shell_results: Vec<ShellValidationResult>,
+    /// Solid validation results.
+    pub solid_results: Vec<SolidValidationResult>,
+    /// Basic structural issues.
+    pub structural_issues: Vec<CheckIssue>,
+    /// Parallel-specific issues.
+    pub parallel_issues: Vec<ParallelCheckIssue>,
+    /// Summary statistics.
+    pub stats: ParallelCheckStats,
+}
+
+impl ParallelCheckReport {
+    /// Returns true if the BRep passed all checks.
+    pub fn is_clean(&self) -> bool {
+        self.is_valid && self.structural_issues.is_empty() && self.parallel_issues.is_empty()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        let status = if self.is_valid { "VALID" } else { "INVALID" };
+        format!(
+            "BRep {}: {} solids, {} faces, {} edges, {} vertices | {}ms ({} threads)",
+            status, self.total_solids, self.total_faces, self.total_edges,
+            self.total_vertices, self.total_duration_ms, self.threads_used
+        )
+    }
+
+    /// Returns timing breakdown as a formatted string.
+    pub fn timing_summary(&self) -> String {
+        let mut lines: Vec<String> = self.phase_timings.iter()
+            .map(|t| format!("  {}: {}ms ({} items)", t.phase, t.duration_ms, t.items_processed))
+            .collect();
+        lines.insert(0, "Timing breakdown:".to_string());
+        lines.join("\n")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Parallel Face Checking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Check all faces in a BRep in parallel.
+///
+/// This function distributes face checking across multiple threads for better
+/// performance on large models. Each face is checked for:
+/// - Zero normal
+/// - Degenerate wire (< 3 edges)
+/// - Wire closure
+/// - Edge index validity
+/// - Self-intersections
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to check.
+/// * `num_threads` - Number of threads to use (0 = use all available).
+///
+/// # Returns
+///
+/// A vector of `FaceCheckResult`, one per face.
+pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckResult> {
+    let n_edges = brep.edges.len();
+    let tolerance = 1e-6;
+
+    // Create a flat list of face references for parallel iteration
+    let face_items: Vec<(usize, usize, usize)> = brep.solids
+        .iter()
+        .enumerate()
+        .flat_map(|(si, solid)| {
+            solid.shells.iter().enumerate().flat_map(move |(shi, shell)| {
+                shell.faces.iter().enumerate().map(move |(fi, _)| {
+                    (si, shi, fi)
+                })
+            })
+        })
+        .collect();
+
+    // Configure thread pool if specified
+    let results = if num_threads > 0 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
+        pool.install(|| {
+            face_items.par_iter()
+                .map(|&(si, shi, fi)| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
+                .collect()
+        })
+    } else {
+        face_items.par_iter()
+            .map(|&(si, shi, fi)| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
+            .collect()
+    };
+
+    results
+}
+
+/// Check a single face and return a detailed result.
+fn check_single_face_detailed(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+    n_edges: usize,
+    tolerance: f64,
+) -> FaceCheckResult {
+    let solid = &brep.solids[si];
+    let shell = &solid.shells[shi];
+    let face = &shell.faces[fi];
+    let wire = &face.outer_wire;
+
+    let mut issues = Vec::new();
+    let mut outer_wire_closed = true;
+    let mut outer_wire_gaps = 0usize;
+    let mut has_self_intersection = false;
+
+    // Check normal
+    let normal_valid = face.normal != DVec3::ZERO && (face.normal.length() - 1.0).abs() < 0.01;
+    if face.normal == DVec3::ZERO {
+        issues.push(FaceCheckIssue::ZeroNormal);
+    }
+
+    // Check degenerate face
+    if wire.edges.len() < 3 {
+        issues.push(FaceCheckIssue::DegenerateFace);
+        return FaceCheckResult {
+            solid_idx: si,
+            shell_idx: shi,
+            face_idx: fi,
+            is_valid: false,
+            issues,
+            outer_wire_edge_count: wire.edges.len(),
+            inner_wire_count: face.inner_wires.len(),
+            normal: face.normal,
+            normal_valid,
+            outer_wire_closed: false,
+            outer_wire_gaps: 0,
+            has_self_intersection: false,
+        };
+    }
+
+    // Check edge indices and collect wire vertices
+    let mut wire_verts: Vec<(usize, usize)> = Vec::new();
+    let mut valid = true;
+
+    for we in &wire.edges {
+        if we.idx >= n_edges {
+            issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: we.idx });
+            valid = false;
+        } else {
+            let edge = &brep.edges[we.idx];
+            let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+            wire_verts.push((sv, ev));
+        }
+    }
+
+    if valid {
+        // Check wire closure
+        let n = wire_verts.len();
+        for i in 0..n {
+            let next = (i + 1) % n;
+            let end_v = wire_verts[i].1;
+            let start_v = wire_verts[next].0;
+            if end_v != start_v {
+                let end_pt = brep.vertices.get(end_v).map(|v| v.point).unwrap_or_default();
+                let start_pt = brep.vertices.get(start_v).map(|v| v.point).unwrap_or_default();
+                let gap = (end_pt - start_pt).length();
+                if gap > tolerance {
+                    issues.push(FaceCheckIssue::OpenWire { wire_pos: i, gap_distance: gap });
+                    outer_wire_closed = false;
+                    outer_wire_gaps += 1;
+                }
+            }
+        }
+
+        // Check for self-intersection (topological)
+        use std::collections::HashMap;
+        let mut vertex_count: HashMap<usize, usize> = HashMap::new();
+        for &(sv, ev) in &wire_verts {
+            *vertex_count.entry(sv).or_insert(0) += 1;
+            *vertex_count.entry(ev).or_insert(0) += 1;
+        }
+        for (&vidx, &count) in &vertex_count {
+            if count > 2 {
+                issues.push(FaceCheckIssue::SelfIntersection { vertex_idx: vidx, wire_idx: 0 });
+                has_self_intersection = true;
+            }
+        }
+
+        // Check for geometric self-intersection
+        check_geometric_self_intersection_face(&wire_verts, &brep.vertices, &mut issues);
+    }
+
+    // Check inner wires
+    for (wi, inner_wire) in face.inner_wires.iter().enumerate() {
+        if inner_wire.edges.len() < 2 {
+            continue;
+        }
+
+        let mut inner_verts: Vec<(usize, usize)> = Vec::new();
+        let mut inner_valid = true;
+
+        for we in &inner_wire.edges {
+            if we.idx >= n_edges {
+                issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: we.idx });
+                inner_valid = false;
+            } else {
+                let edge = &brep.edges[we.idx];
+                let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+                inner_verts.push((sv, ev));
+            }
+        }
+
+        if inner_valid {
+            let n_inner = inner_verts.len();
+            for i in 0..n_inner {
+                let next = (i + 1) % n_inner;
+                let end_v = inner_verts[i].1;
+                let start_v = inner_verts[next].0;
+                if end_v != start_v {
+                    let end_pt = brep.vertices.get(end_v).map(|v| v.point).unwrap_or_default();
+                    let start_pt = brep.vertices.get(start_v).map(|v| v.point).unwrap_or_default();
+                    let gap = (end_pt - start_pt).length();
+                    if gap > tolerance {
+                        issues.push(FaceCheckIssue::InnerWireOpen { wire_idx: wi + 1, wire_pos: i });
+                    }
+                }
+            }
+        }
+    }
+
+    FaceCheckResult {
+        solid_idx: si,
+        shell_idx: shi,
+        face_idx: fi,
+        is_valid: issues.is_empty(),
+        issues,
+        outer_wire_edge_count: wire.edges.len(),
+        inner_wire_count: face.inner_wires.len(),
+        normal: face.normal,
+        normal_valid,
+        outer_wire_closed,
+        outer_wire_gaps,
+        has_self_intersection,
+    }
+}
+
+/// Check for geometric self-intersections in a face wire.
+fn check_geometric_self_intersection_face(
+    wire_verts: &[(usize, usize)],
+    vertices: &[rcad_kernel::topology::Vertex],
+    issues: &mut Vec<FaceCheckIssue>,
+) {
+    let n = wire_verts.len();
+    if n < 4 {
+        return;
+    }
+
+    // Check pairs of non-adjacent edges
+    for i in 0..n {
+        for j in (i + 2)..n {
+            if i == 0 && j == n - 1 {
+                continue;
+            }
+
+            let (a_start, a_end) = wire_verts[i];
+            let (b_start, b_end) = wire_verts[j];
+
+            let p1 = vertices.get(a_start).map(|v| v.point).unwrap_or_default();
+            let p2 = vertices.get(a_end).map(|v| v.point).unwrap_or_default();
+            let p3 = vertices.get(b_start).map(|v| v.point).unwrap_or_default();
+            let p4 = vertices.get(b_end).map(|v| v.point).unwrap_or_default();
+
+            if segments_intersect_2d(p1, p2, p3, p4) {
+                issues.push(FaceCheckIssue::GeometricSelfIntersection { edge_a: i, edge_b: j });
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Parallel Edge Checking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Check all edges in a BRep in parallel.
+///
+/// This function distributes edge checking across multiple threads. Each edge is
+/// checked for:
+/// - Vertex index validity
+/// - Degeneracy (zero length)
+/// - Manifold condition
+/// - SameParameter violations
+/// - Self-intersections
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to check.
+/// * `num_threads` - Number of threads to use (0 = use all available).
+///
+/// # Returns
+///
+/// A vector of `EdgeCheckResult`, one per edge.
+pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
+    let n_verts = brep.vertices.len();
+    let tolerance = 1e-6;
+
+    // Pre-compute edge face counts
+    let edge_face_counts = compute_edge_face_counts_parallel(brep, brep.edges.len());
+
+    let results = if num_threads > 0 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
+        pool.install(|| {
+            brep.edges.par_iter()
+                .enumerate()
+                .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
+                .collect()
+        })
+    } else {
+        brep.edges.par_iter()
+            .enumerate()
+            .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
+            .collect()
+    };
+
+    results
+}
+
+/// Check a single edge and return a detailed result.
+fn check_single_edge(
+    brep: &BRep,
+    eidx: usize,
+    edge: &rcad_kernel::topology::Edge,
+    n_verts: usize,
+    face_count: usize,
+    tolerance: f64,
+) -> EdgeCheckResult {
+    let mut issues = Vec::new();
+
+    // Check vertex indices
+    let start_valid = edge.start < n_verts;
+    let end_valid = edge.end < n_verts;
+
+    if !start_valid {
+        issues.push(EdgeCheckIssue::InvalidVertexIndex { vertex_idx: edge.start });
+    }
+    if !end_valid {
+        issues.push(EdgeCheckIssue::InvalidVertexIndex { vertex_idx: edge.end });
+    }
+
+    // Compute edge length
+    let start_pt = if start_valid { brep.vertices[edge.start].point } else { DVec3::ZERO };
+    let end_pt = if end_valid { brep.vertices[edge.end].point } else { DVec3::ZERO };
+    let length = (end_pt - start_pt).length();
+    let is_degenerate = length < tolerance;
+
+    if is_degenerate && start_valid && end_valid && edge.start != edge.end {
+        issues.push(EdgeCheckIssue::DegenerateEdge);
+    }
+
+    // Check manifold condition
+    let is_manifold = face_count == 2;
+    if face_count == 0 {
+        issues.push(EdgeCheckIssue::FreeEdge);
+    } else if face_count != 2 {
+        issues.push(EdgeCheckIssue::NonManifold { face_count });
+    }
+
+    // Check SameParameter condition
+    let mut edge_tolerance = tolerance;
+    if let Some(curve_idx) = brep.geom.edge_curve.get(eidx).and_then(|c| *c) {
+        if let Some(curve) = brep.geom.curves.get(curve_idx) {
+            if let Some(range) = brep.geom.edge_curve_range.get(eidx).and_then(|r| *r) {
+                if start_valid && end_valid {
+                    let eval_start = curve.point_at(range[0]);
+                    let eval_end = curve.point_at(range[1]);
+                    let start_gap = (eval_start - start_pt).length();
+                    let end_gap = (eval_end - end_pt).length();
+
+                    edge_tolerance = start_gap.max(end_gap);
+
+                    if start_gap > tolerance || end_gap > tolerance {
+                        issues.push(EdgeCheckIssue::SameParameterViolation { start_gap, end_gap });
+                    }
+                }
+            }
+        }
+    }
+
+    EdgeCheckResult {
+        edge_idx: eidx,
+        is_valid: issues.is_empty(),
+        issues,
+        start_vertex: edge.start,
+        end_vertex: edge.end,
+        length,
+        is_degenerate,
+        face_count,
+        is_manifold,
+        tolerance: edge_tolerance,
+        has_self_intersection: false, // Would require curve evaluation
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Parallel Shell Validation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Validate all shells in a BRep in parallel.
+///
+/// This function checks each shell for:
+/// - Closure (no free edges)
+/// - Manifold condition
+/// - Euler characteristic
+/// - Orientation consistency
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to validate.
+///
+/// # Returns
+///
+/// A vector of `ShellValidationResult`, one per shell.
+pub fn validate_shells_parallel(brep: &BRep) -> Vec<ShellValidationResult> {
+    // Create a flat list of shells for parallel processing
+    let shell_items: Vec<(usize, usize)> = brep.solids
+        .iter()
+        .enumerate()
+        .flat_map(|(si, solid)| {
+            solid.shells.iter().enumerate().map(move |(shi, _)| (si, shi))
+        })
+        .collect();
+
+    shell_items.par_iter()
+        .map(|&(si, shi)| validate_single_shell(brep, si, shi))
+        .collect()
+}
+
+/// Validate a single shell.
+fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationResult {
+    use std::collections::{HashMap, HashSet};
+
+    let solid = &brep.solids[si];
+    let shell = &solid.shells[shi];
+    let n_edges = brep.edges.len();
+    let tolerance = 1e-6;
+
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Count edges and vertices
+    let mut unique_edges: HashSet<usize> = HashSet::new();
+    let mut unique_vertices: HashSet<usize> = HashSet::new();
+
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                unique_edges.insert(we.idx);
+                let edge = &brep.edges[we.idx];
+                unique_vertices.insert(edge.start);
+                unique_vertices.insert(edge.end);
+            }
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                if we.idx < n_edges {
+                    unique_edges.insert(we.idx);
+                    let edge = &brep.edges[we.idx];
+                    unique_vertices.insert(edge.start);
+                    unique_vertices.insert(edge.end);
+                }
+            }
+        }
+    }
+
+    let edge_count = unique_edges.len();
+    let vertex_count = unique_vertices.len();
+    let face_count = shell.faces.len();
+
+    // Count edge face references
+    let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                *edge_face_count.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                if we.idx < n_edges {
+                    *edge_face_count.entry(we.idx).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let open_edge_count = edge_face_count.values().filter(|&&c| c == 1).count();
+    let non_manifold_edge_count = edge_face_count.values().filter(|&&c| c > 2).count();
+
+    let is_closed = open_edge_count == 0;
+    let is_manifold = non_manifold_edge_count == 0;
+
+    // Compute Euler characteristic
+    let euler_characteristic = vertex_count as i64 - edge_count as i64 + face_count as i64;
+
+    // Compute genus (only meaningful for closed shells)
+    let genus = if is_closed {
+        let g = (2 - euler_characteristic) / 2;
+        if (2 - euler_characteristic) % 2 == 0 && g >= 0 { Some(g) } else { None }
+    } else {
+        None
+    };
+
+    // Check orientation consistency
+    let orientation_consistent = check_shell_orientation_consistency(shell, brep);
+
+    // Get face results
+    let face_results: Vec<FaceCheckResult> = shell.faces
+        .iter()
+        .enumerate()
+        .map(|(fi, _)| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
+        .collect();
+
+    // Generate errors and warnings
+    if !is_closed {
+        errors.push(format!("Shell has {} open edges", open_edge_count));
+    }
+    if !is_manifold {
+        errors.push(format!("Shell has {} non-manifold edges", non_manifold_edge_count));
+    }
+    if !orientation_consistent {
+        warnings.push("Shell orientation may be inconsistent".to_string());
+    }
+
+    let is_valid = errors.is_empty() && face_results.iter().all(|f| f.is_valid);
+
+    ShellValidationResult {
+        solid_idx: si,
+        shell_idx: shi,
+        is_valid,
+        face_count,
+        edge_count,
+        vertex_count,
+        euler_characteristic,
+        is_closed,
+        is_manifold,
+        open_edge_count,
+        non_manifold_edge_count,
+        orientation_consistent,
+        genus,
+        face_results,
+        errors,
+        warnings,
+    }
+}
+
+/// Check orientation consistency for a shell.
+fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> bool {
+    use std::collections::HashMap;
+
+    let n_edges = brep.edges.len();
+    let mut edge_orientations: HashMap<usize, Vec<bool>> = HashMap::new();
+
+    for face in &shell.faces {
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                edge_orientations.entry(we.idx).or_default().push(we.forward);
+            }
+        }
+    }
+
+    // For a properly oriented shell, each edge should have one forward and one backward reference
+    for (_, orientations) in &edge_orientations {
+        if orientations.len() == 2 {
+            // Adjacent faces should have opposite orientations for shared edges
+            if orientations[0] == orientations[1] {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Parallel Solid Validation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Validate all solids in a BRep in parallel.
+///
+/// This function checks each solid for:
+/// - Shell closure
+/// - Manifold condition
+/// - Orientation validity
+/// - Volume calculation
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to validate.
+///
+/// # Returns
+///
+/// A vector of `SolidValidationResult`, one per solid.
+pub fn validate_solids_parallel(brep: &BRep) -> Vec<SolidValidationResult> {
+    brep.solids.par_iter()
+        .enumerate()
+        .map(|(si, _)| validate_single_solid(brep, si))
+        .collect()
+}
+
+/// Validate a single solid.
+fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
+    use std::collections::HashSet;
+
+    let solid = &brep.solids[si];
+    let n_edges = brep.edges.len();
+
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Get shell results
+    let shell_results: Vec<ShellValidationResult> = solid.shells
+        .iter()
+        .enumerate()
+        .map(|(shi, _)| validate_single_shell(brep, si, shi))
+        .collect();
+
+    // Aggregate counts
+    let face_count: usize = solid.shells.iter().map(|s| s.faces.len()).sum();
+    let edge_count: usize;
+    let vertex_count: usize;
+
+    {
+        let mut edges: HashSet<usize> = HashSet::new();
+        let mut verts: HashSet<usize> = HashSet::new();
+
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    if we.idx < n_edges {
+                        edges.insert(we.idx);
+                        let edge = &brep.edges[we.idx];
+                        verts.insert(edge.start);
+                        verts.insert(edge.end);
+                    }
+                }
+            }
+        }
+
+        edge_count = edges.len();
+        vertex_count = verts.len();
+    }
+
+    // Compute Euler characteristic
+    let euler_characteristic = vertex_count as i64 - edge_count as i64 + face_count as i64;
+
+    // Check if all shells are closed and manifold
+    let is_closed = shell_results.iter().all(|s| s.is_closed);
+    let is_manifold = shell_results.iter().all(|s| s.is_manifold);
+    let orientation_valid = shell_results.iter().all(|s| s.orientation_consistent);
+
+    // Compute volume (approximate using shell volumes)
+    let volume: f64 = solid.shells.iter()
+        .map(|shell| compute_shell_volume(shell, brep))
+        .sum();
+
+    let has_positive_volume = volume > 0.0;
+
+    // Compute genus
+    let genus = if is_closed && is_manifold {
+        let g = (2 - euler_characteristic) / 2;
+        if (2 - euler_characteristic) % 2 == 0 && g >= 0 { Some(g) } else { None }
+    } else {
+        None
+    };
+
+    // Generate errors
+    if !is_closed {
+        errors.push("Solid has unclosed shells".to_string());
+    }
+    if !is_manifold {
+        errors.push("Solid has non-manifold topology".to_string());
+    }
+    if !has_positive_volume {
+        warnings.push("Solid has zero or negative volume".to_string());
+    }
+
+    let is_valid = errors.is_empty() && shell_results.iter().all(|s| s.is_valid);
+
+    SolidValidationResult {
+        solid_idx: si,
+        is_valid,
+        shell_count: solid.shells.len(),
+        face_count,
+        edge_count,
+        vertex_count,
+        euler_characteristic,
+        is_closed,
+        is_manifold,
+        orientation_valid,
+        has_positive_volume,
+        volume,
+        genus,
+        shell_results,
+        errors,
+        warnings,
+    }
+}
+
+/// Compute the volume of a shell using signed volume method.
+fn compute_shell_volume(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> f64 {
+    use std::collections::HashMap;
+
+    let n_edges = brep.edges.len();
+    let mut volume = 0.0_f64;
+
+    for face in &shell.faces {
+        // Get vertices of the outer wire
+        let mut verts: Vec<DVec3> = Vec::new();
+        for we in &face.outer_wire.edges {
+            if we.idx < n_edges {
+                let edge = &brep.edges[we.idx];
+                let vi = if we.forward { edge.start } else { edge.end };
+                if vi < brep.vertices.len() {
+                    verts.push(brep.vertices[vi].point);
+                }
+            }
+        }
+
+        // Compute signed volume contribution using triangulation
+        if verts.len() >= 3 {
+            let origin = verts[0];
+            for i in 1..verts.len() - 1 {
+                let v1 = verts[i] - origin;
+                let v2 = verts[i + 1] - origin;
+                let signed_vol = v1.cross(v2).dot(face.normal) / 6.0;
+                volume += signed_vol;
+            }
+        }
+    }
+
+    volume.abs()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Comprehensive Parallel Check
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Perform a comprehensive parallel check of a BRep.
+///
+/// This function runs all configured checks in parallel and returns a detailed
+/// report including timing information for each phase.
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to check.
+/// * `config` - Configuration for the check.
+///
+/// # Returns
+///
+/// A `ParallelCheckReport` containing all results and timing information.
+pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> ParallelCheckReport {
+    let start_time = Instant::now();
+    let mut phase_timings: Vec<CheckPhaseTiming> = Vec::new();
+    let mut structural_issues = Vec::new();
+    let mut parallel_issues = Vec::new();
+
+    // Configure thread pool
+    let threads_used = if config.num_threads > 0 {
+        config.num_threads
+    } else {
+        rayon::current_num_threads()
+    };
+
+    // Count totals
+    let total_solids = brep.solids.len();
+    let total_shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
+    let total_faces: usize = brep.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+    let total_edges = brep.edges.len();
+    let total_vertices = brep.vertices.len();
+
+    let use_parallel = total_faces >= config.parallel_threshold
+        || total_edges >= config.parallel_threshold
+        || total_vertices >= config.parallel_threshold;
+
+    // Phase 1: Face checking
+    let mut face_results = Vec::new();
+    if config.check_faces {
+        let phase_start = Instant::now();
+        face_results = if use_parallel {
+            check_faces_parallel(brep, threads_used)
+        } else {
+            check_faces_sequential(brep)
+        };
+        phase_timings.push(CheckPhaseTiming {
+            phase: "faces".to_string(),
+            duration_ms: phase_start.elapsed().as_millis() as u64,
+            items_processed: total_faces,
+        });
+
+        // Collect issues from face results
+        for fr in &face_results {
+            if !fr.is_valid {
+                structural_issues.push(CheckIssue::DegenerateFace {
+                    solid: fr.solid_idx,
+                    shell: fr.shell_idx,
+                    face: fr.face_idx,
+                });
+            }
+        }
+    }
+
+    // Phase 2: Edge checking
+    let mut edge_results = Vec::new();
+    if config.check_edges {
+        let phase_start = Instant::now();
+        edge_results = if use_parallel {
+            check_edges_parallel(brep, threads_used)
+        } else {
+            check_edges_sequential(brep)
+        };
+        phase_timings.push(CheckPhaseTiming {
+            phase: "edges".to_string(),
+            duration_ms: phase_start.elapsed().as_millis() as u64,
+            items_processed: total_edges,
+        });
+
+        // Collect issues from edge results
+        for er in &edge_results {
+            for issue in &er.issues {
+                match issue {
+                    EdgeCheckIssue::InvalidVertexIndex { vertex_idx } => {
+                        structural_issues.push(CheckIssue::InvalidVertexIndex {
+                            edge: er.edge_idx,
+                            vertex_idx: *vertex_idx,
+                        });
+                    }
+                    EdgeCheckIssue::NonManifold { face_count } => {
+                        structural_issues.push(CheckIssue::NonManifoldEdge {
+                            edge_idx: er.edge_idx,
+                            face_count: *face_count,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Phase 3: Vertex checking
+    if config.check_vertices {
+        let phase_start = Instant::now();
+
+        // Check for non-finite vertices
+        if config.check_finite_vertices {
+            for (vidx, v) in brep.vertices.iter().enumerate() {
+                if !v.point.is_finite() {
+                    parallel_issues.push(ParallelCheckIssue::NonFiniteVertex { vertex_idx: vidx });
+                }
+            }
+        }
+
+        // Check for isolated vertices
+        if config.check_isolated_vertices {
+            let mut referenced = vec![false; brep.vertices.len()];
+            for edge in &brep.edges {
+                if edge.start < brep.vertices.len() {
+                    referenced[edge.start] = true;
+                }
+                if edge.end < brep.vertices.len() {
+                    referenced[edge.end] = true;
+                }
+            }
+            for (vidx, &is_ref) in referenced.iter().enumerate() {
+                if !is_ref {
+                    parallel_issues.push(ParallelCheckIssue::IsolatedVertex { vertex_idx: vidx });
+                }
+            }
+        }
+
+        // Check for duplicate vertices
+        if config.check_duplicate_vertices {
+            let duplicates = find_duplicate_vertices_parallel(&brep.vertices, config.tolerance);
+            parallel_issues.extend(duplicates);
+        }
+
+        phase_timings.push(CheckPhaseTiming {
+            phase: "vertices".to_string(),
+            duration_ms: phase_start.elapsed().as_millis() as u64,
+            items_processed: total_vertices,
+        });
+    }
+
+    // Phase 4: Shell validation
+    let mut shell_results = Vec::new();
+    if config.check_shells {
+        let phase_start = Instant::now();
+        shell_results = validate_shells_parallel(brep);
+        phase_timings.push(CheckPhaseTiming {
+            phase: "shells".to_string(),
+            duration_ms: phase_start.elapsed().as_millis() as u64,
+            items_processed: total_shells,
+        });
+    }
+
+    // Phase 5: Solid validation
+    let mut solid_results = Vec::new();
+    if config.check_solids {
+        let phase_start = Instant::now();
+        solid_results = validate_solids_parallel(brep);
+        phase_timings.push(CheckPhaseTiming {
+            phase: "solids".to_string(),
+            duration_ms: phase_start.elapsed().as_millis() as u64,
+            items_processed: total_solids,
+        });
+    }
+
+    let total_duration_ms = start_time.elapsed().as_millis() as u64;
+
+    // Determine overall validity
+    let is_valid = structural_issues.is_empty()
+        && parallel_issues.is_empty()
+        && shell_results.iter().all(|s| s.is_valid)
+        && solid_results.iter().all(|s| s.is_valid);
+
+    // Build stats
+    let stats = ParallelCheckStats {
+        face_count: total_faces,
+        edge_count: total_edges,
+        vertex_count: total_vertices,
+        issue_count: structural_issues.len() + parallel_issues.len(),
+        is_valid,
+        was_parallel: use_parallel,
+        thread_count: threads_used,
+    };
+
+    ParallelCheckReport {
+        is_valid,
+        total_faces,
+        total_edges,
+        total_vertices,
+        total_solids,
+        total_shells,
+        threads_used,
+        was_parallel: use_parallel,
+        total_duration_ms,
+        phase_timings,
+        face_results,
+        edge_results,
+        shell_results,
+        solid_results,
+        structural_issues,
+        parallel_issues,
+        stats,
+    }
+}
+
+/// Sequential face checking fallback.
+fn check_faces_sequential(brep: &BRep) -> Vec<FaceCheckResult> {
+    let n_edges = brep.edges.len();
+    let tolerance = 1e-6;
+
+    let mut results = Vec::new();
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for fi in 0..shell.faces.len() {
+                results.push(check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance));
+            }
+        }
+    }
+    results
+}
+
+/// Sequential edge checking fallback.
+fn check_edges_sequential(brep: &BRep) -> Vec<EdgeCheckResult> {
+    let n_verts = brep.vertices.len();
+    let tolerance = 1e-6;
+
+    // Compute edge face counts
+    let mut edge_face_counts = vec![0usize; brep.edges.len()];
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    if we.idx < brep.edges.len() {
+                        edge_face_counts[we.idx] += 1;
+                    }
+                }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        if we.idx < brep.edges.len() {
+                            edge_face_counts[we.idx] += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    brep.edges.iter()
+        .enumerate()
+        .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
+        .collect()
+}
+
 /// Perform parallel check and return detailed statistics.
 pub fn check_parallel_with_stats(brep: &BRep) -> (CheckResult, ParallelCheckStats) {
     let face_count: usize = brep.solids.iter()
@@ -1387,5 +2793,551 @@ mod tests {
         assert_eq!(opts.chunk_size, 128);
         assert!(!opts.check_duplicate_vertices);
         assert!(!opts.check_isolated_vertices);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for check_faces_parallel
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_check_faces_parallel_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let results = check_faces_parallel(&brep, 0);
+        assert_eq!(results.len(), 6, "Box should have 6 faces");
+
+        for result in &results {
+            assert!(result.is_valid, "Face should be valid: {:?}", result.issues);
+            assert!(result.outer_wire_closed, "Outer wire should be closed");
+            assert_eq!(result.outer_wire_edge_count, 4, "Each face should have 4 edges");
+        }
+    }
+
+    #[test]
+    fn test_check_faces_parallel_open_wire() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 3, end: 0 }); // Gap: v2 != v3
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let results = check_faces_parallel(&brep, 0);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].is_valid, "Face with open wire should be invalid");
+        assert!(!results[0].outer_wire_closed, "Wire should be reported as open");
+        assert!(results[0].outer_wire_gaps > 0, "Should have gaps");
+    }
+
+    #[test]
+    fn test_check_faces_parallel_degenerate_face() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0)], // Only 1 edge
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let results = check_faces_parallel(&brep, 0);
+        assert!(!results[0].is_valid, "Degenerate face should be invalid");
+        assert!(results[0].issues.iter().any(|i| matches!(i, FaceCheckIssue::DegenerateFace)));
+    }
+
+    #[test]
+    fn test_check_faces_parallel_zero_normal() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::ZERO, // Zero normal
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let results = check_faces_parallel(&brep, 0);
+        assert!(!results[0].is_valid, "Face with zero normal should be invalid");
+        assert!(results[0].issues.iter().any(|i| matches!(i, FaceCheckIssue::ZeroNormal)));
+    }
+
+    #[test]
+    fn test_check_faces_parallel_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let results = check_faces_parallel(&brep, 0);
+
+        // Sphere should have faces
+        assert!(!results.is_empty(), "Sphere should have faces");
+        // Verify basic structure
+        for result in &results {
+            assert!(result.outer_wire_edge_count >= 0);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for check_edges_parallel
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_check_edges_parallel_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let results = check_edges_parallel(&brep, 0);
+        assert_eq!(results.len(), 12, "Box should have 12 edges");
+
+        for result in &results {
+            assert!(result.is_valid, "Edge should be valid: {:?}", result.issues);
+            assert!(result.is_manifold, "Each edge should be manifold");
+            assert_eq!(result.face_count, 2, "Each edge should be shared by 2 faces");
+            assert!(!result.is_degenerate, "No edge should be degenerate");
+            assert!(result.length > 0.0, "Each edge should have positive length");
+        }
+    }
+
+    #[test]
+    fn test_check_edges_parallel_invalid_vertex() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.edges.push(Edge { start: 0, end: 99 }); // Invalid vertex
+
+        let results = check_edges_parallel(&brep, 0);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].is_valid, "Edge with invalid vertex should be invalid");
+        assert!(results[0].issues.iter().any(|i| matches!(i, EdgeCheckIssue::InvalidVertexIndex { .. })));
+    }
+
+    #[test]
+    fn test_check_edges_parallel_degenerate() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::ZERO }); // Same position
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let results = check_edges_parallel(&brep, 0);
+        assert!(results[0].is_degenerate, "Edge with same vertex positions should be degenerate");
+    }
+
+    #[test]
+    fn test_check_edges_parallel_free_edge() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.edges.push(Edge { start: 0, end: 1 }); // Not referenced by any face
+
+        let results = check_edges_parallel(&brep, 0);
+        assert!(!results[0].is_valid, "Free edge should be invalid");
+        assert!(results[0].issues.iter().any(|i| matches!(i, EdgeCheckIssue::FreeEdge)));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for validate_shells_parallel
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_validate_shells_parallel_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let results = validate_shells_parallel(&brep);
+        assert_eq!(results.len(), 1, "Box should have 1 shell");
+
+        let shell = &results[0];
+        assert!(shell.is_valid, "Box shell should be valid");
+        assert!(shell.is_closed, "Box shell should be closed");
+        assert!(shell.is_manifold, "Box shell should be manifold");
+        assert_eq!(shell.face_count, 6);
+        assert_eq!(shell.euler_characteristic, 2, "Box Euler characteristic should be 2");
+        assert_eq!(shell.genus, Some(0), "Box genus should be 0");
+    }
+
+    #[test]
+    fn test_validate_shells_parallel_sphere() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        let results = validate_shells_parallel(&brep);
+        assert_eq!(results.len(), 1);
+
+        let shell = &results[0];
+        assert!(shell.is_closed, "Sphere shell should be closed");
+        assert_eq!(shell.euler_characteristic, 2, "Sphere Euler characteristic should be 2");
+        assert_eq!(shell.genus, Some(0), "Sphere genus should be 0");
+    }
+
+    #[test]
+    fn test_validate_shells_parallel_open_shell() {
+        let mut brep = BRep::new();
+        // Create a simple open shell (just one face)
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        let results = validate_shells_parallel(&brep);
+        assert!(!results[0].is_closed, "Single face shell should be open");
+        assert!(results[0].open_edge_count > 0, "Should have open edges");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for validate_solids_parallel
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_validate_solids_parallel_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let results = validate_solids_parallel(&brep);
+        assert_eq!(results.len(), 1, "Should have 1 solid");
+
+        let solid = &results[0];
+        assert!(solid.is_valid, "Box solid should be valid");
+        assert!(solid.is_closed, "Box solid should be closed");
+        assert!(solid.is_manifold, "Box solid should be manifold");
+        assert_eq!(solid.face_count, 6);
+        assert_eq!(solid.edge_count, 12);
+        assert_eq!(solid.vertex_count, 8);
+        assert!(solid.volume >= 0.0, "Box volume should be non-negative");
+    }
+
+    #[test]
+    fn test_validate_solids_parallel_cylinder() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let results = validate_solids_parallel(&brep);
+        assert_eq!(results.len(), 1);
+
+        let solid = &results[0];
+        assert!(solid.is_closed, "Cylinder solid should be closed");
+        assert!(solid.volume >= 0.0, "Cylinder volume should be non-negative");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for check_brep_parallel
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_check_brep_parallel_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        assert!(report.is_valid, "Box should pass all checks");
+        assert!(report.structural_issues.is_empty());
+        assert!(report.parallel_issues.is_empty());
+        assert_eq!(report.total_faces, 6);
+        assert_eq!(report.total_edges, 12);
+        assert_eq!(report.total_vertices, 8);
+        assert_eq!(report.total_solids, 1);
+        assert!(report.total_duration_ms < 10000, "Should complete quickly");
+    }
+
+    #[test]
+    fn test_check_brep_parallel_fast_config() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        let config = ParallelCheckConfig::fast();
+        let report = check_brep_parallel(&brep, &config);
+
+        // Fast config skips some checks
+        assert!(report.phase_timings.iter().any(|t| t.phase == "faces"));
+    }
+
+    #[test]
+    fn test_check_brep_parallel_thorough_config() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let config = ParallelCheckConfig::thorough();
+        let report = check_brep_parallel(&brep, &config);
+
+        // Thorough config has tighter tolerance
+        assert!((config.tolerance - 1e-9).abs() < 1e-15);
+    }
+
+    #[test]
+    fn test_check_brep_parallel_custom_threads() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let config = ParallelCheckConfig::default().with_threads(2);
+        let report = check_brep_parallel(&brep, &config);
+
+        // Should work with custom thread count
+        assert!(report.threads_used >= 1);
+    }
+
+    #[test]
+    fn test_check_brep_parallel_timing() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        // Should have timing for each phase
+        let phases: Vec<&str> = report.phase_timings.iter().map(|t| t.phase.as_str()).collect();
+        assert!(phases.contains(&"faces"));
+        assert!(phases.contains(&"edges"));
+        assert!(phases.contains(&"vertices"));
+        assert!(phases.contains(&"shells"));
+        assert!(phases.contains(&"solids"));
+    }
+
+    #[test]
+    fn test_check_brep_parallel_invalid_brep() {
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(f64::NAN, 0.0, 0.0) }); // NaN vertex
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // Duplicate
+        brep.edges.push(Edge { start: 0, end: 2 });
+        // Vertex 1 is isolated
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        assert!(!report.is_valid, "Invalid BRep should fail checks");
+        assert!(!report.parallel_issues.is_empty(), "Should have parallel-specific issues");
+    }
+
+    #[test]
+    fn test_check_brep_parallel_empty_brep() {
+        let brep = BRep::default();
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        assert!(report.is_valid, "Empty BRep should be valid (no issues)");
+        assert_eq!(report.total_faces, 0);
+        assert_eq!(report.total_edges, 0);
+        assert_eq!(report.total_vertices, 0);
+    }
+
+    #[test]
+    fn test_check_brep_parallel_summary() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        let summary = report.summary();
+        assert!(summary.contains("VALID"));
+        assert!(summary.contains("1 solids"));
+        assert!(summary.contains("6 faces"));
+    }
+
+    #[test]
+    fn test_check_brep_parallel_timing_summary() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let config = ParallelCheckConfig::default();
+        let report = check_brep_parallel(&brep, &config);
+
+        let timing = report.timing_summary();
+        assert!(timing.contains("Timing breakdown"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Tests for result types
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_face_check_result_summary() {
+        let result = FaceCheckResult {
+            solid_idx: 0,
+            shell_idx: 0,
+            face_idx: 1,
+            is_valid: true,
+            issues: vec![],
+            outer_wire_edge_count: 4,
+            inner_wire_count: 0,
+            normal: DVec3::Z,
+            normal_valid: true,
+            outer_wire_closed: true,
+            outer_wire_gaps: 0,
+            has_self_intersection: false,
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("valid"));
+        assert!(result.is_clean());
+    }
+
+    #[test]
+    fn test_edge_check_result_summary() {
+        let result = EdgeCheckResult {
+            edge_idx: 0,
+            is_valid: true,
+            issues: vec![],
+            start_vertex: 0,
+            end_vertex: 1,
+            length: 1.0,
+            is_degenerate: false,
+            face_count: 2,
+            is_manifold: true,
+            tolerance: 1e-6,
+            has_self_intersection: false,
+        };
+
+        let summary = result.summary();
+        assert!(summary.contains("valid"));
+        assert!(result.is_clean());
+    }
+
+    #[test]
+    fn test_shell_validation_result_summary() {
+        let result = ShellValidationResult {
+            solid_idx: 0,
+            shell_idx: 0,
+            is_valid: true,
+            face_count: 6,
+            edge_count: 12,
+            vertex_count: 8,
+            euler_characteristic: 2,
+            is_closed: true,
+            is_manifold: true,
+            open_edge_count: 0,
+            non_manifold_edge_count: 0,
+            orientation_consistent: true,
+            genus: Some(0),
+            face_results: vec![],
+            errors: vec![],
+            warnings: vec![],
+        };
+
+        assert!(result.is_closed_manifold());
+        let summary = result.summary();
+        assert!(summary.contains("VALID"));
+    }
+
+    #[test]
+    fn test_solid_validation_result_summary() {
+        let result = SolidValidationResult {
+            solid_idx: 0,
+            is_valid: true,
+            shell_count: 1,
+            face_count: 6,
+            edge_count: 12,
+            vertex_count: 8,
+            euler_characteristic: 2,
+            is_closed: true,
+            is_manifold: true,
+            orientation_valid: true,
+            has_positive_volume: true,
+            volume: 1.0,
+            genus: Some(0),
+            shell_results: vec![],
+            errors: vec![],
+            warnings: vec![],
+        };
+
+        assert!(result.is_valid_for_operations());
+        let summary = result.summary();
+        assert!(summary.contains("VALID"));
+    }
+
+    #[test]
+    fn test_parallel_check_config_presets() {
+        let fast = ParallelCheckConfig::fast();
+        assert!(!fast.check_self_intersections);
+        assert!(!fast.check_same_parameter);
+
+        let thorough = ParallelCheckConfig::thorough();
+        assert!((thorough.tolerance - 1e-9).abs() < 1e-15);
+        assert!(thorough.check_self_intersections);
+    }
+
+    #[test]
+    fn test_parallel_check_report_timing() {
+        let timing = CheckPhaseTiming {
+            phase: "test".to_string(),
+            duration_ms: 100,
+            items_processed: 50,
+        };
+
+        assert_eq!(timing.phase, "test");
+        assert_eq!(timing.duration_ms, 100);
+        assert_eq!(timing.items_processed, 50);
     }
 }

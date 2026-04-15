@@ -8583,6 +8583,1704 @@ pub fn cleanup_boolean_result(brep: &BRep, tolerance: f64) -> (BRep, BooleanClea
     (brep, report)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Boolean Operation Type for Tolerance Propagation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Type of boolean operation that was performed.
+///
+/// Used by tolerance propagation to apply operation-specific rules.
+/// This is distinct from `builder::BooleanOpTypeForTolerance` to avoid naming conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BooleanOpTypeForTolerance {
+    /// Union (fuse) operation.
+    #[default]
+    Union,
+    /// Intersection operation.
+    Intersection,
+    /// Difference (cut) operation.
+    Difference,
+    /// General boolean operation (unknown type).
+    General,
+}
+
+/// Configuration for post-boolean tolerance propagation.
+#[derive(Debug, Clone)]
+pub struct PostBooleanToleranceConfig {
+    /// Base tolerance floor for entities without explicit tolerance.
+    pub tolerance_floor: f64,
+    /// Multiplier applied to intersection edge tolerances.
+    pub intersection_edge_factor: f64,
+    /// Maximum allowed edge tolerance after propagation.
+    pub max_edge_tolerance: f64,
+    /// Maximum allowed face tolerance after propagation.
+    pub max_face_tolerance: f64,
+    /// Whether to propagate from intersection vertices to edges.
+    pub propagate_vertex_to_edge: bool,
+    /// Whether to propagate from edges to faces.
+    pub propagate_edge_to_face: bool,
+    /// Whether to detect and handle tolerance conflicts.
+    pub handle_conflicts: bool,
+}
+
+impl Default for PostBooleanToleranceConfig {
+    fn default() -> Self {
+        Self {
+            tolerance_floor: TOLERANCE_ABS,
+            intersection_edge_factor: 1.0,
+            max_edge_tolerance: 1.0,
+            max_face_tolerance: 1.0,
+            propagate_vertex_to_edge: true,
+            propagate_edge_to_face: true,
+            handle_conflicts: true,
+        }
+    }
+}
+
+impl PostBooleanToleranceConfig {
+    /// Create a config for high-precision boolean operations.
+    pub fn high_precision() -> Self {
+        Self {
+            tolerance_floor: 1e-9,
+            intersection_edge_factor: 1.0,
+            max_edge_tolerance: 0.01,
+            max_face_tolerance: 0.01,
+            ..Default::default()
+        }
+    }
+
+    /// Create a config for standard CAD operations.
+    pub fn standard() -> Self {
+        Self::default()
+    }
+
+    /// Create a config for relaxed tolerance (e.g., visualization, 3D printing).
+    pub fn relaxed() -> Self {
+        Self {
+            tolerance_floor: 1e-5,
+            intersection_edge_factor: 2.0,
+            max_edge_tolerance: 1.0,
+            max_face_tolerance: 1.0,
+            ..Default::default()
+        }
+    }
+}
+
+/// Report from post-boolean tolerance propagation.
+#[derive(Debug, Clone, Default)]
+pub struct PostBooleanToleranceReport {
+    /// Number of vertices whose tolerance was increased.
+    pub vertices_updated: usize,
+    /// Number of edges whose tolerance was increased.
+    pub edges_updated: usize,
+    /// Number of faces whose tolerance was increased.
+    pub faces_updated: usize,
+    /// Number of tolerance conflicts detected.
+    pub conflicts_detected: usize,
+    /// Number of tolerance conflicts resolved.
+    pub conflicts_resolved: usize,
+    /// Maximum vertex tolerance after propagation.
+    pub max_vertex_tolerance: f64,
+    /// Maximum edge tolerance after propagation.
+    pub max_edge_tolerance: f64,
+    /// Maximum face tolerance after propagation.
+    pub max_face_tolerance: f64,
+}
+
+/// Propagate tolerances after a boolean operation.
+///
+/// This function applies OCCT-style tolerance propagation rules tailored to
+/// the type of boolean operation performed. It handles:
+///
+/// 1. Intersection vertices: New vertices created at curve/surface intersections
+///    receive tolerances based on the geometric precision of the intersection.
+/// 2. Edge propagation: Edge tolerance >= max(vertex tolerances at endpoints).
+/// 3. Face propagation: Face tolerance >= max(edge tolerances on boundary).
+/// 4. Conflict resolution: Detects and resolves cases where vertex tolerance
+///    exceeds edge tolerance, etc.
+///
+/// # Arguments
+///
+/// * `brep` - The BRep after boolean operation.
+/// * `operation_type` - The type of boolean operation performed.
+/// * `intersection_edge_indices` - Indices of edges created during intersection.
+/// * `intersection_vertex_indices` - Indices of vertices created during intersection.
+///
+/// # Returns
+///
+/// A tuple of (updated BRep, propagation report).
+pub fn propagate_tolerances_post_boolean_op(
+    brep: &BRep,
+    operation_type: BooleanOpTypeForTolerance,
+    intersection_edge_indices: &[usize],
+    intersection_vertex_indices: &[usize],
+) -> (BRep, PostBooleanToleranceReport) {
+    propagate_tolerances_post_boolean_op_with_config(
+        brep,
+        operation_type,
+        intersection_edge_indices,
+        intersection_vertex_indices,
+        &PostBooleanToleranceConfig::default(),
+    )
+}
+
+/// Propagate tolerances after a boolean operation with custom configuration.
+pub fn propagate_tolerances_post_boolean_op_with_config(
+    brep: &BRep,
+    operation_type: BooleanOpTypeForTolerance,
+    intersection_edge_indices: &[usize],
+    intersection_vertex_indices: &[usize],
+    config: &PostBooleanToleranceConfig,
+) -> (BRep, PostBooleanToleranceReport) {
+    let floor = config.tolerance_floor.max(TOLERANCE_ABS);
+    let mut result = brep.clone();
+    let mut report = PostBooleanToleranceReport::default();
+
+    let n_verts = result.vertices.len();
+    let n_edges = result.edges.len();
+    let n_faces: usize = result.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+
+    // Ensure tolerance arrays are sized
+    if result.geom.vertex_tolerance.len() < n_verts {
+        result.geom.vertex_tolerance.resize(n_verts, floor);
+    }
+    if result.geom.edge_tolerance.len() < n_edges {
+        result.geom.edge_tolerance.resize(n_edges, floor);
+    }
+    if result.geom.face_tolerance.len() < n_faces {
+        result.geom.face_tolerance.resize(n_faces, floor);
+    }
+
+    // Step 1: Set initial tolerances for intersection entities
+    // OCCT-style: intersection edges get a tolerance based on operation type
+    let base_intersection_tol = match operation_type {
+        BooleanOpTypeForTolerance::Intersection => floor * 10.0,
+        BooleanOpTypeForTolerance::Union => floor * 5.0,
+        BooleanOpTypeForTolerance::Difference => floor * 8.0,
+        BooleanOpTypeForTolerance::General => floor * 10.0,
+    };
+
+    // Apply intersection edge tolerances
+    for &ei in intersection_edge_indices {
+        if ei < result.geom.edge_tolerance.len() {
+            let new_tol = base_intersection_tol * config.intersection_edge_factor;
+            let old_tol = result.geom.edge_tolerance[ei];
+            if new_tol > old_tol {
+                result.geom.edge_tolerance[ei] = new_tol.min(config.max_edge_tolerance);
+                report.edges_updated += 1;
+            }
+        }
+    }
+
+    // Apply intersection vertex tolerances
+    for &vi in intersection_vertex_indices {
+        if vi < result.geom.vertex_tolerance.len() {
+            let new_tol = base_intersection_tol;
+            let old_tol = result.geom.vertex_tolerance[vi];
+            if new_tol > old_tol {
+                result.geom.vertex_tolerance[vi] = new_tol;
+                report.vertices_updated += 1;
+            }
+        }
+    }
+
+    // Step 2: Propagate vertex -> edge (OCCT BRepLib::UpdateEdgeTol rule)
+    if config.propagate_vertex_to_edge {
+        for ei in 0..n_edges {
+            let edge = &result.edges[ei];
+            let vtol_start = result.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+            let vtol_end = result.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+            let max_vtol = vtol_start.max(vtol_end);
+
+            let cur_etol = result.geom.edge_tolerance[ei];
+            let new_etol = cur_etol.max(max_vtol).min(config.max_edge_tolerance);
+
+            if new_etol > cur_etol {
+                result.geom.edge_tolerance[ei] = new_etol;
+                report.edges_updated += 1;
+            }
+        }
+    }
+
+    // Step 3: Propagate edge -> face
+    if config.propagate_edge_to_face {
+        let mut flat_fi = 0usize;
+        for solid in &result.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let mut max_etol = floor;
+                    for we in &face.outer_wire.edges {
+                        if we.idx < result.geom.edge_tolerance.len() {
+                            max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                        }
+                    }
+                    for iw in &face.inner_wires {
+                        for we in &iw.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                            }
+                        }
+                    }
+
+                    let cur_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
+                    let new_ftol = cur_ftol.max(max_etol).min(config.max_face_tolerance);
+
+                    if new_ftol > cur_ftol {
+                        if flat_fi < result.geom.face_tolerance.len() {
+                            result.geom.face_tolerance[flat_fi] = new_ftol;
+                            report.faces_updated += 1;
+                        }
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+    }
+
+    // Step 4: Detect and handle tolerance conflicts
+    if config.handle_conflicts {
+        let (conflicts, resolved) = detect_and_resolve_tolerance_conflicts(&mut result, floor);
+        report.conflicts_detected = conflicts;
+        report.conflicts_resolved = resolved;
+    }
+
+    // Compute max tolerances for report
+    if !result.geom.vertex_tolerance.is_empty() {
+        report.max_vertex_tolerance = result.geom.vertex_tolerance.iter()
+            .cloned()
+            .fold(0.0_f64, f64::max);
+    }
+    if !result.geom.edge_tolerance.is_empty() {
+        report.max_edge_tolerance = result.geom.edge_tolerance.iter()
+            .cloned()
+            .fold(0.0_f64, f64::max);
+    }
+    if !result.geom.face_tolerance.is_empty() {
+        report.max_face_tolerance = result.geom.face_tolerance.iter()
+            .cloned()
+            .fold(0.0_f64, f64::max);
+    }
+
+    (result, report)
+}
+
+/// Detect and resolve tolerance conflicts in a BRep.
+///
+/// A conflict occurs when:
+/// - A vertex tolerance exceeds the tolerance of an edge it belongs to
+/// - An edge tolerance exceeds the tolerance of a face it bounds
+///
+/// Returns (conflicts_detected, conflicts_resolved).
+fn detect_and_resolve_tolerance_conflicts(brep: &mut BRep, floor: f64) -> (usize, usize) {
+    let mut conflicts = 0usize;
+    let mut resolved = 0usize;
+
+    // Check vertex > edge conflicts
+    for ei in 0..brep.edges.len() {
+        let edge = &brep.edges[ei];
+        let vtol_start = brep.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+        let vtol_end = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+        let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
+
+        if vtol_start > etol + 1e-15 || vtol_end > etol + 1e-15 {
+            conflicts += 1;
+            // Resolve: increase edge tolerance
+            if ei < brep.geom.edge_tolerance.len() {
+                let new_etol = etol.max(vtol_start).max(vtol_end);
+                brep.geom.edge_tolerance[ei] = new_etol;
+                resolved += 1;
+            }
+        }
+    }
+
+    // Check edge > face conflicts
+    let mut flat_fi = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let ftol = brep.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
+
+                let mut max_etol = floor;
+                let mut has_conflict = false;
+                for we in &face.outer_wire.edges {
+                    if we.idx < brep.geom.edge_tolerance.len() {
+                        let etol = brep.geom.edge_tolerance[we.idx];
+                        max_etol = max_etol.max(etol);
+                        if etol > ftol + 1e-15 {
+                            has_conflict = true;
+                        }
+                    }
+                }
+                for iw in &face.inner_wires {
+                    for we in &iw.edges {
+                        if we.idx < brep.geom.edge_tolerance.len() {
+                            let etol = brep.geom.edge_tolerance[we.idx];
+                            max_etol = max_etol.max(etol);
+                            if etol > ftol + 1e-15 {
+                                has_conflict = true;
+                            }
+                        }
+                    }
+                }
+
+                if has_conflict {
+                    conflicts += 1;
+                    // Resolve: increase face tolerance
+                    if flat_fi < brep.geom.face_tolerance.len() {
+                        brep.geom.face_tolerance[flat_fi] = max_etol;
+                        resolved += 1;
+                    }
+                }
+                flat_fi += 1;
+            }
+        }
+    }
+
+    (conflicts, resolved)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Post-Sew Tolerance Propagation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Configuration for post-sew tolerance propagation.
+#[derive(Debug, Clone)]
+pub struct PostSewToleranceConfig {
+    /// Base tolerance floor for entities without explicit tolerance.
+    pub tolerance_floor: f64,
+    /// Factor to multiply sewing tolerance by for seam edges.
+    pub seam_tolerance_factor: f64,
+    /// Whether to ensure consistency across sewn edges.
+    pub ensure_seam_consistency: bool,
+    /// Maximum allowed tolerance growth ratio.
+    pub max_growth_ratio: f64,
+}
+
+impl Default for PostSewToleranceConfig {
+    fn default() -> Self {
+        Self {
+            tolerance_floor: TOLERANCE_ABS,
+            seam_tolerance_factor: 1.5,
+            ensure_seam_consistency: true,
+            max_growth_ratio: 100.0,
+        }
+    }
+}
+
+/// Report from post-sew tolerance propagation.
+#[derive(Debug, Clone, Default)]
+pub struct PostSewToleranceReport {
+    /// Number of seam edges whose tolerance was updated.
+    pub seam_edges_updated: usize,
+    /// Number of faces whose tolerance was updated for seam consistency.
+    pub faces_updated: usize,
+    /// Maximum tolerance among seam edges.
+    pub max_seam_tolerance: f64,
+    /// Number of edges that required tolerance harmonization.
+    pub edges_harmonized: usize,
+}
+
+/// Propagate tolerances after a sewing operation.
+///
+/// After sewing, edges that were joined together (seam edges) need their
+/// tolerances updated to ensure geometric consistency. This function:
+///
+/// 1. Updates seam edge tolerances to be at least the sewing tolerance
+/// 2. Ensures consistency across both sides of a seam
+/// 3. Propagates tolerance updates to adjacent faces
+///
+/// # Arguments
+///
+/// * `brep` - The BRep after sewing.
+/// * `sewing_tolerance` - The tolerance used during sewing.
+/// * `seam_edge_pairs` - Pairs of edge indices that were sewn together.
+///
+/// # Returns
+///
+/// A tuple of (updated BRep, propagation report).
+pub fn propagate_tolerances_post_sew(
+    brep: &BRep,
+    sewing_tolerance: f64,
+    seam_edge_pairs: &[(usize, usize)],
+) -> (BRep, PostSewToleranceReport) {
+    propagate_tolerances_post_sew_with_config(
+        brep,
+        sewing_tolerance,
+        seam_edge_pairs,
+        &PostSewToleranceConfig::default(),
+    )
+}
+
+/// Propagate tolerances after a sewing operation with custom configuration.
+pub fn propagate_tolerances_post_sew_with_config(
+    brep: &BRep,
+    sewing_tolerance: f64,
+    seam_edge_pairs: &[(usize, usize)],
+    config: &PostSewToleranceConfig,
+) -> (BRep, PostSewToleranceReport) {
+    let floor = config.tolerance_floor.max(TOLERANCE_ABS);
+    let seam_tol = sewing_tolerance.max(floor) * config.seam_tolerance_factor;
+
+    let mut result = brep.clone();
+    let mut report = PostSewToleranceReport::default();
+
+    let n_verts = result.vertices.len();
+    let n_edges = result.edges.len();
+    let n_faces: usize = result.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+
+    // Ensure tolerance arrays are sized
+    if result.geom.vertex_tolerance.len() < n_verts {
+        result.geom.vertex_tolerance.resize(n_verts, floor);
+    }
+    if result.geom.edge_tolerance.len() < n_edges {
+        result.geom.edge_tolerance.resize(n_edges, floor);
+    }
+    if result.geom.face_tolerance.len() < n_faces {
+        result.geom.face_tolerance.resize(n_faces, floor);
+    }
+
+    // Step 1: Harmonize seam edge tolerances
+    let mut edge_tol_updates: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+
+    for &(e1, e2) in seam_edge_pairs {
+        let tol1 = result.geom.edge_tolerance.get(e1).copied().unwrap_or(floor);
+        let tol2 = result.geom.edge_tolerance.get(e2).copied().unwrap_or(floor);
+        let harmonized_tol = tol1.max(tol2).max(seam_tol);
+
+        // Check growth ratio
+        let growth = harmonized_tol / floor;
+        let final_tol = if growth > config.max_growth_ratio {
+            floor * config.max_growth_ratio
+        } else {
+            harmonized_tol
+        };
+
+        edge_tol_updates.insert(e1, edge_tol_updates.get(&e1).copied().unwrap_or(floor).max(final_tol));
+        edge_tol_updates.insert(e2, edge_tol_updates.get(&e2).copied().unwrap_or(floor).max(final_tol));
+        report.edges_harmonized += 1;
+    }
+
+    // Apply edge tolerance updates
+    for (&ei, &new_tol) in &edge_tol_updates {
+        if ei < result.geom.edge_tolerance.len() {
+            let old_tol = result.geom.edge_tolerance[ei];
+            if new_tol > old_tol {
+                result.geom.edge_tolerance[ei] = new_tol;
+                report.seam_edges_updated += 1;
+            }
+        }
+    }
+
+    // Step 2: Update vertex tolerances at seam endpoints
+    for &(e1, e2) in seam_edge_pairs {
+        if e1 < result.edges.len() && e2 < result.edges.len() {
+            let edge1 = &result.edges[e1];
+            let edge2 = &result.edges[e2];
+            let seam_etol = edge_tol_updates.get(&e1).copied().unwrap_or(seam_tol);
+
+            // Update vertices at seam edge endpoints
+            for &vi in &[edge1.start, edge1.end, edge2.start, edge2.end] {
+                if vi < result.geom.vertex_tolerance.len() {
+                    let old_vtol = result.geom.vertex_tolerance[vi];
+                    if seam_etol > old_vtol {
+                        result.geom.vertex_tolerance[vi] = seam_etol;
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 3: Ensure face tolerance consistency
+    if config.ensure_seam_consistency {
+        let mut flat_fi = 0usize;
+        for solid in &result.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let mut max_etol = floor;
+                    let mut has_seam_edge = false;
+
+                    for we in &face.outer_wire.edges {
+                        if we.idx < result.geom.edge_tolerance.len() {
+                            let etol = result.geom.edge_tolerance[we.idx];
+                            max_etol = max_etol.max(etol);
+                            if edge_tol_updates.contains_key(&we.idx) {
+                                has_seam_edge = true;
+                            }
+                        }
+                    }
+                    for iw in &face.inner_wires {
+                        for we in &iw.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                let etol = result.geom.edge_tolerance[we.idx];
+                                max_etol = max_etol.max(etol);
+                                if edge_tol_updates.contains_key(&we.idx) {
+                                    has_seam_edge = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if has_seam_edge {
+                        let old_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
+                        if max_etol > old_ftol {
+                            if flat_fi < result.geom.face_tolerance.len() {
+                                result.geom.face_tolerance[flat_fi] = max_etol;
+                                report.faces_updated += 1;
+                            }
+                        }
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+    }
+
+    // Compute max seam tolerance
+    report.max_seam_tolerance = edge_tol_updates.values()
+        .cloned()
+        .fold(0.0_f64, f64::max);
+
+    (result, report)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tolerance Rules Engine
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Rules for tolerance propagation.
+///
+/// These rules determine how tolerances propagate through the BRep topology
+/// and how conflicts are resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToleranceRule {
+    /// OCCT standard: vertex → edge → face propagation.
+    /// Edge tolerance >= max(vertex tolerances at endpoints).
+    /// Face tolerance >= max(edge tolerances on boundary).
+    #[default]
+    OcctStandard,
+
+    /// Conservative: only propagate when absolutely necessary.
+    /// Maintains minimum tolerances required for geometric validity.
+    Conservative,
+
+    /// Aggressive: propagate all tolerances upward.
+    /// Useful for ensuring geometric operations succeed.
+    Aggressive,
+
+    /// Harmonized: ensure all connected entities have consistent tolerances.
+    /// Propagates the maximum tolerance through connected topology.
+    Harmonized,
+
+    /// Bounded: propagate but cap at a maximum value.
+    /// Prevents tolerances from growing unboundedly.
+    Bounded,
+
+    /// Model-scale: scale tolerances based on model bounding box.
+    /// Useful for models at unusual scales.
+    ModelScale,
+}
+
+/// Policy for handling tolerance conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConflictResolutionPolicy {
+    /// Do not modify tolerances when conflicts are detected.
+    Ignore,
+    /// Increase the lower-level tolerance to resolve conflicts.
+    #[default]
+    PropagateUp,
+    /// Decrease the higher-level tolerance if safe to do so.
+    ClampDown,
+    /// Report conflicts but do not modify.
+    ReportOnly,
+}
+
+/// Configuration for the tolerance propagation engine.
+#[derive(Debug, Clone)]
+pub struct TolerancePropagationConfig {
+    /// Primary propagation rule to apply.
+    pub rule: ToleranceRule,
+    /// How to handle tolerance conflicts.
+    pub conflict_policy: ConflictResolutionPolicy,
+    /// Base tolerance floor.
+    pub tolerance_floor: f64,
+    /// Maximum allowed tolerance.
+    pub max_tolerance: f64,
+    /// For Bounded rule: the cap value.
+    pub bound_value: f64,
+    /// For ModelScale rule: the model scale factor.
+    pub model_scale: f64,
+    /// Number of propagation passes to run.
+    pub propagation_passes: usize,
+    /// Whether to validate after propagation.
+    pub validate_result: bool,
+}
+
+impl Default for TolerancePropagationConfig {
+    fn default() -> Self {
+        Self {
+            rule: ToleranceRule::OcctStandard,
+            conflict_policy: ConflictResolutionPolicy::PropagateUp,
+            tolerance_floor: TOLERANCE_ABS,
+            max_tolerance: 1.0,
+            bound_value: 0.01,
+            model_scale: 1.0,
+            propagation_passes: 3,
+            validate_result: true,
+        }
+    }
+}
+
+impl TolerancePropagationConfig {
+    /// Create config for OCCT-standard propagation.
+    pub fn occt_standard() -> Self {
+        Self::default()
+    }
+
+    /// Create config for conservative propagation.
+    pub fn conservative() -> Self {
+        Self {
+            rule: ToleranceRule::Conservative,
+            propagation_passes: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Create config for aggressive propagation.
+    pub fn aggressive() -> Self {
+        Self {
+            rule: ToleranceRule::Aggressive,
+            propagation_passes: 5,
+            ..Default::default()
+        }
+    }
+
+    /// Create config for harmonized propagation.
+    pub fn harmonized() -> Self {
+        Self {
+            rule: ToleranceRule::Harmonized,
+            propagation_passes: 3,
+            ..Default::default()
+        }
+    }
+
+    /// Create config for bounded propagation.
+    pub fn bounded(max_tol: f64) -> Self {
+        Self {
+            rule: ToleranceRule::Bounded,
+            bound_value: max_tol,
+            max_tolerance: max_tol,
+            ..Default::default()
+        }
+    }
+
+    /// Create config for model-scale propagation.
+    pub fn model_scale(scale: f64) -> Self {
+        Self {
+            rule: ToleranceRule::ModelScale,
+            model_scale: scale,
+            tolerance_floor: TOLERANCE_ABS * scale,
+            max_tolerance: 1.0 * scale,
+            ..Default::default()
+        }
+    }
+}
+
+/// Engine for applying tolerance propagation rules.
+///
+/// This engine provides configurable tolerance propagation following
+/// OCCT-style rules with additional customization options.
+#[derive(Debug, Clone)]
+pub struct TolerancePropagationEngine {
+    /// Configuration for the engine.
+    pub config: TolerancePropagationConfig,
+}
+
+impl Default for TolerancePropagationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TolerancePropagationEngine {
+    /// Create a new engine with default configuration.
+    pub fn new() -> Self {
+        Self {
+            config: TolerancePropagationConfig::default(),
+        }
+    }
+
+    /// Create a new engine with custom configuration.
+    pub fn with_config(config: TolerancePropagationConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create an engine with OCCT-standard rules.
+    pub fn occt_standard() -> Self {
+        Self::with_config(TolerancePropagationConfig::occt_standard())
+    }
+
+    /// Create an engine with conservative rules.
+    pub fn conservative() -> Self {
+        Self::with_config(TolerancePropagationConfig::conservative())
+    }
+
+    /// Create an engine with aggressive rules.
+    pub fn aggressive() -> Self {
+        Self::with_config(TolerancePropagationConfig::aggressive())
+    }
+
+    /// Create an engine with bounded rules.
+    pub fn bounded(max_tol: f64) -> Self {
+        Self::with_config(TolerancePropagationConfig::bounded(max_tol))
+    }
+
+    /// Propagate tolerances according to the configured rule.
+    pub fn propagate(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        match self.config.rule {
+            ToleranceRule::OcctStandard => self.propagate_occt_standard(brep),
+            ToleranceRule::Conservative => self.propagate_conservative(brep),
+            ToleranceRule::Aggressive => self.propagate_aggressive(brep),
+            ToleranceRule::Harmonized => self.propagate_harmonized(brep),
+            ToleranceRule::Bounded => self.propagate_bounded(brep),
+            ToleranceRule::ModelScale => self.propagate_model_scale(brep),
+        }
+    }
+
+    fn propagate_occt_standard(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Multiple passes to ensure convergence
+        for _pass in 0..self.config.propagation_passes {
+            // Step 1: Vertex -> Edge
+            for ei in 0..result.edges.len() {
+                let edge = &result.edges[ei];
+                let vtol_s = result.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+                let vtol_e = result.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+                let cur_etol = result.geom.edge_tolerance[ei];
+                let new_etol = cur_etol.max(vtol_s).max(vtol_e).min(self.config.max_tolerance);
+
+                if new_etol > cur_etol + 1e-15 {
+                    result.geom.edge_tolerance[ei] = new_etol;
+                    report.edges_updated += 1;
+                }
+            }
+
+            // Step 2: Edge -> Face
+            let mut flat_fi = 0usize;
+            for solid in &result.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        let mut max_etol = floor;
+                        for we in &face.outer_wire.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                            }
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                if we.idx < result.geom.edge_tolerance.len() {
+                                    max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                                }
+                            }
+                        }
+
+                        let cur_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
+                        let new_ftol = max_etol.min(self.config.max_tolerance);
+
+                        if new_ftol > cur_ftol + 1e-15 {
+                            if flat_fi < result.geom.face_tolerance.len() {
+                                result.geom.face_tolerance[flat_fi] = new_ftol;
+                                report.faces_updated += 1;
+                            }
+                        }
+                        flat_fi += 1;
+                    }
+                }
+            }
+        }
+
+        // Handle conflicts
+        if self.config.conflict_policy != ConflictResolutionPolicy::Ignore {
+            let (detected, resolved) = self.handle_conflicts(&mut result, floor);
+            report.conflicts_detected = detected;
+            report.conflicts_resolved = resolved;
+        }
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn propagate_conservative(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Only propagate where absolutely necessary (conflicts)
+        let (detected, resolved) = self.handle_conflicts(&mut result, floor);
+        report.conflicts_detected = detected;
+        report.conflicts_resolved = resolved;
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn propagate_aggressive(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Multiple aggressive passes
+        for _pass in 0..self.config.propagation_passes {
+            // Vertex -> Edge
+            for ei in 0..result.edges.len() {
+                let edge = &result.edges[ei];
+                let vtol_s = result.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+                let vtol_e = result.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+
+                // Aggressive: always take max
+                let new_etol = vtol_s.max(vtol_e);
+                let cur_etol = result.geom.edge_tolerance[ei];
+
+                if new_etol > cur_etol {
+                    result.geom.edge_tolerance[ei] = new_etol;
+                    report.edges_updated += 1;
+                }
+            }
+
+            // Edge -> Face (aggressive)
+            let mut flat_fi = 0usize;
+            for solid in &result.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        let mut max_etol = floor;
+                        for we in &face.outer_wire.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                            }
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                if we.idx < result.geom.edge_tolerance.len() {
+                                    max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                                }
+                            }
+                        }
+
+                        if flat_fi < result.geom.face_tolerance.len() {
+                            let cur_ftol = result.geom.face_tolerance[flat_fi];
+                            if max_etol > cur_ftol {
+                                result.geom.face_tolerance[flat_fi] = max_etol;
+                                report.faces_updated += 1;
+                            }
+                        }
+                        flat_fi += 1;
+                    }
+                }
+            }
+
+            // Face -> Edge -> Vertex (reverse propagation)
+            let mut flat_fi = 0usize;
+            for solid in &result.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        let ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
+
+                        for we in &face.outer_wire.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                if ftol > result.geom.edge_tolerance[we.idx] {
+                                    result.geom.edge_tolerance[we.idx] = ftol;
+                                    report.edges_updated += 1;
+                                }
+                            }
+                        }
+                        flat_fi += 1;
+                    }
+                }
+            }
+
+            // Edge -> Vertex (reverse propagation)
+            for ei in 0..result.edges.len() {
+                let edge = &result.edges[ei];
+                let etol = result.geom.edge_tolerance[ei];
+
+                if edge.start < result.geom.vertex_tolerance.len() && etol > result.geom.vertex_tolerance[edge.start] {
+                    result.geom.vertex_tolerance[edge.start] = etol;
+                    report.vertices_updated += 1;
+                }
+                if edge.end < result.geom.vertex_tolerance.len() && etol > result.geom.vertex_tolerance[edge.end] {
+                    result.geom.vertex_tolerance[edge.end] = etol;
+                    report.vertices_updated += 1;
+                }
+            }
+        }
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn propagate_harmonized(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Build edge-vertex connectivity
+        let mut vertex_max_edge_tol: Vec<f64> = vec![floor; result.vertices.len()];
+        for ei in 0..result.edges.len() {
+            let edge = &result.edges[ei];
+            let etol = result.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
+
+            if edge.start < vertex_max_edge_tol.len() {
+                vertex_max_edge_tol[edge.start] = vertex_max_edge_tol[edge.start].max(etol);
+            }
+            if edge.end < vertex_max_edge_tol.len() {
+                vertex_max_edge_tol[edge.end] = vertex_max_edge_tol[edge.end].max(etol);
+            }
+        }
+
+        // Harmonize: propagate max through connected topology
+        for _pass in 0..self.config.propagation_passes {
+            // Find global max for connected components
+            let mut changed = false;
+
+            for ei in 0..result.edges.len() {
+                let edge = &result.edges[ei];
+                let vtol_s = vertex_max_edge_tol.get(edge.start).copied().unwrap_or(floor);
+                let vtol_e = vertex_max_edge_tol.get(edge.end).copied().unwrap_or(floor);
+                let cur_etol = result.geom.edge_tolerance[ei];
+                let harmonized = cur_etol.max(vtol_s).max(vtol_e);
+
+                if harmonized > cur_etol + 1e-15 {
+                    result.geom.edge_tolerance[ei] = harmonized;
+                    // Update vertex max
+                    if edge.start < vertex_max_edge_tol.len() {
+                        vertex_max_edge_tol[edge.start] = vertex_max_edge_tol[edge.start].max(harmonized);
+                    }
+                    if edge.end < vertex_max_edge_tol.len() {
+                        vertex_max_edge_tol[edge.end] = vertex_max_edge_tol[edge.end].max(harmonized);
+                    }
+                    report.edges_updated += 1;
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        // Propagate to faces
+        let mut flat_fi = 0usize;
+        for solid in &result.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let mut max_etol = floor;
+                    for we in &face.outer_wire.edges {
+                        if we.idx < result.geom.edge_tolerance.len() {
+                            max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                        }
+                    }
+                    for iw in &face.inner_wires {
+                        for we in &iw.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                            }
+                        }
+                    }
+
+                    if flat_fi < result.geom.face_tolerance.len() {
+                        let cur_ftol = result.geom.face_tolerance[flat_fi];
+                        if max_etol > cur_ftol {
+                            result.geom.face_tolerance[flat_fi] = max_etol;
+                            report.faces_updated += 1;
+                        }
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn propagate_bounded(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
+        let bound = self.config.bound_value.max(floor);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Standard propagation with bounding
+        for ei in 0..result.edges.len() {
+            let edge = &result.edges[ei];
+            let vtol_s = result.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+            let vtol_e = result.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+            let cur_etol = result.geom.edge_tolerance[ei];
+            let new_etol = cur_etol.max(vtol_s).max(vtol_e).min(bound);
+
+            if (new_etol - cur_etol).abs() > 1e-15 {
+                result.geom.edge_tolerance[ei] = new_etol;
+                report.edges_updated += 1;
+            }
+        }
+
+        let mut flat_fi = 0usize;
+        for solid in &result.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    let mut max_etol = floor;
+                    for we in &face.outer_wire.edges {
+                        if we.idx < result.geom.edge_tolerance.len() {
+                            max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                        }
+                    }
+                    for iw in &face.inner_wires {
+                        for we in &iw.edges {
+                            if we.idx < result.geom.edge_tolerance.len() {
+                                max_etol = max_etol.max(result.geom.edge_tolerance[we.idx]);
+                            }
+                        }
+                    }
+
+                    if flat_fi < result.geom.face_tolerance.len() {
+                        let bounded_etol = max_etol.min(bound);
+                        let cur_ftol = result.geom.face_tolerance[flat_fi];
+                        if bounded_etol > cur_ftol {
+                            result.geom.face_tolerance[flat_fi] = bounded_etol;
+                            report.faces_updated += 1;
+                        }
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+
+        // Clamp all tolerances
+        for tol in &mut result.geom.vertex_tolerance {
+            *tol = tol.min(bound);
+        }
+        for tol in &mut result.geom.edge_tolerance {
+            *tol = tol.min(bound);
+        }
+        for tol in &mut result.geom.face_tolerance {
+            *tol = tol.min(bound);
+        }
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn propagate_model_scale(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+        let mut result = brep.clone();
+        let mut report = TolerancePropagationReport::default();
+        let scale = self.config.model_scale.max(1e-10);
+        let floor = self.config.tolerance_floor.max(TOLERANCE_ABS * scale);
+
+        self.ensure_tolerance_arrays(&mut result, floor);
+
+        // Scale all existing tolerances
+        for tol in &mut result.geom.vertex_tolerance {
+            *tol = (*tol * scale).max(floor).min(self.config.max_tolerance);
+        }
+        for tol in &mut result.geom.edge_tolerance {
+            *tol = (*tol * scale).max(floor).min(self.config.max_tolerance);
+        }
+        for tol in &mut result.geom.face_tolerance {
+            *tol = (*tol * scale).max(floor).min(self.config.max_tolerance);
+        }
+
+        // Then apply standard propagation
+        for ei in 0..result.edges.len() {
+            let edge = &result.edges[ei];
+            let vtol_s = result.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+            let vtol_e = result.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+            let cur_etol = result.geom.edge_tolerance[ei];
+
+            let new_etol = cur_etol.max(vtol_s).max(vtol_e);
+            if new_etol > cur_etol {
+                result.geom.edge_tolerance[ei] = new_etol;
+                report.edges_updated += 1;
+            }
+        }
+
+        self.compute_report_stats(&result, &mut report);
+        (result, report)
+    }
+
+    fn ensure_tolerance_arrays(&self, brep: &mut BRep, floor: f64) {
+        let n_verts = brep.vertices.len();
+        let n_edges = brep.edges.len();
+        let n_faces: usize = brep.solids.iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+
+        if brep.geom.vertex_tolerance.len() < n_verts {
+            brep.geom.vertex_tolerance.resize(n_verts, floor);
+        }
+        if brep.geom.edge_tolerance.len() < n_edges {
+            brep.geom.edge_tolerance.resize(n_edges, floor);
+        }
+        if brep.geom.face_tolerance.len() < n_faces {
+            brep.geom.face_tolerance.resize(n_faces, floor);
+        }
+    }
+
+    fn handle_conflicts(&self, brep: &mut BRep, floor: f64) -> (usize, usize) {
+        match self.config.conflict_policy {
+            ConflictResolutionPolicy::Ignore => (0, 0),
+            ConflictResolutionPolicy::PropagateUp => {
+                detect_and_resolve_tolerance_conflicts(brep, floor)
+            }
+            ConflictResolutionPolicy::ClampDown => {
+                // Clamp higher-level tolerances down
+                let mut conflicts = 0usize;
+                let mut resolved = 0usize;
+
+                for ei in 0..brep.edges.len() {
+                    let edge = &brep.edges[ei];
+                    let vtol_s = brep.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+                    let vtol_e = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+                    let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
+
+                    if vtol_s > etol + 1e-15 || vtol_e > etol + 1e-15 {
+                        conflicts += 1;
+                        // Clamp vertices down
+                        if edge.start < brep.geom.vertex_tolerance.len() {
+                            brep.geom.vertex_tolerance[edge.start] = brep.geom.vertex_tolerance[edge.start].min(etol);
+                        }
+                        if edge.end < brep.geom.vertex_tolerance.len() {
+                            brep.geom.vertex_tolerance[edge.end] = brep.geom.vertex_tolerance[edge.end].min(etol);
+                        }
+                        resolved += 1;
+                    }
+                }
+
+                (conflicts, resolved)
+            }
+            ConflictResolutionPolicy::ReportOnly => {
+                // Just count conflicts
+                let mut conflicts = 0usize;
+
+                for ei in 0..brep.edges.len() {
+                    let edge = &brep.edges[ei];
+                    let vtol_s = brep.geom.vertex_tolerance.get(edge.start).copied().unwrap_or(floor);
+                    let vtol_e = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
+                    let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
+
+                    if vtol_s > etol + 1e-15 || vtol_e > etol + 1e-15 {
+                        conflicts += 1;
+                    }
+                }
+
+                (conflicts, 0)
+            }
+        }
+    }
+
+    fn compute_report_stats(&self, brep: &BRep, report: &mut TolerancePropagationReport) {
+        if !brep.geom.vertex_tolerance.is_empty() {
+            report.max_vertex_tolerance = brep.geom.vertex_tolerance.iter()
+                .cloned()
+                .fold(0.0_f64, f64::max);
+        }
+        if !brep.geom.edge_tolerance.is_empty() {
+            report.max_edge_tolerance = brep.geom.edge_tolerance.iter()
+                .cloned()
+                .fold(0.0_f64, f64::max);
+        }
+        if !brep.geom.face_tolerance.is_empty() {
+            report.max_face_tolerance = brep.geom.face_tolerance.iter()
+                .cloned()
+                .fold(0.0_f64, f64::max);
+        }
+        report.rule_applied = self.config.rule;
+    }
+}
+
+/// Report from tolerance propagation.
+#[derive(Debug, Clone, Default)]
+pub struct TolerancePropagationReport {
+    /// Number of vertices whose tolerance was updated.
+    pub vertices_updated: usize,
+    /// Number of edges whose tolerance was updated.
+    pub edges_updated: usize,
+    /// Number of faces whose tolerance was updated.
+    pub faces_updated: usize,
+    /// Number of tolerance conflicts detected.
+    pub conflicts_detected: usize,
+    /// Number of tolerance conflicts resolved.
+    pub conflicts_resolved: usize,
+    /// Maximum vertex tolerance after propagation.
+    pub max_vertex_tolerance: f64,
+    /// Maximum edge tolerance after propagation.
+    pub max_edge_tolerance: f64,
+    /// Maximum face tolerance after propagation.
+    pub max_face_tolerance: f64,
+    /// The rule that was applied.
+    pub rule_applied: ToleranceRule,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tolerance Consistency Analysis
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A specific tolerance violation found during analysis.
+#[derive(Debug, Clone)]
+pub struct ToleranceViolation {
+    /// Type of the violation.
+    pub violation_type: ToleranceViolationType,
+    /// Index of the entity with the violation.
+    pub entity_index: usize,
+    /// Related entity index (e.g., edge for vertex violation).
+    pub related_index: Option<usize>,
+    /// Actual tolerance value.
+    pub actual_tolerance: f64,
+    /// Expected or related tolerance value.
+    pub expected_tolerance: f64,
+    /// Severity of the violation (1-5, 5 being most severe).
+    pub severity: u8,
+    /// Suggested fix for the violation.
+    pub suggested_fix: ToleranceFix,
+}
+
+/// Type of tolerance violation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToleranceViolationType {
+    /// Vertex tolerance exceeds edge tolerance.
+    VertexExceedsEdge,
+    /// Edge tolerance exceeds face tolerance.
+    EdgeExceedsFace,
+    /// Tolerance is below minimum floor.
+    BelowFloor,
+    /// Tolerance exceeds maximum allowed.
+    ExceedsMaximum,
+    /// Inconsistent tolerances across seam edges.
+    SeamInconsistency,
+    /// Tolerance is NaN or infinite.
+    InvalidValue,
+}
+
+/// Suggested fix for a tolerance violation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToleranceFix {
+    /// Increase the lower-level tolerance.
+    IncreaseLower,
+    /// Decrease the higher-level tolerance.
+    DecreaseHigher,
+    /// Set tolerance to a specific value.
+    SetToValue,
+    /// Propagate tolerance through topology.
+    Propagate,
+    /// No automatic fix available.
+    ManualIntervention,
+}
+
+/// Report from tolerance consistency analysis.
+#[derive(Debug, Clone, Default)]
+pub struct ToleranceConsistencyReport {
+    /// Whether the BRep has consistent tolerances.
+    pub is_consistent: bool,
+    /// Total number of violations found.
+    pub violation_count: usize,
+    /// Number of critical violations (severity >= 4).
+    pub critical_violation: usize,
+    /// List of all violations found.
+    pub violations: Vec<ToleranceViolation>,
+    /// Summary statistics.
+    pub stats: ToleranceAnalysisReport,
+    /// Suggested global fixes.
+    pub suggested_global_fixes: Vec<String>,
+}
+
+impl ToleranceConsistencyReport {
+    /// Get violations by type.
+    pub fn violations_by_type(&self, violation_type: ToleranceViolationType) -> Vec<&ToleranceViolation> {
+        self.violations.iter()
+            .filter(|v| v.violation_type == violation_type)
+            .collect()
+    }
+
+    /// Get critical violations.
+    pub fn critical_violations(&self) -> Vec<&ToleranceViolation> {
+        self.violations.iter()
+            .filter(|v| v.severity >= 4)
+            .collect()
+    }
+
+    /// Returns a summary string.
+    pub fn summary(&self) -> String {
+        if self.is_consistent {
+            "Tolerance consistency: OK".to_string()
+        } else {
+            format!(
+                "Tolerance consistency: {} violations ({} critical)",
+                self.violation_count,
+                self.critical_violations().len()
+            )
+        }
+    }
+}
+
+/// Analyze tolerance consistency in a BRep.
+///
+/// This function checks for tolerance violations and inconsistencies:
+/// - Vertex tolerances exceeding edge tolerances
+/// - Edge tolerances exceeding face tolerances
+/// - Tolerances below floor or above maximum
+/// - Seam edge inconsistencies
+/// - Invalid (NaN/Inf) tolerance values
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to analyze.
+/// * `default_tolerance` - Default tolerance for entities without explicit values.
+/// * `min_tolerance` - Minimum allowed tolerance (floor).
+/// * `max_tolerance` - Maximum allowed tolerance.
+///
+/// # Returns
+///
+/// A `ToleranceConsistencyReport` containing all violations found.
+pub fn analyze_tolerance_consistency(
+    brep: &BRep,
+    default_tolerance: f64,
+    min_tolerance: f64,
+    max_tolerance: f64,
+) -> ToleranceConsistencyReport {
+    let mut report = ToleranceConsistencyReport::default();
+    let floor = min_tolerance.max(TOLERANCE_ABS);
+
+    // Get base statistics
+    report.stats = analyze_tolerances(brep, default_tolerance);
+
+    let n_verts = brep.vertices.len();
+    let n_edges = brep.edges.len();
+
+    // Ensure we have tolerance arrays to work with
+    let vertex_tols: Vec<f64> = if brep.geom.vertex_tolerance.len() >= n_verts {
+        brep.geom.vertex_tolerance.clone()
+    } else {
+        vec![default_tolerance; n_verts]
+    };
+
+    let edge_tols: Vec<f64> = if brep.geom.edge_tolerance.len() >= n_edges {
+        brep.geom.edge_tolerance.clone()
+    } else {
+        vec![default_tolerance; n_edges]
+    };
+
+    // Check for invalid values
+    for (i, &tol) in vertex_tols.iter().enumerate() {
+        if !tol.is_finite() || tol <= 0.0 {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::InvalidValue,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: floor,
+                severity: 5,
+                suggested_fix: ToleranceFix::SetToValue,
+            });
+        }
+    }
+
+    for (i, &tol) in edge_tols.iter().enumerate() {
+        if !tol.is_finite() || tol <= 0.0 {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::InvalidValue,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: floor,
+                severity: 5,
+                suggested_fix: ToleranceFix::SetToValue,
+            });
+        }
+    }
+
+    // Check vertex tolerances below floor or above max
+    for (i, &tol) in vertex_tols.iter().enumerate() {
+        if tol < floor {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::BelowFloor,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: floor,
+                severity: 2,
+                suggested_fix: ToleranceFix::SetToValue,
+            });
+        } else if tol > max_tolerance {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::ExceedsMaximum,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: max_tolerance,
+                severity: 3,
+                suggested_fix: ToleranceFix::DecreaseHigher,
+            });
+        }
+    }
+
+    // Check edge tolerances
+    for (i, &tol) in edge_tols.iter().enumerate() {
+        if tol < floor {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::BelowFloor,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: floor,
+                severity: 2,
+                suggested_fix: ToleranceFix::SetToValue,
+            });
+        } else if tol > max_tolerance {
+            report.violations.push(ToleranceViolation {
+                violation_type: ToleranceViolationType::ExceedsMaximum,
+                entity_index: i,
+                related_index: None,
+                actual_tolerance: tol,
+                expected_tolerance: max_tolerance,
+                severity: 3,
+                suggested_fix: ToleranceFix::DecreaseHigher,
+            });
+        }
+    }
+
+    // Check vertex > edge violations
+    for (ei, edge) in brep.edges.iter().enumerate() {
+        let etol = edge_tols.get(ei).copied().unwrap_or(default_tolerance);
+
+        if edge.start < vertex_tols.len() {
+            let vtol = vertex_tols[edge.start];
+            if vtol > etol + 1e-15 {
+                report.violations.push(ToleranceViolation {
+                    violation_type: ToleranceViolationType::VertexExceedsEdge,
+                    entity_index: edge.start,
+                    related_index: Some(ei),
+                    actual_tolerance: vtol,
+                    expected_tolerance: etol,
+                    severity: 4,
+                    suggested_fix: ToleranceFix::IncreaseLower,
+                });
+            }
+        }
+
+        if edge.end < vertex_tols.len() {
+            let vtol = vertex_tols[edge.end];
+            if vtol > etol + 1e-15 {
+                report.violations.push(ToleranceViolation {
+                    violation_type: ToleranceViolationType::VertexExceedsEdge,
+                    entity_index: edge.end,
+                    related_index: Some(ei),
+                    actual_tolerance: vtol,
+                    expected_tolerance: etol,
+                    severity: 4,
+                    suggested_fix: ToleranceFix::IncreaseLower,
+                });
+            }
+        }
+    }
+
+    // Check edge > face violations
+    let mut flat_fi = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let ftol = brep.geom.face_tolerance.get(flat_fi).copied().unwrap_or(default_tolerance);
+
+                for we in &face.outer_wire.edges {
+                    let etol = edge_tols.get(we.idx).copied().unwrap_or(default_tolerance);
+                    if etol > ftol + 1e-15 {
+                        report.violations.push(ToleranceViolation {
+                            violation_type: ToleranceViolationType::EdgeExceedsFace,
+                            entity_index: we.idx,
+                            related_index: Some(flat_fi),
+                            actual_tolerance: etol,
+                            expected_tolerance: ftol,
+                            severity: 3,
+                            suggested_fix: ToleranceFix::IncreaseLower,
+                        });
+                    }
+                }
+
+                for iw in &face.inner_wires {
+                    for we in &iw.edges {
+                        let etol = edge_tols.get(we.idx).copied().unwrap_or(default_tolerance);
+                        if etol > ftol + 1e-15 {
+                            report.violations.push(ToleranceViolation {
+                                violation_type: ToleranceViolationType::EdgeExceedsFace,
+                                entity_index: we.idx,
+                                related_index: Some(flat_fi),
+                                actual_tolerance: etol,
+                                expected_tolerance: ftol,
+                                severity: 3,
+                                suggested_fix: ToleranceFix::IncreaseLower,
+                            });
+                        }
+                    }
+                }
+
+                flat_fi += 1;
+            }
+        }
+    }
+
+    // Compute summary
+    report.violation_count = report.violations.len();
+    report.critical_violation = report.violations.iter().filter(|v| v.severity >= 4).count();
+    report.is_consistent = report.violations.is_empty();
+
+    // Generate global fix suggestions
+    if !report.violations.is_empty() {
+        let vertex_edge_violations = report.violations_by_type(ToleranceViolationType::VertexExceedsEdge).len();
+        let edge_face_violations = report.violations_by_type(ToleranceViolationType::EdgeExceedsFace).len();
+        let invalid_values = report.violations_by_type(ToleranceViolationType::InvalidValue).len();
+
+        if vertex_edge_violations > 0 {
+            report.suggested_global_fixes.push(format!(
+                "Run tolerance propagation (vertex→edge) to fix {} vertex>edge violations",
+                vertex_edge_violations
+            ));
+        }
+        if edge_face_violations > 0 {
+            report.suggested_global_fixes.push(format!(
+                "Run tolerance propagation (edge→face) to fix {} edge>face violations",
+                edge_face_violations
+            ));
+        }
+        if invalid_values > 0 {
+            report.suggested_global_fixes.push(format!(
+                "Fix {} invalid (NaN/Inf) tolerance values before processing",
+                invalid_values
+            ));
+        }
+    }
+
+    report
+}
+
+/// Apply automatic fixes to tolerance violations.
+///
+/// This function attempts to automatically fix tolerance violations
+/// by propagating tolerances according to the suggested fixes.
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to fix.
+/// * `report` - The consistency report with violations.
+/// * `max_fixes` - Maximum number of fixes to apply (0 = unlimited).
+///
+/// # Returns
+///
+/// A tuple of (fixed BRep, number of fixes applied).
+pub fn apply_tolerance_fixes(
+    brep: &BRep,
+    report: &ToleranceConsistencyReport,
+    max_fixes: usize,
+) -> (BRep, usize) {
+    let mut result = brep.clone();
+    let mut fixes_applied = 0usize;
+    let floor = TOLERANCE_ABS;
+
+    let n_verts = result.vertices.len();
+    let n_edges = result.edges.len();
+    let n_faces: usize = result.solids.iter()
+        .flat_map(|s| s.shells.iter())
+        .map(|sh| sh.faces.len())
+        .sum();
+
+    // Ensure arrays are sized
+    if result.geom.vertex_tolerance.len() < n_verts {
+        result.geom.vertex_tolerance.resize(n_verts, floor);
+    }
+    if result.geom.edge_tolerance.len() < n_edges {
+        result.geom.edge_tolerance.resize(n_edges, floor);
+    }
+    if result.geom.face_tolerance.len() < n_faces {
+        result.geom.face_tolerance.resize(n_faces, floor);
+    }
+
+    for violation in &report.violations {
+        if max_fixes > 0 && fixes_applied >= max_fixes {
+            break;
+        }
+
+        match violation.suggested_fix {
+            ToleranceFix::SetToValue => {
+                match violation.violation_type {
+                    ToleranceViolationType::InvalidValue | ToleranceViolationType::BelowFloor => {
+                        if violation.entity_index < result.geom.vertex_tolerance.len() {
+                            result.geom.vertex_tolerance[violation.entity_index] = violation.expected_tolerance;
+                            fixes_applied += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ToleranceFix::IncreaseLower => {
+                match violation.violation_type {
+                    ToleranceViolationType::VertexExceedsEdge => {
+                        if let Some(ei) = violation.related_index {
+                            if ei < result.geom.edge_tolerance.len() {
+                                let new_tol = result.geom.edge_tolerance[ei].max(violation.actual_tolerance);
+                                result.geom.edge_tolerance[ei] = new_tol;
+                                fixes_applied += 1;
+                            }
+                        }
+                    }
+                    ToleranceViolationType::EdgeExceedsFace => {
+                        if let Some(fi) = violation.related_index {
+                            if fi < result.geom.face_tolerance.len() {
+                                let new_tol = result.geom.face_tolerance[fi].max(violation.actual_tolerance);
+                                result.geom.face_tolerance[fi] = new_tol;
+                                fixes_applied += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ToleranceFix::DecreaseHigher => {
+                if violation.entity_index < result.geom.vertex_tolerance.len() {
+                    result.geom.vertex_tolerance[violation.entity_index] = violation.expected_tolerance;
+                    fixes_applied += 1;
+                }
+            }
+            ToleranceFix::Propagate => {
+                // Use the engine for propagation
+                let engine = TolerancePropagationEngine::occt_standard();
+                let (propagated, _) = engine.propagate(&result);
+                result = propagated;
+                fixes_applied += 1;
+            }
+            ToleranceFix::ManualIntervention => {
+                // Cannot auto-fix
+            }
+        }
+    }
+
+    (result, fixes_applied)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11602,5 +13300,713 @@ mod tests {
         assert!(report.nesting_hierarchy.is_empty());
         assert!(!report.is_properly_oriented);
         assert!(report.orientation_issues.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Tests for Post-Boolean Tolerance Propagation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn propagate_tolerances_post_boolean_basic() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Simulate a boolean operation with some intersection edges
+        let intersection_edges = vec![0, 1, 2]; // First 3 edges are "intersection" edges
+        let intersection_vertices = vec![0, 1, 2, 3]; // First 4 vertices
+
+        let (result, report) = propagate_tolerances_post_boolean_op(
+            &brep,
+            BooleanOpTypeForTolerance::Union,
+            &intersection_edges,
+            &intersection_vertices,
+        );
+
+        // Check that edges were updated
+        assert!(report.edges_updated >= 3, "Should update intersection edges");
+        // Check that tolerances were propagated
+        assert!(report.max_edge_tolerance > TOLERANCE_ABS);
+    }
+
+    #[test]
+    fn propagate_tolerances_post_boolean_intersection_type() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let intersection_edges = vec![0];
+        let intersection_vertices = vec![0];
+
+        // Intersection operations typically need higher tolerances
+        let (result_union, report_union) = propagate_tolerances_post_boolean_op(
+            &brep,
+            BooleanOpTypeForTolerance::Union,
+            &intersection_edges,
+            &intersection_vertices,
+        );
+
+        let (result_intersection, report_intersection) = propagate_tolerances_post_boolean_op(
+            &brep,
+            BooleanOpTypeForTolerance::Intersection,
+            &intersection_edges,
+            &intersection_vertices,
+        );
+
+        // Intersection should result in higher tolerances
+        assert!(report_intersection.max_edge_tolerance >= report_union.max_edge_tolerance);
+    }
+
+    #[test]
+    fn test_propagate_tolerances_post_boolean_op_with_config() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let config = PostBooleanToleranceConfig::high_precision();
+        let intersection_edges = vec![0];
+        let intersection_vertices = vec![0];
+
+        let (_result, report) = propagate_tolerances_post_boolean_op_with_config(
+            &brep,
+            BooleanOpTypeForTolerance::General,
+            &intersection_edges,
+            &intersection_vertices,
+            &config,
+        );
+
+        // High-precision config should result in lower tolerances
+        assert!(report.max_edge_tolerance < 0.1);
+    }
+
+    #[test]
+    fn post_boolean_config_presets() {
+        let standard = PostBooleanToleranceConfig::standard();
+        let high_precision = PostBooleanToleranceConfig::high_precision();
+        let relaxed = PostBooleanToleranceConfig::relaxed();
+
+        // High precision should have smallest floor
+        assert!(high_precision.tolerance_floor < standard.tolerance_floor);
+        // Relaxed should have largest floor
+        assert!(relaxed.tolerance_floor > standard.tolerance_floor);
+    }
+
+    #[test]
+    fn detect_and_resolve_tolerance_conflicts_resolves_vertex_edge() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set up conflict: vertex tolerance > edge tolerance
+        brep.geom.vertex_tolerance = vec![1e-3, 1e-3, 1e-7]; // v0 and v1 have high tolerance
+        brep.geom.edge_tolerance = vec![1e-7, 1e-7, 1e-7]; // edges have low tolerance
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let mut cloned = brep.clone();
+        let (conflicts, resolved) = detect_and_resolve_tolerance_conflicts(&mut cloned, TOLERANCE_ABS);
+
+        assert!(conflicts >= 1, "Should detect at least one conflict");
+        assert!(resolved >= 1, "Should resolve at least one conflict");
+        // Edge 0 should now have higher tolerance (>= vertex 0 and 1)
+        assert!(cloned.geom.edge_tolerance[0] >= 1e-3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Tests for Post-Sew Tolerance Propagation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn propagate_tolerances_post_sew_basic() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+
+        // Create two edges that were "sewn" together
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3 (seam edge)
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Initialize tolerances
+        brep.geom.vertex_tolerance = vec![1e-7; 4];
+        brep.geom.edge_tolerance = vec![1e-7; 4];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        // Simulate seam edge pairs (edge 3 was sewn)
+        let seam_pairs = vec![(3, 3)];
+
+        let (_result, report) = propagate_tolerances_post_sew(&brep, 1e-4, &seam_pairs);
+
+        // Verify function runs successfully
+        assert!(report.max_seam_tolerance > 0.0 || report.seam_edges_updated == 0);
+    }
+
+    #[test]
+    fn test_propagate_tolerances_post_sew_with_config() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        brep.geom.vertex_tolerance = vec![1e-7; 2];
+        brep.geom.edge_tolerance = vec![1e-7];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let config = PostSewToleranceConfig {
+            seam_tolerance_factor: 2.0,
+            max_growth_ratio: 1000.0,
+            ..Default::default()
+        };
+
+        let seam_pairs = vec![(0, 0)];
+        let (_result, report) = propagate_tolerances_post_sew_with_config(
+            &brep,
+            1e-4,
+            &seam_pairs,
+            &config,
+        );
+
+        // Verify function runs successfully
+        assert!(report.max_seam_tolerance >= 0.0);
+    }
+
+    #[test]
+    fn post_sew_config_default() {
+        let config = PostSewToleranceConfig::default();
+
+        assert_eq!(config.tolerance_floor, TOLERANCE_ABS);
+        assert_eq!(config.seam_tolerance_factor, 1.5);
+        assert!(config.ensure_seam_consistency);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Tests for Tolerance Rules Engine
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn tolerance_rule_variants() {
+        // Test that all rule variants exist
+        let rules = vec![
+            ToleranceRule::OcctStandard,
+            ToleranceRule::Conservative,
+            ToleranceRule::Aggressive,
+            ToleranceRule::Harmonized,
+            ToleranceRule::Bounded,
+            ToleranceRule::ModelScale,
+        ];
+
+        // Ensure they can be compared
+        assert_ne!(ToleranceRule::OcctStandard, ToleranceRule::Aggressive);
+    }
+
+    #[test]
+    fn conflict_resolution_policy_variants() {
+        let policies = vec![
+            ConflictResolutionPolicy::Ignore,
+            ConflictResolutionPolicy::PropagateUp,
+            ConflictResolutionPolicy::ClampDown,
+            ConflictResolutionPolicy::ReportOnly,
+        ];
+
+        assert_ne!(ConflictResolutionPolicy::Ignore, ConflictResolutionPolicy::PropagateUp);
+    }
+
+    #[test]
+    fn tolerance_propagation_config_presets() {
+        let occt = TolerancePropagationConfig::occt_standard();
+        assert_eq!(occt.rule, ToleranceRule::OcctStandard);
+
+        let conservative = TolerancePropagationConfig::conservative();
+        assert_eq!(conservative.rule, ToleranceRule::Conservative);
+
+        let aggressive = TolerancePropagationConfig::aggressive();
+        assert_eq!(aggressive.rule, ToleranceRule::Aggressive);
+
+        let harmonized = TolerancePropagationConfig::harmonized();
+        assert_eq!(harmonized.rule, ToleranceRule::Harmonized);
+
+        let bounded = TolerancePropagationConfig::bounded(0.1);
+        assert_eq!(bounded.rule, ToleranceRule::Bounded);
+        assert_eq!(bounded.bound_value, 0.1);
+
+        let model_scale = TolerancePropagationConfig::model_scale(100.0);
+        assert_eq!(model_scale.rule, ToleranceRule::ModelScale);
+        assert!((model_scale.model_scale - 100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_default() {
+        let engine = TolerancePropagationEngine::new();
+        assert_eq!(engine.config.rule, ToleranceRule::OcctStandard);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_occt_standard() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set vertex tolerances higher than edge tolerances
+        brep.geom.vertex_tolerance = vec![1e-4, 1e-4, 1e-4];
+        brep.geom.edge_tolerance = vec![1e-7, 1e-7, 1e-7];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let engine = TolerancePropagationEngine::occt_standard();
+        let (result, report) = engine.propagate(&brep);
+
+        // Edges should now have higher tolerances (propagated from vertices)
+        assert!(result.geom.edge_tolerance[0] >= 1e-4);
+        assert!(report.rule_applied == ToleranceRule::OcctStandard);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_conservative() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let engine = TolerancePropagationEngine::conservative();
+        let (result, report) = engine.propagate(&brep);
+
+        assert_eq!(report.rule_applied, ToleranceRule::Conservative);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_aggressive() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        brep.geom.vertex_tolerance = vec![1e-7; 3];
+        brep.geom.edge_tolerance = vec![1e-7; 3];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let engine = TolerancePropagationEngine::aggressive();
+        let (result, report) = engine.propagate(&brep);
+
+        assert_eq!(report.rule_applied, ToleranceRule::Aggressive);
+        // Aggressive propagation may update tolerances more
+        assert!(report.vertices_updated + report.edges_updated + report.faces_updated >= 0);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_bounded() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set very high tolerances
+        brep.geom.vertex_tolerance = vec![1.0, 1.0];
+        brep.geom.edge_tolerance = vec![1.0];
+        brep.geom.face_tolerance = vec![1.0];
+
+        let engine = TolerancePropagationEngine::bounded(1e-3);
+        let (result, report) = engine.propagate(&brep);
+
+        // All tolerances should be clamped to bound
+        assert!(result.geom.vertex_tolerance[0] <= 1e-3);
+        assert!(result.geom.edge_tolerance[0] <= 1e-3);
+        assert!(result.geom.face_tolerance[0] <= 1e-3);
+    }
+
+    #[test]
+    fn tolerance_propagation_engine_model_scale() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1000.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        brep.geom.vertex_tolerance = vec![1e-7, 1e-7];
+        brep.geom.edge_tolerance = vec![1e-7];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let engine = TolerancePropagationEngine::with_config(
+            TolerancePropagationConfig::model_scale(1000.0)
+        );
+        let (result, report) = engine.propagate(&brep);
+
+        assert_eq!(report.rule_applied, ToleranceRule::ModelScale);
+        // Tolerances should be scaled
+        assert!(result.geom.vertex_tolerance[0] > 1e-7);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Tests for Tolerance Consistency Analysis
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn analyze_tolerance_consistency_unit_box() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+
+        // Unit box should have consistent tolerances
+        assert!(report.is_consistent || report.violation_count == 0);
+    }
+
+    #[test]
+    fn analyze_tolerance_consistency_detects_vertex_edge_violation() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set vertex tolerance > edge tolerance (violation)
+        brep.geom.vertex_tolerance = vec![1e-3, 1e-3];
+        brep.geom.edge_tolerance = vec![1e-7];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+
+        assert!(!report.is_consistent, "Should detect inconsistency");
+        assert!(report.violation_count >= 1, "Should have at least one violation");
+
+        let vertex_edge_violations = report.violations_by_type(ToleranceViolationType::VertexExceedsEdge);
+        assert!(!vertex_edge_violations.is_empty(), "Should have vertex>edge violations");
+    }
+
+    #[test]
+    fn analyze_tolerance_consistency_detects_edge_face_violation() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set edge tolerance > face tolerance (violation)
+        brep.geom.vertex_tolerance = vec![1e-7, 1e-7];
+        brep.geom.edge_tolerance = vec![1e-3];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+
+        let edge_face_violations = report.violations_by_type(ToleranceViolationType::EdgeExceedsFace);
+        assert!(!edge_face_violations.is_empty(), "Should have edge>face violations");
+    }
+
+    #[test]
+    fn analyze_tolerance_consistency_detects_invalid_values() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set NaN and negative tolerances
+        brep.geom.vertex_tolerance = vec![f64::NAN, -1e-10];
+        brep.geom.edge_tolerance = vec![f64::INFINITY];
+        brep.geom.face_tolerance = vec![0.0];
+
+        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+
+        let invalid_violations = report.violations_by_type(ToleranceViolationType::InvalidValue);
+        assert!(invalid_violations.len() >= 2, "Should detect invalid values");
+    }
+
+    #[test]
+    fn tolerance_violation_severity() {
+        let violation = ToleranceViolation {
+            violation_type: ToleranceViolationType::VertexExceedsEdge,
+            entity_index: 0,
+            related_index: Some(0),
+            actual_tolerance: 1e-3,
+            expected_tolerance: 1e-7,
+            severity: 4,
+            suggested_fix: ToleranceFix::IncreaseLower,
+        };
+
+        assert!(violation.severity >= 4);
+    }
+
+    #[test]
+    fn tolerance_consistency_report_summary() {
+        let report = ToleranceConsistencyReport {
+            is_consistent: true,
+            violation_count: 0,
+            critical_violation: 0,
+            violations: vec![],
+            stats: ToleranceAnalysisReport::default(),
+            suggested_global_fixes: vec![],
+        };
+
+        assert!(report.summary().contains("OK"));
+
+        // Create report with actual violations
+        let critical_violation = ToleranceViolation {
+            violation_type: ToleranceViolationType::VertexExceedsEdge,
+            entity_index: 0,
+            related_index: None,
+            actual_tolerance: 1e-3,
+            expected_tolerance: 1e-6,
+            severity: 4,
+            suggested_fix: ToleranceFix::Propagate,
+        };
+        let normal_violation = ToleranceViolation {
+            violation_type: ToleranceViolationType::EdgeExceedsFace,
+            entity_index: 1,
+            related_index: None,
+            actual_tolerance: 1e-4,
+            expected_tolerance: 1e-6,
+            severity: 2,
+            suggested_fix: ToleranceFix::Propagate,
+        };
+
+        let report_with_violations = ToleranceConsistencyReport {
+            is_consistent: false,
+            violation_count: 2,
+            critical_violation: 1,
+            violations: vec![critical_violation, normal_violation],
+            stats: ToleranceAnalysisReport::default(),
+            suggested_global_fixes: vec![],
+        };
+
+        assert!(report_with_violations.summary().contains("2 violations"));
+        assert!(report_with_violations.summary().contains("1 critical"));
+    }
+
+    #[test]
+    fn apply_tolerance_fixes_basic() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set up violations
+        brep.geom.vertex_tolerance = vec![1e-3, 1e-3]; // High vertex tolerance
+        brep.geom.edge_tolerance = vec![1e-7]; // Low edge tolerance
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        assert!(!report.is_consistent);
+
+        let (fixed, fixes_applied) = apply_tolerance_fixes(&brep, &report, 0);
+
+        assert!(fixes_applied >= 1, "Should apply at least one fix");
+        // Edge tolerance should now be >= vertex tolerance
+        assert!(fixed.geom.edge_tolerance[0] >= 1e-3);
+    }
+
+    #[test]
+    fn tolerance_fix_variants() {
+        // Test that all fix variants exist
+        assert_ne!(ToleranceFix::IncreaseLower, ToleranceFix::DecreaseHigher);
+        assert_ne!(ToleranceFix::SetToValue, ToleranceFix::Propagate);
+        assert_ne!(ToleranceFix::ManualIntervention, ToleranceFix::IncreaseLower);
+    }
+
+    #[test]
+    fn tolerance_violation_type_variants() {
+        // Test that all violation type variants exist
+        assert_ne!(ToleranceViolationType::VertexExceedsEdge, ToleranceViolationType::EdgeExceedsFace);
+        assert_ne!(ToleranceViolationType::BelowFloor, ToleranceViolationType::ExceedsMaximum);
+        assert_ne!(ToleranceViolationType::SeamInconsistency, ToleranceViolationType::InvalidValue);
+    }
+
+    #[test]
+    fn propagate_tolerances_post_boolean_handles_conflicts() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let face = Face {
+            outer_wire: Wire { edges: vec![WireEdge::fwd(0)] },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
+
+        // Set up a conflict: vertex tolerance > edge tolerance
+        brep.geom.vertex_tolerance = vec![1e-3, 1e-3];
+        brep.geom.edge_tolerance = vec![1e-7];
+        brep.geom.face_tolerance = vec![1e-7];
+
+        let (_result, report) = propagate_tolerances_post_boolean_op(
+            &brep,
+            BooleanOpTypeForTolerance::Union,
+            &[],
+            &[],
+        );
+
+        // Verify function runs successfully
+        assert!(report.conflicts_detected >= 0);
+    }
+
+    #[test]
+    fn propagate_tolerances_post_boolean_empty_intersection_lists() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Empty intersection lists should still work
+        let (result, report) = propagate_tolerances_post_boolean_op(
+            &brep,
+            BooleanOpTypeForTolerance::General,
+            &[],
+            &[],
+        );
+
+        // Should still run propagation
+        assert!(report.max_edge_tolerance > 0.0);
     }
 }

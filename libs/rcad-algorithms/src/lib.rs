@@ -104,6 +104,15 @@ pub use brep_repair::{
     ManifoldRepairResult, NonManifoldEdgeInfo,
     ShellValidationReport, EdgeValenceInfo, VertexValenceInfo,
     fix_shell_orientation_advanced, repair_shell_closure, repair_non_manifold_edges, validate_shell_topology,
+    // Comprehensive Tolerance Propagation (new)
+    BooleanOpTypeForTolerance, PostBooleanToleranceConfig, PostBooleanToleranceReport,
+    propagate_tolerances_post_boolean_op, propagate_tolerances_post_boolean_op_with_config,
+    PostSewToleranceConfig, PostSewToleranceReport, propagate_tolerances_post_sew,
+    propagate_tolerances_post_sew_with_config,
+    ToleranceRule, ConflictResolutionPolicy, TolerancePropagationConfig,
+    TolerancePropagationEngine, TolerancePropagationReport,
+    ToleranceViolation, ToleranceViolationType, ToleranceFix,
+    ToleranceConsistencyReport, analyze_tolerance_consistency, apply_tolerance_fixes,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
@@ -231,7 +240,7 @@ pub use shape_analysis::{
     UvConsistencyReport as FaceUvConsistencyReport,
     ParamRangeIssue, UvFlipIssue, UvFlipType, SeamEdgeIssue,
     check_face_uv_consistency_by_idx,
-    SurfaceDeviation, ToleranceViolation,
+    SurfaceDeviation, SurfaceDeviationViolation,
     compute_surface_deviation,
     detect_surface_self_intersection,
 };
