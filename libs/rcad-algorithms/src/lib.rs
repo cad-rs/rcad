@@ -123,6 +123,14 @@ pub use healing::{
     // ShapeFix_Solid and ShapeFix_Wire equivalents
     fix_solid, fix_wire, heal_comprehensive,
     SolidFixReport, WireFixReport, ComprehensiveHealingReport, WireIssueLocation,
+    // New ShapeProcess operators
+    DirectFacesOperator, SameParameterOperator, RemoveInternalFacesOperator, HealGeometryOperator,
+    HealGeometryStep,
+    // Operator result aggregation and rollback
+    OperatorResultAggregation, BRepSnapshot, RollbackConfig, PipelineExecutionReport,
+    run_healing_pipeline_with_rollback,
+    // Progress callbacks
+    ProgressCallback, SimpleProgressCallback,
 };
 pub use builder::{
     BooleanError, BooleanOpType,
