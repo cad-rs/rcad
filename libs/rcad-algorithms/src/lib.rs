@@ -96,6 +96,9 @@ pub use brep_repair::{
     // Seed detection for scoped make-connected
     SeedDetectionStrategy, SeedDetectionConfig, SeedDetectionResult, detect_seeds_for_scoped_cleanup,
     make_connected_scoped_auto,
+    // UV Gap Repair
+    UvGapRepairConfig, UvGapRepairReport, UnrepairedGap, GapRepairFailureReason,
+    fix_uv_gaps, fix_all_uv_gaps, fix_edge_pcurve_uv_bounds,
 };
 pub use healing::{
     ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,

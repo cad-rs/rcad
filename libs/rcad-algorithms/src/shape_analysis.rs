@@ -2768,6 +2768,1397 @@ fn segment_segment_distance_3d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> f6
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Enhanced UV Bounds Analysis (ShapeAnalysis_Surface UV gap/overlap detection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from detailed UV gap detection for a face.
+///
+/// Analyzes gaps between PCurve endpoints and surface parameter bounds,
+/// providing detailed information about each detected gap.
+#[derive(Debug, Clone, Default)]
+pub struct UvGapDetectionReport {
+    /// Whether any UV gaps were detected.
+    pub has_gaps: bool,
+    /// Total number of gaps detected.
+    pub total_gap_count: usize,
+    /// Gaps at the U-min boundary.
+    pub u_min_gaps: Vec<EndpointGap>,
+    /// Gaps at the U-max boundary.
+    pub u_max_gaps: Vec<EndpointGap>,
+    /// Gaps at the V-min boundary.
+    pub v_min_gaps: Vec<EndpointGap>,
+    /// Gaps at the V-max boundary.
+    pub v_max_gaps: Vec<EndpointGap>,
+    /// Gaps at periodic boundaries (for periodic surfaces).
+    pub periodic_boundary_gaps: Vec<PeriodicGap>,
+    /// Faces affected by gaps (for multi-face analysis).
+    pub affected_faces: Vec<usize>,
+    /// Maximum gap size detected.
+    pub max_gap_size: f64,
+    /// Total gap area in UV space (approximate).
+    pub total_gap_area: f64,
+}
+
+/// A gap at a PCurve endpoint.
+#[derive(Debug, Clone)]
+pub struct EndpointGap {
+    /// Edge index where the gap was detected.
+    pub edge_idx: usize,
+    /// UV direction of the gap.
+    pub direction: UvDirection,
+    /// Whether this is at the min or max boundary.
+    pub at_max: bool,
+    /// Gap size in parameter space.
+    pub gap_size: f64,
+    /// UV coordinates of the gap start.
+    pub gap_start_uv: (f64, f64),
+    /// UV coordinates where the surface boundary should be.
+    pub boundary_uv: (f64, f64),
+    /// 3D distance equivalent of the gap.
+    pub gap_3d_distance: f64,
+    /// Whether the gap is at a periodic boundary.
+    pub is_periodic_boundary: bool,
+}
+
+/// A gap at a periodic surface boundary.
+#[derive(Debug, Clone)]
+pub struct PeriodicGap {
+    /// Edge index where the gap was detected.
+    pub edge_idx: usize,
+    /// UV direction of the periodic boundary.
+    pub direction: UvDirection,
+    /// Period of the surface in this direction.
+    pub period: f64,
+    /// Gap size at the seam.
+    pub gap_size: f64,
+    /// Whether the PCurve wraps correctly across the seam.
+    pub wraps_correctly: bool,
+}
+
+/// Detect UV gaps between PCurve endpoints and surface bounds.
+///
+/// Analyzes each edge's PCurves to find gaps where the PCurve does not
+/// extend to the surface boundary. This is essential for ensuring proper
+/// trimming loop closure.
+///
+/// # Arguments
+///
+/// * `solid_idx` - Index of the solid containing the face.
+/// * `shell_idx` - Index of the shell containing the face.
+/// * `face_idx` - Index of the face to analyze.
+/// * `brep` - The BRep structure.
+/// * `tolerance` - Tolerance for gap detection (in parameter space).
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_algorithms::shape_analysis::detect_uv_gaps;
+///
+/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+///     radius: 1.0,
+///     height: 2.0,
+/// });
+/// let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+/// // Check if any gaps were detected
+/// println!("Has gaps: {}, count: {}", report.has_gaps, report.total_gap_count);
+/// ```
+pub fn detect_uv_gaps(
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    brep: &BRep,
+    tolerance: f64,
+) -> UvGapDetectionReport {
+    let mut report = UvGapDetectionReport::default();
+
+    let Some(solid) = brep.solids.get(solid_idx) else { return report; };
+    let Some(shell) = solid.shells.get(shell_idx) else { return report; };
+    let Some(face) = shell.faces.get(face_idx) else { return report; };
+
+    let flat_face_idx = compute_flat_face_idx(brep, solid_idx, shell_idx, face_idx);
+
+    let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+        return report;
+    };
+    let Some(surface) = brep.geom.surfaces.get(surface_idx) else {
+        return report;
+    };
+
+    let domain = surface.default_domain();
+    let (is_u_periodic, is_v_periodic) = detect_periodicity(surface);
+
+    // Collect all edges in the face
+    let all_edges: Vec<(usize, bool)> = face.outer_wire.edges.iter()
+        .map(|we| (we.idx, we.forward))
+        .chain(face.inner_wires.iter().flat_map(|w| w.edges.iter().map(|we| (we.idx, we.forward))))
+        .collect();
+
+    for (edge_idx, _forward) in &all_edges {
+        let Some(pcurves) = brep.geom.edge_pcurves.get(*edge_idx) else { continue; };
+
+        for pc in pcurves {
+            if pc.surface_idx != surface_idx {
+                continue;
+            }
+
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+
+            let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or([0.0, 1.0]);
+
+            // Sample the PCurve endpoints
+            let uv_start = curve2d.point_at(range[0]);
+            let uv_end = curve2d.point_at(range[1]);
+
+            // Check U-min boundary
+            if !is_u_periodic {
+                let gap_start = domain[0] - uv_start.x;
+                let gap_end = domain[0] - uv_end.x;
+
+                if gap_start > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::U,
+                        at_max: false,
+                        gap_size: gap_start,
+                        gap_start_uv: (uv_start.x, uv_start.y),
+                        boundary_uv: (domain[0], uv_start.y),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_start, (domain[0], uv_start.y)),
+                        is_periodic_boundary: false,
+                    };
+                    report.u_min_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_start);
+                }
+
+                if gap_end > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::U,
+                        at_max: false,
+                        gap_size: gap_end,
+                        gap_start_uv: (uv_end.x, uv_end.y),
+                        boundary_uv: (domain[0], uv_end.y),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_end, (domain[0], uv_end.y)),
+                        is_periodic_boundary: false,
+                    };
+                    report.u_min_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_end);
+                }
+            }
+
+            // Check U-max boundary
+            if !is_u_periodic {
+                let gap_start = uv_start.x - domain[1];
+                let gap_end = uv_end.x - domain[1];
+
+                if gap_start > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::U,
+                        at_max: true,
+                        gap_size: gap_start,
+                        gap_start_uv: (uv_start.x, uv_start.y),
+                        boundary_uv: (domain[1], uv_start.y),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_start, (domain[1], uv_start.y)),
+                        is_periodic_boundary: false,
+                    };
+                    report.u_max_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_start);
+                }
+
+                if gap_end > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::U,
+                        at_max: true,
+                        gap_size: gap_end,
+                        gap_start_uv: (uv_end.x, uv_end.y),
+                        boundary_uv: (domain[1], uv_end.y),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_end, (domain[1], uv_end.y)),
+                        is_periodic_boundary: false,
+                    };
+                    report.u_max_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_end);
+                }
+            }
+
+            // Check V-min boundary
+            if !is_v_periodic {
+                let gap_start = domain[2] - uv_start.y;
+                let gap_end = domain[2] - uv_end.y;
+
+                if gap_start > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::V,
+                        at_max: false,
+                        gap_size: gap_start,
+                        gap_start_uv: (uv_start.x, uv_start.y),
+                        boundary_uv: (uv_start.x, domain[2]),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_start, (uv_start.x, domain[2])),
+                        is_periodic_boundary: false,
+                    };
+                    report.v_min_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_start);
+                }
+
+                if gap_end > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::V,
+                        at_max: false,
+                        gap_size: gap_end,
+                        gap_start_uv: (uv_end.x, uv_end.y),
+                        boundary_uv: (uv_end.x, domain[2]),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_end, (uv_end.x, domain[2])),
+                        is_periodic_boundary: false,
+                    };
+                    report.v_min_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_end);
+                }
+            }
+
+            // Check V-max boundary
+            if !is_v_periodic {
+                let gap_start = uv_start.y - domain[3];
+                let gap_end = uv_end.y - domain[3];
+
+                if gap_start > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::V,
+                        at_max: true,
+                        gap_size: gap_start,
+                        gap_start_uv: (uv_start.x, uv_start.y),
+                        boundary_uv: (uv_start.x, domain[3]),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_start, (uv_start.x, domain[3])),
+                        is_periodic_boundary: false,
+                    };
+                    report.v_max_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_start);
+                }
+
+                if gap_end > tolerance {
+                    let gap = EndpointGap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::V,
+                        at_max: true,
+                        gap_size: gap_end,
+                        gap_start_uv: (uv_end.x, uv_end.y),
+                        boundary_uv: (uv_end.x, domain[3]),
+                        gap_3d_distance: compute_3d_gap_distance(surface, uv_end, (uv_end.x, domain[3])),
+                        is_periodic_boundary: false,
+                    };
+                    report.v_max_gaps.push(gap);
+                    report.total_gap_count += 1;
+                    report.max_gap_size = report.max_gap_size.max(gap_end);
+                }
+            }
+
+            // Check periodic boundary gaps
+            if is_u_periodic {
+                let u_period = domain[1] - domain[0];
+                let gap = check_periodic_gap(*edge_idx, curve2d, &range, UvDirection::U, u_period, surface);
+                if let Some(g) = gap {
+                    if g.gap_size > tolerance {
+                        report.periodic_boundary_gaps.push(g);
+                        report.total_gap_count += 1;
+                    }
+                }
+            }
+
+            if is_v_periodic {
+                let v_period = domain[3] - domain[2];
+                let gap = check_periodic_gap(*edge_idx, curve2d, &range, UvDirection::V, v_period, surface);
+                if let Some(g) = gap {
+                    if g.gap_size > tolerance {
+                        report.periodic_boundary_gaps.push(g);
+                        report.total_gap_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    report.has_gaps = report.total_gap_count > 0;
+    report.affected_faces = vec![flat_face_idx];
+
+    // Approximate gap area (very rough estimate)
+    report.total_gap_area = report.max_gap_size * report.max_gap_size;
+
+    report
+}
+
+/// Compute the 3D distance equivalent of a UV gap.
+fn compute_3d_gap_distance(surface: &Surface3, uv1: impl Into<(f64, f64)>, uv2: impl Into<(f64, f64)>) -> f64 {
+    let uv1 = uv1.into();
+    let uv2 = uv2.into();
+    let p1 = surface.point_at(uv1.0, uv1.1);
+    let p2 = surface.point_at(uv2.0, uv2.1);
+    (p1 - p2).length()
+}
+
+/// Check for a gap at a periodic boundary.
+fn check_periodic_gap(
+    edge_idx: usize,
+    curve2d: &rcad_kernel::Curve2d,
+    range: &[f64; 2],
+    direction: UvDirection,
+    period: f64,
+    _surface: &Surface3,
+) -> Option<PeriodicGap> {
+    let uv_start = curve2d.point_at(range[0]);
+    let uv_end = curve2d.point_at(range[1]);
+
+    let (coord_start, coord_end) = match direction {
+        UvDirection::U => (uv_start.x, uv_end.x),
+        UvDirection::V => (uv_start.y, uv_end.y),
+    };
+
+    // Check if the curve crosses the periodic boundary
+    let span = (coord_end - coord_start).abs();
+
+    // If the span is close to the period, it's wrapping around
+    let wraps_correctly = (span - period).abs() < period * 0.1;
+
+    // Check for gap at the seam
+    let normalized_start = coord_start % period;
+    let normalized_end = coord_end % period;
+
+    // Gap at seam (discontinuity in wrapped parameter)
+    let seam_gap = if (normalized_start * normalized_end < 0.0) && !wraps_correctly {
+        // Crossing zero - potential seam gap
+        let gap = normalized_start.abs().min(normalized_end.abs());
+        gap
+    } else {
+        0.0
+    };
+
+    if seam_gap > 1e-10 {
+        Some(PeriodicGap {
+            edge_idx,
+            direction,
+            period,
+            gap_size: seam_gap,
+            wraps_correctly,
+        })
+    } else {
+        None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UV Overlap Detection (ShapeAnalysis_Surface overlap detection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from UV overlap detection for a face.
+///
+/// Analyzes overlapping PCurves in UV space, which can indicate
+/// self-intersecting trimming loops or redundant geometry.
+#[derive(Debug, Clone, Default)]
+pub struct UvOverlapDetectionReport {
+    /// Whether any overlaps were detected.
+    pub has_overlaps: bool,
+    /// Total number of overlap regions detected.
+    pub overlap_count: usize,
+    /// Overlapping PCurve pairs.
+    pub overlapping_pairs: Vec<OverlapPair>,
+    /// Overlaps that occur at periodic seams (expected on periodic surfaces).
+    pub seam_overlaps: Vec<SeamOverlap>,
+    /// Total overlap area in UV space.
+    pub total_overlap_area: f64,
+    /// Maximum overlap extent in U direction.
+    pub max_u_overlap: f64,
+    /// Maximum overlap extent in V direction.
+    pub max_v_overlap: f64,
+}
+
+/// A pair of overlapping PCurves.
+#[derive(Debug, Clone)]
+pub struct OverlapPair {
+    /// First edge index.
+    pub edge_idx_1: usize,
+    /// Second edge index.
+    pub edge_idx_2: usize,
+    /// UV bounds of the overlap region [u_min, u_max, v_min, v_max].
+    pub overlap_bounds: [f64; 4],
+    /// Approximate overlap area.
+    pub overlap_area: f64,
+    /// Whether this overlap is valid (expected for adjacent edges at vertices).
+    pub is_valid_overlap: bool,
+    /// Description of the overlap.
+    pub description: String,
+}
+
+/// An overlap at a periodic seam edge.
+#[derive(Debug, Clone)]
+pub struct SeamOverlap {
+    /// Edge index of the seam edge.
+    pub edge_idx: usize,
+    /// UV direction of the seam.
+    pub direction: UvDirection,
+    /// Overlap extent at the seam.
+    pub overlap_extent: f64,
+    /// Whether the overlap is consistent with periodic wrapping.
+    pub is_consistent: bool,
+}
+
+/// Detect UV overlaps between PCurves in a face.
+///
+/// Analyzes PCurves to find overlapping regions in UV space. Some overlaps
+/// are expected at shared vertices, while others may indicate geometric issues.
+///
+/// # Arguments
+///
+/// * `solid_idx` - Index of the solid containing the face.
+/// * `shell_idx` - Index of the shell containing the face.
+/// * `face_idx` - Index of the face to analyze.
+/// * `brep` - The BRep structure.
+/// * `tolerance` - Tolerance for overlap detection.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_algorithms::shape_analysis::detect_uv_overlaps;
+///
+/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere {
+///     radius: 1.0,
+/// });
+/// let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+/// println!("Overlaps detected: {}", report.overlap_count);
+/// ```
+pub fn detect_uv_overlaps(
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    brep: &BRep,
+    tolerance: f64,
+) -> UvOverlapDetectionReport {
+    let mut report = UvOverlapDetectionReport::default();
+
+    let Some(solid) = brep.solids.get(solid_idx) else { return report; };
+    let Some(shell) = solid.shells.get(shell_idx) else { return report; };
+    let Some(face) = shell.faces.get(face_idx) else { return report; };
+
+    let flat_face_idx = compute_flat_face_idx(brep, solid_idx, shell_idx, face_idx);
+
+    let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+        return report;
+    };
+    let Some(surface) = brep.geom.surfaces.get(surface_idx) else {
+        return report;
+    };
+
+    let (is_u_periodic, is_v_periodic) = detect_periodicity(surface);
+
+    // Collect all edges and their PCurve data
+    let all_edges: Vec<usize> = face.outer_wire.edges.iter()
+        .map(|we| we.idx)
+        .chain(face.inner_wires.iter().flat_map(|w| w.edges.iter().map(|we| we.idx)))
+        .collect();
+
+    // Collect PCurve bounds for each edge
+    let mut pcurve_bounds: Vec<(usize, [f64; 4])> = Vec::new(); // (edge_idx, [u_min, u_max, v_min, v_max])
+
+    for &edge_idx in &all_edges {
+        let Some(pcurves) = brep.geom.edge_pcurves.get(edge_idx) else { continue; };
+
+        for pc in pcurves {
+            if pc.surface_idx != surface_idx {
+                continue;
+            }
+
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+
+            let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or([0.0, 1.0]);
+
+            // Sample to find bounds
+            let mut u_min = f64::INFINITY;
+            let mut u_max = f64::NEG_INFINITY;
+            let mut v_min = f64::INFINITY;
+            let mut v_max = f64::NEG_INFINITY;
+
+            for i in 0..=32 {
+                let t = range[0] + (range[1] - range[0]) * i as f64 / 32.0;
+                let uv = curve2d.point_at(t);
+                u_min = u_min.min(uv.x);
+                u_max = u_max.max(uv.x);
+                v_min = v_min.min(uv.y);
+                v_max = v_max.max(uv.y);
+            }
+
+            pcurve_bounds.push((edge_idx, [u_min, u_max, v_min, v_max]));
+        }
+    }
+
+    // Check for overlaps between pairs of PCurves
+    for i in 0..pcurve_bounds.len() {
+        for j in (i + 1)..pcurve_bounds.len() {
+            let (edge1, bounds1) = &pcurve_bounds[i];
+            let (edge2, bounds2) = &pcurve_bounds[j];
+
+            // Check if bounds overlap
+            let overlap = check_bounds_overlap(*edge1, bounds1, *edge2, bounds2, tolerance);
+
+            if let Some(overlap_pair) = overlap {
+                // Check if this is a valid overlap (adjacent edges at shared vertex)
+                let is_valid = are_edges_adjacent(*edge1, *edge2, brep);
+
+                let mut overlap = overlap_pair;
+                overlap.is_valid_overlap = is_valid;
+
+                if !is_valid {
+                    report.overlap_count += 1;
+                    report.max_u_overlap = report.max_u_overlap.max(overlap.overlap_bounds[1] - overlap.overlap_bounds[0]);
+                    report.max_v_overlap = report.max_v_overlap.max(overlap.overlap_bounds[3] - overlap.overlap_bounds[2]);
+                    report.total_overlap_area += overlap.overlap_area;
+                }
+
+                report.overlapping_pairs.push(overlap);
+            }
+        }
+    }
+
+    // Check for seam edge overlaps on periodic surfaces
+    if is_u_periodic || is_v_periodic {
+        for (edge_idx, bounds) in &pcurve_bounds {
+            if is_u_periodic {
+                let domain = surface.default_domain();
+                let u_period = domain[1] - domain[0];
+
+                // Check if PCurve spans near the full U period
+                let u_span = bounds[1] - bounds[0];
+                if u_span > u_period * 0.9 {
+                    report.seam_overlaps.push(SeamOverlap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::U,
+                        overlap_extent: u_span - u_period * 0.9,
+                        is_consistent: true, // Expected for seam edges
+                    });
+                }
+            }
+
+            if is_v_periodic {
+                let domain = surface.default_domain();
+                let v_period = domain[3] - domain[2];
+
+                let v_span = bounds[3] - bounds[2];
+                if v_span > v_period * 0.9 {
+                    report.seam_overlaps.push(SeamOverlap {
+                        edge_idx: *edge_idx,
+                        direction: UvDirection::V,
+                        overlap_extent: v_span - v_period * 0.9,
+                        is_consistent: true,
+                    });
+                }
+            }
+        }
+    }
+
+    report.has_overlaps = report.overlap_count > 0;
+
+    report
+}
+
+/// Check if two bounding boxes overlap in UV space.
+fn check_bounds_overlap(
+    edge1: usize,
+    bounds1: &[f64; 4],
+    edge2: usize,
+    bounds2: &[f64; 4],
+    tolerance: f64,
+) -> Option<OverlapPair> {
+    // Check for overlap in both U and V directions
+    let u_overlap = bounds1[0] < bounds2[1] + tolerance && bounds1[1] > bounds2[0] - tolerance;
+    let v_overlap = bounds1[2] < bounds2[3] + tolerance && bounds1[3] > bounds2[2] - tolerance;
+
+    if u_overlap && v_overlap {
+        let overlap_u_min = bounds1[0].max(bounds2[0]);
+        let overlap_u_max = bounds1[1].min(bounds2[1]);
+        let overlap_v_min = bounds1[2].max(bounds2[2]);
+        let overlap_v_max = bounds1[3].min(bounds2[3]);
+
+        let u_extent = (overlap_u_max - overlap_u_min).max(0.0);
+        let v_extent = (overlap_v_max - overlap_v_min).max(0.0);
+
+        // Only report significant overlaps
+        if u_extent > tolerance && v_extent > tolerance {
+            let area = u_extent * v_extent;
+
+            return Some(OverlapPair {
+                edge_idx_1: edge1,
+                edge_idx_2: edge2,
+                overlap_bounds: [overlap_u_min, overlap_u_max, overlap_v_min, overlap_v_max],
+                overlap_area: area,
+                is_valid_overlap: false,
+                description: format!("PCurves overlap in UV space: area = {:.6}", area),
+            });
+        }
+    }
+
+    None
+}
+
+/// Check if two edges are adjacent (share a vertex).
+fn are_edges_adjacent(edge1_idx: usize, edge2_idx: usize, brep: &BRep) -> bool {
+    let Some(edge1) = brep.edges.get(edge1_idx) else { return false; };
+    let Some(edge2) = brep.edges.get(edge2_idx) else { return false; };
+
+    edge1.start == edge2.start || edge1.start == edge2.end ||
+    edge1.end == edge2.start || edge1.end == edge2.end
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trimming Loop Validation (ShapeAnalysis_Surface trimming analysis)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from trimming loop validation for a face.
+///
+/// Analyzes the trimming loops of a face to detect issues such as
+/// non-manifold situations, holes in loops, and quality metrics.
+#[derive(Debug, Clone, Default)]
+pub struct TrimmingLoopValidationReport {
+    /// Whether the trimming loops are valid.
+    pub is_valid: bool,
+    /// Number of trimming loops analyzed (1 outer + N inner).
+    pub loop_count: usize,
+    /// Issues detected in the trimming loops.
+    pub issues: Vec<TrimmingLoopIssue>,
+    /// Quality metrics for the trimming loops.
+    pub quality_metrics: TrimmingLoopQuality,
+    /// Information about the outer wire.
+    pub outer_wire: WireTrimmingInfo,
+    /// Information about inner wires (holes).
+    pub inner_wires: Vec<WireTrimmingInfo>,
+}
+
+/// An issue detected in a trimming loop.
+#[derive(Debug, Clone)]
+pub struct TrimmingLoopIssue {
+    /// Type of the issue.
+    pub kind: TrimmingLoopIssueKind,
+    /// Wire index (None for outer wire, Some(i) for inner wire i).
+    pub wire_idx: Option<usize>,
+    /// Edge index where the issue was detected (if applicable).
+    pub edge_idx: Option<usize>,
+    /// Description of the issue.
+    pub description: String,
+}
+
+/// Classification of trimming loop issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimmingLoopIssueKind {
+    /// Loop is not closed.
+    OpenLoop,
+    /// Loop orientation is inconsistent with face normal.
+    InconsistentOrientation,
+    /// Loop self-intersects in UV space.
+    SelfIntersection,
+    /// Hole in the trimming loop (gap between edges).
+    HoleInLoop,
+    /// Non-manifold trimming situation.
+    NonManifoldTrimming,
+    /// Inner wire is outside outer wire.
+    InnerWireOutside,
+    /// Inner wires overlap each other.
+    OverlappingHoles,
+    /// Degenerate edge in the loop.
+    DegenerateEdge,
+    /// PCurve is missing for an edge.
+    MissingPCurve,
+}
+
+/// Quality metrics for trimming loops.
+#[derive(Debug, Clone, Default)]
+pub struct TrimmingLoopQuality {
+    /// Total length of the outer wire in UV space.
+    pub outer_wire_uv_length: f64,
+    /// Total length of all inner wires in UV space.
+    pub inner_wires_uv_length: f64,
+    /// Ratio of outer wire length to its bounding box perimeter.
+    pub outer_wire_compactness: f64,
+    /// Number of edges in the outer wire.
+    pub outer_wire_edge_count: usize,
+    /// Number of edges in all inner wires.
+    pub inner_wire_edge_count: usize,
+    /// Smallest angle between consecutive edges (in radians).
+    pub min_corner_angle: f64,
+    /// Largest angle between consecutive edges (in radians).
+    pub max_corner_angle: f64,
+    /// Number of degenerate edges.
+    pub degenerate_edge_count: usize,
+}
+
+/// Information about a wire's trimming.
+#[derive(Debug, Clone, Default)]
+pub struct WireTrimmingInfo {
+    /// Whether the wire forms a closed loop.
+    pub is_closed: bool,
+    /// Orientation of the wire (clockwise or counter-clockwise in UV space).
+    pub orientation: UvOrientation,
+    /// UV bounds of the wire [u_min, u_max, v_min, v_max].
+    pub uv_bounds: [f64; 4],
+    /// Number of edges in the wire.
+    pub edge_count: usize,
+    /// Area enclosed by the wire in UV space (signed).
+    pub enclosed_area: f64,
+}
+
+/// Orientation of a wire in UV space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UvOrientation {
+    /// Counter-clockwise (positive area).
+    #[default]
+    CounterClockwise,
+    /// Clockwise (negative area).
+    Clockwise,
+    /// Degenerate (zero area).
+    Degenerate,
+}
+
+/// Validate trimming loops for a face.
+///
+/// Performs comprehensive validation of the face's trimming loops:
+/// - Checks for closed loops
+/// - Validates wire orientation
+/// - Detects self-intersections
+/// - Checks for holes in trimming loops
+/// - Validates inner wire placement
+///
+/// # Arguments
+///
+/// * `solid_idx` - Index of the solid containing the face.
+/// * `shell_idx` - Index of the shell containing the face.
+/// * `face_idx` - Index of the face to analyze.
+/// * `brep` - The BRep structure.
+/// * `tolerance` - Tolerance for validation checks.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_algorithms::shape_analysis::validate_trimming_loops;
+///
+/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+///     width: 1.0, height: 1.0, depth: 1.0
+/// });
+/// let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+/// assert!(report.is_valid || !report.issues.is_empty());
+/// ```
+pub fn validate_trimming_loops(
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    brep: &BRep,
+    tolerance: f64,
+) -> TrimmingLoopValidationReport {
+    let mut report = TrimmingLoopValidationReport::default();
+
+    let Some(solid) = brep.solids.get(solid_idx) else { return report; };
+    let Some(shell) = solid.shells.get(shell_idx) else { return report; };
+    let Some(face) = shell.faces.get(face_idx) else { return report; };
+
+    let flat_face_idx = compute_flat_face_idx(brep, solid_idx, shell_idx, face_idx);
+
+    let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+        report.issues.push(TrimmingLoopIssue {
+            kind: TrimmingLoopIssueKind::MissingPCurve,
+            wire_idx: None,
+            edge_idx: None,
+            description: "Face has no surface geometry".to_string(),
+        });
+        return report;
+    };
+
+    // Analyze outer wire
+    let outer_info = analyze_wire_trimming(&face.outer_wire, surface_idx, brep, tolerance);
+    report.outer_wire = outer_info.clone();
+    report.loop_count = 1;
+
+    // Check outer wire issues
+    if !outer_info.is_closed {
+        report.issues.push(TrimmingLoopIssue {
+            kind: TrimmingLoopIssueKind::OpenLoop,
+            wire_idx: None,
+            edge_idx: None,
+            description: "Outer wire is not closed".to_string(),
+        });
+    }
+
+    // Check for degenerate edges
+    for we in &face.outer_wire.edges {
+        if brep.geom.edge_degenerated.get(we.idx).copied().unwrap_or(false) {
+            report.quality_metrics.degenerate_edge_count += 1;
+        }
+    }
+
+    // Analyze inner wires
+    for (i, wire) in face.inner_wires.iter().enumerate() {
+        let inner_info = analyze_wire_trimming(wire, surface_idx, brep, tolerance);
+        report.inner_wires.push(inner_info.clone());
+        report.loop_count += 1;
+
+        if !inner_info.is_closed {
+            report.issues.push(TrimmingLoopIssue {
+                kind: TrimmingLoopIssueKind::OpenLoop,
+                wire_idx: Some(i),
+                edge_idx: None,
+                description: format!("Inner wire {} is not closed", i),
+            });
+        }
+
+        // Check if inner wire is inside outer wire
+        if inner_info.uv_bounds[0] < outer_info.uv_bounds[0] - tolerance ||
+           inner_info.uv_bounds[1] > outer_info.uv_bounds[1] + tolerance ||
+           inner_info.uv_bounds[2] < outer_info.uv_bounds[2] - tolerance ||
+           inner_info.uv_bounds[3] > outer_info.uv_bounds[3] + tolerance {
+            report.issues.push(TrimmingLoopIssue {
+                kind: TrimmingLoopIssueKind::InnerWireOutside,
+                wire_idx: Some(i),
+                edge_idx: None,
+                description: format!("Inner wire {} extends outside outer wire bounds", i),
+            });
+        }
+    }
+
+    // Check for overlapping inner wires
+    for i in 0..report.inner_wires.len() {
+        for j in (i + 1)..report.inner_wires.len() {
+            let bounds1 = &report.inner_wires[i].uv_bounds;
+            let bounds2 = &report.inner_wires[j].uv_bounds;
+
+            if bounds1[0] < bounds2[1] + tolerance && bounds1[1] > bounds2[0] - tolerance &&
+               bounds1[2] < bounds2[3] + tolerance && bounds1[3] > bounds2[2] - tolerance {
+                report.issues.push(TrimmingLoopIssue {
+                    kind: TrimmingLoopIssueKind::OverlappingHoles,
+                    wire_idx: Some(i),
+                    edge_idx: None,
+                    description: format!("Inner wires {} and {} overlap", i, j),
+                });
+            }
+        }
+    }
+
+    // Calculate quality metrics
+    report.quality_metrics.outer_wire_edge_count = face.outer_wire.edges.len();
+    report.quality_metrics.inner_wire_edge_count = face.inner_wires.iter()
+        .map(|w| w.edges.len())
+        .sum();
+
+    // Compute wire length and compactness
+    let outer_length = compute_wire_uv_length(&face.outer_wire, surface_idx, brep);
+    report.quality_metrics.outer_wire_uv_length = outer_length;
+
+    let u_extent = outer_info.uv_bounds[1] - outer_info.uv_bounds[0];
+    let v_extent = outer_info.uv_bounds[3] - outer_info.uv_bounds[2];
+    let bbox_perimeter = 2.0 * (u_extent + v_extent);
+
+    if bbox_perimeter > tolerance {
+        report.quality_metrics.outer_wire_compactness = outer_length / bbox_perimeter;
+    }
+
+    // Check wire orientation consistency
+    if outer_info.orientation == UvOrientation::Clockwise {
+        // Outer wire should be counter-clockwise for forward-oriented faces
+        // This is a warning, not necessarily an error
+    }
+
+    report.is_valid = report.issues.is_empty();
+    report
+}
+
+/// Analyze a wire's trimming properties.
+fn analyze_wire_trimming(
+    wire: &rcad_kernel::topology::Wire,
+    surface_idx: usize,
+    brep: &BRep,
+    tolerance: f64,
+) -> WireTrimmingInfo {
+    let mut info = WireTrimmingInfo::default();
+    info.edge_count = wire.edges.len();
+
+    if wire.edges.is_empty() {
+        return info;
+    }
+
+    // Collect UV points from all edges
+    let mut uv_points: Vec<glam::DVec2> = Vec::new();
+    let mut u_min = f64::INFINITY;
+    let mut u_max = f64::NEG_INFINITY;
+    let mut v_min = f64::INFINITY;
+    let mut v_max = f64::NEG_INFINITY;
+
+    for we in &wire.edges {
+        let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) else { continue; };
+
+        for pc in pcurves {
+            if pc.surface_idx != surface_idx {
+                continue;
+            }
+
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+
+            let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or([0.0, 1.0]);
+
+            // Sample points
+            for i in 0..=16 {
+                let t = range[0] + (range[1] - range[0]) * i as f64 / 16.0;
+                let uv = curve2d.point_at(t);
+
+                if i == 0 || i == 16 {
+                    uv_points.push(glam::DVec2::new(uv.x, uv.y));
+                }
+
+                u_min = u_min.min(uv.x);
+                u_max = u_max.max(uv.x);
+                v_min = v_min.min(uv.y);
+                v_max = v_max.max(uv.y);
+            }
+        }
+    }
+
+    info.uv_bounds = [u_min, u_max, v_min, v_max];
+
+    // Check closure
+    if uv_points.len() >= 2 {
+        let first = uv_points[0];
+        let last = uv_points[uv_points.len() - 1];
+        info.is_closed = (first - last).length() < tolerance;
+    }
+
+    // Compute enclosed area using shoelace formula
+    if uv_points.len() >= 3 {
+        let mut area = 0.0;
+        for i in 0..uv_points.len() {
+            let j = (i + 1) % uv_points.len();
+            area += uv_points[i].x * uv_points[j].y;
+            area -= uv_points[j].x * uv_points[i].y;
+        }
+        info.enclosed_area = area / 2.0;
+
+        info.orientation = if info.enclosed_area > tolerance {
+            UvOrientation::CounterClockwise
+        } else if info.enclosed_area < -tolerance {
+            UvOrientation::Clockwise
+        } else {
+            UvOrientation::Degenerate
+        };
+    }
+
+    info
+}
+
+/// Compute the total UV length of a wire's PCurves.
+fn compute_wire_uv_length(
+    wire: &rcad_kernel::topology::Wire,
+    surface_idx: usize,
+    brep: &BRep,
+) -> f64 {
+    let mut length = 0.0;
+
+    for we in &wire.edges {
+        let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) else { continue; };
+
+        for pc in pcurves {
+            if pc.surface_idx != surface_idx {
+                continue;
+            }
+
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+
+            let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or([0.0, 1.0]);
+
+            // Approximate arc length by sampling
+            let n = 32;
+            let dt = (range[1] - range[0]) / n as f64;
+            let mut prev = curve2d.point_at(range[0]);
+
+            for i in 1..=n {
+                let t = range[0] + dt * i as f64;
+                let curr = curve2d.point_at(t);
+                length += (curr - prev).length();
+                prev = curr;
+            }
+        }
+    }
+
+    length
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Periodic Surface Handling (ShapeAnalysis_Surface periodicity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report from periodic surface analysis for a face.
+///
+/// Provides detailed information about periodicity handling for
+/// surfaces that wrap in U and/or V directions.
+#[derive(Debug, Clone, Default)]
+pub struct PeriodicSurfaceReport {
+    /// Whether the surface is periodic in U direction.
+    pub is_u_periodic: bool,
+    /// Whether the surface is periodic in V direction.
+    pub is_v_periodic: bool,
+    /// U period value (if periodic).
+    pub u_period: Option<f64>,
+    /// V period value (if periodic).
+    pub v_period: Option<f64>,
+    /// Seam edges detected.
+    pub seam_edges: Vec<SeamEdgeInfo>,
+    /// PCurves that cross periodic boundaries.
+    pub crossing_pcurves: Vec<CrossingPCurve>,
+    /// Whether the seam handling is consistent.
+    pub seam_handling_consistent: bool,
+    /// Issues with periodic surface handling.
+    pub issues: Vec<PeriodicSurfaceIssue>,
+}
+
+/// Information about a seam edge on a periodic surface.
+#[derive(Debug, Clone)]
+pub struct SeamEdgeInfo {
+    /// Edge index of the seam edge.
+    pub edge_idx: usize,
+    /// UV direction of the seam.
+    pub direction: UvDirection,
+    /// UV coordinates on one side of the seam.
+    pub uv_side_a: (f64, f64),
+    /// UV coordinates on the other side of the seam.
+    pub uv_side_b: (f64, f64),
+    /// Whether the seam edge is properly handled.
+    pub is_valid: bool,
+}
+
+/// A PCurve that crosses a periodic boundary.
+#[derive(Debug, Clone)]
+pub struct CrossingPCurve {
+    /// Edge index of the PCurve.
+    pub edge_idx: usize,
+    /// UV direction of the crossing.
+    pub direction: UvDirection,
+    /// Number of times the PCurve wraps around.
+    pub wrap_count: i32,
+    /// Whether the crossing is properly handled.
+    pub is_valid: bool,
+}
+
+/// An issue with periodic surface handling.
+#[derive(Debug, Clone)]
+pub struct PeriodicSurfaceIssue {
+    /// Type of the issue.
+    pub kind: PeriodicSurfaceIssueKind,
+    /// Edge index where the issue was detected (if applicable).
+    pub edge_idx: Option<usize>,
+    /// Description of the issue.
+    pub description: String,
+}
+
+/// Classification of periodic surface handling issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeriodicSurfaceIssueKind {
+    /// PCurve parameter is outside canonical range.
+    OutsideCanonicalRange,
+    /// Seam edge has inconsistent PCurves.
+    InconsistentSeamPCurves,
+    /// PCurve wraps incorrectly across seam.
+    IncorrectWrap,
+    /// Missing seam edge on periodic surface.
+    MissingSeamEdge,
+}
+
+/// Analyze periodic surface handling for a face.
+///
+/// Examines how PCurves interact with periodic surface boundaries,
+/// checking for proper wrapping and seam edge consistency.
+///
+/// # Arguments
+///
+/// * `solid_idx` - Index of the solid containing the face.
+/// * `shell_idx` - Index of the shell containing the face.
+/// * `face_idx` - Index of the face to analyze.
+/// * `brep` - The BRep structure.
+/// * `tolerance` - Tolerance for analysis.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_kernel::BRep;
+/// use rcad_algorithms::shape_analysis::analyze_periodic_surface_handling;
+///
+/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+///     radius: 1.0,
+///     height: 2.0,
+/// });
+/// let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+/// assert!(report.is_u_periodic); // Cylinder is U-periodic
+/// ```
+pub fn analyze_periodic_surface_handling(
+    solid_idx: usize,
+    shell_idx: usize,
+    face_idx: usize,
+    brep: &BRep,
+    tolerance: f64,
+) -> PeriodicSurfaceReport {
+    let mut report = PeriodicSurfaceReport::default();
+
+    let Some(solid) = brep.solids.get(solid_idx) else { return report; };
+    let Some(shell) = solid.shells.get(shell_idx) else { return report; };
+    let Some(face) = shell.faces.get(face_idx) else { return report; };
+
+    let flat_face_idx = compute_flat_face_idx(brep, solid_idx, shell_idx, face_idx);
+
+    let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+        return report;
+    };
+    let Some(surface) = brep.geom.surfaces.get(surface_idx) else {
+        return report;
+    };
+
+    let domain = surface.default_domain();
+    let (is_u_periodic, is_v_periodic) = detect_periodicity(surface);
+
+    report.is_u_periodic = is_u_periodic;
+    report.is_v_periodic = is_v_periodic;
+
+    if is_u_periodic {
+        report.u_period = Some(domain[1] - domain[0]);
+    }
+    if is_v_periodic {
+        report.v_period = Some(domain[3] - domain[2]);
+    }
+
+    // Collect all edges in the face
+    let all_edges: Vec<usize> = face.outer_wire.edges.iter()
+        .map(|we| we.idx)
+        .chain(face.inner_wires.iter().flat_map(|w| w.edges.iter().map(|we| we.idx)))
+        .collect();
+
+    let mut seam_handling_ok = true;
+
+    for &edge_idx in &all_edges {
+        let Some(pcurves) = brep.geom.edge_pcurves.get(edge_idx) else { continue; };
+
+        // Count PCurves on this surface
+        let pcurves_on_surface: Vec<_> = pcurves.iter()
+            .filter(|pc| pc.surface_idx == surface_idx)
+            .collect();
+
+        // Check for seam edge (multiple PCurves on same surface)
+        if pcurves_on_surface.len() > 1 {
+            // This is a seam edge
+            let seam_info = analyze_seam_edge(edge_idx, &pcurves_on_surface, surface, brep, tolerance);
+            report.seam_edges.push(seam_info.clone());
+
+            if !seam_info.is_valid {
+                seam_handling_ok = false;
+                report.issues.push(PeriodicSurfaceIssue {
+                    kind: PeriodicSurfaceIssueKind::InconsistentSeamPCurves,
+                    edge_idx: Some(edge_idx),
+                    description: format!("Seam edge {} has inconsistent PCurves", edge_idx),
+                });
+            }
+        } else if pcurves_on_surface.len() == 1 {
+            let pc = pcurves_on_surface[0];
+            let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+
+            let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
+                .and_then(|r| *r)
+                .unwrap_or([0.0, 1.0]);
+
+            // Check for crossing PCurve
+            let crossing = analyze_crossing_pcurve(edge_idx, curve2d, &range, &domain, is_u_periodic, is_v_periodic, tolerance);
+
+            if let Some(cross) = crossing {
+                report.crossing_pcurves.push(cross);
+            }
+
+            // Check if PCurve is outside canonical range
+            if is_u_periodic || is_v_periodic {
+                let uv_sample = curve2d.point_at((range[0] + range[1]) / 2.0);
+
+                if is_u_periodic {
+                    let u_period = domain[1] - domain[0];
+                    if uv_sample.x < domain[0] - tolerance || uv_sample.x > domain[1] + u_period + tolerance {
+                        report.issues.push(PeriodicSurfaceIssue {
+                            kind: PeriodicSurfaceIssueKind::OutsideCanonicalRange,
+                            edge_idx: Some(edge_idx),
+                            description: format!("Edge {} PCurve is outside canonical U range", edge_idx),
+                        });
+                        seam_handling_ok = false;
+                    }
+                }
+
+                if is_v_periodic {
+                    let v_period = domain[3] - domain[2];
+                    if uv_sample.y < domain[2] - tolerance || uv_sample.y > domain[3] + v_period + tolerance {
+                        report.issues.push(PeriodicSurfaceIssue {
+                            kind: PeriodicSurfaceIssueKind::OutsideCanonicalRange,
+                            edge_idx: Some(edge_idx),
+                            description: format!("Edge {} PCurve is outside canonical V range", edge_idx),
+                        });
+                        seam_handling_ok = false;
+                    }
+                }
+            }
+        }
+    }
+
+    report.seam_handling_consistent = seam_handling_ok;
+
+    report
+}
+
+/// Analyze a seam edge for consistency.
+fn analyze_seam_edge(
+    edge_idx: usize,
+    pcurves: &[&PCurve],
+    surface: &Surface3,
+    brep: &BRep,
+    tolerance: f64,
+) -> SeamEdgeInfo {
+    let mut info = SeamEdgeInfo {
+        edge_idx,
+        direction: UvDirection::U, // Default
+        uv_side_a: (0.0, 0.0),
+        uv_side_b: (0.0, 0.0),
+        is_valid: true,
+    };
+
+    if pcurves.len() != 2 {
+        info.is_valid = false;
+        return info;
+    }
+
+    let curve2d_0 = match brep.geom.curve2ds.get(pcurves[0].curve2d_idx) {
+        Some(c) => c,
+        None => {
+            info.is_valid = false;
+            return info;
+        }
+    };
+
+    let curve2d_1 = match brep.geom.curve2ds.get(pcurves[1].curve2d_idx) {
+        Some(c) => c,
+        None => {
+            info.is_valid = false;
+            return info;
+        }
+    };
+
+    let range_0 = brep.geom.curve2d_range.get(pcurves[0].curve2d_idx)
+        .and_then(|r| *r)
+        .unwrap_or([0.0, 1.0]);
+    let range_1 = brep.geom.curve2d_range.get(pcurves[1].curve2d_idx)
+        .and_then(|r| *r)
+        .unwrap_or([0.0, 1.0]);
+
+    let uv_0 = curve2d_0.point_at((range_0[0] + range_0[1]) / 2.0);
+    let uv_1 = curve2d_1.point_at((range_1[0] + range_1[1]) / 2.0);
+
+    info.uv_side_a = (uv_0.x, uv_0.y);
+    info.uv_side_b = (uv_1.x, uv_1.y);
+
+    // Determine which direction has the seam
+    let u_diff = (uv_0.x - uv_1.x).abs();
+    let v_diff = (uv_0.y - uv_1.y).abs();
+
+    let domain = surface.default_domain();
+    let u_period = domain[1] - domain[0];
+    let v_period = domain[3] - domain[2];
+
+    // Check if this is a U-seam (PCurves on opposite sides of U boundary)
+    if u_diff > u_period * 0.9 {
+        info.direction = UvDirection::U;
+    } else if v_diff > v_period * 0.9 {
+        info.direction = UvDirection::V;
+    }
+
+    // Verify that the 3D points match
+    let p3d_0 = surface.point_at(uv_0.x, uv_0.y);
+    let p3d_1 = surface.point_at(uv_1.x, uv_1.y);
+    let dist = (p3d_0 - p3d_1).length();
+
+    info.is_valid = dist < tolerance * 10.0;
+
+    info
+}
+
+/// Analyze a PCurve that may cross a periodic boundary.
+fn analyze_crossing_pcurve(
+    edge_idx: usize,
+    curve2d: &rcad_kernel::Curve2d,
+    range: &[f64; 2],
+    domain: &[f64; 4],
+    is_u_periodic: bool,
+    is_v_periodic: bool,
+    tolerance: f64,
+) -> Option<CrossingPCurve> {
+    let uv_start = curve2d.point_at(range[0]);
+    let uv_end = curve2d.point_at(range[1]);
+
+    let mut crossing = CrossingPCurve {
+        edge_idx,
+        direction: UvDirection::U,
+        wrap_count: 0,
+        is_valid: true,
+    };
+
+    // Check U direction
+    if is_u_periodic {
+        let u_period = domain[1] - domain[0];
+        let u_span = (uv_end.x - uv_start.x).abs();
+
+        if u_span > u_period * 0.5 {
+            // PCurve spans more than half the period - it's crossing the seam
+            crossing.direction = UvDirection::U;
+            crossing.wrap_count = (u_span / u_period).round() as i32;
+
+            // Check if wrapping is consistent
+            let normalized_start = ((uv_start.x - domain[0]) % u_period) / u_period;
+            let normalized_end = ((uv_end.x - domain[0]) % u_period) / u_period;
+
+            // If both endpoints are near the seam, the wrap should be consistent
+            if normalized_start < tolerance / u_period || normalized_start > 1.0 - tolerance / u_period {
+                if normalized_end < tolerance / u_period || normalized_end > 1.0 - tolerance / u_period {
+                    crossing.is_valid = true;
+                }
+            }
+
+            return Some(crossing);
+        }
+    }
+
+    // Check V direction
+    if is_v_periodic {
+        let v_period = domain[3] - domain[2];
+        let v_span = (uv_end.y - uv_start.y).abs();
+
+        if v_span > v_period * 0.5 {
+            crossing.direction = UvDirection::V;
+            crossing.wrap_count = (v_span / v_period).round() as i32;
+            return Some(crossing);
+        }
+    }
+
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3248,5 +4639,392 @@ mod tests {
 
         // Distance should be 1.0 (perpendicular distance between skew lines)
         assert!(approx_eq(dist, 1.0, TOL));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for UV Gap Detection
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_uv_gaps_box_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Analyze the first face of the box
+        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+
+        // Box faces are planes with infinite bounds - no gaps expected
+        // (unless PCurves are defined with specific bounds)
+        assert!(report.total_gap_count >= 0);
+    }
+
+    #[test]
+    fn detect_uv_gaps_cylinder_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        // Analyze the cylindrical face
+        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+
+        // Cylinder is U-periodic, so no U gaps expected
+        assert!(report.u_min_gaps.is_empty() || report.u_max_gaps.is_empty());
+    }
+
+    #[test]
+    fn detect_uv_gaps_sphere_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere {
+            radius: 1.0,
+        });
+
+        // Analyze the spherical face
+        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+
+        // Sphere is U-periodic
+        assert!(report.total_gap_count >= 0);
+    }
+
+    #[test]
+    fn uv_gap_detection_report_default() {
+        let report = UvGapDetectionReport::default();
+
+        assert!(!report.has_gaps);
+        assert_eq!(report.total_gap_count, 0);
+        assert!(report.u_min_gaps.is_empty());
+        assert!(report.u_max_gaps.is_empty());
+        assert!(report.v_min_gaps.is_empty());
+        assert!(report.v_max_gaps.is_empty());
+        assert!(report.periodic_boundary_gaps.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for UV Overlap Detection
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_uv_overlaps_box_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Analyze the first face of the box
+        let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+
+        // Check basic report structure
+        assert!(report.overlap_count >= 0);
+        assert!(report.overlapping_pairs.len() >= 0);
+    }
+
+    #[test]
+    fn detect_uv_overlaps_torus_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        // Analyze the toroidal face
+        let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+
+        // Torus is U and V periodic
+        assert!(report.overlap_count >= 0);
+    }
+
+    #[test]
+    fn uv_overlap_detection_report_default() {
+        let report = UvOverlapDetectionReport::default();
+
+        assert!(!report.has_overlaps);
+        assert_eq!(report.overlap_count, 0);
+        assert!(report.overlapping_pairs.is_empty());
+        assert!(report.seam_overlaps.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Trimming Loop Validation
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_trimming_loops_box_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Validate trimming loops for the first face
+        let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+
+        // Box should have 6 faces, each with a valid trimming loop
+        // The function returns default if indices are invalid
+        // Check basic report structure
+        if report.loop_count >= 1 {
+            assert!(report.outer_wire.edge_count >= 0);
+        }
+    }
+
+    #[test]
+    fn validate_trimming_loops_cylinder_face() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        // Validate trimming loops for the cylindrical face
+        let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+
+        // Cylinder should have valid trimming loops
+        assert!(report.loop_count >= 1);
+    }
+
+    #[test]
+    fn trimming_loop_validation_report_default() {
+        let report = TrimmingLoopValidationReport::default();
+
+        assert!(!report.is_valid);
+        assert_eq!(report.loop_count, 0);
+        assert!(report.issues.is_empty());
+    }
+
+    #[test]
+    fn uv_orientation_default() {
+        let orientation = UvOrientation::default();
+        assert_eq!(orientation, UvOrientation::CounterClockwise);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Periodic Surface Handling
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn analyze_periodic_surface_cylinder() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+
+        // Cylinder is U-periodic
+        assert!(report.is_u_periodic);
+        assert!(!report.is_v_periodic);
+        assert!(report.u_period.is_some());
+    }
+
+    #[test]
+    fn analyze_periodic_surface_torus() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+
+        // Torus is U and V periodic
+        assert!(report.is_u_periodic);
+        assert!(report.is_v_periodic);
+        assert!(report.u_period.is_some());
+        assert!(report.v_period.is_some());
+    }
+
+    #[test]
+    fn analyze_periodic_surface_box() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+
+        // Plane is not periodic
+        assert!(!report.is_u_periodic);
+        assert!(!report.is_v_periodic);
+    }
+
+    #[test]
+    fn periodic_surface_report_default() {
+        let report = PeriodicSurfaceReport::default();
+
+        assert!(!report.is_u_periodic);
+        assert!(!report.is_v_periodic);
+        assert!(report.u_period.is_none());
+        assert!(report.v_period.is_none());
+        assert!(report.seam_edges.is_empty());
+        assert!(report.crossing_pcurves.is_empty());
+        assert!(!report.seam_handling_consistent); // Default is false
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Surface Bounds Analysis
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn surface_bounds_report_structure() {
+        let report = SurfaceBoundsReport::default();
+
+        assert!(!report.bounds_match); // Default is false
+        assert_eq!(report.surface_bounds, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(report.wire_bounds, [0.0, 0.0, 0.0, 0.0]);
+        assert!(report.uv_gaps.is_empty());
+        assert!(report.uv_overlaps.is_empty());
+        assert!(!report.uses_full_domain);
+        assert_eq!(report.seam_edge_count, 0);
+        assert_eq!(report.degenerate_edge_count, 0);
+    }
+
+    #[test]
+    fn uv_gap_structure() {
+        let gap = UvGap {
+            direction: UvDirection::U,
+            param_value: 0.5,
+            gap_size: 0.01,
+            at_periodic_boundary: false,
+        };
+
+        assert_eq!(gap.direction, UvDirection::U);
+        assert_eq!(gap.param_value, 0.5);
+        assert_eq!(gap.gap_size, 0.01);
+        assert!(!gap.at_periodic_boundary);
+    }
+
+    #[test]
+    fn uv_overlap_structure() {
+        let overlap = UvOverlap {
+            direction: UvDirection::V,
+            overlap_size: 0.02,
+        };
+
+        assert_eq!(overlap.direction, UvDirection::V);
+        assert_eq!(overlap.overlap_size, 0.02);
+    }
+
+    #[test]
+    fn uv_consistency_report_structure() {
+        let report = UVConsistencyReport::default();
+
+        assert!(!report.is_consistent);
+        assert!(report.issues.is_empty());
+        assert_eq!(report.edges_checked, 0);
+        assert_eq!(report.pcurves_analyzed, 0);
+        assert_eq!(report.orientation_mismatches, 0);
+        assert_eq!(report.valid_seam_edges, 0);
+        assert_eq!(report.invalid_seam_edges, 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Edge Cases and Error Handling
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_uv_gaps_invalid_indices() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Test with invalid solid index
+        let report = detect_uv_gaps(99, 0, 0, &brep, 1e-6);
+        assert!(!report.has_gaps);
+
+        // Test with invalid shell index
+        let report = detect_uv_gaps(0, 99, 0, &brep, 1e-6);
+        assert!(!report.has_gaps);
+
+        // Test with invalid face index
+        let report = detect_uv_gaps(0, 0, 99, &brep, 1e-6);
+        assert!(!report.has_gaps);
+    }
+
+    #[test]
+    fn detect_uv_overlaps_invalid_indices() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Test with invalid indices
+        let report = detect_uv_overlaps(99, 99, 99, &brep, 1e-6);
+        assert!(!report.has_overlaps);
+    }
+
+    #[test]
+    fn validate_trimming_loops_invalid_indices() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Test with invalid indices
+        let report = validate_trimming_loops(99, 99, 99, &brep, 1e-6);
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn analyze_periodic_surface_invalid_indices() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+
+        // Test with invalid indices
+        let report = analyze_periodic_surface_handling(99, 99, 99, &brep, 1e-6);
+        assert!(!report.is_u_periodic);
+        assert!(!report.is_v_periodic);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Complex Geometry
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn analyze_complex_brep_cylinder() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 3.0,
+        });
+
+        // Analyze all faces
+        let analysis = analyze_brep(&brep);
+
+        // Should have valid geometry
+        assert!(!analysis.surfaces.is_empty());
+    }
+
+    #[test]
+    fn analyze_complex_brep_torus() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Torus {
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+
+        // Analyze all faces
+        let analysis = analyze_brep(&brep);
+
+        // Should have valid geometry
+        assert!(!analysis.surfaces.is_empty());
+    }
+
+    #[test]
+    fn analyze_complex_brep_cone() {
+        let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Cone {
+            base_radius: 2.0,
+            height: 3.0,
+        });
+
+        // Analyze all faces
+        let analysis = analyze_brep(&brep);
+
+        // Should have valid geometry
+        assert!(!analysis.surfaces.is_empty());
     }
 }

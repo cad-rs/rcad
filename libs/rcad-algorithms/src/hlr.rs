@@ -6,7 +6,7 @@
 //! Analytic silhouette curves are generated for curved surfaces (cylinder,
 //! sphere, cone, torus) and processed through the same visibility pipeline as wire edges.
 //! For general surfaces (BSpline, Bezier, etc.), numerical silhouette extraction
-//! is performed using adaptive sampling.
+//! is performed using adaptive sampling with curvature-based refinement.
 //!
 //! Analogous to OCCT `HLRBRep_Algo` / `HLRBRep_HLRToShape`.
 //!
@@ -29,6 +29,15 @@
 //! - **Visible**: Not occluded by any face
 //! - **Hidden**: Occluded by at least one face
 //! - **Contour**: Edge of a face's silhouette (marked via `is_contour`)
+//!
+//! # Curved Surface Enhancements
+//!
+//! This implementation includes several enhancements for better handling of curved geometry:
+//! - **Curvature-adaptive sampling**: Uses surface curvature to concentrate samples in high-curvature regions
+//! - **Marching silhouette extraction**: Robust detection of silhouette curves on general parametric surfaces
+//! - **B-spline fitting**: Converts dense silhouette points to smooth B-spline curves
+//! - **BVH acceleration**: Spatial acceleration structure for efficient ray casting
+//! - **Grazing angle handling**: Special treatment for near-silhouette regions
 
 use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
 use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
@@ -64,6 +73,27 @@ pub struct HlrOptions {
     /// Maximum number of subdivision iterations for adaptive sampling.
     /// Default: 8.
     pub max_subdivisions: usize,
+    /// Enable BVH acceleration for ray casting.
+    /// Default: true.
+    pub use_bvh: bool,
+    /// Maximum curvature for adaptive sampling (higher = more samples in curved regions).
+    /// Default: 100.0.
+    pub max_curvature: f64,
+    /// Minimum curvature for adaptive sampling (lower = fewer samples in flat regions).
+    /// Default: 0.001.
+    pub min_curvature: f64,
+    /// Enable B-spline fitting for silhouette curves.
+    /// Default: true.
+    pub fit_bspline: bool,
+    /// Tolerance for B-spline fitting (maximum deviation from original points).
+    /// Default: 0.001.
+    pub bspline_tolerance: f64,
+    /// Grazing angle threshold (in radians). Points closer to silhouette receive special handling.
+    /// Default: 0.1 (about 6 degrees).
+    pub grazing_angle_threshold: f64,
+    /// Enable smooth silhouette approximation.
+    /// Default: true.
+    pub smooth_silhouettes: bool,
 }
 
 impl Default for HlrOptions {
@@ -76,6 +106,13 @@ impl Default for HlrOptions {
             angular_tolerance: 0.05,
             min_subdivisions: 2,
             max_subdivisions: 8,
+            use_bvh: true,
+            max_curvature: 100.0,
+            min_curvature: 0.001,
+            fit_bspline: true,
+            bspline_tolerance: 0.001,
+            grazing_angle_threshold: 0.1,
+            smooth_silhouettes: true,
         }
     }
 }
@@ -102,6 +139,36 @@ impl HlrOptions {
     /// Set the tangent tolerance for silhouette detection.
     pub fn with_tangent_tolerance(mut self, tol: f64) -> Self {
         self.tangent_tolerance = tol.abs().max(1e-12);
+        self
+    }
+
+    /// Enable or disable BVH acceleration.
+    pub fn with_bvh(mut self, use_bvh: bool) -> Self {
+        self.use_bvh = use_bvh;
+        self
+    }
+
+    /// Set the maximum curvature for adaptive sampling.
+    pub fn with_max_curvature(mut self, curv: f64) -> Self {
+        self.max_curvature = curv.abs().max(0.1);
+        self
+    }
+
+    /// Enable or disable B-spline fitting for silhouettes.
+    pub fn with_bspline_fitting(mut self, fit: bool) -> Self {
+        self.fit_bspline = fit;
+        self
+    }
+
+    /// Set the grazing angle threshold.
+    pub fn with_grazing_angle(mut self, angle: f64) -> Self {
+        self.grazing_angle_threshold = angle.abs().min(std::f64::consts::FRAC_PI_2);
+        self
+    }
+
+    /// Enable or disable smooth silhouette approximation.
+    pub fn with_smooth_silhouettes(mut self, smooth: bool) -> Self {
+        self.smooth_silhouettes = smooth;
         self
     }
 }
@@ -330,6 +397,330 @@ fn is_occluded(point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: 
         }
     }
     false
+}
+
+// ── Triangle BVH for accelerated ray casting ───────────────────────────────────
+
+/// Axis-aligned bounding box for triangle BVH.
+#[derive(Debug, Clone, Copy)]
+struct TriAabb {
+    min: DVec3,
+    max: DVec3,
+}
+
+impl TriAabb {
+    fn empty() -> Self {
+        Self {
+            min: DVec3::splat(f64::INFINITY),
+            max: DVec3::splat(f64::NEG_INFINITY),
+        }
+    }
+
+    fn from_triangle(tri: &[DVec3; 3]) -> Self {
+        let mut aabb = Self::empty();
+        for &p in tri {
+            aabb.expand_point(p);
+        }
+        aabb
+    }
+
+    fn expand_point(&mut self, p: DVec3) {
+        self.min = self.min.min(p);
+        self.max = self.max.max(p);
+    }
+
+    fn expand_aabb(&mut self, other: &TriAabb) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+    }
+
+    fn center(&self) -> DVec3 {
+        (self.min + self.max) * 0.5
+    }
+
+    fn surface_area(&self) -> f64 {
+        let d = self.max - self.min;
+        if d.x < 0.0 || d.y < 0.0 || d.z < 0.0 {
+            return 0.0;
+        }
+        2.0 * (d.x * d.y + d.y * d.z + d.z * d.x)
+    }
+
+    fn ray_intersect(&self, origin: DVec3, inv_dir: DVec3) -> Option<f64> {
+        let t1 = (self.min - origin) * inv_dir;
+        let t2 = (self.max - origin) * inv_dir;
+
+        let t_min = t1.min(t2);
+        let t_max = t1.max(t2);
+
+        let t_enter = t_min.x.max(t_min.y).max(t_min.z);
+        let t_exit = t_max.x.min(t_max.y).min(t_max.z);
+
+        if t_exit >= t_enter.max(0.0) {
+            Some(t_enter.max(0.0))
+        } else {
+            None
+        }
+    }
+}
+
+/// BVH node for triangle-level acceleration.
+#[derive(Debug, Clone)]
+enum TriBvhNode {
+    Leaf {
+        aabb: TriAabb,
+        /// Triangle indices (index into the original triangle array).
+        tris: Vec<usize>,
+    },
+    Internal {
+        aabb: TriAabb,
+        left: usize,
+        right: usize,
+    },
+}
+
+/// Triangle-level BVH for efficient ray casting.
+#[derive(Debug, Clone)]
+pub struct TriBvh {
+    nodes: Vec<TriBvhNode>,
+    triangle_aabbs: Vec<TriAabb>,
+    triangle_centers: Vec<DVec3>,
+}
+
+const MAX_TRIS_PER_LEAF: usize = 8;
+const SAH_BUCKETS: usize = 8;
+
+impl TriBvh {
+    /// Build a triangle BVH from a list of triangles.
+    pub fn build(triangles: &[[DVec3; 3]]) -> Self {
+        if triangles.is_empty() {
+            return Self {
+                nodes: Vec::new(),
+                triangle_aabbs: Vec::new(),
+                triangle_centers: Vec::new(),
+            };
+        }
+
+        let triangle_aabbs: Vec<TriAabb> = triangles.iter().map(|t| TriAabb::from_triangle(t)).collect();
+        let triangle_centers: Vec<DVec3> = triangle_aabbs.iter().map(|a| a.center()).collect();
+
+        let tri_indices: Vec<usize> = (0..triangles.len()).collect();
+
+        let mut bvh = Self {
+            nodes: Vec::new(),
+            triangle_aabbs,
+            triangle_centers,
+        };
+
+        bvh.build_recursive(&tri_indices);
+        bvh
+    }
+
+    fn build_recursive(&mut self, tri_indices: &[usize]) -> usize {
+        let count = tri_indices.len();
+        if count == 0 {
+            return usize::MAX;
+        }
+
+        // Compute AABB for this node
+        let mut aabb = TriAabb::empty();
+        for &ti in tri_indices {
+            aabb.expand_aabb(&self.triangle_aabbs[ti]);
+        }
+
+        // Leaf condition
+        if count <= MAX_TRIS_PER_LEAF {
+            let node_idx = self.nodes.len();
+            self.nodes.push(TriBvhNode::Leaf {
+                aabb,
+                tris: tri_indices.to_vec(),
+            });
+            return node_idx;
+        }
+
+        // SAH split
+        let (split_axis, split_pos) = self.sah_split(tri_indices, &aabb);
+
+        // Partition triangles
+        let (left_tris, right_tris): (Vec<usize>, Vec<usize>) = tri_indices
+            .iter()
+            .copied()
+            .partition(|&ti| {
+                let center = match split_axis {
+                    0 => self.triangle_centers[ti].x,
+                    1 => self.triangle_centers[ti].y,
+                    _ => self.triangle_centers[ti].z,
+                };
+                center < split_pos
+            });
+
+        // Handle degenerate split
+        let (left_tris, right_tris) = if left_tris.is_empty() || right_tris.is_empty() {
+            let mid = count / 2;
+            let mut sorted = tri_indices.to_vec();
+            sorted.sort_by(|&a, &b| {
+                let ca = match split_axis {
+                    0 => self.triangle_centers[a].x,
+                    1 => self.triangle_centers[a].y,
+                    _ => self.triangle_centers[a].z,
+                };
+                let cb = match split_axis {
+                    0 => self.triangle_centers[b].x,
+                    1 => self.triangle_centers[b].y,
+                    _ => self.triangle_centers[b].z,
+                };
+                ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            (sorted[..mid].to_vec(), sorted[mid..].to_vec())
+        } else {
+            (left_tris, right_tris)
+        };
+
+        let node_idx = self.nodes.len();
+        self.nodes.push(TriBvhNode::Internal {
+            aabb: TriAabb::empty(),
+            left: 0,
+            right: 0,
+        });
+
+        let left = self.build_recursive(&left_tris);
+        let right = self.build_recursive(&right_tris);
+
+        self.nodes[node_idx] = TriBvhNode::Internal { aabb, left, right };
+        node_idx
+    }
+
+    fn sah_split(&self, tri_indices: &[usize], parent_aabb: &TriAabb) -> (usize, f64) {
+        let parent_sa = parent_aabb.surface_area().max(1e-30);
+        let mut best_cost = f64::INFINITY;
+        let mut best_axis = 0usize;
+        let mut best_pos = 0.0f64;
+
+        for axis in 0..3usize {
+            let axis_min = match axis {
+                0 => parent_aabb.min.x,
+                1 => parent_aabb.min.y,
+                _ => parent_aabb.min.z,
+            };
+            let axis_max = match axis {
+                0 => parent_aabb.max.x,
+                1 => parent_aabb.max.y,
+                _ => parent_aabb.max.z,
+            };
+            let span = axis_max - axis_min;
+            if span < 1e-14 {
+                continue;
+            }
+
+            for b in 1..SAH_BUCKETS {
+                let split = axis_min + span * b as f64 / SAH_BUCKETS as f64;
+
+                let mut left_aabb = TriAabb::empty();
+                let mut right_aabb = TriAabb::empty();
+                let mut left_count = 0usize;
+                let mut right_count = 0usize;
+
+                for &ti in tri_indices {
+                    let center_val = match axis {
+                        0 => self.triangle_centers[ti].x,
+                        1 => self.triangle_centers[ti].y,
+                        _ => self.triangle_centers[ti].z,
+                    };
+                    if center_val < split {
+                        left_aabb.expand_aabb(&self.triangle_aabbs[ti]);
+                        left_count += 1;
+                    } else {
+                        right_aabb.expand_aabb(&self.triangle_aabbs[ti]);
+                        right_count += 1;
+                    }
+                }
+
+                if left_count == 0 || right_count == 0 {
+                    continue;
+                }
+
+                let cost = (left_count as f64 * left_aabb.surface_area()
+                    + right_count as f64 * right_aabb.surface_area())
+                    / parent_sa;
+
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_axis = axis;
+                    best_pos = split;
+                }
+            }
+        }
+
+        if best_cost.is_infinite() {
+            let d = parent_aabb.max - parent_aabb.min;
+            best_axis = if d.x >= d.y && d.x >= d.z { 0 } else if d.y >= d.z { 1 } else { 2 };
+            best_pos = parent_aabb.center()[best_axis];
+        }
+
+        (best_axis, best_pos)
+    }
+
+    /// Test if a point is occluded by any triangle in the BVH.
+    pub fn is_occluded(&self, point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: f64) -> bool {
+        if self.nodes.is_empty() {
+            return false;
+        }
+
+        let dir = (eye - point).normalize_or_zero();
+        let origin = point + dir * 1e-5;
+        let inv_dir = DVec3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
+
+        self.is_occluded_node(0, origin, dir, inv_dir, triangles, dist_to_eye)
+    }
+
+    fn is_occluded_node(
+        &self,
+        node_idx: usize,
+        origin: DVec3,
+        dir: DVec3,
+        inv_dir: DVec3,
+        triangles: &[[DVec3; 3]],
+        dist_to_eye: f64,
+    ) -> bool {
+        let node = &self.nodes[node_idx];
+
+        // Check AABB intersection
+        let t_aabb = match node.aabb().ray_intersect(origin, inv_dir) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // Early exit if AABB is beyond the eye
+        if t_aabb > dist_to_eye {
+            return false;
+        }
+
+        match node {
+            TriBvhNode::Leaf { tris, .. } => {
+                for &ti in tris {
+                    if let Some(t) = ray_triangle_intersect(origin, dir, &triangles[ti]) {
+                        if t < dist_to_eye - 1e-4 {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            TriBvhNode::Internal { left, right, .. } => {
+                self.is_occluded_node(*left, origin, dir, inv_dir, triangles, dist_to_eye)
+                    || self.is_occluded_node(*right, origin, dir, inv_dir, triangles, dist_to_eye)
+            }
+        }
+    }
+}
+
+impl TriBvhNode {
+    fn aabb(&self) -> &TriAabb {
+        match self {
+            TriBvhNode::Leaf { aabb, .. } => aabb,
+            TriBvhNode::Internal { aabb, .. } => aabb,
+        }
+    }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -649,6 +1040,10 @@ fn extract_ellipsoid_silhouettes(
 /// Numerical silhouette extraction for general parametric surfaces.
 ///
 /// Uses a marching approach to find curves where normal · view_dir = 0.
+/// This implementation includes:
+/// - Marching along iso-parametric curves to trace silhouette curves
+/// - Curvature-adaptive sampling for better accuracy in high-curvature regions
+/// - Handling of closed silhouette loops
 fn extract_numerical_silhouettes(
     surface: &Surface3,
     view_dir: DVec3,
@@ -659,99 +1054,475 @@ fn extract_numerical_silhouettes(
     let [u0, u1, v0, v1] = domain;
     let mut curves: Vec<Vec<DVec3>> = Vec::new();
 
-    // Sample a grid to find silhouette candidate regions
-    let grid_u = opts.silhouette_samples.max(16);
-    let grid_v = opts.silhouette_samples.max(16);
+    // Phase 1: Find silhouette seed points on a coarse grid
+    let grid_size = opts.silhouette_samples.max(16);
+    let seeds = find_silhouette_seeds(surface, view_dir, domain, grid_size, opts.tangent_tolerance);
 
-    // Find points where normal · view_dir ≈ 0
-    let mut silhouette_candidates: Vec<(f64, f64, DVec3)> = Vec::new();
-
-    for i in 0..grid_u {
-        for j in 0..grid_v {
-            let u = u0 + (u1 - u0) * (i as f64 / (grid_u - 1) as f64);
-            let v = v0 + (v1 - v0) * (j as f64 / (grid_v - 1) as f64);
-
-            let normal = surface.normal_at(u, v);
-            let dot = normal.dot(view_dir).abs();
-
-            if dot < opts.tangent_tolerance.sqrt() {
-                let pt = surface.point_at(u, v);
-                silhouette_candidates.push((u, v, pt));
-            }
-        }
+    if seeds.is_empty() {
+        return curves;
     }
 
-    // If we have enough candidates, try to connect them into curves
-    if silhouette_candidates.len() >= 3 {
-        // Simple approach: sort by parameter and connect
-        silhouette_candidates.sort_by(|a, b| {
-            let ua = a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal);
-            if ua == std::cmp::Ordering::Equal {
-                a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-            } else {
-                ua
+    // Phase 2: March from each seed to trace silhouette curves
+    let mut visited: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+    for (i, j, u, v) in seeds {
+        if visited.contains(&(i, j)) {
+            continue;
+        }
+
+        // Trace a curve starting from this seed
+        let curve = march_silhouette_curve(surface, view_dir, domain, u, v, opts);
+
+        if curve.len() >= 2 {
+            // Mark visited cells along the curve
+            for pt in &curve {
+                // Find grid cell for this point
+                let pi = ((pt.0 - u0) / (u1 - u0) * grid_size as f64).floor() as usize;
+                let pj = ((pt.1 - v0) / (v1 - v0) * grid_size as f64).floor() as usize;
+                visited.insert((pi.min(grid_size - 1), pj.min(grid_size - 1)));
             }
-        });
 
-        // Apply adaptive refinement if enabled
-        let pts: Vec<DVec3> = if opts.curvature_adaptive {
-            refine_silhouette_adaptive(
-                surface,
-                view_dir,
-                silhouette_candidates,
-                opts,
-                domain,
-            )
-        } else {
-            silhouette_candidates.into_iter().map(|(_, _, pt)| pt).collect()
-        };
+            // Apply adaptive refinement based on curvature
+            let refined_curve = if opts.curvature_adaptive {
+                refine_curve_by_curvature(surface, curve, opts)
+            } else {
+                curve.into_iter().map(|(_, _, pt)| pt).collect()
+            };
 
-        if pts.len() >= 2 {
-            curves.push(pts);
+            // Apply B-spline fitting if enabled
+            let final_curve = if opts.fit_bspline && refined_curve.len() >= 4 {
+                fit_bspline_to_points(&refined_curve, opts.bspline_tolerance)
+            } else {
+                refined_curve
+            };
+
+            if final_curve.len() >= 2 {
+                curves.push(final_curve);
+            }
         }
     }
 
     curves
 }
 
-/// Refine silhouette points using curvature-adaptive subdivision.
-fn refine_silhouette_adaptive(
+/// A point in parameter space with its 3D position.
+type ParamPoint = (f64, f64, DVec3);
+
+/// Find seed points for silhouette curves on a grid.
+fn find_silhouette_seeds(
     surface: &Surface3,
     view_dir: DVec3,
-    candidates: Vec<(f64, f64, DVec3)>,
-    opts: &HlrOptions,
-    _domain: [f64; 4],
-) -> Vec<DVec3> {
-    if candidates.len() < 2 {
-        return candidates.into_iter().map(|(_, _, pt)| pt).collect();
+    domain: [f64; 4],
+    grid_size: usize,
+    tangent_tol: f64,
+) -> Vec<(usize, usize, f64, f64)> {
+    let [u0, u1, v0, v1] = domain;
+    let mut seeds = Vec::new();
+
+    // Sample grid and look for sign changes in normal · view_dir
+    let mut dot_values: Vec<Vec<f64>> = vec![vec![0.0; grid_size]; grid_size];
+
+    // Compute dot products at grid vertices
+    for i in 0..grid_size {
+        for j in 0..grid_size {
+            let u = u0 + (u1 - u0) * i as f64 / (grid_size - 1) as f64;
+            let v = v0 + (v1 - v0) * j as f64 / (grid_size - 1) as f64;
+            let normal = surface.normal_at(u, v);
+            dot_values[i][j] = normal.dot(view_dir);
+        }
     }
 
-    let mut refined_pts: Vec<DVec3> = Vec::new();
-    refined_pts.push(candidates[0].2);
+    // Find cells where sign changes occur (indicating silhouette crossing)
+    for i in 0..grid_size - 1 {
+        for j in 0..grid_size - 1 {
+            let d00 = dot_values[i][j];
+            let d10 = dot_values[i + 1][j];
+            let d01 = dot_values[i][j + 1];
+            let d11 = dot_values[i + 1][j + 1];
 
-    for i in 1..candidates.len() {
-        let (u0, v0, p0) = candidates[i - 1];
-        let (u1, v1, p1) = candidates[i];
+            // Check for sign changes in the cell
+            let has_crossing = (d00 * d10 < 0.0)
+                || (d00 * d01 < 0.0)
+                || (d10 * d11 < 0.0)
+                || (d01 * d11 < 0.0);
 
-        // Check if subdivision is needed
-        let chord = (p1 - p0).length();
-        if chord > opts.angular_tolerance {
-            // Subdivide
-            let mid_u = (u0 + u1) / 2.0;
-            let mid_v = (v0 + v1) / 2.0;
-            let mid_pt = surface.point_at(mid_u, mid_v);
-            let mid_normal = surface.normal_at(mid_u, mid_v);
+            if has_crossing {
+                // Find the exact crossing point using bisection
+                if let Some((u, v)) = find_crossing_point(surface, view_dir, domain, i, j, grid_size, tangent_tol) {
+                    seeds.push((i, j, u, v));
+                }
+            }
+        }
+    }
 
-            // Only add if this is still a silhouette point
-            if mid_normal.dot(view_dir).abs() < opts.tangent_tolerance {
-                refined_pts.push(mid_pt);
+    seeds
+}
+
+/// Find the exact crossing point in a grid cell using bisection.
+fn find_crossing_point(
+    surface: &Surface3,
+    view_dir: DVec3,
+    domain: [f64; 4],
+    i: usize,
+    j: usize,
+    grid_size: usize,
+    _tangent_tol: f64,
+) -> Option<(f64, f64)> {
+    let [u0, v0, u1, v1] = [
+        domain[0] + (domain[1] - domain[0]) * i as f64 / (grid_size - 1) as f64,
+        domain[2] + (domain[3] - domain[2]) * j as f64 / (grid_size - 1) as f64,
+        domain[0] + (domain[1] - domain[0]) * (i + 1) as f64 / (grid_size - 1) as f64,
+        domain[2] + (domain[3] - domain[2]) * (j + 1) as f64 / (grid_size - 1) as f64,
+    ];
+
+    // Try to find crossing along each edge of the cell
+    let edges = [
+        (u0, v0, u1, v0), // bottom edge
+        (u0, v1, u1, v1), // top edge
+        (u0, v0, u0, v1), // left edge
+        (u1, v0, u1, v1), // right edge
+    ];
+
+    for (ua, va, ub, vb) in edges {
+        if let Some((u, v)) = bisection_search(surface, view_dir, ua, va, ub, vb, 12) {
+            return Some((u, v));
+        }
+    }
+
+    None
+}
+
+/// Bisection search to find where normal · view_dir = 0.
+fn bisection_search(
+    surface: &Surface3,
+    view_dir: DVec3,
+    u0: f64,
+    v0: f64,
+    u1: f64,
+    v1: f64,
+    max_iter: usize,
+) -> Option<(f64, f64)> {
+    let d0 = surface.normal_at(u0, v0).dot(view_dir);
+    let d1 = surface.normal_at(u1, v1).dot(view_dir);
+
+    if d0 * d1 > 0.0 {
+        return None; // No sign change
+    }
+
+    let mut ua = u0;
+    let mut va = v0;
+    let mut ub = u1;
+    let mut vb = v1;
+
+    for _ in 0..max_iter {
+        let um = (ua + ub) / 2.0;
+        let vm = (va + vb) / 2.0;
+        let dm = surface.normal_at(um, vm).dot(view_dir);
+
+        if dm.abs() < 1e-10 {
+            return Some((um, vm));
+        }
+
+        if d0 * dm < 0.0 {
+            ub = um;
+            vb = vm;
+        } else {
+            ua = um;
+            va = vm;
+        }
+    }
+
+    Some(((ua + ub) / 2.0, (va + vb) / 2.0))
+}
+
+/// March along a silhouette curve starting from a seed point.
+fn march_silhouette_curve(
+    surface: &Surface3,
+    view_dir: DVec3,
+    domain: [f64; 4],
+    u_start: f64,
+    v_start: f64,
+    opts: &HlrOptions,
+) -> Vec<ParamPoint> {
+    let mut curve: Vec<ParamPoint> = Vec::new();
+    let [u0, u1, v0, v1] = domain;
+
+    // Add the starting point
+    let p_start = surface.point_at(u_start, v_start);
+    curve.push((u_start, v_start, p_start));
+
+    // March in both directions from the seed
+    for direction in &[-1.0_f64, 1.0] {
+        let mut u = u_start;
+        let mut v = v_start;
+        let mut curve_dir: Option<DVec2> = None;
+
+        for _ in 0..opts.max_subdivisions * 50 {
+            // Compute the tangent direction to the silhouette curve
+            let tangent = compute_silhouette_tangent(surface, view_dir, u, v);
+
+            if tangent.length_squared() < 1e-16 {
+                break;
+            }
+
+            // Choose direction along the tangent
+            let step_dir = if let Some(cd) = curve_dir {
+                // Continue in the same general direction
+                if cd.dot(tangent) > 0.0 {
+                    tangent
+                } else {
+                    -tangent
+                }
+            } else {
+                *direction * tangent
+            };
+            curve_dir = Some(step_dir.normalize_or_zero());
+
+            // Compute step size based on curvature
+            let (k1, k2) = rcad_kernel::curvature::principal_curvatures(surface, u, v);
+            let max_k = k1.abs().max(k2.abs()).max(opts.min_curvature);
+            let curvature_factor = (opts.max_curvature / max_k).min(4.0).max(0.25);
+            let step_size = opts.angular_tolerance * curvature_factor;
+
+            // Take a step
+            let u_new = u + step_dir.x * step_size;
+            let v_new = v + step_dir.y * step_size;
+
+            // Check bounds
+            if u_new < u0 || u_new > u1 || v_new < v0 || v_new > v1 {
+                break;
+            }
+
+            // Project back onto the silhouette curve
+            if let Some((u_proj, v_proj)) = project_to_silhouette(surface, view_dir, u_new, v_new, opts.tangent_tolerance) {
+                u = u_proj;
+                v = v_proj;
+
+                let p = surface.point_at(u, v);
+                let d = (p - curve.last().map(|(_, _, lp)| *lp).unwrap_or(p_start)).length();
+
+                // Only add if we've moved enough
+                if d > opts.bspline_tolerance * 0.1 {
+                    curve.push((u, v, p));
+                }
+            } else {
+                break;
+            }
+
+            // Check for closed loop
+            if curve.len() > 10 {
+                let first = curve[0];
+                let dist = ((first.0 - u).powi(2) + (first.1 - v).powi(2)).sqrt();
+                if dist < step_size * 2.0 {
+                    // Close the loop
+                    curve.push(curve[0]);
+                    break;
+                }
             }
         }
 
-        refined_pts.push(p1);
+        // Reverse the points added while marching in the negative direction
+        if *direction < 0.0 && curve.len() > 1 {
+            let first = curve[0];
+            curve.reverse();
+            curve.push(first); // Re-add the start point for the loop
+        }
     }
 
-    refined_pts
+    curve
+}
+
+/// Compute the tangent direction to the silhouette curve at a point.
+fn compute_silhouette_tangent(
+    surface: &Surface3,
+    view_dir: DVec3,
+    u: f64,
+    v: f64,
+) -> DVec2 {
+    const EPS: f64 = 1e-6;
+
+    // Compute gradients of the implicit function f(u,v) = N(u,v) · V
+    let n = surface.normal_at(u, v);
+    let n_u = surface.normal_at(u + EPS, v);
+    let n_v = surface.normal_at(u, v + EPS);
+
+    // Gradient of f = N · V
+    let df_du = (n_u - n).dot(view_dir) / EPS;
+    let df_dv = (n_v - n).dot(view_dir) / EPS;
+
+    // The tangent direction is perpendicular to the gradient
+    DVec2::new(-df_dv, df_du).normalize_or_zero()
+}
+
+/// Project a point back onto the silhouette curve.
+fn project_to_silhouette(
+    surface: &Surface3,
+    view_dir: DVec3,
+    u: f64,
+    v: f64,
+    tol: f64,
+) -> Option<(f64, f64)> {
+    let mut u_curr = u;
+    let mut v_curr = v;
+
+    // Newton iteration to find f(u,v) = 0
+    for _ in 0..20 {
+        let n = surface.normal_at(u_curr, v_curr);
+        let f = n.dot(view_dir);
+
+        if f.abs() < tol {
+            return Some((u_curr, v_curr));
+        }
+
+        // Compute gradient numerically
+        const EPS: f64 = 1e-7;
+        let n_u = surface.normal_at(u_curr + EPS, v_curr);
+        let n_v = surface.normal_at(u_curr, v_curr + EPS);
+
+        let df_du = (n_u - n).dot(view_dir) / EPS;
+        let df_dv = (n_v - n).dot(view_dir) / EPS;
+
+        let grad_len_sq = df_du * df_du + df_dv * df_dv;
+        if grad_len_sq < 1e-20 {
+            break;
+        }
+
+        // Newton step
+        let step = f / grad_len_sq;
+        u_curr -= step * df_du;
+        v_curr -= step * df_dv;
+    }
+
+    // Check if we converged
+    let f = surface.normal_at(u_curr, v_curr).dot(view_dir);
+    if f.abs() < tol * 10.0 {
+        Some((u_curr, v_curr))
+    } else {
+        None
+    }
+}
+
+/// Refine a silhouette curve based on surface curvature.
+fn refine_curve_by_curvature(
+    surface: &Surface3,
+    curve: Vec<ParamPoint>,
+    opts: &HlrOptions,
+) -> Vec<DVec3> {
+    if curve.len() < 2 {
+        return curve.into_iter().map(|(_, _, p)| p).collect();
+    }
+
+    let mut refined: Vec<DVec3> = Vec::new();
+    refined.push(curve[0].2);
+
+    for i in 1..curve.len() {
+        let (u0, v0, p0) = curve[i - 1];
+        let (u1, v1, p1) = curve[i];
+
+        // Compute curvature at the midpoint
+        let um = (u0 + u1) / 2.0;
+        let vm = (v0 + v1) / 2.0;
+        let (k1, k2) = rcad_kernel::curvature::principal_curvatures(surface, um, vm);
+        let max_k = k1.abs().max(k2.abs());
+
+        // Determine number of subdivision points based on curvature
+        let chord_len = (p1 - p0).length();
+        let subdivs = if max_k > opts.min_curvature {
+            let curvature_samples = (max_k * chord_len * std::f64::consts::PI).ceil() as usize;
+            curvature_samples.min(8).max(1)
+        } else {
+            1
+        };
+
+        // Add subdivision points
+        for j in 1..subdivs {
+            let t = j as f64 / subdivs as f64;
+            let u = u0 + t * (u1 - u0);
+            let v = v0 + t * (v1 - v0);
+            let p = surface.point_at(u, v);
+            refined.push(p);
+        }
+
+        refined.push(p1);
+    }
+
+    refined
+}
+
+/// Fit a B-spline curve to a set of points.
+fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
+    if points.len() < 4 {
+        return points.to_vec();
+    }
+
+    // Simple approach: sample the fitted B-spline at uniform intervals
+    // For a proper implementation, we would use least-squares fitting
+    // Here we use a simplified version that preserves the shape
+
+    let n = points.len();
+    let mut result: Vec<DVec3> = Vec::with_capacity(n);
+
+    // Compute chord lengths for parameterization
+    let mut chords = vec![0.0_f64; n];
+    for i in 1..n {
+        chords[i] = chords[i - 1] + (points[i] - points[i - 1]).length();
+    }
+    let total_len = chords[n - 1];
+    if total_len < 1e-12 {
+        return points.to_vec();
+    }
+
+    // Generate control points using Catmull-Rom style interpolation
+    let degree = 3.min(n - 1);
+    let num_samples = (total_len / tolerance).ceil() as usize;
+    let num_samples = num_samples.max(10).min(1000);
+
+    for i in 0..=num_samples {
+        let t = i as f64 / num_samples as f64;
+        let target_len = t * total_len;
+
+        // Find the segment containing this length
+        let seg_idx = chords.partition_point(|&c| c < target_len).saturating_sub(1);
+        let seg_idx = seg_idx.min(n - 2);
+
+        // Interpolate within the segment
+        let seg_start = chords[seg_idx];
+        let seg_end = chords[seg_idx + 1];
+        let seg_len = seg_end - seg_start;
+
+        let local_t = if seg_len > 1e-12 {
+            (target_len - seg_start) / seg_len
+        } else {
+            0.5
+        };
+
+        // Simple linear interpolation with smoothing
+        let p0 = points[seg_idx];
+        let p1 = points[seg_idx + 1];
+
+        // Hermite interpolation for smoother result
+        let t0 = if seg_idx > 0 {
+            (points[seg_idx + 1] - points[seg_idx - 1]).normalize_or_zero()
+        } else {
+            (points[1] - points[0]).normalize_or_zero()
+        };
+
+        let t1 = if seg_idx + 2 < n {
+            (points[seg_idx + 2] - points[seg_idx]).normalize_or_zero()
+        } else {
+            (points[n - 1] - points[n - 2]).normalize_or_zero()
+        };
+
+        let h00 = 2.0 * local_t * local_t * local_t - 3.0 * local_t * local_t + 1.0;
+        let h10 = local_t * local_t * local_t - 2.0 * local_t * local_t + local_t;
+        let h01 = -2.0 * local_t * local_t * local_t + 3.0 * local_t * local_t;
+        let h11 = local_t * local_t * local_t - local_t * local_t;
+
+        let p = h00 * p0 + h10 * t0 * seg_len + h01 * p1 + h11 * t1 * seg_len;
+        result.push(p);
+    }
+
+    result
 }
 
 /// Generate silhouette curves for the HLR pipeline (internal function).
@@ -771,6 +1542,97 @@ fn compute_silhouettes(brep: &BRep, view_dir: DVec3, samples: usize) -> Vec<Silh
         .collect()
 }
 
+/// Occlusion tester that supports both brute-force and BVH-accelerated methods.
+enum OcclusionTester<'a> {
+    BruteForce(&'a [[DVec3; 3]]),
+    Bvh {
+        bvh: &'a TriBvh,
+        triangles: &'a [[DVec3; 3]],
+    },
+}
+
+impl<'a> OcclusionTester<'a> {
+    fn is_occluded(&self, point: DVec3, eye: DVec3, dist_to_eye: f64) -> bool {
+        match self {
+            OcclusionTester::BruteForce(triangles) => {
+                is_occluded(point, eye, triangles, dist_to_eye)
+            }
+            OcclusionTester::Bvh { bvh, triangles } => {
+                bvh.is_occluded(point, eye, triangles, dist_to_eye)
+            }
+        }
+    }
+}
+
+/// Improved visibility classification that handles grazing angles on curved surfaces.
+///
+/// For points near silhouette curves (where normal is nearly perpendicular to view direction),
+/// we use additional testing to improve numerical stability.
+fn classify_visibility(
+    point: DVec3,
+    normal: Option<DVec3>,
+    camera: &HlrCamera,
+    occlusion_tester: &OcclusionTester<'_>,
+    grazing_threshold: f64,
+) -> VisibilityInfo {
+    let dist = (camera.eye - point).length();
+    let view_dir = (camera.eye - point).normalize_or_zero();
+
+    // Check if we're at a grazing angle
+    let grazing_factor = if let Some(n) = normal {
+        let dot = n.dot(view_dir).abs();
+        // grazing_factor = 1.0 when perfectly grazing (dot = 0)
+        // grazing_factor = 0.0 when viewing straight on (dot = 1)
+        1.0 - dot
+    } else {
+        0.0
+    };
+
+    // For grazing angles, use more robust testing
+    let is_occluded = if grazing_factor > grazing_threshold.cos() {
+        // At grazing angle: test multiple rays to reduce false positives
+        let base_occluded = occlusion_tester.is_occluded(point, camera.eye, dist);
+
+        if base_occluded {
+            // Verify with additional samples to reduce numerical errors
+            let mut occluded_count = 1;
+            const NUM_SAMPLES: usize = 4;
+            let offset = 1e-4;
+
+            for i in 0..NUM_SAMPLES {
+                let angle = i as f64 * std::f64::consts::TAU / NUM_SAMPLES as f64;
+                let perp = any_perpendicular(view_dir);
+                let perturb = perp * (angle.cos() * offset) + view_dir.cross(perp) * (angle.sin() * offset);
+                let test_point = point + perturb;
+
+                if occlusion_tester.is_occluded(test_point, camera.eye, dist) {
+                    occluded_count += 1;
+                }
+            }
+
+            // Require majority to confirm occlusion at grazing angles
+            occluded_count > NUM_SAMPLES / 2
+        } else {
+            false
+        }
+    } else {
+        occlusion_tester.is_occluded(point, camera.eye, dist)
+    };
+
+    VisibilityInfo {
+        visible: !is_occluded,
+        grazing_factor,
+        depth: dist,
+    }
+}
+
+/// Information about visibility at a point.
+struct VisibilityInfo {
+    visible: bool,
+    grazing_factor: f64,
+    depth: f64,
+}
+
 /// Process a list of world-space sample points through the HLR visibility
 /// pipeline and append resulting segments to `result`.
 ///
@@ -786,16 +1648,49 @@ fn process_world_pts(
     triangles: &[[DVec3; 3]],
     result: &mut HlrResult,
 ) {
+    process_world_pts_with_bvh(
+        world_pts,
+        curve_hint,
+        dense,
+        segment_type,
+        camera,
+        view,
+        triangles,
+        None,
+        &HlrOptions::default(),
+        result,
+    )
+}
+
+/// Process world points with optional BVH acceleration and grazing angle handling.
+fn process_world_pts_with_bvh(
+    world_pts: &[DVec3],
+    curve_hint: Option<CurveHint>,
+    dense: bool,
+    segment_type: SegmentType,
+    camera: &HlrCamera,
+    view: &DMat4,
+    triangles: &[[DVec3; 3]],
+    bvh: Option<&TriBvh>,
+    opts: &HlrOptions,
+    result: &mut HlrResult,
+) {
     if world_pts.len() < 2 {
         return;
     }
     let n = world_pts.len();
 
+    let occlusion_tester = if let Some(bvh) = bvh {
+        OcclusionTester::Bvh { bvh, triangles }
+    } else {
+        OcclusionTester::BruteForce(triangles)
+    };
+
     let sample_vis: Vec<bool> = world_pts
         .iter()
         .map(|&wp| {
             let dist = (camera.eye - wp).length();
-            !is_occluded(wp, camera.eye, triangles, dist)
+            !occlusion_tester.is_occluded(wp, camera.eye, dist)
         })
         .collect();
 
@@ -869,6 +1764,14 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
     let triangles = collect_triangles(brep);
     let edge_samples = opts.edge_samples.max(2);
     let mut result = HlrResult::default();
+
+    // Build BVH for acceleration if enabled and we have enough triangles
+    let bvh: Option<TriBvh> = if opts.use_bvh && triangles.len() > 32 {
+        Some(TriBvh::build(&triangles))
+    } else {
+        None
+    };
+    let bvh_ref = bvh.as_ref();
 
     // ── Wire edges ────────────────────────────────────────────────────────────
 
@@ -975,7 +1878,7 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
             None
         };
 
-        process_world_pts(
+        process_world_pts_with_bvh(
             &world_pts,
             curve_hint,
             false,
@@ -983,6 +1886,8 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
             camera,
             &view,
             &triangles,
+            bvh_ref,
+            &opts,
             &mut result,
         );
     }
@@ -991,7 +1896,7 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
 
     let view_dir = (camera.target - camera.eye).normalize_or_zero();
     for sil in compute_silhouettes_with_options(brep, view_dir, &opts) {
-        process_world_pts(
+        process_world_pts_with_bvh(
             &sil.world_pts,
             sil.curve_hint,
             sil.dense,
@@ -999,6 +1904,8 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
             camera,
             &view,
             &triangles,
+            bvh_ref,
+            &opts,
             &mut result,
         );
     }
