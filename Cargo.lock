@@ -3061,6 +3061,7 @@ dependencies = [
  "criterion",
  "glam 0.29.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

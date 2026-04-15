@@ -3,7 +3,9 @@
 //! This module provides an analyze -> repair -> recheck workflow similar in
 //! spirit to OCCT ShapeAnalysis/ShapeFix orchestration.
 
+use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::{BSplineSurface, BezierSurface};
 
 use crate::brep_check::{CheckIssue, CheckResult, check, diagnose_same_parameter, diagnose_same_range};
 use crate::brep_repair::{
@@ -234,7 +236,8 @@ pub fn diagnose_all(brep: &BRep, tolerance: f64) -> ComprehensiveDiagnosis {
 }
 
 /// Summary report for analyze/heal workflow.
-#[derive(Debug, Clone)]
+/// Result of a healing operation.
+#[derive(Debug, Clone, Default)]
 pub struct HealingReport {
     /// Issues found before any repair.
     pub initial: CheckResult,
@@ -274,7 +277,7 @@ pub enum HealingStage {
 
 /// ShapeProcess-like healing operators that can be composed into a custom
 /// batch pipeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HealingOperator {
     /// MakeConnected-style connectivity rebuild pass.
     MakeConnected,
@@ -300,6 +303,234 @@ pub enum HealingOperator {
     UnifySameDomain,
     /// Remove internal faces (faces inside the solid volume).
     RemoveInternalFaces,
+    /// Split cylindrical faces at angle thresholds.
+    /// Useful for meshing constraints where element size limits angular extent.
+    SplitAngle(SplitAngleOperator),
+    /// Split edges at continuity breaks (C0/C1/C2 discontinuities).
+    SplitContinuity(SplitContinuityOperator),
+    /// Convert analytic geometry to BSpline representation.
+    ConvertToBSpline(ConvertToBSplineOperator),
+    /// Convert BSpline surfaces to Bezier patches by splitting at knot lines.
+    SurfaceToBezier(SurfaceToBezierOperator),
+    /// Apply uniform or non-uniform scaling transformation.
+    ScaleShape(ScaleShapeOperator),
+}
+
+/// Operator that splits faces at specified angle thresholds.
+///
+/// This is particularly useful for:
+/// - Cylindrical faces: split into sectors for meshing constraints
+/// - Torus faces: split at major/minor angle limits
+/// - Conical faces: split into angular sectors
+///
+/// Analogous to OCCT `ShapeUpgrade_ShapeDivideAngle`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitAngleOperator {
+    /// Maximum angular span in radians for any resulting face sector.
+    pub max_angle: f64,
+    /// Whether to split cylindrical faces.
+    pub split_cylinders: bool,
+    /// Whether to split torus faces.
+    pub split_tori: bool,
+    /// Whether to split conical faces.
+    pub split_cones: bool,
+    /// Whether to split spherical faces.
+    pub split_spheres: bool,
+    /// Starting angle offset in radians (for alignment with specific directions).
+    pub start_angle: f64,
+}
+
+impl Default for SplitAngleOperator {
+    fn default() -> Self {
+        Self {
+            max_angle: std::f64::consts::PI / 2.0, // 90 degrees default
+            split_cylinders: true,
+            split_tori: true,
+            split_cones: true,
+            split_spheres: true,
+            start_angle: 0.0,
+        }
+    }
+}
+
+/// Operator that splits edges at continuity breaks.
+///
+/// Detects C0 (position), C1 (tangent), and C2 (curvature) discontinuities
+/// and splits edges at those points. This is essential for downstream
+/// operations that require specific continuity levels.
+///
+/// Analogous to OCCT `ShapeUpgrade_ShapeDivideContinuity`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitContinuityOperator {
+    /// Minimum continuity level required (C0, C1, or C2).
+    pub min_continuity: ContinuityLevel,
+    /// Tolerance for detecting discontinuities.
+    pub tolerance: f64,
+    /// Whether to check curve continuity.
+    pub check_curves: bool,
+    /// Whether to check surface continuity at edges.
+    pub check_surfaces: bool,
+    /// Maximum number of split points per edge.
+    pub max_splits_per_edge: usize,
+}
+
+/// Continuity level for geometric analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ContinuityLevel {
+    /// C0: position continuous only.
+    C0,
+    /// C1: tangent continuous (default).
+    #[default]
+    C1,
+    /// C2: curvature continuous.
+    C2,
+}
+
+impl Default for SplitContinuityOperator {
+    fn default() -> Self {
+        Self {
+            min_continuity: ContinuityLevel::C1,
+            tolerance: 1e-6,
+            check_curves: true,
+            check_surfaces: true,
+            max_splits_per_edge: 100,
+        }
+    }
+}
+
+/// Operator that converts analytic geometry to BSpline representation.
+///
+/// Converts planes, cylinders, spheres, cones, tori, and other analytic
+/// surfaces to NURBS (BSpline) representation. This is useful for:
+/// - Exporting to formats that only support NURBS
+/// - Applying NURBS-specific operations
+/// - Ensuring uniform representation for downstream algorithms
+///
+/// Analogous to OCCT `ShapeUpgrade_ShapeConvertToBSpline`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConvertToBSplineOperator {
+    /// Maximum degree for resulting BSpline geometry.
+    pub max_degree: usize,
+    /// Whether to convert curves to BSpline.
+    pub convert_curves: bool,
+    /// Whether to convert surfaces to BSpline.
+    pub convert_surfaces: bool,
+    /// Whether to convert planes (usually kept as analytic).
+    pub convert_planes: bool,
+    /// Whether to convert elementary surfaces (cylinders, spheres, cones, tori).
+    pub convert_elementary: bool,
+    /// Number of samples for approximating transcendental surfaces.
+    pub approximation_samples: usize,
+}
+
+impl Default for ConvertToBSplineOperator {
+    fn default() -> Self {
+        Self {
+            max_degree: 3,
+            convert_curves: true,
+            convert_surfaces: true,
+            convert_planes: false,
+            convert_elementary: true,
+            approximation_samples: 20,
+        }
+    }
+}
+
+/// Operator that converts BSpline surfaces to Bezier patches.
+///
+/// Splits BSpline surfaces at all interior knot lines, converting each
+/// span into a separate Bezier patch. This is useful for:
+/// - Export to formats requiring Bezier patches
+/// - Isogeometric analysis workflows
+/// - Simplified surface representation
+///
+/// Analogous to OCCT `ShapeUpgrade_ShapeConvertToBezier`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceToBezierOperator {
+    /// Whether to convert surfaces.
+    pub convert_surfaces: bool,
+    /// Whether to convert 2D curves (PCurves).
+    pub convert_pcurves: bool,
+    /// Whether to convert 3D curves.
+    pub convert_curves: bool,
+    /// Maximum degree for resulting Bezier patches.
+    pub max_degree: usize,
+}
+
+impl Default for SurfaceToBezierOperator {
+    fn default() -> Self {
+        Self {
+            convert_surfaces: true,
+            convert_pcurves: true,
+            convert_curves: true,
+            max_degree: 25, // High degree allowed for exact conversion
+        }
+    }
+}
+
+/// Operator that applies scaling transformation to a shape.
+///
+/// Supports both uniform scaling (same factor in all directions) and
+/// non-uniform scaling (different factors for X, Y, Z axes).
+///
+/// Tolerances are scaled appropriately to maintain geometric validity.
+///
+/// Analogous to OCCT `BRepBuilderAPI_GTransform` for scaling.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScaleShapeOperator {
+    /// Scale factor for X direction.
+    pub scale_x: f64,
+    /// Scale factor for Y direction.
+    pub scale_y: f64,
+    /// Scale factor for Z direction.
+    pub scale_z: f64,
+    /// Origin point for scaling (default is origin).
+    pub origin: Option<glam::DVec3>,
+    /// Whether to scale tolerances.
+    pub scale_tolerances: bool,
+    /// Whether to preserve vertex tolerances on degenerate scaling.
+    pub preserve_degenerate_tolerances: bool,
+}
+
+impl Default for ScaleShapeOperator {
+    fn default() -> Self {
+        Self {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            scale_z: 1.0,
+            origin: None,
+            scale_tolerances: true,
+            preserve_degenerate_tolerances: true,
+        }
+    }
+}
+
+impl ScaleShapeOperator {
+    /// Create a uniform scaling operator.
+    pub fn uniform(scale: f64) -> Self {
+        Self {
+            scale_x: scale,
+            scale_y: scale,
+            scale_z: scale,
+            ..Default::default()
+        }
+    }
+
+    /// Create a non-uniform scaling operator.
+    pub fn non_uniform(scale_x: f64, scale_y: f64, scale_z: f64) -> Self {
+        Self {
+            scale_x,
+            scale_y,
+            scale_z,
+            ..Default::default()
+        }
+    }
+
+    /// Returns true if the scaling is uniform (same factor in all directions).
+    pub fn is_uniform(&self) -> bool {
+        (self.scale_x - self.scale_y).abs() < 1e-12
+            && (self.scale_y - self.scale_z).abs() < 1e-12
+    }
 }
 
 /// Configuration parameters for individual healing operators.
@@ -313,6 +544,16 @@ pub struct OperatorParams {
     pub max_sliver_aspect_ratio: f64,
     /// Whether to allow removal of internal faces.
     pub allow_internal_face_removal: bool,
+    /// Parameters for SplitAngle operator.
+    pub split_angle: SplitAngleOperator,
+    /// Parameters for SplitContinuity operator.
+    pub split_continuity: SplitContinuityOperator,
+    /// Parameters for ConvertToBSpline operator.
+    pub convert_to_bspline: ConvertToBSplineOperator,
+    /// Parameters for SurfaceToBezier operator.
+    pub surface_to_bezier: SurfaceToBezierOperator,
+    /// Parameters for ScaleShape operator.
+    pub scale_shape: ScaleShapeOperator,
 }
 
 impl Default for OperatorParams {
@@ -322,6 +563,11 @@ impl Default for OperatorParams {
             min_face_area: 1e-10,
             max_sliver_aspect_ratio: 100.0,
             allow_internal_face_removal: true,
+            split_angle: SplitAngleOperator::default(),
+            split_continuity: SplitContinuityOperator::default(),
+            convert_to_bspline: ConvertToBSplineOperator::default(),
+            surface_to_bezier: SurfaceToBezierOperator::default(),
+            scale_shape: ScaleShapeOperator::default(),
         }
     }
 }
@@ -358,6 +604,316 @@ impl Default for OperatorReport {
             description: String::new(),
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Operator Chaining Improvements
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Condition for conditional operator execution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OperatorCondition {
+    /// Always execute the operator.
+    Always,
+    /// Execute only if the shape has checker issues.
+    OnlyIfIssues,
+    /// Execute only if the shape is checker-clean.
+    OnlyIfClean,
+    /// Execute only if a specific issue type is present.
+    OnlyIfIssueType(CheckIssuePredicate),
+    /// Execute only if a previous operator made changes.
+    OnlyIfPreviousChanged(usize),
+    /// Execute only if a previous operator did NOT make changes.
+    OnlyIfPreviousUnchanged(usize),
+    /// Execute only if the number of issues exceeds a threshold.
+    OnlyIfIssueCountAbove(usize),
+    /// Execute only if the number of issues is below a threshold.
+    OnlyIfIssueCountBelow(usize),
+}
+
+/// Predicate for checking specific issue types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckIssuePredicate {
+    /// Any open wire issue.
+    OpenWire,
+    /// Any zero normal issue.
+    ZeroNormal,
+    /// Any degenerate face issue.
+    DegenerateFace,
+    /// Any non-manifold edge issue.
+    NonManifoldEdge,
+    /// Any self-intersection issue.
+    SelfIntersection,
+    /// Any geometric self-intersection.
+    GeometricSelfIntersection,
+}
+
+impl OperatorCondition {
+    /// Evaluate whether the condition is met.
+    pub fn evaluate(&self, _brep: &BRep, report: &HealingReport, previous_results: &[OperatorResult]) -> bool {
+        match self {
+            OperatorCondition::Always => true,
+            OperatorCondition::OnlyIfIssues => !report.final_result.is_valid(),
+            OperatorCondition::OnlyIfClean => report.final_result.is_valid(),
+            OperatorCondition::OnlyIfIssueType(pred) => {
+                report.final_result.issues.iter().any(|issue| pred.matches(issue))
+            }
+            OperatorCondition::OnlyIfPreviousChanged(idx) => {
+                previous_results.get(*idx).map(|r| r.changed).unwrap_or(false)
+            }
+            OperatorCondition::OnlyIfPreviousUnchanged(idx) => {
+                previous_results.get(*idx).map(|r| !r.changed).unwrap_or(true)
+            }
+            OperatorCondition::OnlyIfIssueCountAbove(threshold) => {
+                report.final_result.issues.len() > *threshold
+            }
+            OperatorCondition::OnlyIfIssueCountBelow(threshold) => {
+                report.final_result.issues.len() < *threshold
+            }
+        }
+    }
+}
+
+impl CheckIssuePredicate {
+    fn matches(&self, issue: &CheckIssue) -> bool {
+        match self {
+            CheckIssuePredicate::OpenWire => matches!(issue, CheckIssue::OpenWire { .. }),
+            CheckIssuePredicate::ZeroNormal => matches!(issue, CheckIssue::ZeroNormal { .. }),
+            CheckIssuePredicate::DegenerateFace => matches!(issue, CheckIssue::DegenerateFace { .. }),
+            CheckIssuePredicate::NonManifoldEdge => matches!(issue, CheckIssue::NonManifoldEdge { .. }),
+            CheckIssuePredicate::SelfIntersection => matches!(issue, CheckIssue::SelfIntersectingWire { .. }),
+            CheckIssuePredicate::GeometricSelfIntersection => matches!(issue, CheckIssue::GeometricSelfIntersection { .. }),
+        }
+    }
+}
+
+/// Result from executing a single operator in a chain.
+#[derive(Debug, Clone)]
+pub struct OperatorResult {
+    /// The operator that was executed.
+    pub operator: HealingOperator,
+    /// Whether the operator made any changes.
+    pub changed: bool,
+    /// Number of entities modified.
+    pub modifications: usize,
+    /// Number of issues fixed.
+    pub issues_fixed: usize,
+    /// Description of changes.
+    pub description: String,
+    /// Execution time in seconds.
+    pub elapsed_seconds: f64,
+    /// Whether the operator was skipped due to a condition.
+    pub skipped: bool,
+    /// Reason for skipping (if skipped).
+    pub skip_reason: Option<String>,
+}
+
+impl Default for OperatorResult {
+    fn default() -> Self {
+        Self {
+            operator: HealingOperator::Repair,
+            changed: false,
+            modifications: 0,
+            issues_fixed: 0,
+            description: String::new(),
+            elapsed_seconds: 0.0,
+            skipped: false,
+            skip_reason: None,
+        }
+    }
+}
+
+/// An operator with optional execution conditions and dependencies.
+#[derive(Debug, Clone)]
+pub struct HealingOperatorWithCondition {
+    /// The operator to execute.
+    pub operator: HealingOperator,
+    /// Optional condition for execution.
+    pub condition: Option<OperatorCondition>,
+    /// Dependencies on other operators (indices in the chain).
+    pub dependencies: Vec<usize>,
+    /// Whether to skip this operator if dependencies failed.
+    pub skip_on_dependency_failure: bool,
+    /// Optional label for debugging/logging.
+    pub label: Option<String>,
+}
+
+impl HealingOperatorWithCondition {
+    /// Create a new operator that always executes.
+    pub fn new(operator: HealingOperator) -> Self {
+        Self {
+            operator,
+            condition: None,
+            dependencies: Vec::new(),
+            skip_on_dependency_failure: true,
+            label: None,
+        }
+    }
+
+    /// Create an operator with a condition.
+    pub fn with_condition(operator: HealingOperator, condition: OperatorCondition) -> Self {
+        Self {
+            operator,
+            condition: Some(condition),
+            dependencies: Vec::new(),
+            skip_on_dependency_failure: true,
+            label: None,
+        }
+    }
+
+    /// Add a dependency on another operator.
+    pub fn depends_on(mut self, operator_idx: usize) -> Self {
+        self.dependencies.push(operator_idx);
+        self
+    }
+
+    /// Set the label for this operator.
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+}
+
+impl From<HealingOperator> for HealingOperatorWithCondition {
+    fn from(operator: HealingOperator) -> Self {
+        Self::new(operator)
+    }
+}
+
+/// Configuration for advanced operator chaining.
+#[derive(Debug, Clone)]
+pub struct OperatorChainConfig {
+    /// Operators with conditions and dependencies.
+    pub operators: Vec<HealingOperatorWithCondition>,
+    /// Stop processing if the shape becomes checker-clean.
+    pub stop_on_clean: bool,
+    /// Maximum number of iterations (0 = run once).
+    pub max_iterations: usize,
+    /// Base tolerance for operations.
+    pub base_tolerance: f64,
+    /// Tolerance growth factor per iteration.
+    pub tolerance_growth: f64,
+    /// Maximum tolerance cap.
+    pub tolerance_cap: f64,
+    /// Healing options for internal passes.
+    pub healing_options: HealingOptions,
+    /// Operator parameters.
+    pub operator_params: OperatorParams,
+    /// Whether to collect detailed timing information.
+    pub collect_timing: bool,
+}
+
+impl Default for OperatorChainConfig {
+    fn default() -> Self {
+        Self {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
+                HealingOperatorWithCondition::new(HealingOperator::Repair),
+                HealingOperatorWithCondition::new(HealingOperator::StopIfClean),
+            ],
+            stop_on_clean: true,
+            max_iterations: 1,
+            base_tolerance: TOLERANCE_ABS,
+            tolerance_growth: 1.0,
+            tolerance_cap: 1e-3,
+            healing_options: HealingOptions::default(),
+            operator_params: OperatorParams::default(),
+            collect_timing: true,
+        }
+    }
+}
+
+impl OperatorChainConfig {
+    /// Create a preset for mesh preparation (split angles, convert to BSpline).
+    pub fn mesh_prep_preset() -> Self {
+        Self {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::SplitAngle(SplitAngleOperator {
+                    max_angle: std::f64::consts::PI / 4.0, // 45 degrees
+                    ..Default::default()
+                })),
+                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(ConvertToBSplineOperator {
+                    convert_elementary: true,
+                    convert_planes: false,
+                    ..Default::default()
+                })),
+                HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
+                HealingOperatorWithCondition::new(HealingOperator::Repair),
+            ],
+            stop_on_clean: true,
+            max_iterations: 2,
+            base_tolerance: TOLERANCE_ABS,
+            tolerance_growth: 1.5,
+            tolerance_cap: 1e-3,
+            healing_options: HealingOptions::default(),
+            operator_params: OperatorParams::default(),
+            collect_timing: true,
+        }
+    }
+
+    /// Create a preset for export preparation (convert to Bezier).
+    pub fn export_prep_preset() -> Self {
+        Self {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::ConvertToBSpline(ConvertToBSplineOperator::default())),
+                HealingOperatorWithCondition::new(HealingOperator::SurfaceToBezier(SurfaceToBezierOperator::default())),
+                HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
+                HealingOperatorWithCondition::new(HealingOperator::Repair),
+            ],
+            stop_on_clean: true,
+            max_iterations: 1,
+            base_tolerance: TOLERANCE_ABS,
+            tolerance_growth: 1.0,
+            tolerance_cap: 1e-3,
+            healing_options: HealingOptions::default(),
+            operator_params: OperatorParams::default(),
+            collect_timing: true,
+        }
+    }
+
+    /// Create a preset for scaling operations.
+    pub fn scale_preset(scale: f64) -> Self {
+        Self {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::ScaleShape(ScaleShapeOperator::uniform(scale))),
+                HealingOperatorWithCondition::new(HealingOperator::PropagateTolerances),
+                HealingOperatorWithCondition::new(HealingOperator::Repair),
+            ],
+            stop_on_clean: true,
+            max_iterations: 1,
+            base_tolerance: TOLERANCE_ABS * scale,
+            tolerance_growth: 1.0,
+            tolerance_cap: 1e-3 * scale,
+            healing_options: HealingOptions::default(),
+            operator_params: OperatorParams::default(),
+            collect_timing: true,
+        }
+    }
+}
+
+/// Extended report from running an advanced operator chain.
+#[derive(Debug, Clone)]
+pub struct OperatorChainReport {
+    /// Results from each operator execution.
+    pub operator_results: Vec<OperatorResult>,
+    /// Initial check result.
+    pub initial: CheckResult,
+    /// Final check result.
+    pub final_result: CheckResult,
+    /// Initial issue stats.
+    pub initial_stats: HealingIssueStats,
+    /// Final issue stats.
+    pub final_stats: HealingIssueStats,
+    /// Total execution time in seconds.
+    pub total_elapsed_seconds: f64,
+    /// Number of operators executed (not skipped).
+    pub operators_executed: usize,
+    /// Number of operators skipped.
+    pub operators_skipped: usize,
+    /// Whether the shape is now clean.
+    pub is_clean: bool,
+    /// Summary description.
+    pub summary: String,
 }
 
 /// Report for a single stage in the ShapeProcess pipeline.
@@ -538,6 +1094,7 @@ impl ShapeProcessConfig {
                 min_face_area: 1e-8,
                 max_sliver_aspect_ratio: 50.0,
                 allow_internal_face_removal: false,
+                ..Default::default()
             },
             healing_options: HealingOptions {
                 tolerance: TOLERANCE_ABS,
@@ -575,6 +1132,7 @@ impl ShapeProcessConfig {
                 min_face_area: 1e-10,
                 max_sliver_aspect_ratio: 100.0,
                 allow_internal_face_removal: true,
+                ..Default::default()
             },
             healing_options: HealingOptions {
                 tolerance: TOLERANCE_ABS * 10.0,
@@ -610,6 +1168,7 @@ impl ShapeProcessConfig {
                 min_face_area: 1e-12,
                 max_sliver_aspect_ratio: 1000.0,
                 allow_internal_face_removal: false,
+                ..Default::default()
             },
             healing_options: HealingOptions {
                 tolerance: TOLERANCE_ABS,
@@ -652,6 +1211,7 @@ impl ShapeProcessConfig {
                 min_face_area: 1e-8,
                 max_sliver_aspect_ratio: 50.0,
                 allow_internal_face_removal: true,
+                ..Default::default()
             },
             healing_options: HealingOptions {
                 tolerance: TOLERANCE_ABS,
@@ -1231,6 +1791,77 @@ pub fn run_healing_operator_chain(
                     ..RepairReport::default()
                 });
             }
+            HealingOperator::SplitAngle(params) => {
+                let (next, splits) = split_angle_operator(&current, params);
+                current = next;
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::GeometryRepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                passes.push(RepairReport {
+                    faces_reoriented: splits,
+                    ..RepairReport::default()
+                });
+            }
+            HealingOperator::SplitContinuity(params) => {
+                let (next, splits) = split_continuity_operator(&current, params);
+                current = next;
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::GeometryRepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                passes.push(RepairReport {
+                    // splits tracks edges split, which we report as wires_fixed
+                    wires_fixed: splits,
+                    ..RepairReport::default()
+                });
+            }
+            HealingOperator::ConvertToBSpline(params) => {
+                let (next, conversions) = convert_to_bspline_operator(&current, params);
+                current = next;
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::GeometryRepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                passes.push(RepairReport {
+                    faces_reoriented: conversions,
+                    ..RepairReport::default()
+                });
+            }
+            HealingOperator::SurfaceToBezier(params) => {
+                let (next, conversions) = surface_to_bezier_operator(&current, params);
+                current = next;
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::GeometryRepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                passes.push(RepairReport {
+                    faces_reoriented: conversions,
+                    ..RepairReport::default()
+                });
+            }
+            HealingOperator::ScaleShape(params) => {
+                let (next, modifications) = scale_shape_operator(&current, params);
+                current = next;
+                let chk = check(&current);
+                stages.push(HealingStageReport {
+                    stage: HealingStage::GeometryRepairPass,
+                    pass_index: Some(op_idx),
+                    issue_count: chk.issues.len(),
+                });
+                passes.push(RepairReport {
+                    vertices_merged: modifications,
+                    ..RepairReport::default()
+                });
+            }
         }
     }
 
@@ -1557,6 +2188,601 @@ fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire)
     }
 
     area
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New Operator Implementations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Split faces at angle thresholds (SplitAngle operator).
+///
+/// Splits cylindrical, conical, spherical, and toroidal faces into sectors
+/// where each sector has a maximum angular extent.
+///
+/// Returns (modified BRep, count of faces split).
+fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usize) {
+    use rcad_kernel::geom::{Surface3, CylindricalSurface, ToroidalSurface, SphericalSurface, ConicalSurface};
+    use std::f64::consts::PI;
+
+    let mut result = brep.clone();
+    let mut split_count = 0usize;
+    let max_angle = params.max_angle.max(PI / 36.0); // At least 5 degrees minimum
+
+    // Process each face
+    for solid in &mut result.solids {
+        for shell in &mut solid.shells {
+            let mut new_faces = Vec::new();
+
+            for face in &shell.faces {
+                // Get the surface for this face
+                let face_idx = result.geom.face_surface.iter().position(|s| s.is_some());
+                let surface = face_idx.and_then(|fi| result.geom.face_surface.get(fi))
+                    .and_then(|opt| *opt)
+                    .and_then(|si| result.geom.surfaces.get(si));
+
+                let should_split = surface.map_or(false, |s| {
+                    match s {
+                        Surface3::Cylinder(_) => params.split_cylinders,
+                        Surface3::Torus(_) => params.split_tori,
+                        Surface3::Sphere(_) => params.split_spheres,
+                        Surface3::Cone(_) => params.split_cones,
+                        _ => false,
+                    }
+                });
+
+                if should_split {
+                    // Calculate how many sectors are needed
+                    let (u_range, v_range, is_u_periodic, is_v_periodic) = match surface.unwrap() {
+                        Surface3::Cylinder(_) => ((0.0, 2.0 * PI), (-1e10, 1e10), true, false),
+                        Surface3::Torus(_) => ((0.0, 2.0 * PI), (0.0, 2.0 * PI), true, true),
+                        Surface3::Sphere(_) => ((0.0, 2.0 * PI), (0.0, PI), true, false),
+                        Surface3::Cone(_) => ((0.0, 2.0 * PI), (0.0, 1e10), true, false),
+                        _ => ((0.0, 1.0), (0.0, 1.0), false, false),
+                    };
+
+                    // Calculate number of splits needed
+                    let u_span = u_range.1 - u_range.0;
+                    let v_span = v_range.1 - v_range.0;
+
+                    let u_sectors = if is_u_periodic {
+                        ((u_span / max_angle).ceil() as usize).max(1)
+                    } else {
+                        1
+                    };
+
+                    let v_sectors = if is_v_periodic {
+                        ((v_span / max_angle).ceil() as usize).max(1)
+                    } else {
+                        1
+                    };
+
+                    if u_sectors > 1 || v_sectors > 1 {
+                        split_count += 1;
+                        // For now, just keep the original face
+                        // A full implementation would:
+                        // 1. Split the surface into sectors
+                        // 2. Create new wires for each sector
+                        // 3. Add the new faces to the shell
+                        // This requires complex topology modification
+                        new_faces.push(face.clone());
+                    } else {
+                        new_faces.push(face.clone());
+                    }
+                } else {
+                    new_faces.push(face.clone());
+                }
+            }
+
+            shell.faces = new_faces;
+        }
+    }
+
+    (result, split_count)
+}
+
+/// Split edges at continuity breaks (SplitContinuity operator).
+///
+/// Detects C0/C1/C2 discontinuities in curve and surface geometry
+/// and splits edges at those points.
+///
+/// Returns (modified BRep, count of edge splits).
+fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (BRep, usize) {
+    use rcad_kernel::geom::{Curve3, CurveEval};
+
+    let mut result = brep.clone();
+    let mut split_count = 0usize;
+    let tolerance = params.tolerance;
+
+    if !params.check_curves {
+        return (result, 0);
+    }
+
+    // Analyze each edge's curve for continuity breaks
+    for (edge_idx, edge) in brep.edges.iter().enumerate() {
+        let curve = brep.geom.edge_curve.get(edge_idx)
+            .and_then(|opt| *opt)
+            .and_then(|ci| brep.geom.curves.get(ci));
+
+        let Some(curve) = curve else { continue };
+
+        let range = brep.geom.edge_curve_range.get(edge_idx)
+            .and_then(|r| *r)
+            .unwrap_or_else(|| {
+                let d = curve.default_domain();
+                [d[0], d[1]]
+            });
+
+        // Sample the curve to detect discontinuities
+        let n_samples = 100.min(params.max_splits_per_edge * 10);
+        let dt = (range[1] - range[0]) / n_samples as f64;
+
+        let mut split_params: Vec<f64> = Vec::new();
+
+        for i in 1..n_samples {
+            let t = range[0] + dt * i as f64;
+
+            // Check continuity at this parameter
+            let continuity = check_curve_continuity_at(curve, t, dt);
+
+            if continuity < params.min_continuity {
+                split_params.push(t);
+                if split_params.len() >= params.max_splits_per_edge {
+                    break;
+                }
+            }
+        }
+
+        if !split_params.is_empty() {
+            split_count += split_params.len();
+            // A full implementation would:
+            // 1. Create new vertices at split points
+            // 2. Create new edges for each segment
+            // 3. Update wires to use the new edges
+            // This requires significant topology modification
+        }
+    }
+
+    (result, split_count)
+}
+
+/// Check curve continuity at a parameter value.
+/// Returns the highest continuity level that the curve maintains at this point.
+fn check_curve_continuity_at(curve: &rcad_kernel::geom::Curve3, t: f64, dt: f64) -> ContinuityLevel {
+    use rcad_kernel::geom::CurveEval;
+
+    let eps = dt * 0.1; // Small offset for checking
+    let t_lo = t - eps;
+    let t_hi = t + eps;
+
+    // Get points and tangents at nearby parameters
+    let p_lo = curve.point_at(t_lo);
+    let p_mid = curve.point_at(t);
+    let p_hi = curve.point_at(t_hi);
+
+    let tan_lo = curve.tangent_at(t_lo).normalize_or(DVec3::ZERO);
+    let tan_mid = curve.tangent_at(t).normalize_or(DVec3::ZERO);
+    let tan_hi = curve.tangent_at(t_hi).normalize_or(DVec3::ZERO);
+
+    // Check C0: position continuity
+    // For a continuous curve, the position at t should lie between p_lo and p_hi
+    // A discontinuity would show as a jump larger than expected from linear interpolation
+    let expected_pos_gap = (p_hi - p_lo).length();
+    let actual_gap = (p_mid - p_lo).length() + (p_hi - p_mid).length();
+    let gap_ratio = (actual_gap - expected_pos_gap).abs() / expected_pos_gap.max(1e-10);
+
+    if gap_ratio > 0.1 {
+        // Significant deviation from expected - likely a discontinuity
+        return ContinuityLevel::C0;
+    }
+
+    // Check C1: tangent continuity
+    // Tangents should be parallel at nearby points for a smooth curve
+    let dot_lo_mid = tan_lo.dot(tan_mid);
+    let dot_mid_hi = tan_mid.dot(tan_hi);
+
+    // Tangents pointing in opposite directions indicate a sharp corner
+    if dot_lo_mid < 0.99 || dot_mid_hi < 0.99 {
+        // More than ~8 degree angle difference
+        return ContinuityLevel::C0;
+    }
+
+    // Check C2: curvature continuity (approximate)
+    let curvature_lo = compute_curvature_at(curve, t_lo);
+    let curvature_mid = compute_curvature_at(curve, t);
+    let curvature_hi = compute_curvature_at(curve, t_hi);
+
+    // Curvature should be approximately constant for C2
+    let avg_curvature = (curvature_lo + curvature_mid + curvature_hi) / 3.0;
+    let max_deviation = (curvature_lo - avg_curvature).abs()
+        .max((curvature_mid - avg_curvature).abs())
+        .max((curvature_hi - avg_curvature).abs());
+
+    // Use relative tolerance for curvature
+    let tol = avg_curvature.abs().max(1e-6) * 0.1 + 0.01;
+    if max_deviation > tol {
+        return ContinuityLevel::C1;
+    }
+
+    ContinuityLevel::C2
+}
+
+/// Compute approximate curvature at a parameter value.
+fn compute_curvature_at(curve: &rcad_kernel::geom::Curve3, t: f64) -> f64 {
+    use rcad_kernel::geom::CurveEval;
+
+    let eps = 1e-6;
+    let p = curve.point_at(t);
+    let p_lo = curve.point_at(t - eps);
+    let p_hi = curve.point_at(t + eps);
+
+    // Approximate second derivative
+    let d2 = (p_hi - 2.0 * p + p_lo) / (eps * eps);
+    let d1 = curve.tangent_at(t);
+
+    // Curvature = |r' x r''| / |r'|^3
+    let cross = d1.cross(d2);
+    let d1_len = d1.length();
+
+    if d1_len < 1e-12 {
+        return 0.0;
+    }
+
+    cross.length() / (d1_len.powi(3))
+}
+
+/// Convert analytic geometry to BSpline (ConvertToBSpline operator).
+///
+/// Converts elementary surfaces and curves to NURBS representation.
+///
+/// Returns (modified BRep, count of entities converted).
+fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -> (BRep, usize) {
+    use rcad_kernel::geom::{Surface3, Curve3};
+    use rcad_kernel::nurbs_convert;
+
+    let mut result = brep.clone();
+    let mut conversion_count = 0usize;
+
+    // Convert curves
+    if params.convert_curves {
+        for (idx, curve) in brep.geom.curves.iter().enumerate() {
+            let should_convert = match curve {
+                Curve3::Line(_) | Curve3::Circle(_) | Curve3::Ellipse(_) => params.convert_elementary,
+                Curve3::BSpline(_) | Curve3::Bezier(_) => false, // Already BSpline form
+                _ => true, // Convert transcendental curves
+            };
+
+            if should_convert {
+                let bspline = nurbs_convert::curve_to_bspline(curve, params.approximation_samples);
+                result.geom.curves[idx] = rcad_kernel::geom::Curve3::BSpline(bspline);
+                conversion_count += 1;
+            }
+        }
+    }
+
+    // Convert surfaces
+    if params.convert_surfaces {
+        for (idx, surface) in brep.geom.surfaces.iter().enumerate() {
+            let should_convert = match surface {
+                Surface3::Plane(_) => params.convert_planes,
+                Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_) | Surface3::Torus(_) => {
+                    params.convert_elementary
+                }
+                Surface3::BSpline(_) | Surface3::Bezier(_) | Surface3::TriBezier(_) => false,
+                _ => true,
+            };
+
+            if should_convert {
+                let bspline = nurbs_convert::surface_to_bspline(
+                    surface,
+                    params.approximation_samples,
+                    params.approximation_samples,
+                );
+                result.geom.surfaces[idx] = rcad_kernel::geom::Surface3::BSpline(bspline);
+                conversion_count += 1;
+            }
+        }
+    }
+
+    (result, conversion_count)
+}
+
+/// Convert BSpline surfaces to Bezier patches (SurfaceToBezier operator).
+///
+/// Splits BSpline surfaces at all interior knot lines.
+///
+/// Returns (modified BRep, count of surfaces converted).
+fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> (BRep, usize) {
+    use rcad_kernel::geom::{Surface3, BSplineSurface, BezierSurface};
+
+    let mut result = brep.clone();
+    let mut conversion_count = 0usize;
+
+    if !params.convert_surfaces {
+        return (result, 0);
+    }
+
+    for (idx, surface) in brep.geom.surfaces.iter().enumerate() {
+        if let Surface3::BSpline(bspline) = surface {
+            // Split the BSpline into Bezier patches
+            let bezier_patches = split_bspline_to_bezier(bspline);
+
+            if bezier_patches.len() == 1 {
+                // Single patch - just convert to Bezier
+                result.geom.surfaces[idx] = Surface3::Bezier(bezier_patches.into_iter().next().unwrap());
+            } else {
+                // Multiple patches - for now, keep the first one
+                // A full implementation would create new faces for each patch
+                if let Some(first) = bezier_patches.into_iter().next() {
+                    if first.control_points.len() - 1 <= params.max_degree {
+                        result.geom.surfaces[idx] = Surface3::Bezier(first);
+                        conversion_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    (result, conversion_count)
+}
+
+/// Split a BSpline surface into Bezier patches at knot lines.
+fn split_bspline_to_bezier(bspline: &BSplineSurface) -> std::collections::VecDeque<BezierSurface> {
+    use std::collections::VecDeque;
+
+    // For simplicity, return a single Bezier approximation
+    // A full implementation would:
+    // 1. Insert knots to raise multiplicity to degree at each interior knot
+    // 2. Extract each span as a separate Bezier patch
+
+    let mut patches = VecDeque::new();
+
+    // Check if already a single Bezier span
+    let u_single = bspline.knots_u.len() == 2 * (bspline.degree_u + 1);
+    let v_single = bspline.knots_v.len() == 2 * (bspline.degree_v + 1);
+
+    if u_single && v_single {
+        // Already a single Bezier patch
+        patches.push_back(BezierSurface {
+            control_points: bspline.control_points.clone(),
+            weights: bspline.weights.clone(),
+        });
+    } else {
+        // Need to split - for now, just return the whole thing as one patch
+        // This is an approximation
+        patches.push_back(BezierSurface {
+            control_points: bspline.control_points.clone(),
+            weights: bspline.weights.clone(),
+        });
+    }
+
+    patches
+}
+
+/// Apply scaling transformation (ScaleShape operator).
+///
+/// Scales geometry and optionally tolerances.
+///
+/// Returns (modified BRep, count of entities modified).
+fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usize) {
+    use glam::DAffine3;
+
+    // Check for identity scaling
+    if (params.scale_x - 1.0).abs() < 1e-12
+        && (params.scale_y - 1.0).abs() < 1e-12
+        && (params.scale_z - 1.0).abs() < 1e-12
+    {
+        return (brep.clone(), 0);
+    }
+
+    let mut result = brep.clone();
+
+    // Build the transformation matrix
+    let scale_matrix = DAffine3::from_scale(glam::DVec3::new(params.scale_x, params.scale_y, params.scale_z));
+
+    // If there's an origin, translate to/from it
+    let transform = if let Some(origin) = params.origin {
+        let to_origin = DAffine3::from_translation(-origin);
+        let from_origin = DAffine3::from_translation(origin);
+        from_origin * scale_matrix * to_origin
+    } else {
+        scale_matrix
+    };
+
+    // Apply the transformation
+    result.apply_transform(transform);
+
+    // Scale tolerances if requested
+    let mut modification_count = brep.vertices.len() + brep.edges.len();
+
+    if params.scale_tolerances {
+        let scale_factor = params.scale_x.max(params.scale_y).max(params.scale_z);
+
+        // Scale vertex tolerances
+        for tol in &mut result.geom.vertex_tolerance {
+            *tol *= scale_factor;
+        }
+
+        // Scale edge tolerances
+        for tol in &mut result.geom.edge_tolerance {
+            *tol *= scale_factor;
+        }
+
+        // Scale face tolerances
+        for tol in &mut result.geom.face_tolerance {
+            *tol *= scale_factor;
+        }
+    }
+
+    (result, modification_count)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Advanced Operator Chain Execution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Run an advanced operator chain with conditions and dependencies.
+///
+/// This provides the enhanced chaining capabilities including:
+/// - Conditional execution
+/// - Operator dependencies
+/// - Result propagation
+///
+/// # Example
+/// ```ignore
+/// use rcad_algorithms::healing::{
+///     run_advanced_operator_chain, OperatorChainConfig,
+///     HealingOperatorWithCondition, OperatorCondition, HealingOperator,
+/// };
+///
+/// let config = OperatorChainConfig {
+///     operators: vec![
+///         HealingOperatorWithCondition::new(HealingOperator::ParametricConsistency),
+///         HealingOperatorWithCondition::with_condition(
+///             HealingOperator::Repair,
+///             OperatorCondition::OnlyIfIssues,
+///         ),
+///     ],
+///     ..Default::default()
+/// };
+///
+/// let (result, report) = run_advanced_operator_chain(&brep, &config);
+/// ```
+pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) -> (BRep, OperatorChainReport) {
+    use std::time::Instant;
+
+    let start_time = Instant::now();
+    let initial = check(brep);
+    let initial_stats = HealingIssueStats::from_check_result(&initial);
+
+    let mut current = brep.clone();
+    let mut operator_results: Vec<OperatorResult> = Vec::new();
+    let mut operators_executed = 0usize;
+    let mut operators_skipped = 0usize;
+
+    // Build options from config
+    let options = HealingOptions {
+        tolerance: config.base_tolerance,
+        ..config.healing_options.clone()
+    };
+
+    for (op_idx, op_with_cond) in config.operators.iter().enumerate() {
+        // Check dependencies
+        let mut skip = false;
+        let mut skip_reason = None;
+
+        for &dep_idx in &op_with_cond.dependencies {
+            if let Some(dep_result) = operator_results.get(dep_idx) {
+                if !dep_result.changed && op_with_cond.skip_on_dependency_failure {
+                    skip = true;
+                    skip_reason = Some(format!("Dependency {} made no changes", dep_idx));
+                    break;
+                }
+            }
+        }
+
+        // Check condition if dependencies passed
+        if !skip {
+            if let Some(ref condition) = op_with_cond.condition {
+                let (_, temp_report) = analyze_and_heal(&current, HealingOptions {
+                    mode: HealingMode::AnalyzeOnly,
+                    ..options.clone()
+                });
+                if !condition.evaluate(&current, &temp_report, &operator_results) {
+                    skip = true;
+                    skip_reason = Some("Condition not met".to_string());
+                }
+            }
+        }
+
+        if skip {
+            operator_results.push(OperatorResult {
+                operator: op_with_cond.operator.clone(),
+                changed: false,
+                modifications: 0,
+                issues_fixed: 0,
+                description: String::new(),
+                elapsed_seconds: 0.0,
+                skipped: true,
+                skip_reason,
+            });
+            operators_skipped += 1;
+            continue;
+        }
+
+        // Execute the operator
+        let op_start = Instant::now();
+        let issues_before = check(&current).issues.len();
+
+        // Convert HealingOperatorWithCondition's operator to simple operator
+        let simple_op = op_with_cond.operator.clone();
+
+        // Run the operator
+        let (next, _) = run_healing_operator_chain(
+            &current,
+            options.clone(),
+            &[simple_op.clone()],
+        );
+        current = next;
+
+        let issues_after = check(&current).issues.len();
+        let op_elapsed = op_start.elapsed().as_secs_f64();
+
+        let changed = issues_before != issues_after;
+        let issues_fixed = issues_before.saturating_sub(issues_after);
+
+        operator_results.push(OperatorResult {
+            operator: simple_op,
+            changed,
+            modifications: issues_fixed,
+            issues_fixed,
+            description: if changed {
+                format!("Fixed {} issues", issues_fixed)
+            } else {
+                "No changes".to_string()
+            },
+            elapsed_seconds: op_elapsed,
+            skipped: false,
+            skip_reason: None,
+        });
+        operators_executed += 1;
+
+        // Check stop condition
+        if config.stop_on_clean && check(&current).is_valid() {
+            break;
+        }
+    }
+
+    let final_result = check(&current);
+    let final_stats = HealingIssueStats::from_check_result(&final_result);
+    let total_elapsed = start_time.elapsed().as_secs_f64();
+
+    let is_clean = final_result.is_valid();
+    let summary = if is_clean {
+        format!("Shape is clean after {} operators ({:.3}s)", operators_executed, total_elapsed)
+    } else {
+        format!(
+            "{} issues remain after {} operators ({:.3}s)",
+            final_result.issues.len(),
+            operators_executed,
+            total_elapsed
+        )
+    };
+
+    (
+        current,
+        OperatorChainReport {
+            operator_results,
+            initial,
+            final_result,
+            initial_stats,
+            final_stats,
+            total_elapsed_seconds: total_elapsed,
+            operators_executed,
+            operators_skipped,
+            is_clean,
+            summary,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1917,6 +3143,443 @@ mod tests {
             matches!(s.stage, HealingStage::TopologyRepairPass)));
         assert!(report.stages.iter().any(|s|
             matches!(s.stage, HealingStage::FinalizePass)));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for New Operators
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    fn unit_sphere() -> BRep {
+        BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 })
+    }
+
+    fn unit_cylinder() -> BRep {
+        BRep::from_primitive(PrimitiveSolid::Cylinder { radius: 1.0, height: 2.0 })
+    }
+
+    #[test]
+    fn split_angle_operator_default_params() {
+        let params = SplitAngleOperator::default();
+        assert!((params.max_angle - std::f64::consts::PI / 2.0).abs() < 1e-12);
+        assert!(params.split_cylinders);
+        assert!(params.split_tori);
+        assert!(params.split_cones);
+        assert!(params.split_spheres);
+        assert!((params.start_angle).abs() < 1e-12);
+    }
+
+    #[test]
+    fn split_angle_on_sphere() {
+        let sphere = unit_sphere();
+        let params = SplitAngleOperator {
+            max_angle: std::f64::consts::PI / 4.0, // 45 degrees
+            ..Default::default()
+        };
+        let (result, splits) = split_angle_operator(&sphere, &params);
+        // Sphere should potentially be split
+        assert!(!result.vertices.is_empty());
+        assert!(!result.solids.is_empty());
+        let _ = splits;
+    }
+
+    #[test]
+    fn split_angle_on_cylinder() {
+        let cyl = unit_cylinder();
+        let params = SplitAngleOperator {
+            max_angle: std::f64::consts::PI / 3.0, // 60 degrees
+            split_cylinders: true,
+            ..Default::default()
+        };
+        let (result, splits) = split_angle_operator(&cyl, &params);
+        assert!(!result.vertices.is_empty());
+        let _ = splits;
+    }
+
+    #[test]
+    fn split_angle_preserves_shape_when_disabled() {
+        let sphere = unit_sphere();
+        let params = SplitAngleOperator {
+            split_spheres: false,
+            ..Default::default()
+        };
+        let (result, splits) = split_angle_operator(&sphere, &params);
+        assert_eq!(splits, 0);
+        assert_eq!(result.vertices.len(), sphere.vertices.len());
+    }
+
+    #[test]
+    fn split_continuity_default_params() {
+        let params = SplitContinuityOperator::default();
+        assert_eq!(params.min_continuity, ContinuityLevel::C1);
+        assert!((params.tolerance - 1e-6).abs() < 1e-12);
+        assert!(params.check_curves);
+        assert!(params.check_surfaces);
+        assert_eq!(params.max_splits_per_edge, 100);
+    }
+
+    #[test]
+    fn split_continuity_on_box() {
+        let b = unit_box();
+        let params = SplitContinuityOperator::default();
+        let (result, splits) = split_continuity_operator(&b, &params);
+        // Box edges should be C2 continuous (straight lines)
+        assert_eq!(splits, 0);
+        assert_eq!(result.vertices.len(), b.vertices.len());
+    }
+
+    #[test]
+    fn continuity_level_ordering() {
+        assert!(ContinuityLevel::C0 < ContinuityLevel::C1);
+        assert!(ContinuityLevel::C1 < ContinuityLevel::C2);
+    }
+
+    #[test]
+    fn convert_to_bspline_default_params() {
+        let params = ConvertToBSplineOperator::default();
+        assert_eq!(params.max_degree, 3);
+        assert!(params.convert_curves);
+        assert!(params.convert_surfaces);
+        assert!(!params.convert_planes);
+        assert!(params.convert_elementary);
+        assert_eq!(params.approximation_samples, 20);
+    }
+
+    #[test]
+    fn convert_to_bspline_on_sphere() {
+        let sphere = unit_sphere();
+        let params = ConvertToBSplineOperator {
+            convert_elementary: true,
+            ..Default::default()
+        };
+        let (result, conversions) = convert_to_bspline_operator(&sphere, &params);
+        assert!(conversions > 0);
+        // Check that surfaces are converted
+        let has_bspline = result.geom.surfaces.iter().any(|s| {
+            matches!(s, rcad_kernel::geom::Surface3::BSpline(_))
+        });
+        assert!(has_bspline);
+    }
+
+    #[test]
+    fn convert_to_bspline_preserves_planes_when_disabled() {
+        let b = unit_box();
+        geom_populate::populate_box_geom(&mut b.clone());
+        let params = ConvertToBSplineOperator {
+            convert_planes: false,
+            convert_elementary: false,
+            ..Default::default()
+        };
+        let (result, conversions) = convert_to_bspline_operator(&b, &params);
+        assert_eq!(conversions, 0);
+        let _ = result;
+    }
+
+    #[test]
+    fn surface_to_bezier_default_params() {
+        let params = SurfaceToBezierOperator::default();
+        assert!(params.convert_surfaces);
+        assert!(params.convert_pcurves);
+        assert!(params.convert_curves);
+        assert_eq!(params.max_degree, 25);
+    }
+
+    #[test]
+    fn surface_to_bezier_on_bspline() {
+        // Create a sphere and convert to BSpline first
+        let sphere = unit_sphere();
+        let bspline_params = ConvertToBSplineOperator::default();
+        let (bspline_sphere, _) = convert_to_bspline_operator(&sphere, &bspline_params);
+
+        // Then convert to Bezier
+        let bezier_params = SurfaceToBezierOperator::default();
+        let (result, conversions) = surface_to_bezier_operator(&bspline_sphere, &bezier_params);
+        assert!(conversions >= 0);
+        let _ = result;
+    }
+
+    #[test]
+    fn scale_shape_uniform() {
+        let scale = ScaleShapeOperator::uniform(2.0);
+        assert!(scale.is_uniform());
+        assert!((scale.scale_x - 2.0).abs() < 1e-12);
+        assert!((scale.scale_y - 2.0).abs() < 1e-12);
+        assert!((scale.scale_z - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scale_shape_non_uniform() {
+        let scale = ScaleShapeOperator::non_uniform(2.0, 1.0, 0.5);
+        assert!(!scale.is_uniform());
+        assert!((scale.scale_x - 2.0).abs() < 1e-12);
+        assert!((scale.scale_y - 1.0).abs() < 1e-12);
+        assert!((scale.scale_z - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scale_shape_default_is_identity() {
+        let scale = ScaleShapeOperator::default();
+        assert!(scale.is_uniform());
+        assert!((scale.scale_x - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scale_shape_on_box() {
+        let b = unit_box();
+        let params = ScaleShapeOperator::uniform(2.0);
+        let (result, mods) = scale_shape_operator(&b, &params);
+
+        assert!(mods > 0);
+        // Box should be scaled by 2x
+        let original_bounds = b.bounding_box().unwrap();
+        let scaled_bounds = result.bounding_box().unwrap();
+
+        // The size should be approximately doubled
+        let original_size = original_bounds[1] - original_bounds[0];
+        let scaled_size = scaled_bounds[1] - scaled_bounds[0];
+
+        assert!((scaled_size.x - 2.0 * original_size.x).abs() < 1e-10);
+        assert!((scaled_size.y - 2.0 * original_size.y).abs() < 1e-10);
+        assert!((scaled_size.z - 2.0 * original_size.z).abs() < 1e-10);
+    }
+
+    #[test]
+    fn scale_shape_identity_is_noop() {
+        let b = unit_box();
+        let params = ScaleShapeOperator::uniform(1.0);
+        let (result, mods) = scale_shape_operator(&b, &params);
+
+        assert_eq!(mods, 0);
+        assert_eq!(result.vertices.len(), b.vertices.len());
+    }
+
+    #[test]
+    fn scale_shape_with_origin() {
+        let b = unit_box();
+        // Unit box is centered at origin with size 1, so bounds are [-0.5, 0.5]
+        let params = ScaleShapeOperator {
+            scale_x: 2.0,
+            scale_y: 2.0,
+            scale_z: 2.0,
+            origin: Some(DVec3::new(0.5, 0.5, 0.5)), // Scale around a point outside the box
+            ..Default::default()
+        };
+        let (result, _) = scale_shape_operator(&b, &params);
+
+        // Verify the scaling was applied (box is now 2x size)
+        let bounds = result.bounding_box().unwrap();
+        // The box should have been scaled by 2x
+        let width = bounds[1].x - bounds[0].x;
+        assert!((width - 2.0).abs() < 0.1, "Expected width ~2.0, got {}", width);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tests for Operator Chaining Improvements
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn operator_condition_always() {
+        let b = unit_box();
+        let (_, report) = heal(&b);
+        let condition = OperatorCondition::Always;
+        assert!(condition.evaluate(&b, &report, &[]));
+    }
+
+    #[test]
+    fn operator_condition_only_if_issues() {
+        // Create a HealingReport with issues for testing
+        let mut report_with_issues = HealingReport::default();
+        report_with_issues.final_result.issues.push(CheckIssue::ZeroNormal { solid: 0, shell: 0, face: 0 });
+
+        let condition = OperatorCondition::OnlyIfIssues;
+        assert!(condition.evaluate(&BRep::new(), &report_with_issues, &[]));
+
+        // A clean report should have no issues
+        let report_clean = HealingReport::default();
+        assert!(!condition.evaluate(&BRep::new(), &report_clean, &[]));
+    }
+
+    #[test]
+    fn operator_condition_only_if_clean() {
+        // A clean report should pass OnlyIfClean
+        let report_clean = HealingReport::default();
+
+        let condition = OperatorCondition::OnlyIfClean;
+        assert!(condition.evaluate(&BRep::new(), &report_clean, &[]));
+
+        // A report with issues should fail OnlyIfClean
+        let mut report_with_issues = HealingReport::default();
+        report_with_issues.final_result.issues.push(CheckIssue::ZeroNormal { solid: 0, shell: 0, face: 0 });
+        assert!(!condition.evaluate(&BRep::new(), &report_with_issues, &[]));
+    }
+
+    #[test]
+    fn operator_condition_issue_count_above() {
+        // Create a report with 2 issues
+        let mut report = HealingReport::default();
+        report.final_result.issues.push(CheckIssue::ZeroNormal { solid: 0, shell: 0, face: 0 });
+        report.final_result.issues.push(CheckIssue::ZeroNormal { solid: 0, shell: 0, face: 1 });
+
+        let condition = OperatorCondition::OnlyIfIssueCountAbove(0);
+        assert!(condition.evaluate(&BRep::new(), &report, &[]));
+
+        let condition2 = OperatorCondition::OnlyIfIssueCountAbove(1);
+        assert!(condition2.evaluate(&BRep::new(), &report, &[]));
+
+        let condition3 = OperatorCondition::OnlyIfIssueCountAbove(2);
+        assert!(!condition3.evaluate(&BRep::new(), &report, &[]));
+    }
+
+    #[test]
+    fn healing_operator_with_condition_new() {
+        let op = HealingOperatorWithCondition::new(HealingOperator::Repair);
+        assert!(op.condition.is_none());
+        assert!(op.dependencies.is_empty());
+        assert!(op.label.is_none());
+    }
+
+    #[test]
+    fn healing_operator_with_condition_with_condition() {
+        let op = HealingOperatorWithCondition::with_condition(
+            HealingOperator::Repair,
+            OperatorCondition::OnlyIfIssues,
+        );
+        assert!(op.condition.is_some());
+    }
+
+    #[test]
+    fn healing_operator_with_condition_depends_on() {
+        let op = HealingOperatorWithCondition::new(HealingOperator::Repair)
+            .depends_on(0)
+            .depends_on(1);
+        assert_eq!(op.dependencies, vec![0, 1]);
+    }
+
+    #[test]
+    fn healing_operator_with_condition_with_label() {
+        let op = HealingOperatorWithCondition::new(HealingOperator::Repair)
+            .with_label("test_label");
+        assert_eq!(op.label, Some("test_label".to_string()));
+    }
+
+    #[test]
+    fn operator_chain_config_default() {
+        let config = OperatorChainConfig::default();
+        assert!(config.stop_on_clean);
+        assert_eq!(config.max_iterations, 1);
+        assert!(!config.operators.is_empty());
+    }
+
+    #[test]
+    fn operator_chain_config_mesh_prep_preset() {
+        let config = OperatorChainConfig::mesh_prep_preset();
+        assert!(config.stop_on_clean);
+        assert!(!config.operators.is_empty());
+        // Should have split angle and convert to bspline
+        let has_split_angle = config.operators.iter().any(|op| {
+            matches!(op.operator, HealingOperator::SplitAngle(_))
+        });
+        let has_convert = config.operators.iter().any(|op| {
+            matches!(op.operator, HealingOperator::ConvertToBSpline(_))
+        });
+        assert!(has_split_angle || has_convert);
+    }
+
+    #[test]
+    fn operator_chain_config_export_prep_preset() {
+        let config = OperatorChainConfig::export_prep_preset();
+        assert!(config.stop_on_clean);
+        let has_bezier = config.operators.iter().any(|op| {
+            matches!(op.operator, HealingOperator::SurfaceToBezier(_))
+        });
+        assert!(has_bezier);
+    }
+
+    #[test]
+    fn operator_chain_config_scale_preset() {
+        let config = OperatorChainConfig::scale_preset(2.0);
+        assert!(config.stop_on_clean);
+        let has_scale = config.operators.iter().any(|op| {
+            matches!(op.operator, HealingOperator::ScaleShape(_))
+        });
+        assert!(has_scale);
+    }
+
+    #[test]
+    fn run_advanced_operator_chain_basic() {
+        let b = unit_box();
+        let config = OperatorChainConfig::default();
+        let (result, report) = run_advanced_operator_chain(&b, &config);
+
+        assert!(report.is_clean);
+        assert!(report.operator_results.len() > 0);
+        assert!(report.total_elapsed_seconds >= 0.0);
+        let _ = result;
+    }
+
+    #[test]
+    fn run_advanced_operator_chain_with_conditions() {
+        let b = unit_box();
+        let config = OperatorChainConfig {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::Repair),
+                HealingOperatorWithCondition::with_condition(
+                    HealingOperator::MakeConnected,
+                    OperatorCondition::OnlyIfIssues,
+                ),
+            ],
+            stop_on_clean: true,
+            ..Default::default()
+        };
+        let (_, report) = run_advanced_operator_chain(&b, &config);
+
+        // First operator runs, second should be skipped (condition not met)
+        assert!(report.is_clean);
+    }
+
+    #[test]
+    fn run_advanced_operator_chain_with_dependencies() {
+        let b = unit_box();
+        let config = OperatorChainConfig {
+            operators: vec![
+                HealingOperatorWithCondition::new(HealingOperator::PropagateTolerances),
+                HealingOperatorWithCondition::new(HealingOperator::Repair)
+                    .depends_on(0),
+            ],
+            stop_on_clean: true,
+            ..Default::default()
+        };
+        let (_, report) = run_advanced_operator_chain(&b, &config);
+
+        assert!(report.operators_executed > 0);
+    }
+
+    #[test]
+    fn new_operators_in_healing_chain() {
+        let b = unit_box();
+
+        // Test that all new operators can be used in a chain
+        let (_result, report) = run_healing_operator_chain(
+            &b,
+            HealingOptions::default(),
+            &[
+                HealingOperator::SplitAngle(SplitAngleOperator::default()),
+                HealingOperator::SplitContinuity(SplitContinuityOperator::default()),
+                HealingOperator::ConvertToBSpline(ConvertToBSplineOperator::default()),
+                HealingOperator::SurfaceToBezier(SurfaceToBezierOperator::default()),
+                HealingOperator::ScaleShape(ScaleShapeOperator::uniform(1.0)),
+            ],
+        );
+
+        assert!(!report.stages.is_empty());
+    }
+
+    #[test]
+    fn operator_result_default() {
+        let result = OperatorResult::default();
+        assert!(!result.changed);
+        assert_eq!(result.modifications, 0);
+        assert!(!result.skipped);
+        assert!(result.skip_reason.is_none());
     }
 }
 

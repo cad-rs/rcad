@@ -6501,6 +6501,216 @@ fn resolve_surface_for_trim_ops(parsed: &ParsedStep, surface_ref: u64) -> Option
     resolve_surface(parsed, surface_ref)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONVERSION FUNCTIONS: Kernel annotation types to STEP types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use rcad_kernel::annotation::{
+    Annotation, AnnotationKind, Note, NoteCategory, NoteTarget, View, ViewProjection,
+};
+
+/// Convert a kernel View to STEP view entities.
+///
+/// Returns (StepView, StepCameraModelD3, StepViewVolume) for writing to STEP.
+pub fn view_to_step_entities(view: &View, start_id: u64) -> (StepView, StepCameraModelD3, StepViewVolume) {
+    let view_id = start_id;
+    let camera_id = start_id + 1;
+    let volume_id = start_id + 2;
+
+    let step_view = StepView {
+        entity_id: view_id,
+        name: Some(view.name.clone()),
+        description: None,
+        camera_model_id: Some(camera_id),
+        view_type: Some(view.name.clone()),
+    };
+
+    let step_camera = StepCameraModelD3 {
+        entity_id: camera_id,
+        name: Some(view.name.clone()),
+        view_reference_system_id: None, // Would need AXIS2_PLACEMENT_3D
+        view_volume_id: Some(volume_id),
+        perspective: view.projection == ViewProjection::Perspective,
+    };
+
+    let volume_type = match view.projection {
+        ViewProjection::Orthographic => ViewVolumeType::Orthographic,
+        ViewProjection::Perspective => ViewVolumeType::Perspective,
+    };
+
+    let step_volume = StepViewVolume {
+        entity_id: volume_id,
+        name: Some(view.name.clone()),
+        volume_type,
+        view_center: Some(view.target.into()),
+        view_plane_distance: Some(view.distance()),
+        up_direction: Some(view.up_vector.into()),
+        view_window_width: Some(view.view_width),
+        view_window_height: Some(view.view_height),
+    };
+
+    (step_view, step_camera, step_volume)
+}
+
+/// Convert a kernel Note to a STEP note entity.
+pub fn note_to_step(note: &Note) -> StepNote {
+    StepNote {
+        entity_id: note.id,
+        name: Some(note.name.clone()),
+        description: note.author.clone(),
+        text: Some(note.text.clone()),
+        annotation_plane_id: None,
+        associated_geometry_id: None,
+    }
+}
+
+/// Convert a kernel Annotation to STEP note and related entities.
+///
+/// Returns a StepNote and optionally annotation plane and occurrence information.
+pub fn annotation_to_step_entities(
+    annotation: &Annotation,
+    _start_id: u64,
+) -> (StepNote, Option<StepAnnotationPlane>, Option<StepAnnotationOccurrence>) {
+    let step_note = StepNote {
+        entity_id: annotation.id,
+        name: Some(annotation.name.clone()),
+        description: None,
+        text: Some(annotation.text.clone()),
+        annotation_plane_id: None,
+        associated_geometry_id: None,
+    };
+
+    // For now, we don't create annotation planes/occurrences for simple annotations
+    // These would be needed for more complex PMI representations
+    (step_note, None, None)
+}
+
+/// Convert StepDocumentMetadata views to kernel View objects.
+pub fn step_views_to_kernel(
+    views: &[StepView],
+    cameras: &[StepCameraModelD3],
+    volumes: &[StepViewVolume],
+) -> Vec<View> {
+    views
+        .iter()
+        .filter_map(|step_view| {
+            // Find corresponding camera
+            let camera = step_view.camera_model_id.and_then(|cam_id| {
+                cameras.iter().find(|c| c.entity_id == cam_id || c.entity_id == step_view.entity_id)
+            });
+
+            // Find corresponding view volume
+            let volume = camera.and_then(|cam| {
+                cam.view_volume_id.and_then(|vol_id| {
+                    volumes.iter().find(|v| v.entity_id == vol_id)
+                })
+            });
+
+            let mut view = View::new(step_view.entity_id, step_view.name.clone().unwrap_or_default());
+
+            if let Some(cam) = camera {
+                view.projection = if cam.perspective {
+                    ViewProjection::Perspective
+                } else {
+                    ViewProjection::Orthographic
+                };
+            }
+
+            if let Some(vol) = volume {
+                if let Some(center) = vol.view_center {
+                    view.target = glam::DVec3::from_array(center);
+                }
+                if let Some(up) = vol.up_direction {
+                    view.up_vector = glam::DVec3::from_array(up);
+                }
+                if let Some(width) = vol.view_window_width {
+                    view.view_width = width;
+                }
+                if let Some(height) = vol.view_window_height {
+                    view.view_height = height;
+                }
+                if let Some(dist) = vol.view_plane_distance {
+                    // Calculate camera position from target and distance
+                    let dir = view.view_direction();
+                    if dir.length() > 0.0 {
+                        view.camera_position = view.target - dir.normalize() * dist;
+                    }
+                }
+                view.clipping = rcad_kernel::annotation::ViewClipping::new(0.1, 10000.0);
+            }
+
+            view.custom = true;
+            Some(view)
+        })
+        .collect()
+}
+
+/// Convert StepDocumentMetadata notes to kernel Note objects.
+pub fn step_notes_to_kernel(notes: &[StepNote]) -> Vec<Note> {
+    notes
+        .iter()
+        .filter_map(|step_note| {
+            let category = match step_note.name.as_deref() {
+                Some(name) if name.contains("warning") || name.contains("Warning") => NoteCategory::Warning,
+                Some(name) if name.contains("requirement") || name.contains("Requirement") => NoteCategory::Requirement,
+                Some(name) if name.contains("comment") || name.contains("Comment") => NoteCategory::Comment,
+                Some(name) if name.contains("approval") || name.contains("Approval") => NoteCategory::Approval,
+                _ => NoteCategory::Info,
+            };
+
+            let mut note = Note::new(
+                step_note.entity_id,
+                step_note.name.clone().unwrap_or_default(),
+                step_note.text.clone().unwrap_or_default(),
+            )
+            .with_category(category);
+
+            if let Some(ref author) = step_note.description {
+                note = note.with_author(author.clone());
+            }
+
+            Some(note)
+        })
+        .collect()
+}
+
+/// Create StepAp242Metadata from kernel annotation store.
+pub fn annotation_store_to_step_metadata(
+    store: &rcad_kernel::annotation::AnnotationStore,
+) -> StepAp242Metadata {
+    let mut metadata = StepAp242Metadata::default();
+
+    // Convert views
+    let mut next_id = 1000u64; // Start IDs high to avoid conflicts
+    for view in &store.views {
+        let (step_view, step_camera, step_volume) = view_to_step_entities(view, next_id);
+        metadata.views.push(step_view);
+        metadata.cameras.push(step_camera);
+        metadata.view_volumes.push(step_volume);
+        next_id += 10;
+    }
+
+    // Convert notes
+    for note in &store.xc_notes {
+        metadata.notes.push(note_to_step(note));
+    }
+
+    // Convert annotations
+    for annotation in &store.annotations {
+        let (step_note, plane, occurrence) = annotation_to_step_entities(annotation, next_id);
+        metadata.notes.push(step_note);
+        if let Some(plane) = plane {
+            metadata.annotation_planes.push(plane);
+        }
+        if let Some(occurrence) = occurrence {
+            metadata.annotation_occurrences.push(occurrence);
+        }
+        next_id += 10;
+    }
+
+    metadata
+}
+
 #[cfg(test)]
 mod tagged_surface_tests {
     use super::*;
@@ -9180,5 +9390,128 @@ END-ISO-10303-21;
         assert_eq!(volumes.len(), 1);
         assert_eq!(planes.len(), 1);
         assert_eq!(curves.len(), 1);
+    }
+
+    // ── Conversion function tests ───────────────────────────────────────────────
+
+    #[test]
+    fn view_to_step_entities_converts_correctly() {
+        use rcad_kernel::annotation::{View, ViewProjection};
+
+        let view = View::isometric(1)
+            .with_position(glam::DVec3::new(100.0, 100.0, 100.0))
+            .with_target(glam::DVec3::ZERO)
+            .with_projection(ViewProjection::Perspective)
+            .with_fov(60.0);
+
+        let (step_view, step_camera, step_volume) = view_to_step_entities(&view, 1000);
+
+        assert_eq!(step_view.entity_id, 1000);
+        assert_eq!(step_view.name.as_deref(), Some("Isometric"));
+        assert_eq!(step_camera.entity_id, 1001);
+        assert!(step_camera.perspective);
+        assert_eq!(step_volume.entity_id, 1002);
+        assert_eq!(step_volume.volume_type, ViewVolumeType::Perspective);
+    }
+
+    #[test]
+    fn note_to_step_converts_correctly() {
+        use rcad_kernel::annotation::{Note, NoteCategory};
+
+        let note = Note::new(42, "TestNote", "This is a test note")
+            .with_category(NoteCategory::Warning)
+            .with_author("John Doe");
+
+        let step_note = note_to_step(&note);
+
+        assert_eq!(step_note.entity_id, 42);
+        assert_eq!(step_note.name.as_deref(), Some("TestNote"));
+        assert_eq!(step_note.text.as_deref(), Some("This is a test note"));
+        assert_eq!(step_note.description.as_deref(), Some("John Doe"));
+    }
+
+    #[test]
+    fn step_views_to_kernel_converts_correctly() {
+        let step_views = vec![StepView {
+            entity_id: 100,
+            name: Some("Front".to_string()),
+            description: None,
+            camera_model_id: Some(100),
+            view_type: Some("front".to_string()),
+        }];
+
+        let step_cameras = vec![StepCameraModelD3 {
+            entity_id: 100,
+            name: Some("Front".to_string()),
+            view_reference_system_id: None,
+            view_volume_id: Some(200),
+            perspective: false,
+        }];
+
+        let step_volumes = vec![StepViewVolume {
+            entity_id: 200,
+            name: Some("ortho".to_string()),
+            volume_type: ViewVolumeType::Orthographic,
+            view_center: Some([0.0, 0.0, 0.0]),
+            view_plane_distance: Some(100.0),
+            up_direction: Some([0.0, 1.0, 0.0]),
+            view_window_width: Some(50.0),
+            view_window_height: Some(50.0),
+        }];
+
+        let kernel_views = step_views_to_kernel(&step_views, &step_cameras, &step_volumes);
+
+        assert_eq!(kernel_views.len(), 1);
+        assert_eq!(kernel_views[0].id, 100);
+        assert_eq!(kernel_views[0].name, "Front");
+        assert_eq!(kernel_views[0].projection, rcad_kernel::annotation::ViewProjection::Orthographic);
+    }
+
+    #[test]
+    fn step_notes_to_kernel_converts_correctly() {
+        let step_notes = vec![
+            StepNote {
+                entity_id: 100,
+                name: Some("WarningNote".to_string()),
+                description: Some("Jane Smith".to_string()),
+                text: Some("Check this area".to_string()),
+                annotation_plane_id: None,
+                associated_geometry_id: None,
+            },
+            StepNote {
+                entity_id: 101,
+                name: Some("InfoNote".to_string()),
+                description: None,
+                text: Some("Information".to_string()),
+                annotation_plane_id: None,
+                associated_geometry_id: None,
+            },
+        ];
+
+        let kernel_notes = step_notes_to_kernel(&step_notes);
+
+        assert_eq!(kernel_notes.len(), 2);
+        assert_eq!(kernel_notes[0].id, 100);
+        assert_eq!(kernel_notes[0].category, NoteCategory::Warning);
+        assert_eq!(kernel_notes[0].author.as_deref(), Some("Jane Smith"));
+        assert_eq!(kernel_notes[1].category, NoteCategory::Info);
+    }
+
+    #[test]
+    fn annotation_store_to_step_metadata_converts_all() {
+        use rcad_kernel::annotation::{Annotation, AnnotationStore, Note, View};
+
+        let mut store = AnnotationStore::new();
+        store.add_view(View::front(1));
+        store.add_view(View::top(2));
+        store.add_xc_note(Note::new(100, "Note1", "Test note"));
+        store.add_annotation(Annotation::dimension(200, "Dim1", 25.4));
+
+        let metadata = annotation_store_to_step_metadata(&store);
+
+        assert_eq!(metadata.views.len(), 2);
+        assert_eq!(metadata.cameras.len(), 2);
+        assert_eq!(metadata.view_volumes.len(), 2);
+        assert_eq!(metadata.notes.len(), 2); // One from xc_notes, one from annotation
     }
 }

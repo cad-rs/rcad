@@ -174,11 +174,15 @@ pub use point_cloud::{
     sample_points_from_brep_surfaces,
 };
 pub use medial_axis::{
-    MedialAxisOptions, MedialVertex, MedialEdge, MedialFace, MedialAxis,
+    MedialAxisOptions, MedialVertex, MedialEdge, MedialFace,
+    MedialAxis2d, MedialBranch2d, MedialPoint2d, MedialSurface,
+    VoronoiDiagram2d, VoronoiEdge2d, VoronoiVertex2d,
+    ThicknessMap, ThicknessSample, ThicknessStats, MidSurfaceResult,
     ThinRegion, WallThicknessResult,
-    compute_medial_axis_2d, compute_medial_axis_3d, compute_wall_thickness,
+    compute_medial_axis_2d, compute_medial_surface, compute_wall_thickness,
     detect_thin_regions, generate_rib_paths, point_in_polygon_2d,
     compute_mat_2d, find_max_inscribed_circle, cluster_medial_vertices,
+    compute_voronoi_2d, compute_thickness_map, compute_mid_surface,
 };
 pub use non_manifold::{
     NonManifoldReport, NonManifoldTraversal,
