@@ -4,6 +4,13 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 
 ## Current Status (April 2026)
 
+**Recent additions:**
+- Gordon surface transfinite interpolation (N×M curve network fill)
+- Shell/solid offset operations (`offset_shell`, `offset_solid`, `hollow_solid`)
+- Non-manifold topology analysis and repair hints (`BRepGraph`, `RepairHint`)
+- Boolean robustness improvements (class-specific retry ordering, bounded retry rounds)
+- AP242 kinematics metadata read/write baseline
+
 **Geometry kernel (`rcad-kernel`)**
 - 3D curves: `Line3`, `Circle3`, `Ellipse3`, `Hyperbola3`, `Parabola3`, `BSplineCurve3`, `BezierCurve3`, `OffsetCurve3`
 - 3D surfaces: `Plane`, `CylindricalSurface`, `SphericalSurface`, `ConicalSurface`, `ToroidalSurface`, `BSplineSurface`, `BezierSurface`, `LinearExtrusionSurface`, `RevolutionSurface`, `OffsetSurface`, `TrimmedSurface`
@@ -22,6 +29,8 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 - Sweeps: `extrude`, `revolve`, `sweep_pipe`, `sweep_pipe_variable`, `loft`
 - Blending: `fillet_edge`, `chamfer_edge`, `fillet_edges`, `corner_blend`
 - Shell sewing: `sew_shells`
+- **Offset/shell**: `offset_shell`, `offset_solid`, `hollow_solid`, `thick_solid_with_removed_faces`
+- **Surface fill**: Gordon surface (N×M transfinite interpolation from curve network)
 
 **Algorithms (`rcad-algorithms`)**
 - Boolean ops: `boolean_op(Union|Intersection|Difference)` + `*_with_history`; full support for planar solids; curved solids (Cylinder/Sphere) partially supported
@@ -32,6 +41,8 @@ A generic CAD engine written in pure Rust, targeting feature parity with Open CA
 - Shape distance: `min_distance`; topology query: `edge_adjacent_faces`, `face_edges`, `vertex_adjacent_edges`
 - Surface-surface intersection: `intersect_surfaces` (analytic pairs + marching fallback)
 - HLR: `hlr`, `hlr_to_svg`
+- **Offset/thicken**: `offset_shell`, `offset_solid`, `hollow_solid`, `thicken_shell`, `thick_solid_with_removed_faces`
+- **Topology graph**: `BRepGraph` with O(1) adjacency queries, DFS/BFS traversal, manifold analysis, repair hints for non-manifold topology
 
 **Data exchange (`rcad-step`)**
 - STEP AP203/AP214 read/write for all geometry and topology types above
@@ -152,6 +163,9 @@ Useful examples:
 - `cargo run -p rcad-examples --example step_color_hlr` — colored STEP export and HLR SVG generation.
 - `cargo run -p rcad-examples --example obj_iges_io` — OBJ / IGES mesh import-export demo using bundled sample assets in `assets/`.
 - `cargo run -p rcad-examples --example diagnose_step_mesh -- --step assets/hfss.step` — inspect imported STEP mesh topology and renderer normals.
+- `cargo run -p rcad-examples --example gordon_surface` — Gordon surface transfinite interpolation from curve network.
+- `cargo run -p rcad-examples --example offset_shell` — shell offset, solid offset, and hollow solid operations.
+- `cargo run -p rcad-examples --example non_manifold_topology` — non-manifold topology analysis and repair hints using BRepGraph.
 
 ## WASM-specific notes
 

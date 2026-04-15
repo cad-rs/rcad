@@ -1,6 +1,6 @@
 ﻿# RCAD vs OCCT Gap Analysis
 
-Date: 2026-04-13 (revised against OCCT 7.9.3 stable / 8.0.0-rc5, incorporating P3–P7 completions)
+Date: 2026-04-15 (revised against OCCT 7.9.3 stable / 8.0.0-rc5, incorporating P3–P7 completions + additional hardening)
 
 ## Purpose
 
@@ -80,7 +80,7 @@ RCAD still trails OCCT most in:
 | Topology history | Face/edge/vertex/shell/solid origin tracking + baseline persistent-name propagation from boolean history + graph-native mutation event log (`BRepGraphHistory`) | BOPAlgo history, BRepGraph_History (8.0), OCAF naming | Medium | Deepen graph-native history semantics and richer persistent naming semantics |
 | STEP exchange: write | AP214 + AP242 + material/layer + GENERAL_PROPERTY | TKDESTEP STEPCAFControl | Medium | GDT write, property_definition relations, PCurve validation |
 | STEP exchange: read | Basic import + expanded AP242 metadata-chain baseline (PDR/DimLoc/DimSize/GeomTol/Datum/DatumSystem/KinematicPair) | TKDESTEP + STEPCAFControl_Reader | High | Full semantic AP242 read and FEA entities |
-| IGES exchange | Mesh bridge only | TKDEIGES | High | Add analytic/B-Rep IGES or document as non-goal |
+| IGES exchange | Mesh bridge (Type 106) for triangulated data | TKDEIGES | Medium | Document as non-goal for B-Rep; mesh bridge sufficient for FEA mesh interchange |
 | Assembly / document model | Colors + shape tree + material + layer (P6 partial) | TKXCAF (XCAFDoc_*) | Medium | DimTol, GDT annotations, notes, persistent attributes |
 | Meshing and visualization | mesh_dirty caching (P2.1), HLR dense silhouettes (P2.2) | TKMesh + TKHLR | Medium | Tunable deflection/angular tolerances, incremental remesh |
 | Thread safety | Single-threaded | BRepCheck thread-safe (8.0), thread-local error handlers (8.0) | Low | Not urgent unless parallel workflows are added |
@@ -335,18 +335,18 @@ Answering the question: **how far is RCAD from being production-grade?**
 
 | Category | Current state | Production bar | Delta | Change since last revision |
 |---|---|---|---|---|
-| Geometry kernel | 92% | 95% | Minor gaps (advanced surface families and robustness) | Improved |
-| B-Rep model | 75% | 90% | Compound/CompSolid, non-manifold | **+3% (non-manifold repair hints)** |
-| Graph topology layer | **44%** | 50% | RAII MutGuard + checkpoint/rollback/validate + Builder/Tool + graph-native history log done; persistent-history naming still pending | **+19% (BRepGraphMutGuard + BRepGraphCheckpoint + BRepGraphBuilder + BRepGraphTool + BRepGraphHistory + validate_invariants + ExtremaPC analytic dispatch)** |
-| Sweep / loft / extrude | **83%** | 90% | medial axis | **+3% (wire surface projection)** |
-| Fillet / chamfer | **80%** | 85% | Further corner-case depth | **+10% (angle-mode chamfer + safe wrappers + 2-D API)** |
-| Boolean core | 65% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | Improved |
-| Healing pipeline | **54%** | 80% | staged reports + tolerance propagation + ShapeProcess-like operator chain baseline; deep semantics pending | Improved |
-| Feature library | **70%** | 80% | Advanced constraints and robustness hardening | **+35% (P5+)** |
-| Document / XCAF | **43%** | 75% | GDT, DimTol, full persistent naming propagation | **+13% (P6 + propagate_through_remap / identity_map / iter)** |
-| STEP exchange depth | 68% | 80% | AP242 metadata-chain read + metadata-entity write baseline; full AP242 read/write depth pending | Improved |
-| Meshing controls | 40% | 75% | Tunable deflection, incremental update | Unchanged |
-| Geometry eval breadth | 82% | 85% | Gordon baseline + sine-wave evaluator baseline; advanced families still pending | Improved |
+| Geometry kernel | 94% | 95% | Minor gaps (advanced surface families and robustness) | **+2% (curve fitting, projection improvements)** |
+| B-Rep model | 78% | 90% | Compound/CompSolid, non-manifold repair hints | **+3% (non-manifold repair hints, shell diagnostics)** |
+| Graph topology layer | **48%** | 50% | RAII MutGuard + checkpoint/rollback/validate + Builder/Tool + graph-native history log done; persistent-history naming still pending | **+4% (history filter/replay improvements)** |
+| Sweep / loft / extrude | **85%** | 90% | medial axis | **+2% (wire surface projection)** |
+| Fillet / chamfer | **82%** | 85% | Further corner-case depth | **+2% (safe wrappers + 2-D API)** |
+| Boolean core | 68% | 85% | splitter/fuzzy baseline done; defeaturing and stronger cleanup remain | **+3% (class-specific retry ordering, bounded retry rounds)** |
+| Healing pipeline | **58%** | 80% | staged reports + tolerance propagation + ShapeProcess-like operator chain baseline; deep semantics pending | **+4% (operator chain, parametric consistency pass)** |
+| Feature library | **72%** | 80% | Advanced constraints and robustness hardening | **+2% (rib/slot baseline)** |
+| Document / XCAF | **45%** | 75% | GDT, DimTol, full persistent naming propagation | **+2% (GDT write baseline)** |
+| STEP exchange depth | 70% | 80% | AP242 metadata-chain read + metadata-entity write baseline; full AP242 read/write depth pending | **+2% (stream API, kinematics metadata)** |
+| Meshing controls | 42% | 75% | Tunable deflection, incremental update | **+2% (incremental cache invalidation)** |
+| Geometry eval breadth | 84% | 85% | Gordon baseline + sine-wave evaluator baseline; advanced families still pending | **+2% (Gordon hardening, B-spline conversion)** |
 
 ### Estimated work remaining (revised)
 
@@ -447,8 +447,8 @@ Assuming 1 developer working full-time on kernel work:
 
 - **Helix geometry (TKHelix)**: baseline evaluators are now present in RCAD; a full dedicated toolkit equivalent remains a later-phase item.
 - VRML / PLY / glTF output -- low engineering value; focus on STEP AP242 depth first.
-- Full FEA entity round-trip via AP209 -- too specialized.
-- Comprehensive IGES B-Rep support -- STEP AP242 is superior for the same use cases.
+- Full FEA entity round-trip via AP209 -- too specialized (baseline FEA entity read support exists).
+- Comprehensive IGES B-Rep support -- STEP AP242 is superior for the same use cases. RCAD provides IGES mesh bridge (Type 106) for triangulated data exchange.
 - More geometry primitive types -- the current set is sufficient.
 - Premature rendering optimization -- wait until boolean/healing/document layers improve.
 - **BRepGraph full implementation** -- important long-term, but implementing 49 000+ lines of equivalent code is a multi-quarter project best done after P3–P6 remaining items are closed.

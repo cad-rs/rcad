@@ -3,7 +3,10 @@ pub mod brep_check;
 pub mod brep_repair;
 pub mod builder;
 pub mod defeature;
+pub mod shape_analysis;
+pub mod shape_custom;
 pub mod features;
+pub mod gluer;
 pub mod bvh;
 pub mod classify;
 pub mod draft;
@@ -33,6 +36,7 @@ pub mod triangulate;
 pub mod array;
 pub mod cells_builder;
 pub mod maker_volume;
+pub mod point_cloud;
 
 use serde::Serialize;
 
@@ -50,7 +54,7 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     OrientationIssue, OrientationReport, check_orientation_consistency,
     RicherValidityReport, richer_validity_analysis,
     // Surface UV analysis (ShapeAnalysis_Surface equivalent)
-    SurfaceAnalysisReport, UvBoundsViolation,
+    SurfaceAnalysisReport as SurfaceUvAnalysisReport, UvBoundsViolation,
     analyze_surface_uv_consistency,
     // Wire quality metrics (ShapeAnalysis_Wire enhancement)
     WireQualityMetrics, WireQualityReport, analyze_wire_quality,
@@ -84,7 +88,11 @@ pub use history::{
     BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
     ShellOrigin, SolidOrigin, VertexOrigin,
 };
-pub use hlr::{AssemblyHlrResult, ComponentHlr, HlrCamera, HlrResult, HlrSegment, hlr, hlr_assembly, hlr_to_svg};
+pub use hlr::{
+    AssemblyHlrResult, ComponentHlr, HlrCamera, HlrOptions, HlrResult, HlrSegment,
+    SegmentType, SilhouetteCurve3, CurveHint,
+    hlr, hlr_assembly, hlr_to_svg, hlr_with_options, extract_silhouette_curves,
+};
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
 };
@@ -128,6 +136,16 @@ pub use maker_volume::{
     MakerVolume, MakerVolumeError, MakerVolumeSelection, make_solid_from_cell_indices,
     make_solid_from_region, make_solid_from_region_with_history,
 };
+pub use point_cloud::{
+    PointCloud, PointCloudAnalysis, Dimensionality,
+    analyze_point_cloud, compute_pca, compute_inertia, estimate_dimensionality,
+    OutlierPoint, detect_outliers, remove_outliers,
+    SamplingStrategy, simplify_point_cloud, estimate_normals,
+    FittedPlane, fit_plane, FittedSphere, fit_sphere, FittedCylinder, fit_cylinder,
+    FittedPolygon, fit_polygon,
+    extract_points_from_brep_vertices, extract_points_from_brep_mesh, extract_points_from_mesh,
+    sample_points_from_brep_surfaces,
+};
 pub use brep_graph::{
     NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent, TopoGraphValidationIssue,
     TopoNode,
@@ -140,6 +158,37 @@ pub use non_manifold::{
     boundary_edges, multi_face_edges, orphan_edges,
     split_non_manifold_edges, make_manifold, make_manifold_with_options,
     merge_shells_at_interface,
+};
+pub use gluer::{
+    GluerError, GluerOptions, GluerResult, GluerHistory,
+    FaceOrigin as GluerFaceOrigin, EdgeOrigin as GluerEdgeOrigin, VertexOrigin as GluerVertexOrigin,
+    InterfaceInfo, detect_interface, glue_shapes, glue_at_interface,
+};
+pub use shape_analysis::{
+    // Surface analysis (ShapeAnalysis_Surface)
+    SurfaceAnalysisReport as ShapeAnalysisSurfaceReport, SingularPoint, SingularPointKind,
+    UvInconsistency, UvInconsistencyKind,
+    analyze_surface, check_uv_consistency,
+    // Curve analysis (ShapeAnalysis_Curve)
+    CurveAnalysisReport, CurveSelfIntersection, ContinuityLevel,
+    analyze_curve,
+    // Wire analysis (ShapeAnalysis_Wire)
+    WireAnalysisReport as ShapeAnalysisWireReport, WireSelfIntersection, WireGap,
+    analyze_wire, check_face_wires,
+    // Face analysis (ShapeAnalysis_Face)
+    FaceAnalysisReport, SurfaceWireIssue, SurfaceWireIssueKind,
+    analyze_face,
+    // Full BRep analysis
+    BRepAnalysisReport, analyze_brep,
+};
+pub use shape_custom::{
+    BSplineSimplifyOptions, SimplificationResult,
+    GeometryRestrictions, ConversionReport,
+    simplify_bspline_curve, simplify_bspline_surface,
+    convert_to_bspline, restrict_geometry,
+    is_bspline_curve, is_bspline_surface,
+    curve_degree, surface_degrees,
+    ensure_bspline_curve, ensure_bspline_surface,
 };
 
 /// Options for post-operation topology simplification.

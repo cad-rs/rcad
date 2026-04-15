@@ -1,6 +1,13 @@
 # RCAD 功能文档
 
 > 当前快照：2026-04 · 几何/建模/STEP/渲染/双 Creator UI 功能已同步到当前实现
+>
+> **最近添加（2026-04）：**
+> - Gordon 曲面（N×M 曲线网络横向插值）
+> - 壳体/实体偏移操作（`offset_shell`、`offset_solid`、`hollow_solid`）
+> - 非流形拓扑分析与修复提示（`BRepGraph`、`RepairHint`）
+> - AP242 运动学元数据读写基线
+> - 布尔鲁棒性改进（类特定重试排序、有界重试轮次）
 
 ---
 
@@ -94,6 +101,7 @@ LinearExtrusionSurface — 线性拉伸面（轮廓曲线 + 方向向量）
 RevolutionSurface      — 旋转面（轮廓曲线 + 轴）
 RuledSurface           — 直纹面（两条同参边界曲线线性插值）
 CoonsSurface           — Coons 边界混合曲面（四条边界曲线跨界插值）
+GordonSurface          — Gordon 曲面（N×M 曲线网络横向插值，Lagrange 基函数）
 OffsetSurface          — 偏移面（基面 + 法向偏移距离）
 TrimmedSurface         — 矩形裁剪面（基面 + [u1,u2,v1,v2] 参数框）
 ```
@@ -351,10 +359,207 @@ BRep::from_primitive(PrimitiveSolid::Torus { major_radius, minor_radius })
 |------|-----|
 | 面法向偏移 | `offset_surface(face, dist)` → `OffsetSurface` |
 | 壳体偏移 | `offset_shell(brep, dist)` |
+| 壳体偏移（带选项） | `offset_shell_with_options(brep, opts)` |
+| 实体偏移 | `offset_solid(brep, dist)` |
+| 空心实体 | `hollow_solid(brep, thickness, open_faces)` |
 | 薄壁实体 | `thick_solid_with_removed_faces(brep, thickness, removed_faces)` → `Result<BRep>` |
+| 开放壳加厚 | `thicken_shell(brep, thickness)` |
+
+**`OffsetOptions` 配置：**
+
+```rust
+OffsetOptions {
+    distance: f64,              // 偏移距离（正=向外，负=向内）
+    tolerance: f64,             // 几何计算容差
+    check_self_intersection: bool,  // 是否检测自交
+    auto_repair: bool,          // 是否自动修复自交
+    min_feature_size: f64,      // 最小特征尺寸
+}
+```
+
+**支持的曲面偏移：**
+
+| 曲面类型 | 偏移方式 |
+|---------|---------|
+| Plane | 沿法向平移 |
+| Sphere | 半径增减 |
+| Cylinder | 半径增减 |
+| Cone | 半径和锥顶位置调整 |
+| Torus | 小半径增减 |
+| BSpline/Bezier | `OffsetSurface` 包装 |
+| Trimmed | 基面偏移后保持裁剪域 |
 
 薄壁实体支持：移除指定面后向内/外偏移，自动生成侧面连接面和三角封闭面。
 包含自交检测：当 `thickness > min_distance / 2` 时标记 `self_intersection: true`。
+
+---
+
+### 4.7 Gordon 曲面
+
+类比 OCCT `GeomFill_Gordon`，提供 N×M 曲线网络的横向插值曲面。
+
+```rust
+use rcad_kernel::gordon::{gordon_surface_curves, GordonOptions, ContinuityLevel};
+
+// 构造 U 方向曲线族（等 v 线）
+let u_curves = vec![
+    Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+    Curve3::Line(Line3 { origin: DVec3::Y, direction: DVec3::X }),
+];
+
+// 构造 V 方向曲线族（等 u 线）
+let v_curves = vec![
+    Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y }),
+    Curve3::Line(Line3 { origin: DVec3::X, direction: DVec3::Y }),
+];
+
+// 构造 Gordon 曲面
+let surface = gordon_surface_curves(
+    &u_curves,
+    &v_curves,
+    GordonOptions {
+        continuity: ContinuityLevel::C1,
+        tolerance: 1e-6,
+        validate_intersections: true,
+        intersection_tolerance: 1e-4,
+        ..Default::default()
+    },
+)?;
+```
+
+**`GordonOptions` 配置：**
+
+| 参数 | 说明 |
+|------|------|
+| `degree_u` / `degree_v` | 输出 B-spline 的度数（None 则自动推断） |
+| `continuity` | 连续性级别：C0 / C1 / C2 |
+| `tolerance` | 几何比较容差 |
+| `min_node_separation` | 参数节点最小间距 |
+| `normalize_params` | 是否自动归一化参数域到 [0, 1] |
+| `validate_intersections` | 是否验证曲线交叉点匹配 |
+| `intersection_tolerance` | 交叉点匹配容差 |
+
+**错误类型 `GordonError`：**
+
+| 错误 | 说明 |
+|------|------|
+| `TooFewUCurves` / `TooFewVCurves` | 曲线数量 < 2 |
+| `NonMonotonicParams` | 参数非单调递增 |
+| `ParamsOutOfRange` | 参数超出 [0, 1] 范围 |
+| `IntersectionMismatch` | 曲线交叉点距离超过容差 |
+| `CoincidentNodes` | 参数节点过近，数值不稳定 |
+| `DegenerateCurve` | 曲线退化为零长度 |
+
+**辅助函数：**
+
+| 函数 | 说明 |
+|------|------|
+| `eval_gordon_surface_safe` | 安全求值（返回 Option） |
+| `gordon_surface_normal_safe` | 法向量计算 |
+| `gordon_to_bspline` | 转换为 B-spline 曲面 |
+| `is_rectangular_network` | 检查曲线网络是否形成矩形拓扑 |
+
+---
+
+### 5.14 非流形拓扑分析（`BRepGraph`）
+
+类比 OCCT 8.0 的 `BRepGraph` 模块，提供图拓扑缓存和 O(1) 邻接查询。
+
+```rust
+use rcad_kernel::{BRep, BRepGraph, PrimitiveSolid};
+
+let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+let graph = BRepGraph::from_brep(&brep);
+
+// O(1) 邻接查询
+let adj_faces = graph.edge_adjacent_faces(0);  // 边的邻接面
+let face_edges = graph.face_edges(0);           // 面的边
+let vertex_edges = graph.vertex_adjacent_edges(0);  // 顶点的邻接边
+
+// 流形检测
+assert!(graph.is_manifold());  // 每条边恰好被 2 个面共享
+assert!(graph.is_closed());    // 没有边界边
+
+// 非流形分析
+let nm_edges = graph.non_manifold_edges();       // 边数量 ≠ 2
+let boundary = graph.boundary_edges();           // 边数量 = 1
+let orphan = graph.orphan_edges();               // 边数量 = 0
+let nm_vertices = graph.non_manifold_vertices(); // 多面边端点
+
+// 修复提示
+let hints = graph.repair_hints(&brep);
+for hint in &hints.hints {
+    match hint {
+        RepairHint::StitchablePair { edge_a, edge_b, .. } => {
+            // 两条边界边可以缝合
+        }
+        RepairHint::MultiManifoldEdge { edge_idx, face_count } => {
+            // 边被 >2 个面共享，需要分裂
+        }
+        RepairHint::NonManifoldVertex { vertex_idx, .. } => {
+            // 非流形顶点可能需要复制
+        }
+        _ => {}
+    }
+}
+```
+
+**BRepGraph API：**
+
+| 方法 | 说明 |
+|------|------|
+| `from_brep(brep)` | 从 BRep 构建图（O(n) 一次遍历） |
+| `edge_adjacent_faces(idx)` | O(1) 边→面 |
+| `face_edges(idx)` | O(1) 面→边 |
+| `vertex_adjacent_edges(idx)` | O(1) 顶点→边 |
+| `vertex_adjacent_faces(idx)` | O(1) 顶点→面 |
+| `edge_endpoints(idx)` | 边端点顶点对 |
+| `edge_valence(idx)` | 边的面数量（0=孤立，1=边界，2=流形，>2=非流形） |
+| `vertex_degree(idx)` | 顶点的边度数 |
+| `is_manifold()` | 是否所有边 valence=2 |
+| `is_closed()` | 是否无边界边 |
+| `dfs_faces(seed)` | 面的 DFS 遍历迭代器 |
+| `bfs_faces(seed)` | 面的 BFS 遍历迭代器 |
+| `dfs_edges_from_vertex(seed)` | 从顶点出发的边 DFS 遍历 |
+| `repair_hints(brep)` | 生成可操作的修复提示 |
+| `validate_invariants()` | 验证内部拓扑不变量 |
+
+**修复提示类型 `RepairHint`：**
+
+| 提示 | 说明 | 修复操作 |
+|------|------|---------|
+| `StitchablePair` | 两条边界边端点重合 | 缝合（merge vertices） |
+| `UnmatchedBoundaryEdge` | 边界边无配对 | 填补孔洞或移除面 |
+| `OrphanEdge` | 边不属于任何面 | 移除边 |
+| `MultiManifoldEdge` | 边被 >2 个面共享 | 分裂为多条边 |
+| `NonManifoldVertex` | 非流形边端点 | 可能需要顶点复制 |
+
+**变异追踪与历史：**
+
+```rust
+let mut graph = BRepGraph::from_brep(&brep);
+
+// RAII 变异守卫
+{
+    let mut guard = graph.begin_mutation();
+    guard.graph().mark_face_modified(0);
+    guard.graph().mark_edge_modified(1);
+    guard.commit()?;  // 验证不变量后提交
+}
+
+// 检查点/回滚
+let checkpoint = graph.checkpoint();
+// ... 执行变异 ...
+graph.restore_from_checkpoint(&checkpoint);  // 回滚
+
+// 变异历史日志
+let mut history = BRepGraphHistory::new();
+{
+    let mut guard = graph.begin_mutation();
+    guard.graph().mark_face_modified(2);
+    guard.commit_with_history(&mut history, Some("boolean_cleanup".to_string()))?;
+}
+```
 
 ---
 
@@ -843,6 +1048,7 @@ STEP 结构：每个组件对应一组 `PRODUCT_DEFINITION` + `SHAPE_DEFINITION_
 | 环面 | `Geom_ToroidalSurface` | `ToroidalSurface` | ✅ |
 | 椭球面 | `Geom_Ellipsoid` / `GeomEval` 椭球求值 | `EllipsoidalSurface` | ✅ |
 | 螺旋面 | `Geom_Helicoid` / `GeomEval` 螺旋面求值 | `HelicoidSurface` | ✅ |
+| Gordon 曲面 | `GeomFill_Gordon` | `GordonSurface` | ✅ 横向插值基线 |
 | B-Spline 曲面 | `Geom_BSplineSurface` | `BSplineSurface` | ✅ |
 | Bezier 曲面 | `Geom_BezierSurface` | `BezierSurface` | ✅ |
 | 裁剪曲面 | `Geom_RectangularTrimmedSurface` | `TrimmedSurface` | ✅ |
@@ -1085,4 +1291,4 @@ SpaceSketch::solve() -> SpaceSolveResult
 
 ---
 
-*文档更新于 2026-04-12（容差统一：约束求解器硬编码常量 → 共享常量 SOLVER_RESIDUAL_TOL/SOLVER_FD_H/SOLVER_LAMBDA/SOLVER_PIVOT_TOL/SOLVER_NORM_TOL，2D/3D 求解器共用；BVH 加速布尔运算：PaveFiller::with_bvh() 使用 candidate_pairs() 预筛选面对，<20 面自动回退暴力遍历；3D 约束扩展：新增 Cylinder/PlanePerpendicular/LineParallelPlane/LinePerpendicularPlane/AngleLineLine/AnglePlanePlane/AngleLinePlane/PointPlaneDistance/PointOnCylinder/CylinderRadius/CylinderTangent/PlaneTangentToSphere 等约束类型）*
+*文档更新于 2026-04-15（Gordon 曲面：N×M 横向插值基线；偏移/薄壁：`offset_shell`/`offset_solid`/`hollow_solid`/`thicken_shell`；非流形拓扑分析：`BRepGraph` + `RepairHint` + 变异历史；BVH 加速布尔运算：PaveFiller::with_bvh() 使用 candidate_pairs() 预筛选面对；3D 约束扩展：新增 Cylinder/PlanePerpendicular/LineParallelPlane/LinePerpendicularPlane 等约束类型）*
