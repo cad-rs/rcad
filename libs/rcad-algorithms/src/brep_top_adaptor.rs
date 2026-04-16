@@ -1058,7 +1058,6 @@ mod tests {
 
     fn create_cylinder() -> BRep {
         BRep::from_primitive(PrimitiveSolid::Cylinder {
-            axis: glam::DVec3::Z,
             radius: 1.0,
             height: 2.0,
         })

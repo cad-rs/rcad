@@ -686,22 +686,38 @@ pub fn sampled_points_bounds(points: &[DVec3]) -> (DVec3, DVec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{Circle3, Line3, Plane, Sphere3};
+    use rcad_kernel::geom::{Circle3, Line3, Plane, SphericalSurface};
 
     fn create_test_line() -> Curve3 {
-        Curve3::Line(Line3::from_points(DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0)))
+        let start = DVec3::new(0.0, 0.0, 0.0);
+        let end = DVec3::new(10.0, 0.0, 0.0);
+        Curve3::Line(Line3 {
+            origin: start,
+            direction: (end - start).normalize(),
+        })
     }
 
     fn create_test_circle() -> Curve3 {
-        Circle3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0), 5.0).into()
+        Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, 0.0),
+            normal: DVec3::new(0.0, 0.0, 1.0),
+            radius: 5.0,
+        })
     }
 
     fn create_test_plane() -> Surface3 {
-        Plane::new(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0)).into()
+        Surface3::Plane(Plane {
+            origin: DVec3::new(0.0, 0.0, 0.0),
+            normal: DVec3::new(0.0, 0.0, 1.0),
+        })
     }
 
     fn create_test_sphere() -> Surface3 {
-        Sphere3::new(DVec3::new(0.0, 0.0, 0.0), 5.0).into()
+        Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(0.0, 0.0, 0.0),
+            axis: DVec3::new(0.0, 0.0, 1.0),
+            radius: 5.0,
+        })
     }
 
     #[test]

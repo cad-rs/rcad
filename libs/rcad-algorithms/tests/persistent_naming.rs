@@ -254,6 +254,10 @@ fn name_collision_resolution() {
         vertex_origins: vec![],
         shell_origins: vec![],
         solid_origins: vec![],
+        tracker: rcad_algorithms::HistoryTracker::default(),
+        deleted_from_a: vec![],
+        deleted_from_b: vec![],
+        deletion_reasons: std::collections::HashMap::new(),
     };
 
     // Both A and B have a face named "top"
@@ -301,6 +305,10 @@ fn dropped_names_reported() {
         vertex_origins: vec![],
         shell_origins: vec![],
         solid_origins: vec![],
+        tracker: rcad_algorithms::HistoryTracker::default(),
+        deleted_from_a: vec![],
+        deleted_from_b: vec![],
+        deletion_reasons: std::collections::HashMap::new(),
     };
 
     // Name bound to a face that doesn't exist in result
@@ -342,6 +350,10 @@ fn multiple_collisions_deterministic() {
         vertex_origins: vec![],
         shell_origins: vec![],
         solid_origins: vec![],
+        tracker: rcad_algorithms::HistoryTracker::default(),
+        deleted_from_a: vec![],
+        deleted_from_b: vec![],
+        deletion_reasons: std::collections::HashMap::new(),
     };
 
     // Multiple faces with the same name in A (simulating splits)

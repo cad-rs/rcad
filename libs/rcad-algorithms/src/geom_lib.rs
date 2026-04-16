@@ -1254,6 +1254,7 @@ fn check_knot_continuity(knots: &[f64], degree: usize, tol: f64) -> usize {
 mod tests {
     use super::*;
     use glam::DVec3;
+    use std::f64::consts::PI;
 
     // Helper to create a simple line BSpline
     fn line_bspline(p0: DVec3, p1: DVec3) -> BSplineCurve3 {

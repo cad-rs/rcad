@@ -981,7 +981,6 @@ mod tests {
             center: DVec3::ZERO,
             normal: DVec3::Z,
             radius: 1.0,
-            x_dir: DVec3::X,
         });
 
         let mut bbox = BoundingBox::new();
@@ -1049,8 +1048,9 @@ mod tests {
 
     #[test]
     fn test_surface_bounds_sphere() {
-        let sphere = rcad_kernel::geom::Sphere {
+        let sphere = rcad_kernel::geom::SphericalSurface {
             center: DVec3::ZERO,
+            axis: DVec3::Z,
             radius: 2.0,
         };
         let surface = Surface3::Sphere(sphere);

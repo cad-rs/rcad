@@ -33,7 +33,7 @@
 //! ```
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Circle3, Curve2d, Curve2dEval, Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::fit::{interpolate_points, interpolate_points_2d};
 
 // ─────────────────────────────────────────────────────────────────────────────

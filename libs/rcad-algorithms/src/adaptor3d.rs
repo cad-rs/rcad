@@ -862,7 +862,7 @@ mod tests {
 
         // Domain should be infinite
         let domain = adaptor.domain();
-        assert!(domain[0].is_neg_infinite());
+        assert!(domain[0].is_infinite() && domain[0] < 0.0);
         assert!(domain[1].is_infinite());
 
         // Plane should not be closed or periodic
@@ -890,7 +890,7 @@ mod tests {
         let domain = adaptor.domain();
         assert!((domain[0] - 0.0).abs() < 1e-10);
         assert!((domain[1] - 2.0 * PI).abs() < 1e-10);
-        assert!(domain[2].is_neg_infinite());
+        assert!(domain[2].is_infinite() && domain[2] < 0.0);
         assert!(domain[3].is_infinite());
 
         // Cylinder should be U-closed and U-periodic
@@ -1031,7 +1031,7 @@ mod tests {
 
         // Should provide domain access
         let domain = handle.domain();
-        assert!(domain[0].is_neg_infinite());
+        assert!(domain[0].is_infinite() && domain[0] < 0.0);
 
         // Type name should be available
         assert_eq!(handle.surface_type(), "Plane");

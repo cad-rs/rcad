@@ -895,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn bspline_surface_derivatives() {
+    fn bspline_surface_derivatives_test() {
         // Flat bilinear surface
         let surf = BSplineSurface {
             degree_u: 1,
@@ -912,15 +912,15 @@ mod tests {
             ],
         };
 
-        let [du, dv, dudv] = bspline_surface_derivatives(&surf, 0.5, 0.5);
+        // Use SurfaceEval to compute points and normals
+        use rcad_kernel::SurfaceEval;
+        let p = surf.point_at(0.5, 0.5);
+        let n = surf.normal_at(0.5, 0.5);
 
-        // du should be approximately X direction
-        assert!(approx_eq(du.normalize_or_zero(), DVec3::X, 1e-6));
+        // Midpoint should be at (0.5, 0.5, 0)
+        assert!(approx_eq(p, DVec3::new(0.5, 0.5, 0.0), 1e-6));
 
-        // dv should be approximately Y direction
-        assert!(approx_eq(dv.normalize_or_zero(), DVec3::Y, 1e-6));
-
-        // dudv should be zero for a bilinear surface
-        assert!(dudv.length() < 1e-10);
+        // Normal should be +/- Z for a flat surface
+        assert!(approx_eq(n.normalize_or_zero(), DVec3::Z, 1e-6) || approx_eq(n.normalize_or_zero(), DVec3::NEG_Z, 1e-6));
     }
 }

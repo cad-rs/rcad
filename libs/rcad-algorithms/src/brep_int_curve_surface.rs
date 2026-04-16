@@ -1016,8 +1016,9 @@ mod tests {
     #[test]
     fn line_through_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Line through the center of the box, along Z
@@ -1061,8 +1062,9 @@ mod tests {
     #[test]
     fn line_misses_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Line outside the box
@@ -1079,8 +1081,9 @@ mod tests {
     #[test]
     fn ray_cast_through_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         let hits = ray_cast(DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, &box_brep);
@@ -1096,8 +1099,9 @@ mod tests {
     #[test]
     fn shoot_ray_limited_distance() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Shoot a ray that won't reach the box
@@ -1114,8 +1118,9 @@ mod tests {
     #[test]
     fn point_inside_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Point at origin should be inside
@@ -1125,8 +1130,9 @@ mod tests {
     #[test]
     fn point_outside_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Point far away should be outside
@@ -1150,8 +1156,9 @@ mod tests {
     #[test]
     fn curve_line_through_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         let line = Curve3::Line(Line3 {
@@ -1167,8 +1174,9 @@ mod tests {
     #[test]
     fn curve_circle_through_box() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(4.0, 4.0, 4.0),
+            width: 4.0,
+            height: 4.0,
+            depth: 4.0,
         });
 
         // Circle in XY plane at z=0
@@ -1266,8 +1274,9 @@ mod tests {
     #[test]
     fn multiple_rays_for_inside_test() {
         let box_brep = BRep::from_primitive(PrimitiveSolid::Box {
-            center: DVec3::ZERO,
-            size: DVec3::new(2.0, 2.0, 2.0),
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
         });
 
         // Test several points
