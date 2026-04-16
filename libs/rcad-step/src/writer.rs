@@ -44,6 +44,30 @@ pub struct ExportSelection<'a> {
     pub selected_edges: &'a [usize],
 }
 
+/// STEP header section fields similar to OCCT's OCCSTEP* export controls.
+#[derive(Debug, Clone, Default)]
+pub struct StepHeader {
+    pub description: Option<String>,
+    pub implementation_level: Option<String>,
+    pub model_name: Option<String>,
+    pub time_stamp: Option<String>,
+    pub author: Option<String>,
+    pub organization: Option<String>,
+    pub preprocessor_version: Option<String>,
+    pub originating_system: Option<String>,
+    pub authorization: Option<String>,
+}
+
+/// Unified export options for STEP writing.
+#[derive(Debug, Clone, Default)]
+pub struct StepWriteOptions {
+    pub protocol: StepProtocol,
+    pub colors: Option<StepColor>,
+    pub properties: Vec<StepGeneralProperty>,
+    pub ap242_metadata: Option<StepAp242Metadata>,
+    pub header: StepHeader,
+}
+
 /// Optional AP242 metadata entities to be written alongside geometry.
 #[derive(Debug, Clone, Default)]
 pub struct StepAp242Metadata {
@@ -87,7 +111,35 @@ struct FaceExportResult {
 
 impl StepWriter {
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
-        Self::write_string_with_protocol(brep, selection, StepProtocol::Ap214)
+        Self::write_string_with_options(
+            brep,
+            selection,
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Export with a single options object containing protocol, header,
+    /// color and AP242 metadata controls.
+    pub fn write_string_with_options(
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        options: &StepWriteOptions,
+    ) -> String {
+        let mut writer = Part21Writer::new_with_protocol_and_header(
+            options.protocol,
+            options.header.clone(),
+        );
+        writer.write_brep(
+            brep,
+            selection,
+            options.colors.as_ref(),
+            &options.properties,
+            options.ap242_metadata.as_ref(),
+        );
+        writer.finish()
     }
 
     /// Export using the specified STEP application protocol.
@@ -99,9 +151,14 @@ impl StepWriter {
         selection: ExportSelection<'_>,
         protocol: StepProtocol,
     ) -> String {
-        let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None, &[], None);
-        writer.finish()
+        Self::write_string_with_options(
+            brep,
+            selection,
+            &StepWriteOptions {
+                protocol,
+                ..Default::default()
+            },
+        )
     }
 
     /// Export with additional generic metadata properties.
@@ -113,9 +170,15 @@ impl StepWriter {
         properties: &[StepGeneralProperty],
         protocol: StepProtocol,
     ) -> String {
-        let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None, properties, None);
-        writer.finish()
+        Self::write_string_with_options(
+            brep,
+            selection,
+            &StepWriteOptions {
+                protocol,
+                properties: properties.to_vec(),
+                ..Default::default()
+            },
+        )
     }
 
     /// Export with generic properties plus AP242 metadata entities.
@@ -126,9 +189,16 @@ impl StepWriter {
         metadata: &StepAp242Metadata,
         protocol: StepProtocol,
     ) -> String {
-        let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(brep, selection, None, properties, Some(metadata));
-        writer.finish()
+        Self::write_string_with_options(
+            brep,
+            selection,
+            &StepWriteOptions {
+                protocol,
+                properties: properties.to_vec(),
+                ap242_metadata: Some(metadata.clone()),
+                ..Default::default()
+            },
+        )
     }
 
     /// Export with per-face / per-solid color information.
@@ -146,18 +216,18 @@ impl StepWriter {
         colors: &StepColor,
         protocol: StepProtocol,
     ) -> String {
-        let mut writer = Part21Writer::new_with_protocol(protocol);
-        writer.write_brep(
+        Self::write_string_with_options(
             brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
             },
-            Some(colors),
-            &[],
-            None,
-        );
-        writer.finish()
+            &StepWriteOptions {
+                protocol,
+                colors: Some(colors.clone()),
+                ..Default::default()
+            },
+        )
     }
 
     /// Stream-based export variant that writes UTF-8 STEP content into any sink.
@@ -206,6 +276,17 @@ impl StepWriter {
             Self::write_string_with_ap242_metadata(brep, selection, properties, metadata, protocol);
         sink.write_all(step.as_bytes())
     }
+
+    /// Stream-based export with a single options object.
+    pub fn write_to_with_options<W: Write>(
+        sink: &mut W,
+        brep: &BRep,
+        selection: ExportSelection<'_>,
+        options: &StepWriteOptions,
+    ) -> std::io::Result<()> {
+        let step = Self::write_string_with_options(brep, selection, options);
+        sink.write_all(step.as_bytes())
+    }
 }
 
 struct Part21Writer {
@@ -214,20 +295,18 @@ struct Part21Writer {
     vertex_point_ids: HashMap<usize, u64>,
     edge_curve_ids: HashMap<usize, u64>,
     protocol: StepProtocol,
+    header: StepHeader,
 }
 
 impl Part21Writer {
-    fn new() -> Self {
-        Self::new_with_protocol(StepProtocol::Ap214)
-    }
-
-    fn new_with_protocol(protocol: StepProtocol) -> Self {
+    fn new_with_protocol_and_header(protocol: StepProtocol, header: StepHeader) -> Self {
         Self {
             next_id: 1,
             records: Vec::new(),
             vertex_point_ids: HashMap::new(),
             edge_curve_ids: HashMap::new(),
             protocol,
+            header,
         }
     }
 
@@ -243,10 +322,55 @@ impl Part21Writer {
         let mut out = String::new();
         out.push_str("ISO-10303-21;\n");
         out.push_str("HEADER;\n");
-        out.push_str("FILE_DESCRIPTION(('RCAD exported geometry'),'2;1');\n");
-        out.push_str(
-            "FILE_NAME('rcad_export.step','2026-04-02T00:00:00',(''),(''),'RCAD','RCAD','');\n",
-        );
+        let file_description = self
+            .header
+            .description
+            .as_deref()
+            .unwrap_or("RCAD exported geometry");
+        let implementation_level = self
+            .header
+            .implementation_level
+            .as_deref()
+            .unwrap_or("2;1");
+        out.push_str(&format!(
+            "FILE_DESCRIPTION(('{}'),'{}');\n",
+            esc_step(file_description),
+            esc_step(implementation_level)
+        ));
+
+        let model_name = self
+            .header
+            .model_name
+            .as_deref()
+            .unwrap_or("rcad_export.step");
+        let time_stamp = self
+            .header
+            .time_stamp
+            .as_deref()
+            .unwrap_or("2026-04-02T00:00:00");
+        let author = self.header.author.as_deref().unwrap_or("");
+        let organization = self.header.organization.as_deref().unwrap_or("");
+        let preprocessor = self
+            .header
+            .preprocessor_version
+            .as_deref()
+            .unwrap_or("RCAD");
+        let originating = self
+            .header
+            .originating_system
+            .as_deref()
+            .unwrap_or("RCAD");
+        let authorization = self.header.authorization.as_deref().unwrap_or("");
+        out.push_str(&format!(
+            "FILE_NAME('{}','{}',('{}'),('{}'),'{}','{}','{}');\n",
+            esc_step(model_name),
+            esc_step(time_stamp),
+            esc_step(author),
+            esc_step(organization),
+            esc_step(preprocessor),
+            esc_step(originating),
+            esc_step(authorization)
+        ));
         out.push_str(&format!("FILE_SCHEMA(('{}'));\n", schema_token));
         out.push_str("ENDSEC;\n");
         out.push_str("DATA;\n");
@@ -2389,6 +2513,10 @@ impl Part21Writer {
         self.records.push(format!("#{}={};", id, body));
         id
     }
+}
+
+fn esc_step(s: &str) -> String {
+    s.replace('\'', "''")
 }
 
 fn escape_step_string(s: &str) -> String {

@@ -25,7 +25,9 @@ pub use assembly::{
 };
 pub use iges::{IgesError, IgesReader, IgesWriter};
 pub use obj_writer::{ObjError, ObjReader, ObjWriter, write_obj};
-pub use writer::{ExportSelection, StepAp242Metadata, StepProtocol, StepWriter};
+pub use writer::{
+    ExportSelection, StepAp242Metadata, StepHeader, StepProtocol, StepWriteOptions, StepWriter,
+};
 
 /// Errors that can occur when reading or parsing a STEP file.
 #[derive(Debug, Clone)]
