@@ -609,6 +609,56 @@ pub fn detect_seeds_for_scoped_cleanup(
                 }
             }
 
+            // Seam candidate Strategy 1: Edges referenced by multiple faces (potential seams)
+            let mut edge_face_count = vec![0usize; n_edges];
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        for we in &face.outer_wire.edges {
+                            if we.idx < n_edges {
+                                edge_face_count[we.idx] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            for (ei, &count) in edge_face_count.iter().enumerate() {
+                if count > 2 {
+                    if let Some(edge) = brep.edges.get(ei) {
+                        combined.insert(edge.start);
+                        combined.insert(edge.end);
+                    }
+                }
+            }
+
+            // Seam candidate Strategy 2: Edges with multiple PCurves
+            for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
+                if pcurves.len() > 1 {
+                    if let Some(edge) = brep.edges.get(ei) {
+                        combined.insert(edge.start);
+                        combined.insert(edge.end);
+                    }
+                }
+            }
+
+            // Seam candidate Strategy 3: Edges with large face normal angle (> 45 degrees)
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
+                if adj_faces.len() == 2 {
+                    if let (Some(n1), Some(n2)) = (
+                        get_face_normal(brep, adj_faces[0]),
+                        get_face_normal(brep, adj_faces[1]),
+                    ) {
+                        let dot = n1.dot(n2);
+                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
+                            combined.insert(edge.start);
+                            combined.insert(edge.end);
+                        }
+                    }
+                }
+            }
+
             vertex_set = combined;
             result.strategy_counts.insert("hybrid".to_string(), vertex_set.len());
         }
@@ -17171,6 +17221,135 @@ mod tests {
         assert!(
             result.seed_edges.contains(&0),
             "Multi-PCurve edge should be detected as seam candidate"
+        );
+    }
+
+    #[test]
+    fn test_seam_candidates_multi_face_edges() {
+        // Strategy 1: Test edges referenced by more than 2 faces
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add vertices (4 vertices for a tetrahedron-like shape)
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.vertices.push(Vertex { point: DVec3::Z });
+
+        // Add edges - edge 0 connects vertices 0 and 1
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        // Create multiple faces that all reference edge 0 (simulating a non-manifold edge)
+        let create_face_with_edge = |edge_idx: usize| -> Face {
+            Face {
+                outer_wire: Wire {
+                    edges: vec![WireEdge {
+                        idx: edge_idx,
+                        forward: true,
+                    }],
+                },
+                inner_wires: vec![],
+                normal: DVec3::Z,
+                triangles: vec![],
+                mesh_dirty: true,
+            }
+        };
+
+        // Create 3 faces all referencing edge 0 (non-manifold condition)
+        let face0 = create_face_with_edge(0);
+        let face1 = create_face_with_edge(0);
+        let face2 = create_face_with_edge(0);
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![face0, face1, face2],
+            }],
+        });
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 is referenced by 3 faces (> 2), so its vertices should be detected
+        assert!(
+            result.seed_edges.contains(&0),
+            "Edge referenced by more than 2 faces should be detected as seam candidate"
+        );
+        assert!(
+            result.seed_vertices.contains(&0) && result.seed_vertices.contains(&1),
+            "Vertices of multi-face edge should be in seed set"
+        );
+    }
+
+    #[test]
+    fn test_seam_candidates_large_normal_angle() {
+        // Strategy 3: Test edges with large face normal angle
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add vertices
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+
+        // Add an edge
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        // Create two faces with perpendicular normals sharing edge 0
+        let face0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge {
+                    idx: 0,
+                    forward: true,
+                }],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z, // pointing up
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge {
+                    idx: 0,
+                    forward: true,
+                }],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Y, // perpendicular (90 degrees to Z)
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![face0, face1],
+            }],
+        });
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 has adjacent faces with 90 degree normal angle (> 45 degrees)
+        // so it should be detected as seam candidate
+        assert!(
+            result.seed_edges.contains(&0),
+            "Edge with large face normal angle should be detected as seam candidate"
+        );
+        assert!(
+            result.seed_vertices.contains(&0) && result.seed_vertices.contains(&1),
+            "Vertices of edge with large normal angle should be in seed set"
         );
     }
 }
