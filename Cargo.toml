@@ -9,9 +9,9 @@ members = [
     "libs/rcad-render",
     "libs/rcad-scene",
     "libs/rcad-constraints",
-    "libs/rcad-gds",
-    "libs/rcad-oas",
-    "libs/rcad-io",
+    # "libs/rcad-gds",   # moved to rcad-pro
+    # "libs/rcad-oas",   # moved to rcad-pro
+    # "libs/rcad-io",    # moved to rcad-pro
     "apps/creator-egui",
     "apps/creator-iced",
     "examples",

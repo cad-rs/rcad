@@ -2037,12 +2037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "laykit"
-version = "0.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5829743a24ff7edb510b4fdf2e7a5424dec742562d86b502a15417b6c70a725"
-
-[[package]]
 name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3051,19 +3045,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rcad-gds"
-version = "0.1.0"
-dependencies = [
- "glam 0.29.3",
- "laykit",
- "rcad-kernel",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "rcad-iges"
 version = "0.1.0"
 dependencies = [
@@ -3071,19 +3052,6 @@ dependencies = [
  "glam 0.29.3",
  "rcad-kernel",
  "serde",
-]
-
-[[package]]
-name = "rcad-io"
-version = "0.1.0"
-dependencies = [
- "glam 0.29.3",
- "rcad-gds",
- "rcad-kernel",
- "rcad-oas",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3102,19 +3070,6 @@ version = "0.1.0"
 dependencies = [
  "glam 0.29.3",
  "rcad-kernel",
-]
-
-[[package]]
-name = "rcad-oas"
-version = "0.1.0"
-dependencies = [
- "glam 0.29.3",
- "laykit",
- "rcad-kernel",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]
