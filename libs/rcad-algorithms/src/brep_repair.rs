@@ -486,7 +486,7 @@ pub fn assess_coverage(brep: &BRep, seed_vertices: &[usize]) -> CoverageAssessme
         0.0
     };
 
-    // Fallback threshold: if all coverages are below 30%, use global
+    // Fallback threshold: if any coverage is below 30%, use global
     let min_coverage = vertex_coverage.min(edge_coverage).min(face_coverage);
     let should_fallback = min_coverage < 0.3;
 
