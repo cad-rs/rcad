@@ -144,12 +144,12 @@ pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
 pub use gordon::{
     BoundaryContinuityReport, BoundaryType, ContinuityLevel, FallbackStrategy, GordonError,
-    GordonOptions, GordonQualityReport, GordonResult, ParameterizationMethod, QualityIssue,
-    QualityIssueKind,
+    GordonOptions, GordonQualityReport, GordonResult, GordonWarning, GordonWarningKind,
+    GordonConstructionResult, ParameterizationMethod, QualityIssue, QualityIssueKind,
     centripetal_parameterization, check_boundary_continuity, chord_length_parameterization,
     coons_fallback, eval_gordon_surface_safe, gordon_surface_curves, gordon_surface_normal_safe,
-    gordon_surface_quality, gordon_surface_with_fallback, gordon_surface_with_params,
-    gordon_to_bspline,
+    gordon_surface_derivatives, gordon_surface_quality, gordon_surface_with_fallback,
+    gordon_surface_with_params, gordon_surface_with_warnings, gordon_to_bspline,
 };
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
