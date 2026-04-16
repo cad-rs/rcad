@@ -1727,7 +1727,6 @@ pub struct WgpuRenderer {
     gizmo_center_material_bind_group: wgpu::BindGroup,
     show_grid: std::sync::Mutex<bool>,
     show_axis_gizmo: std::sync::Mutex<bool>,
-    scene_axes_scale: std::sync::Mutex<f32>,
     gizmo_eye: std::sync::Mutex<glam::Vec3>,
     light_dir: std::sync::Mutex<glam::Vec3>,
 }
@@ -2284,7 +2283,6 @@ impl WgpuRenderer {
             gizmo_center_material_bind_group,
             show_grid: std::sync::Mutex::new(true),
             show_axis_gizmo: std::sync::Mutex::new(true),
-            scene_axes_scale: std::sync::Mutex::new(0.3),
             gizmo_eye: std::sync::Mutex::new(glam::Vec3::new(0.0, 0.0, 3.2)),
             light_dir: std::sync::Mutex::new(glam::Vec3::new(0.45, 0.85, 0.35)),
         }
@@ -2871,14 +2869,6 @@ impl WgpuRenderer {
 
     pub fn show_axis_gizmo(&self) -> bool {
         *self.show_axis_gizmo.lock().expect("render mutex poisoned")
-    }
-
-    pub fn set_scene_axes_scale(&self, scale: f32) {
-        *self.scene_axes_scale.lock().expect("render mutex poisoned") = scale;
-    }
-
-    pub fn scene_axes_scale(&self) -> f32 {
-        *self.scene_axes_scale.lock().expect("render mutex poisoned")
     }
 
     pub fn set_model_color(&self, queue: &wgpu::Queue, color: [f32; 4]) {
