@@ -5,17 +5,20 @@ pub use brep_graph::{
 pub mod bopds;
 pub mod brep_check;
 pub mod brep_check_parallel;
+pub mod brep_lib;
 pub mod brep_repair;
 pub mod brep_tools;
 pub mod builder;
 pub mod defeature;
 pub mod shape_analysis;
+pub mod shape_build;
 pub mod shape_custom;
 pub mod features;
 pub mod gluer;
 pub mod bvh;
 pub mod classify;
 pub mod draft;
+pub mod geom_convert;
 pub mod geom_populate;
 pub mod healing;
 pub mod history;
@@ -36,12 +39,24 @@ pub use features::{
     make_cylindrical_hole, make_draft_prism, make_prism, make_revolution,
     make_linear_rib, make_revolution_rib, split_face_by_wire,
 };
+pub use brep_feat::{
+    BRepFeatError, FuseMode, FeatureParams, RibParams, GrooveParams,
+    DraftFeatureParams,
+    make_rib,
+    make_linear_rib as make_linear_rib_feat,
+    make_groove, make_through_groove,
+    make_prism_feature, make_revol_feature, make_pipe_feature,
+    apply_draft_feature,
+    make_drafted_prism, make_loft_feature,
+};
+pub mod int_ana;
 pub mod inttools;
 pub mod pave_filler;
 pub mod section;
 pub mod thicken;
 pub mod tolerance;
 pub mod offset;
+pub mod brep_offset;
 pub mod triangulate;
 pub mod array;
 pub mod cells_builder;
@@ -51,10 +66,33 @@ pub mod maker_volume;
 pub mod point_cloud;
 pub mod medial_axis;
 pub mod blend;
+pub mod brep_feat;
+pub mod extrema;
+pub mod projection;
+pub mod sweep;
 
 use serde::Serialize;
 
 pub use bvh::{Aabb, Bvh, BvhStats};
+pub use extrema::{
+    distance_point_point, distance_point_curve, distance_point_surface,
+    distance_curve_curve, distance_curve_surface, distance_surface_surface,
+    distance_brep_brep,
+    find_closest_points, find_furthest_points,
+    closest_point_on_curve, closest_point_on_surface,
+    find_supporting_face, find_supporting_edge,
+};
+pub use geom_convert::{
+    ConvertParams,
+    // Curve conversions
+    line_to_bspline, circle_to_bspline, ellipse_to_bspline, curve_to_bspline,
+    approx_curve_to_bspline,
+    // Surface conversions
+    plane_to_bspline, cylinder_to_bspline, cone_to_bspline, sphere_to_bspline,
+    torus_to_bspline, surface_to_bspline, approx_surface_to_bspline,
+    // BSpline operations
+    bspline_to_bezier, bspline_surface_to_bezier,
+};
 pub use brep_tools::{
     BRepToolsError, ShapeType,
     write_brep_to_string, read_brep_from_string,
@@ -66,6 +104,16 @@ pub use brep_tools::{
     get_vertex_tolerance, get_edge_tolerance, get_face_tolerance,
     count_faces, count_edges, count_vertices, count_shells,
     bounding_box,
+};
+pub use brep_lib::{
+    BRepLibError, FoundSurface, FittedSurfaceType,
+    find_surface_through_edges, find_surface_through_points,
+    sort_faces_by_area, sort_faces_by_bounding_box, sort_faces_by_distance,
+    faces_share_surface,
+    add_edge_with_curve, add_face_with_surface,
+    make_edge_from_curve, make_face_from_surface, make_wire_from_edges,
+    EdgeData, FaceData,
+    compute_edge_bounds, compute_face_bounds,
 };
 
 use rcad_kernel::BRep;
@@ -188,6 +236,18 @@ pub use hlr::{
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
 };
+pub use projection::{
+    ProjectionDirection, ProjectionOptions,
+    PointCurveProjection, PointSurfaceProjection, PointBRepProjection,
+    project_point_on_curve, project_point_on_curve_with_options,
+    project_point_on_surface, project_point_on_surface_with_options,
+    project_point_on_brep,
+    project_wire_on_surface, project_wire_on_face,
+    project_curve_on_surface, project_surface_on_surface,
+    compute_silhouette_curves, compute_contour_edges, SilhouetteResult,
+    normal_project_curve_on_surface, directional_project_curve_on_surface,
+    compute_all_curve_surface_projections,
+};
 pub use inttools::{
     SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
     intersect_surfaces_with_density, intersect_surfaces_with_tolerance,
@@ -202,6 +262,19 @@ pub use inttools::{
     detect_near_tangent_configurations,
     ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
 };
+pub use int_ana::{
+    // Line-Surface intersections (IntAna_IntLinPln, IntAna_IntLinCyl, etc.)
+    LinPlnIntersection, intersect_line_plane,
+    intersect_line_cylinder, intersect_line_sphere,
+    intersect_line_cone, intersect_line_torus,
+    // Plane-Surface intersections (IntAna_IntPlnPln, IntAna_IntPlnCyl, etc.)
+    PlnPlnResult, intersect_plane_plane_intana,
+    PlnCylResult, intersect_plane_cylinder_intana,
+    PlnSphResult, intersect_plane_sphere_intana,
+    PlnConResult, intersect_plane_cone_intana,
+    // Cylinder-Cylinder intersection (IntAna_IntCylCyl)
+    CylCylResult, intersect_cylinder_cylinder,
+};
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 pub use thicken::{ThickeningResult, thicken_shell};
 pub use offset::{
@@ -210,6 +283,15 @@ pub use offset::{
     offset_solid, offset_solid_with_options,
     hollow_solid, hollow_solid_with_options,
     offset_shape, detect_self_intersection,
+    JoinType, VariableThickness, OffsetQuality,
+};
+pub use brep_offset::{
+    OffsetMode, BRepOffsetOptions,
+    WireOffsetResult, ThickSolidResult, PipeShellResult, EvolvedResult,
+    MakeOffset, MakeOffsetShape, MakeThickSolid, MakePipeShell, MakeEvolved,
+    offset_wire, offset_shape_with_options, offset_shape_with_join,
+    make_thick_solid, make_hollow_solid,
+    make_pipe_shell, make_evolved,
 };
 pub use chamfer::{
     ChamferParams, ChamferMode, ChamferResult, ChamferError, ChamferWarning,
@@ -277,6 +359,18 @@ pub use non_manifold::{
     split_non_manifold_edges, make_manifold, make_manifold_with_options,
     merge_shells_at_interface,
 };
+pub use sweep::{
+    SweepError, SweepMode, SweepOptions, SweepHistory, CornerMode,
+    linear_sweep, linear_sweep_with_history, linear_sweep_with_options,
+    linear_sweep_face, linear_sweep_wire,
+    rotational_sweep, rotational_sweep_with_history, rotational_sweep_with_options,
+    rotational_sweep_face, rotational_sweep_wire,
+    pipe_sweep, pipe_sweep_with_history, pipe_sweep_with_options,
+    pipe_sweep_wire, pipe_with_rotation,
+    handle_pipe_corners,
+    linear_law_sweep, variable_section_sweep,
+    Law, LinearLaw, ConstantLaw, SineLaw, PiecewiseLinearLaw,
+};
 pub use gluer::{
     GluerError, GluerOptions, GluerResult, GluerHistory, GluerMode,
     Gluer,
@@ -308,6 +402,12 @@ pub use shape_analysis::{
     SurfaceDeviation, SurfaceDeviationViolation,
     compute_surface_deviation,
     detect_surface_self_intersection,
+};
+pub use shape_build::{
+    BuildError,
+    BuildVertex, BuildWire, BuildFace, BuildShell, BuildSolid,
+    validate_wire_closed, validate_shell_closed, validate_solid_valid,
+    Rebuild, BRepBuilder,
 };
 pub use shape_custom::{
     BSplineSimplifyOptions, SimplificationResult,
