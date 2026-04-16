@@ -2,29 +2,38 @@ pub use brep_graph::{
     BRepGraphHistory, NamedGraph, NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent,
     TopoGraphValidationIssue, TopoNode,
 };
+pub mod bnd_lib;
 pub mod bopds;
+pub mod brep_algo;
+pub mod brep_bnd;
 pub mod brep_check;
 pub mod brep_check_parallel;
 pub mod brep_lib;
 pub mod brep_repair;
 pub mod brep_tools;
 pub mod builder;
+pub mod brep_algo_api;
 pub mod defeature;
 pub mod shape_analysis;
 pub mod shape_build;
+pub mod shape_construct;
 pub mod shape_custom;
+pub mod shape_extend;
+pub mod shape_algo;
 pub mod features;
 pub mod gluer;
 pub mod bvh;
 pub mod classify;
 pub mod draft;
 pub mod geom_convert;
+pub mod geom_lib;
 pub mod geom_populate;
 pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
 pub mod brep_graph;
+pub mod brep_top_adaptor;
 pub mod non_manifold;
 pub use defeature::{
     CylindricalFeature, DefeaturingError, DefeaturingOptions, DefeaturingReport,
@@ -51,10 +60,12 @@ pub use brep_feat::{
 };
 pub mod int_ana;
 pub mod inttools;
+pub mod law;
 pub mod pave_filler;
 pub mod section;
 pub mod thicken;
 pub mod tolerance;
+pub mod top_loc;
 pub mod offset;
 pub mod brep_offset;
 pub mod triangulate;
@@ -69,7 +80,18 @@ pub mod blend;
 pub mod brep_feat;
 pub mod extrema;
 pub mod projection;
+pub mod brep_int_curve_surface;
 pub mod sweep;
+pub mod brep_mesh;
+pub mod geom2d_api;
+pub mod gcpnts;
+pub mod math_utils;
+pub mod tcol_std;
+pub mod elc_lib;
+pub mod els_lib;
+pub mod brep_adaptor;
+pub mod adaptor3d;
+pub mod approx_int;
 
 use serde::Serialize;
 
@@ -82,6 +104,56 @@ pub use extrema::{
     closest_point_on_curve, closest_point_on_surface,
     find_supporting_face, find_supporting_edge,
 };
+pub use gcpnts::{
+    arc_length, total_arc_length,
+    point_at_arc_length, points_at_equal_arc_length,
+    uniform_abscissa, uniform_abscissa_points,
+    uniform_deflection, adaptive_sample_curve,
+    tangential_deflection,
+    quasi_uniform,
+    sample_surface_uniform, sample_surface_grid,
+    sample_surface_adaptive,
+    sample_u_isolines, sample_v_isolines,
+    sampled_points_bounds,
+};
+pub use geom2d_api::{
+    Curve2dIntersection,
+    intersect_curves2d,
+    points_to_bspline2d, points_to_bspline2d_interpolate,
+    project_point_on_curve2d,
+    distance_between_curves2d,
+    distance_point_to_curve2d,
+    curve2d_angle_at, curve2d_curvature_at,
+};
+pub use els_lib::{
+    // Plane utilities
+    plane_point_at, plane_parameters, plane_normal, plane_tangent_u, plane_tangent_v,
+    // Cylinder utilities
+    cylinder_point_at, cylinder_parameters, cylinder_normal, cylinder_tangent_u, cylinder_tangent_v,
+    // Sphere utilities
+    sphere_point_at, sphere_parameters, sphere_normal, sphere_tangent_u, sphere_tangent_v,
+    // Cone utilities
+    cone_point_at, cone_parameters, cone_normal,
+    // Torus utilities
+    torus_point_at, torus_parameters, torus_normal, torus_tangent_u, torus_tangent_v,
+    // BSplineSurface utilities
+    bspline_surface_point_at, bspline_surface_normal, bspline_surface_derivatives,
+};
+pub use elc_lib::{
+    // Line utilities
+    line_point_at, line_parameter, line_distance_to_point, line_closest_point,
+    // Circle utilities
+    circle_point_at, circle_parameter, circle_tangent_at, circle_normal_at, circle_binormal_at,
+    circle_derivative,
+    // Ellipse utilities
+    ellipse_point_at, ellipse_parameter, ellipse_derivative,
+    // Hyperbola utilities
+    hyperbola_point_at, hyperbola_derivative,
+    // Parabola utilities
+    parabola_point_at, parabola_derivative,
+    // BSpline utilities
+    bspline_point_at, bspline_derivative,
+};
 pub use geom_convert::{
     ConvertParams,
     // Curve conversions
@@ -92,6 +164,27 @@ pub use geom_convert::{
     torus_to_bspline, surface_to_bspline, approx_surface_to_bspline,
     // BSpline operations
     bspline_to_bezier, bspline_surface_to_bezier,
+};
+pub use approx_int::{
+    ApproxOptions, ApproxResult, IntersectionApproximator, IntersectionSample,
+    compute_same_parameter, compute_same_parameter_bspline, adjust_same_parameter,
+    approximate_2d_curve, approximate_2d_curve_with_ctrl,
+    sample_intersection_points, sample_with_adaptive_density, sample_curve_segment,
+    approximate_polyline, approximate_intersection,
+};
+pub use geom_lib::{
+    // Closure checking
+    is_curve_closed, is_surface_u_closed, is_surface_v_closed,
+    // Degeneracy removal
+    remove_degenerate_curve_sections,
+    // Normal estimation
+    estimate_normal, estimate_normal_by_neighbors,
+    // Curve tools
+    reverse_curve, trim_curve, transform_curve,
+    // Surface tools
+    reverse_surface_u, reverse_surface_v, trim_surface, transform_surface,
+    // Continuity checking
+    check_curve_continuity, check_surface_continuity,
 };
 pub use brep_tools::{
     BRepToolsError, ShapeType,
@@ -105,6 +198,16 @@ pub use brep_tools::{
     count_faces, count_edges, count_vertices, count_shells,
     bounding_box,
 };
+pub use brep_algo::{
+    BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue,
+    evaluate_face_normal, evaluate_edge_tangent, evaluate_vertex_normal,
+    propagate_edge_tolerances, propagate_face_tolerances,
+    max_face_area, min_face_area, max_edge_length,
+    total_volume, total_surface_area,
+    is_valid_brep, check_orientation,
+    fix_orientation, reverse_face,
+    find_connected_components,
+};
 pub use brep_lib::{
     BRepLibError, FoundSurface, FittedSurfaceType,
     find_surface_through_edges, find_surface_through_points,
@@ -114,6 +217,23 @@ pub use brep_lib::{
     make_edge_from_curve, make_face_from_surface, make_wire_from_edges,
     EdgeData, FaceData,
     compute_edge_bounds, compute_face_bounds,
+};
+pub use brep_bnd::{
+    BoundingBox,
+    add_brep_to_bbox, add_face_to_bbox, add_edge_to_bbox, add_vertex_to_bbox,
+    surface_bounds, surface_bounds_with_domain,
+    curve_bounds, curve_bounds_with_range, curve_bounds_default,
+};
+pub use brep_top_adaptor::{
+    FaceAdaptor, EdgeAdaptor, VertexAdaptor,
+    FaceExplorer, EdgeExplorer, VertexExplorer, WireExplorer,
+    ShapeIterator, OrientedEdge,
+    edges_of_face, faces_of_edge, vertices_of_edge, edges_of_vertex, faces_of_vertex,
+    face_count, shell_count, wire_count,
+};
+pub use top_loc::{
+    Location, Datum, LocationManager,
+    apply_location_to_shape, apply_location_to_shape_owned,
 };
 
 use rcad_kernel::BRep;
@@ -133,7 +253,7 @@ pub use brep_check::{CheckIssue, CheckResult, check,
     // Wire quality metrics (ShapeAnalysis_Wire enhancement)
     WireQualityMetrics, WireQualityReport, analyze_wire_quality,
     // Geometry validation (OCCT BRepCheck_Analyzer equivalent)
-    GeometryValidationReport, check_surface_continuity, check_curve_surface_consistency,
+    GeometryValidationReport, check_curve_surface_consistency,
     // Topology validation
     TopologyValidationReport, validate_shell_orientation, validate_solid_closure,
     validate_wire_orientation, validate_nested_wires,
@@ -221,6 +341,11 @@ pub use builder::{
     GlueConfig, GlueFacePair, GlueFaceCache,
     detect_glue_faces, apply_glue_optimization, compute_adaptive_glue_tolerance,
 };
+pub use brep_algo_api::{
+    // BRepAlgoAPI-style high-level boolean API
+    BRepAlgoAPI_Common, BRepAlgoAPI_Fuse, BRepAlgoAPI_Cut, BRepAlgoAPI_Section,
+    BooleanApiOptions, BRepHistory,
+};
 pub use history::{
     BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
     HistoryTracker, HistoryChain, HistoryStatistics, ChainStatistics,
@@ -248,6 +373,12 @@ pub use projection::{
     normal_project_curve_on_surface, directional_project_curve_on_surface,
     compute_all_curve_surface_projections,
 };
+pub use brep_int_curve_surface::{
+    CurveBRepIntersection, CurveFaceIntersection, RayHit,
+    intersect_curve_with_brep, intersect_line_with_brep,
+    intersect_curve_with_face, intersect_line_with_face,
+    ray_cast, shoot_ray, is_point_inside_by_ray,
+};
 pub use inttools::{
     SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
     intersect_surfaces_with_density, intersect_surfaces_with_tolerance,
@@ -274,6 +405,12 @@ pub use int_ana::{
     PlnConResult, intersect_plane_cone_intana,
     // Cylinder-Cylinder intersection (IntAna_IntCylCyl)
     CylCylResult, intersect_cylinder_cylinder,
+};
+pub use law::{
+    LawFunction,
+    ConstantLaw, LinearLaw, BSplineLaw, CompositeLaw, InterpolateLaw,
+    SineLaw, SmoothStepLaw,
+    sine_law, smooth_step_law,
 };
 pub use section::{SectionCurve, section, section_curves, section_polylines};
 pub use thicken::{ThickeningResult, thicken_shell};
@@ -319,6 +456,13 @@ pub use triangulate::{
     BoundarySensitiveTessellator, FeatureEdge,
     IncrementalMesher, MeshDelta,
     MeshSimplifier,
+};
+pub use brep_mesh::{
+    MeshParams, Mesh, BRepMesh,
+    mesh_face, mesh_brep as brep_mesh_brep,
+    discretize_edge, discretize_edge_on_surface,
+    mesh_aspect_ratio, mesh_min_angle, mesh_max_edge_length,
+    refine_mesh,
 };
 pub use array::{
     LinearPatternParams, CircularPatternParams, PatternError,
@@ -369,7 +513,7 @@ pub use sweep::{
     pipe_sweep_wire, pipe_with_rotation,
     handle_pipe_corners,
     linear_law_sweep, variable_section_sweep,
-    Law, LinearLaw, ConstantLaw, SineLaw, PiecewiseLinearLaw,
+    Law, PiecewiseLinearLaw,
 };
 pub use gluer::{
     GluerError, GluerOptions, GluerResult, GluerHistory, GluerMode,
@@ -409,6 +553,21 @@ pub use shape_build::{
     validate_wire_closed, validate_shell_closed, validate_solid_valid,
     Rebuild, BRepBuilder,
 };
+pub use shape_construct::{
+    // Curve construction
+    construct_line, construct_circle_from_3_points, construct_circle_center_normal,
+    construct_ellipse_from_points,
+    // Surface construction
+    construct_plane_from_3_points, construct_plane_from_point_normal,
+    construct_cylinder_from_axis, construct_cone_from_axis,
+    construct_sphere_from_center_radius, construct_torus_from_center_radii,
+    // BSpline construction
+    construct_bspline_curve, construct_bspline_surface,
+    // Wire construction
+    construct_polygon_wire, construct_circle_wire,
+    // Face construction
+    construct_planar_face_from_wire, construct_face_from_boundary,
+};
 pub use shape_custom::{
     BSplineSimplifyOptions, SimplificationResult,
     GeometryRestrictions, ConversionReport,
@@ -417,6 +576,45 @@ pub use shape_custom::{
     is_bspline_curve, is_bspline_surface,
     curve_degree, surface_degrees,
     ensure_bspline_curve, ensure_bspline_surface,
+};
+pub use shape_extend::{
+    // ShapeExtend_WireData
+    WireData,
+    // ShapeExtend_CompositeSurface
+    CompositeSurface,
+    // ShapeExtend_BasicMsgRegistrator
+    MessageRegistrator, MessageSeverity, ShapeMessage,
+    // ShapeExtend_MsgRegistrator
+    ShapeMessageRegistrator, ShapeContextMessage,
+    // ShapeExtend_Explorer
+    ShapeExplorer,
+};
+pub use shape_algo::{
+    // Algorithm container
+    AlgoContainer, ShapeAlgorithm,
+    // Geometry extraction structures
+    BoxGeometry, CylinderGeometry, SphereGeometry, ConeGeometry, TorusGeometry,
+    // Geometry extraction functions
+    get_box_geometry, get_cylinder_geometry, get_sphere_geometry, get_cone_geometry, get_torus_geometry,
+    // Primitive detection
+    is_box, is_cylinder, is_sphere, is_cone, is_torus,
+};
+pub use math_utils::{
+    // Root finding
+    newton_raphson, bisection, secant,
+    // Multi-dimensional Newton
+    newton_2d, newton_3d,
+    // Polynomial solvers
+    solve_linear, solve_quadratic, solve_cubic, solve_quartic,
+    // Eigenvalue/Matrix
+    eigenvalues_2x2, eigenvalues_3x3, inverse_3x3, determinant_3x3,
+    // Integration
+    simpson_integrate, gaussian_quadrature,
+    // Optimization
+    golden_section_min, golden_section_max,
+};
+pub use adaptor3d::{
+    Curve3dAdaptor, SurfaceAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor,
 };
 
 /// Options for post-operation topology simplification.
