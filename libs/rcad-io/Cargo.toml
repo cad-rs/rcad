@@ -1,0 +1,13 @@
+[package]
+name = "rcad-io"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rcad-gds = { path = "../rcad-gds" }
+rcad-oas = { path = "../rcad-oas" }
+rcad-kernel = { path = "../rcad-kernel" }
+glam = { workspace = true }
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

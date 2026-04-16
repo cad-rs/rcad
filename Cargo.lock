@@ -3074,6 +3074,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcad-io"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "rcad-gds",
+ "rcad-kernel",
+ "rcad-oas",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "rcad-kernel"
 version = "0.1.0"
 dependencies = [
