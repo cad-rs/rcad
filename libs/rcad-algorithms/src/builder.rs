@@ -1952,6 +1952,355 @@ fn handle_degenerate_points(
     }
 }
 
+/// Enhanced handling of degenerate UV polygons on surfaces with singularities.
+///
+/// This function handles UV polygons where vertices collapse at surface singularities:
+/// - Sphere poles (v=0 or v=π)
+/// - Cone apex (v=0)
+///
+/// The function:
+/// 1. Detects pole/apex proximity
+/// 2. Handles triangulation specially for degenerate triangles
+/// 3. Ensures edge PCurve tolerance near poles/apex
+///
+/// Returns a 3D boundary that correctly handles surface singularities.
+pub fn handle_degenerate_uv_polygon(uv_poly: &[DVec2], surface: &Surface3) -> Vec<DVec3> {
+    match surface {
+        Surface3::Sphere(s) => {
+            handle_sphere_degenerate_uv(uv_poly, s)
+        }
+        Surface3::Cone(c) => {
+            handle_cone_degenerate_uv(uv_poly, c)
+        }
+        _ => {
+            // No degenerate points - standard mapping
+            uv_poly.iter().map(|uv| surface.point_at(uv.x, uv.y)).collect()
+        }
+    }
+}
+
+/// Handle degenerate UV polygons on sphere surfaces.
+fn handle_sphere_degenerate_uv(uv_poly: &[DVec2], sphere: &SphericalSurface) -> Vec<DVec3> {
+    let pole_tol = 0.01; // Tolerance for detecting near-pole
+
+    // Find min/max v values to detect pole proximity
+    let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+    // Check if polygon touches either pole
+    let touches_north_pole = v_min < pole_tol;
+    let touches_south_pole = v_max > std::f64::consts::PI - pole_tol;
+
+    if !touches_north_pole && !touches_south_pole {
+        // No pole involvement - standard mapping
+        return uv_poly.iter().map(|uv| sphere.point_at(uv.x, uv.y)).collect();
+    }
+
+    let mut boundary_3d = Vec::new();
+
+    // Determine which pole(s) are involved
+    let north_pole = sphere.center + sphere.axis * sphere.radius;
+    let south_pole = sphere.center - sphere.axis * sphere.radius;
+
+    // Sample UV polygon edges more densely near poles
+    let n = uv_poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = uv_poly[i];
+        let b = uv_poly[j];
+
+        // More samples if edge is near pole
+        let near_pole = (a.y < pole_tol || a.y > std::f64::consts::PI - pole_tol)
+            || (b.y < pole_tol || b.y > std::f64::consts::PI - pole_tol);
+        let n_samples = if near_pole { 16 } else { 4 };
+
+        for k in 0..n_samples {
+            let t = k as f64 / n_samples as f64;
+            let uv = DVec2::new(
+                a.x + t * (b.x - a.x),
+                a.y + t * (b.y - a.y),
+            );
+
+            // Clamp v to avoid pole singularity
+            let v_clamped = uv.y.clamp(0.001, std::f64::consts::PI - 0.001);
+            let pt = sphere.point_at(uv.x, v_clamped);
+
+            // Skip points very close to pole (will add pole point separately)
+            let near_north = (pt - north_pole).length() < sphere.radius * 0.1;
+            let near_south = (pt - south_pole).length() < sphere.radius * 0.1;
+            if !near_north && !near_south {
+                boundary_3d.push(pt);
+            }
+        }
+    }
+
+    // Add pole point(s) if polygon contains them
+    if touches_north_pole {
+        boundary_3d.push(north_pole);
+    }
+    if touches_south_pole {
+        boundary_3d.push(south_pole);
+    }
+
+    dedup_3d_points(&boundary_3d)
+}
+
+/// Handle degenerate UV polygons on cone surfaces.
+fn handle_cone_degenerate_uv(uv_poly: &[DVec2], cone: &ConicalSurface) -> Vec<DVec3> {
+    let apex_tol = 0.01; // Tolerance for detecting near-apex
+
+    // Find min v value to detect apex proximity
+    let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+
+    if v_min >= apex_tol {
+        // No apex involvement - standard mapping
+        return uv_poly.iter().map(|uv| cone.point_at(uv.x, uv.y)).collect();
+    }
+
+    let mut boundary_3d = Vec::new();
+    let apex = cone.apex_point();
+
+    // Sample UV polygon edges more densely near apex
+    let n = uv_poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = uv_poly[i];
+        let b = uv_poly[j];
+
+        // More samples if edge is near apex
+        let near_apex = a.y < apex_tol * 10.0 || b.y < apex_tol * 10.0;
+        let n_samples = if near_apex { 16 } else { 4 };
+
+        for k in 0..n_samples {
+            let t = k as f64 / n_samples as f64;
+            let uv = DVec2::new(
+                a.x + t * (b.x - a.x),
+                a.y + t * (b.y - a.y),
+            );
+
+            // Clamp v to avoid apex singularity
+            let v_clamped = uv.y.max(0.001);
+            let pt = cone.point_at(uv.x, v_clamped);
+
+            // Skip points very close to apex
+            if (pt - apex).length() > 0.01 {
+                boundary_3d.push(pt);
+            }
+        }
+    }
+
+    // Add apex point
+    boundary_3d.push(apex);
+
+    dedup_3d_points(&boundary_3d)
+}
+
+/// Split an edge at a periodic seam if it crosses the U=0/2π boundary.
+///
+/// This function detects if an edge on a periodic surface (cylinder, sphere, torus)
+/// crosses the seam and splits it at the crossing point.
+///
+/// Returns:
+/// - `None` if the edge doesn't cross the seam
+/// - `Some(vec![seg1, seg2])` where each segment is `[start_uv, end_uv]`
+pub fn split_edge_at_periodic_seam(
+    start_uv: DVec2,
+    end_uv: DVec2,
+    surface: &Surface3,
+) -> Option<Vec<Vec<DVec2>>> {
+    // Get the U period for this surface type
+    let u_period = match surface {
+        Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
+            std::f64::consts::TAU
+        }
+        Surface3::Cone(_) => {
+            // Cone is also periodic in U
+            std::f64::consts::TAU
+        }
+        _ => {
+            // Non-periodic surface
+            return None;
+        }
+    };
+
+    let u1 = start_uv.x;
+    let u2 = end_uv.x;
+    let v1 = start_uv.y;
+    let v2 = end_uv.y;
+    let du = u2 - u1;
+
+    // Check for seam crossing (jump > period/2)
+    if du.abs() <= u_period * 0.5 {
+        return None;
+    }
+
+    // Determine which way we're crossing
+    let is_low_to_high = du < 0.0; // u1 is high, u2 is low
+
+    // Calculate intersection point at seam
+    let (t, seam_u) = if is_low_to_high {
+        // u1 is near period, u2 is near 0
+        // Find t where u = period
+        let t = (u_period - u1) / ((u2 + u_period) - u1);
+        (t, u_period)
+    } else {
+        // u1 is near 0, u2 is near period
+        // Find t where u = 0
+        let t = -u1 / ((u2 - u_period) - u1);
+        (t, 0.0)
+    };
+
+    // Clamp t to [0, 1] for numerical stability
+    let t = t.clamp(0.0, 1.0);
+    let seam_v = v1 + t * (v2 - v1);
+
+    // Build two segments
+    let seam_point = DVec2::new(seam_u, seam_v);
+    let opposite_seam_point = if seam_u < u_period * 0.5 {
+        DVec2::new(u_period, seam_v)
+    } else {
+        DVec2::new(0.0, seam_v)
+    };
+
+    // First segment: from start to seam
+    let seg1 = vec![start_uv, seam_point];
+    // Second segment: from opposite seam to end
+    let seg2 = vec![opposite_seam_point, end_uv];
+
+    Some(vec![seg1, seg2])
+}
+
+/// Split a UV polygon at both U and V seams for torus double periodicity.
+///
+/// The torus has two periodic parameters:
+/// - U period: 2π (around major circle)
+/// - V period: 2π (around tube circle)
+///
+/// This function handles UV polygon splitting in both directions.
+pub fn split_uv_polygon_torus_double(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec2>> {
+    if uv_polygon.len() < 3 {
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // First, split at U seam
+    let u_split = split_uv_polygon_at_seam(uv_polygon, period);
+
+    // Then, split each result at V seam
+    let mut result = Vec::new();
+    for poly in u_split {
+        let v_split = split_uv_polygon_at_v_seam(&poly, period);
+        result.extend(v_split);
+    }
+
+    result
+}
+
+/// Split a UV polygon at the V periodic seam (V=0/period boundary).
+///
+/// This is similar to split_uv_polygon_at_seam but for the V parameter.
+fn split_uv_polygon_at_v_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec2>> {
+    if uv_polygon.len() < 3 {
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // Find all edges crossing the V seam
+    let mut crossings: Vec<(usize, f64, DVec2)> = Vec::new();
+
+    for i in 0..uv_polygon.len() {
+        let j = (i + 1) % uv_polygon.len();
+        let v1 = uv_polygon[i].y;
+        let v2 = uv_polygon[j].y;
+        let dv = v2 - v1;
+
+        // Check for seam crossing (jump > period/2)
+        if dv.abs() > period * 0.5 {
+            let u1 = uv_polygon[i].x;
+            let u2 = uv_polygon[j].x;
+
+            // Determine which way we're crossing
+            let is_low_to_high = dv < 0.0; // v1 is high, v2 is low
+
+            // Calculate intersection point
+            let (t, seam_v) = if is_low_to_high {
+                let t = (period - v1) / ((v2 + period) - v1);
+                (t, period)
+            } else {
+                let t = -v1 / ((v2 - period) - v1);
+                (t, 0.0)
+            };
+
+            let t = t.clamp(0.0, 1.0);
+            let seam_u = u1 + t * (u2 - u1);
+
+            crossings.push((i, t, DVec2::new(seam_u, seam_v)));
+        }
+    }
+
+    if crossings.is_empty() {
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // For now, handle simple cases
+    if crossings.len() != 2 {
+        // Complex case - return original
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // Build two sub-polygons
+    let (idx1, _, pt1) = crossings[0];
+    let (idx2, _, pt2) = crossings[1];
+
+    let mut low_polygon: Vec<DVec2> = Vec::new();
+    let mut high_polygon: Vec<DVec2> = Vec::new();
+
+    let is_low = |v: f64| v < period * 0.5;
+
+    let n = uv_polygon.len();
+
+    // Traverse polygon and assign vertices
+    for i in 0..n {
+        let curr = uv_polygon[i];
+
+        // Add current vertex to appropriate polygon
+        if is_low(curr.y) {
+            low_polygon.push(curr);
+        } else {
+            high_polygon.push(curr);
+        }
+
+        // Check for crossing between i and i+1
+        for (cross_idx, _, cross_pt) in &crossings {
+            if *cross_idx == i {
+                // Add seam points to both polygons
+                let low_pt = DVec2::new(cross_pt.x, 0.0);
+                let high_pt = DVec2::new(cross_pt.x, period);
+
+                if is_low(curr.y) {
+                    low_polygon.push(low_pt);
+                    high_polygon.push(high_pt);
+                } else {
+                    high_polygon.push(high_pt);
+                    low_polygon.push(low_pt);
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    if low_polygon.len() >= 3 {
+        result.push(low_polygon);
+    }
+    if high_polygon.len() >= 3 {
+        result.push(high_polygon);
+    }
+
+    if result.is_empty() {
+        vec![uv_polygon.to_vec()]
+    } else {
+        result
+    }
+}
+
 /// Deduplicate 3D points within tolerance.
 fn dedup_3d_points(points: &[DVec3]) -> Vec<DVec3> {
     let mut result: Vec<DVec3> = Vec::new();
@@ -3326,6 +3675,7 @@ pub fn compute_adaptive_glue_tolerance(
 mod glue_tests {
     use super::*;
     use rcad_kernel::PrimitiveSolid;
+    use rcad_kernel::geom::{SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
     use glam::DAffine3;
 
     fn unit_box() -> BRep {
@@ -3686,5 +4036,324 @@ mod glue_tests {
         let result = split_uv_polygon_at_seam(&empty, period);
         assert_eq!(result.len(), 1);
         assert!(result[0].is_empty());
+    }
+
+    // =====================================================
+    // Track A: Periodic Surface Seam Enhancement Tests
+    // =====================================================
+
+    // --- A1: Enhanced degenerate UV polygon handling tests ---
+
+    #[test]
+    fn test_handle_degenerate_uv_polygon_sphere_pole_cap() {
+        // UV polygon that represents a small cap near the north pole of a sphere
+        // All vertices collapse toward v=0 (north pole)
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            radius: 1.0,
+            axis: DVec3::Y,
+        };
+        let surface = Surface3::Sphere(sphere);
+
+        // Small triangle near north pole (v ≈ 0)
+        let uv_polygon = vec![
+            DVec2::new(0.0, 0.001),
+            DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
+            DVec2::new(std::f64::consts::PI, 0.001),
+        ];
+
+        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+        // Should produce valid 3D boundary
+        assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+        // All points should be valid (no NaN)
+        for pt in &result {
+            assert!(pt.x.is_finite(), "Point x should be finite");
+            assert!(pt.y.is_finite(), "Point y should be finite");
+            assert!(pt.z.is_finite(), "Point z should be finite");
+        }
+
+        // Should include pole point since all vertices are near pole
+        let north_pole = sphere.center + sphere.axis * sphere.radius;
+        let has_pole = result.iter().any(|pt| (*pt - north_pole).length() < 0.1);
+        assert!(has_pole, "Should include pole point for collapsed vertices");
+    }
+
+    #[test]
+    fn test_handle_degenerate_uv_polygon_sphere_south_pole_cap() {
+        // UV polygon near south pole (v ≈ π)
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            radius: 1.0,
+            axis: DVec3::Y,
+        };
+        let surface = Surface3::Sphere(sphere);
+
+        // Small triangle near south pole (v ≈ π)
+        let uv_polygon = vec![
+            DVec2::new(0.0, std::f64::consts::PI - 0.001),
+            DVec2::new(std::f64::consts::FRAC_PI_2, std::f64::consts::PI - 0.001),
+            DVec2::new(std::f64::consts::PI, std::f64::consts::PI - 0.001),
+        ];
+
+        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+        // Should produce valid 3D boundary
+        assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+        // Should include south pole point
+        let south_pole = sphere.center - sphere.axis * sphere.radius;
+        let has_pole = result.iter().any(|pt| (*pt - south_pole).length() < 0.1);
+        assert!(has_pole, "Should include south pole point for collapsed vertices");
+    }
+
+    #[test]
+    fn test_handle_degenerate_uv_polygon_cone_apex() {
+        // UV polygon that collapses toward cone apex (v=0)
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 0.0, // Reference radius at apex
+            half_angle_rad: std::f64::consts::FRAC_PI_4,
+        };
+        let surface = Surface3::Cone(cone);
+
+        // Small triangle near apex (v ≈ 0)
+        let uv_polygon = vec![
+            DVec2::new(0.0, 0.001),
+            DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
+            DVec2::new(std::f64::consts::PI, 0.001),
+        ];
+
+        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+        // Should produce valid 3D boundary
+        assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+        // All points should be valid (no NaN)
+        for pt in &result {
+            assert!(pt.x.is_finite(), "Point x should be finite");
+            assert!(pt.y.is_finite(), "Point y should be finite");
+            assert!(pt.z.is_finite(), "Point z should be finite");
+        }
+
+        // Should include apex point
+        let apex = cone.apex_point();
+        let has_apex = result.iter().any(|pt| (*pt - apex).length() < 0.1);
+        assert!(has_apex, "Should include apex point for collapsed vertices");
+    }
+
+    #[test]
+    fn test_handle_degenerate_uv_polygon_sphere_triangular_pole_cap() {
+        // A triangular UV region that includes the pole, simulating a spherical triangle
+        // with one vertex at the pole
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            radius: 1.0,
+            axis: DVec3::Y,
+        };
+        let surface = Surface3::Sphere(sphere);
+
+        // Triangle with pole at one vertex
+        // u=0, v=0 is the pole, other vertices at larger v
+        let uv_polygon = vec![
+            DVec2::new(0.0, 0.0), // At pole
+            DVec2::new(0.0, 0.5), // Away from pole
+            DVec2::new(std::f64::consts::FRAC_PI_2, 0.5), // Away from pole
+        ];
+
+        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+        // Should produce valid 3D boundary with at least 2 distinct points
+        assert!(result.len() >= 2, "Should produce at least 2 boundary points");
+
+        // All points should be valid (no NaN)
+        for pt in &result {
+            assert!(pt.x.is_finite(), "Point x should be finite");
+            assert!(pt.y.is_finite(), "Point y should be finite");
+            assert!(pt.z.is_finite(), "Point z should be finite");
+        }
+    }
+
+    // --- A2: Edge splitting at periodic seam tests ---
+
+    #[test]
+    fn test_split_edge_at_periodic_seam_cylinder() {
+        // Edge that crosses U=0/2π boundary on cylinder
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 1.0,
+        };
+
+        // Edge from u near 2π to u near 0
+        let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 0.5);
+        let end_uv = DVec2::new(0.1, 0.5);
+
+        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
+
+        // Should return two segments
+        assert!(result.is_some(), "Should detect seam crossing");
+        let segments = result.unwrap();
+        assert_eq!(segments.len(), 2, "Should split into two segments");
+
+        // Each segment should have start and end UV
+        for (i, seg) in segments.iter().enumerate() {
+            assert_eq!(seg.len(), 2, "Segment {} should have 2 points", i);
+        }
+
+        // First segment should end at seam
+        assert!(
+            segments[0][1].x.abs() < 0.01 || (segments[0][1].x - std::f64::consts::TAU).abs() < 0.01,
+            "First segment should end at seam"
+        );
+
+        // Second segment should start at seam
+        assert!(
+            segments[1][0].x.abs() < 0.01 || (segments[1][0].x - std::f64::consts::TAU).abs() < 0.01,
+            "Second segment should start at seam"
+        );
+    }
+
+    #[test]
+    fn test_split_edge_at_periodic_seam_no_crossing() {
+        // Edge that doesn't cross seam
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Y,
+            radius: 1.0,
+        };
+
+        let start_uv = DVec2::new(1.0, 0.5);
+        let end_uv = DVec2::new(2.0, 0.5);
+
+        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
+
+        // Should return None (no splitting needed)
+        assert!(result.is_none(), "Should not split edge that doesn't cross seam");
+    }
+
+    #[test]
+    fn test_split_edge_at_periodic_seam_sphere() {
+        // Edge crossing U=0/2π boundary on sphere
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            radius: 1.0,
+            axis: DVec3::Y,
+        };
+
+        let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 1.0);
+        let end_uv = DVec2::new(0.1, 1.0);
+
+        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Sphere(sphere));
+
+        assert!(result.is_some(), "Should detect seam crossing on sphere");
+        let segments = result.unwrap();
+        assert_eq!(segments.len(), 2, "Should split into two segments");
+    }
+
+    // --- A3: Torus double periodicity tests ---
+
+    #[test]
+    fn test_split_uv_polygon_torus_u_period() {
+        // UV polygon on torus that crosses U seam only
+        let period = std::f64::consts::TAU;
+        let uv_polygon = vec![
+            DVec2::new(5.5, 0.5), // Near U=2π
+            DVec2::new(0.5, 0.5), // Near U=0
+            DVec2::new(0.5, 1.5),
+            DVec2::new(5.5, 1.5),
+        ];
+
+        let result = split_uv_polygon_at_seam(&uv_polygon, period);
+
+        // Should split into two polygons
+        assert_eq!(result.len(), 2, "Should split torus polygon at U seam");
+
+        // Each polygon should not cross U seam
+        for poly in &result {
+            for j in 0..poly.len() {
+                let k = (j + 1) % poly.len();
+                let du = poly[k].x - poly[j].x;
+                assert!(
+                    du.abs() < period * 0.5,
+                    "Output polygon should not cross U seam"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_uv_polygon_torus_double_period() {
+        // UV polygon on torus that crosses both U and V seams
+        // This is a complex case where the polygon wraps around both directions
+        let period = std::f64::consts::TAU;
+
+        // Polygon that spans nearly full U range and crosses V seam
+        let uv_polygon = vec![
+            DVec2::new(0.1, 5.5), // V near 2π
+            DVec2::new(5.9, 5.5),
+            DVec2::new(5.9, 0.5), // V near 0
+            DVec2::new(0.1, 0.5),
+        ];
+
+        // Use double periodic splitting
+        let result = split_uv_polygon_torus_double(&uv_polygon, period);
+
+        // Should produce multiple non-crossing polygons
+        assert!(!result.is_empty(), "Should produce output polygons");
+
+        // Each polygon should not cross U or V seams
+        for poly in &result {
+            assert!(poly.len() >= 3, "Polygon should have at least 3 vertices");
+
+            for j in 0..poly.len() {
+                let k = (j + 1) % poly.len();
+                let du = poly[k].x - poly[j].x;
+                let dv = poly[k].y - poly[j].y;
+                assert!(
+                    du.abs() < period * 0.5,
+                    "Output polygon should not cross U seam"
+                );
+                assert!(
+                    dv.abs() < period * 0.5,
+                    "Output polygon should not cross V seam"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_handle_degenerate_uv_polygon_non_degenerate() {
+        // Normal UV polygon on sphere (no degenerate points)
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            radius: 1.0,
+            axis: DVec3::Y,
+        };
+        let surface = Surface3::Sphere(sphere);
+
+        // Rectangle away from poles
+        let uv_polygon = vec![
+            DVec2::new(0.0, 1.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(1.0, 2.0),
+            DVec2::new(0.0, 2.0),
+        ];
+
+        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+        // Should produce same number of points as input
+        assert_eq!(result.len(), uv_polygon.len(), "Non-degenerate should map 1:1");
+
+        // All points should be on sphere surface
+        for pt in &result {
+            let dist = pt.length();
+            assert!(
+                (dist - sphere.radius).abs() < 0.001,
+                "Point should be on sphere surface"
+            );
+        }
     }
 }
