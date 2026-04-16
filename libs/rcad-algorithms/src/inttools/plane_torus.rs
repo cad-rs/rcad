@@ -3,10 +3,9 @@
 //! # Cases
 //!
 //! - **Perpendicular to axis**: Two circles (inner and outer equator)
-//! - **Parallel to axis**: Two circles or figure-8 depending on offset
+//! - **Parallel to axis**: Falls back to numerical marching (TODO: analytic implementation)
 //! - **Oblique**: Complex curve, fall back to numerical marching
 
-use glam::DVec3;
 use rcad_kernel::geom::{Circle3, Plane, ToroidalSurface};
 
 use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
