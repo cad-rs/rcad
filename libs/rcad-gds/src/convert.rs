@@ -1,4 +1,3 @@
-use glam::DVec2;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::error::{GdsError, Result};
@@ -50,7 +49,7 @@ pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) 
         let layer_settings = config.get(boundary.layer);
 
         // Create a face from the boundary
-        let wire = boundary_to_wire(boundary)?;
+        let _wire = boundary_to_wire(boundary)?;
 
         // Create vertices for this boundary
         let mut face_vertices: Vec<Vertex> = boundary.points.iter()
@@ -71,7 +70,7 @@ pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) 
             wire_edges.push(WireEdge::fwd(face_edges.len() - 1));
         }
 
-        let vertex_start = brep.vertices.len();
+        let _vertex_start = brep.vertices.len();
         let edge_start = brep.edges.len();
 
         brep.vertices.append(&mut face_vertices);
@@ -116,6 +115,7 @@ impl GdsLibrary {
 mod tests {
     use super::*;
     use crate::LayerSettings;
+    use glam::DVec2;
 
     fn create_test_boundary() -> GdsBoundary {
         GdsBoundary {
