@@ -31,6 +31,12 @@ pub enum BooleanError {
     NumericalFailure(&'static str),
     /// An expected non-empty collection was empty (e.g. polyline with no points).
     EmptyCollection(&'static str),
+    /// Result fails validity checks (non-manifold, open shells, invalid orientation).
+    InvalidResult(&'static str),
+    /// Missing intersection curves between surfaces that should intersect.
+    IncompleteIntersection(&'static str),
+    /// Result contains self-intersecting geometry.
+    SelfIntersection(&'static str),
 }
 
 impl std::fmt::Display for BooleanError {
@@ -41,6 +47,9 @@ impl std::fmt::Display for BooleanError {
             Self::DegenerateResult => write!(f, "degenerate result"),
             Self::NumericalFailure(msg) => write!(f, "numerical failure: {msg}"),
             Self::EmptyCollection(msg) => write!(f, "unexpected empty collection: {msg}"),
+            Self::InvalidResult(msg) => write!(f, "invalid result: {msg}"),
+            Self::IncompleteIntersection(msg) => write!(f, "incomplete intersection: {msg}"),
+            Self::SelfIntersection(msg) => write!(f, "self-intersection: {msg}"),
         }
     }
 }

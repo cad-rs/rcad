@@ -4,6 +4,7 @@ pub use brep_graph::{
 };
 pub mod bnd_lib;
 pub mod bopds;
+pub mod boolean;
 pub mod brep_algo;
 pub mod brep_bnd;
 pub mod brep_check;
@@ -340,6 +341,11 @@ pub use builder::{
     // Glue path enhancement types
     GlueConfig, GlueFacePair, GlueFaceCache,
     detect_glue_faces, apply_glue_optimization, compute_adaptive_glue_tolerance,
+};
+pub use boolean::{
+    BooleanFailureClass, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
+    BooleanAttemptDiagnostic, BooleanDiagnosticReport, FinalSuccessfulConfig,
+    FailureAnalyzer,
 };
 pub use brep_algo_api::{
     // BRepAlgoAPI-style high-level boolean API
@@ -1159,6 +1165,26 @@ pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
         BooleanError::DegenerateResult => BooleanRetryClass::DegenerateTopology,
         BooleanError::NumericalFailure(_) => BooleanRetryClass::NumericalInstability,
         BooleanError::EmptyCollection(_) => BooleanRetryClass::DegenerateTopology,
+        BooleanError::InvalidResult(_) => BooleanRetryClass::DegenerateTopology,
+        BooleanError::IncompleteIntersection(_) => BooleanRetryClass::DegenerateTopology,
+        BooleanError::SelfIntersection(_) => BooleanRetryClass::DegenerateTopology,
+    }
+}
+
+/// Classify boolean execution failures into detailed failure classes.
+///
+/// This provides more specific failure classification than `classify_boolean_retry`,
+/// enabling targeted recovery strategies for each failure mode.
+pub fn classify_boolean_failure(err: &BooleanError) -> BooleanFailureClass {
+    match err {
+        BooleanError::EmptyInput => BooleanFailureClass::InvalidInput,
+        BooleanError::MissingGeometry(_) => BooleanFailureClass::InvalidInput,
+        BooleanError::DegenerateResult => BooleanFailureClass::DegenerateTopology,
+        BooleanError::NumericalFailure(_) => BooleanFailureClass::NumericalInstability,
+        BooleanError::EmptyCollection(_) => BooleanFailureClass::DegenerateTopology,
+        BooleanError::InvalidResult(_) => BooleanFailureClass::InvalidResult,
+        BooleanError::IncompleteIntersection(_) => BooleanFailureClass::IncompleteIntersection,
+        BooleanError::SelfIntersection(_) => BooleanFailureClass::SelfIntersection,
     }
 }
 
@@ -1495,6 +1521,89 @@ fn tune_boolean_options_for_retry_class(
                     .make_connected_scope_global_fallback_tolerance_cap
                     .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
             }
+        }
+    }
+}
+
+/// Tune boolean options for a specific detailed failure class.
+///
+/// This provides targeted recovery strategies based on the specific failure type,
+/// complementing the broader `tune_boolean_options_for_retry_class` function.
+pub fn tune_boolean_options_for_failure_class(
+    options: &mut BooleanOptions,
+    failure_class: BooleanFailureClass,
+    retry_round: usize,
+) -> RecoveryStrategy {
+    let base_tol = options
+        .make_connected_tolerance
+        .max(options.glue_tolerance)
+        .max(tolerance::TOLERANCE_ABS);
+
+    match failure_class {
+        BooleanFailureClass::DegenerateTopology => {
+            // Run MakeConnected cleanup with increased aggressiveness
+            options.run_make_connected = true;
+            options.make_connected_max_passes = options
+                .make_connected_max_passes
+                .max(5 + retry_round * 2);
+            options.make_connected_tolerance = options
+                .make_connected_tolerance
+                .max(base_tol * (5.0 + retry_round as f64));
+            options.make_connected_tolerance_growth = options
+                .make_connected_tolerance_growth
+                .max(2.0 + retry_round as f64);
+
+            RecoveryStrategy::MakeConnectedCleanup
+        }
+        BooleanFailureClass::NumericalInstability => {
+            // Increase fuzzy tolerance significantly
+            options.use_glue = true;
+            options.glue_tolerance = options
+                .glue_tolerance
+                .max(base_tol * 50.0 * (1.0 + retry_round as f64));
+
+            RecoveryStrategy::IncreaseFuzzyTolerance
+        }
+        BooleanFailureClass::InvalidResult => {
+            // Try different algorithm variant - enable glue and increase tolerances
+            options.use_glue = true;
+            options.glue_tolerance = options
+                .glue_tolerance
+                .max(base_tol * 20.0 * (1.0 + retry_round as f64));
+            options.run_make_connected = true;
+            options.make_connected_max_passes = options
+                .make_connected_max_passes
+                .max(4 + retry_round);
+
+            RecoveryStrategy::AlgorithmVariant
+        }
+        BooleanFailureClass::IncompleteIntersection => {
+            // Enable Glue mode for better intersection handling
+            options.use_glue = true;
+            options.glue_tolerance = options
+                .glue_tolerance
+                .max(base_tol * 10.0 * (1.0 + retry_round as f64));
+
+            RecoveryStrategy::EnableGlueMode
+        }
+        BooleanFailureClass::SelfIntersection => {
+            // Run MakeConnected cleanup with higher aggressiveness
+            options.run_make_connected = true;
+            options.make_connected_max_passes = options
+                .make_connected_max_passes
+                .max(6 + retry_round * 2);
+            options.make_connected_tolerance = options
+                .make_connected_tolerance
+                .max(base_tol * (10.0 + retry_round as f64 * 5.0));
+            options.make_connected_tolerance_growth = options
+                .make_connected_tolerance_growth
+                .max(3.0 + retry_round as f64);
+
+            RecoveryStrategy::MakeConnectedCleanup
+        }
+        BooleanFailureClass::InvalidInput | BooleanFailureClass::Unknown => {
+            // No recovery possible
+            RecoveryStrategy::None
         }
     }
 }
