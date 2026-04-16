@@ -27,6 +27,16 @@ pub struct GdsLibrary {
     pub structures: std::collections::HashMap<String, GdsStructure>,
 }
 
+impl Default for GdsLibrary {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            units: GdsUnits::default(),
+            structures: std::collections::HashMap::new(),
+        }
+    }
+}
+
 /// GDS structure (cell).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GdsStructure {
