@@ -135,6 +135,7 @@ fn intersect_plane_torus_parallel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::DVec3;
 
     #[test]
     fn plane_perpendicular_to_torus_axis_produces_two_circles() {

@@ -3,6 +3,7 @@ pub mod coplanar;
 pub mod curve_surface;
 pub mod cylinder_cone;
 pub mod cylinder_cylinder;
+pub mod cylinder_torus;
 pub mod edge_face;
 pub mod extreme_geometry;
 pub mod intss;
@@ -35,3 +36,4 @@ pub use extreme_geometry::{
     ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
 };
 pub use plane_torus::{PlaneTorusResult, intersect_plane_torus, intersect_plane_torus_with_tolerance};
+pub use cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus, intersect_cylinder_torus_with_tolerance};
