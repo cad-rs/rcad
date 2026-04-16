@@ -2029,6 +2029,64 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
     ])
 }
 
+/// Split a UV polygon at periodic seams (U=0/2π boundary).
+///
+/// Returns one or more polygons that don't cross the seam.
+pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec2>> {
+    if uv_polygon.len() < 3 {
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // Detect seam crossings
+    let mut crossings: Vec<usize> = Vec::new();
+    for i in 0..uv_polygon.len() {
+        let j = (i + 1) % uv_polygon.len();
+        let du = uv_polygon[j].x - uv_polygon[i].x;
+
+        // Large jump indicates seam crossing
+        if du.abs() > period * 0.5 {
+            crossings.push(i);
+        }
+    }
+
+    if crossings.is_empty() {
+        return vec![uv_polygon.to_vec()];
+    }
+
+    // Split at each crossing
+    let mut result = Vec::new();
+    let mut current = Vec::new();
+    let mut offset = 0.0;
+
+    for (i, uv) in uv_polygon.iter().enumerate() {
+        // Check if previous edge crossed seam
+        let prev_i = if i == 0 { uv_polygon.len() - 1 } else { i - 1 };
+        if crossings.contains(&prev_i) {
+            let prev = uv_polygon[prev_i];
+            let du = uv.x - prev.x;
+
+            // Determine offset to unwrap
+            if du > period * 0.5 {
+                offset = -period;
+            } else if du < -period * 0.5 {
+                offset = period;
+            }
+
+            if current.len() >= 3 {
+                result.push(std::mem::take(&mut current));
+            }
+        }
+
+        current.push(DVec2::new(uv.x + offset, uv.y));
+    }
+
+    if current.len() >= 3 {
+        result.push(current);
+    }
+
+    result
+}
+
 /// Split a 2D UV polygon by a 2D trim polyline.
 ///
 /// Algorithm:
@@ -3417,5 +3475,21 @@ mod glue_tests {
         assert!((config.edge_tolerance - 2e-5).abs() < 1e-12);
         assert!(!config.use_geometric_hash);
         assert!(!config.early_normal_filter);
+    }
+
+    #[test]
+    fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
+        // UV polygon that crosses the U=0/2π seam on a cylinder
+        let uv_polygon = vec![
+            DVec2::new(5.5, 0.0),  // Near 2π
+            DVec2::new(0.5, 0.0),  // Near 0
+            DVec2::new(0.5, 1.0),
+            DVec2::new(5.5, 1.0),
+        ];
+
+        let result = split_uv_polygon_at_seam(&uv_polygon, std::f64::consts::TAU);
+
+        // Should split into two polygons
+        assert_eq!(result.len(), 2, "Seam crossing should split polygon");
     }
 }
