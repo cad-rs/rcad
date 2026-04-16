@@ -11,7 +11,7 @@ pub mod writer;
 pub mod convert;
 
 pub use error::GdsError;
-pub use types::{GdsLibrary, GdsStructure, GdsBoundary, GdsPath, GdsText, GdsReference, GdsUnits};
+pub use types::{GdsLibrary, GdsStructure, GdsBoundary, GdsPath, GdsText, GdsReference, GdsUnits, Transform2D};
 pub use layer_config::{LayerConfig, LayerSettings};
 pub use reader::GdsReader;
 pub use writer::GdsWriter;
