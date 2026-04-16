@@ -1678,6 +1678,9 @@ fn build_grid_mesh(
     (vertices, major_indices, minor_indices)
 }
 
+/// Default scale for scene axes (relative to fixed camera distance).
+const DEFAULT_SCENE_AXES_SCALE: f32 = 0.3;
+
 pub struct WgpuRenderer {
     pipeline: wgpu::RenderPipeline,
     pipeline_depth: wgpu::RenderPipeline,
@@ -1703,8 +1706,11 @@ pub struct WgpuRenderer {
     depth_view: std::sync::Mutex<Option<wgpu::TextureView>>,
     depth_size: std::sync::Mutex<(u32, u32)>,
     axes_buffers: [AxisBuffers; 3],
+    axes_camera_buffer: wgpu::Buffer,
+    axes_camera_bind_group: wgpu::BindGroup,
     axes_material_bind_groups: [wgpu::BindGroup; 3],
     show_axes: std::sync::Mutex<bool>,
+    scene_axes_scale: std::sync::Mutex<f32>,
     display_mode: std::sync::Mutex<DisplayMode>,
     material_transparent_bind_group: wgpu::BindGroup,
     material_buffer: wgpu::Buffer,
@@ -1864,6 +1870,26 @@ impl WgpuRenderer {
                 resource: gizmo_camera_buffer.as_entire_binding(),
             }],
         });
+
+        // Scene axes camera buffer (fixed-size axes at origin)
+        let axes_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Scene Axes Camera Buffer"),
+            contents: bytemuck::cast_slice(&[CameraUniform {
+                view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                eye_pos: [0.0, 0.0, 3.0, 1.0],
+                light_dir: [0.45, 0.85, 0.35, 0.0],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let axes_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Scene Axes Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: axes_camera_buffer.as_entire_binding(),
+            }],
+        });
+
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Material Bind Group Layout"),
@@ -2236,8 +2262,11 @@ impl WgpuRenderer {
             depth_view: std::sync::Mutex::new(None),
             depth_size: std::sync::Mutex::new((0, 0)),
             axes_buffers,
+            axes_camera_buffer,
+            axes_camera_bind_group,
             axes_material_bind_groups,
             show_axes: std::sync::Mutex::new(true),
+            scene_axes_scale: std::sync::Mutex::new(DEFAULT_SCENE_AXES_SCALE),
             display_mode: std::sync::Mutex::new(DisplayMode::default()),
             material_transparent_bind_group,
             material_buffer,
@@ -2453,9 +2482,62 @@ impl WgpuRenderer {
             grid_major_indices.len() as u32;
         *self.grid.minor_index_count.lock().expect("render mutex poisoned") =
             grid_minor_indices.len() as u32;
+
+        // Update scene axes camera (fixed size, follows rotation only)
+        self.update_scene_axes_camera(queue, camera, aspect);
     }
 
-    fn update_axis_gizmo_camera(&self, queue: &wgpu::Queue, camera: &Camera) {
+    /// Update the scene axes camera for fixed-size axes at origin.
+    fn update_scene_axes_camera(&self, queue: &wgpu::Queue, camera: &Camera, aspect: f32) {
+        let scale = *self.scene_axes_scale.lock().expect("render mutex poisoned");
+
+        // Build view matrix using camera rotation but with fixed distance
+        let yaw = camera.rot_y;
+        let pitch = camera.rot_x;
+
+        // Fixed camera distance for consistent axis size
+        let fixed_distance = 3.0;
+
+        // Compute eye position based on rotation
+        let eye = glam::Vec3::new(
+            fixed_distance * pitch.cos() * yaw.sin(),
+            fixed_distance * pitch.sin(),
+            fixed_distance * pitch.cos() * yaw.cos(),
+        );
+
+        let view = glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Y);
+
+        // Use perspective projection with fixed FOV for consistent size
+        let fov_y = std::f32::consts::FRAC_PI_4;
+        let near = 0.1;
+        let far = 100.0;
+        let proj = glam::Mat4::perspective_rh(fov_y, aspect, near, far);
+
+        // Apply scale factor
+        let scale_matrix = glam::Mat4::from_scale(glam::Vec3::splat(scale));
+
+        let view_proj = proj * view * scale_matrix;
+
+        let light_dir = glam::Vec3::new(0.45, 0.85, 0.35).normalize_or_zero();
+        let uniform = CameraUniform {
+            view_proj: view_proj.to_cols_array_2d(),
+            eye_pos: [eye.x, eye.y, eye.z, 1.0],
+            light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
+        };
+        queue.write_buffer(&self.axes_camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
+    }
+
+    /// Set the scene axes scale factor (default 0.3).
+    pub fn set_scene_axes_scale(&self, scale: f32) {
+        *self.scene_axes_scale.lock().expect("render mutex poisoned") = scale;
+    }
+
+    /// Get the scene axes scale factor.
+    pub fn scene_axes_scale(&self) -> f32 {
+        *self.scene_axes_scale.lock().expect("render mutex poisoned")
+    }
+
+    pub fn update_axis_gizmo_camera(&self, queue: &wgpu::Queue, camera: &Camera) {
         let eye = axis_gizmo_eye(camera);
         let light_dir = glam::Vec3::new(0.55, 0.8, 0.35).normalize_or_zero();
         let uniform = CameraUniform {
@@ -2700,7 +2782,7 @@ impl WgpuRenderer {
             } else {
                 render_pass.set_pipeline(&self.pipeline);
             }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.axes_camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
             render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
             render_pass
@@ -2713,7 +2795,7 @@ impl WgpuRenderer {
             } else {
                 render_pass.set_pipeline(&self.pipeline_line);
             }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.axes_camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.axes_material_bind_groups[i], &[]);
             render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
             render_pass
