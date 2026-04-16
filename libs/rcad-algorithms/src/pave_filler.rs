@@ -3235,8 +3235,10 @@ pub enum PartialOverlapType {
     /// Faces are coplanar with partial boundary overlap.
     CoplanarBoundary,
     /// Faces share an edge partially.
+    /// TODO: Implement edge overlap detection
     EdgeOverlap,
     /// One face is contained within another.
+    /// TODO: Implement containment detection
     Contained,
 }
 
@@ -3367,5 +3369,17 @@ mod tests {
             !overlaps.is_empty(),
             "Should detect partial face overlaps"
         );
+
+        // Verify the detected overlap makes sense
+        for overlap in &overlaps {
+            // Overlap ratio should be in partial range
+            assert!(
+                overlap.overlap_ratio > 0.0 && overlap.overlap_ratio < 1.0,
+                "Overlap ratio should be partial, got {}",
+                overlap.overlap_ratio
+            );
+            // Type should be CoplanarBoundary for box-box overlap
+            assert_eq!(overlap.overlap_type, PartialOverlapType::CoplanarBoundary);
+        }
     }
 }
