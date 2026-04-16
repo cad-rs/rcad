@@ -9,6 +9,7 @@ members = [
     "libs/rcad-render",
     "libs/rcad-scene",
     "libs/rcad-constraints",
+    "libs/rcad-gds",
     "apps/creator-egui",
     "apps/creator-iced",
     "examples",
