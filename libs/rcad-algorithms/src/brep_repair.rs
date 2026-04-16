@@ -419,6 +419,85 @@ pub struct SeedDetectionResult {
     pub coverage_ratio: f64,
 }
 
+/// Multi-dimensional coverage assessment for scoped cleanup.
+#[derive(Debug, Clone)]
+pub struct CoverageAssessment {
+    /// Fraction of vertices covered by seeds.
+    pub vertex_coverage: f64,
+    /// Fraction of edges covered by seeds (at least one endpoint).
+    pub edge_coverage: f64,
+    /// Fraction of faces covered by seeds (at least one boundary vertex).
+    pub face_coverage: f64,
+    /// Whether scoped cleanup should fall back to global.
+    pub should_fallback_to_global: bool,
+}
+
+/// Assess coverage of seed vertices over the BRep.
+pub fn assess_coverage(brep: &BRep, seed_vertices: &[usize]) -> CoverageAssessment {
+    let n_vertices = brep.vertices.len().max(1);
+    let n_edges = brep.edges.len().max(1);
+
+    let seed_set: std::collections::HashSet<usize> = seed_vertices.iter().copied().collect();
+
+    // Vertex coverage
+    let vertex_coverage = seed_vertices.len() as f64 / n_vertices as f64;
+
+    // Edge coverage: at least one endpoint in seeds
+    let covered_edges = brep
+        .edges
+        .iter()
+        .filter(|e| seed_set.contains(&e.start) || seed_set.contains(&e.end))
+        .count();
+    let edge_coverage = covered_edges as f64 / n_edges as f64;
+
+    // Face coverage: at least one boundary vertex in seeds
+    let mut covered_faces = 0usize;
+    let total_faces = brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+
+    for face in brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+    {
+        let has_seed = face
+            .outer_wire
+            .edges
+            .iter()
+            .flat_map(|we| {
+                brep.edges
+                    .get(we.idx)
+                    .map(|e| vec![e.start, e.end])
+                    .unwrap_or_default()
+            })
+            .any(|v| seed_set.contains(&v));
+        if has_seed {
+            covered_faces += 1;
+        }
+    }
+    let face_coverage = if total_faces > 0 {
+        covered_faces as f64 / total_faces as f64
+    } else {
+        0.0
+    };
+
+    // Fallback threshold: if all coverages are below 30%, use global
+    let min_coverage = vertex_coverage.min(edge_coverage).min(face_coverage);
+    let should_fallback = min_coverage < 0.3;
+
+    CoverageAssessment {
+        vertex_coverage,
+        edge_coverage,
+        face_coverage,
+        should_fallback_to_global: should_fallback,
+    }
+}
+
 /// Get adjacent faces for an edge (simplified, no BRepGraph needed).
 fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
     let mut faces = Vec::new();
@@ -17350,6 +17429,70 @@ mod tests {
         assert!(
             result.seed_vertices.contains(&0) && result.seed_vertices.contains(&1),
             "Vertices of edge with large normal angle should be in seed set"
+        );
+    }
+
+    #[test]
+    fn coverage_assessment_triggers_global_fallback() {
+        let mut brep = BRep::new();
+
+        // Add 100 vertices
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64, 0.0, 0.0),
+            });
+        }
+
+        // Only seed vertices 0-4 (5% coverage)
+        let assessment = assess_coverage(&brep, &vec![0, 1, 2, 3, 4]);
+
+        assert!(assessment.vertex_coverage < 0.1, "Coverage should be low");
+        assert!(
+            assessment.should_fallback_to_global,
+            "Should trigger global fallback"
+        );
+    }
+
+    #[test]
+    fn coverage_assessment_accepts_high_coverage() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add 100 vertices
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64, 0.0, 0.0),
+            });
+        }
+
+        // Add edges connecting vertices
+        for i in 0..99 {
+            brep.edges.push(Edge { start: i, end: i + 1 });
+        }
+
+        // Create a face using first 3 edges (and vertices 0,1,2)
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        // Seed 90 vertices (90% coverage)
+        let seeds: Vec<usize> = (0..90).collect();
+        let assessment = assess_coverage(&brep, &seeds);
+
+        assert!(assessment.vertex_coverage > 0.8, "Coverage should be high");
+        assert!(
+            !assessment.should_fallback_to_global,
+            "Should not trigger fallback"
         );
     }
 }
