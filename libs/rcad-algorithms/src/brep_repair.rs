@@ -441,7 +441,7 @@ fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
 }
 
 /// Get face normal from geometry or stored normal.
-fn get_face_normal_from_brep(brep: &BRep, face_idx: usize) -> Option<DVec3> {
+fn get_face_normal(brep: &BRep, face_idx: usize) -> Option<DVec3> {
     // First, try to get from face's stored normal
     let mut current_idx = 0usize;
     for solid in &brep.solids {
@@ -556,13 +556,13 @@ pub fn detect_seeds_for_scoped_cleanup(
                 let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
                 if adj_faces.len() == 2 {
                     if let (Some(n1), Some(n2)) = (
-                        get_face_normal_from_brep(brep, adj_faces[0]),
-                        get_face_normal_from_brep(brep, adj_faces[1]),
+                        get_face_normal(brep, adj_faces[0]),
+                        get_face_normal(brep, adj_faces[1]),
                     ) {
                         let dot = n1.dot(n2);
                         // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
                         // Use abs to handle both same-side and opposite-side normals
-                        if dot.abs() < std::f64::consts::FRAC_PI_2.cos() {
+                        if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
                             vertex_set.insert(edge.start);
                             vertex_set.insert(edge.end);
                             edge_set.insert(ei);
