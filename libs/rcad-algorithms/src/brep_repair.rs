@@ -419,6 +419,45 @@ pub struct SeedDetectionResult {
     pub coverage_ratio: f64,
 }
 
+/// Get adjacent faces for an edge (simplified, no BRepGraph needed).
+fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
+    let mut faces = Vec::new();
+    let mut face_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                // Check if this face references the edge
+                for wire_edge in &_face.outer_wire.edges {
+                    if wire_edge.idx == edge_idx {
+                        faces.push(face_idx);
+                        break;
+                    }
+                }
+                face_idx += 1;
+            }
+        }
+    }
+    faces
+}
+
+/// Get face normal from geometry or stored normal.
+fn get_face_normal_from_brep(brep: &BRep, face_idx: usize) -> Option<DVec3> {
+    // First, try to get from face's stored normal
+    let mut current_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                if current_idx == face_idx {
+                    // Return the stored face normal
+                    return Some(face.normal.normalize());
+                }
+                current_idx += 1;
+            }
+        }
+    }
+    None
+}
+
 /// Detect seed vertices for scoped make-connected based on strategy.
 pub fn detect_seeds_for_scoped_cleanup(
     brep: &BRep,
@@ -477,7 +516,7 @@ pub fn detect_seeds_for_scoped_cleanup(
             result.strategy_counts.insert("near_duplicate_vertices".to_string(), vertex_set.len());
         }
         SeedDetectionStrategy::SeamCandidates => {
-            // Edges referenced by multiple faces (potential seams)
+            // Strategy 1: Edges referenced by multiple faces (potential seams)
             let mut edge_face_count = vec![0usize; n_edges];
             for solid in &brep.solids {
                 for shell in &solid.shells {
@@ -492,12 +531,46 @@ pub fn detect_seeds_for_scoped_cleanup(
             }
             for (ei, &count) in edge_face_count.iter().enumerate() {
                 if count > 2 {
-                    let edge = &brep.edges[ei];
-                    vertex_set.insert(edge.start);
-                    vertex_set.insert(edge.end);
-                    edge_set.insert(ei);
+                    if let Some(edge) = brep.edges.get(ei) {
+                        vertex_set.insert(edge.start);
+                        vertex_set.insert(edge.end);
+                        edge_set.insert(ei);
+                    }
                 }
             }
+
+            // Strategy 2: Detect edges with multiple PCurves (potential seams on periodic surfaces)
+            for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
+                if pcurves.len() > 1 {
+                    // Multi-PCurve edge is a seam candidate (e.g., seam on cylinder/sphere/torus)
+                    if let Some(edge) = brep.edges.get(ei) {
+                        vertex_set.insert(edge.start);
+                        vertex_set.insert(edge.end);
+                        edge_set.insert(ei);
+                    }
+                }
+            }
+
+            // Strategy 3: Detect edges where adjacent face normals have large angle (> 45 degrees)
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
+                if adj_faces.len() == 2 {
+                    if let (Some(n1), Some(n2)) = (
+                        get_face_normal_from_brep(brep, adj_faces[0]),
+                        get_face_normal_from_brep(brep, adj_faces[1]),
+                    ) {
+                        let dot = n1.dot(n2);
+                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        // Use abs to handle both same-side and opposite-side normals
+                        if dot.abs() < std::f64::consts::FRAC_PI_2.cos() {
+                            vertex_set.insert(edge.start);
+                            vertex_set.insert(edge.end);
+                            edge_set.insert(ei);
+                        }
+                    }
+                }
+            }
+
             result.strategy_counts.insert("seam_candidates".to_string(), vertex_set.len());
         }
         SeedDetectionStrategy::Hybrid => {
@@ -17033,6 +17106,71 @@ mod tests {
         assert_eq!(
             validation.orphaned_vertices, 1,
             "Should detect one orphaned vertex"
+        );
+    }
+
+    #[test]
+    fn detect_multi_pcurve_edges_as_seeds() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+        use rcad_kernel::{Curve2d, Surface3, PCurve};
+        use rcad_kernel::geom::{Line2d, Plane};
+        use glam::DVec2;
+
+        let mut brep = BRep::new();
+
+        // Add vertices
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
+
+        // Add edges
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+
+        // Add 2D curves to the geometry pool
+        brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::X,
+        }));
+        brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::Y,
+        }));
+
+        // Add surfaces
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        }));
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        }));
+
+        // Add multiple PCurves for edge 0 (seam candidate)
+        brep.geom.edge_pcurves.push(vec![
+            PCurve {
+                surface_idx: 0,
+                curve2d_idx: 0,
+            },
+            PCurve {
+                surface_idx: 1,
+                curve2d_idx: 1,
+            },
+        ]);
+        brep.geom.edge_pcurves.push(vec![]); // Edge 1 has no PCurves
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 should be detected as seam candidate (has multiple PCurves)
+        assert!(
+            result.seed_edges.contains(&0),
+            "Multi-PCurve edge should be detected as seam candidate"
         );
     }
 }
