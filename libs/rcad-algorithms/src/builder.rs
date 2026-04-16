@@ -2029,7 +2029,16 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
     ])
 }
 
-/// Split a UV polygon at periodic seams (U=0/2π boundary).
+/// Split a UV polygon at periodic seams (U=0/period boundary).
+///
+/// For periodic surfaces like cylinders, the U parameter wraps around.
+/// When a polygon crosses the seam (U=0 or U=period), we need to split it
+/// into separate polygons, each with consistent U coordinates.
+///
+/// Algorithm:
+/// 1. Find edges that cross the seam (|du| > period * 0.5)
+/// 2. For each crossing edge, compute the exact intersection point at U=0 or U=period
+/// 3. Build output polygons by inserting intersection points
 ///
 /// Returns one or more polygons that don't cross the seam.
 pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec2>> {
@@ -2037,15 +2046,61 @@ pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DV
         return vec![uv_polygon.to_vec()];
     }
 
-    // Detect seam crossings
-    let mut crossings: Vec<usize> = Vec::new();
+    // Structure to hold information about seam crossings
+    struct SeamCrossing {
+        edge_idx: usize,
+        intersection: DVec2,
+        is_low_to_high: bool, // true: crossing from low u (near 0) to high u (near period)
+    }
+
+    // Find all edges crossing the seam and compute intersection points
+    let mut crossings: Vec<SeamCrossing> = Vec::new();
     for i in 0..uv_polygon.len() {
         let j = (i + 1) % uv_polygon.len();
-        let du = uv_polygon[j].x - uv_polygon[i].x;
+        let u1 = uv_polygon[i].x;
+        let u2 = uv_polygon[j].x;
+        let v1 = uv_polygon[i].y;
+        let v2 = uv_polygon[j].y;
+        let du = u2 - u1;
 
         // Large jump indicates seam crossing
         if du.abs() > period * 0.5 {
-            crossings.push(i);
+            // Determine which way we're crossing
+            // du > 0: wrapping from low u to high u (crossing U=0 going backwards in unwrapped space)
+            // du < 0: wrapping from high u to low u (crossing U=period going backwards in unwrapped space)
+            let is_low_to_high = du < 0.0; // u1 is high, u2 is low
+
+            // Calculate intersection point using linear interpolation
+            // We need to find the V coordinate where the edge crosses the seam
+            //
+            // For an edge from (u1, v1) to (u2, v2) crossing the seam:
+            // If u1 is near period and u2 is near 0: unwrap u2 to u2 + period, find where U = period
+            // If u1 is near 0 and u2 is near period: unwrap u2 to u2 - period, find where U = 0
+            let (t, seam_u) = if is_low_to_high {
+                // u1 is near period, u2 is near 0
+                // Unwrap u2: consider edge from (u1, v1) to (u2 + period, v2)
+                // Find t where u = period
+                let t = (period - u1) / ((u2 + period) - u1);
+                (t, period)
+            } else {
+                // u1 is near 0, u2 is near period
+                // Unwrap u2: consider edge from (u1, v1) to (u2 - period, v2)
+                // Find t where u = 0 (which equals period in the unwrapped space)
+                // Or equivalently: the edge goes from u1 to u2-period (negative)
+                // We want u = 0, so t = (0 - u1) / ((u2 - period) - u1) = -u1 / (u2 - period - u1)
+                let t = -u1 / ((u2 - period) - u1);
+                (t, 0.0)
+            };
+
+            // Clamp t to [0, 1] to handle numerical edge cases
+            let t = t.clamp(0.0, 1.0);
+            let intersection_v = v1 + t * (v2 - v1);
+
+            crossings.push(SeamCrossing {
+                edge_idx: i,
+                intersection: DVec2::new(seam_u, intersection_v),
+                is_low_to_high,
+            });
         }
     }
 
@@ -2053,35 +2108,73 @@ pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DV
         return vec![uv_polygon.to_vec()];
     }
 
-    // Split at each crossing
-    let mut result = Vec::new();
-    let mut current = Vec::new();
-    let mut offset = 0.0;
+    // Build output polygons
+    // We need to partition the vertices and insert intersection points
+    // Each output polygon will have consistent U values (all low or all high)
 
-    for (i, uv) in uv_polygon.iter().enumerate() {
-        // Check if previous edge crossed seam
-        let prev_i = if i == 0 { uv_polygon.len() - 1 } else { i - 1 };
-        if crossings.contains(&prev_i) {
-            let prev = uv_polygon[prev_i];
-            let du = uv.x - prev.x;
+    // Collect all vertices and their positions relative to the seam
+    // "low" means u < period * 0.5, "high" means u >= period * 0.5
+    let is_low = |u: f64| u < period * 0.5;
 
-            // Determine offset to unwrap
-            if du > period * 0.5 {
-                offset = -period;
-            } else if du < -period * 0.5 {
-                offset = period;
-            }
+    // Build two polygons: one for low-u region, one for high-u region
+    let mut low_polygon: Vec<DVec2> = Vec::new();
+    let mut high_polygon: Vec<DVec2> = Vec::new();
 
-            if current.len() >= 3 {
-                result.push(std::mem::take(&mut current));
-            }
+    // Sort crossings by edge index for efficient lookup
+    let crossing_map: std::collections::HashMap<usize, &SeamCrossing> = crossings
+        .iter()
+        .map(|c| (c.edge_idx, c))
+        .collect();
+
+    // Traverse the polygon and assign vertices to appropriate output polygons
+    for i in 0..uv_polygon.len() {
+        let curr = uv_polygon[i];
+        let next_idx = (i + 1) % uv_polygon.len();
+        let next = uv_polygon[next_idx];
+
+        // Add current vertex to appropriate polygon
+        if is_low(curr.x) {
+            low_polygon.push(curr);
+        } else {
+            high_polygon.push(curr);
         }
 
-        current.push(DVec2::new(uv.x + offset, uv.y));
+        // Check if edge (i, i+1) crosses the seam
+        if let Some(crossing) = crossing_map.get(&i) {
+            // Add intersection point to both polygons
+            // The intersection point is at the seam (u = 0 or u = period)
+            // For the low polygon, we want u = 0
+            // For the high polygon, we want u = period
+            let low_intersection = DVec2::new(0.0, crossing.intersection.y);
+            let high_intersection = DVec2::new(period, crossing.intersection.y);
+
+            if crossing.is_low_to_high {
+                // Going from high u to low u
+                // Add period-point to high polygon first, then 0-point to low polygon
+                high_polygon.push(high_intersection);
+                low_polygon.push(low_intersection);
+            } else {
+                // Going from low u to high u
+                // Add 0-point to low polygon first, then period-point to high polygon
+                low_polygon.push(low_intersection);
+                high_polygon.push(high_intersection);
+            }
+        }
     }
 
-    if current.len() >= 3 {
-        result.push(current);
+    // Build result - only include valid polygons (at least 3 vertices)
+    let mut result = Vec::new();
+
+    if low_polygon.len() >= 3 {
+        result.push(low_polygon);
+    }
+    if high_polygon.len() >= 3 {
+        result.push(high_polygon);
+    }
+
+    // If we didn't get valid polygons, return the original
+    if result.is_empty() {
+        return vec![uv_polygon.to_vec()];
     }
 
     result
@@ -3480,6 +3573,10 @@ mod glue_tests {
     #[test]
     fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
         // UV polygon that crosses the U=0/2π seam on a cylinder
+        // This is a quad that wraps around the seam:
+        // - Right side: u ≈ 5.5 (near 2π)
+        // - Left side: u ≈ 0.5 (near 0)
+        let period = std::f64::consts::TAU; // ≈ 6.283
         let uv_polygon = vec![
             DVec2::new(5.5, 0.0),  // Near 2π
             DVec2::new(0.5, 0.0),  // Near 0
@@ -3487,9 +3584,107 @@ mod glue_tests {
             DVec2::new(5.5, 1.0),
         ];
 
-        let result = split_uv_polygon_at_seam(&uv_polygon, std::f64::consts::TAU);
+        let result = split_uv_polygon_at_seam(&uv_polygon, period);
 
         // Should split into two polygons
         assert_eq!(result.len(), 2, "Seam crossing should split polygon");
+
+        // Each output polygon must have at least 3 vertices
+        for (i, poly) in result.iter().enumerate() {
+            assert!(
+                poly.len() >= 3,
+                "Output polygon {} has only {} vertices (need >= 3)",
+                i,
+                poly.len()
+            );
+        }
+
+        // No output polygon should cross the seam
+        for (i, poly) in result.iter().enumerate() {
+            for j in 0..poly.len() {
+                let k = (j + 1) % poly.len();
+                let du = poly[k].x - poly[j].x;
+                assert!(
+                    du.abs() < period * 0.5,
+                    "Output polygon {} still crosses seam: du = {} between vertices {} and {}",
+                    i,
+                    du,
+                    j,
+                    k
+                );
+            }
+        }
+
+        // Verify specific coordinates: each polygon should contain seam intersection points
+        // The original polygon has edges that cross the seam at v=0 and v=1
+        // Output polygons should have intersection points at u=0 or u=period
+
+        // Find the right-side polygon (u values near 5.5)
+        let right_poly = result
+            .iter()
+            .find(|p| p.iter().any(|v| v.x > period * 0.5))
+            .expect("Should have a polygon with high u values");
+        // Find the left-side polygon (u values near 0.5)
+        let left_poly = result
+            .iter()
+            .find(|p| p.iter().any(|v| v.x < period * 0.5))
+            .expect("Should have a polygon with low u values");
+
+        // Right polygon should have vertices with u near 5.5 and seam points
+        let has_high_u = right_poly.iter().any(|v| (v.x - 5.5).abs() < 0.01);
+        assert!(has_high_u, "Right polygon should contain original high-u vertices");
+
+        // Left polygon should have vertices with u near 0.5 and seam points
+        let has_low_u = left_poly.iter().any(|v| (v.x - 0.5).abs() < 0.01);
+        assert!(has_low_u, "Left polygon should contain original low-u vertices");
+
+        // Each polygon should have seam intersection points
+        // (either at u=0 or u=period, both representing the same physical location)
+        fn near_seam(u: f64, period: f64) -> bool {
+            u.abs() < 0.01 || (u - period).abs() < 0.01
+        }
+
+        assert!(
+            right_poly.iter().any(|v| near_seam(v.x, period)),
+            "Right polygon should have a seam intersection point"
+        );
+        assert!(
+            left_poly.iter().any(|v| near_seam(v.x, period)),
+            "Left polygon should have a seam intersection point"
+        );
+    }
+
+    #[test]
+    fn split_uv_polygon_no_crossing_returns_original() {
+        // Polygon that doesn't cross the seam
+        let period = std::f64::consts::TAU;
+        let uv_polygon = vec![
+            DVec2::new(1.0, 0.0),
+            DVec2::new(2.0, 0.0),
+            DVec2::new(2.0, 1.0),
+            DVec2::new(1.0, 1.0),
+        ];
+
+        let result = split_uv_polygon_at_seam(&uv_polygon, period);
+
+        assert_eq!(result.len(), 1, "No seam crossing should return one polygon");
+        assert_eq!(result[0].len(), 4, "Original polygon should be unchanged");
+    }
+
+    #[test]
+    fn split_uv_polygon_degenerate_input() {
+        let period = std::f64::consts::TAU;
+
+        // Less than 3 vertices
+        let two_vertices = vec![DVec2::new(1.0, 0.0), DVec2::new(2.0, 0.0)];
+        let result = split_uv_polygon_at_seam(&two_vertices, period);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].len(), 2);
+
+        // Empty input
+        let empty: Vec<DVec2> = vec![];
+        let result = split_uv_polygon_at_seam(&empty, period);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_empty());
     }
 }
