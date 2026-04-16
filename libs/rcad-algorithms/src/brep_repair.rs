@@ -85,6 +85,10 @@ pub struct MakeConnectedReport {
     pub edges_sewn: usize,
     /// Number of faces that were merged (enhanced mode with face merging).
     pub faces_merged: usize,
+    /// Whether scoped cleanup fell back to global.
+    pub fell_back_to_global: bool,
+    /// Coverage assessment that triggered fallback (if any).
+    pub coverage_assessment: Option<CoverageAssessment>,
 }
 
 /// Operating mode for `make_connected_enhanced`.
@@ -1037,6 +1041,9 @@ pub fn make_connected_iterative_with_growth_cap(
 ///
 /// Only short-edge removal and near-vertex merges touching `scope_vertices`
 /// are applied, allowing localized connectivity fixes.
+///
+/// Automatically falls back to global cleanup when seed coverage is below
+/// the fallback threshold (30% for any coverage dimension).
 pub fn make_connected_iterative_scoped_with_growth_cap(
     brep: &BRep,
     scope_vertices: &[usize],
@@ -1045,6 +1052,23 @@ pub fn make_connected_iterative_scoped_with_growth_cap(
     tolerance_growth: f64,
     tolerance_cap: f64,
 ) -> (BRep, MakeConnectedReport) {
+    // Assess coverage first
+    let assessment = assess_coverage(brep, scope_vertices);
+
+    if assessment.should_fallback_to_global {
+        // Fall back to global cleanup with same parameters
+        let (result, mut report) = make_connected_iterative_with_growth_cap(
+            brep,
+            tolerance,
+            max_passes,
+            tolerance_growth,
+            tolerance_cap,
+        );
+        report.fell_back_to_global = true;
+        report.coverage_assessment = Some(assessment);
+        return (result, report);
+    }
+
     let tol = tolerance.max(TOLERANCE_ABS);
     let pass_limit = max_passes.max(1);
     let growth = if tolerance_growth > 1.0 {
@@ -17494,5 +17518,56 @@ mod tests {
             !assessment.should_fallback_to_global,
             "Should not trigger fallback"
         );
+    }
+
+    #[test]
+    fn scoped_cleanup_falls_back_on_low_coverage() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Create geometry with many vertices but few seeds
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64 * 0.1, 0.0, 0.0),
+            });
+        }
+
+        // Add edges to connect vertices
+        for i in 0..99 {
+            brep.edges.push(Edge { start: i, end: i + 1 });
+        }
+
+        // Add a face using the first few edges
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        // Only 5 seeds - well below 30% threshold
+        let seeds = vec![0, 1, 2, 3, 4];
+
+        let (_, report) = make_connected_iterative_scoped_with_growth_cap(
+            &brep,
+            &seeds,
+            1e-6,
+            3,
+            1.5,
+            1e-3,
+        );
+
+        assert!(
+            report.fell_back_to_global,
+            "Should fall back to global on low coverage"
+        );
+        assert!(report.coverage_assessment.is_some());
     }
 }
