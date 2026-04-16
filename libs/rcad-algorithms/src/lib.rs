@@ -6,6 +6,7 @@ pub mod bopds;
 pub mod brep_check;
 pub mod brep_check_parallel;
 pub mod brep_repair;
+pub mod brep_tools;
 pub mod builder;
 pub mod defeature;
 pub mod shape_analysis;
@@ -44,13 +45,28 @@ pub mod offset;
 pub mod triangulate;
 pub mod array;
 pub mod cells_builder;
+pub mod chamfer;
+pub mod fillet;
 pub mod maker_volume;
 pub mod point_cloud;
 pub mod medial_axis;
+pub mod blend;
 
 use serde::Serialize;
 
 pub use bvh::{Aabb, Bvh, BvhStats};
+pub use brep_tools::{
+    BRepToolsError, ShapeType,
+    write_brep_to_string, read_brep_from_string,
+    write_brep_to_file, read_brep_from_file,
+    transform_shape, mirror_shape, scale_shape, rotate_shape,
+    get_shape_type, get_outer_wire, get_inner_wires, is_closed,
+    get_surface, get_curve, get_pcurve,
+    get_edge_range, is_edge_degenerate,
+    get_vertex_tolerance, get_edge_tolerance, get_face_tolerance,
+    count_faces, count_edges, count_vertices, count_shells,
+    bounding_box,
+};
 
 use rcad_kernel::BRep;
 
@@ -194,6 +210,25 @@ pub use offset::{
     offset_solid, offset_solid_with_options,
     hollow_solid, hollow_solid_with_options,
     offset_shape, detect_self_intersection,
+};
+pub use chamfer::{
+    ChamferParams, ChamferMode, ChamferResult, ChamferError, ChamferWarning,
+    make_chamfer_edge, make_chamfer_asymmetric, make_chamfer_angle, make_chamfer_all_edges,
+    compute_chamfer_surface, compute_chamfer_curves, trim_adjacent_faces,
+};
+pub use fillet::{
+    FilletParams, FilletMode, FilletResult, FilletError, FilletContinuity,
+    VariableRadiusPoint,
+    make_fillet_edge, make_fillet_edge_with_params, make_fillet_all_edges,
+    make_variable_fillet,
+    compute_rollball_surface, compute_fillet_curves, blend_adjacent_faces,
+};
+pub use blend::{
+    BlendError, BlendParams, BlendMode, BlendResult, BlendContinuity,
+    BlendBoundary, BlendQuality, RadiusLaw, SurfaceCurvePair,
+    blend_two_surfaces, compute_rolling_ball_blend, compute_ruled_blend, compute_pipe_blend,
+    compute_blend_boundary_curves, compute_spine_curve, compute_guide_curves,
+    blend_edge_to_face, blend_vertex, apply_blend_to_edge,
 };
 pub use triangulate::{
     SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface,
