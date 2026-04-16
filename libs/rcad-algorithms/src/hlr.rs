@@ -1557,16 +1557,231 @@ fn extract_torus_silhouettes(
     curves
 }
 
-/// Extract silhouette curves from an ellipsoid using numerical methods.
+/// Extract silhouette curves from an ellipsoid using analytic methods.
+///
+/// The silhouette of an ellipsoid is the intersection of the ellipsoid surface
+/// with a plane passing through the center. The plane normal is proportional to
+/// (vx/a², vy/b², vz/c²) where v is the view direction and a, b, c are the radii.
+///
+/// This intersection is an ellipse, which we parameterize by:
+/// 1. Finding two orthogonal directions in the silhouette plane
+/// 2. For each angle, computing where a ray in that direction intersects the ellipsoid
 fn extract_ellipsoid_silhouettes(
-    _ell: &rcad_kernel::geom::EllipsoidalSurface,
-    _view_dir: DVec3,
-    _opts: &HlrOptions,
-    _samples: usize,
+    ell: &rcad_kernel::geom::EllipsoidalSurface,
+    view_dir: DVec3,
+    opts: &HlrOptions,
+    samples: usize,
 ) -> Vec<Vec<DVec3>> {
-    // TODO: Implement ellipsoid silhouette extraction
-    // For now, return empty (ellipsoid is not commonly used)
-    Vec::new()
+    use rcad_kernel::geom::SurfaceEval;
+    use std::f64::consts::PI;
+
+    // Build the orthonormal frame of the ellipsoid
+    let (axis, x_axis, y_axis) = orthonormal_frame(ell.axis, ell.ref_dir);
+
+    // Transform view direction into the ellipsoid's local coordinate frame
+    // Local coordinates: x along x_axis, y along y_axis, z along axis
+    let vx = view_dir.dot(x_axis);
+    let vy = view_dir.dot(y_axis);
+    let vz = view_dir.dot(axis);
+    let view_local = DVec3::new(vx, vy, vz);
+
+    // Handle degenerate case: view direction is zero
+    if view_local.length_squared() < 1e-20 {
+        return Vec::new();
+    }
+
+    // The silhouette plane normal in local coordinates is proportional to
+    // (vx/a², vy/b², vz/c²)
+    let a = ell.radius_x;
+    let b = ell.radius_y;
+    let c = ell.radius_z;
+
+    let plane_normal_local = DVec3::new(
+        vx / (a * a),
+        vy / (b * b),
+        vz / (c * c),
+    );
+
+    // Handle the degenerate case where the plane normal is zero
+    // This happens when all components are zero, which shouldn't occur for valid view direction
+    let plane_normal_len = plane_normal_local.length();
+    if plane_normal_len < 1e-20 {
+        // View direction is exactly perpendicular to all scaled axes
+        // This is a degenerate case - return empty
+        return Vec::new();
+    }
+    let plane_normal_local = plane_normal_local.normalize();
+
+    // Check if view is along a principal axis (plane normal is near a coordinate axis)
+    // In this case, the silhouette is an ellipse in the perpendicular plane
+    let is_view_along_axis = plane_normal_local.z.abs() > 1.0 - 1e-6;
+    let is_view_along_x = plane_normal_local.x.abs() > 1.0 - 1e-6;
+    let is_view_along_y = plane_normal_local.y.abs() > 1.0 - 1e-6;
+
+    // Find two orthogonal directions in the silhouette plane
+    // These will be used to parameterize the ellipse
+    let (u_dir, v_dir) = if is_view_along_axis {
+        // View is along Z axis (ellipsoid's axis)
+        // Silhouette plane is XY plane, silhouette is ellipse x²/a² + y²/b² = 1
+        (DVec3::X, DVec3::Y)
+    } else if is_view_along_x {
+        // View is along X axis
+        // Silhouette plane is YZ plane
+        (DVec3::Y, DVec3::Z)
+    } else if is_view_along_y {
+        // View is along Y axis
+        // Silhouette plane is XZ plane
+        (DVec3::X, DVec3::Z)
+    } else {
+        // General case: find two orthogonal vectors in the silhouette plane
+        // Use any_perpendicular to get a vector perpendicular to the plane normal
+        let u = any_perpendicular(plane_normal_local);
+        let v = plane_normal_local.cross(u).normalize_or_zero();
+        (u, v)
+    };
+
+    // Parameterize the ellipse by sampling angles
+    // For each angle θ, the ray direction is u*cos(θ) + v*sin(θ)
+    // The intersection parameter t is: t = 1 / sqrt((dx/a)² + (dy/b)² + (dz/c)²)
+    let actual_samples = samples.max(opts.silhouette_samples).max(32);
+    let points: Vec<DVec3> = (0..actual_samples)
+        .map(|i| {
+            let theta = 2.0 * PI * i as f64 / actual_samples as f64;
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+
+            // Ray direction in local coordinates
+            let dir_local = u_dir * cos_t + v_dir * sin_t;
+
+            // Compute intersection parameter t
+            // The ray is: p = t * dir_local
+            // On ellipsoid: (tx/a)² + (ty/b)² + (tz/c)² = 1
+            // t² * ((dx/a)² + (dy/b)² + (dz/c)²) = 1
+            let dx = dir_local.x;
+            let dy = dir_local.y;
+            let dz = dir_local.z;
+            let t_squared_recip = (dx * dx) / (a * a) + (dy * dy) / (b * b) + (dz * dz) / (c * c);
+
+            let t = 1.0 / t_squared_recip.sqrt();
+
+            // Local point on ellipsoid
+            let local_point = dir_local * t;
+
+            // Transform back to world coordinates
+            ell.center + local_point.x * x_axis + local_point.y * y_axis + local_point.z * axis
+        })
+        .collect();
+
+    // Verify that the silhouette points satisfy the silhouette condition
+    // (normal · view_dir ≈ 0)
+    let mut valid = true;
+    for pt in &points {
+        // Compute the point in local coordinates
+        let p_local = *pt - ell.center;
+        let x = p_local.dot(x_axis);
+        let y = p_local.dot(y_axis);
+        let z = p_local.dot(axis);
+
+        // Normal direction (gradient of implicit equation)
+        let grad_local = DVec3::new(
+            x / (a * a),
+            y / (b * b),
+            z / (c * c),
+        );
+        let normal = (grad_local.x * x_axis + grad_local.y * y_axis + grad_local.z * axis).normalize_or_zero();
+        let dot = normal.dot(view_dir);
+
+        // Check if silhouette condition is approximately satisfied
+        if dot.abs() > opts.tangent_tolerance.max(0.1) {
+            valid = false;
+            break;
+        }
+    }
+
+    if valid && !points.is_empty() {
+        vec![points]
+    } else {
+        // Fallback to numerical method if analytic result seems invalid
+        extract_ellipsoid_silhouettes_numerical(ell, view_dir, opts, samples)
+    }
+}
+
+/// Fallback numerical silhouette extraction for ellipsoids.
+///
+/// Used when the analytic method produces questionable results.
+fn extract_ellipsoid_silhouettes_numerical(
+    ell: &rcad_kernel::geom::EllipsoidalSurface,
+    view_dir: DVec3,
+    opts: &HlrOptions,
+    samples: usize,
+) -> Vec<Vec<DVec3>> {
+    use rcad_kernel::geom::SurfaceEval;
+
+    let domain = ell.default_domain(); // [0, 2π, 0, π]
+    let grid_size = (samples / 4).max(16);
+
+    // Find silhouette seed points on a grid
+    let mut silhouette_points: Vec<DVec3> = Vec::new();
+
+    let [u0, u1, v0, v1] = domain;
+    for i in 0..grid_size {
+        for j in 0..grid_size {
+            let u = u0 + (u1 - u0) * i as f64 / (grid_size - 1) as f64;
+            let v = v0 + (v1 - v0) * j as f64 / (grid_size - 1) as f64;
+
+            let normal = ell.normal_at(u, v);
+            let dot = normal.dot(view_dir);
+
+            // Check if this is a silhouette point
+            if dot.abs() < opts.tangent_tolerance.max(0.01) {
+                let point = ell.point_at(u, v);
+                silhouette_points.push(point);
+            }
+        }
+    }
+
+    // Sort points by angle around the silhouette center (approximation)
+    if silhouette_points.len() >= 3 {
+        // Compute centroid
+        let centroid = silhouette_points.iter().sum::<DVec3>() / silhouette_points.len() as f64;
+
+        // Build the orthonormal frame
+        let (axis, x_axis, y_axis) = orthonormal_frame(ell.axis, ell.ref_dir);
+
+        // Sort by angle in the local XY plane (projected)
+        silhouette_points.sort_by(|a, b| {
+            let a_local = *a - ell.center;
+            let b_local = *b - ell.center;
+            let ax = a_local.dot(x_axis);
+            let ay = a_local.dot(y_axis);
+            let bx = b_local.dot(x_axis);
+            let by = b_local.dot(y_axis);
+            let angle_a = ay.atan2(ax);
+            let angle_b = by.atan2(bx);
+            angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        vec![silhouette_points]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Helper function to build an orthonormal frame from axis and reference direction.
+///
+/// Returns (axis_normalized, x_axis, y_axis) where axis, x_axis, y_axis form
+/// a right-handed orthonormal basis.
+fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
+    let z = axis.normalize_or_zero();
+    let x = (ref_dir - ref_dir.dot(z) * z).normalize_or_zero();
+    // Handle degenerate case where ref_dir is parallel to axis
+    let x = if x.length_squared() < 0.5 {
+        any_perpendicular(z)
+    } else {
+        x
+    };
+    let y = z.cross(x).normalize_or_zero();
+    (z, x, y)
 }
 
 // ── Thread Edge Detection ───────────────────────────────────────────────────────
@@ -4360,5 +4575,291 @@ mod tests {
             // For a sphere primitive, edges should not be degenerate
             // (the seam edge is not degenerate, just periodic)
         }
+    }
+
+    // ── Ellipsoid Silhouette Tests ───────────────────────────────────────────────
+
+    #[test]
+    fn ellipsoid_silhouette_basic() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        // Create an ellipsoid with different radii
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Z; // View along Z axis
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert_eq!(curves.len(), 1, "ellipsoid should have one silhouette curve");
+        assert!(curves[0].len() >= 32, "silhouette should have enough points");
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_satisfies_condition() {
+        use rcad_kernel::geom::{EllipsoidalSurface, SurfaceEval};
+
+        // Create an ellipsoid
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Z;
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert!(!curves.is_empty(), "should have silhouette curves");
+
+        // Check that all silhouette points satisfy n·v ≈ 0
+        for pt in &curves[0] {
+            // Compute the point in local coordinates
+            let x = pt.x;
+            let y = pt.y;
+            let z = pt.z;
+
+            // Normal direction (gradient of implicit equation, normalized)
+            let grad = DVec3::new(
+                x / (ell.radius_x * ell.radius_x),
+                y / (ell.radius_y * ell.radius_y),
+                z / (ell.radius_z * ell.radius_z),
+            );
+            let normal = grad.normalize_or_zero();
+
+            // Dot product with view direction should be near zero
+            let dot = normal.dot(view_dir);
+            assert!(
+                dot.abs() < 0.05,
+                "silhouette point should satisfy n·v ≈ 0, got {dot}"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_on_surface() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        // Create an ellipsoid
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Z;
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert!(!curves.is_empty());
+
+        // Check that all silhouette points are on the ellipsoid surface
+        // x²/a² + y²/b² + z²/c² = 1
+        for pt in &curves[0] {
+            let value = (pt.x / ell.radius_x).powi(2)
+                + (pt.y / ell.radius_y).powi(2)
+                + (pt.z / ell.radius_z).powi(2);
+            assert!(
+                (value - 1.0).abs() < 1e-6,
+                "point should be on ellipsoid surface, got implicit value {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_various_view_directions() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let opts = HlrOptions::default();
+
+        // Test various view directions
+        let view_directions = [
+            DVec3::X,
+            DVec3::Y,
+            DVec3::Z,
+            DVec3::new(1.0, 1.0, 0.0).normalize(),
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(0.0, 1.0, 1.0).normalize(),
+        ];
+
+        for view_dir in view_directions {
+            let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+            assert!(
+                !curves.is_empty() && !curves[0].is_empty(),
+                "should have silhouette for view_dir {:?}",
+                view_dir
+            );
+
+            // Verify silhouette condition
+            for pt in &curves[0] {
+                let grad = DVec3::new(
+                    pt.x / (ell.radius_x * ell.radius_x),
+                    pt.y / (ell.radius_y * ell.radius_y),
+                    pt.z / (ell.radius_z * ell.radius_z),
+                );
+                let normal = grad.normalize_or_zero();
+                let dot = normal.dot(view_dir);
+                assert!(
+                    dot.abs() < 0.1,
+                    "silhouette condition not satisfied for view_dir {:?}, dot = {}",
+                    view_dir,
+                    dot
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_sphere_case() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        // A sphere is a special case of an ellipsoid with all radii equal
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 2.0,
+            radius_y: 2.0,
+            radius_z: 2.0,
+        };
+
+        let view_dir = DVec3::Z;
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert_eq!(curves.len(), 1, "sphere should have one silhouette curve");
+
+        // All points should be at distance 2.0 from origin (great circle)
+        for pt in &curves[0] {
+            let dist = pt.length();
+            assert!(
+                (dist - 2.0).abs() < 0.01,
+                "sphere silhouette point should be at radius distance, got {dist}"
+            );
+
+            // z-coordinate should be near 0 (great circle perpendicular to Z)
+            assert!(
+                pt.z.abs() < 0.01,
+                "great circle should be in XY plane, got z = {}",
+                pt.z
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_translated() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        // Ellipsoid not at origin
+        let ell = EllipsoidalSurface {
+            center: DVec3::new(1.0, -2.0, 0.5),
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Z;
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert!(!curves.is_empty());
+
+        // Check that all points are centered around the ellipsoid center
+        for pt in &curves[0] {
+            let local = *pt - ell.center;
+            let value = (local.x / ell.radius_x).powi(2)
+                + (local.y / ell.radius_y).powi(2)
+                + (local.z / ell.radius_z).powi(2);
+            assert!(
+                (value - 1.0).abs() < 1e-6,
+                "point should be on translated ellipsoid surface"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_rotated_frame() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        // Ellipsoid with rotated axis (not aligned with Z)
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Y, // Axis along Y
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Y; // View along the axis
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert!(!curves.is_empty());
+
+        // The silhouette should be an ellipse in the XZ plane
+        for pt in &curves[0] {
+            // Y coordinate should be near 0 (silhouette in plane perpendicular to view)
+            assert!(
+                pt.y.abs() < 0.01,
+                "silhouette should be in XZ plane for Y view, got y = {}",
+                pt.y
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_silhouette_closed_curve() {
+        use rcad_kernel::geom::EllipsoidalSurface;
+
+        let ell = EllipsoidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius_x: 3.0,
+            radius_y: 2.0,
+            radius_z: 1.0,
+        };
+
+        let view_dir = DVec3::Z;
+        let opts = HlrOptions::default();
+        let curves = extract_ellipsoid_silhouettes(&ell, view_dir, &opts, 64);
+
+        assert!(!curves.is_empty());
+
+        // The silhouette should be a closed curve
+        // First and last points should be close
+        let pts = &curves[0];
+        let first = pts.first().unwrap();
+        let last = pts.last().unwrap();
+        let closure_dist = (*first - *last).length();
+        assert!(
+            closure_dist < 0.5,
+            "silhouette should be approximately closed, distance between first and last = {}",
+            closure_dist
+        );
     }
 }
