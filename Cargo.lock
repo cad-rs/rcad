@@ -3092,6 +3092,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcad-oas"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "laykit",
+ "rcad-kernel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "rcad-render"
 version = "0.1.0"
 dependencies = [
