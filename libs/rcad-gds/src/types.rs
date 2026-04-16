@@ -2,19 +2,23 @@ use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
 /// GDS units information.
+///
+/// In GDSII, units are specified as:
+/// - user_unit: size of one user unit in meters (e.g., 1e-6 for microns)
+/// - meter_unit: size of one database unit in meters (e.g., 1e-9 for nanometers)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GdsUnits {
-    /// User units (e.g., 1e-6 for microns)
+    /// Size of one user unit in meters (e.g., 1e-6 for microns)
     pub user_unit: f64,
-    /// Meters per database unit
+    /// Size of one database unit in meters (e.g., 1e-9 for nanometers)
     pub meter_unit: f64,
 }
 
 impl Default for GdsUnits {
     fn default() -> Self {
         Self {
-            user_unit: 1e-6,  // microns
-            meter_unit: 1e-9, // nanometers
+            user_unit: 1e-6,  // 1 micron
+            meter_unit: 1e-9, // 1 nanometer
         }
     }
 }
