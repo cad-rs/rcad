@@ -12,6 +12,7 @@ pub mod plane_cone;
 pub mod plane_cylinder;
 pub mod plane_plane;
 pub mod plane_sphere;
+pub mod plane_torus;
 pub mod sphere_cone;
 pub mod sphere_cylinder;
 pub mod torus_cone;
@@ -33,3 +34,4 @@ pub use extreme_geometry::{
     detect_near_tangent_configurations,
     ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
 };
+pub use plane_torus::{PlaneTorusResult, intersect_plane_torus, intersect_plane_torus_with_tolerance};
