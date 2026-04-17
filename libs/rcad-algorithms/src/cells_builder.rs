@@ -18,6 +18,8 @@ pub enum CellExpr {
     Intersection(Box<CellExpr>, Box<CellExpr>),
     /// Difference of two expressions: left - right.
     Difference(Box<CellExpr>, Box<CellExpr>),
+    /// XOR: symmetric difference (A xor B = (A - B) ∪ (B - A))
+    Xor(Box<CellExpr>, Box<CellExpr>),
 }
 
 /// Error type for [`CellsBuilder`].
@@ -94,6 +96,12 @@ impl CellsBuilder {
             CellExpr::Union(a, b) => self.eval_bin(BooleanOpType::Union, a, b),
             CellExpr::Intersection(a, b) => self.eval_bin(BooleanOpType::Intersection, a, b),
             CellExpr::Difference(a, b) => self.eval_bin(BooleanOpType::Difference, a, b),
+            CellExpr::Xor(a, b) => {
+                // XOR: (A - B) ∪ (B - A)
+                let a_min_b = self.eval_bin(BooleanOpType::Difference, a, b)?;
+                let b_min_a = self.eval_bin(BooleanOpType::Difference, b, a)?;
+                Ok(boolean_op(BooleanOpType::Union, &a_min_b, &b_min_a)?)
+            }
         }
     }
 
@@ -156,5 +164,21 @@ mod tests {
             err,
             CellsBuilderError::InvalidCellIndex { index: 10, count: 0 }
         ));
+    }
+
+    #[test]
+    fn cells_builder_xor_expression_succeeds() {
+        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+        let builder = CellsBuilder::from_cells(vec![a, b]);
+
+        // XOR: (A ∪ B) - (A ∩ B)
+        let expr = CellExpr::Xor(Box::new(CellExpr::Cell(0)), Box::new(CellExpr::Cell(1)));
+
+        let out = builder.evaluate(&expr).expect("XOR expression should succeed");
+
+        // XOR of two overlapping boxes should have more faces than either input
+        assert!(face_count_of(&out) > 6);
     }
 }

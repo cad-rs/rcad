@@ -4,3 +4,4 @@ dist/
 *.stp
 /*.svg
 .claude/
+Cargo.lock

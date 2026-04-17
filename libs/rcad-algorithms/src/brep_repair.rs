@@ -85,6 +85,10 @@ pub struct MakeConnectedReport {
     pub edges_sewn: usize,
     /// Number of faces that were merged (enhanced mode with face merging).
     pub faces_merged: usize,
+    /// Whether scoped cleanup fell back to global.
+    pub fell_back_to_global: bool,
+    /// Coverage assessment that triggered fallback (if any).
+    pub coverage_assessment: Option<CoverageAssessment>,
 }
 
 /// Operating mode for `make_connected_enhanced`.
@@ -419,6 +423,124 @@ pub struct SeedDetectionResult {
     pub coverage_ratio: f64,
 }
 
+/// Multi-dimensional coverage assessment for scoped cleanup.
+#[derive(Debug, Clone)]
+pub struct CoverageAssessment {
+    /// Fraction of vertices covered by seeds.
+    pub vertex_coverage: f64,
+    /// Fraction of edges covered by seeds (at least one endpoint).
+    pub edge_coverage: f64,
+    /// Fraction of faces covered by seeds (at least one boundary vertex).
+    pub face_coverage: f64,
+    /// Whether scoped cleanup should fall back to global.
+    pub should_fallback_to_global: bool,
+}
+
+/// Assess coverage of seed vertices over the BRep.
+pub fn assess_coverage(brep: &BRep, seed_vertices: &[usize]) -> CoverageAssessment {
+    let n_vertices = brep.vertices.len().max(1);
+    let n_edges = brep.edges.len().max(1);
+
+    let seed_set: std::collections::HashSet<usize> = seed_vertices.iter().copied().collect();
+
+    // Vertex coverage
+    let vertex_coverage = seed_vertices.len() as f64 / n_vertices as f64;
+
+    // Edge coverage: at least one endpoint in seeds
+    let covered_edges = brep
+        .edges
+        .iter()
+        .filter(|e| seed_set.contains(&e.start) || seed_set.contains(&e.end))
+        .count();
+    let edge_coverage = covered_edges as f64 / n_edges as f64;
+
+    // Face coverage: at least one boundary vertex in seeds
+    let mut covered_faces = 0usize;
+    let total_faces = brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+
+    for face in brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+    {
+        let has_seed = face
+            .outer_wire
+            .edges
+            .iter()
+            .flat_map(|we| {
+                brep.edges
+                    .get(we.idx)
+                    .map(|e| vec![e.start, e.end])
+                    .unwrap_or_default()
+            })
+            .any(|v| seed_set.contains(&v));
+        if has_seed {
+            covered_faces += 1;
+        }
+    }
+    let face_coverage = if total_faces > 0 {
+        covered_faces as f64 / total_faces as f64
+    } else {
+        0.0
+    };
+
+    // Fallback threshold: if any coverage is below 30%, use global
+    let min_coverage = vertex_coverage.min(edge_coverage).min(face_coverage);
+    let should_fallback = min_coverage < 0.3;
+
+    CoverageAssessment {
+        vertex_coverage,
+        edge_coverage,
+        face_coverage,
+        should_fallback_to_global: should_fallback,
+    }
+}
+
+/// Get adjacent faces for an edge (simplified, no BRepGraph needed).
+fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
+    let mut faces = Vec::new();
+    let mut face_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                // Check if this face references the edge
+                for wire_edge in &_face.outer_wire.edges {
+                    if wire_edge.idx == edge_idx {
+                        faces.push(face_idx);
+                        break;
+                    }
+                }
+                face_idx += 1;
+            }
+        }
+    }
+    faces
+}
+
+/// Get face normal from geometry or stored normal.
+fn get_face_normal(brep: &BRep, face_idx: usize) -> Option<DVec3> {
+    // First, try to get from face's stored normal
+    let mut current_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                if current_idx == face_idx {
+                    // Return the stored face normal
+                    return Some(face.normal.normalize());
+                }
+                current_idx += 1;
+            }
+        }
+    }
+    None
+}
+
 /// Detect seed vertices for scoped make-connected based on strategy.
 pub fn detect_seeds_for_scoped_cleanup(
     brep: &BRep,
@@ -477,7 +599,7 @@ pub fn detect_seeds_for_scoped_cleanup(
             result.strategy_counts.insert("near_duplicate_vertices".to_string(), vertex_set.len());
         }
         SeedDetectionStrategy::SeamCandidates => {
-            // Edges referenced by multiple faces (potential seams)
+            // Strategy 1: Edges referenced by multiple faces (potential seams)
             let mut edge_face_count = vec![0usize; n_edges];
             for solid in &brep.solids {
                 for shell in &solid.shells {
@@ -492,12 +614,46 @@ pub fn detect_seeds_for_scoped_cleanup(
             }
             for (ei, &count) in edge_face_count.iter().enumerate() {
                 if count > 2 {
-                    let edge = &brep.edges[ei];
-                    vertex_set.insert(edge.start);
-                    vertex_set.insert(edge.end);
-                    edge_set.insert(ei);
+                    if let Some(edge) = brep.edges.get(ei) {
+                        vertex_set.insert(edge.start);
+                        vertex_set.insert(edge.end);
+                        edge_set.insert(ei);
+                    }
                 }
             }
+
+            // Strategy 2: Detect edges with multiple PCurves (potential seams on periodic surfaces)
+            for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
+                if pcurves.len() > 1 {
+                    // Multi-PCurve edge is a seam candidate (e.g., seam on cylinder/sphere/torus)
+                    if let Some(edge) = brep.edges.get(ei) {
+                        vertex_set.insert(edge.start);
+                        vertex_set.insert(edge.end);
+                        edge_set.insert(ei);
+                    }
+                }
+            }
+
+            // Strategy 3: Detect edges where adjacent face normals have large angle (> 45 degrees)
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
+                if adj_faces.len() == 2 {
+                    if let (Some(n1), Some(n2)) = (
+                        get_face_normal(brep, adj_faces[0]),
+                        get_face_normal(brep, adj_faces[1]),
+                    ) {
+                        let dot = n1.dot(n2);
+                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        // Use abs to handle both same-side and opposite-side normals
+                        if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
+                            vertex_set.insert(edge.start);
+                            vertex_set.insert(edge.end);
+                            edge_set.insert(ei);
+                        }
+                    }
+                }
+            }
+
             result.strategy_counts.insert("seam_candidates".to_string(), vertex_set.len());
         }
         SeedDetectionStrategy::Hybrid => {
@@ -532,6 +688,56 @@ pub fn detect_seeds_for_scoped_cleanup(
                     if dist < config.near_duplicate_distance {
                         combined.insert(i);
                         combined.insert(j);
+                    }
+                }
+            }
+
+            // Seam candidate Strategy 1: Edges referenced by multiple faces (potential seams)
+            let mut edge_face_count = vec![0usize; n_edges];
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        for we in &face.outer_wire.edges {
+                            if we.idx < n_edges {
+                                edge_face_count[we.idx] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            for (ei, &count) in edge_face_count.iter().enumerate() {
+                if count > 2 {
+                    if let Some(edge) = brep.edges.get(ei) {
+                        combined.insert(edge.start);
+                        combined.insert(edge.end);
+                    }
+                }
+            }
+
+            // Seam candidate Strategy 2: Edges with multiple PCurves
+            for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
+                if pcurves.len() > 1 {
+                    if let Some(edge) = brep.edges.get(ei) {
+                        combined.insert(edge.start);
+                        combined.insert(edge.end);
+                    }
+                }
+            }
+
+            // Seam candidate Strategy 3: Edges with large face normal angle (> 45 degrees)
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
+                if adj_faces.len() == 2 {
+                    if let (Some(n1), Some(n2)) = (
+                        get_face_normal(brep, adj_faces[0]),
+                        get_face_normal(brep, adj_faces[1]),
+                    ) {
+                        let dot = n1.dot(n2);
+                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
+                            combined.insert(edge.start);
+                            combined.insert(edge.end);
+                        }
                     }
                 }
             }
@@ -835,6 +1041,9 @@ pub fn make_connected_iterative_with_growth_cap(
 ///
 /// Only short-edge removal and near-vertex merges touching `scope_vertices`
 /// are applied, allowing localized connectivity fixes.
+///
+/// Automatically falls back to global cleanup when seed coverage is below
+/// the fallback threshold (30% for any coverage dimension).
 pub fn make_connected_iterative_scoped_with_growth_cap(
     brep: &BRep,
     scope_vertices: &[usize],
@@ -843,6 +1052,23 @@ pub fn make_connected_iterative_scoped_with_growth_cap(
     tolerance_growth: f64,
     tolerance_cap: f64,
 ) -> (BRep, MakeConnectedReport) {
+    // Assess coverage first
+    let assessment = assess_coverage(brep, scope_vertices);
+
+    if assessment.should_fallback_to_global {
+        // Fall back to global cleanup with same parameters
+        let (result, mut report) = make_connected_iterative_with_growth_cap(
+            brep,
+            tolerance,
+            max_passes,
+            tolerance_growth,
+            tolerance_cap,
+        );
+        report.fell_back_to_global = true;
+        report.coverage_assessment = Some(assessment);
+        return (result, report);
+    }
+
     let tol = tolerance.max(TOLERANCE_ABS);
     let pass_limit = max_passes.max(1);
     let growth = if tolerance_growth > 1.0 {
@@ -17034,5 +17260,314 @@ mod tests {
             validation.orphaned_vertices, 1,
             "Should detect one orphaned vertex"
         );
+    }
+
+    #[test]
+    fn detect_multi_pcurve_edges_as_seeds() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+        use rcad_kernel::{Curve2d, Surface3, PCurve};
+        use rcad_kernel::geom::{Line2d, Plane};
+        use glam::DVec2;
+
+        let mut brep = BRep::new();
+
+        // Add vertices
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
+
+        // Add edges
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+
+        // Add 2D curves to the geometry pool
+        brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::X,
+        }));
+        brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+            origin: DVec2::ZERO,
+            direction: DVec2::Y,
+        }));
+
+        // Add surfaces
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        }));
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        }));
+
+        // Add multiple PCurves for edge 0 (seam candidate)
+        brep.geom.edge_pcurves.push(vec![
+            PCurve {
+                surface_idx: 0,
+                curve2d_idx: 0,
+            },
+            PCurve {
+                surface_idx: 1,
+                curve2d_idx: 1,
+            },
+        ]);
+        brep.geom.edge_pcurves.push(vec![]); // Edge 1 has no PCurves
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 should be detected as seam candidate (has multiple PCurves)
+        assert!(
+            result.seed_edges.contains(&0),
+            "Multi-PCurve edge should be detected as seam candidate"
+        );
+    }
+
+    #[test]
+    fn test_seam_candidates_multi_face_edges() {
+        // Strategy 1: Test edges referenced by more than 2 faces
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add vertices (4 vertices for a tetrahedron-like shape)
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+        brep.vertices.push(Vertex { point: DVec3::Y });
+        brep.vertices.push(Vertex { point: DVec3::Z });
+
+        // Add edges - edge 0 connects vertices 0 and 1
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+        brep.edges.push(Edge { start: 2, end: 0 });
+
+        // Create multiple faces that all reference edge 0 (simulating a non-manifold edge)
+        let create_face_with_edge = |edge_idx: usize| -> Face {
+            Face {
+                outer_wire: Wire {
+                    edges: vec![WireEdge {
+                        idx: edge_idx,
+                        forward: true,
+                    }],
+                },
+                inner_wires: vec![],
+                normal: DVec3::Z,
+                triangles: vec![],
+                mesh_dirty: true,
+            }
+        };
+
+        // Create 3 faces all referencing edge 0 (non-manifold condition)
+        let face0 = create_face_with_edge(0);
+        let face1 = create_face_with_edge(0);
+        let face2 = create_face_with_edge(0);
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![face0, face1, face2],
+            }],
+        });
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 is referenced by 3 faces (> 2), so its vertices should be detected
+        assert!(
+            result.seed_edges.contains(&0),
+            "Edge referenced by more than 2 faces should be detected as seam candidate"
+        );
+        assert!(
+            result.seed_vertices.contains(&0) && result.seed_vertices.contains(&1),
+            "Vertices of multi-face edge should be in seed set"
+        );
+    }
+
+    #[test]
+    fn test_seam_candidates_large_normal_angle() {
+        // Strategy 3: Test edges with large face normal angle
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add vertices
+        brep.vertices.push(Vertex { point: DVec3::ZERO });
+        brep.vertices.push(Vertex { point: DVec3::X });
+
+        // Add an edge
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        // Create two faces with perpendicular normals sharing edge 0
+        let face0 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge {
+                    idx: 0,
+                    forward: true,
+                }],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z, // pointing up
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        let face1 = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge {
+                    idx: 0,
+                    forward: true,
+                }],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Y, // perpendicular (90 degrees to Z)
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+
+        brep.solids.push(Solid {
+            shells: vec![Shell {
+                faces: vec![face0, face1],
+            }],
+        });
+
+        let config = SeedDetectionConfig {
+            strategy: SeedDetectionStrategy::SeamCandidates,
+            ..Default::default()
+        };
+
+        let result = detect_seeds_for_scoped_cleanup(&brep, &config);
+
+        // Edge 0 has adjacent faces with 90 degree normal angle (> 45 degrees)
+        // so it should be detected as seam candidate
+        assert!(
+            result.seed_edges.contains(&0),
+            "Edge with large face normal angle should be detected as seam candidate"
+        );
+        assert!(
+            result.seed_vertices.contains(&0) && result.seed_vertices.contains(&1),
+            "Vertices of edge with large normal angle should be in seed set"
+        );
+    }
+
+    #[test]
+    fn coverage_assessment_triggers_global_fallback() {
+        let mut brep = BRep::new();
+
+        // Add 100 vertices
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64, 0.0, 0.0),
+            });
+        }
+
+        // Only seed vertices 0-4 (5% coverage)
+        let assessment = assess_coverage(&brep, &vec![0, 1, 2, 3, 4]);
+
+        assert!(assessment.vertex_coverage < 0.1, "Coverage should be low");
+        assert!(
+            assessment.should_fallback_to_global,
+            "Should trigger global fallback"
+        );
+    }
+
+    #[test]
+    fn coverage_assessment_accepts_high_coverage() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Add 100 vertices
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64, 0.0, 0.0),
+            });
+        }
+
+        // Add edges connecting vertices
+        for i in 0..99 {
+            brep.edges.push(Edge { start: i, end: i + 1 });
+        }
+
+        // Create a face using first 3 edges (and vertices 0,1,2)
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        // Seed 90 vertices (90% coverage)
+        let seeds: Vec<usize> = (0..90).collect();
+        let assessment = assess_coverage(&brep, &seeds);
+
+        assert!(assessment.vertex_coverage > 0.8, "Coverage should be high");
+        assert!(
+            !assessment.should_fallback_to_global,
+            "Should not trigger fallback"
+        );
+    }
+
+    #[test]
+    fn scoped_cleanup_falls_back_on_low_coverage() {
+        use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+
+        let mut brep = BRep::new();
+
+        // Create geometry with many vertices but few seeds
+        for i in 0..100 {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(i as f64 * 0.1, 0.0, 0.0),
+            });
+        }
+
+        // Add edges to connect vertices
+        for i in 0..99 {
+            brep.edges.push(Edge { start: i, end: i + 1 });
+        }
+
+        // Add a face using the first few edges
+        let face = Face {
+            outer_wire: Wire {
+                edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
+            },
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            mesh_dirty: true,
+        };
+        brep.solids.push(Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        });
+
+        // Only 5 seeds - well below 30% threshold
+        let seeds = vec![0, 1, 2, 3, 4];
+
+        let (_, report) = make_connected_iterative_scoped_with_growth_cap(
+            &brep,
+            &seeds,
+            1e-6,
+            3,
+            1.5,
+            1e-3,
+        );
+
+        assert!(
+            report.fell_back_to_global,
+            "Should fall back to global on low coverage"
+        );
+        assert!(report.coverage_assessment.is_some());
     }
 }

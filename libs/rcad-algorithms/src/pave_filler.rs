@@ -3215,3 +3215,171 @@ fn intersect_edge_face_numeric(
     }
     hits
 }
+
+/// Result of partial face overlap analysis.
+#[derive(Debug, Clone)]
+pub struct PartialOverlapInfo {
+    /// Face index in shape A.
+    pub face_a: usize,
+    /// Face index in shape B.
+    pub face_b: usize,
+    /// Estimated overlap ratio (0.0 to 1.0).
+    pub overlap_ratio: f64,
+    /// Overlap type.
+    pub overlap_type: PartialOverlapType,
+}
+
+/// Type of partial overlap between faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialOverlapType {
+    /// Faces are coplanar with partial boundary overlap.
+    CoplanarBoundary,
+    /// Faces share an edge partially.
+    /// TODO: Implement edge overlap detection
+    EdgeOverlap,
+    /// One face is contained within another.
+    /// TODO: Implement containment detection
+    Contained,
+}
+
+impl<'a> PaveFiller<'a> {
+    /// Detect partial overlaps between faces for Glue mode.
+    ///
+    /// This method identifies face pairs where the boundaries partially overlap,
+    /// as opposed to `should_skip_glued_face_pair` which only detects complete overlaps.
+    ///
+    /// # Returns
+    /// A vector of `PartialOverlapInfo` describing the detected partial overlaps.
+    pub fn detect_partial_glue_overlaps(&self) -> Vec<PartialOverlapInfo> {
+        let mut overlaps = Vec::new();
+        let tol = self.tol();
+
+        // Iterate over all face pairs from different shapes
+        for f1_idx in 0..self.ds.a_face_count {
+            for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
+                if let Some(overlap) = self.check_partial_overlap(f1_idx, f2_idx, tol) {
+                    overlaps.push(overlap);
+                }
+            }
+        }
+
+        overlaps
+    }
+
+    fn check_partial_overlap(
+        &self,
+        f1_idx: usize,
+        f2_idx: usize,
+        tol: f64,
+    ) -> Option<PartialOverlapInfo> {
+        // First check if surfaces are compatible for overlap
+        let face1 = &self.ds.faces[f1_idx];
+        let face2 = &self.ds.faces[f2_idx];
+
+        // Skip if same origin
+        if face1.origin == face2.origin {
+            return None;
+        }
+
+        // Check surface compatibility
+        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
+            return None;
+        }
+
+        // Get boundary points for both faces
+        let pts1 = self.sampled_face_boundary_points(f1_idx, 8);
+        let pts2 = self.sampled_face_boundary_points(f2_idx, 8);
+
+        if pts1.is_empty() || pts2.is_empty() {
+            return None;
+        }
+
+        // Compute overlap ratio by counting points near the other face's boundary
+        let overlap_ratio = self.compute_boundary_overlap_ratio(&pts1, &pts2, tol);
+
+        // Partial overlap: some but not complete
+        if overlap_ratio > 0.1 && overlap_ratio < 0.99 {
+            return Some(PartialOverlapInfo {
+                face_a: f1_idx,
+                face_b: f2_idx,
+                overlap_ratio,
+                overlap_type: PartialOverlapType::CoplanarBoundary,
+            });
+        }
+
+        None
+    }
+
+    fn compute_boundary_overlap_ratio(&self, pts1: &[DVec3], pts2: &[DVec3], tol: f64) -> f64 {
+        let proximity_tol = tol * 100.0; // More lenient for overlap detection
+
+        // Count points from pts1 that are near pts2
+        let in_2 = pts1
+            .iter()
+            .filter(|p| pts2.iter().any(|b| (*b - **p).length() < proximity_tol))
+            .count();
+
+        // Count points from pts2 that are near pts1
+        let in_1 = pts2
+            .iter()
+            .filter(|p| pts1.iter().any(|b| (*b - **p).length() < proximity_tol))
+            .count();
+
+        let total = pts1.len() + pts2.len();
+        if total == 0 {
+            return 0.0;
+        }
+
+        (in_2 + in_1) as f64 / total as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcad_kernel::{BRep, PrimitiveSolid};
+    use crate::bopds::ds::DS;
+
+    #[test]
+    fn glue_detects_partial_face_overlap() {
+        // Two boxes that partially overlap on one face
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        // Translate box2 so it partially overlaps box1's face
+        let mut box2_moved = box2.clone();
+        for v in &mut box2_moved.vertices {
+            v.point.x += 1.5; // Partial overlap
+        }
+
+        let mut ds = DS::new(&box1, &box2_moved);
+        let filler = PaveFiller::new(&mut ds);
+
+        // Should detect partial overlap on faces
+        let overlaps = filler.detect_partial_glue_overlaps();
+        assert!(
+            !overlaps.is_empty(),
+            "Should detect partial face overlaps"
+        );
+
+        // Verify the detected overlap makes sense
+        for overlap in &overlaps {
+            // Overlap ratio should be in partial range
+            assert!(
+                overlap.overlap_ratio > 0.0 && overlap.overlap_ratio < 1.0,
+                "Overlap ratio should be partial, got {}",
+                overlap.overlap_ratio
+            );
+            // Type should be CoplanarBoundary for box-box overlap
+            assert_eq!(overlap.overlap_type, PartialOverlapType::CoplanarBoundary);
+        }
+    }
+}
