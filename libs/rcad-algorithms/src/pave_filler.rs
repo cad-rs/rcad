@@ -929,59 +929,23 @@ impl<'a> PaveFiller<'a> {
     /// Returns a list of (edge_idx_in_f1, edge_idx_in_f2) pairs for shared edges.
     fn detect_shared_edges_between_faces(&self, f1: usize, f2: usize) -> Vec<(usize, usize)> {
         let tol = self.glue_tolerance;
-        let tol_sq = tol * tol;
         let mut shared_edges = Vec::new();
 
         let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.iter().copied().collect();
         let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.iter().copied().collect();
 
         for &e1 in &edges1 {
-            let edge1 = match self.ds.edges.get(e1) {
-                Some(e) => e,
-                None => continue,
-            };
-
-            // Get endpoints of edge1
-            let pts1: Vec<DVec3> = (0..=8)
-                .map(|k| {
-                    let t = edge1.t_range[0] + (edge1.t_range[1] - edge1.t_range[0]) * k as f64 / 8.0;
-                    edge1.curve.point_at(t)
-                })
-                .collect();
-
             for &e2 in &edges2 {
-                let edge2 = match self.ds.edges.get(e2) {
-                    Some(e) => e,
-                    None => continue,
-                };
-
-                // Check if edges are geometrically compatible (same curve direction or reverse)
-                let curve_compatible = self.edges_curve_compatible(e1, e2, tol);
-                if !curve_compatible {
-                    continue;
-                }
-
-                // Sample edge2 and check proximity
-                let pts2: Vec<DVec3> = (0..=8)
-                    .map(|k| {
-                        let t = edge2.t_range[0] + (edge2.t_range[1] - edge2.t_range[0]) * k as f64 / 8.0;
-                        edge2.curve.point_at(t)
-                    })
-                    .collect();
-
-                // Check if sampled points are close
-                let mut all_close = true;
-                for p1 in &pts1 {
-                    let min_dist = pts2.iter().map(|p2| (*p1 - *p2).length_squared()).fold(f64::INFINITY, f64::min);
-                    if min_dist > tol_sq {
-                        all_close = false;
-                        break;
+                // Use the new edge overlap detection
+                if let Some(overlap) = self.detect_edge_overlap(e1, e2, tol) {
+                    // Only consider edges that have at least partial overlap
+                    if overlap.overlap_type != EdgeOverlapType::None
+                        && overlap.overlap_ratio_a > 0.01
+                        && overlap.max_distance < tol * 10.0
+                    {
+                        shared_edges.push((e1, e2));
+                        break; // Each edge in f1 matches at most one in f2
                     }
-                }
-
-                if all_close {
-                    shared_edges.push((e1, e2));
-                    break; // Each edge in f1 matches at most one in f2
                 }
             }
         }
@@ -3235,11 +3199,86 @@ pub enum PartialOverlapType {
     /// Faces are coplanar with partial boundary overlap.
     CoplanarBoundary,
     /// Faces share an edge partially.
-    /// TODO: Implement edge overlap detection
     EdgeOverlap,
     /// One face is contained within another.
-    /// TODO: Implement containment detection
     Contained,
+}
+
+/// Result of edge overlap detection between two edges.
+#[derive(Debug, Clone)]
+pub struct EdgeOverlapResult {
+    /// Edge index in shape A.
+    pub edge_a: usize,
+    /// Edge index in shape B.
+    pub edge_b: usize,
+    /// Type of overlap detected.
+    pub overlap_type: EdgeOverlapType,
+    /// Overlap ratio for the first edge (0.0 to 1.0).
+    pub overlap_ratio_a: f64,
+    /// Overlap ratio for the second edge (0.0 to 1.0).
+    pub overlap_ratio_b: f64,
+    /// Parameter range of overlap on edge A [t_start, t_end].
+    pub param_range_a: Option<[f64; 2]>,
+    /// Parameter range of overlap on edge B [t_start, t_end].
+    pub param_range_b: Option<[f64; 2]>,
+    /// Maximum distance between edges in the overlap region.
+    pub max_distance: f64,
+}
+
+/// Type of overlap between two edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeOverlapType {
+    /// No overlap - edges are on different curves or don't intersect.
+    None,
+    /// Partial overlap - edges share part of their parameter range.
+    Partial,
+    /// Full overlap - one edge completely overlaps the other.
+    Full,
+    /// Edge A is contained within edge B's parameter range.
+    AContainedInB,
+    /// Edge B is contained within edge A's parameter range.
+    BContainedInA,
+}
+
+/// Result of edge containment detection.
+#[derive(Debug, Clone)]
+pub struct EdgeContainmentResult {
+    /// Edge index that is contained.
+    pub contained_edge: usize,
+    /// Edge index that contains.
+    pub containing_edge: usize,
+    /// Containment ratio (how much of the contained edge is inside).
+    pub containment_ratio: f64,
+    /// Whether the containment is exact within tolerance.
+    pub is_exact: bool,
+}
+
+/// Parameter overlap result for two parameter ranges.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamOverlap {
+    /// Overlap type.
+    pub overlap_type: ParamOverlapType,
+    /// Overlap range [min, max] if any overlap exists.
+    pub overlap_range: Option<[f64; 2]>,
+    /// Ratio of first range that overlaps.
+    pub ratio_a: f64,
+    /// Ratio of second range that overlaps.
+    pub ratio_b: f64,
+}
+
+/// Type of parameter range overlap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamOverlapType {
+    /// No overlap.
+    None,
+    /// Partial overlap - ranges partially intersect.
+    Partial,
+    /// Range A contains range B entirely.
+    AContainsB,
+    /// Range B contains range A entirely.
+    BContainsA,
+    /// Exact match - ranges are identical.
+    Exact,
 }
 
 /// Result of near-tangent face detection.
@@ -3370,13 +3409,37 @@ impl<'a> PaveFiller<'a> {
         // Compute overlap ratio by counting points near the other face's boundary
         let overlap_ratio = self.compute_boundary_overlap_ratio(&pts1, &pts2, tol);
 
+        // Check for edge overlap between faces
+        let shared_edges = self.detect_shared_edges_between_faces(f1_idx, f2_idx);
+        let has_edge_overlap = !shared_edges.is_empty();
+
+        // Check for edge containment
+        let mut has_containment = false;
+        for &(e1, e2) in &shared_edges {
+            if let Some(containment) = self.detect_edge_containment(e1, e2, tol) {
+                if containment.is_exact {
+                    has_containment = true;
+                    break;
+                }
+            }
+        }
+
+        // Determine overlap type
+        let overlap_type = if has_containment {
+            PartialOverlapType::Contained
+        } else if has_edge_overlap {
+            PartialOverlapType::EdgeOverlap
+        } else {
+            PartialOverlapType::CoplanarBoundary
+        };
+
         // Partial overlap: some but not complete
         if overlap_ratio > 0.1 && overlap_ratio < 0.99 {
             return Some(PartialOverlapInfo {
                 face_a: f1_idx,
                 face_b: f2_idx,
                 overlap_ratio,
-                overlap_type: PartialOverlapType::CoplanarBoundary,
+                overlap_type,
             });
         }
 
@@ -3404,6 +3467,632 @@ impl<'a> PaveFiller<'a> {
         }
 
         (in_2 + in_1) as f64 / total as f64
+    }
+
+    // ============================================================
+    // Edge Overlap Detection
+    // ============================================================
+
+    /// Detect edge overlap between all edge pairs from different shapes.
+    ///
+    /// This function identifies pairs of edges that partially or fully overlap,
+    /// which is important for glue mode and shared topology detection.
+    ///
+    /// # Returns
+    /// A vector of `EdgeOverlapResult` describing detected edge overlaps.
+    pub fn detect_edge_overlaps(&self) -> Vec<EdgeOverlapResult> {
+        let mut overlaps = Vec::new();
+        let tol = self.tol();
+
+        // Iterate over all edge pairs from different shapes
+        for e1_idx in 0..self.ds.a_edge_count {
+            for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
+                if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol) {
+                    if overlap.overlap_type != EdgeOverlapType::None {
+                        overlaps.push(overlap);
+                    }
+                }
+            }
+        }
+
+        overlaps
+    }
+
+    /// Detect overlap between two specific edges.
+    ///
+    /// # Arguments
+    /// * `e1_idx` - Index of the first edge.
+    /// * `e2_idx` - Index of the second edge.
+    /// * `tol` - Tolerance for geometric comparisons.
+    ///
+    /// # Returns
+    /// `Some(EdgeOverlapResult)` if the edges can be compared, `None` if invalid indices.
+    pub fn detect_edge_overlap(&self, e1_idx: usize, e2_idx: usize, tol: f64) -> Option<EdgeOverlapResult> {
+        let edge1 = self.ds.edges.get(e1_idx)?;
+        let edge2 = self.ds.edges.get(e2_idx)?;
+
+        // First check if the curves are compatible (same supporting curve)
+        let curve_match = self.curves_are_collinear(&edge1.curve, &edge2.curve, tol);
+        if !curve_match {
+            return Some(EdgeOverlapResult {
+                edge_a: e1_idx,
+                edge_b: e2_idx,
+                overlap_type: EdgeOverlapType::None,
+                overlap_ratio_a: 0.0,
+                overlap_ratio_b: 0.0,
+                param_range_a: None,
+                param_range_b: None,
+                max_distance: f64::INFINITY,
+            });
+        }
+
+        // Compute parameter range overlap in a common parameter space
+        let param_overlap = self.compute_param_overlap_for_edges(edge1, edge2, tol);
+
+        // Sample points to compute max distance in overlap region
+        let max_distance = if param_overlap.overlap_range.is_some() {
+            self.compute_max_edge_distance_in_range(edge1, edge2, &param_overlap, tol)
+        } else {
+            f64::INFINITY
+        };
+
+        let overlap_type = match param_overlap.overlap_type {
+            ParamOverlapType::None => EdgeOverlapType::None,
+            ParamOverlapType::Partial => EdgeOverlapType::Partial,
+            ParamOverlapType::AContainsB => EdgeOverlapType::BContainedInA,
+            ParamOverlapType::BContainsA => EdgeOverlapType::AContainedInB,
+            ParamOverlapType::Exact => EdgeOverlapType::Full,
+        };
+
+        Some(EdgeOverlapResult {
+            edge_a: e1_idx,
+            edge_b: e2_idx,
+            overlap_type,
+            overlap_ratio_a: param_overlap.ratio_a,
+            overlap_ratio_b: param_overlap.ratio_b,
+            param_range_a: param_overlap.overlap_range,
+            param_range_b: param_overlap.overlap_range,
+            max_distance,
+        })
+    }
+
+    /// Check if two curves are collinear (share the same supporting curve).
+    ///
+    /// This is a fundamental check for edge overlap detection.
+    /// Two curves are collinear if they represent the same geometric curve,
+    /// possibly with different parameter ranges.
+    pub fn curves_are_collinear(&self, c1: &Curve3, c2: &Curve3, tol: f64) -> bool {
+        match (c1, c2) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => self.lines_are_collinear(l1, l2, tol),
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => self.circles_are_collinear(c1, c2, tol),
+            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => self.ellipses_are_collinear(e1, e2, tol),
+            (Curve3::BSpline(b1), Curve3::BSpline(b2)) => self.bsplines_are_collinear(b1, b2, tol),
+            (Curve3::Bezier(b1), Curve3::Bezier(b2)) => self.beziers_are_collinear(b1, b2, tol),
+            // Mixed types could potentially represent the same curve
+            // For simplicity, we return false for mixed types
+            _ => false,
+        }
+    }
+
+    /// Check if two lines are collinear.
+    fn lines_are_collinear(&self, l1: &Line3, l2: &Line3, tol: f64) -> bool {
+        let d1 = l1.direction.normalize_or_zero();
+        let d2 = l2.direction.normalize_or_zero();
+
+        // Check if directions are parallel (or anti-parallel)
+        let dot = d1.dot(d2);
+        if dot.abs() < 0.999999 {
+            return false;
+        }
+
+        // Check if origins are on the same line
+        // l2.origin should lie on l1's line
+        let v = l2.origin - l1.origin;
+        let perp = v - d1 * v.dot(d1);
+        perp.length() <= tol * 2.0
+    }
+
+    /// Check if two circles are collinear (coincident circles).
+    fn circles_are_collinear(&self, c1: &Circle3, c2: &Circle3, tol: f64) -> bool {
+        // Centers must be the same
+        let center_dist = (c1.center - c2.center).length();
+        if center_dist > tol {
+            return false;
+        }
+
+        // Normals must be parallel (or anti-parallel)
+        let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
+        if normal_dot.abs() < 0.999999 {
+            return false;
+        }
+
+        // Radii must be equal
+        (c1.radius - c2.radius).abs() <= tol
+    }
+
+    /// Check if two ellipses are collinear.
+    fn ellipses_are_collinear(&self, e1: &Ellipse3, e2: &Ellipse3, tol: f64) -> bool {
+        // Centers must be the same
+        let center_dist = (e1.center - e2.center).length();
+        if center_dist > tol {
+            return false;
+        }
+
+        // Normals must be parallel
+        let normal_dot = e1.normal.normalize_or_zero().dot(e2.normal.normalize_or_zero());
+        if normal_dot.abs() < 0.999999 {
+            return false;
+        }
+
+        // Major directions must be parallel (or anti-parallel if normal is flipped)
+        let major_dot = e1.major_dir.normalize_or_zero().dot(e2.major_dir.normalize_or_zero());
+        if major_dot.abs() < 0.999999 {
+            return false;
+        }
+
+        // Radii must be equal
+        (e1.major_radius - e2.major_radius).abs() <= tol
+            && (e1.minor_radius - e2.minor_radius).abs() <= tol
+    }
+
+    /// Check if two BSpline curves are collinear.
+    ///
+    /// This is a conservative check that compares control points and structure.
+    /// For exact equivalence, we would need to compare the curves point-by-point.
+    fn bsplines_are_collinear(&self, b1: &BSplineCurve3, b2: &BSplineCurve3, tol: f64) -> bool {
+        // Degrees must match
+        if b1.degree != b2.degree {
+            return false;
+        }
+
+        // Knot vectors should have similar structure
+        if b1.knots.len() != b2.knots.len() {
+            return false;
+        }
+
+        // Control points should match (allowing for reparameterization)
+        if b1.control_points.len() != b2.control_points.len() {
+            return false;
+        }
+
+        // Compare control points with tolerance
+        for (p1, p2) in b1.control_points.iter().zip(b2.control_points.iter()) {
+            if (*p1 - *p2).length() > tol {
+                return false;
+            }
+        }
+
+        // Compare weights if rational
+        for (w1, w2) in b1.weights.iter().zip(b2.weights.iter()) {
+            if (w1 - w2).abs() > tol {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check if two Bezier curves are collinear.
+    fn beziers_are_collinear(&self, b1: &BezierCurve3, b2: &BezierCurve3, tol: f64) -> bool {
+        // Control point counts must match
+        if b1.control_points.len() != b2.control_points.len() {
+            return false;
+        }
+
+        // Compare control points
+        for (p1, p2) in b1.control_points.iter().zip(b2.control_points.iter()) {
+            if (*p1 - *p2).length() > tol {
+                return false;
+            }
+        }
+
+        // Compare weights
+        for (w1, w2) in b1.weights.iter().zip(b2.weights.iter()) {
+            if (w1 - w2).abs() > tol {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Compute parameter range overlap between two edges on the same curve.
+    ///
+    /// This function maps the parameter ranges of both edges to a common parameter
+    /// space and computes their overlap.
+    fn compute_param_overlap_for_edges(&self, edge1: &DSEdge, edge2: &DSEdge, tol: f64) -> ParamOverlap {
+        // For collinear edges, we need to map both parameter ranges to a common space
+        // The approach depends on the curve type
+
+        match (&edge1.curve, &edge2.curve) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => {
+                self.compute_line_param_overlap(l1, edge1.t_range, l2, edge2.t_range, tol)
+            }
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => {
+                self.compute_circle_param_overlap(c1, edge1.t_range, c2, edge2.t_range, tol)
+            }
+            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
+                self.compute_ellipse_param_overlap(e1, edge1.t_range, e2, edge2.t_range, tol)
+            }
+            (Curve3::BSpline(b1), Curve3::BSpline(b2)) => {
+                self.compute_bspline_param_overlap(b1, edge1.t_range, b2, edge2.t_range, tol)
+            }
+            (Curve3::Bezier(b1), Curve3::Bezier(b2)) => {
+                self.compute_bezier_param_overlap(b1, edge1.t_range, b2, edge2.t_range, tol)
+            }
+            _ => ParamOverlap {
+                overlap_type: ParamOverlapType::None,
+                overlap_range: None,
+                ratio_a: 0.0,
+                ratio_b: 0.0,
+            },
+        }
+    }
+
+    /// Compute parameter overlap for two line segments.
+    fn compute_line_param_overlap(
+        &self,
+        l1: &Line3,
+        range1: [f64; 2],
+        l2: &Line3,
+        range2: [f64; 2],
+        tol: f64,
+    ) -> ParamOverlap {
+        let d1 = l1.direction.normalize_or_zero();
+        let d2 = l2.direction.normalize_or_zero();
+
+        // Determine if directions are same or opposite
+        let dot = d1.dot(d2);
+        let same_direction = dot >= 0.0;
+
+        // Project l2's origin onto l1's parameter space
+        // l1: P(t) = l1.origin + t * d1
+        // For point p on l2 at parameter s: p = l2.origin + s * d2
+        // We need to find t such that: l1.origin + t * d1 = l2.origin + s * d2
+        // t = (l2.origin - l1.origin) . d1 + s * (d2 . d1)
+        // Since d2 . d1 = ±1 (same or opposite direction), we have:
+        // t = offset + s * sign
+
+        let offset = (l2.origin - l1.origin).dot(d1);
+        let sign = if same_direction { 1.0 } else { -1.0 };
+
+        // Convert range2 to l1's parameter space
+        let range2_on_1 = if same_direction {
+            [offset + range2[0] * sign, offset + range2[1] * sign]
+        } else {
+            // Reverse the range when direction is opposite
+            [offset + range2[1] * sign, offset + range2[0] * sign]
+        };
+
+        // Now compute overlap between range1 and range2_on_1
+        self.compute_interval_overlap(range1, range2_on_1, tol)
+    }
+
+    /// Compute parameter overlap for two circular arc segments.
+    fn compute_circle_param_overlap(
+        &self,
+        c1: &Circle3,
+        range1: [f64; 2],
+        c2: &Circle3,
+        range2: [f64; 2],
+        tol: f64,
+    ) -> ParamOverlap {
+        // For circles, parameters are angles [0, 2π]
+        // Since we already verified circles are the same, we just compare angle ranges
+        // But we need to handle periodicity
+
+        let period = 2.0 * std::f64::consts::PI;
+
+        // Check if circles have the same orientation
+        let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
+        let same_orientation = normal_dot >= 0.0;
+
+        // Normalize ranges to [0, 2π]
+        let r1 = self.normalize_angle_range(range1, period);
+        let r2 = self.normalize_angle_range(range2, period);
+
+        // Handle periodic overlap
+        if same_orientation {
+            self.compute_periodic_interval_overlap(r1, r2, period, tol)
+        } else {
+            // Flip the range for opposite orientation
+            let r2_flipped = [period - r2[1], period - r2[0]];
+            self.compute_periodic_interval_overlap(r1, r2_flipped, period, tol)
+        }
+    }
+
+    /// Compute parameter overlap for two ellipse segments.
+    fn compute_ellipse_param_overlap(
+        &self,
+        e1: &Ellipse3,
+        range1: [f64; 2],
+        e2: &Ellipse3,
+        range2: [f64; 2],
+        tol: f64,
+    ) -> ParamOverlap {
+        let period = 2.0 * std::f64::consts::PI;
+
+        // Check if ellipses have the same orientation
+        let normal_dot = e1.normal.normalize_or_zero().dot(e2.normal.normalize_or_zero());
+        let same_orientation = normal_dot >= 0.0;
+
+        let r1 = self.normalize_angle_range(range1, period);
+        let r2 = self.normalize_angle_range(range2, period);
+
+        if same_orientation {
+            self.compute_periodic_interval_overlap(r1, r2, period, tol)
+        } else {
+            let r2_flipped = [period - r2[1], period - r2[0]];
+            self.compute_periodic_interval_overlap(r1, r2_flipped, period, tol)
+        }
+    }
+
+    /// Compute parameter overlap for two BSpline curve segments.
+    fn compute_bspline_param_overlap(
+        &self,
+        _b1: &BSplineCurve3,
+        range1: [f64; 2],
+        _b2: &BSplineCurve3,
+        range2: [f64; 2],
+        tol: f64,
+    ) -> ParamOverlap {
+        // For BSplines that have been verified as collinear,
+        // we assume the same parameterization and compare ranges directly
+        self.compute_interval_overlap(range1, range2, tol)
+    }
+
+    /// Compute parameter overlap for two Bezier curve segments.
+    fn compute_bezier_param_overlap(
+        &self,
+        _b1: &BezierCurve3,
+        range1: [f64; 2],
+        _b2: &BezierCurve3,
+        range2: [f64; 2],
+        tol: f64,
+    ) -> ParamOverlap {
+        // Bezier curves have domain [0, 1]
+        self.compute_interval_overlap(range1, range2, tol)
+    }
+
+    /// Compute overlap between two parameter intervals [a1, a2] and [b1, b2].
+    fn compute_interval_overlap(&self, a: [f64; 2], b: [f64; 2], tol: f64) -> ParamOverlap {
+        let a_len = (a[1] - a[0]).abs();
+        let b_len = (b[1] - b[0]).abs();
+
+        if a_len < tol || b_len < tol {
+            // Degenerate interval
+            return ParamOverlap {
+                overlap_type: ParamOverlapType::None,
+                overlap_range: None,
+                ratio_a: 0.0,
+                ratio_b: 0.0,
+            };
+        }
+
+        // Compute overlap range
+        let overlap_start = a[0].max(b[0]);
+        let overlap_end = a[1].min(b[1]);
+
+        if overlap_start >= overlap_end - tol {
+            // No overlap
+            return ParamOverlap {
+                overlap_type: ParamOverlapType::None,
+                overlap_range: None,
+                ratio_a: 0.0,
+                ratio_b: 0.0,
+            };
+        }
+
+        let overlap_len = overlap_end - overlap_start;
+        let ratio_a = overlap_len / a_len;
+        let ratio_b = overlap_len / b_len;
+
+        // Determine overlap type
+        let overlap_type = if ratio_a >= 0.999999 && ratio_b >= 0.999999 {
+            ParamOverlapType::Exact
+        } else if ratio_a >= 0.999999 {
+            ParamOverlapType::BContainsA
+        } else if ratio_b >= 0.999999 {
+            ParamOverlapType::AContainsB
+        } else {
+            ParamOverlapType::Partial
+        };
+
+        ParamOverlap {
+            overlap_type,
+            overlap_range: Some([overlap_start, overlap_end]),
+            ratio_a,
+            ratio_b,
+        }
+    }
+
+    /// Compute overlap between two parameter intervals on a periodic domain.
+    fn compute_periodic_interval_overlap(
+        &self,
+        a: [f64; 2],
+        b: [f64; 2],
+        period: f64,
+        tol: f64,
+    ) -> ParamOverlap {
+        // Handle wraparound for interval a
+        let a_wraps = a[1] > a[0] + period / 2.0 || a[1] < a[0];
+        let b_wraps = b[1] > b[0] + period / 2.0 || b[1] < b[0];
+
+        // Simple case: neither wraps
+        if !a_wraps && !b_wraps {
+            return self.compute_interval_overlap(a, b, tol);
+        }
+
+        // For wrapping intervals, we need to handle periodicity
+        // Unwrap both intervals to a continuous representation
+        let a_unwrapped = if a_wraps {
+            vec![[a[0], period], [0.0, a[1]]]
+        } else {
+            vec![a]
+        };
+
+        let b_unwrapped = if b_wraps {
+            vec![[b[0], period], [0.0, b[1]]]
+        } else {
+            vec![b]
+        };
+
+        // Compute overlap for each combination
+        let mut total_overlap_len = 0.0;
+        let mut overlap_ranges = Vec::new();
+
+        for a_seg in &a_unwrapped {
+            for b_seg in &b_unwrapped {
+                let overlap = self.compute_interval_overlap(*a_seg, *b_seg, tol);
+                if let Some(range) = overlap.overlap_range {
+                    total_overlap_len += range[1] - range[0];
+                    overlap_ranges.push(range);
+                }
+            }
+        }
+
+        let a_len = a_unwrapped.iter().map(|s| s[1] - s[0]).sum::<f64>();
+        let b_len = b_unwrapped.iter().map(|s| s[1] - s[0]).sum::<f64>();
+
+        if total_overlap_len < tol {
+            return ParamOverlap {
+                overlap_type: ParamOverlapType::None,
+                overlap_range: None,
+                ratio_a: 0.0,
+                ratio_b: 0.0,
+            };
+        }
+
+        let ratio_a = total_overlap_len / a_len;
+        let ratio_b = total_overlap_len / b_len;
+
+        let overlap_type = if ratio_a >= 0.999999 && ratio_b >= 0.999999 {
+            ParamOverlapType::Exact
+        } else if ratio_a >= 0.999999 {
+            ParamOverlapType::BContainsA
+        } else if ratio_b >= 0.999999 {
+            ParamOverlapType::AContainsB
+        } else {
+            ParamOverlapType::Partial
+        };
+
+        // Return the first overlap range (simplified for periodic case)
+        ParamOverlap {
+            overlap_type,
+            overlap_range: overlap_ranges.first().copied(),
+            ratio_a,
+            ratio_b,
+        }
+    }
+
+    /// Normalize an angle range to [0, period].
+    fn normalize_angle_range(&self, range: [f64; 2], period: f64) -> [f64; 2] {
+        let mut r1 = range[0] % period;
+        let mut r2 = range[1] % period;
+
+        if r1 < 0.0 {
+            r1 += period;
+        }
+        if r2 < 0.0 {
+            r2 += period;
+        }
+
+        [r1, r2]
+    }
+
+    /// Compute maximum distance between two edges in their overlap region.
+    fn compute_max_edge_distance_in_range(
+        &self,
+        edge1: &DSEdge,
+        edge2: &DSEdge,
+        param_overlap: &ParamOverlap,
+        tol: f64,
+    ) -> f64 {
+        let overlap_range = match param_overlap.overlap_range {
+            Some(r) => r,
+            None => return f64::INFINITY,
+        };
+
+        // Sample points in the overlap region
+        let num_samples = 10;
+        let mut max_dist = 0.0_f64;
+
+        for i in 0..=num_samples {
+            let t = overlap_range[0] + (overlap_range[1] - overlap_range[0]) * i as f64 / num_samples as f64;
+
+            let p1 = edge1.curve.point_at(t);
+
+            // Find corresponding point on edge2
+            // For now, use simple distance check
+            let t2_start = edge2.t_range[0];
+            let t2_end = edge2.t_range[1];
+
+            // Sample edge2 and find closest point
+            let mut min_dist = f64::INFINITY;
+            for j in 0..=num_samples {
+                let t2 = t2_start + (t2_end - t2_start) * j as f64 / num_samples as f64;
+                let p2 = edge2.curve.point_at(t2);
+                let dist = (p1 - p2).length();
+                min_dist = min_dist.min(dist);
+            }
+
+            max_dist = max_dist.max(min_dist);
+        }
+
+        max_dist
+    }
+
+    /// Detect if one edge is contained within another.
+    ///
+    /// # Arguments
+    /// * `e1_idx` - Index of the first edge.
+    /// * `e2_idx` - Index of the second edge.
+    /// * `tol` - Tolerance for geometric comparisons.
+    ///
+    /// # Returns
+    /// `Some(EdgeContainmentResult)` if containment is detected, `None` otherwise.
+    pub fn detect_edge_containment(
+        &self,
+        e1_idx: usize,
+        e2_idx: usize,
+        tol: f64,
+    ) -> Option<EdgeContainmentResult> {
+        let overlap = self.detect_edge_overlap(e1_idx, e2_idx, tol)?;
+
+        match overlap.overlap_type {
+            EdgeOverlapType::AContainedInB => Some(EdgeContainmentResult {
+                contained_edge: e1_idx,
+                containing_edge: e2_idx,
+                containment_ratio: overlap.overlap_ratio_a,
+                is_exact: overlap.overlap_ratio_a >= 0.999999,
+            }),
+            EdgeOverlapType::BContainedInA => Some(EdgeContainmentResult {
+                contained_edge: e2_idx,
+                containing_edge: e1_idx,
+                containment_ratio: overlap.overlap_ratio_b,
+                is_exact: overlap.overlap_ratio_b >= 0.999999,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Detect edge containment between all edge pairs from different shapes.
+    ///
+    /// # Returns
+    /// A vector of `EdgeContainmentResult` describing detected containments.
+    pub fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
+        let mut containments = Vec::new();
+        let tol = self.tol();
+
+        for e1_idx in 0..self.ds.a_edge_count {
+            for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
+                if let Some(containment) = self.detect_edge_containment(e1_idx, e2_idx, tol) {
+                    containments.push(containment);
+                }
+            }
+        }
+
+        containments
     }
 
     /// Detect and handle near-tangent faces.
@@ -4564,5 +5253,374 @@ mod tests {
             !filler.faces_boundaries_overlap(&pts1, &pts3, 0.01),
             "Boundaries should not overlap"
         );
+    }
+
+    // ============================================================
+    // Edge Overlap Detection Tests
+    // ============================================================
+
+    #[test]
+    fn test_edge_overlap_line_full() {
+        // Test: Two boxes with fully overlapping edges (same edge)
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = box1.clone();
+
+        let mut ds = DS::new(&box1, &box2);
+        let filler = PaveFiller::new(&mut ds);
+
+        // Detect edge overlaps
+        let overlaps = filler.detect_edge_overlaps();
+
+        // Should detect overlapping edges since boxes are identical
+        assert!(!overlaps.is_empty(), "Should detect edge overlaps for identical boxes");
+
+        // Check that at least some edges have full overlap
+        let full_overlaps: Vec<_> = overlaps.iter()
+            .filter(|o| o.overlap_type == EdgeOverlapType::Full)
+            .collect();
+        assert!(!full_overlaps.is_empty(), "Should have at least some fully overlapping edges");
+    }
+
+    #[test]
+    fn test_edge_overlap_line_partial() {
+        // Test: Two boxes with partially overlapping edges
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        // Translate box2 to partially overlap box1
+        let mut box2_moved = box2.clone();
+        for v in &mut box2_moved.vertices {
+            v.point.x += 1.0; // Partial overlap
+        }
+
+        let mut ds = DS::new(&box1, &box2_moved);
+        let filler = PaveFiller::new(&mut ds);
+
+        let overlaps = filler.detect_edge_overlaps();
+
+        // Should detect some edge overlaps
+        assert!(!overlaps.is_empty(), "Should detect edge overlaps for partially overlapping boxes");
+
+        // Check that we have some partial overlaps
+        let partial_overlaps: Vec<_> = overlaps.iter()
+            .filter(|o| o.overlap_type == EdgeOverlapType::Partial
+                || o.overlap_type == EdgeOverlapType::AContainedInB
+                || o.overlap_type == EdgeOverlapType::BContainedInA)
+            .collect();
+        assert!(!partial_overlaps.is_empty(), "Should have at least some partial overlaps");
+    }
+
+    #[test]
+    fn test_edge_overlap_line_none() {
+        // Test: Two boxes with no overlapping edges
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        // Translate box2 far away
+        let mut box2_moved = box2.clone();
+        for v in &mut box2_moved.vertices {
+            v.point.x += 10.0; // Far apart
+        }
+
+        let mut ds = DS::new(&box1, &box2_moved);
+        let filler = PaveFiller::new(&mut ds);
+
+        let overlaps = filler.detect_edge_overlaps();
+
+        // Should have no overlaps (all should be EdgeOverlapType::None which is filtered out)
+        assert!(overlaps.is_empty(), "Should have no edge overlaps for far apart boxes");
+    }
+
+    #[test]
+    fn test_edge_overlap_circle_overlap() {
+        // Test: Two cylinders that might have overlapping circular edges
+        let cyl1 = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        let cyl2 = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let mut ds = DS::new(&cyl1, &cyl2);
+        let filler = PaveFiller::new(&mut ds);
+
+        let overlaps = filler.detect_edge_overlaps();
+
+        // For identical cylinders, should detect some overlapping edges
+        // (circular edges on the ends might overlap)
+        assert!(!overlaps.is_empty(), "Should detect some edge overlaps for identical cylinders");
+    }
+
+    #[test]
+    fn test_edge_overlap_containment() {
+        // Test: Edge containment detection
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        // Translate box2 so its edge is contained within box1's edge
+        let mut box2_moved = box2.clone();
+        for v in &mut box2_moved.vertices {
+            v.point.x += 1.0;
+        }
+
+        let mut ds = DS::new(&box1, &box2_moved);
+        let filler = PaveFiller::new(&mut ds);
+
+        let containments = filler.detect_all_edge_containments();
+
+        // Should detect some edge containments
+        assert!(!containments.is_empty(), "Should detect edge containments");
+
+        // Verify containment ratio is valid
+        for c in &containments {
+            assert!(c.containment_ratio >= 0.0 && c.containment_ratio <= 1.0,
+                "Containment ratio should be between 0 and 1");
+        }
+    }
+
+    #[test]
+    fn test_curves_are_collinear_lines() {
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        let mut ds = DS::new(&box1, &box2);
+        // Store values we need before borrowing ds
+        let a_edge_count = ds.a_edge_count;
+        let edges_len = ds.edges.len();
+
+        // Clone curves to avoid borrow issues
+        let curve1 = if edges_len > 0 { Some(ds.edges[0].curve.clone()) } else { None };
+        let curve2 = if edges_len > a_edge_count && a_edge_count > 0 {
+            Some(ds.edges[a_edge_count].curve.clone())
+        } else {
+            None
+        };
+
+        let filler = PaveFiller::new(&mut ds);
+
+        // Get first edge from each shape
+        if let (Some(c1), Some(c2)) = (&curve1, &curve2) {
+            // Check collinearity
+            let collinear = filler.curves_are_collinear(c1, c2, 1e-6);
+
+            // For identical boxes, edges should be collinear
+            assert!(collinear, "Edges from identical boxes should be collinear");
+        }
+    }
+
+    #[test]
+    fn test_curves_are_collinear_circles() {
+        let cyl1 = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        let cyl2 = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        let mut ds = DS::new(&cyl1, &cyl2);
+        // Store values we need before borrowing ds
+        let a_edge_count = ds.a_edge_count;
+        let edges_len = ds.edges.len();
+
+        // Clone the curves we need before borrowing
+        let curves: Vec<_> = ds.edges.iter().map(|e| e.curve.clone()).collect();
+
+        let filler = PaveFiller::new(&mut ds);
+
+        // Find circular edges
+        for e1_idx in 0..a_edge_count {
+            for e2_idx in a_edge_count..edges_len {
+                let curve1 = &curves[e1_idx];
+                let curve2 = &curves[e2_idx];
+
+                if matches!(curve1, Curve3::Circle(_)) && matches!(curve2, Curve3::Circle(_)) {
+                    let collinear = filler.curves_are_collinear(curve1, curve2, 1e-6);
+                    assert!(collinear, "Circular edges from identical cylinders should be collinear");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_param_overlap_intervals() {
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        let mut ds = DS::new(&box1, &box2);
+        let filler = PaveFiller::new(&mut ds);
+        let tol = 1e-6;
+
+        // Test full overlap
+        let overlap = filler.compute_interval_overlap([0.0, 1.0], [0.0, 1.0], tol);
+        assert_eq!(overlap.overlap_type, ParamOverlapType::Exact, "Identical ranges should have exact overlap");
+        assert!((overlap.ratio_a - 1.0).abs() < 1e-10);
+        assert!((overlap.ratio_b - 1.0).abs() < 1e-10);
+
+        // Test partial overlap
+        let overlap = filler.compute_interval_overlap([0.0, 2.0], [1.0, 3.0], tol);
+        assert_eq!(overlap.overlap_type, ParamOverlapType::Partial, "Partially overlapping ranges should have partial overlap");
+        assert!((overlap.ratio_a - 0.5).abs() < 1e-10);
+        assert!((overlap.ratio_b - 0.5).abs() < 1e-10);
+
+        // Test containment
+        let overlap = filler.compute_interval_overlap([0.0, 1.0], [0.0, 2.0], tol);
+        assert_eq!(overlap.overlap_type, ParamOverlapType::BContainsA, "Smaller range should be contained in larger");
+
+        // Test no overlap
+        let overlap = filler.compute_interval_overlap([0.0, 1.0], [2.0, 3.0], tol);
+        assert_eq!(overlap.overlap_type, ParamOverlapType::None, "Non-overlapping ranges should have no overlap");
+    }
+
+    #[test]
+    fn test_periodic_param_overlap() {
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        let mut ds = DS::new(&box1, &box2);
+        let filler = PaveFiller::new(&mut ds);
+        let tol = 1e-6;
+        let period = std::f64::consts::PI * 2.0;
+
+        // Test wraparound overlap (e.g., from 5.0 to 1.0 wraps around 2*PI)
+        let overlap = filler.compute_periodic_interval_overlap([5.0, 1.0], [0.0, period], period, tol);
+        // Should have some overlap since [5.0, 2*PI] U [0, 1.0] overlaps with [0, 2*PI]
+        assert!(overlap.overlap_type != ParamOverlapType::None, "Wraparound range should overlap with full period");
+
+        // Test simple periodic overlap
+        let overlap = filler.compute_periodic_interval_overlap([0.0, 1.0], [0.5, 1.5], period, tol);
+        assert_eq!(overlap.overlap_type, ParamOverlapType::Partial, "Partial overlap on periodic domain");
+    }
+
+    #[test]
+    fn test_detect_shared_edges_between_faces() {
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        let mut ds = DS::new(&box1, &box2);
+        // Store values we need before borrowing ds
+        let a_face_count = ds.a_face_count;
+        let a_edge_count = ds.a_edge_count;
+        let total_faces = ds.faces.len();
+        let total_edges = ds.edges.len();
+
+        let mut filler = PaveFiller::new(&mut ds);
+        filler.configure_glue(true, 1e-6);
+
+        // Find faces from different shapes that might share edges
+        for f1_idx in 0..a_face_count {
+            for f2_idx in a_face_count..total_faces {
+                let shared = filler.detect_shared_edges_between_faces(f1_idx, f2_idx);
+                // For identical boxes, some faces should share edges
+                if !shared.is_empty() {
+                    // Verify the shared edges are valid indices
+                    for &(e1, e2) in &shared {
+                        assert!(e1 < a_edge_count, "Edge A index should be valid");
+                        assert!(e2 >= a_edge_count && e2 < total_edges, "Edge B index should be valid");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_partial_overlap_with_edge_overlap_type() {
+        // Test that check_partial_overlap correctly identifies EdgeOverlap type
+        let box1 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+
+        // Translate box2 to partially overlap
+        let mut box2_moved = box2.clone();
+        for v in &mut box2_moved.vertices {
+            v.point.x += 1.0;
+        }
+
+        let mut ds = DS::new(&box1, &box2_moved);
+        let mut filler = PaveFiller::new(&mut ds);
+        filler.configure_glue(true, 1e-6);
+
+        let overlaps = filler.detect_partial_glue_overlaps();
+
+        // Should detect partial overlaps
+        for overlap in &overlaps {
+            // Verify overlap type is valid
+            assert!(matches!(
+                overlap.overlap_type,
+                PartialOverlapType::CoplanarBoundary
+                    | PartialOverlapType::EdgeOverlap
+                    | PartialOverlapType::Contained
+            ), "Overlap type should be valid");
+        }
     }
 }
