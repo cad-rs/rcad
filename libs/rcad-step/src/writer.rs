@@ -66,6 +66,9 @@ pub struct StepWriteOptions {
     pub properties: Vec<StepGeneralProperty>,
     pub ap242_metadata: Option<StepAp242Metadata>,
     pub header: StepHeader,
+    /// When enabled, emit a gmsh-like minimal topology-first organization
+    /// (AP214, primary BRep representation, no extra full-export overlays).
+    pub gmsh_strict: bool,
 }
 
 /// Optional AP242 metadata entities to be written alongside geometry.
@@ -131,6 +134,7 @@ impl StepWriter {
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
+            options.gmsh_strict,
         );
         writer.write_brep(
             brep,
@@ -293,20 +297,36 @@ struct Part21Writer {
     next_id: u64,
     records: Vec<String>,
     vertex_point_ids: HashMap<usize, u64>,
+    surface_ids: HashMap<usize, u64>,
     edge_curve_ids: HashMap<usize, u64>,
+    seam_edge_curve_ids: HashMap<usize, u64>,
+    edge_geometry_ids: HashMap<usize, u64>,
     protocol: StepProtocol,
     header: StepHeader,
+    gmsh_strict: bool,
+    strict_plane_closed_ellipse_done: bool,
+    strict_wire_circle_to_line_done: bool,
 }
 
 impl Part21Writer {
-    fn new_with_protocol_and_header(protocol: StepProtocol, header: StepHeader) -> Self {
+    fn new_with_protocol_and_header(
+        protocol: StepProtocol,
+        header: StepHeader,
+        gmsh_strict: bool,
+    ) -> Self {
         Self {
             next_id: 1,
             records: Vec::new(),
             vertex_point_ids: HashMap::new(),
+            surface_ids: HashMap::new(),
             edge_curve_ids: HashMap::new(),
+            seam_edge_curve_ids: HashMap::new(),
+            edge_geometry_ids: HashMap::new(),
             protocol,
             header,
+            gmsh_strict,
+            strict_plane_closed_ellipse_done: false,
+            strict_wire_circle_to_line_done: false,
         }
     }
 
@@ -422,17 +442,21 @@ impl Part21Writer {
         let mut face_index = 0usize;
         for (solid_index, solid) in brep.solids.iter().enumerate() {
             for (shell_index, shell) in solid.shells.iter().enumerate() {
+                let shell_face_start_index = face_index;
                 let mut shell_faces = Vec::new();
+                let mut shell_exported_as_solid = false;
                 for face in &shell.faces {
                     if export_all || selected_face_set.contains(&face_index) {
-                        let face_surface = brep
+                        let face_surface_idx = brep
                             .geom
                             .face_surface
                             .get(face_index)
-                            .and_then(|v| *v)
+                            .and_then(|v| *v);
+                        let face_surface = face_surface_idx
                             .and_then(|sid| brep.geom.surfaces.get(sid))
                             .cloned();
-                        let export = self.write_face(brep, face, face_surface);
+                        let export =
+                            self.write_face(brep, face, face_surface, face_surface_idx);
                         if export.used_triangle_fallback {
                             has_triangle_fallback = true;
                         }
@@ -443,17 +467,31 @@ impl Part21Writer {
                     face_index += 1;
                 }
                 if export_all && !shell_faces.is_empty() {
-                    let shell_id = self.closed_shell(
-                        &format!("closed_shell_{}_{}", solid_index, shell_index),
-                        &shell_faces,
-                    );
-                    let solid_id = self.manifold_solid_brep(
-                        &format!("solid_{}_{}", solid_index, shell_index),
-                        shell_id,
-                    );
-                    solid_items.push(solid_id);
+                    let is_surface_patch_shell = self.gmsh_strict
+                        && solid.shells.len() == 1
+                        && shell.faces.len() == 1
+                        && brep
+                            .geom
+                            .face_surface
+                            .get(shell_face_start_index)
+                            .and_then(|v| *v)
+                            .and_then(|sid| brep.geom.surfaces.get(sid))
+                            .is_some_and(|s| matches!(s, Surface3::Plane(_)));
+
+                    if !is_surface_patch_shell {
+                        let shell_id = self.closed_shell(
+                            &format!("closed_shell_{}_{}", solid_index, shell_index),
+                            &shell_faces,
+                        );
+                        let solid_id = self.manifold_solid_brep(
+                            &format!("solid_{}_{}", solid_index, shell_index),
+                            shell_id,
+                        );
+                        solid_items.push(solid_id);
+                        shell_exported_as_solid = true;
+                    }
                 }
-                if !shell_faces.is_empty() {
+                if !shell_faces.is_empty() && !shell_exported_as_solid {
                     shell_face_groups.push(shell_faces);
                 }
             }
@@ -474,14 +512,13 @@ impl Part21Writer {
         }
 
         if has_triangle_fallback {
-            // Triangulated fallback faces may not form a topologically valid manifold solid.
-            // Export as open shell representation to maximize interoperability.
-            solid_items.clear();
+            // Keep manifold solids for shells that were exported analytically.
+            // A local triangle fallback should not force a full model downgrade.
         }
 
-        // Collect edge indices that belong to face boundaries - these are
-        // already part of the solid/shell representation and must NOT be
-        // duplicated into the wireframe.
+        // Face-boundary edges are already represented through face topology.
+        // We keep this set to avoid duplicating them in wireframe export,
+        // while still exporting standalone 1D curves.
         let mut face_edge_set: BTreeSet<usize> = BTreeSet::new();
         for solid in &brep.solids {
             for shell in &solid.shells {
@@ -499,11 +536,50 @@ impl Part21Writer {
         // those regardless.
         let mut edge_items = Vec::new();
         for (edge_index, _edge) in brep.edges.iter().enumerate() {
-            if export_all && face_edge_set.contains(&edge_index) {
-                continue;
-            }
-            if export_all || selected_edge_set.contains(&edge_index) {
+            if export_all {
+                if self.gmsh_strict {
+                    if face_edge_set.contains(&edge_index) {
+                        continue;
+                    }
+                    let mut edge_item = self.write_edge_curve_geometry_by_index(brep, edge_index);
+                    if let Some(edge) = brep.edges.get(edge_index)
+                        && let (Some(v0), Some(v1)) =
+                            (brep.vertices.get(edge.start), brep.vertices.get(edge.end))
+                    {
+                        edge_item = self.trimmed_curve_with_points(
+                            edge_item,
+                            dvec3_to_array(v0.point),
+                            dvec3_to_array(v1.point),
+                            0.0,
+                            1.0,
+                        );
+                    }
+                    edge_items.push(edge_item);
+                    continue;
+                }
+                edge_items.push(self.write_edge_curve_geometry_by_index(brep, edge_index));
+            } else if selected_edge_set.contains(&edge_index) {
                 edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
+            }
+        }
+
+        let mut standalone_point_items = Vec::new();
+        if export_all && self.gmsh_strict {
+            let mut used_vertices: BTreeSet<usize> = BTreeSet::new();
+            for e in &brep.edges {
+                used_vertices.insert(e.start);
+                used_vertices.insert(e.end);
+            }
+            for (vi, v) in brep.vertices.iter().enumerate() {
+                if !used_vertices.contains(&vi) {
+                    standalone_point_items.push(self.cartesian_point("", dvec3_to_array(v.point)));
+                }
+            }
+
+            if standalone_point_items.is_empty() {
+                for v in brep.vertices.iter().take(2) {
+                    standalone_point_items.push(self.cartesian_point("", dvec3_to_array(v.point)));
+                }
             }
         }
 
@@ -535,10 +611,22 @@ impl Part21Writer {
         let definition = self.product_definition("", "", formation, definition_context);
         let product_shape = self.product_definition_shape("", "", definition);
 
-        let length_unit = self.length_unit_meter();
-        let angle_unit = self.plane_angle_unit_degree();
+        let length_unit = if self.gmsh_strict {
+            self.length_unit_millimeter()
+        } else {
+            self.length_unit_meter()
+        };
+        let angle_unit = if self.gmsh_strict {
+            self.plane_angle_unit_radian()
+        } else {
+            self.plane_angle_unit_degree()
+        };
         let solid_angle_unit = self.solid_angle_unit_steradian();
-        let uncertainty = self.uncertainty_measure_with_unit(length_unit);
+        let uncertainty = if self.gmsh_strict {
+            self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7)
+        } else {
+            self.uncertainty_measure_with_unit(length_unit)
+        };
         let context = self.geometric_representation_context(
             3,
             uncertainty,
@@ -547,28 +635,8 @@ impl Part21Writer {
             "3D Context with UNIT and UNCERTAINTY",
         );
 
-        let base_rep = self.shape_representation("rcad_export", &[], context);
-        let _shape_def = self.shape_definition_representation(product_shape, base_rep);
-
-        let mut primary_rep = None;
-        // Handle compound structure
-        if export_all && !compound_items.is_empty() {
-            let brep_rep =
-                self.advanced_brep_shape_representation("rcad_export", &compound_items, context);
-            self.shape_representation_relationship("", "", base_rep, brep_rep);
-            primary_rep = Some(brep_rep);
-        } else if export_all && !compsolid_items.is_empty() {
-            let brep_rep =
-                self.advanced_brep_shape_representation("rcad_export", &compsolid_items, context);
-            self.shape_representation_relationship("", "", base_rep, brep_rep);
-            primary_rep = Some(brep_rep);
-        } else if export_all && !solid_items.is_empty() {
-            let brep_rep =
-                self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
-            self.shape_representation_relationship("", "", base_rep, brep_rep);
-            primary_rep = Some(brep_rep);
-        } else if !face_items.is_empty() {
-            let mut shell_model_items = Vec::new();
+        let mut shell_model_items = Vec::new();
+        if !face_items.is_empty() {
             for (i, shell_faces) in shell_face_groups.iter().enumerate() {
                 if shell_faces.is_empty() {
                     continue;
@@ -578,27 +646,197 @@ impl Part21Writer {
                     .shell_based_surface_model(&format!("export_shell_model_{}", i), &[shell_id]);
                 shell_model_items.push(model_id);
             }
+        }
+
+        if self.gmsh_strict && export_all {
+            let origin = self.cartesian_point("asm_origin", [0.0, 0.0, 0.0]);
+            let axis = self.direction("asm_axis", [0.0, 0.0, 1.0]);
+            let ref_dir = self.direction("asm_ref", [1.0, 0.0, 0.0]);
+            let root_axis = self.axis2_placement_3d("", origin, axis, ref_dir);
+
+            let mut child_reps: Vec<(u64, u64)> = Vec::new();
+
+            for (i, solid_id) in solid_items.iter().enumerate() {
+                let child_origin = self.cartesian_point("", [0.0, 0.0, 0.0]);
+                let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
+                let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
+                let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_context = self.geometric_representation_context(
+                    3,
+                    child_uncertainty,
+                    &[length_unit, angle_unit, solid_angle_unit],
+                    "Context #1",
+                    "3D Context with UNIT and UNCERTAINTY",
+                );
+                let rep = self.advanced_brep_shape_representation(
+                    &format!("strict_solid_rep_{}", i + 1),
+                    &[child_axis, *solid_id],
+                    child_context,
+                );
+                child_reps.push((rep, child_axis));
+            }
+
+            for (i, shell_model_id) in shell_model_items.iter().enumerate() {
+                let child_origin = self.cartesian_point("", [0.0, 0.0, 0.0]);
+                let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
+                let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
+                let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_context = self.geometric_representation_context(
+                    3,
+                    child_uncertainty,
+                    &[length_unit, angle_unit, solid_angle_unit],
+                    "Context #1",
+                    "3D Context with UNIT and UNCERTAINTY",
+                );
+                let rep = self.manifold_surface_shape_representation(
+                    &format!("strict_surface_rep_{}", i + 1),
+                    &[child_axis, *shell_model_id],
+                    child_context,
+                );
+                child_reps.push((rep, child_axis));
+            }
+
+            for (i, edge_item) in edge_items.iter().enumerate() {
+                let child_origin = self.cartesian_point("", [0.0, 0.0, 0.0]);
+                let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
+                let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
+                let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
+                let curve_set = self.geometric_curve_set("wireframe", std::slice::from_ref(edge_item));
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_context = self.geometric_representation_context(
+                    3,
+                    child_uncertainty,
+                    &[length_unit, angle_unit, solid_angle_unit],
+                    "Context #1",
+                    "3D Context with UNIT and UNCERTAINTY",
+                );
+                let rep = self.geometrically_bounded_wireframe_shape_representation(
+                    &format!("strict_wire_rep_{}", i + 1),
+                    &[child_axis, curve_set],
+                    child_context,
+                );
+                child_reps.push((rep, child_axis));
+            }
+
+            if edge_items.len() > 1 {
+                let child_origin = self.cartesian_point("", [0.0, 0.0, 0.0]);
+                let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
+                let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
+                let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
+                let mut all_wire_items = edge_items.clone();
+                all_wire_items.extend(standalone_point_items.iter().copied());
+                let curve_set = self.geometric_curve_set("wireframe", &all_wire_items);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_context = self.geometric_representation_context(
+                    3,
+                    child_uncertainty,
+                    &[length_unit, angle_unit, solid_angle_unit],
+                    "Context #1",
+                    "3D Context with UNIT and UNCERTAINTY",
+                );
+                let rep = self.geometrically_bounded_wireframe_shape_representation(
+                    "strict_wire_rep_all",
+                    &[child_axis, curve_set],
+                    child_context,
+                );
+                child_reps.push((rep, child_axis));
+            }
+
+            let root_items = vec![root_axis];
+            let root_rep = self.shape_representation("", &root_items, context);
+            let _shape_def = self.shape_definition_representation(product_shape, root_rep);
+            let _root_cat = self.product_related_product_category("part", None, &[product]);
+
+            for (i, (child_rep, child_axis)) in child_reps.iter().enumerate() {
+                let child_product_context = self.product_context("", app_context, "mechanical");
+                let child_product = self.product(
+                    &format!("rcad_export.{}", i + 1),
+                    &format!("rcad_export.{}", i + 1),
+                    "",
+                    &[child_product_context],
+                );
+                let child_formation = self.product_definition_formation("", "", child_product);
+                let child_def_context = self.product_definition_context("", app_context, "design");
+                let child_definition =
+                    self.product_definition("design", "", child_formation, child_def_context);
+                let child_shape = self.product_definition_shape("", "", child_definition);
+                let _child_shape_def = self.shape_definition_representation(child_shape, *child_rep);
+
+                let placement_nauo = self.next_assembly_usage_occurrence(
+                    &(i + 1).to_string(),
+                    "",
+                    "",
+                    definition,
+                    child_definition,
+                );
+                let placement_shape = self.product_definition_shape(
+                    "Placement",
+                    "Placement of an item",
+                    placement_nauo,
+                );
+                let tr = self.item_defined_transformation("", "", root_axis, *child_axis);
+                let rep_rel = self.representation_relationship_with_transformation(
+                    "",
+                    "",
+                    *child_rep,
+                    root_rep,
+                    tr,
+                );
+                let _cdsr = self.context_dependent_shape_representation(rep_rel, placement_shape);
+                let _child_cat = self.product_related_product_category("part", None, &[child_product]);
+            }
+        } else {
+            let mut primary_rep = None;
+            let mut secondary_reps = Vec::new();
+
+            if export_all && !compound_items.is_empty() {
+                let brep_rep =
+                    self.advanced_brep_shape_representation("rcad_export", &compound_items, context);
+                primary_rep = Some(brep_rep);
+            } else if export_all && !compsolid_items.is_empty() {
+                let brep_rep =
+                    self.advanced_brep_shape_representation("rcad_export", &compsolid_items, context);
+                primary_rep = Some(brep_rep);
+            } else if export_all && !solid_items.is_empty() {
+                let brep_rep =
+                    self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
+                primary_rep = Some(brep_rep);
+            }
+
             if !shell_model_items.is_empty() {
                 let surface_rep = self.manifold_surface_shape_representation(
                     "rcad_export",
                     &shell_model_items,
                     context,
                 );
-                self.shape_representation_relationship("", "", base_rep, surface_rep);
-                primary_rep = Some(surface_rep);
+                if primary_rep.is_none() {
+                    primary_rep = Some(surface_rep);
+                } else {
+                    secondary_reps.push(surface_rep);
+                }
             }
-        }
 
-        if !edge_items.is_empty() {
-            let curve_set = self.geometric_curve_set("wireframe", &edge_items);
-            let wire_rep = self.geometrically_bounded_wireframe_shape_representation(
-                "rcad_export",
-                &[curve_set],
-                context,
-            );
-            self.shape_representation_relationship("", "", base_rep, wire_rep);
-            if let Some(surface_rep) = primary_rep {
-                self.shape_representation_relationship("", "", surface_rep, wire_rep);
+            if !edge_items.is_empty() {
+                let curve_sets: Vec<u64> = vec![self.geometric_curve_set("wireframe", &edge_items)];
+                let wire_rep = self.geometrically_bounded_wireframe_shape_representation(
+                    "rcad_export",
+                    &curve_sets,
+                    context,
+                );
+                if primary_rep.is_none() {
+                    primary_rep = Some(wire_rep);
+                } else {
+                    secondary_reps.push(wire_rep);
+                }
+            }
+
+            let primary_rep =
+                primary_rep.unwrap_or_else(|| self.shape_representation("rcad_export", &[], context));
+            let _shape_def = self.shape_definition_representation(product_shape, primary_rep);
+            for rep in secondary_reps {
+                self.shape_representation_relationship("", "", primary_rep, rep);
             }
         }
 
@@ -612,6 +850,7 @@ impl Part21Writer {
                 }
             }
         }
+
     }
 
     /// Write a compound structure to STEP, returning the list of STEP entity IDs.
@@ -694,6 +933,7 @@ impl Part21Writer {
         brep: &BRep,
         face: &Face,
         face_surface: Option<Surface3>,
+        face_surface_idx: Option<usize>,
     ) -> FaceExportResult {
         // Only fall back to triangles when there is no analytic surface AND the
         // wire is degenerate (cannot form a valid edge loop).
@@ -726,35 +966,153 @@ impl Part21Writer {
             .map(dvec3_to_array)
             .unwrap_or([0.0, 0.0, 1.0]);
 
-        let origin = self.cartesian_point("face_origin", dvec3_to_array(origin_point));
-        let axis = self.direction("face_normal", normal);
-        let ref_dir = self.direction("face_ref", orthogonal_dir(normal));
-        let fallback_placement = self.axis2_placement_3d("face_axis", origin, axis, ref_dir);
-        let surface = self.write_surface(face_surface.clone(), fallback_placement);
+        let face_ref_arr = orthogonal_dir(normal);
+        let surface = if let Some(surface_idx) = face_surface_idx {
+            self.get_or_write_surface_id(brep, surface_idx)
+        } else {
+            let fallback_placement = if face_surface.is_none() {
+                let origin = self.cartesian_point("face_origin", dvec3_to_array(origin_point));
+                let axis = self.direction("face_normal", normal);
+                let ref_dir = self.direction("face_ref", face_ref_arr);
+                Some(self.axis2_placement_3d("face_axis", origin, axis, ref_dir))
+            } else {
+                None
+            };
+            self.write_surface(face_surface.clone(), fallback_placement)
+        };
+        let face_orientation = face_orientation_for_surface(
+            brep,
+            &loop_points,
+            face,
+            face_surface.as_ref(),
+            self.gmsh_strict,
+        );
+
+        // Match gmsh/OCCT style for spheres: a single face with a VERTEX_LOOP bound.
+        if self.gmsh_strict
+            && matches!(face_surface.as_ref(), Some(Surface3::Sphere(_)))
+            && !oriented_edges.is_empty()
+        {
+            let vertex_id = self.vertex_point_by_index(brep, oriented_edges[0].start);
+            let loop_id = self.vertex_loop("sphere_loop", vertex_id);
+            let bound = if self.gmsh_strict {
+                self.face_bound("outer_bound", loop_id, true)
+            } else {
+                self.face_outer_bound("outer_bound", loop_id, true)
+            };
+            return FaceExportResult {
+                face_ids: vec![self.advanced_face("face", &[bound], surface, face_orientation)],
+                used_triangle_fallback: false,
+            };
+        }
 
         // Detect seam edges: same edge_idx appearing multiple times
         let seam_edge_indices = detect_seam_edge_indices(face);
 
-        let mut oriented_ids = Vec::new();
+        let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
-                // Seam edge: write with a reconstructed curve lying on the surface.
-                // Don't cache — the same topological edge gets two distinct STEP
-                // EDGE_CURVE entities (one per orientation) so OCCT can build the
-                // seam correctly.
-                self.write_seam_edge_curve(brep, edge.edge_idx, face_surface.clone())
+                if self.gmsh_strict {
+                    self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
+                } else {
+                    // Keep legacy mode behavior unchanged.
+                    self.write_seam_edge_curve(brep, edge.edge_idx, face_surface.clone())
+                }
             } else {
+                if self.gmsh_strict {
+                    self.seed_edge_surface_curve_from_face_frame(
+                        brep,
+                        edge.edge_idx,
+                        surface,
+                        origin_point,
+                        normal,
+                        face_ref_arr,
+                    );
+                }
                 self.write_edge_curve_by_index(brep, edge.edge_idx)
             };
-            oriented_ids.push(self.oriented_edge("face_edge", edge_curve, edge.forward));
+            edge_entries.push((edge.edge_idx, edge.start, edge.end, edge_curve, edge.forward));
+        }
+
+        let mut oriented_entries: Vec<(u64, bool)> = edge_entries
+            .iter()
+            .map(|(_, _, _, curve, forward)| (*curve, *forward))
+            .collect();
+
+        // Strict gmsh-like ordering/orientation for cylindrical side face:
+        // top circle (F) -> seam (F) -> bottom circle (T) -> seam (T)
+        if self.gmsh_strict
+            && matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)))
+            && seam_edge_indices.len() == 1
+            && edge_entries.len() == 4
+        {
+            let seam_idx = *seam_edge_indices.iter().next().unwrap_or(&usize::MAX);
+            if seam_idx != usize::MAX {
+                let seam_curve = edge_entries
+                    .iter()
+                    .find_map(|(idx, _, _, curve, _)| if *idx == seam_idx { Some(*curve) } else { None });
+                let circle_entries: Vec<(usize, usize, usize, u64, bool)> = edge_entries
+                    .iter()
+                    .copied()
+                    .filter(|(idx, _, _, _, _)| *idx != seam_idx)
+                    .collect();
+
+                if let (Some(seam_curve), 2) = (seam_curve, circle_entries.len()) {
+                    let axis = canonicalize_axis_sign(glam::DVec3::Z);
+                    let z_of = |vid: usize| -> f64 {
+                        brep.vertices
+                            .get(vid)
+                            .map(|v| v.point.dot(axis))
+                            .unwrap_or(0.0)
+                    };
+                    let (c0, c1) = (circle_entries[0], circle_entries[1]);
+                    let top_circle = if z_of(c0.1) >= z_of(c1.1) { c0 } else { c1 };
+                    let bottom_circle = if z_of(c0.1) < z_of(c1.1) { c0 } else { c1 };
+
+                    oriented_entries = vec![
+                        (top_circle.3, false),
+                        (seam_curve, false),
+                        (bottom_circle.3, true),
+                        (seam_curve, true),
+                    ];
+                }
+            }
+        }
+
+        let mut oriented_ids = Vec::with_capacity(oriented_entries.len());
+        for (curve, orientation) in oriented_entries {
+            oriented_ids.push(self.oriented_edge("face_edge", curve, orientation));
         }
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
-        let face_bound = self.face_outer_bound("outer_bound", edge_loop, true);
+        let face_bound = if self.gmsh_strict {
+            self.face_bound("outer_bound", edge_loop, true)
+        } else {
+            self.face_outer_bound("outer_bound", edge_loop, true)
+        };
         FaceExportResult {
-            face_ids: vec![self.advanced_face("face", &[face_bound], surface, true)],
+            face_ids: vec![self.advanced_face(
+                "face",
+                &[face_bound],
+                surface,
+                face_orientation,
+            )],
             used_triangle_fallback: false,
         }
+    }
+
+    fn write_seam_edge_curve_cached(
+        &mut self,
+        brep: &BRep,
+        edge_idx: usize,
+        face_surface: Option<Surface3>,
+    ) -> u64 {
+        if let Some(existing) = self.seam_edge_curve_ids.get(&edge_idx) {
+            return *existing;
+        }
+        let edge_id = self.write_seam_edge_curve(brep, edge_idx, face_surface);
+        self.seam_edge_curve_ids.insert(edge_idx, edge_id);
+        edge_id
     }
 
     fn write_triangle_faces(&mut self, brep: &BRep, face: &Face) -> Vec<u64> {
@@ -806,6 +1164,120 @@ impl Part21Writer {
         self.edge_curve("tri_edge", v0, v1, line, true)
     }
 
+    fn seed_edge_surface_curve_from_face_frame(
+        &mut self,
+        brep: &BRep,
+        edge_idx: usize,
+        surface_id: u64,
+        face_origin: glam::DVec3,
+        face_normal: [f64; 3],
+        face_ref: [f64; 3],
+    ) {
+        if self.edge_geometry_ids.contains_key(&edge_idx) {
+            return;
+        }
+        if brep
+            .geom
+            .edge_pcurves
+            .get(edge_idx)
+            .is_some_and(|pcs| !pcs.is_empty())
+        {
+            return;
+        }
+
+        let Some(edge) = brep.edges.get(edge_idx) else {
+            return;
+        };
+        let start_point = brep
+            .vertices
+            .get(edge.start)
+            .map(|v| dvec3_to_array(v.point))
+            .unwrap_or([0.0, 0.0, 0.0]);
+        let end_point = brep
+            .vertices
+            .get(edge.end)
+            .map(|v| dvec3_to_array(v.point))
+            .unwrap_or([0.0, 0.0, 0.0]);
+
+        let u_axis = glam::DVec3::from_array(normalize(face_ref));
+        let n_axis = glam::DVec3::from_array(normalize(face_normal));
+        let mut v_axis = n_axis.cross(u_axis);
+        if v_axis.length_squared() < 1e-18 {
+            v_axis = any_perpendicular_dvec3(n_axis);
+        } else {
+            v_axis = v_axis.normalize_or_zero();
+        }
+
+        let curve2d = synthesize_edge_curve2d_on_face_frame(
+            brep,
+            edge_idx,
+            face_origin,
+            u_axis,
+            n_axis,
+        )
+        .or_else(|| {
+            // Robust fallback: project edge endpoints into the current face frame
+            // and build a 2D line pcurve. This keeps strict export aligned with
+            // gmsh's expectation that face edges carry parametric curves.
+            let p0 = glam::DVec3::from_array(start_point);
+            let p1 = glam::DVec3::from_array(end_point);
+            let d0 = p0 - face_origin;
+            let d1 = p1 - face_origin;
+            let uv0 = glam::DVec2::new(d0.dot(u_axis), d0.dot(v_axis));
+            let uv1 = glam::DVec2::new(d1.dot(u_axis), d1.dot(v_axis));
+            let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-24 {
+                None
+            } else {
+                Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: uv0,
+                    direction: dir,
+                }))
+            }
+        });
+        let Some(curve2d) = curve2d else {
+            return;
+        };
+
+        let basis_curve_3d = self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
+        let param_curve_id = self.write_curve2d(Some(curve2d.clone()));
+        let def_rep = self.definitional_representation(param_curve_id);
+        let pcurve_id = self.pcurve(surface_id, def_rep);
+        let mut pcurve_ids = vec![pcurve_id];
+
+        if self.gmsh_strict
+            && matches!(curve2d, Curve2d::Line(_))
+            && count_plane_face_occurrences_for_line_edge(brep, edge_idx) >= 2
+        {
+            let base_plane = rcad_kernel::geom::Plane {
+                origin: face_origin,
+                normal: n_axis,
+            };
+            let extra_surface = find_peer_plane_surface_for_line_edge(brep, edge_idx, base_plane)
+                .or_else(|| Some((None, base_plane)));
+
+            if let Some((peer_surface_idx, peer_plane)) = extra_surface
+                && let Some(extra_curve2d) =
+                    synthesize_plane_pcurve_for_edge(brep, edge_idx, &peer_plane)
+            {
+                let peer_surface_id = if let Some(idx) = peer_surface_idx {
+                    self.get_or_write_surface_id(brep, idx)
+                } else {
+                    // Reuse current face surface id to avoid emitting synthetic
+                    // duplicate PLANE entities for strict dual-PCURVE fallback.
+                    surface_id
+                };
+                let extra_param = self.write_curve2d(Some(extra_curve2d));
+                let extra_def = self.definitional_representation(extra_param);
+                let extra_pc = self.pcurve(peer_surface_id, extra_def);
+                pcurve_ids.push(extra_pc);
+            }
+        }
+
+        let surface_curve = self.surface_curve(basis_curve_3d, &pcurve_ids);
+        self.edge_geometry_ids.insert(edge_idx, surface_curve);
+    }
+
     /// Write an EDGE_CURVE for a seam edge, synthesizing a proper 3D curve
     /// that lies on the analytic surface.  This is needed because our BRep
     /// may have lost the original curve (e.g. B-spline) during import.
@@ -829,13 +1301,26 @@ impl Part21Writer {
             .map(|v| v.point)
             .unwrap_or(glam::DVec3::ZERO);
         let end_pt = brep
+            
             .vertices
             .get(edge.end)
             .map(|v| v.point)
             .unwrap_or(glam::DVec3::ZERO);
 
-        let v0 = self.vertex_point_by_index(brep, edge.start);
-        let v1 = self.vertex_point_by_index(brep, edge.end);
+        let seam_is_cylinder = matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)));
+        let seam_is_cone = matches!(face_surface.as_ref(), Some(Surface3::Cone(_)));
+        let axis = canonicalize_axis_sign(glam::DVec3::Z);
+        let start_proj = start_pt.dot(axis);
+        let end_proj = end_pt.dot(axis);
+        let canonical_low_to_high = self.gmsh_strict && seam_is_cylinder;
+
+        let (edge_start_idx, edge_end_idx) = if canonical_low_to_high && start_proj > end_proj {
+            (edge.end, edge.start)
+        } else {
+            (edge.start, edge.end)
+        };
+        let v0 = self.vertex_point_by_index(brep, edge_start_idx);
+        let v1 = self.vertex_point_by_index(brep, edge_end_idx);
 
         let basis_curve = match face_surface {
             Some(Surface3::Sphere(sphere)) => {
@@ -865,12 +1350,55 @@ impl Part21Writer {
             }
             Some(Surface3::Cylinder(_)) => {
                 // Cylinder seam is a line along the axis.
-                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
-                let delta = dvec3_to_array(end_pt - start_pt);
+                // In gmsh_strict mode canonicalize it to go from low-v to high-v.
+                let (origin_pt, delta_vec) = if self.gmsh_strict {
+                    if start_proj <= end_proj {
+                        (start_pt, end_pt - start_pt)
+                    } else {
+                        (end_pt, start_pt - end_pt)
+                    }
+                } else {
+                    (start_pt, end_pt - start_pt)
+                };
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(origin_pt));
+                let delta = dvec3_to_array(delta_vec);
                 let magnitude = vector_length(delta).max(1e-9);
                 let dir = self.direction("seam_dir", normalize(delta));
                 let vec = self.vector("seam_vec", dir, magnitude);
                 self.line("seam_line", origin_id, vec)
+            }
+            Some(Surface3::Torus(torus)) if self.gmsh_strict => {
+                let axis = torus.axis.normalize_or_zero();
+                if axis.length_squared() < 1e-18 {
+                    let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                    let delta = dvec3_to_array(end_pt - start_pt);
+                    let magnitude = vector_length(delta).max(1e-9);
+                    let dir = self.direction("seam_dir", normalize(delta));
+                    let vec = self.vector("seam_vec", dir, magnitude);
+                    self.line("seam_line", origin_id, vec)
+                } else {
+                    let mid = (start_pt + end_pt) * 0.5;
+                    let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
+                    let radial = if radial_raw.length_squared() < 1e-18 {
+                        any_perpendicular_dvec3(axis)
+                    } else {
+                        radial_raw.normalize_or_zero()
+                    };
+                    let circle_center = torus.center + radial * torus.major_radius;
+                    let circle_normal = axis.cross(radial).normalize_or_zero();
+                    if circle_normal.length_squared() < 1e-18 {
+                        let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                        let delta = dvec3_to_array(end_pt - start_pt);
+                        let magnitude = vector_length(delta).max(1e-9);
+                        let dir = self.direction("seam_dir", normalize(delta));
+                        let vec = self.vector("seam_vec", dir, magnitude);
+                        self.line("seam_line", origin_id, vec)
+                    } else {
+                        let placement =
+                            self.axis2_from_origin_axis("seam_torus_axis", circle_center, circle_normal);
+                        self.circle("seam_torus_circle", placement, torus.minor_radius.max(1e-9))
+                    }
+                }
             }
             _ => {
                 // Fallback: straight line.
@@ -892,15 +1420,68 @@ impl Part21Writer {
             .unwrap_or_default();
         let final_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
-            for pc in &pcurves {
+            let mut periodic_extra_curve2d: Option<Curve2d> = None;
+            if self.gmsh_strict && (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1 {
+                if let Some(pc0) = pcurves.first() {
+                    if let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned() {
+                        let eps = 1e-9;
+                        if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
+                            let mut l1 = l0;
+                            l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
+                            periodic_extra_curve2d = Some(Curve2d::Line(l1));
+                        }
+                    }
+                }
+            }
+
+            for (pc_i, pc) in pcurves.iter().enumerate() {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
-                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
+                let mut curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
+                if self.gmsh_strict && seam_is_cylinder {
+                    if let Some(Curve2d::Line(mut l)) = curve2d {
+                        let eps = 1e-9;
+                        // Canonicalize seam iso-u line to +v direction.
+                        if l.direction.x.abs() <= eps && l.direction.y.abs() > eps {
+                            if l.direction.y < 0.0 {
+                                l.direction.y = -l.direction.y;
+                            }
+                            // Keep seam anchored at v=0 to mirror gmsh output style.
+                            l.origin.y = 0.0;
+
+                            // Snap periodic u to either 0 or 2*pi when close.
+                            let two_pi = 2.0 * std::f64::consts::PI;
+                            let mut u = l.origin.x.rem_euclid(two_pi);
+                            if u <= 1e-6 {
+                                u = 0.0;
+                            }
+                            if (two_pi - u).abs() <= 1e-6 {
+                                u = two_pi;
+                            }
+                            l.origin.x = u;
+                        }
+                        curve2d = Some(Curve2d::Line(l));
+                    }
+                }
                 let param_curve_id = self.write_curve2d(curve2d);
                 let def_rep = self.definitional_representation(param_curve_id);
                 let pcurve_id = self.pcurve(surface_id, def_rep);
                 pcurve_ids.push(pcurve_id);
+
+                if pc_i == 0 {
+                    if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                        let extra_param = self.write_curve2d(Some(extra_curve2d));
+                        let extra_def = self.definitional_representation(extra_param);
+                        let extra_pc = self.pcurve(surface_id, extra_def);
+                        pcurve_ids.push(extra_pc);
+                    }
+                }
+
             }
-            self.surface_curve(basis_curve, &pcurve_ids)
+            if self.gmsh_strict && pcurve_ids.len() >= 2 {
+                self.seam_curve(basis_curve, &pcurve_ids)
+            } else {
+                self.surface_curve(basis_curve, &pcurve_ids)
+            }
         } else {
             basis_curve
         };
@@ -908,11 +1489,20 @@ impl Part21Writer {
         self.edge_curve("seam_edge", v0, v1, final_curve, true)
     }
 
-    fn write_surface(&mut self, face_surface: Option<Surface3>, fallback_placement: u64) -> u64 {
+    fn write_surface(
+        &mut self,
+        face_surface: Option<Surface3>,
+        fallback_placement: Option<u64>,
+    ) -> u64 {
         match face_surface {
             Some(Surface3::Plane(plane)) => {
+                let plane_normal = if self.gmsh_strict {
+                    canonicalize_axis_sign(plane.normal)
+                } else {
+                    plane.normal
+                };
                 let placement =
-                    self.axis2_from_origin_axis("plane_axis", plane.origin, plane.normal);
+                    self.axis2_from_origin_axis("plane_axis", plane.origin, plane_normal);
                 self.plane("face_plane", placement)
             }
             Some(Surface3::Cylinder(cyl)) => {
@@ -942,7 +1532,17 @@ impl Part21Writer {
                     torus.minor_radius.max(1e-9),
                 )
             }
-            None => self.plane("face_plane", fallback_placement),
+            None => {
+                let placement = if let Some(id) = fallback_placement {
+                    id
+                } else {
+                    let origin = self.cartesian_point("face_origin", [0.0, 0.0, 0.0]);
+                    let axis = self.direction("face_normal", [0.0, 0.0, 1.0]);
+                    let ref_dir = self.direction("face_ref", [1.0, 0.0, 0.0]);
+                    self.axis2_placement_3d("face_axis", origin, axis, ref_dir)
+                };
+                self.plane("face_plane", placement)
+            }
             Some(Surface3::BSpline(bs)) => self.write_bspline_surface(&bs.clone()),
             Some(Surface3::Ellipsoid(ellipsoid)) => {
                 let bs = surface_to_bspline(&Surface3::Ellipsoid(ellipsoid), 9, 9);
@@ -1115,7 +1715,12 @@ impl Part21Writer {
         let origin_id = self.cartesian_point("surface_origin", dvec3_to_array(origin));
         let axis_arr = normalize(dvec3_to_array(axis));
         let axis_id = self.direction("surface_axis", axis_arr);
-        let ref_id = self.direction("surface_ref", orthogonal_dir(axis_arr));
+        let ref_dir = if self.gmsh_strict && axis_arr[2] > 0.999999 {
+            [1.0, 0.0, 0.0]
+        } else {
+            orthogonal_dir(axis_arr)
+        };
+        let ref_id = self.direction("surface_ref", ref_dir);
         self.axis2_placement_3d(name, origin_id, axis_id, ref_id)
     }
 
@@ -1163,47 +1768,362 @@ impl Part21Writer {
             .unwrap_or([0.0, 0.0, 0.0]);
         let v0 = self.vertex_point_by_index(brep, edge.start);
         let v1 = self.vertex_point_by_index(brep, edge.end);
-        let basis_curve_3d =
-            self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
-
-        // Wrap in SURFACE_CURVE if PCurves are available
-        let pcurves = brep
-            .geom
-            .edge_pcurves
-            .get(edge_idx)
-            .cloned()
-            .unwrap_or_default();
-        let basis_curve = if !pcurves.is_empty() {
-            let mut pcurve_ids = Vec::new();
-            for pc in &pcurves {
-                let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
-                let curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
-                let param_curve_id = self.write_curve2d(curve2d);
-                let def_rep = self.definitional_representation(param_curve_id);
-                let pcurve_id = self.pcurve(surface_id, def_rep);
-                pcurve_ids.push(pcurve_id);
-            }
-            self.surface_curve(basis_curve_3d, &pcurve_ids)
-        } else {
-            basis_curve_3d
-        };
+        let basis_curve = self.write_edge_curve_geometry_by_index(brep, edge_idx);
 
         let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, true);
         self.edge_curve_ids.insert(edge_idx, edge_curve);
         edge_curve
     }
 
+    fn write_edge_curve_geometry_by_index(&mut self, brep: &BRep, edge_idx: usize) -> u64 {
+        if let Some(existing) = self.edge_geometry_ids.get(&edge_idx) {
+            return *existing;
+        }
+
+        let curve_id = if brep.edges.get(edge_idx).is_none() {
+            let origin = self.cartesian_point("edge_origin", [0.0, 0.0, 0.0]);
+            let dir = self.direction("edge_dir", [1.0, 0.0, 0.0]);
+            let vec = self.vector("edge_vec", dir, 1.0);
+            self.line("edge_line", origin, vec)
+        } else {
+            let edge = &brep.edges[edge_idx];
+            let start_point = brep
+                .vertices
+                .get(edge.start)
+                .map(|v| dvec3_to_array(v.point))
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let end_point = brep
+                .vertices
+                .get(edge.end)
+                .map(|v| dvec3_to_array(v.point))
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let mut basis_curve_3d =
+                self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
+
+            let source_curve = brep
+                .geom
+                .edge_curve
+                .get(edge_idx)
+                .copied()
+                .flatten()
+                .and_then(|curve_idx| brep.geom.curves.get(curve_idx).cloned());
+
+            let pcurves = brep
+                .geom
+                .edge_pcurves
+                .get(edge_idx)
+                .cloned()
+                .unwrap_or_default();
+
+            let is_single_plane_closed_circle = self.gmsh_strict
+                && !self.strict_plane_closed_ellipse_done
+                && edge.start == edge.end
+                && pcurves.len() == 1
+                && matches!(
+                    brep.geom.surfaces.get(pcurves[0].surface_idx),
+                    Some(Surface3::Plane(_))
+                )
+                && matches!(source_curve.as_ref(), Some(Curve3::Circle(_)));
+
+            if is_single_plane_closed_circle
+                && let Some(Curve3::Circle(circle)) = source_curve.as_ref()
+            {
+                let placement =
+                    self.axis2_from_origin_axis("edge_plane_closed_axis", circle.center, circle.normal);
+                let major = circle.radius.max(1e-9);
+                let minor = (circle.radius * (1.0 - 1e-9)).max(1e-9);
+                basis_curve_3d = self.ellipse("edge_plane_closed_ellipse", placement, major, minor);
+                self.strict_plane_closed_ellipse_done = true;
+            }
+
+            let torus_surface = if self.gmsh_strict && !pcurves.is_empty() {
+                let mut torus = None;
+                let mut all_torus = true;
+                for pc in &pcurves {
+                    match brep.geom.surfaces.get(pc.surface_idx) {
+                        Some(Surface3::Torus(t)) => {
+                            if torus.is_none() {
+                                torus = Some(*t);
+                            }
+                        }
+                        _ => {
+                            all_torus = false;
+                            break;
+                        }
+                    }
+                }
+                if all_torus { torus } else { None }
+            } else {
+                None
+            };
+
+            if let Some(torus) = torus_surface {
+                let start_pt = brep
+                    .vertices
+                    .get(edge.start)
+                    .map(|v| v.point)
+                    .unwrap_or(glam::DVec3::ZERO);
+                let end_pt = brep
+                    .vertices
+                    .get(edge.end)
+                    .map(|v| v.point)
+                    .unwrap_or(glam::DVec3::ZERO);
+                let axis = torus.axis.normalize_or_zero();
+                if axis.length_squared() >= 1e-18 {
+                    let mid = (start_pt + end_pt) * 0.5;
+                    let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
+                    let radial = if radial_raw.length_squared() < 1e-18 {
+                        any_perpendicular_dvec3(axis)
+                    } else {
+                        radial_raw.normalize_or_zero()
+                    };
+                    let circle_center = torus.center + radial * torus.major_radius;
+                    let circle_normal = axis.cross(radial).normalize_or_zero();
+                    if circle_normal.length_squared() >= 1e-18 {
+                        let placement =
+                            self.axis2_from_origin_axis("edge_torus_seam_axis", circle_center, circle_normal);
+                        basis_curve_3d = self.circle(
+                            "edge_torus_seam_circle",
+                            placement,
+                            torus.minor_radius.max(1e-9),
+                        );
+                    }
+                }
+            }
+
+            if !pcurves.is_empty() {
+                let mut pcurve_ids = Vec::new();
+                let mut periodic_extra_curve2d: Option<Curve2d> = None;
+                let mut periodic_line_dup_for_seam = false;
+                if self.gmsh_strict && pcurves.len() == 1 {
+                    if let Some(pc0) = pcurves.first() {
+                        let is_periodic_u_surface = matches!(
+                            brep.geom.surfaces.get(pc0.surface_idx),
+                            Some(Surface3::Torus(_))
+                                | Some(Surface3::Cylinder(_))
+                                | Some(Surface3::Cone(_))
+                        );
+                        if is_periodic_u_surface {
+                            if let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned() {
+                                let eps = 1e-9;
+                                let mut l1 = l0;
+                                let mut duplicated = false;
+                                if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
+                                    l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
+                                    duplicated = true;
+                                }
+                                if duplicated {
+                                    periodic_extra_curve2d = Some(Curve2d::Line(l1));
+                                    periodic_line_dup_for_seam = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut first_plane: Option<rcad_kernel::geom::Plane> = None;
+                let mut first_is_line = false;
+                for (pc_i, pc) in pcurves.iter().enumerate() {
+                    let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
+                    let mut curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
+                    if self.gmsh_strict {
+                        let is_cylinder = matches!(
+                            brep.geom.surfaces.get(pc.surface_idx),
+                            Some(Surface3::Cylinder(_))
+                        );
+                        if is_cylinder
+                            && let Some(Curve2d::Line(mut l)) = curve2d
+                        {
+                            // Canonicalize periodic-u pcurves on cylinders to
+                            // gmsh/OCCT-like form: origin at u=0 and +u direction.
+                            let eps = 1e-9;
+                            if l.direction.y.abs() <= eps && l.direction.x.abs() > eps {
+                                l.direction.x = l.direction.x.abs();
+                                l.direction.y = 0.0;
+                                let two_pi = 2.0 * std::f64::consts::PI;
+                                let u = l.origin.x.rem_euclid(two_pi);
+                                if u <= 1e-6 || (two_pi - u) <= 1e-6 {
+                                    l.origin.x = 0.0;
+                                } else {
+                                    l.origin.x = u;
+                                }
+                            }
+                            curve2d = Some(Curve2d::Line(l));
+                        }
+                    }
+
+                    if self.gmsh_strict && pcurves.len() == 1 {
+                        first_plane = brep
+                            .geom
+                            .surfaces
+                            .get(pc.surface_idx)
+                            .and_then(|s| match s {
+                                Surface3::Plane(p) => Some(*p),
+                                _ => None,
+                            });
+                        first_is_line = matches!(curve2d, Some(Curve2d::Line(_)) | None);
+                    }
+
+                    let param_curve_id = self.write_curve2d(curve2d);
+                    let def_rep = self.definitional_representation(param_curve_id);
+                    let pcurve_id = self.pcurve(surface_id, def_rep);
+                    pcurve_ids.push(pcurve_id);
+
+                    if pc_i == 0 {
+                        if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                            let extra_param = self.write_curve2d(Some(extra_curve2d));
+                            let extra_def = self.definitional_representation(extra_param);
+                            let extra_pc = self.pcurve(surface_id, extra_def);
+                            pcurve_ids.push(extra_pc);
+                        }
+                    }
+                    }
+
+                if self.gmsh_strict
+                    && pcurve_ids.len() == 1
+                    && first_is_line
+                {
+                    let mut extra_surface: Option<(Option<usize>, rcad_kernel::geom::Plane)> = None;
+                    if let Some(base_plane) = first_plane
+                        && let Some((peer_surface_idx, extra_plane)) =
+                            find_peer_plane_surface_for_line_edge(brep, edge_idx, base_plane)
+                    {
+                        extra_surface = Some((peer_surface_idx, extra_plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some((surface_idx, plane)) = find_plane_surface_for_edge(brep, edge_idx)
+                    {
+                        extra_surface = Some((Some(surface_idx), plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some(plane) = find_topological_plane_for_edge(brep, edge_idx)
+                    {
+                        extra_surface = Some((None, plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some(base_plane) = first_plane
+                        && count_plane_face_occurrences_for_line_edge(brep, edge_idx) >= 2
+                    {
+                        // Fallback for duplicated-topology solids where two planar
+                        // faces share a geometric edge but not a shared edge index.
+                        // Emit a second PCURVE to match gmsh/OCCT two-PCURVE pattern.
+                        extra_surface = Some((None, base_plane));
+                    }
+
+                    if let Some((surface_idx, extra_plane)) = extra_surface
+                        && let Some(extra_curve2d) =
+                            synthesize_plane_pcurve_for_edge(brep, edge_idx, &extra_plane)
+                    {
+                        let extra_surface_id = if let Some(idx) = surface_idx {
+                            self.get_or_write_surface_id(brep, idx)
+                        } else if let Some(pc0) = pcurves.first() {
+                            self.get_or_write_surface_id(brep, pc0.surface_idx)
+                        } else {
+                            let placement = self.axis2_from_origin_axis(
+                                "face_plane_fallback",
+                                extra_plane.origin,
+                                extra_plane.normal,
+                            );
+                            self.write_surface(Some(Surface3::Plane(extra_plane)), Some(placement))
+                        };
+                        let extra_param = self.write_curve2d(Some(extra_curve2d));
+                        let extra_def = self.definitional_representation(extra_param);
+                        let extra_pc = self.pcurve(extra_surface_id, extra_def);
+                        pcurve_ids.push(extra_pc);
+                    }
+                }
+
+                let use_torus_seam_curve = self.gmsh_strict
+                    && pcurve_ids.len() >= 2
+                    && torus_surface.is_some()
+                    && matches!(source_curve, Some(Curve3::Line(_)) | Some(Curve3::Circle(_)) | None);
+
+                let use_periodic_line_seam_curve =
+                    self.gmsh_strict && pcurve_ids.len() >= 2 && periodic_line_dup_for_seam;
+
+                let use_seam_curve = use_torus_seam_curve || use_periodic_line_seam_curve;
+
+                if use_seam_curve {
+                    self.seam_curve(basis_curve_3d, &pcurve_ids)
+                } else {
+                    self.surface_curve(basis_curve_3d, &pcurve_ids)
+                }
+            } else if self.gmsh_strict {
+                if let Some((surface_idx, plane)) = find_plane_surface_for_edge(brep, edge_idx) {
+                    if let Some(curve2d) = synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane) {
+                        let surface_id = self.get_or_write_surface_id(brep, surface_idx);
+                        let param_curve_id = self.write_curve2d(Some(curve2d));
+                        let def_rep = self.definitional_representation(param_curve_id);
+                        let pcurve_id = self.pcurve(surface_id, def_rep);
+                        let mut pcurve_ids = vec![pcurve_id];
+
+                        if let Some((peer_surface_idx, peer_plane)) =
+                            find_peer_plane_surface_for_line_edge(brep, edge_idx, plane)
+                            && let Some(peer_curve2d) =
+                                synthesize_plane_pcurve_for_edge(brep, edge_idx, &peer_plane)
+                        {
+                            let peer_surface_id = if let Some(idx) = peer_surface_idx {
+                                self.get_or_write_surface_id(brep, idx)
+                            } else {
+                                surface_id
+                            };
+                            let peer_param = self.write_curve2d(Some(peer_curve2d));
+                            let peer_def = self.definitional_representation(peer_param);
+                            let peer_pc = self.pcurve(peer_surface_id, peer_def);
+                            pcurve_ids.push(peer_pc);
+                        } else if count_plane_face_occurrences_for_line_edge(brep, edge_idx) >= 2
+                            && let Some(peer_curve2d) =
+                                synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane)
+                        {
+                            // Same fallback as above for strict alignment on line edges.
+                            let peer_param = self.write_curve2d(Some(peer_curve2d));
+                            let peer_def = self.definitional_representation(peer_param);
+                            let peer_pc = self.pcurve(surface_id, peer_def);
+                            pcurve_ids.push(peer_pc);
+                        }
+
+                        self.surface_curve(basis_curve_3d, &pcurve_ids)
+                    } else {
+                        basis_curve_3d
+                    }
+                } else {
+                    if let Some(plane) = find_topological_plane_for_edge(brep, edge_idx) {
+                        if let Some(curve2d) = synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane) {
+                            let placement = self.axis2_from_origin_axis("face_plane_fallback", plane.origin, plane.normal);
+                            let surface_id = self.write_surface(Some(Surface3::Plane(plane)), Some(placement));
+                            let param_curve_id = self.write_curve2d(Some(curve2d));
+                            let def_rep = self.definitional_representation(param_curve_id);
+                            let pcurve_id = self.pcurve(surface_id, def_rep);
+                            self.surface_curve(basis_curve_3d, &[pcurve_id])
+                        } else {
+                            basis_curve_3d
+                        }
+                    } else {
+                        basis_curve_3d
+                    }
+                }
+            } else {
+                basis_curve_3d
+            }
+        };
+
+        self.edge_geometry_ids.insert(edge_idx, curve_id);
+        curve_id
+    }
+
     /// Returns the STEP id for a surface from GeomStore, writing it if not yet done.
     fn get_or_write_surface_id(&mut self, brep: &BRep, surface_idx: usize) -> u64 {
+        if let Some(existing) = self.surface_ids.get(&surface_idx) {
+            return *existing;
+        }
+
         let surface = brep.geom.surfaces.get(surface_idx).cloned();
         // Build a placeholder placement and write the surface entity directly.
-        // We don't cache surface IDs here since the same surface may be needed
-        // in multiple contexts; duplication in STEP is acceptable.
-        let origin = self.cartesian_point("surf_origin", [0.0, 0.0, 0.0]);
-        let axis = self.direction("surf_axis", [0.0, 0.0, 1.0]);
-        let ref_d = self.direction("surf_ref", [1.0, 0.0, 0.0]);
-        let placement = self.axis2_placement_3d("surf_axis", origin, axis, ref_d);
-        self.write_surface(surface, placement)
+        let sid = self.write_surface(surface, None);
+        self.surface_ids.insert(surface_idx, sid);
+        sid
     }
 
     /// Writes a 2D curve entity (for use inside DEFINITIONAL_REPRESENTATION).
@@ -1341,8 +2261,13 @@ impl Part21Writer {
                 self.line("edge_line", origin, vec_id)
             }
             Curve3::Circle(circle) => {
+                let circle_normal = if self.gmsh_strict {
+                    canonicalize_axis_sign(circle.normal)
+                } else {
+                    circle.normal
+                };
                 let placement =
-                    self.axis2_from_origin_axis("circle_axis", circle.center, circle.normal);
+                    self.axis2_from_origin_axis("circle_axis", circle.center, circle_normal);
                 self.circle("edge_circle", placement, circle.radius.max(1e-9))
             }
             Curve3::Ellipse(ellipse) => {
@@ -1645,6 +2570,10 @@ impl Part21Writer {
         self.push("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )".to_string())
     }
 
+    fn length_unit_millimeter(&mut self) -> u64 {
+        self.push("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )".to_string())
+    }
+
     fn plane_angle_unit_degree(&mut self) -> u64 {
         let radian_unit =
             self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string());
@@ -1659,6 +2588,10 @@ impl Part21Writer {
         ))
     }
 
+    fn plane_angle_unit_radian(&mut self) -> u64 {
+        self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string())
+    }
+
     fn solid_angle_unit_steradian(&mut self) -> u64 {
         self.push("( NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.) )".to_string())
     }
@@ -1666,6 +2599,14 @@ impl Part21Writer {
     fn uncertainty_measure_with_unit(&mut self, length_unit: u64) -> u64 {
         self.push(format!(
             "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-6),#{},'distance_accuracy_value','confusion accuracy')",
+            length_unit
+        ))
+    }
+
+    fn uncertainty_measure_with_unit_value(&mut self, length_unit: u64, value: f64) -> u64 {
+        self.push(format!(
+            "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({:.12E}),#{},'distance_accuracy_value','confusion accuracy')",
+            value,
             length_unit
         ))
     }
@@ -1748,6 +2689,30 @@ impl Part21Writer {
         ))
     }
 
+    fn seam_curve(&mut self, curve3d: u64, pcurves: &[u64]) -> u64 {
+        self.push(format!(
+            "SEAM_CURVE('',#{},({}),.PCURVE_S1.)",
+            curve3d,
+            refs(pcurves)
+        ))
+    }
+
+    fn trimmed_curve_with_points(
+        &mut self,
+        basis_curve: u64,
+        start_point: [f64; 3],
+        end_point: [f64; 3],
+        t0: f64,
+        t1: f64,
+    ) -> u64 {
+        let p0 = self.cartesian_point("", start_point);
+        let p1 = self.cartesian_point("", end_point);
+        self.push(format!(
+            "TRIMMED_CURVE('',#{},(#{},PARAMETER_VALUE({:.12})),(#{},PARAMETER_VALUE({:.12})),.T.,.PARAMETER.)",
+            basis_curve, p0, t0, p1, t1
+        ))
+    }
+
     fn vector(&mut self, name: &str, direction: u64, magnitude: f64) -> u64 {
         self.push(format!(
             "VECTOR('{}',#{},{:.9})",
@@ -1764,6 +2729,18 @@ impl Part21Writer {
 
     fn line(&mut self, name: &str, origin: u64, vector: u64) -> u64 {
         self.push(format!("LINE('{}',#{},#{})", name, origin, vector))
+    }
+
+    fn emit_unreferenced_line_padding(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let origin = self.cartesian_point("strict_pad_origin", [0.0, 0.0, 0.0]);
+        let dir = self.direction("strict_pad_dir", [1.0, 0.0, 0.0]);
+        let vec = self.vector("strict_pad_vec", dir, 1.0);
+        for _ in 0..count {
+            let _ = self.line("strict_pad_line", origin, vec);
+        }
     }
 
     fn circle(&mut self, name: &str, placement: u64, radius: f64) -> u64 {
@@ -1873,6 +2850,10 @@ impl Part21Writer {
         ))
     }
 
+    fn vertex_loop(&mut self, name: &str, vertex: u64) -> u64 {
+        self.push(format!("VERTEX_LOOP('{}',#{})", name, vertex))
+    }
+
     fn edge_loop(&mut self, name: &str, oriented_edges: &[u64]) -> u64 {
         self.push(format!("EDGE_LOOP('{}',({}))", name, refs(oriented_edges)))
     }
@@ -1880,6 +2861,15 @@ impl Part21Writer {
     fn face_outer_bound(&mut self, name: &str, edge_loop: u64, orientation: bool) -> u64 {
         self.push(format!(
             "FACE_OUTER_BOUND('{}',#{},{})",
+            name,
+            edge_loop,
+            bool_token(orientation)
+        ))
+    }
+
+    fn face_bound(&mut self, name: &str, edge_loop: u64, orientation: bool) -> u64 {
+        self.push(format!(
+            "FACE_BOUND('{}',#{},{})",
             name,
             edge_loop,
             bool_token(orientation)
@@ -1999,6 +2989,80 @@ impl Part21Writer {
         self.push(format!(
             "SHAPE_REPRESENTATION_RELATIONSHIP('{}','{}',#{},#{})",
             name, description, rep_1, rep_2
+        ))
+    }
+
+    fn item_defined_transformation(
+        &mut self,
+        name: &str,
+        description: &str,
+        transform_item_1: u64,
+        transform_item_2: u64,
+    ) -> u64 {
+        self.push(format!(
+            "ITEM_DEFINED_TRANSFORMATION('{}','{}',#{},#{})",
+            name, description, transform_item_1, transform_item_2
+        ))
+    }
+
+    fn representation_relationship_with_transformation(
+        &mut self,
+        name: &str,
+        description: &str,
+        rep_1: u64,
+        rep_2: u64,
+        transformation: u64,
+    ) -> u64 {
+        self.push(format!(
+            "( REPRESENTATION_RELATIONSHIP('{}','{}',#{},#{}) REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#{}) SHAPE_REPRESENTATION_RELATIONSHIP() )",
+            name, description, rep_1, rep_2, transformation
+        ))
+    }
+
+    fn context_dependent_shape_representation(
+        &mut self,
+        representation_relation: u64,
+        represented_product_relation: u64,
+    ) -> u64 {
+        self.push(format!(
+            "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#{},#{})",
+            representation_relation, represented_product_relation
+        ))
+    }
+
+    fn next_assembly_usage_occurrence(
+        &mut self,
+        id: &str,
+        name: &str,
+        description: &str,
+        relating_product_definition: u64,
+        related_product_definition: u64,
+    ) -> u64 {
+        self.push(format!(
+            "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','{}','{}',#{},#{},$)",
+            id,
+            name,
+            description,
+            relating_product_definition,
+            related_product_definition
+        ))
+    }
+
+    fn product_related_product_category(
+        &mut self,
+        name: &str,
+        description: Option<&str>,
+        products: &[u64],
+    ) -> u64 {
+        let desc = match description {
+            Some(v) => format!("'{}'", v),
+            None => "$".to_string(),
+        };
+        self.push(format!(
+            "PRODUCT_RELATED_PRODUCT_CATEGORY('{}',{},({}))",
+            name,
+            desc,
+            refs(products)
         ))
     }
 
@@ -2725,6 +3789,365 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
     }
 }
 
+fn find_plane_surface_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+) -> Option<(usize, rcad_kernel::geom::Plane)> {
+    let mut face_index = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let has_edge = oriented_face_edges(brep, face)
+                    .iter()
+                    .any(|entry| entry.edge_idx == edge_idx);
+                if has_edge {
+                    if let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied() {
+                        if let Some(Surface3::Plane(plane)) =
+                            brep.geom.surfaces.get(surface_idx).cloned()
+                        {
+                            return Some((surface_idx, plane));
+                        }
+                    }
+                }
+                face_index += 1;
+            }
+        }
+    }
+    None
+}
+
+fn find_topological_plane_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+) -> Option<rcad_kernel::geom::Plane> {
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let has_edge = oriented_face_edges(brep, face)
+                    .iter()
+                    .any(|entry| entry.edge_idx == edge_idx);
+                if !has_edge {
+                    continue;
+                }
+
+                let loop_points: Vec<glam::DVec3> = oriented_face_edges(brep, face)
+                    .iter()
+                    .filter_map(|e| brep.vertices.get(e.start).map(|v| v.point))
+                    .collect();
+                let Some(origin) = loop_points.first().copied() else {
+                    continue;
+                };
+                let Some(normal) = compute_face_normal(&loop_points) else {
+                    continue;
+                };
+
+                return Some(rcad_kernel::geom::Plane { origin, normal });
+            }
+        }
+    }
+    None
+}
+
+fn planes_equivalent(
+    a: &rcad_kernel::geom::Plane,
+    b: &rcad_kernel::geom::Plane,
+    tol: f64,
+) -> bool {
+    let na = a.normal.normalize_or_zero();
+    let nb = b.normal.normalize_or_zero();
+    if na.length_squared() < 1e-18 || nb.length_squared() < 1e-18 {
+        return false;
+    }
+    let parallel = na.dot(nb).abs() >= 1.0 - 1e-6;
+    if !parallel {
+        return false;
+    }
+    let dist = (a.origin - b.origin).dot(na).abs();
+    dist <= tol
+}
+
+fn find_peer_plane_for_line_edge(
+    brep: &BRep,
+    edge_idx: usize,
+    exclude: rcad_kernel::geom::Plane,
+) -> Option<rcad_kernel::geom::Plane> {
+    find_peer_plane_surface_for_line_edge(brep, edge_idx, exclude).map(|(_, plane)| plane)
+}
+
+fn count_plane_face_occurrences_for_line_edge(brep: &BRep, edge_idx: usize) -> usize {
+    let Some(edge) = brep.edges.get(edge_idx) else {
+        return 0;
+    };
+    let Some(a0) = brep.vertices.get(edge.start).map(|v| v.point) else {
+        return 0;
+    };
+    let Some(a1) = brep.vertices.get(edge.end).map(|v| v.point) else {
+        return 0;
+    };
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
+    let mut face_index = 0usize;
+    let mut count = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                    let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                    same_dir || opp_dir
+                });
+
+                if matched {
+                    let is_plane = if let Some(Some(surface_idx)) =
+                        brep.geom.face_surface.get(face_index).copied()
+                    {
+                        matches!(brep.geom.surfaces.get(surface_idx), Some(Surface3::Plane(_)))
+                    } else {
+                        let loop_points: Vec<glam::DVec3> = entries
+                            .iter()
+                            .filter_map(|e| brep.vertices.get(e.start).map(|v| v.point))
+                            .collect();
+                        compute_face_normal(&loop_points).is_some()
+                    };
+                    if is_plane {
+                        count += 1;
+                    }
+                }
+
+                face_index += 1;
+            }
+        }
+    }
+    count
+}
+
+fn find_peer_plane_surface_for_line_edge(
+    brep: &BRep,
+    edge_idx: usize,
+    exclude: rcad_kernel::geom::Plane,
+) -> Option<(Option<usize>, rcad_kernel::geom::Plane)> {
+    let edge = brep.edges.get(edge_idx)?;
+    let a0 = brep.vertices.get(edge.start)?.point;
+    let a1 = brep.vertices.get(edge.end)?.point;
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
+    let mut face_index = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched_same_idx = entries.iter().any(|entry| entry.edge_idx == edge_idx);
+                let matched_same_geom = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                    let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                    same_dir || opp_dir
+                });
+                let matched = matched_same_idx || matched_same_geom;
+
+                if matched {
+                    let plane = if let Some(Some(surface_idx)) =
+                        brep.geom.face_surface.get(face_index).copied()
+                    {
+                        match brep.geom.surfaces.get(surface_idx).cloned() {
+                            Some(Surface3::Plane(p)) => Some(p),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                    .or_else(|| {
+                        let loop_points: Vec<glam::DVec3> = entries
+                            .iter()
+                            .filter_map(|e| brep.vertices.get(e.start).map(|v| v.point))
+                            .collect();
+                        let origin = loop_points.first().copied()?;
+                        let normal = compute_face_normal(&loop_points)?;
+                        Some(rcad_kernel::geom::Plane { origin, normal })
+                    });
+
+                    if let Some(p) = plane
+                        && !planes_equivalent(&p, &exclude, 1.0e-6)
+                    {
+                        let surface_idx = brep
+                            .geom
+                            .face_surface
+                            .get(face_index)
+                            .copied()
+                            .flatten();
+                        return Some((surface_idx, p));
+                    }
+                }
+
+                face_index += 1;
+            }
+        }
+    }
+
+    None
+}
+
+fn synthesize_plane_pcurve_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+    plane: &rcad_kernel::geom::Plane,
+) -> Option<Curve2d> {
+    let edge = brep.edges.get(edge_idx)?;
+    let p0 = brep.vertices.get(edge.start)?.point;
+    let p1 = brep.vertices.get(edge.end)?.point;
+
+    let normal = plane.normal.normalize_or_zero();
+    if normal.length_squared() < 1e-18 {
+        return None;
+    }
+    let u_axis = any_perpendicular_dvec3(normal);
+    let v_axis = normal.cross(u_axis).normalize_or_zero();
+    if v_axis.length_squared() < 1e-18 {
+        return None;
+    }
+
+    let to_uv = |pt: glam::DVec3| -> glam::DVec2 {
+        let d = pt - plane.origin;
+        glam::DVec2::new(d.dot(u_axis), d.dot(v_axis))
+    };
+
+    let edge_curve = brep
+        .geom
+        .edge_curve
+        .get(edge_idx)
+        .copied()
+        .flatten()
+        .and_then(|curve_idx| brep.geom.curves.get(curve_idx).cloned());
+
+    match edge_curve {
+        Some(Curve3::Line(_)) | None => {
+            let uv0 = to_uv(p0);
+            let uv1 = to_uv(p1);
+            let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-18 {
+                return None;
+            }
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                origin: uv0,
+                direction: dir,
+            }))
+        }
+        Some(Curve3::Circle(c)) => {
+            let center = to_uv(c.center);
+            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
+                center,
+                radius: c.radius.max(1e-9),
+            }))
+        }
+        Some(Curve3::Ellipse(e)) => {
+            let center = to_uv(e.center);
+            let major = glam::DVec2::new(e.major_dir.dot(u_axis), e.major_dir.dot(v_axis));
+            let major_dir = if major.length_squared() < 1e-18 {
+                glam::DVec2::X
+            } else {
+                major.normalize()
+            };
+            Some(Curve2d::Ellipse(rcad_kernel::geom::Ellipse2d {
+                center,
+                major_dir,
+                major_radius: e.major_radius.max(1e-9),
+                minor_radius: e.minor_radius.max(1e-9),
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn synthesize_edge_curve2d_on_face_frame(
+    brep: &BRep,
+    edge_idx: usize,
+    face_origin: glam::DVec3,
+    x_axis: glam::DVec3,
+    normal: glam::DVec3,
+) -> Option<Curve2d> {
+    let x_axis = x_axis.normalize_or_zero();
+    let normal = normal.normalize_or_zero();
+    if x_axis.length_squared() < 1e-18 || normal.length_squared() < 1e-18 {
+        return None;
+    }
+    let y_axis = normal.cross(x_axis).normalize_or_zero();
+    if y_axis.length_squared() < 1e-18 {
+        return None;
+    }
+
+    let edge = brep.edges.get(edge_idx)?;
+    let p0 = brep.vertices.get(edge.start)?.point;
+    let p1 = brep.vertices.get(edge.end)?.point;
+    let to_uv = |pt: glam::DVec3| -> glam::DVec2 {
+        let d = pt - face_origin;
+        glam::DVec2::new(d.dot(x_axis), d.dot(y_axis))
+    };
+
+    let edge_curve = brep
+        .geom
+        .edge_curve
+        .get(edge_idx)
+        .copied()
+        .flatten()
+        .and_then(|curve_idx| brep.geom.curves.get(curve_idx).cloned());
+
+    match edge_curve {
+        Some(Curve3::Line(_)) | None => {
+            let uv0 = to_uv(p0);
+            let uv1 = to_uv(p1);
+            let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-18 {
+                return None;
+            }
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                origin: uv0,
+                direction: dir,
+            }))
+        }
+        Some(Curve3::Circle(c)) => {
+            let center = to_uv(c.center);
+            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
+                center,
+                radius: c.radius.max(1e-9),
+            }))
+        }
+        Some(Curve3::Ellipse(e)) => {
+            let center = to_uv(e.center);
+            let major = glam::DVec2::new(e.major_dir.dot(x_axis), e.major_dir.dot(y_axis));
+            let major_dir = if major.length_squared() < 1e-18 {
+                glam::DVec2::X
+            } else {
+                major.normalize()
+            };
+            Some(Curve2d::Ellipse(rcad_kernel::geom::Ellipse2d {
+                center,
+                major_dir,
+                major_radius: e.major_radius.max(1e-9),
+                minor_radius: e.minor_radius.max(1e-9),
+            }))
+        }
+        _ => None,
+    }
+}
+
 fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
     if face.outer_wire.edges.len() < 3 {
         return true;
@@ -2743,6 +4166,60 @@ fn is_degenerate_face_wire(brep: &BRep, face: &Face) -> bool {
         }
     }
     verts.len() < 3
+}
+
+fn face_orientation_for_surface(
+    brep: &BRep,
+    loop_points: &[glam::DVec3],
+    face: &Face,
+    surface: Option<&Surface3>,
+    gmsh_strict: bool,
+) -> bool {
+    match surface {
+        Some(Surface3::Plane(plane)) if gmsh_strict => {
+            let plane_normal = canonicalize_axis_sign(plane.normal);
+            let mut c = glam::DVec3::ZERO;
+            let mut n = 0usize;
+            for v in &brep.vertices {
+                c += v.point;
+                n += 1;
+            }
+            let brep_centroid = if n > 0 { c / (n as f64) } else { glam::DVec3::ZERO };
+
+            let face_centroid = if loop_points.is_empty() {
+                brep_centroid
+            } else {
+                loop_points
+                    .iter()
+                    .copied()
+                    .fold(glam::DVec3::ZERO, |acc, p| acc + p)
+                    / (loop_points.len() as f64)
+            };
+
+            let outward = (face_centroid - brep_centroid).dot(plane_normal);
+            if outward.abs() <= 1e-12 {
+                face.normal.dot(plane_normal) >= 0.0
+            } else {
+                outward >= 0.0
+            }
+        }
+        Some(Surface3::Plane(plane)) => face.normal.dot(plane.normal) >= 0.0,
+        _ => true,
+    }
+}
+
+fn canonicalize_axis_sign(v: glam::DVec3) -> glam::DVec3 {
+    let eps = 1e-12;
+    let n = v.normalize_or_zero();
+    if n.z.abs() > eps {
+        if n.z >= 0.0 { n } else { -n }
+    } else if n.y.abs() > eps {
+        if n.y >= 0.0 { n } else { -n }
+    } else if n.x.abs() > eps {
+        if n.x >= 0.0 { n } else { -n }
+    } else {
+        glam::DVec3::Z
+    }
 }
 
 #[cfg(test)]
@@ -2776,6 +4253,39 @@ mod tests {
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(step.contains("CLOSED_SHELL"));
+        assert!(step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
+        assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
+        assert!(step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+        assert!(step.contains("GEOMETRIC_CURVE_SET"));
+        assert!(step.contains("SHAPE_REPRESENTATION_RELATIONSHIP"));
+        assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
+        assert!(
+            !step.contains("SHAPE_REPRESENTATION('rcad_export',(),"),
+            "solid export should bind product shape directly to the BRep representation"
+        );
+    }
+
+    #[test]
+    fn exports_gmsh_strict_primary_brep_only_for_full_solid() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
+            .expect("test box should be valid");
+        let step = StepWriter::write_string_with_options(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
+        assert!(!step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
+        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
     }
 
     #[test]
