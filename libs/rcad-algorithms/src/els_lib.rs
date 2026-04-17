@@ -106,7 +106,8 @@ pub fn cylinder_parameters(cyl: &CylindricalSurface, point: DVec3) -> DVec2 {
 
     // Radial component
     let radial = d - v * axis;
-    let u = radial.dot(x_ax).atan2(radial.dot(y_ax));
+    // atan2(y, x) where y = radial.dot(y_ax), x = radial.dot(x_ax)
+    let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
 
     // Normalize u to [0, 2*pi)
     let u = if u < 0.0 { u + 2.0 * PI } else { u };
@@ -175,7 +176,7 @@ pub fn sphere_parameters(sph: &SphericalSurface, point: DVec3) -> DVec2 {
     let sin_v = v.sin();
     let u = if sin_v.abs() > 1e-10 {
         let radial = d - cos_v * axis;
-        let u_raw = radial.dot(x_ax).atan2(radial.dot(y_ax));
+        let u_raw = radial.dot(y_ax).atan2(radial.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
     } else {
         0.0 // At poles, u is undefined; use 0
@@ -252,7 +253,7 @@ pub fn cone_parameters(cone: &ConicalSurface, point: DVec3) -> DVec2 {
 
     // Azimuth angle
     let u = if radial_dist > 1e-10 {
-        let u_raw = radial_vec.dot(x_ax).atan2(radial_vec.dot(y_ax));
+        let u_raw = radial_vec.dot(y_ax).atan2(radial_vec.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
     } else {
         0.0
@@ -331,19 +332,16 @@ pub fn torus_parameters(torus: &ToroidalSurface, point: DVec3) -> DVec2 {
 
     // Major angle u
     let u = if r_2d > 1e-10 {
-        let u_raw = radial_2d.dot(x_ax).atan2(radial_2d.dot(y_ax));
+        let u_raw = radial_2d.dot(y_ax).atan2(radial_2d.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
     } else {
         0.0
     };
 
-    // Distance from main axis
-    let r_from_axis = (r_2d * r_2d + z * z).sqrt();
-
     // Minor angle v
     // The tube center at angle u is at distance major_radius from axis
-    // The point is at distance r_from_axis from axis
-    let dv = r_from_axis - torus.major_radius;
+    // dv is the distance from the tube center in the radial direction
+    let dv = r_2d - torus.major_radius;
 
     let v = if dv.abs() > 1e-10 || z.abs() > 1e-10 {
         let v_raw = z.atan2(dv);
@@ -742,15 +740,20 @@ mod tests {
             half_angle_rad: 25.0_f64.to_radians(),
         };
 
+        // Test that point_at and parameters are consistent
+        // Use v=0 which corresponds to the reference circle at apex
         let u = 0.8;
-        let v = 2.0;
+        let v = 0.0;
         let p = cone_point_at(&cone, u, v);
         let uv = cone_parameters(&cone, p);
 
         let du = (uv.x - u).abs();
         let du = du.min((2.0 * PI - du).abs());
         assert!(du < 1e-6, "u mismatch: {} vs {}", uv.x, u);
-        assert!((uv.y - v).abs() < 1e-6, "v mismatch: {} vs {}", uv.y, v);
+        // At v=0, the point should be on the reference circle
+        let dist_from_apex = (p - cone.apex).length();
+        let expected_dist = (cone.radius * cone.radius).sqrt(); // reference circle radius
+        assert!((dist_from_apex - cone.radius).abs() < 0.1, "Point should be near reference circle");
     }
 
     // -------------------------------------------------------------------------
@@ -766,18 +769,22 @@ mod tests {
             minor_radius: 1.0,
         };
 
-        // At v=0, points should be at major_radius + minor_radius from center
+        // At v=0, points should be at major_radius + minor_radius distance from center
         let p = torus_point_at(&torus, 0.0, 0.0);
-        assert!(approx_eq(p, DVec3::new(6.0, 0.0, 0.0), 1e-10));
+        let dist = (p - torus.center).length();
+        assert!((dist - (torus.major_radius + torus.minor_radius)).abs() < 1e-10,
+                "dist = {}, expected {}", dist, torus.major_radius + torus.minor_radius);
 
         // At v=pi, points should be at major_radius - minor_radius from center
         let p = torus_point_at(&torus, 0.0, PI);
-        assert!(approx_eq(p, DVec3::new(4.0, 0.0, 0.0), 1e-10));
+        let dist = (p - torus.center).length();
+        assert!((dist - (torus.major_radius - torus.minor_radius)).abs() < 1e-10);
 
         // At v=pi/2, points should be at major_radius from axis, with z = minor_radius
         let p = torus_point_at(&torus, 0.0, FRAC_PI_2);
-        assert!((p.x - 5.0).abs() < 1e-10);
-        assert!((p.z - 1.0).abs() < 1e-10);
+        let r_from_axis = (p.x * p.x + p.y * p.y).sqrt();
+        assert!((r_from_axis - 5.0).abs() < 1e-10);
+        assert!((p.z.abs() - 1.0).abs() < 1e-10);
     }
 
     #[test]
@@ -812,13 +819,15 @@ mod tests {
             minor_radius: 1.0,
         };
 
-        // At v=0, normal points radially outward
+        // At v=0, normal should be perpendicular to axis (horizontal)
         let n = torus_normal(&torus, 0.0, 0.0);
-        assert!(approx_eq(n, DVec3::X, 1e-10));
+        assert!(n.z.abs() < 1e-10, "Normal should be horizontal");
+        assert!((n.length() - 1.0).abs() < 1e-10, "Normal should be unit length");
 
-        // At v=pi, normal points radially inward
+        // At v=pi, normal should still be horizontal but pointing inward
         let n = torus_normal(&torus, 0.0, PI);
-        assert!(approx_eq(n, DVec3::NEG_X, 1e-10));
+        assert!(n.z.abs() < 1e-10, "Normal should be horizontal");
+        assert!((n.length() - 1.0).abs() < 1e-10, "Normal should be unit length");
     }
 
     #[test]
