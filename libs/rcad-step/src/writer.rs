@@ -1301,7 +1301,6 @@ impl Part21Writer {
             .map(|v| v.point)
             .unwrap_or(glam::DVec3::ZERO);
         let end_pt = brep
-            
             .vertices
             .get(edge.end)
             .map(|v| v.point)
@@ -1322,17 +1321,19 @@ impl Part21Writer {
         let v0 = self.vertex_point_by_index(brep, edge_start_idx);
         let v1 = self.vertex_point_by_index(brep, edge_end_idx);
 
-        let basis_curve = match face_surface {
+        let pcurves = brep
+            .geom
+            .edge_pcurves
+            .get(edge_idx)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut basis_curve = match face_surface.clone() {
             Some(Surface3::Sphere(sphere)) => {
-                // The seam of a sphere is a great circle (meridian).
-                // Its centre is the sphere centre, radius = sphere.radius,
-                // and its normal is perpendicular to the plane containing
-                // the two endpoints and the sphere centre.
                 let a = (start_pt - sphere.center).normalize_or_zero();
                 let b = (end_pt - sphere.center).normalize_or_zero();
                 let mut circle_normal = a.cross(b);
                 if circle_normal.length_squared() < 1e-12 {
-                    // start and end are antipodal — pick a perpendicular to the axis
                     circle_normal = any_perpendicular_dvec3(sphere.axis);
                 }
                 let circle_normal = circle_normal.normalize_or_zero();
@@ -1349,8 +1350,6 @@ impl Part21Writer {
                 self.line("seam_line", origin_id, vec)
             }
             Some(Surface3::Cylinder(_)) => {
-                // Cylinder seam is a line along the axis.
-                // In gmsh_strict mode canonicalize it to go from low-v to high-v.
                 let (origin_pt, delta_vec) = if self.gmsh_strict {
                     if start_proj <= end_proj {
                         (start_pt, end_pt - start_pt)
@@ -1377,31 +1376,58 @@ impl Part21Writer {
                     let vec = self.vector("seam_vec", dir, magnitude);
                     self.line("seam_line", origin_id, vec)
                 } else {
-                    let mid = (start_pt + end_pt) * 0.5;
-                    let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
-                    let radial = if radial_raw.length_squared() < 1e-18 {
-                        any_perpendicular_dvec3(axis)
-                    } else {
-                        radial_raw.normalize_or_zero()
-                    };
-                    let circle_center = torus.center + radial * torus.major_radius;
-                    let circle_normal = axis.cross(radial).normalize_or_zero();
-                    if circle_normal.length_squared() < 1e-18 {
-                        let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
-                        let delta = dvec3_to_array(end_pt - start_pt);
-                        let magnitude = vector_length(delta).max(1e-9);
-                        let dir = self.direction("seam_dir", normalize(delta));
-                        let vec = self.vector("seam_vec", dir, magnitude);
-                        self.line("seam_line", origin_id, vec)
-                    } else {
+                    let major_seam = pcurves.iter().any(|pc| {
+                        brep
+                            .geom
+                            .curve2ds
+                            .get(pc.curve2d_idx)
+                            .cloned()
+                            .and_then(|c2| match c2 {
+                                Curve2d::Line(l) => {
+                                    Some(l.direction.x.abs() > l.direction.y.abs())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(false)
+                    });
+
+                    if major_seam {
+                        let radial_vec =
+                            start_pt - torus.center - axis * (start_pt - torus.center).dot(axis);
+                        let seam_radius = radial_vec.length().max(1e-9);
                         let placement =
-                            self.axis2_from_origin_axis("seam_torus_axis", circle_center, circle_normal);
-                        self.circle("seam_torus_circle", placement, torus.minor_radius.max(1e-9))
+                            self.axis2_from_origin_axis("seam_torus_axis", torus.center, axis);
+                        self.circle("seam_torus_circle", placement, seam_radius)
+                    } else {
+                        let mid = (start_pt + end_pt) * 0.5;
+                        let radial_raw =
+                            mid - torus.center - axis * (mid - torus.center).dot(axis);
+                        let radial = if radial_raw.length_squared() < 1e-18 {
+                            any_perpendicular_dvec3(axis)
+                        } else {
+                            radial_raw.normalize_or_zero()
+                        };
+                        let circle_center = torus.center + radial * torus.major_radius;
+                        let circle_normal = axis.cross(radial).normalize_or_zero();
+                        if circle_normal.length_squared() < 1e-18 {
+                            let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                            let delta = dvec3_to_array(end_pt - start_pt);
+                            let magnitude = vector_length(delta).max(1e-9);
+                            let dir = self.direction("seam_dir", normalize(delta));
+                            let vec = self.vector("seam_vec", dir, magnitude);
+                            self.line("seam_line", origin_id, vec)
+                        } else {
+                            let placement = self.axis2_from_origin_axis(
+                                "seam_torus_axis",
+                                circle_center,
+                                circle_normal,
+                            );
+                            self.circle("seam_torus_circle", placement, torus.minor_radius.max(1e-9))
+                        }
                     }
                 }
             }
             _ => {
-                // Fallback: straight line.
                 let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
                 let delta = dvec3_to_array(end_pt - start_pt);
                 let magnitude = vector_length(delta).max(1e-9);
@@ -1411,25 +1437,18 @@ impl Part21Writer {
             }
         };
 
-        // Wrap in SURFACE_CURVE if PCurves are available for this seam edge.
-        let pcurves = brep
-            .geom
-            .edge_pcurves
-            .get(edge_idx)
-            .cloned()
-            .unwrap_or_default();
         let final_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
             let mut periodic_extra_curve2d: Option<Curve2d> = None;
             if self.gmsh_strict && (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1 {
-                if let Some(pc0) = pcurves.first() {
-                    if let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned() {
-                        let eps = 1e-9;
-                        if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
-                            let mut l1 = l0;
-                            l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
-                            periodic_extra_curve2d = Some(Curve2d::Line(l1));
-                        }
+                if let Some(pc0) = pcurves.first()
+                    && let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
+                {
+                    let eps = 1e-9;
+                    if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
+                        let mut l1 = l0;
+                        l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
+                        periodic_extra_curve2d = Some(Curve2d::Line(l1));
                     }
                 }
             }
@@ -1437,45 +1456,39 @@ impl Part21Writer {
             for (pc_i, pc) in pcurves.iter().enumerate() {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
                 let mut curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
-                if self.gmsh_strict && seam_is_cylinder {
-                    if let Some(Curve2d::Line(mut l)) = curve2d {
-                        let eps = 1e-9;
-                        // Canonicalize seam iso-u line to +v direction.
-                        if l.direction.x.abs() <= eps && l.direction.y.abs() > eps {
-                            if l.direction.y < 0.0 {
-                                l.direction.y = -l.direction.y;
-                            }
-                            // Keep seam anchored at v=0 to mirror gmsh output style.
-                            l.origin.y = 0.0;
-
-                            // Snap periodic u to either 0 or 2*pi when close.
-                            let two_pi = 2.0 * std::f64::consts::PI;
-                            let mut u = l.origin.x.rem_euclid(two_pi);
-                            if u <= 1e-6 {
-                                u = 0.0;
-                            }
-                            if (two_pi - u).abs() <= 1e-6 {
-                                u = two_pi;
-                            }
-                            l.origin.x = u;
+                if self.gmsh_strict && seam_is_cylinder
+                    && let Some(Curve2d::Line(mut l)) = curve2d
+                {
+                    let eps = 1e-9;
+                    if l.direction.x.abs() <= eps && l.direction.y.abs() > eps {
+                        if l.direction.y < 0.0 {
+                            l.direction.y = -l.direction.y;
                         }
-                        curve2d = Some(Curve2d::Line(l));
+                        l.origin.y = 0.0;
+                        let two_pi = 2.0 * std::f64::consts::PI;
+                        let mut u = l.origin.x.rem_euclid(two_pi);
+                        if u <= 1e-6 {
+                            u = 0.0;
+                        }
+                        if (two_pi - u).abs() <= 1e-6 {
+                            u = two_pi;
+                        }
+                        l.origin.x = u;
                     }
+                    curve2d = Some(Curve2d::Line(l));
                 }
+
                 let param_curve_id = self.write_curve2d(curve2d);
                 let def_rep = self.definitional_representation(param_curve_id);
                 let pcurve_id = self.pcurve(surface_id, def_rep);
                 pcurve_ids.push(pcurve_id);
 
-                if pc_i == 0 {
-                    if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
-                        let extra_param = self.write_curve2d(Some(extra_curve2d));
-                        let extra_def = self.definitional_representation(extra_param);
-                        let extra_pc = self.pcurve(surface_id, extra_def);
-                        pcurve_ids.push(extra_pc);
-                    }
+                if pc_i == 0 && let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                    let extra_param = self.write_curve2d(Some(extra_curve2d));
+                    let extra_def = self.definitional_representation(extra_param);
+                    let extra_pc = self.pcurve(surface_id, extra_def);
+                    pcurve_ids.push(extra_pc);
                 }
-
             }
             if self.gmsh_strict && pcurve_ids.len() >= 2 {
                 self.seam_curve(basis_curve, &pcurve_ids)
@@ -1520,7 +1533,11 @@ impl Part21Writer {
                     "face_cone",
                     placement,
                     cone.radius,
-                    cone.half_angle_rad.to_degrees(),
+                    if self.gmsh_strict {
+                        cone.half_angle_rad
+                    } else {
+                        cone.half_angle_rad.to_degrees()
+                    },
                 )
             }
             Some(Surface3::Torus(torus)) => {
@@ -1595,7 +1612,7 @@ impl Part21Writer {
                 self.write_bspline_surface(&bs)
             }
             Some(Surface3::Trimmed(ts)) => {
-                // Write the underlying basis surface — trim bounds are implied by the
+                // Write the underlying basis surface; trim bounds are implied by the
                 // face topology, so we don't need a separate RECTANGULAR_TRIMMED_SURFACE entity.
                 self.write_surface(Some(*ts.basis), fallback_placement)
             }
@@ -1858,6 +1875,15 @@ impl Part21Writer {
             };
 
             if let Some(torus) = torus_surface {
+                let mut major_seam = false;
+                if self.gmsh_strict
+                    && let Some(pc0) = pcurves.first()
+                    && let Some(Curve2d::Line(l)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
+                {
+                    // On torus pcurves, dominant +u direction corresponds to a major-circle seam.
+                    major_seam = l.direction.x.abs() > l.direction.y.abs();
+                }
+
                 let start_pt = brep
                     .vertices
                     .get(edge.start)
@@ -1870,23 +1896,35 @@ impl Part21Writer {
                     .unwrap_or(glam::DVec3::ZERO);
                 let axis = torus.axis.normalize_or_zero();
                 if axis.length_squared() >= 1e-18 {
-                    let mid = (start_pt + end_pt) * 0.5;
-                    let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
-                    let radial = if radial_raw.length_squared() < 1e-18 {
-                        any_perpendicular_dvec3(axis)
-                    } else {
-                        radial_raw.normalize_or_zero()
-                    };
-                    let circle_center = torus.center + radial * torus.major_radius;
-                    let circle_normal = axis.cross(radial).normalize_or_zero();
-                    if circle_normal.length_squared() >= 1e-18 {
+                    if major_seam {
+                        let radial_vec = start_pt - torus.center - axis * (start_pt - torus.center).dot(axis);
+                        let seam_radius = radial_vec.length().max(1e-9);
                         let placement =
-                            self.axis2_from_origin_axis("edge_torus_seam_axis", circle_center, circle_normal);
-                        basis_curve_3d = self.circle(
-                            "edge_torus_seam_circle",
-                            placement,
-                            torus.minor_radius.max(1e-9),
-                        );
+                            self.axis2_from_origin_axis("edge_torus_major_axis", torus.center, axis);
+                        basis_curve_3d =
+                            self.circle("edge_torus_major_circle", placement, seam_radius);
+                    } else {
+                        let mid = (start_pt + end_pt) * 0.5;
+                        let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
+                        let radial = if radial_raw.length_squared() < 1e-18 {
+                            any_perpendicular_dvec3(axis)
+                        } else {
+                            radial_raw.normalize_or_zero()
+                        };
+                        let circle_center = torus.center + radial * torus.major_radius;
+                        let circle_normal = axis.cross(radial).normalize_or_zero();
+                        if circle_normal.length_squared() >= 1e-18 {
+                            let placement = self.axis2_from_origin_axis(
+                                "edge_torus_seam_axis",
+                                circle_center,
+                                circle_normal,
+                            );
+                            basis_curve_3d = self.circle(
+                                "edge_torus_seam_circle",
+                                placement,
+                                torus.minor_radius.max(1e-9),
+                            );
+                        }
                     }
                 }
             }
@@ -2474,7 +2512,6 @@ impl Part21Writer {
             ))
         }
     }
-
     fn vertex_point_by_index(&mut self, brep: &BRep, vertex_idx: usize) -> u64 {
         if let Some(existing) = self.vertex_point_ids.get(&vertex_idx) {
             return *existing;
