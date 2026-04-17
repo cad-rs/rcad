@@ -374,10 +374,9 @@ impl<'a> MakeOffset<'a> {
             // Offset the vertex
             let offset_point = vertex_pos + offset_normal * self.distance;
 
-            // Check if we already have this offset point (for closed wires)
-            if i == 0 || !self.is_closed {
-                offset_points.push(offset_point);
-            }
+            // Always push the offset point
+            // For closed wires, we'll add the first point again at the end to close the loop
+            offset_points.push(offset_point);
         }
 
         // For closed wire, the last point should connect to the first
@@ -699,6 +698,8 @@ impl<'a> MakeThickSolid<'a> {
 
     /// Build the thick solid.
     pub fn build(&self) -> Result<ThickSolidResult, OffsetError> {
+        use std::collections::{HashMap, HashSet};
+
         if self.thickness <= 0.0 {
             return Err(OffsetError::InvalidInput("thickness must be positive"));
         }
@@ -706,6 +707,58 @@ impl<'a> MakeThickSolid<'a> {
         let solid = match self.brep.solids.first() {
             Some(s) => s,
             None => return Err(OffsetError::InvalidInput("BRep has no solids")),
+        };
+
+        let shell = match solid.shells.first() {
+            Some(s) => s,
+            None => return Err(OffsetError::InvalidInput("solid has no shells")),
+        };
+
+        let open_set: HashSet<usize> = self.faces_to_remove.iter().copied().collect();
+
+        // Count offset faces (kept faces that will be offset)
+        let offset_face_count = shell.faces.len() - open_set.len();
+
+        // Count lateral faces by finding boundary edges
+        // Boundary edges are edges shared between kept and removed faces
+        // Each boundary edge creates one lateral face
+        let mut edge_use: HashMap<usize, usize> = HashMap::new();
+        for (fi, face) in shell.faces.iter().enumerate() {
+            if open_set.contains(&fi) {
+                continue;
+            }
+            for we in &face.outer_wire.edges {
+                *edge_use.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+
+        // Find boundary edges (edges where one adjacent face is removed and one is kept)
+        let mut lateral_face_count = 0;
+        for (fi, face) in shell.faces.iter().enumerate() {
+            if !open_set.contains(&fi) {
+                continue;
+            }
+            for we in &face.outer_wire.edges {
+                // Check if this edge is shared with a kept face
+                let is_shared = shell.faces.iter().enumerate().any(|(fj, fj_face)| {
+                    !open_set.contains(&fj)
+                        && fj_face.outer_wire.edges.iter().any(|we2| we2.idx == we.idx)
+                });
+                if is_shared {
+                    lateral_face_count += 1;
+                }
+            }
+        }
+
+        // Join faces are created when using Arc or Tangent join types
+        // Currently, hollow_solid_with_options doesn't create join geometry,
+        // so this is 0. Future implementation could count corner faces.
+        let join_face_count = if self.join_type.requires_join_geometry() {
+            // Count corners (vertices where boundary edges meet)
+            // Each corner could potentially create a join face
+            0 // Placeholder until join geometry is implemented
+        } else {
+            0
         };
 
         // Use existing hollow_solid_with_options
@@ -721,22 +774,14 @@ impl<'a> MakeThickSolid<'a> {
             &opts,
         )?;
 
-        // Count faces
-        let face_count = result
-            .solids
-            .first()
-            .and_then(|s| s.shells.first())
-            .map(|sh| sh.faces.len())
-            .unwrap_or(0);
-
         // Check for self-intersection
         let self_intersection = offset::detect_self_intersection(&result, self.thickness);
 
         Ok(ThickSolidResult {
             brep: result,
-            offset_faces: face_count,
-            lateral_faces: 0, // TODO: count lateral faces
-            join_faces: 0,    // TODO: count join faces
+            offset_faces: offset_face_count,
+            lateral_faces: lateral_face_count,
+            join_faces: join_face_count,
             self_intersection,
             warnings: Vec::new(),
         })
@@ -1567,7 +1612,7 @@ mod tests {
 
         assert!(result.is_ok(), "offset_wire should succeed");
         let wire_result = result.unwrap();
-        assert!(wire_result.wire.edges.len() >= 4);
+        assert!(wire_result.wire.edges.len() >= 4, "expected at least 4 edges, got {}", wire_result.wire.edges.len());
     }
 
     #[test]
@@ -1709,5 +1754,95 @@ mod tests {
         let result = offset_wire(wire, &brep, 0.0, JoinType::Intersection);
 
         assert!(result.is_err(), "offset_wire with zero distance should error");
+    }
+
+    #[test]
+    fn thick_solid_face_counting_single_face_removed() {
+        let brep = create_box_brep();
+
+        // A box has 6 faces, each face has 4 edges
+        // Removing 1 face should result in:
+        // - 5 offset faces (kept faces)
+        // - 4 lateral faces (4 boundary edges of the removed face)
+        // - 0 join faces (intersection join)
+        let result = MakeThickSolid::new(&brep, 0.1)
+            .with_faces_to_remove(&[5])
+            .with_join_type(JoinType::Intersection)
+            .build();
+
+        assert!(result.is_ok(), "MakeThickSolid should succeed");
+        let thick_result = result.unwrap();
+        assert_eq!(thick_result.offset_faces, 5, "should have 5 offset faces");
+        assert_eq!(thick_result.lateral_faces, 4, "should have 4 lateral faces (one per boundary edge)");
+        assert_eq!(thick_result.join_faces, 0, "intersection join should have 0 join faces");
+    }
+
+    #[test]
+    fn thick_solid_face_counting_multiple_faces_removed() {
+        let brep = create_box_brep();
+
+        // Remove 2 opposite faces (e.g., top and bottom, indices 4 and 5)
+        // Each removed face has 4 boundary edges
+        let result = MakeThickSolid::new(&brep, 0.1)
+            .with_faces_to_remove(&[4, 5])
+            .build();
+
+        assert!(result.is_ok(), "MakeThickSolid should succeed with multiple faces");
+        let thick_result = result.unwrap();
+        assert_eq!(thick_result.offset_faces, 4, "should have 4 offset faces");
+        // 4 boundary edges per removed face = 8 lateral faces
+        assert_eq!(thick_result.lateral_faces, 8, "should have 8 lateral faces (4 per removed face)");
+        assert_eq!(thick_result.join_faces, 0, "intersection join should have 0 join faces");
+    }
+
+    #[test]
+    fn thick_solid_face_counting_with_arc_join() {
+        let brep = create_box_brep();
+
+        let result = MakeThickSolid::new(&brep, 0.1)
+            .with_faces_to_remove(&[5])
+            .with_join_type(JoinType::Arc)
+            .build();
+
+        assert!(result.is_ok(), "MakeThickSolid with arc join should succeed");
+        let thick_result = result.unwrap();
+        assert_eq!(thick_result.offset_faces, 5, "should have 5 offset faces");
+        assert_eq!(thick_result.lateral_faces, 4, "should have 4 lateral faces");
+        // Arc join could create join faces at corners, but currently not implemented
+        // This test documents the current behavior
+        assert_eq!(thick_result.join_faces, 0, "arc join faces not yet implemented");
+    }
+
+    #[test]
+    fn thick_solid_face_counting_with_tangent_join() {
+        let brep = create_box_brep();
+
+        let result = MakeThickSolid::new(&brep, 0.1)
+            .with_faces_to_remove(&[5])
+            .with_join_type(JoinType::Tangent)
+            .build();
+
+        assert!(result.is_ok(), "MakeThickSolid with tangent join should succeed");
+        let thick_result = result.unwrap();
+        assert_eq!(thick_result.offset_faces, 5, "should have 5 offset faces");
+        assert_eq!(thick_result.lateral_faces, 4, "should have 4 lateral faces");
+        // Tangent join could create join faces, but currently not implemented
+        assert_eq!(thick_result.join_faces, 0, "tangent join faces not yet implemented");
+    }
+
+    #[test]
+    fn make_hollow_solid_face_counting() {
+        let brep = create_box_brep();
+
+        // make_hollow_solid automatically removes the largest face
+        let result = make_hollow_solid(&brep, 0.1);
+
+        assert!(result.is_ok(), "make_hollow_solid should succeed");
+        let thick_result = result.unwrap();
+        // The largest face is removed, leaving 5 offset faces
+        assert_eq!(thick_result.offset_faces, 5, "should have 5 offset faces");
+        // The removed face has 4 boundary edges
+        assert_eq!(thick_result.lateral_faces, 4, "should have 4 lateral faces");
+        assert_eq!(thick_result.join_faces, 0, "should have 0 join faces");
     }
 }

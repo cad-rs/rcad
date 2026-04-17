@@ -1219,76 +1219,27 @@ fn intersect_surfaces_numerical(
 ///
 /// This function handles trimmed surface boundaries and maintains accuracy
 /// for the parameter space curve (PCurve).
+///
+/// # Algorithm
+///
+/// For analytical surfaces (Plane, Sphere, Cylinder, Cone, Torus), uses
+/// direct analytical formulas with optional Newton-Raphson refinement.
+/// For parametric surfaces (B-spline, Bezier), uses Newton-Raphson iteration.
+///
+/// # Precision
+///
+/// Target precision is 1e-10 for planes and 1e-8 for curved surfaces.
 pub fn project_point_to_surface_uv(
     point: DVec3,
     surf: &Surface3,
     hint_uv: Option<[f64; 2]>,
 ) -> Option<[f64; 2]> {
     match surf {
-        Surface3::Plane(p) => {
-            // For a plane, project the point onto the plane and find UV
-            let v = point - p.origin;
-            // Use the plane basis vectors
-            let u_dir = any_perpendicular(p.normal);
-            let v_dir = p.normal.cross(u_dir);
-            let u = v.dot(u_dir);
-            let v = v.dot(v_dir);
-            Some([u, v])
-        }
-        Surface3::Sphere(s) => {
-            // For a sphere, use spherical coordinates
-            let v = point - s.center;
-            let r = v.length();
-            if r < TOLERANCE_ABS {
-                return hint_uv;
-            }
-            let theta = v.z.atan2(v.x); // azimuthal angle
-            let phi = (v.y / r).clamp(-1.0, 1.0).acos(); // polar angle
-            Some([theta, phi])
-        }
-        Surface3::Cylinder(c) => {
-            // For a cylinder, use cylindrical coordinates
-            let v = point - c.origin;
-            let axis = c.axis.normalize();
-            let height = v.dot(axis);
-            let radial = v - axis * height;
-            let r = radial.length();
-            if r < TOLERANCE_ABS {
-                // On the axis - use hint or default
-                return hint_uv.or(Some([0.0, height]));
-            }
-            let theta = radial.y.atan2(radial.x);
-            Some([theta, height])
-        }
-        Surface3::Cone(c) => {
-            // For a cone, similar to cylinder but with varying radius
-            let v = point - c.apex;
-            let axis = c.axis.normalize();
-            let height = v.dot(axis);
-            let radial = v - axis * height;
-            let r = radial.length();
-            if r < TOLERANCE_ABS {
-                return hint_uv.or(Some([0.0, height]));
-            }
-            let theta = radial.y.atan2(radial.x);
-            Some([theta, height])
-        }
-        Surface3::Torus(t) => {
-            // For a torus, use toroidal coordinates
-            let v = point - t.center;
-            let axis = t.axis.normalize();
-            let z = v.dot(axis);
-            let radial = v - axis * z;
-            let r_xy = radial.length();
-            if r_xy < TOLERANCE_ABS {
-                return hint_uv.or(Some([0.0, 0.0]));
-            }
-            let u = radial.y.atan2(radial.x);
-            // Distance from the torus tube center
-            let d = ((r_xy - t.major_radius).powi(2) + z.powi(2)).sqrt();
-            let v_angle = z.atan2(r_xy - t.major_radius);
-            Some([u, v_angle])
-        }
+        Surface3::Plane(p) => project_point_to_plane_uv(point, p),
+        Surface3::Sphere(s) => project_point_to_sphere_uv(point, s, hint_uv),
+        Surface3::Cylinder(c) => project_point_to_cylinder_uv(point, c, hint_uv),
+        Surface3::Cone(c) => project_point_to_cone_uv(point, c, hint_uv),
+        Surface3::Torus(t) => project_point_to_torus_uv(point, t, hint_uv),
         Surface3::BSpline(_)
         | Surface3::Bezier(_)
         | Surface3::TriBezier(_)
@@ -1304,22 +1255,412 @@ pub fn project_point_to_surface_uv(
     }
 }
 
+/// Compute a deterministic orthonormal frame from a normal vector.
+///
+/// This creates a consistent UV basis from a normal vector by:
+/// 1. Finding the smallest component of the normal
+/// 2. Cross-producting with the corresponding axis to get u_dir
+/// 3. Cross-producting normal × u_dir to get v_dir
+///
+/// This is more numerically stable than `any_perpendicular` and gives
+/// consistent results for the same normal vector.
+fn orthonormal_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
+    let n = normal.normalize_or(DVec3::Z);
+    // Find the axis most perpendicular to n for numerical stability
+    let abs_n = n.abs();
+    let axis = if abs_n.x <= abs_n.y && abs_n.x <= abs_n.z {
+        DVec3::X
+    } else if abs_n.y <= abs_n.x && abs_n.y <= abs_n.z {
+        DVec3::Y
+    } else {
+        DVec3::Z
+    };
+    let u_dir = n.cross(axis).normalize_or(DVec3::X);
+    let v_dir = n.cross(u_dir).normalize_or(DVec3::Y);
+    (u_dir, v_dir)
+}
+
+/// Project a point onto a plane surface and return UV parameters.
+///
+/// The UV coordinates are computed using a deterministic orthonormal basis
+/// derived from the plane normal, ensuring consistent results.
+fn project_point_to_plane_uv(point: DVec3, plane: &Plane) -> Option<[f64; 2]> {
+    let v = point - plane.origin;
+    let (u_dir, v_dir) = orthonormal_basis_from_normal(plane.normal);
+    let u = v.dot(u_dir);
+    let v = v.dot(v_dir);
+    Some([u, v])
+}
+
+/// Project a point onto a sphere surface and return UV parameters.
+///
+/// Uses spherical coordinates compatible with the kernel's `point_at` function.
+///
+/// # Parameters
+/// - `point`: The 3D point to project
+/// - `sphere`: The sphere surface
+/// - `hint_uv`: Optional hint for the initial UV guess (used for disambiguation at poles)
+///
+/// # Returns
+/// - `Some([u, v])` where u is the longitude ∈ [0, 2π] and v is the colatitude ∈ [0, π]
+fn project_point_to_sphere_uv(
+    point: DVec3,
+    sphere: &SphericalSurface,
+    hint_uv: Option<[f64; 2]>,
+) -> Option<[f64; 2]> {
+    let v = point - sphere.center;
+    let r = v.length();
+
+    if r < TOLERANCE_ABS {
+        // Point is at the sphere center - use hint or default
+        return hint_uv.or(Some([0.0, std::f64::consts::FRAC_PI_2]));
+    }
+
+    // Use the same basis vectors as the kernel's point_at function
+    let axis = sphere.axis.normalize_or(DVec3::Z);
+    let x_ax = any_perpendicular(axis);
+    let y_ax = axis.cross(x_ax).normalize();
+
+    // Compute spherical coordinates
+    // u = longitude [0, 2π], v = colatitude [0, π] (0 = north pole)
+    // point_at: center + radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * axis)
+
+    let z = v.dot(axis); // Height along axis (positive = towards axis direction)
+    let radial = v - axis * z; // Projection onto equatorial plane
+    let r_xy = radial.length();
+
+    // Compute u (longitude): angle in the equatorial plane
+    // radial = r_xy * (cos(u) * x_ax + sin(u) * y_ax) * v.sin()
+    // When v.sin() > 0, radial direction = cos(u) * x_ax + sin(u) * y_ax
+    let proj_x = radial.dot(x_ax);
+    let proj_y = radial.dot(y_ax);
+    let u = proj_y.atan2(proj_x);
+
+    // Compute v (colatitude): angle from the axis
+    // cos(v) = z / r, where v ∈ [0, π]
+    // v = 0 means pointing along axis (north pole)
+    // v = π means pointing opposite to axis (south pole)
+    let cos_v = (z / r).clamp(-1.0, 1.0);
+    let v_angle = cos_v.acos();
+
+    // If we have a hint, try to match the azimuthal angle to avoid discontinuities
+    if let Some([hint_u, _]) = hint_uv {
+        // Adjust u to be within 2π of the hint
+        let adjusted_u = adjust_angle_to_hint(u, hint_u);
+        return Some([adjusted_u, v_angle]);
+    }
+
+    Some([u, v_angle])
+}
+
+/// Project a point onto a cylinder surface and return UV parameters.
+///
+/// Uses cylindrical coordinates compatible with the kernel's `point_at` function.
+///
+/// # Parameters
+/// - `point`: The 3D point to project
+/// - `cylinder`: The cylinder surface
+/// - `hint_uv`: Optional hint for the initial UV guess (used when point is on axis)
+///
+/// # Returns
+/// - `Some([u, v])` where u is the azimuthal angle θ ∈ [0, 2π] and v is the height along axis
+fn project_point_to_cylinder_uv(
+    point: DVec3,
+    cylinder: &CylindricalSurface,
+    hint_uv: Option<[f64; 2]>,
+) -> Option<[f64; 2]> {
+    let v = point - cylinder.origin;
+    let axis = cylinder.axis.normalize_or(DVec3::Z);
+    let height = v.dot(axis);
+    let radial = v - axis * height;
+    let r = radial.length();
+
+    if r < TOLERANCE_ABS {
+        // Point is on the axis - use hint's u or default, but always use computed height
+        let u = hint_uv.map(|[u, _]| u).unwrap_or(0.0);
+        return Some([u, height]);
+    }
+
+    // Use the same basis vectors as the kernel's point_at function
+    let x_ax = any_perpendicular(axis);
+    let y_ax = axis.cross(x_ax).normalize();
+
+    // Compute u (azimuthal angle)
+    // radial direction = cos(u) * x_ax + sin(u) * y_ax
+    let proj_x = radial.dot(x_ax);
+    let proj_y = radial.dot(y_ax);
+    let u = proj_y.atan2(proj_x);
+
+    // If we have a hint, try to match the azimuthal angle to avoid discontinuities
+    if let Some([hint_u, _]) = hint_uv {
+        let adjusted_u = adjust_angle_to_hint(u, hint_u);
+        return Some([adjusted_u, height]);
+    }
+
+    Some([u, height])
+}
+
+/// Project a point onto a cone surface and return UV parameters.
+///
+/// For a cone, the UV coordinates are:
+/// - u: azimuthal angle θ ∈ [0, 2π]
+/// - v: distance along the cone generatrix (slant distance) from the reference circle at apex
+///
+/// If the point is not exactly on the cone surface, it is projected
+/// radially onto the surface.
+fn project_point_to_cone_uv(
+    point: DVec3,
+    cone: &ConicalSurface,
+    hint_uv: Option<[f64; 2]>,
+) -> Option<[f64; 2]> {
+    let v = point - cone.apex;
+    let axis = cone.axis_dir();
+
+    // Use the same basis vectors as the kernel's point_at function
+    let x_ax = any_perpendicular(axis);
+    let y_ax = axis.cross(x_ax).normalize();
+
+    // Compute axial distance (height along axis)
+    let axial = v.dot(axis);
+
+    // Compute radial distance in the equatorial plane
+    let radial_vec = v - axis * axial;
+    let radial_len = radial_vec.length();
+
+    // Compute u (azimuthal angle)
+    let u = if radial_len < TOLERANCE_ABS {
+        // Point is on the axis - use hint or default
+        if let Some([hint_u, _]) = hint_uv {
+            hint_u
+        } else {
+            0.0
+        }
+    } else {
+        let proj_x = radial_vec.dot(x_ax);
+        let proj_y = radial_vec.dot(y_ax);
+        proj_y.atan2(proj_x)
+    };
+
+    // Compute v (slant distance)
+    // For a cone: radius_at_slant = cone.radius + slant * sin(half_angle)
+    //             axial_from_slant = slant * cos(half_angle)
+    // Given axial distance, compute slant:
+    let cos_half = cone.half_angle_rad.cos();
+    let slant = if cos_half.abs() > 1e-12 {
+        axial / cos_half
+    } else {
+        0.0
+    };
+
+    // If slant is negative, the point is below the apex
+    if slant < -TOLERANCE_ABS {
+        return None;
+    }
+
+    let v = slant.max(0.0);
+
+    // If we have a hint, try to match the azimuthal angle to avoid discontinuities
+    if let Some([hint_u, _]) = hint_uv {
+        let adjusted_u = adjust_angle_to_hint(u, hint_u);
+        return Some([adjusted_u, v]);
+    }
+
+    Some([u, v])
+}
+
+/// Project a point onto a torus surface and return UV parameters.
+///
+/// For a torus, the UV coordinates are:
+/// - u: angle around the major radius (0 to 2π)
+/// - v: angle around the tube (0 to 2π)
+///
+/// Uses Newton-Raphson iteration for improved accuracy when the point
+/// is not exactly on the torus surface.
+fn project_point_to_torus_uv(
+    point: DVec3,
+    torus: &ToroidalSurface,
+    hint_uv: Option<[f64; 2]>,
+) -> Option<[f64; 2]> {
+    let v = point - torus.center;
+    let axis = torus.axis.normalize_or(DVec3::Z);
+    let z = v.dot(axis);
+    let radial = v - axis * z;
+    let r_xy = radial.length();
+
+    if r_xy < TOLERANCE_ABS {
+        // Point is on the axis - use hint or default
+        return hint_uv.or(Some([0.0, 0.0]));
+    }
+
+    // Use the same basis vectors as the kernel's point_at function
+    let x_ax = any_perpendicular(axis);
+    let y_ax = axis.cross(x_ax).normalize();
+
+    // Compute u: angle around the major circle
+    // radial direction in XY plane = cos(u) * x_ax + sin(u) * y_ax
+    let proj_x = radial.dot(x_ax);
+    let proj_y = radial.dot(y_ax);
+    let u = proj_y.atan2(proj_x);
+
+    // Compute v: angle around the tube
+    // The tube center at angle u is at distance major_radius from the torus center
+    // v is the angle from the tube center to the point
+    let d_from_major_circle = r_xy - torus.major_radius;
+    let v_angle = z.atan2(d_from_major_circle);
+
+    // Use Newton-Raphson to refine if needed
+    let uv = [u, v_angle];
+    let refined_uv = refine_torus_uv(point, torus, uv, hint_uv);
+
+    // If we have a hint, try to match the azimuthal angle to avoid discontinuities
+    if let Some([hint_u, _]) = hint_uv {
+        let adjusted_u = adjust_angle_to_hint(refined_uv[0], hint_u);
+        return Some([adjusted_u, refined_uv[1]]);
+    }
+
+    Some(refined_uv)
+}
+
+/// Adjust angle to be within 2π of a hint angle.
+///
+/// This helps avoid discontinuities when the angle crosses -π/π boundaries.
+fn adjust_angle_to_hint(angle: f64, hint: f64) -> f64 {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let mut adjusted = angle;
+
+    // Bring adjusted within 2π of the hint
+    while adjusted - hint > std::f64::consts::PI {
+        adjusted -= two_pi;
+    }
+    while hint - adjusted > std::f64::consts::PI {
+        adjusted += two_pi;
+    }
+
+    adjusted
+}
+
+/// Refine UV parameters for torus using Newton-Raphson iteration.
+///
+/// This improves accuracy when the point is not exactly on the torus surface.
+fn refine_torus_uv(
+    point: DVec3,
+    torus: &ToroidalSurface,
+    initial_uv: [f64; 2],
+    hint_uv: Option<[f64; 2]>,
+) -> [f64; 2] {
+    let mut uv = initial_uv;
+    let tol = 1e-10;
+    let max_iter = 10;
+
+    let axis = torus.axis.normalize_or(DVec3::Z);
+    // Use the same basis vectors as the kernel's point_at function
+    let x_ax = any_perpendicular(axis);
+    let y_ax = axis.cross(x_ax).normalize();
+
+    for _ in 0..max_iter {
+        // Compute point on torus at current UV
+        let cos_u = uv[0].cos();
+        let sin_u = uv[0].sin();
+        let cos_v = uv[1].cos();
+        let sin_v = uv[1].sin();
+
+        let tube_center = torus.center + torus.major_radius * (cos_u * x_ax + sin_u * y_ax);
+        let radial = (cos_u * x_ax + sin_u * y_ax).normalize();
+        let p = tube_center + torus.minor_radius * (cos_v * radial + sin_v * axis);
+
+        let diff = point - p;
+        let err_sq = diff.length_squared();
+
+        if err_sq < tol * tol {
+            return uv;
+        }
+
+        // Compute partial derivatives analytically
+        // ∂P/∂u = major_radius * (-sin_u * x_ax + cos_u * y_ax) + minor_radius * cos_v * (-sin_u * x_ax + cos_u * y_ax)
+        // ∂P/∂v = minor_radius * (-sin_v * radial + cos_v * axis)
+        let du = (torus.major_radius + torus.minor_radius * cos_v) * (-sin_u * x_ax + cos_u * y_ax);
+        let dv = torus.minor_radius * (-sin_v * radial + cos_v * axis);
+
+        // Solve the 2x2 system for the Newton step
+        let a = du.dot(du);
+        let b = du.dot(dv);
+        let c = dv.dot(dv);
+
+        let det = a * c - b * b;
+        if det.abs() < 1e-20 {
+            break;
+        }
+
+        let fx = diff.dot(du);
+        let fy = diff.dot(dv);
+
+        // Damped Newton step
+        let step_u = (c * fx - b * fy) / det;
+        let step_v = (-b * fx + a * fy) / det;
+
+        // Apply damping for stability
+        let damping = 0.5;
+        uv[0] += damping * step_u;
+        uv[1] += damping * step_v;
+    }
+
+    // If we have a hint, check if we should use it for final convergence
+    if let Some([hint_u, _]) = hint_uv {
+        // Verify the result by checking distance
+        let cos_u = uv[0].cos();
+        let sin_u = uv[0].sin();
+        let cos_v = uv[1].cos();
+        let sin_v = uv[1].sin();
+        let tube_center = torus.center + torus.major_radius * (cos_u * x_ax + sin_u * y_ax);
+        let radial = (cos_u * x_ax + sin_u * y_ax).normalize();
+        let p = tube_center + torus.minor_radius * (cos_v * radial + sin_v * axis);
+        let final_err = (point - p).length_squared();
+
+        if final_err > 1e-6 {
+            // Fall back to hint-based approach
+            let adjusted_u = adjust_angle_to_hint(uv[0], hint_u);
+            return [adjusted_u, uv[1]];
+        }
+    }
+
+    uv
+}
+
 /// Newton iteration for projecting a point onto a parametric surface.
+///
+/// Uses a damped Newton-Raphson method with:
+/// - Analytical derivative computation via finite differences
+/// - Adaptive step damping for stability
+/// - Convergence checks with fallback handling
+/// - Better initial guess strategies
 fn project_point_to_parametric_surface(
     point: DVec3,
     surf: &Surface3,
     initial_uv: Option<[f64; 2]>,
 ) -> Option<[f64; 2]> {
-    let mut uv = initial_uv.unwrap_or([0.5, 0.5]);
+    // Get a better initial guess if not provided
+    let mut uv = initial_uv.unwrap_or_else(|| compute_initial_uv_guess(point, surf));
+
     let tol = TOLERANCE_ABS;
-    let max_iter = 20;
+    let max_iter = 30;
     let h = 1e-6; // Finite difference step
 
-    for _ in 0..max_iter {
+    // Track best solution for fallback
+    let mut best_uv = uv;
+    let mut best_err = f64::MAX;
+
+    for iter in 0..max_iter {
         let p = surf.point_at(uv[0], uv[1]);
         let diff = point - p;
+        let err_sq = diff.length_squared();
 
-        if diff.length_squared() < tol * tol {
+        // Track best solution
+        if err_sq < best_err {
+            best_err = err_sq;
+            best_uv = uv;
+        }
+
+        if err_sq < tol * tol {
             return Some(uv);
         }
 
@@ -1339,25 +1680,116 @@ fn project_point_to_parametric_surface(
 
         let det = a * c - b * b;
         if det.abs() < 1e-12 {
+            // Singular Jacobian - try a small perturbation
+            if iter < max_iter - 1 {
+                uv[0] += 0.01 * (rand_det() - 0.5);
+                uv[1] += 0.01 * (rand_det() - 0.5);
+                continue;
+            }
             break;
         }
 
         let fx = diff.dot(du);
         let fy = diff.dot(dv);
 
-        let duv = 1.0 / det * DVec3::new(c * fx - b * fy, -b * fx + a * fy, 0.0);
+        let step_u = (c * fx - b * fy) / det;
+        let step_v = (-b * fx + a * fy) / det;
 
-        uv[0] += duv.x;
-        uv[1] += duv.y;
+        // Compute damping factor based on step size
+        let step_norm = (step_u * step_u + step_v * step_v).sqrt();
+        let damping = if step_norm > 1.0 {
+            1.0 / step_norm
+        } else if iter < 5 {
+            0.5 // More damping in early iterations
+        } else {
+            0.8 // Less damping as we approach convergence
+        };
+
+        uv[0] += damping * step_u;
+        uv[1] += damping * step_v;
+
+        // Clamp UV to valid domain if the surface has bounded domain
+        let domain = surf.default_domain();
+        if domain[0].is_finite() {
+            uv[0] = uv[0].clamp(domain[0], domain[1]);
+        }
+        if domain[2].is_finite() {
+            uv[1] = uv[1].clamp(domain[2], domain[3]);
+        }
     }
 
-    // Check if we converged
-    let p = surf.point_at(uv[0], uv[1]);
-    if (point - p).length_squared() < tol * tol * 100.0 {
-        Some(uv)
+    // Return best solution if close enough
+    if best_err < tol * tol * 100.0 {
+        Some(best_uv)
     } else {
         None
     }
+}
+
+/// Compute an initial UV guess for parametric surface projection.
+///
+/// Uses multiple strategies to find a good starting point:
+/// 1. Sample the surface at a grid of points
+/// 2. Find the closest sampled point
+/// 3. Use its UV as the initial guess
+fn compute_initial_uv_guess(point: DVec3, surf: &Surface3) -> [f64; 2] {
+    let domain = surf.default_domain();
+
+    // Default to center of domain
+    let u_center = if domain[0].is_finite() && domain[1].is_finite() {
+        (domain[0] + domain[1]) / 2.0
+    } else {
+        0.5
+    };
+    let v_center = if domain[2].is_finite() && domain[3].is_finite() {
+        (domain[2] + domain[3]) / 2.0
+    } else {
+        0.5
+    };
+
+    // Sample a 5x5 grid
+    let n_samples = 5;
+    let mut best_uv = [u_center, v_center];
+    let mut best_dist_sq = f64::MAX;
+
+    for i in 0..n_samples {
+        for j in 0..n_samples {
+            let u = if domain[0].is_finite() && domain[1].is_finite() {
+                domain[0] + (domain[1] - domain[0]) * (i as f64) / ((n_samples - 1) as f64)
+            } else {
+                u_center + (i as f64 - (n_samples as f64) / 2.0) * 0.2
+            };
+            let v = if domain[2].is_finite() && domain[3].is_finite() {
+                domain[2] + (domain[3] - domain[2]) * (j as f64) / ((n_samples - 1) as f64)
+            } else {
+                v_center + (j as f64 - (n_samples as f64) / 2.0) * 0.2
+            };
+
+            let p = surf.point_at(u, v);
+            let dist_sq = (point - p).length_squared();
+
+            if dist_sq < best_dist_sq {
+                best_dist_sq = dist_sq;
+                best_uv = [u, v];
+            }
+        }
+    }
+
+    best_uv
+}
+
+/// Simple deterministic pseudo-random number for perturbation.
+///
+/// Returns a value in [0, 1) that varies based on the call pattern.
+fn rand_det() -> f64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(12345);
+    let x = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Simple xorshift
+    let x = x ^ (x >> 12);
+    let x = x ^ (x << 25);
+    let x = x ^ (x >> 27);
+    (x.wrapping_mul(0x2545F4914F6CDD1D) as f64) / (u64::MAX as f64)
 }
 
 /// Convert an intersection curve to a Curve3 with parameter range.
@@ -1546,6 +1978,9 @@ fn offset_edge(
 }
 
 /// Compute the normal at a vertex on a specific face.
+///
+/// Projects the vertex point onto the surface to get accurate UV parameters,
+/// then evaluates the surface normal at that UV.
 fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize) -> DVec3 {
     let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
         Some(s) => s,
@@ -1567,10 +2002,14 @@ fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize
     // Find a point on the face near this vertex
     let vertex_point = brep.vertices[vertex_idx].point;
 
-    // Compute surface normal at approximate UV
-    // For now, use the face normal as approximation
-    // TODO: Project vertex onto surface to get accurate UV
-    surf.normal_at(0.5, 0.5)
+    // Project vertex onto surface to get accurate UV parameters
+    match project_point_to_surface_uv(vertex_point, surf, None) {
+        Some([u, v]) => surf.normal_at(u, v),
+        None => {
+            // Fall back to face normal if projection fails
+            face.normal
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4126,6 +4565,317 @@ mod tests {
                 assert!((c.radius - r1_expected).abs() < 1e-6, "Circle radius should match");
             }
             other => panic!("Expected Circle, got {other:?}"),
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // UV Projection Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn project_point_to_plane_uv_basic() {
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let surf = Surface3::Plane(plane);
+
+        // Point on the plane at (1, 2, 0)
+        let point = DVec3::new(1.0, 2.0, 0.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        // Verify by reconstructing the point
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-10, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_plane_uv_offset_origin() {
+        let plane = Plane {
+            origin: DVec3::new(5.0, 5.0, 5.0),
+            normal: DVec3::Z,
+        };
+        let surf = Surface3::Plane(plane);
+
+        // Point on the plane
+        let point = DVec3::new(6.0, 7.0, 5.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-10, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_sphere_uv_basic() {
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        };
+        let surf = Surface3::Sphere(sphere);
+
+        // Point on the sphere at (2, 0, 0)
+        let point = DVec3::new(2.0, 0.0, 0.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_sphere_uv_pole() {
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        };
+        let surf = Surface3::Sphere(sphere);
+
+        // Point at the north pole
+        let point = DVec3::new(0.0, 0.0, 2.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_sphere_uv_with_hint() {
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        };
+        let surf = Surface3::Sphere(sphere);
+
+        // Point exactly on the sphere near the seam (u = π)
+        let point = DVec3::new(-2.0, 0.0, 0.0);
+
+        // Without hint, might get u ≈ -π or u ≈ π
+        let uv_no_hint = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        // With hint u = π, should get u close to π
+        // Use v = π/2 for the equator where the point is
+        let uv_with_hint = project_point_to_surface_uv(point, &surf, Some([std::f64::consts::PI, std::f64::consts::FRAC_PI_2])).unwrap();
+
+        // Both should reconstruct to the same point
+        let p1 = surf.point_at(uv_no_hint[0], uv_no_hint[1]);
+        let p2 = surf.point_at(uv_with_hint[0], uv_with_hint[1]);
+        assert!((point - p1).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - p2).length() < 1e-8, "Reconstructed point should match with hint");
+    }
+
+    #[test]
+    fn project_point_to_cylinder_uv_basic() {
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
+        let surf = Surface3::Cylinder(cylinder);
+
+        // Point on the cylinder at (1, 0, 5)
+        let point = DVec3::new(1.0, 0.0, 5.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_cylinder_uv_quadrant() {
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
+        let surf = Surface3::Cylinder(cylinder);
+
+        // Point at 45 degrees in XY plane
+        let r = 1.0_f64 / std::f64::consts::SQRT_2;
+        let point = DVec3::new(r, r, 3.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+
+        // Check that v is 3.0
+        assert!((uv[1] - 3.0).abs() < 1e-10, "v should be 3.0");
+
+        // The u angle depends on the basis chosen by any_perpendicular
+        // Just verify that reconstruction works correctly
+    }
+
+    #[test]
+    fn project_point_to_cylinder_uv_axis() {
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
+        let surf = Surface3::Cylinder(cylinder);
+
+        // Point on the axis - should use hint
+        let point = DVec3::new(0.0, 0.0, 5.0);
+        let uv = project_point_to_surface_uv(point, &surf, Some([1.0, 0.0])).unwrap();
+
+        // v should be 5.0, u can be anything
+        assert!((uv[1] - 5.0).abs() < 1e-10, "v should be 5.0");
+    }
+
+    #[test]
+    fn project_point_to_cone_uv_basic() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            half_angle_rad: std::f64::consts::FRAC_PI_4, // 45 degrees
+            radius: 0.0, // Not used for UV computation
+        };
+        let surf = Surface3::Cone(cone);
+
+        // At height = 2, radius should be 2 * tan(45°) = 2
+        let point = DVec3::new(2.0, 0.0, 2.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_torus_uv_basic() {
+        let torus = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        };
+        let surf = Surface3::Torus(torus);
+
+        // Point on the outer edge of the torus
+        let point = DVec3::new(2.5, 0.0, 0.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_torus_uv_top() {
+        let torus = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        };
+        let surf = Surface3::Torus(torus);
+
+        // Point on the top of the torus tube
+        let point = DVec3::new(2.0, 0.0, 0.5);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_torus_uv_inner() {
+        let torus = ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        };
+        let surf = Surface3::Torus(torus);
+
+        // Point on the inner edge of the torus
+        let point = DVec3::new(1.5, 0.0, 0.0);
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+    }
+
+    #[test]
+    fn project_point_to_surface_uv_consistency() {
+        // Test that multiple calls with the same point give consistent results
+        let sphere = SphericalSurface {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Z,
+            radius: 5.0,
+        };
+        let surf = Surface3::Sphere(sphere);
+
+        let point = DVec3::new(4.0, 6.0, 3.0);
+
+        let uv1 = project_point_to_surface_uv(point, &surf, None).unwrap();
+        let uv2 = project_point_to_surface_uv(point, &surf, None).unwrap();
+
+        assert!((uv1[0] - uv2[0]).abs() < 1e-12, "u should be consistent");
+        assert!((uv1[1] - uv2[1]).abs() < 1e-12, "v should be consistent");
+    }
+
+    #[test]
+    fn project_point_to_surface_uv_precision() {
+        // Test high precision for various surface types
+        let sphere = SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 100.0,
+        };
+        let surf = Surface3::Sphere(sphere);
+
+        // Point at a non-trivial angle
+        let theta: f64 = 1.234;
+        let phi: f64 = 0.789;
+        let point = DVec3::new(
+            100.0 * phi.sin() * theta.cos(),
+            100.0 * phi.sin() * theta.sin(),
+            100.0 * phi.cos(),
+        );
+
+        let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
+        let reconstructed = surf.point_at(uv[0], uv[1]);
+
+        // Should achieve sub-micron precision for 100m sphere
+        assert!((point - reconstructed).length() < 1e-6, "High precision should be achieved");
+    }
+
+    #[test]
+    fn orthonormal_basis_deterministic() {
+        use super::orthonormal_basis_from_normal;
+
+        // Same normal should give same basis
+        let n1 = DVec3::new(1.0, 2.0, 3.0).normalize();
+        let n2 = DVec3::new(1.0, 2.0, 3.0).normalize();
+
+        let (u1, v1) = orthonormal_basis_from_normal(n1);
+        let (u2, v2) = orthonormal_basis_from_normal(n2);
+
+        assert!((u1 - u2).length() < 1e-12, "u should be deterministic");
+        assert!((v1 - v2).length() < 1e-12, "v should be deterministic");
+    }
+
+    #[test]
+    fn orthonormal_basis_orthogonal() {
+        use super::orthonormal_basis_from_normal;
+
+        let normals = vec![
+            DVec3::X,
+            DVec3::Y,
+            DVec3::Z,
+            DVec3::new(1.0, 1.0, 1.0).normalize(),
+            DVec3::new(1.0, 2.0, 3.0).normalize(),
+        ];
+
+        for n in normals {
+            let (u, v) = orthonormal_basis_from_normal(n);
+
+            // Check orthonormality
+            assert!(u.dot(n).abs() < 1e-10, "u should be perpendicular to n");
+            assert!(v.dot(n).abs() < 1e-10, "v should be perpendicular to n");
+            assert!((u.length() - 1.0).abs() < 1e-10, "u should be unit");
+            assert!((v.length() - 1.0).abs() < 1e-10, "v should be unit");
+            assert!((u.dot(v)).abs() < 1e-10, "u and v should be perpendicular");
         }
     }
 }
