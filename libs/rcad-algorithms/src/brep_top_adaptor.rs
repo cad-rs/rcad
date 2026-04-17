@@ -826,6 +826,9 @@ impl<'a> ShapeIterator<'a> {
             self.state.solid_idx += 1;
             self.state.shell_idx = 0;
             self.state.face_idx = 0;
+        } else {
+            // End of iteration - advance past the last face so get_current_face returns None
+            self.state.face_idx += 1;
         }
     }
 }
