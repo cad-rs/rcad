@@ -875,11 +875,13 @@ impl Tessellator {
 #[cfg(test)]
 mod tests {
     use super::Tessellator;
+    use rcad_algorithms::{mesh_brep, TessellationParams};
     use rcad_kernel::{BRep, PrimitiveSolid};
 
     #[test]
     fn tessellate_sphere_hides_seam_edges_in_line_indices() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert!(
             mesh.line_indices.is_empty(),
@@ -889,13 +891,285 @@ mod tests {
 
     #[test]
     fn tessellate_box_keeps_regular_edges_in_line_indices() {
-        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
             depth: 1.0,
         });
+        mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert_eq!(mesh.line_indices.len(), brep.edges.len() * 2);
+    }
+
+    #[test]
+    fn test_tessellate_cylinder() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify vertices are generated
+        assert!(!mesh.vertices.is_empty(), "cylinder should generate vertices");
+
+        // Verify triangles are generated (indices should be divisible by 3)
+        assert!(!mesh.indices.is_empty(), "cylinder should generate indices");
+        assert_eq!(
+            mesh.indices.len() % 3,
+            0,
+            "indices should form complete triangles"
+        );
+
+        // Verify smooth normals are generated
+        assert_eq!(
+            mesh.normals.len(),
+            mesh.vertices.len(),
+            "cylinder should have per-vertex normals for smooth shading"
+        );
+
+        // Verify reasonable mesh density (cylinder should have multiple quads around)
+        assert!(
+            mesh.vertices.len() > 20,
+            "cylinder should have sufficient vertices for curvature"
+        );
+    }
+
+    #[test]
+    fn test_tessellate_sphere() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify vertices are generated
+        assert!(!mesh.vertices.is_empty(), "sphere should generate vertices");
+
+        // Verify triangles are generated (indices should be divisible by 3)
+        assert!(!mesh.indices.is_empty(), "sphere should generate indices");
+        assert_eq!(
+            mesh.indices.len() % 3,
+            0,
+            "indices should form complete triangles"
+        );
+
+        // Verify smooth normals are generated
+        assert_eq!(
+            mesh.normals.len(),
+            mesh.vertices.len(),
+            "sphere should have per-vertex normals for smooth shading"
+        );
+
+        // Verify reasonable mesh density
+        assert!(
+            mesh.vertices.len() > 50,
+            "sphere should have sufficient vertices for curvature"
+        );
+    }
+
+    #[test]
+    fn test_tessellate_cone() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cone {
+            base_radius: 1.0,
+            height: 2.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify vertices are generated
+        assert!(!mesh.vertices.is_empty(), "cone should generate vertices");
+
+        // Verify triangles are generated (indices should be divisible by 3)
+        assert!(!mesh.indices.is_empty(), "cone should generate indices");
+        assert_eq!(
+            mesh.indices.len() % 3,
+            0,
+            "indices should form complete triangles"
+        );
+
+        // Verify smooth normals are generated
+        assert_eq!(
+            mesh.normals.len(),
+            mesh.vertices.len(),
+            "cone should have per-vertex normals for smooth shading"
+        );
+
+        // Verify reasonable mesh density
+        assert!(
+            mesh.vertices.len() > 10,
+            "cone should have sufficient vertices for curvature"
+        );
+    }
+
+    #[test]
+    fn test_tessellate_torus() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify vertices are generated
+        assert!(!mesh.vertices.is_empty(), "torus should generate vertices");
+
+        // Verify triangles are generated (indices should be divisible by 3)
+        assert!(!mesh.indices.is_empty(), "torus should generate indices");
+        assert_eq!(
+            mesh.indices.len() % 3,
+            0,
+            "indices should form complete triangles"
+        );
+
+        // Verify smooth normals are generated
+        assert_eq!(
+            mesh.normals.len(),
+            mesh.vertices.len(),
+            "torus should have per-vertex normals for smooth shading"
+        );
+
+        // Verify reasonable mesh density (torus is complex, needs many vertices)
+        assert!(
+            mesh.vertices.len() > 100,
+            "torus should have sufficient vertices for double curvature"
+        );
+    }
+
+    /// Test adaptive tessellation with edge-sensitive refinement.
+    /// High-quality tessellation should produce more triangles on curved surfaces
+    /// compared to preview quality, demonstrating adaptive refinement behavior.
+    #[test]
+    fn test_adaptive_tessellation() {
+        use rcad_algorithms::TessellationParams;
+
+        // Create a cylinder which has both flat (top/bottom) and curved (side) surfaces
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+
+        // Tessellate with preview settings (lower quality, no adaptive refinement)
+        let preview_params = TessellationParams::preview();
+        let preview_mesh = Tessellator::tessellate_with_options(&mut brep, &preview_params);
+
+        // Count triangles for preview mesh
+        let preview_tri_count = preview_mesh.indices.len() / 3;
+
+        // Reset mesh dirty flags for re-tessellation
+        for solid in &mut brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.mesh_dirty = true;
+                }
+            }
+        }
+
+        // Tessellate with high-quality settings (adaptive refinement enabled)
+        let hq_params = TessellationParams::high_quality();
+        let hq_mesh = Tessellator::tessellate_with_options(&mut brep, &hq_params);
+
+        // Count triangles for high-quality mesh
+        let hq_tri_count = hq_mesh.indices.len() / 3;
+
+        // High-quality tessellation with adaptive refinement should produce more triangles
+        // on curved surfaces (cylinder sides) than preview quality
+        assert!(
+            hq_tri_count > preview_tri_count,
+            "High-quality tessellation ({} triangles) should produce more triangles than preview ({} triangles) on curved surfaces",
+            hq_tri_count,
+            preview_tri_count
+        );
+
+        // Verify the high-quality mesh has reasonable triangle count for a cylinder
+        // A cylinder should have at least enough triangles to represent the curved surface
+        assert!(
+            hq_tri_count >= 12, // Minimum reasonable for a cylinder
+            "High-quality cylinder mesh should have at least 12 triangles, got {}",
+            hq_tri_count
+        );
+    }
+
+    /// Test triangle quality by validating aspect ratios.
+    /// Triangles should not have extreme aspect ratios that would cause rendering artifacts.
+    #[test]
+    fn test_triangle_quality() {
+        use rcad_algorithms::TessellationParams;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let params = TessellationParams::standard();
+        let mesh = Tessellator::tessellate_with_options(&mut brep, &params);
+
+        let vertices = &mesh.vertices;
+        let max_allowed_aspect_ratio = 25.0; // Reasonable threshold for mesh quality
+
+        let mut max_aspect_ratio = 0.0f32;
+        let mut triangles_with_bad_aspect = 0usize;
+
+        // Check each triangle's aspect ratio
+        for tri_idx in 0..(mesh.indices.len() / 3) {
+            let i0 = mesh.indices[tri_idx * 3] as usize;
+            let i1 = mesh.indices[tri_idx * 3 + 1] as usize;
+            let i2 = mesh.indices[tri_idx * 3 + 2] as usize;
+
+            let v0 = glam::Vec3::from(vertices[i0]);
+            let v1 = glam::Vec3::from(vertices[i1]);
+            let v2 = glam::Vec3::from(vertices[i2]);
+
+            let aspect_ratio = compute_triangle_aspect_ratio(v0, v1, v2);
+            max_aspect_ratio = max_aspect_ratio.max(aspect_ratio);
+
+            if aspect_ratio > max_allowed_aspect_ratio {
+                triangles_with_bad_aspect += 1;
+            }
+        }
+
+        let total_triangles = mesh.indices.len() / 3;
+
+        // Allow a small percentage of bad triangles (some edge cases are acceptable)
+        let bad_ratio = triangles_with_bad_aspect as f32 / total_triangles as f32;
+        assert!(
+            bad_ratio < 0.05, // Less than 5% bad triangles
+            "Too many triangles with bad aspect ratio: {}/{} ({:.1}%)",
+            triangles_with_bad_aspect,
+            total_triangles,
+            bad_ratio * 100.0
+        );
+
+        // Log the maximum aspect ratio for debugging
+        println!(
+            "Sphere mesh: {} triangles, max aspect ratio: {:.2}",
+            total_triangles, max_aspect_ratio
+        );
+    }
+
+    /// Compute the aspect ratio of a triangle.
+    /// Aspect ratio = longest_edge / (2 * sqrt(3) * inradius)
+    /// An equilateral triangle has aspect ratio = 1.0
+    fn compute_triangle_aspect_ratio(v0: glam::Vec3, v1: glam::Vec3, v2: glam::Vec3) -> f32 {
+        let e0 = (v1 - v0).length();
+        let e1 = (v2 - v1).length();
+        let e2 = (v0 - v2).length();
+
+        let longest_edge = e0.max(e1).max(e2);
+
+        // Compute area using cross product
+        let cross = (v1 - v0).cross(v2 - v0);
+        let area = cross.length() * 0.5;
+
+        if area < 1e-10 {
+            // Degenerate triangle
+            return f32::MAX;
+        }
+
+        // Semi-perimeter
+        let s = (e0 + e1 + e2) * 0.5;
+
+        // Inradius = area / s
+        let inradius = area / s;
+
+        // Aspect ratio = longest_edge / (2 * sqrt(3) * inradius)
+        // For equilateral triangle: inradius = edge / (2 * sqrt(3))
+        // So aspect ratio = 1.0 for equilateral
+        longest_edge / (2.0 * f32::sqrt(3.0) * inradius)
     }
 }
 
