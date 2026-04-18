@@ -1001,4 +1001,77 @@ mod tests {
         let result = boolean_op_with_options(BooleanOpType::Intersection, &cylinder, &box_, opts);
         assert!(result.is_ok(), "near-tangent cylinder-plane intersection should succeed with fuzzy tolerance");
     }
+
+    // ============================================================================
+    // Thin Wall Tests
+    // ============================================================================
+
+    /// Test difference creating thin walls (0.1 thickness).
+    /// This verifies the kernel's ability to handle thin wall geometry that can
+    /// be prone to numerical issues and degenerate faces.
+    #[test]
+    fn test_thin_wall_difference() {
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+        use glam::DVec3;
+        use rcad_modeling::make_box_brep;
+
+        // Outer box with inner box creating thin wall (0.1 thickness)
+        let mut outer =
+            make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        let mut inner = make_box_brep(
+            DVec3::new(0.1, 0.1, 0.1),
+            DVec3::X,
+            DVec3::Y,
+            9.8,
+            9.8,
+            9.8,
+        )
+        .unwrap();
+        populate_box_geom(&mut outer);
+        populate_box_geom(&mut inner);
+
+        let result = boolean_op_simplified(
+            BooleanOpType::Difference,
+            &outer,
+            &inner,
+            SimplifyOptions::default(),
+        );
+        assert!(
+            result.is_ok(),
+            "thin wall difference should succeed"
+        );
+    }
+
+    /// Test very thin geometry (sheet metal thickness).
+    /// This verifies the kernel's ability to handle sheet metal geometry with
+    /// very thin dimensions that can challenge boolean operations.
+    #[test]
+    fn test_sheet_metal_thickness() {
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+        use glam::DVec3;
+        use rcad_modeling::make_box_brep;
+
+        // Sheet metal panel (100x100x0.5mm typical sheet metal thickness)
+        let mut panel =
+            make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 100.0, 100.0, 0.5).unwrap();
+        // Small hole cut into the panel
+        let mut hole =
+            make_box_brep(DVec3::new(45.0, 45.0, -0.1), DVec3::X, DVec3::Y, 10.0, 10.0, 0.7)
+                .unwrap();
+        populate_box_geom(&mut panel);
+        populate_box_geom(&mut hole);
+
+        let result = boolean_op_simplified(
+            BooleanOpType::Difference,
+            &panel,
+            &hole,
+            SimplifyOptions::default(),
+        );
+        assert!(
+            result.is_ok(),
+            "sheet metal hole cut should succeed"
+        );
+    }
 }
