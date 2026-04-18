@@ -1039,6 +1039,7 @@ dependencies = [
  "rcad-algorithms",
  "rcad-kernel",
  "rcad-modeling",
+ "rcad-scene",
  "serde",
  "serde_json",
 ]
