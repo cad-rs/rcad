@@ -546,23 +546,11 @@ impl Part21Writer {
                     if face_edge_set.contains(&edge_index) {
                         continue;
                     }
-                    let mut edge_item = self.write_edge_curve_geometry_by_index(brep, edge_index);
-                    if let Some(edge) = brep.edges.get(edge_index)
-                        && let (Some(v0), Some(v1)) =
-                            (brep.vertices.get(edge.start), brep.vertices.get(edge.end))
-                    {
-                        edge_item = self.trimmed_curve_with_points(
-                            edge_item,
-                            dvec3_to_array(v0.point),
-                            dvec3_to_array(v1.point),
-                            0.0,
-                            1.0,
-                        );
-                    }
-                    edge_items.push(edge_item);
+                    // Export orphan edges as EDGE_CURVE entities to preserve topology
+                    edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
                     continue;
                 }
-                edge_items.push(self.write_edge_curve_geometry_by_index(brep, edge_index));
+                edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
             } else if selected_edge_set.contains(&edge_index) {
                 edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
             }
