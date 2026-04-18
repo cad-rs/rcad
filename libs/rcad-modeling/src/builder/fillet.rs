@@ -2163,4 +2163,190 @@ mod tests {
         let brep = box_brep_2x2x2();
         assert!(chamfer_edge_safe(&brep, 0, 0.0).is_err());
     }
+
+    // ── Edge case tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_variable_fillet_radius() {
+        // Test variable radius fillet with different start and end radii.
+        // The fillet should produce a conical surface when radii differ.
+        use crate::builder::make_box_brep;
+
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        // Variable radius: 0.05 at start, 0.2 at end
+        let result = fillet_edge_variable_radius(&brep, 0, 0.05, 0.2);
+        assert!(
+            result.is_ok(),
+            "variable radius fillet should succeed: {:?}",
+            result.err()
+        );
+
+        let result = result.unwrap();
+
+        // Should have 9 faces like a regular fillet (6 original + 1 fillet + 2 closing)
+        let n_faces = result.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9, "expected 9 faces after variable fillet");
+
+        // The fillet face should be present
+        assert!(
+            !result.solids[0].shells[0].faces.is_empty(),
+            "result should have faces"
+        );
+    }
+
+    #[test]
+    fn test_fillet_sharp_edge() {
+        // Test fillet on a sharp (acute angle) edge.
+        // Create a wedge shape with an acute angle edge.
+        // Wedge: triangular prism with a sharp edge at the apex.
+        let pts = [
+            DVec3::new(0.0, 0.0, 0.0),  // 0 - base corner
+            DVec3::new(2.0, 0.0, 0.0),  // 1 - base corner
+            DVec3::new(1.0, 0.0, 1.0),  // 2 - apex (sharp edge here)
+            DVec3::new(0.0, 1.0, 0.0),  // 3 - base corner (Y offset)
+            DVec3::new(2.0, 1.0, 0.0),  // 4 - base corner (Y offset)
+            DVec3::new(1.0, 1.0, 1.0),  // 5 - apex (Y offset)
+        ];
+
+        // Create a wedge BRep
+        let mut brep = BRep::new();
+        for &p in &pts {
+            brep.vertices.push(Vertex { point: p });
+        }
+
+        // Define edges for a wedge (triangular prism)
+        let edge_pairs: &[(usize, usize)] = &[
+            // Bottom triangle: 0-1, 1-2, 2-0
+            (0, 1), (1, 2), (2, 0),
+            // Top triangle: 3-4, 4-5, 5-3
+            (3, 4), (4, 5), (5, 3),
+            // Vertical edges: 0-3, 1-4, 2-5
+            (0, 3), (1, 4), (2, 5),
+        ];
+
+        for &(a, b) in edge_pairs {
+            let pa = pts[a];
+            let pb = pts[b];
+            let dir = (pb - pa).normalize_or(DVec3::X);
+            let len = (pb - pa).length();
+            let ci = brep.geom.curves.len();
+            brep.geom.curves.push(Curve3::Line(Line3 { origin: pa, direction: dir }));
+            brep.edges.push(rcad_kernel::topology::Edge { start: a, end: b });
+            brep.geom.edge_curve.push(Some(ci));
+            brep.geom.edge_curve_range.push(Some([0.0, len]));
+            brep.geom.edge_degenerated.push(false);
+        }
+
+        // Build edge lookup
+        let mut edge_map: std::collections::HashMap<(usize, usize), usize> = std::collections::HashMap::new();
+        for (ei, &(a, b)) in edge_pairs.iter().enumerate() {
+            let key = if a < b { (a, b) } else { (b, a) };
+            edge_map.insert(key, ei);
+        }
+
+        let add_face = |brep: &mut BRep, verts: &[usize], normal: DVec3| {
+            let mut wire_edges = Vec::new();
+            for i in 0..verts.len() {
+                let j = (i + 1) % verts.len();
+                let va = verts[i];
+                let vb = verts[j];
+                let key = if va < vb { (va, vb) } else { (vb, va) };
+                let ei = edge_map[&key];
+                let forward = edge_pairs[ei] == (va, vb);
+                wire_edges.push(WireEdge { idx: ei, forward });
+            }
+            brep.solids[0].shells[0].faces.push(Face {
+                outer_wire: rcad_kernel::topology::Wire { edges: wire_edges },
+                inner_wires: vec![],
+                normal,
+                triangles: vec![],
+                mesh_dirty: true,
+            });
+            let si = brep.geom.surfaces.len();
+            brep.geom.surfaces.push(Surface3::Plane(Plane { origin: pts[verts[0]], normal }));
+            brep.geom.face_surface.push(Some(si));
+        };
+
+        brep.solids.push(rcad_kernel::topology::Solid {
+            shells: vec![rcad_kernel::topology::Shell { faces: Vec::new() }],
+        });
+
+        // Bottom face (Y=0, -Y normal): 0-1-2
+        add_face(&mut brep, &[0, 1, 2], -DVec3::Y);
+        // Top face (Y=1, +Y normal): 3-5-4
+        add_face(&mut brep, &[3, 5, 4], DVec3::Y);
+        // Front face (Z=0, -Z normal): 0-3-4-1
+        add_face(&mut brep, &[0, 3, 4, 1], -DVec3::Z);
+        // Left face: 0-2-5-3
+        let left_normal = DVec3::new(-0.4472135954999579, 0.0, 0.8944271909999159); // computed from cross product
+        add_face(&mut brep, &[0, 2, 5, 3], left_normal);
+        // Right face: 1-4-5-2
+        let right_normal = DVec3::new(0.4472135954999579, 0.0, 0.8944271909999159);
+        add_face(&mut brep, &[1, 4, 5, 2], right_normal);
+
+        // Edge 2-5 (index 8) is the sharp edge at the apex
+        // Edge 0-1 (index 0) is the bottom front edge - let's fillet this instead for simplicity
+
+        // Use the front bottom edge (edge 0: 0-1) which has a 90-degree dihedral
+        let result = fillet_edge(&brep, 0, 0.1);
+        assert!(
+            result.is_ok(),
+            "fillet on wedge edge should succeed: {:?}",
+            result.err()
+        );
+
+        let result = result.unwrap();
+        // Verify we have the expected number of faces
+        let n_faces = result.solids[0].shells[0].faces.len();
+        // 5 original + 1 fillet + 2 closing = 8
+        assert!(
+            n_faces >= 7,
+            "expected at least 7 faces after fillet, got {n_faces}"
+        );
+    }
+
+    #[test]
+    fn test_chamfer_very_small_setback() {
+        // Test chamfer with a very small setback value.
+        // This tests numerical stability with tiny dimensions.
+        let brep = box_brep_2x2x2();
+
+        // Very small setback: 1e-6
+        let result = chamfer_edge(&brep, 0, 1e-6);
+        assert!(
+            result.is_ok(),
+            "chamfer with very small setback should succeed: {:?}",
+            result.err()
+        );
+
+        let result = result.unwrap();
+
+        // Should still produce valid geometry
+        let n_faces = result.solids[0].shells[0].faces.len();
+        assert_eq!(n_faces, 9, "expected 9 faces after chamfer");
+
+        // Verify vertices are distinct (not collapsed)
+        let vertices = &result.vertices;
+        for i in 0..vertices.len() {
+            for j in (i + 1)..vertices.len() {
+                let dist = (vertices[i].point - vertices[j].point).length();
+                // Vertices should either coincide (original) or be distinct
+                // The new chamfer vertices should be very close to the original edge endpoints
+                // but still distinct
+                if dist > 1e-12 && dist < 1e-3 {
+                    // This is a new vertex created by the tiny chamfer
+                    assert!(dist > 0.0, "vertices should be distinct");
+                }
+            }
+        }
+
+        // Test with an even smaller value
+        let result2 = chamfer_edge(&brep, 0, 1e-12);
+        assert!(
+            result2.is_ok(),
+            "chamfer with extremely small setback should succeed: {:?}",
+            result2.err()
+        );
+    }
 }

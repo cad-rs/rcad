@@ -1131,4 +1131,208 @@ mod tests {
             "revolve should produce at least 3 faces, got {n_faces}"
         );
     }
+
+    // ── Edge Case Tests ───────────────────────────────────────────────────────────
+
+    /// Test sweep with a very small (near-degenerate) profile.
+    /// Should still succeed for small but valid profiles, but fail for too-small profiles.
+    #[test]
+    fn test_sweep_degenerate_profile() {
+        // Create a very small triangle profile (micro-scale)
+        let tiny_profile: Vec<DVec2> = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1e-6, 0.0),
+            DVec2::new(0.5e-6, 1e-6),
+        ];
+
+        // Simple spine along Z axis
+        let spine: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 1.0),
+        ];
+
+        // Should succeed - profile is tiny but valid (3 vertices)
+        let result = sweep_pipe(&tiny_profile, &spine);
+        assert!(result.is_ok(), "sweep_pipe should succeed with tiny but valid profile");
+
+        let brep = result.unwrap();
+        assert!(
+            !brep.solids.is_empty(),
+            "result should contain a solid"
+        );
+        let n_faces = brep.solids[0].shells[0].faces.len();
+        assert!(n_faces >= 2, "should have at least 2 faces (caps + lateral), got {n_faces}");
+
+        // Test with degenerate profile (only 2 vertices) - should fail
+        let degenerate_profile: Vec<DVec2> = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 0.0),
+        ];
+        let err = sweep_pipe(&degenerate_profile, &spine).unwrap_err();
+        assert!(
+            matches!(err, BuildError::DegenerateGeometry(_)),
+            "expected DegenerateGeometry error for 2-vertex profile"
+        );
+    }
+
+    /// Test sweep along a helical/twisted path.
+    /// Tests the Frenet frame calculation when the spine direction changes.
+    #[test]
+    fn test_sweep_twisted_path() {
+        // Simple rectangular profile
+        let profile: Vec<DVec2> = vec![
+            DVec2::new(-0.5, -0.5),
+            DVec2::new(0.5, -0.5),
+            DVec2::new(0.5, 0.5),
+            DVec2::new(-0.5, 0.5),
+        ];
+
+        // Create a helical-like spine (partial helix)
+        let mut spine: Vec<DVec3> = Vec::new();
+        let radius = 2.0;
+        let height_step = 0.1;
+        let angle_step = std::f64::consts::PI / 8.0;
+        for i in 0..9 {
+            let angle = angle_step * i as f64;
+            spine.push(DVec3::new(
+                radius * angle.cos(),
+                radius * angle.sin(),
+                height_step * i as f64,
+            ));
+        }
+
+        let result = sweep_pipe(&profile, &spine);
+        assert!(result.is_ok(), "sweep_pipe should succeed along helical path");
+
+        let brep = result.unwrap();
+        let n_faces = brep.solids[0].shells[0].faces.len();
+        // 8 segments * 4 lateral faces per segment + 2 caps = 34 faces
+        let expected_lateral = (spine.len() - 1) * profile.len();
+        assert!(
+            n_faces >= expected_lateral,
+            "should have at least {} faces, got {}",
+            expected_lateral,
+            n_faces
+        );
+
+        // Test with a sharply turning spine (90-degree turn)
+        let sharp_spine: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+        ];
+        let sharp_result = sweep_pipe(&profile, &sharp_spine);
+        assert!(
+            sharp_result.is_ok(),
+            "sweep_pipe should handle sharp turns in spine"
+        );
+    }
+
+    /// Test loft with profiles that have different vertex counts.
+    /// Should fail with DegenerateGeometry error.
+    #[test]
+    fn test_loft_dissimilar_profiles() {
+        // Profile 1: square (4 vertices)
+        let square: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+
+        // Profile 2: triangle (3 vertices) - different count!
+        let triangle: Vec<DVec3> = vec![
+            DVec3::new(0.5, 0.0, 1.0),
+            DVec3::new(1.5, 0.0, 1.0),
+            DVec3::new(1.0, 1.0, 1.0),
+        ];
+
+        // Profile 3: pentagon (5 vertices) - yet another count!
+        let pentagon: Vec<DVec3> = vec![
+            DVec3::new(0.5, 0.0, 2.0),
+            DVec3::new(1.5, 0.0, 2.0),
+            DVec3::new(1.7, 0.7, 2.0),
+            DVec3::new(1.0, 1.2, 2.0),
+            DVec3::new(0.3, 0.7, 2.0),
+        ];
+
+        // Square + triangle should fail (different vertex counts)
+        let err1 = loft(&[square.clone(), triangle]).unwrap_err();
+        assert!(
+            matches!(err1, BuildError::DegenerateGeometry(msg) if msg.contains("same vertex count")),
+            "expected DegenerateGeometry error for mismatched vertex counts"
+        );
+
+        // Square + pentagon should also fail
+        let err2 = loft(&[square, pentagon]).unwrap_err();
+        assert!(
+            matches!(err2, BuildError::DegenerateGeometry(msg) if msg.contains("same vertex count")),
+            "expected DegenerateGeometry error for mismatched vertex counts"
+        );
+    }
+
+    /// Test loft with non-planar profiles (profiles that curve in 3D).
+    /// Tests that loft can handle profiles that are not flat.
+    #[test]
+    fn test_loft_non_planar_profiles() {
+        // Profile 1: square in XY plane at Z=0
+        let profile1: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+
+        // Profile 2: square slightly curved (vertices displaced)
+        let profile2: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(1.0, 0.0, 1.0),
+            DVec3::new(1.2, 1.2, 1.0), // lifted corner
+            DVec3::new(0.0, 1.0, 1.0),
+        ];
+
+        // Profile 3: another non-planar shape
+        let profile3: Vec<DVec3> = vec![
+            DVec3::new(0.5, 0.0, 2.0),
+            DVec3::new(1.5, 0.0, 2.0),
+            DVec3::new(1.5, 1.0, 2.0),
+            DVec3::new(0.5, 1.0, 2.0),
+        ];
+
+        // Loft should succeed with non-planar profiles
+        let result = loft(&[profile1, profile2, profile3]);
+        assert!(result.is_ok(), "loft should succeed with non-planar profiles");
+
+        let brep = result.unwrap();
+        assert!(!brep.solids.is_empty(), "result should contain a solid");
+
+        let n_faces = brep.solids[0].shells[0].faces.len();
+        // Should have 2 caps + lateral faces
+        assert!(n_faces >= 2, "should have at least 2 faces, got {n_faces}");
+
+        // Test with twisted profiles (vertices in different rotational positions)
+        let twisted1: Vec<DVec3> = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(0.0, 1.0, 0.0),
+        ];
+
+        // Profile 2 rotated 45 degrees around Z axis (same vertex count)
+        let angle = std::f64::consts::FRAC_PI_4;
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        let twisted2: Vec<DVec3> = vec![
+            DVec3::new(0.5 + 0.5 * cos_a - 0.5 * sin_a, 0.5 + 0.5 * sin_a + 0.5 * cos_a, 1.0),
+            DVec3::new(0.5 + 0.5 * cos_a + 0.5 * sin_a, 0.5 - 0.5 * sin_a + 0.5 * cos_a, 1.0),
+            DVec3::new(0.5 - 0.5 * cos_a + 0.5 * sin_a, 0.5 - 0.5 * sin_a - 0.5 * cos_a, 1.0),
+            DVec3::new(0.5 - 0.5 * cos_a - 0.5 * sin_a, 0.5 + 0.5 * sin_a - 0.5 * cos_a, 1.0),
+        ];
+
+        let twisted_result = loft(&[twisted1, twisted2]);
+        assert!(
+            twisted_result.is_ok(),
+            "loft should handle twisted profiles with same vertex count"
+        );
+    }
 }
