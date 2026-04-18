@@ -8894,6 +8894,36 @@ mod tests {
     const BOX_STEP: &str = include_str!("../../../assets/box.step");
     const EDGE_ONLY_STEP: &str = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=CARTESIAN_POINT('',(1.,0.,0.));\n#3=VERTEX_POINT('',#1);\n#4=VERTEX_POINT('',#2);\n#5=EDGE_CURVE('',#3,#4,$,.T.);\nENDSEC;\nEND-ISO-10303-21;\n";
 
+    /// Helper for round-trip testing: export BRep to STEP and re-import.
+    fn round_trip_brep(brep: &BRep, gmsh_strict: bool) -> BRep {
+        let step = StepWriter::write_string_with_options(
+            brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                gmsh_strict,
+                ..Default::default()
+            },
+        );
+        StepReader::parse_string(&step).expect("round-trip STEP should parse")
+    }
+
+    /// Helper to count topology elements.
+    fn count_topology(brep: &BRep) -> (usize, usize, usize, usize) {
+        let vertices = brep.vertices.len();
+        let edges = brep.edges.len();
+        let shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
+        let faces: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        (vertices, edges, faces, shells)
+    }
+
     #[test]
     fn parses_hfss_into_non_trivial_brep() {
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
