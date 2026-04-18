@@ -861,4 +861,75 @@ mod tests {
         assert!((policy.make_connected_tolerance(1) - 2e-6).abs() < 1e-15);
         assert!((policy.make_connected_tolerance(2) - 4e-6).abs() < 1e-15);
     }
+
+    // ============================================================================
+    // Near-Coincident Vertex Tests
+    // ============================================================================
+
+    /// Two boxes with vertices nearly coincident (within tolerance).
+    /// Tests the kernel's ability to handle fuzzy tolerance correctly when
+    /// vertices are almost but not exactly touching.
+    #[test]
+    fn test_near_coincident_vertices_union() {
+        use crate::{boolean_op_with_options, BooleanOpType, BooleanOptions};
+        use glam::DVec3;
+        use rcad_modeling::make_box_brep;
+
+        // Two boxes with vertices nearly coincident (within tolerance)
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // B's corner is very close to A's corner at (2, 2, 2)
+        let b = make_box_brep(
+            DVec3::new(2.0 - 1e-5, 2.0 - 1e-5, 2.0 - 1e-5),
+            DVec3::X,
+            DVec3::Y,
+            1.0,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Union, &a, &b, opts);
+        assert!(
+            result.is_ok(),
+            "near-coincident vertices union should succeed"
+        );
+    }
+
+    /// Two boxes with vertices nearly coincident - difference operation.
+    /// Tests fuzzy tolerance handling for difference operations.
+    #[test]
+    fn test_near_coincident_vertices_difference() {
+        use crate::{boolean_op_with_options, BooleanOpType, BooleanOptions};
+        use glam::DVec3;
+        use rcad_modeling::make_box_brep;
+
+        // Two boxes with vertices nearly coincident (within tolerance)
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // B's corner is very close to A's corner at (2, 2, 2)
+        let b = make_box_brep(
+            DVec3::new(2.0 - 1e-5, 2.0 - 1e-5, 2.0 - 1e-5),
+            DVec3::X,
+            DVec3::Y,
+            1.0,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Difference, &a, &b, opts);
+        assert!(
+            result.is_ok(),
+            "near-coincident vertices difference should succeed"
+        );
+    }
 }
