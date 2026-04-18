@@ -11042,4 +11042,35 @@ END-ISO-10303-21;
         let has_cone = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cone(_)));
         assert!(has_cone, "should preserve conical surface");
     }
+
+    #[test]
+    fn write_empty_brep_returns_valid_step() {
+        let brep = BRep::default();
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+
+        // Should produce valid STEP structure even for empty geometry
+        assert!(step.contains("ISO-10303-21"));
+        assert!(step.contains("END-ISO-10303-21"));
+    }
+
+    #[test]
+    fn parse_malformed_step_returns_error() {
+        let invalid = "NOT A STEP FILE";
+        let result = StepReader::parse_string(invalid);
+        assert!(result.is_err(), "should return error for invalid STEP");
+    }
+
+    #[test]
+    fn parse_truncated_step_returns_error() {
+        let truncated = "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP214'));\n"; // Missing DATA and ENDSEC
+        let result = StepReader::parse_string(truncated);
+        assert!(result.is_err(), "should return error for truncated STEP");
+    }
 }
