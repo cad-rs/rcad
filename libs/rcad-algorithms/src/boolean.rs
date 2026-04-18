@@ -1165,4 +1165,64 @@ mod tests {
         // A box has 6 faces; after fillet subtraction we expect more
         assert!(face_count >= 6, "result should have at least 6 faces, got {}", face_count);
     }
+
+    // ============================================================================
+    // Nested Boolean Operation Tests
+    // ============================================================================
+
+    /// Test multiple union operations applied sequentially.
+    /// This verifies the kernel's ability to handle chained boolean operations
+    /// where the result of one operation becomes input to the next.
+    #[test]
+    fn test_sequential_union_operations() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Create 4 boxes and union them sequentially
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(0.5, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let mut c = make_box_brep(DVec3::new(0.0, 0.5, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let mut d = make_box_brep(DVec3::new(0.0, 0.0, 0.5), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        populate_box_geom(&mut a);
+        populate_box_geom(&mut b);
+        populate_box_geom(&mut c);
+        populate_box_geom(&mut d);
+
+        let (ab, _) = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default()).unwrap();
+        let (abc, _) = boolean_op_simplified(BooleanOpType::Union, &ab, &c, SimplifyOptions::default()).unwrap();
+        let (abcd, _) = boolean_op_simplified(BooleanOpType::Union, &abc, &d, SimplifyOptions::default()).unwrap();
+
+        assert!(abcd.solids.len() >= 1, "sequential unions should produce valid result");
+    }
+
+    /// Test mixed boolean operations: union followed by difference.
+    /// This verifies the kernel's ability to handle different boolean operation
+    /// types applied sequentially to accumulated geometry.
+    #[test]
+    fn test_mixed_boolean_operations() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Create base boxes for union
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(1.5, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // Create box to subtract
+        let mut c = make_box_brep(DVec3::new(1.0, 0.5, 0.5), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        populate_box_geom(&mut a);
+        populate_box_geom(&mut b);
+        populate_box_geom(&mut c);
+
+        // First union a and b
+        let (ab, _) = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default()).unwrap();
+        // Then subtract c from the result
+        let (result, _) = boolean_op_simplified(BooleanOpType::Difference, &ab, &c, SimplifyOptions::default()).unwrap();
+
+        assert!(result.solids.len() >= 1, "mixed boolean operations should produce valid result");
+    }
 }
