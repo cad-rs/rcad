@@ -134,6 +134,7 @@ pub use annotation::{
 };
 pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
+pub use geom::{Point3, Vec3, Point2, Vec2};
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
 pub use geom::{

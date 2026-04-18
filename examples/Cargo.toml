@@ -123,3 +123,7 @@ path = "offset_shell.rs"
 [[example]]
 name = "non_manifold_topology"
 path = "non_manifold_topology.rs"
+
+[[example]]
+name = "step_gmsh_test"
+path = "step_gmsh_test.rs"

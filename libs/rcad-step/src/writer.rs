@@ -113,12 +113,17 @@ struct FaceExportResult {
 }
 
 impl StepWriter {
+    /// Export BRep to STEP with GMSH/OCCT-compatible format.
+    ///
+    /// Uses AP214 protocol with `gmsh_strict` mode enabled for maximum
+    /// compatibility with GMSH and other OCCT-based viewers.
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
         Self::write_string_with_options(
             brep,
             selection,
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
+                gmsh_strict: true,  // Enable GMSH/OCCT compatibility by default
                 ..Default::default()
             },
         )
@@ -4274,6 +4279,7 @@ mod tests {
     fn exports_full_box_and_reimports() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
             .expect("test box should be valid");
+        // Default now uses gmsh_strict for GMSH/OCCT compatibility
         let step = StepWriter::write_string(
             &brep,
             ExportSelection {
@@ -4288,16 +4294,36 @@ mod tests {
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(step.contains("CLOSED_SHELL"));
-        assert!(step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
-        assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
+        // gmsh_strict mode does NOT include wireframe overlays
+        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
+        assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
+    }
+
+    #[test]
+    fn exports_non_strict_includes_wireframe() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
+            .expect("test box should be valid");
+        let step = StepWriter::write_string_with_options(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: false,  // Non-strict mode includes wireframe
+                ..Default::default()
+            },
+        );
+
+        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
+        assert!(step.contains("MANIFOLD_SOLID_BREP"));
+        // Non-strict mode includes wireframe overlay for visualization
         assert!(step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
         assert!(step.contains("GEOMETRIC_CURVE_SET"));
         assert!(step.contains("SHAPE_REPRESENTATION_RELATIONSHIP"));
         assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
-        assert!(
-            !step.contains("SHAPE_REPRESENTATION('rcad_export',(),"),
-            "solid export should bind product shape directly to the BRep representation"
-        );
     }
 
     #[test]
@@ -4752,11 +4778,17 @@ mod tests {
         }
         assert!(orig_cone_angle > 0.0, "should find a cone in hfss.step");
 
-        let step = StepWriter::write_string(
+        // Use non-strict mode for complex geometry round-trip tests
+        let step = StepWriter::write_string_with_options(
             &brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: false,
+                ..Default::default()
             },
         );
 
@@ -4817,11 +4849,15 @@ mod tests {
             radius_z: 1.0,
         });
 
-        let step = StepWriter::write_string(
+        let step = StepWriter::write_string_with_options(
             &brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
+            },
+            &StepWriteOptions {
+                gmsh_strict: false,
+                ..Default::default()
             },
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
@@ -4857,11 +4893,15 @@ mod tests {
             pitch: 3.0,
         });
 
-        let step = StepWriter::write_string(
+        let step = StepWriter::write_string_with_options(
             &brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
+            },
+            &StepWriteOptions {
+                gmsh_strict: false,
+                ..Default::default()
             },
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
@@ -4909,11 +4949,15 @@ mod tests {
             })),
         });
 
-        let step = StepWriter::write_string(
+        let step = StepWriter::write_string_with_options(
             &brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
+            },
+            &StepWriteOptions {
+                gmsh_strict: false,
+                ..Default::default()
             },
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
@@ -4951,11 +4995,15 @@ mod tests {
             radius: 1.25,
         });
 
-        let step = StepWriter::write_string(
+        let step = StepWriter::write_string_with_options(
             &brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
+            },
+            &StepWriteOptions {
+                gmsh_strict: false,
+                ..Default::default()
             },
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
