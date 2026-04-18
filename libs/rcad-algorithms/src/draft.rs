@@ -1020,7 +1020,6 @@ fn surface_type_name(surface: &Surface3) -> String {
         Surface3::TriBezier(_) => "TriBezier".to_string(),
         Surface3::Offset(_) => "Offset".to_string(),
         Surface3::Trimmed(_) => "Trimmed".to_string(),
-        Surface3::Gordon(_) => "Gordon".to_string(),
     }
 }
 

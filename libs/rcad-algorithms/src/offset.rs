@@ -676,7 +676,6 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
         | Surface3::Revolution(_)
         | Surface3::Ruled(_)
         | Surface3::Coons(_)
-        | Surface3::Gordon(_)
         | Surface3::Ellipsoid(_)
         | Surface3::Helicoid(_)
         | Surface3::Pipe(_) => {

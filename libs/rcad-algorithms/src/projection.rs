@@ -24,7 +24,7 @@
 //!     radius: 1.0,
 //! });
 //! let point = DVec3::new(3.0, 0.0, 0.0);
-//! let (proj_point, uv) = project_point_on_surface(&sphere, point, &ProjectionOptions::default());
+//! let (proj_point, uv) = project_point_on_surface(point, &sphere, &ProjectionOptions::default());
 //! assert!((proj_point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
 //! ```
 
@@ -290,12 +290,12 @@ pub fn project_point_on_surface_with_options(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::projection::{project_point_on_brep, ProjectionOptions};
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let projections = project_point_on_brep(DVec3::new(0.0, 0.0, 5.0), &box_brep, &ProjectionOptions::default());
-/// // Nearest face is the top face (z = 1)
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let projections = project_point_on_brep(DVec3::new(1.0, 1.0, 5.0), &box_brep, &ProjectionOptions::default());
+/// // Nearest face is the top face (z = 2)
 /// assert!(!projections.is_empty());
 /// ```
 pub fn project_point_on_brep(
@@ -736,10 +736,10 @@ pub struct SilhouetteResult {
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::projection::compute_silhouette_curves;
 ///
-/// let sphere = PrimitiveSolid::sphere(1.0).to_brep();
+/// let sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 /// let silhouette = compute_silhouette_curves(&sphere, DVec3::Z, &Default::default());
 /// // Sphere silhouette from +Z is a circle in the XY plane
 /// ```
@@ -954,10 +954,10 @@ fn fit_points_to_bspline(points: &[DVec3]) -> Option<Curve3> {
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::projection::compute_contour_edges;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let contour_edges = compute_contour_edges(&box_brep, DVec3::Z);
 /// ```
 pub fn compute_contour_edges(brep: &BRep, view_dir: DVec3) -> Vec<usize> {

@@ -9,15 +9,15 @@
 //! # Example
 //!
 //! ```
-//! use rcad_algorithms::history::{BooleanHistory, HistoryTracker};
+//! use rcad_algorithms::history::{BooleanHistory, HistoryTracker, GenerationCause, DeletionReason};
 //!
 //! // Create a history tracker for a boolean operation
 //! let mut tracker = HistoryTracker::new();
 //!
 //! // Record modifications, generations, and deletions
 //! tracker.record_face_modified(0, 1);  // Face 0 modified to face 1
-//! tracker.record_face_generated(2);     // Face 2 was newly generated
-//! tracker.record_face_deleted(3, "Removed by boolean cut".to_string());
+//! tracker.record_face_generated(2, GenerationCause::Intersection);     // Face 2 was newly generated
+//! tracker.record_face_deleted(3, DeletionReason::Custom("Removed by boolean cut".to_string()));
 //!
 //! // Query the history
 //! assert!(tracker.has_modified());

@@ -133,6 +133,69 @@ pub struct IntersectionCurve {
     pub pcurve_on_b: Option<Curve2d>,
 }
 
+/// Information about detected extreme geometry conditions.
+///
+/// This stores the results of pre-analysis for near-tangent and near-coincident
+/// geometry, enabling automatic tolerance adjustment during boolean operations.
+#[derive(Debug, Clone, Default)]
+pub struct ExtremeGeometryInfo {
+    /// Near-tangent face pairs detected during pre-analysis.
+    pub near_tangent_faces: Vec<NearTangentFacePair>,
+    /// Near-coincident face pairs detected during pre-analysis.
+    pub near_coincident_faces: Vec<NearCoincidentFacePair>,
+    /// Recommended fuzzy tolerance adjustment.
+    pub recommended_fuzzy_adjustment: f64,
+    /// Whether extreme geometry was detected that requires special handling.
+    pub has_extreme_geometry: bool,
+}
+
+/// A near-tangent face pair with detailed information.
+#[derive(Debug, Clone)]
+pub struct NearTangentFacePair {
+    /// Face index in shape A.
+    pub face_a: usize,
+    /// Face index in shape B.
+    pub face_b: usize,
+    /// Distance between faces at closest point.
+    pub distance: f64,
+    /// Type of near-tangency.
+    pub tangent_type: NearTangentType,
+    /// Suggested fuzzy tolerance for this pair.
+    pub suggested_fuzzy: f64,
+}
+
+/// Type of near-tangency between faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NearTangentType {
+    /// Planes that are nearly parallel.
+    PlaneParallel,
+    /// Cylinder tangent to plane.
+    CylinderPlane,
+    /// Sphere tangent to plane.
+    SpherePlane,
+    /// Two cylinders tangent along a generator.
+    CylinderCylinder,
+    /// Cone tangent to plane.
+    ConePlane,
+    /// General surface tangency.
+    General,
+}
+
+/// A near-coincident face pair with detailed information.
+#[derive(Debug, Clone)]
+pub struct NearCoincidentFacePair {
+    /// Face index in shape A.
+    pub face_a: usize,
+    /// Face index in shape B.
+    pub face_b: usize,
+    /// Maximum distance between faces in overlap region.
+    pub max_distance: f64,
+    /// Overlap ratio (0.0 to 1.0).
+    pub overlap_ratio: f64,
+    /// Suggested fuzzy tolerance for this pair.
+    pub suggested_fuzzy: f64,
+}
+
 /// Central data structure (OCCT: BOPDS_DS).
 #[derive(Debug)]
 pub struct DS {
@@ -155,6 +218,8 @@ pub struct DS {
     pub a_face_count: usize,
     /// Shared topology information for glue path optimization.
     pub shared_topology: SharedTopologyInfo,
+    /// Extreme geometry analysis results.
+    pub extreme_geometry: ExtremeGeometryInfo,
 }
 
 impl DS {
@@ -179,6 +244,7 @@ impl DS {
             a_edge_count: 0,
             a_face_count: 0,
             shared_topology: SharedTopologyInfo::default(),
+            extreme_geometry: ExtremeGeometryInfo::default(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -445,8 +511,16 @@ impl DS {
                         .and_then(|s| *s)
                         .map(|si| brep.geom.surfaces[si].clone())
                         .unwrap_or_else(|| {
-                            // Fallback: synthesize plane from face normal and first triangle
-                            let origin = brep.vertices[face.triangles[0][0]].point;
+                            // Fallback: synthesize plane from face normal
+                            // Use first vertex from outer wire, or origin if no wire
+                            let origin = if !face.triangles.is_empty() {
+                                brep.vertices[face.triangles[0][0]].point
+                            } else if !face.outer_wire.edges.is_empty() {
+                                let first_edge = &brep.edges[face.outer_wire.edges[0].idx];
+                                brep.vertices[first_edge.start].point
+                            } else {
+                                DVec3::ZERO
+                            };
                             Surface3::Plane(Plane {
                                 origin,
                                 normal: face.normal,

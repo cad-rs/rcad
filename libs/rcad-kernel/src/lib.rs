@@ -105,14 +105,6 @@ pub mod nurbs_convert;
 /// `GeomAPI_ExtendCurveToPoint`, and `Geom_RectangularTrimmedSurface`.
 pub mod extend;
 
-/// Gordon surface construction (N x M transfinite interpolation).
-///
-/// Provides robust Gordon/Coons-style surface construction from
-/// curve networks with comprehensive validation and error handling.
-///
-/// Analogous to OCCT `GeomFill_SectionGenerator` / Gordon surface.
-pub mod gordon;
-
 pub use distance::{ShapeDistance, min_distance, point_to_shape_distance};
 pub use extend::{
     CurveEnd, SurfaceBoundary, extend_bspline_surface, extend_curve_by_length,
@@ -142,15 +134,6 @@ pub use annotation::{
 };
 pub use arc_length::arc_length;
 pub use curvature::{gaussian_curvature, mean_curvature, principal_curvatures};
-pub use gordon::{
-    BoundaryContinuityReport, BoundaryType, ContinuityLevel, FallbackStrategy, GordonError,
-    GordonOptions, GordonQualityReport, GordonResult, GordonWarning, GordonWarningKind,
-    GordonConstructionResult, ParameterizationMethod, QualityIssue, QualityIssueKind,
-    centripetal_parameterization, check_boundary_continuity, chord_length_parameterization,
-    coons_fallback, eval_gordon_surface_safe, gordon_surface_curves, gordon_surface_normal_safe,
-    gordon_surface_derivatives, gordon_surface_quality, gordon_surface_with_fallback,
-    gordon_surface_with_params, gordon_surface_with_warnings, gordon_to_bspline,
-};
 pub use geom::PrimitiveSolid;
 pub use geom::TrimmedSurface;
 pub use geom::{
@@ -179,10 +162,9 @@ pub use topo_query::{
     seam_edge_candidates, vertex_adjacent_edges, vertex_count,
 };
 pub use brep_graph::{
-    BfsFaces, BRepGraph, BRepGraphBuilder, BRepGraphCheckpoint, BRepGraphHistory,
-    BRepGraphHistoryCheckpoint, BRepGraphHistoryEvent, BRepGraphHistorySummary, BRepGraphMutGuard,
-    BRepGraphTool, DfsEdgesFromVertex, DfsFaces, HistoryFilter, ManifoldRepairHints,
-    NonManifoldSummary, RepairHint,
+    BfsFaces, BRepGraph, BRepGraphBuilder, BRepGraphCheckpointData,
+    BRepGraphTool, DfsEdgesFromVertex, DfsFaces,
+    ManifoldRepairHints, NonManifoldSummary, RepairHint,
 };
 pub use naming::{PersistentNamingHooks, TopoEntityRef};
 pub use persistent_naming::{
@@ -622,13 +604,54 @@ impl BRep {
             },
         ];
 
+        // Populate GeomStore with planes (surfaces) for face geometry
+        // Note: We populate surfaces but NOT curves/pcurves for the box.
+        // The box's edges are implicit line segments defined by vertex positions.
+        // This allows primitive detection (is_box) to work without requiring
+        // geometrically accurate pcurves.
+        use geom::{Plane, Surface3};
+
+        // Create 6 plane surfaces for faces
+        // F0: Front (z=0, normal -Z), F1: Back (z=d, normal +Z)
+        // F2: Bottom (y=0, normal -Y), F3: Top (y=h, normal +Y)
+        // F4: Left (x=0, normal -X), F5: Right (x=w, normal +X)
+        let surfaces: Vec<Surface3> = vec![
+            Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 0.0), normal: -DVec3::Z }), // Front
+            Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, d), normal: DVec3::Z }),   // Back
+            Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 0.0), normal: -DVec3::Y }), // Bottom
+            Surface3::Plane(Plane { origin: DVec3::new(0.0, h, 0.0), normal: DVec3::Y }),    // Top
+            Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 0.0), normal: -DVec3::X }), // Left
+            Surface3::Plane(Plane { origin: DVec3::new(w, 0.0, 0.0), normal: DVec3::X }),    // Right
+        ];
+
+        // Face surface indices
+        let face_surface: Vec<Option<usize>> = (0..6).map(|i| Some(i)).collect();
+
+        let geom = GeomStore {
+            curves: Vec::new(),
+            surfaces,
+            curve2ds: Vec::new(),
+            edge_curve: Vec::new(),
+            face_surface,
+            edge_pcurves: Vec::new(),
+            edge_curve_range: Vec::new(),
+            edge_degenerated: Vec::new(),
+            vertex_tolerance: Vec::new(),
+            edge_tolerance: Vec::new(),
+            face_tolerance: Vec::new(),
+            curve2d_range: Vec::new(),
+            face_surface_range: Vec::new(),
+            edge_same_parameter: Vec::new(),
+            edge_same_range: Vec::new(),
+        };
+
         BRep {
             vertices,
             edges,
             solids: vec![Solid {
                 shells: vec![Shell { faces }],
             }],
-            geom: GeomStore::default(),
+            geom,
             compound: None,
             compsolid: None,
         }
@@ -1413,15 +1436,6 @@ impl BRep {
                 Surface3::Trimmed(t) => {
                     xf_surface(&mut t.basis, mat);
                     // trim domain is in parameter space — unchanged by transform
-                }
-                Surface3::Gordon(g) => {
-                    for c in &mut g.u_curves {
-                        xf_curve(c, mat);
-                    }
-                    for c in &mut g.v_curves {
-                        xf_curve(c, mat);
-                    }
-                    // u/v parameter grids are dimensionless param values.
                 }
             }
         }

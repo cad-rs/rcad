@@ -1825,10 +1825,6 @@ fn resolve_to_direct_surface(surface: &Surface3) -> Surface3 {
             // Coons patches to BSpline
             Surface3::BSpline(surface_to_bspline(surface, 32, 32))
         }
-        Surface3::Gordon(_) => {
-            // Gordon surfaces to BSpline
-            Surface3::BSpline(surface_to_bspline(surface, 32, 32))
-        }
         // Analytic surfaces are already direct
         s @ Surface3::Plane(_)
         | s @ Surface3::Cylinder(_)

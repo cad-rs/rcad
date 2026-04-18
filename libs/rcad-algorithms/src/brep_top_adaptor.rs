@@ -31,7 +31,7 @@
 
 use rcad_kernel::BRep;
 use rcad_kernel::topology::{Face, WireEdge};
-use crate::brep_tools::ShapeType;
+pub use crate::brep_tools::ShapeType;
 
 // =============================================================================
 // Face Adaptor

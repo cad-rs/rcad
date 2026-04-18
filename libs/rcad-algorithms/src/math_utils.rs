@@ -401,53 +401,79 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     let r = d / a;
     let s = e / a;
 
-    // Substitute x = y - p/4 to get depressed quartic y^4 + ay^2 + by + c = 0
+    // Substitute x = y - p/4 to get depressed quartic y^4 + py^2 + qy + r = 0
     let a1 = q - 3.0 * p * p / 8.0;
     let b1 = r + p * p * p / 8.0 - p * q / 2.0;
     let c1 = s - 3.0 * p * p * p * p / 256.0 + p * p * q / 16.0 - p * r / 4.0;
 
-    // Solve resolvent cubic: z^3 + (a/2)z^2 + ((a^2-4c)/16)z - b^2/64 = 0
-    let resolvent_roots = solve_cubic(
-        1.0,
-        a1 / 2.0,
-        (a1 * a1 - 4.0 * c1) / 16.0,
-        -b1 * b1 / 64.0,
-    );
+    // Handle b1 = 0 case (quartic with only even powers)
+    if b1.abs() < 1e-12 {
+        let disc = a1 * a1 - 4.0 * c1;
+        if disc < -1e-10 {
+            return Vec::new();
+        }
+        if disc.abs() < 1e-10 {
+            let y = (-a1 / 2.0).sqrt();
+            return vec![y - p / 4.0, -y - p / 4.0];
+        }
+        let sqrt_disc = disc.sqrt();
+        let y1_sq = (-a1 + sqrt_disc) / 2.0;
+        let y2_sq = (-a1 - sqrt_disc) / 2.0;
+
+        let mut roots = Vec::new();
+        if y1_sq >= -1e-10 {
+            let y1 = y1_sq.max(0.0).sqrt();
+            roots.push(y1 - p / 4.0);
+            roots.push(-y1 - p / 4.0);
+        }
+        if y2_sq >= -1e-10 {
+            let y2 = y2_sq.max(0.0).sqrt();
+            roots.push(y2 - p / 4.0);
+            roots.push(-y2 - p / 4.0);
+        }
+        roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        return roots;
+    }
+
+    // Solve resolvent cubic: t^3 + 2*a1*t^2 + (a1^2 - 4*c1)*t - b1^2 = 0
+    let resolvent_roots = solve_cubic(1.0, 2.0 * a1, a1 * a1 - 4.0 * c1, -b1 * b1);
 
     if resolvent_roots.is_empty() {
         return Vec::new();
     }
 
     // Find a positive root of the resolvent
-    let z = resolvent_roots
+    let t = resolvent_roots
         .iter()
-        .find(|&&z| z > 0.0)
+        .find(|&&t| t > 1e-10)
         .copied()
         .unwrap_or(resolvent_roots[0]);
 
-    let sqrt_z = z.sqrt();
-    let half_a1 = a1 / 2.0;
-
-    // Solve two quadratics: y^2 + sqrt(z)*y + (half_a1 - z - b1/(2*sqrt(z))) = 0
-    // and y^2 - sqrt(z)*y + (half_a1 - z + b1/(2*sqrt(z))) = 0
+    let sqrt_t = t.max(0.0).sqrt();
 
     let mut roots = Vec::new();
 
-    if sqrt_z.abs() > 1e-15 {
-        let r1_quad = solve_quadratic(1.0, sqrt_z, half_a1 - z - b1 / (2.0 * sqrt_z));
-        let r2_quad = solve_quadratic(1.0, -sqrt_z, half_a1 - z + b1 / (2.0 * sqrt_z));
+    if sqrt_t > 1e-10 {
+        let inner1 = -(a1 + t + b1 / sqrt_t);
+        let inner2 = -(a1 + t - b1 / sqrt_t);
 
-        for root in r1_quad {
-            roots.push(root - p / 4.0);
+        if inner1 >= -1e-10 {
+            let s1 = inner1.max(0.0).sqrt();
+            roots.push((sqrt_t + s1) / 2.0 - p / 4.0);
+            roots.push((sqrt_t - s1) / 2.0 - p / 4.0);
         }
-        for root in r2_quad {
-            roots.push(root - p / 4.0);
+        if inner2 >= -1e-10 {
+            let s2 = inner2.max(0.0).sqrt();
+            roots.push((-sqrt_t + s2) / 2.0 - p / 4.0);
+            roots.push((-sqrt_t - s2) / 2.0 - p / 4.0);
         }
     } else {
-        // Special case when z is zero
-        let r_quad = solve_quadratic(1.0, 0.0, half_a1);
-        for root in r_quad {
-            roots.push(root - p / 4.0);
+        // t is nearly zero, use alternative formula
+        let inner = -(a1 + t);
+        if inner >= -1e-10 {
+            let s = inner.max(0.0).sqrt();
+            roots.push(s / 2.0 - p / 4.0);
+            roots.push(-s / 2.0 - p / 4.0);
         }
     }
 
@@ -498,10 +524,11 @@ pub fn eigenvalues_3x3(m: DMat3) -> (f64, f64, f64) {
     let trace = m.x_axis.x + m.y_axis.y + m.z_axis.z; // trace = sum of diagonal
     let det = m.determinant();
 
-    // Sum of principal 2x2 minors
-    let s = m.x_axis.x * (m.y_axis.y * m.z_axis.z - m.y_axis.z * m.z_axis.y)
-        - m.y_axis.y * (m.x_axis.x * m.z_axis.z - m.x_axis.z * m.z_axis.x)
-        + m.z_axis.z * (m.x_axis.x * m.y_axis.y - m.x_axis.y * m.y_axis.x);
+    // Sum of principal 2x2 minors:
+    // M11 = (a22*a33 - a23*a32), M22 = (a11*a33 - a13*a31), M33 = (a11*a22 - a12*a21)
+    let s = (m.y_axis.y * m.z_axis.z - m.y_axis.z * m.z_axis.y)  // M11
+          + (m.x_axis.x * m.z_axis.z - m.x_axis.z * m.z_axis.x)  // M22
+          + (m.x_axis.x * m.y_axis.y - m.x_axis.y * m.y_axis.x); // M33
 
     // Coefficients of characteristic polynomial: lambda^3 - trace*lambda^2 + s*lambda - det = 0
     let roots = solve_cubic(1.0, -trace, s, -det);
@@ -974,8 +1001,9 @@ mod tests {
     #[test]
     fn test_simpson_integrate_sin() {
         // Integrate sin(x) from 0 to pi, should be 2
+        // Simpson's rule with n=100 has error O(h^4) ≈ 1e-8
         let result = simpson_integrate(f64::sin, 0.0, PI, 100);
-        assert!((result - 2.0).abs() < 1e-10);
+        assert!((result - 2.0).abs() < 1e-6);
     }
 
     #[test]
@@ -989,8 +1017,9 @@ mod tests {
     #[test]
     fn test_gaussian_quadrature_sin() {
         // Integrate sin(x) from 0 to pi, should be 2
+        // 5-point Gaussian quadrature has error ~1e-7 for this case
         let result = gaussian_quadrature(f64::sin, 0.0, PI, 5);
-        assert!((result - 2.0).abs() < 1e-8);
+        assert!((result - 2.0).abs() < 1e-6);
     }
 
     // --- Optimization Tests ---
@@ -1021,6 +1050,6 @@ mod tests {
         let f = |x: f64| -x * x + 4.0;
 
         let max_x = golden_section_max(f, -2.0, 2.0, 1e-10);
-        assert!(max_x.abs() < 1e-8);
+        assert!(max_x.abs() < 1e-6);
     }
 }

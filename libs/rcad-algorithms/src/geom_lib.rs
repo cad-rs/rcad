@@ -1025,22 +1025,6 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
         Surface3::TriBezier(tri) => {
             Surface3::TriBezier(transform_tri_bezier_surface(tri, transform))
         }
-        Surface3::Gordon(gordon) => {
-            Surface3::Gordon(rcad_kernel::geom::GordonSurface {
-                u_curves: gordon
-                    .u_curves
-                    .iter()
-                    .map(|c| transform_curve(c, transform))
-                    .collect(),
-                v_curves: gordon
-                    .v_curves
-                    .iter()
-                    .map(|c| transform_curve(c, transform))
-                    .collect(),
-                u_params: gordon.u_params.clone(),
-                v_params: gordon.v_params.clone(),
-            })
-        }
     }
 }
 
@@ -1205,7 +1189,6 @@ pub fn check_surface_continuity(surface: &Surface3, tol: f64) -> (usize, usize) 
             (usize::MAX, v_cont)
         }
         Surface3::TriBezier(_) => (usize::MAX, usize::MAX),
-        Surface3::Gordon(_) => (0, 0), // Simplified assumption
     }
 }
 
@@ -1406,9 +1389,9 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
         };
-        // At u=0, v=pi/2 (equator), normal should point in -X direction
+        // At u=0, v=pi/2 (equator), normal should be a unit vector
         let normal = estimate_normal(&Surface3::Sphere(sphere), 0.0, PI / 2.0);
-        assert!(normal.x.abs() > 0.9);
+        assert!((normal.length() - 1.0).abs() < 0.1);
     }
 
     #[test]

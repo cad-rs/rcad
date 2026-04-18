@@ -389,6 +389,11 @@ impl<'a> BRepAlgoAPI_Common<'a> {
     }
 
     fn build_internal(&mut self) -> Result<(), BooleanError> {
+        // Check for empty inputs
+        if self.shape1.solids.is_empty() || self.shape2.solids.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+
         // Ensure geometry is populated for primitives
         let a = self.ensure_geometry(self.shape1);
         let b = self.ensure_geometry(self.shape2);
@@ -546,6 +551,11 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
     }
 
     fn build_internal(&mut self) -> Result<(), BooleanError> {
+        // Check for empty inputs
+        if self.shape1.solids.is_empty() || self.shape2.solids.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+
         let a = self.ensure_geometry(self.shape1);
         let b = self.ensure_geometry(self.shape2);
 
@@ -695,6 +705,11 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
     }
 
     fn build_internal(&mut self) -> Result<(), BooleanError> {
+        // Check for empty inputs
+        if self.shape1.solids.is_empty() || self.shape2.solids.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+
         let a = self.ensure_geometry(self.shape1);
         let b = self.ensure_geometry(self.shape2);
 

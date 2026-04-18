@@ -409,27 +409,6 @@ pub enum Surface3 {
     TriBezier(TriBezierSurface),             // Phase T
     Offset(OffsetSurface),                   // Phase M
     Trimmed(TrimmedSurface),                 // Phase Q
-    Gordon(GordonSurface),                   // Phase R
-}
-
-/// A Gordon surface (transfinite interpolation surface) defined by two families of cross-curves.
-///
-/// - `u_curves[i]` is parameterised over `[0,1]` and lives at v = v_params[i].
-/// - `v_curves[j]` is parameterised over `[0,1]` and lives at u = u_params[j].
-///
-/// S(u,v) = sum_i L_v[i]*C_i(u) + sum_j L_u[j]*D_j(v) - sum_ij L_v[i]*L_u[j]*P_ij
-///
-/// Analogous to GeomFill_SectionGenerator / Gordon surface in OCCT.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GordonSurface {
-    /// Cross-section curves in the u-direction (iso-v lines), one per v_params entry.
-    pub u_curves: Vec<Curve3>,
-    /// v-parameter values corresponding to each u_curves[i] (monotone, in [0,1]).
-    pub v_params: Vec<f64>,
-    /// Cross-section curves in the v-direction (iso-u lines), one per u_params entry.
-    pub v_curves: Vec<Curve3>,
-    /// u-parameter values corresponding to each v_curves[j] (monotone, in [0,1]).
-    pub u_params: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -706,11 +685,12 @@ impl CurveEval for Hyperbola3 {
 
 impl CurveEval for Parabola3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        let dir_perp = self.normal.cross(self.axis_dir).normalize();
+        // dir_perp forms a right-handed system: axis_dir × normal gives perpendicular direction
+        let dir_perp = self.axis_dir.cross(self.normal).normalize();
         self.vertex + (t * t / (2.0 * self.focal_param)) * self.axis_dir + t * dir_perp
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        let dir_perp = self.normal.cross(self.axis_dir).normalize();
+        let dir_perp = self.axis_dir.cross(self.normal).normalize();
         let v = (t / self.focal_param) * self.axis_dir + dir_perp;
         v.normalize_or_zero()
     }
@@ -1030,7 +1010,6 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.point_at(u, v),
             Surface3::Offset(s) => s.point_at(u, v),
             Surface3::Trimmed(s) => s.point_at(u, v),
-            Surface3::Gordon(s) => s.point_at(u, v),
         }
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
@@ -1052,7 +1031,6 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.normal_at(u, v),
             Surface3::Offset(s) => s.normal_at(u, v),
             Surface3::Trimmed(s) => s.normal_at(u, v),
-            Surface3::Gordon(s) => s.normal_at(u, v),
         }
     }
     fn default_domain(&self) -> [f64; 4] {
@@ -1074,7 +1052,6 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
-            Surface3::Gordon(s) => s.default_domain(),
         }
     }
 }
@@ -1121,114 +1098,6 @@ fn lagrange_basis(nodes: &[f64], t: f64) -> Vec<f64> {
     }
 
     basis
-}
-
-impl SurfaceEval for GordonSurface {
-    fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let n = self.u_curves.len();
-        let m = self.v_curves.len();
-        if n == 0 && m == 0 {
-            return DVec3::ZERO;
-        }
-
-        // Clamp parameters to valid range for stability
-        let u = u.clamp(0.0, 1.0);
-        let v = v.clamp(0.0, 1.0);
-
-        // Compute Lagrange basis functions
-        let lv = if n > 0 {
-            lagrange_basis(&self.v_params, v)
-        } else {
-            vec![]
-        };
-        let lu = if m > 0 {
-            lagrange_basis(&self.u_params, u)
-        } else {
-            vec![]
-        };
-
-        // Helper to evaluate a curve at a normalized parameter [0,1]
-        // by mapping to its natural parameter domain
-        let eval_curve_normalized = |curve: &Curve3, t_norm: f64| -> DVec3 {
-            let [t0, t1] = curve.default_domain();
-            if t0.is_finite() && t1.is_finite() && (t1 - t0).abs() > 1e-15 {
-                // Map normalized t to curve's natural domain
-                let t = t0 + t_norm * (t1 - t0);
-                curve.point_at(t)
-            } else {
-                // For unbounded curves, use the normalized parameter directly
-                curve.point_at(t_norm)
-            }
-        };
-
-        // Sum of u-direction loft: S_u(u,v) = sum_i L_v[i](v) * C_i(u)
-        let mut s_u = DVec3::ZERO;
-        for (i, curve) in self.u_curves.iter().enumerate() {
-            s_u += lv[i] * eval_curve_normalized(curve, u);
-        }
-
-        // Sum of v-direction loft: S_v(u,v) = sum_j L_u[j](u) * D_j(v)
-        let mut s_v = DVec3::ZERO;
-        for (j, curve) in self.v_curves.iter().enumerate() {
-            s_v += lu[j] * eval_curve_normalized(curve, v);
-        }
-
-        // Tensor product correction: S_t(u,v) = sum_{i,j} L_v[i](v) * L_u[j](u) * P_{ij}
-        // where P_{ij} is the intersection point = u_curve[i] evaluated at u_params[j]
-        let mut s_t = DVec3::ZERO;
-        for (i, u_curve) in self.u_curves.iter().enumerate() {
-            for (j, _v_curve) in self.v_curves.iter().enumerate() {
-                // P_ij = u_curve[i] at parameter u_params[j]
-                // (This should match v_curve[j] at parameter v_params[i])
-                let p_ij = eval_curve_normalized(u_curve, self.u_params[j]);
-                s_t += lv[i] * lu[j] * p_ij;
-            }
-        }
-
-        // Gordon surface formula: S = S_u + S_v - S_t
-        let result = s_u + s_v - s_t;
-
-        // Guard against NaN/Inf
-        if result.is_nan() || !result.is_finite() {
-            DVec3::ZERO
-        } else {
-            result
-        }
-    }
-
-    fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-5;
-
-        // Use one-sided differences near domain boundaries
-        let u_minus = (u - eps).max(0.0);
-        let u_plus = (u + eps).min(1.0);
-        let v_minus = (v - eps).max(0.0);
-        let v_plus = (v + eps).min(1.0);
-
-        let du = if u_plus > u_minus {
-            (self.point_at(u_plus, v) - self.point_at(u_minus, v)) / (u_plus - u_minus)
-        } else {
-            DVec3::ZERO
-        };
-
-        let dv = if v_plus > v_minus {
-            (self.point_at(u, v_plus) - self.point_at(u, v_minus)) / (v_plus - v_minus)
-        } else {
-            DVec3::ZERO
-        };
-
-        let n = du.cross(dv);
-        let len = n.length();
-        if len < 1e-15 {
-            DVec3::Z
-        } else {
-            n / len
-        }
-    }
-
-    fn default_domain(&self) -> [f64; 4] {
-        [0.0, 1.0, 0.0, 1.0]
-    }
 }
 
 fn remap_unit_to_curve_domain(curve: &Curve3, t: f64) -> f64 {
@@ -2515,26 +2384,5 @@ mod eval_tests {
             // Tangent must be a unit vector
             assert!((tan.length() - 1.0).abs() < 1e-10, "t={t}: |tan|={}", tan.length());
         }
-    }
-
-    #[test]
-    fn gordon_surface_interpolates_curve_network_at_nodes() {
-        let u0 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 0.0, 0.0), direction: DVec3::X });
-        let u1 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 1.0, 0.0), direction: DVec3::X });
-        let v0 = Curve3::Line(Line3 { origin: DVec3::new(0.0, 0.0, 0.0), direction: DVec3::Y });
-        let v1 = Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 0.0), direction: DVec3::Y });
-
-        let s = GordonSurface {
-            u_curves: vec![u0, u1],
-            v_params: vec![0.0, 1.0],
-            v_curves: vec![v0, v1],
-            u_params: vec![0.0, 1.0],
-        };
-
-        assert!((s.point_at(0.0, 0.0) - DVec3::new(0.0, 0.0, 0.0)).length() < 1e-10);
-        assert!((s.point_at(1.0, 0.0) - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-10);
-        assert!((s.point_at(0.0, 1.0) - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-10);
-        assert!((s.point_at(1.0, 1.0) - DVec3::new(1.0, 1.0, 0.0)).length() < 1e-10);
-        assert!((s.point_at(0.5, 0.5) - DVec3::new(0.5, 0.5, 0.0)).length() < 1e-10);
     }
 }

@@ -124,7 +124,7 @@ impl Location {
     /// ```
     /// use rcad_algorithms::top_loc::Location;
     /// use glam::DVec3;
-    /// use std::f64::consts::PI;
+    /// use std::f64::consts::FRAC_PI_2;
     ///
     /// // Rotate 90 degrees around Z axis
     /// let loc = Location::from_rotation(DVec3::Z, FRAC_PI_2);
@@ -234,7 +234,7 @@ impl Location {
     /// let scale = Location::from_scale(2.0);
     ///
     /// let combined = translate.compose(&scale);
-    /// // First scales by 2, then translates by 1
+    /// // First translates by 1, then scales by 2
     /// ```
     pub fn compose(&self, other: &Location) -> Location {
         if self.is_identity_cache {
@@ -243,9 +243,18 @@ impl Location {
         if other.is_identity_cache {
             return self.clone();
         }
+        // The resulting transformation applies `self` first, then `other`.
+        // This is equivalent to matrix multiplication: `other * self`.
+        let transform = other.transform * self.transform;
+        // Check if the result is identity (within tolerance)
+        let is_identity = transform
+            .to_cols_array()
+            .iter()
+            .zip(DAffine3::IDENTITY.to_cols_array().iter())
+            .all(|(a, b)| (a - b).abs() < 1e-12);
         Location {
-            transform: other.transform * self.transform,
-            is_identity_cache: false,
+            transform,
+            is_identity_cache: is_identity,
         }
     }
 
@@ -551,8 +560,12 @@ impl Datum {
             DVec3::Y
         };
 
-        let x_dir = z_dir.cross(temp).normalize_or(DVec3::X);
-        let y_dir = z_dir.cross(x_dir).normalize_or(DVec3::Y);
+        // For a right-handed coordinate system with z as normal:
+        // y = z × x, so x = temp projected onto the plane perpendicular to z
+        // First get y as perpendicular to both z and temp
+        // Then x = y × z (completing the right-handed system)
+        let y_dir = z_dir.cross(temp).normalize_or(DVec3::Y);
+        let x_dir = y_dir.cross(z_dir).normalize_or(DVec3::X);
 
         Datum {
             origin,
@@ -1162,15 +1175,15 @@ mod tests {
         let translate = Location::from_translation(DVec3::new(5.0, 0.0, 0.0));
         let scale = Location::from_scale(2.0);
 
-        // Compose: first scale, then translate
+        // Compose: applies self (translate) first, then other (scale)
         let combined = translate.compose(&scale);
 
         let point = DVec3::new(1.0, 0.0, 0.0);
         let transformed = combined.transform_point(point);
 
-        // Scale: (1, 0, 0) -> (2, 0, 0)
-        // Translate: (2, 0, 0) -> (7, 0, 0)
-        assert!((transformed.x - 7.0).abs() < 1e-9);
+        // Translate: (1, 0, 0) -> (6, 0, 0)
+        // Scale: (6, 0, 0) -> (12, 0, 0)
+        assert!((transformed.x - 12.0).abs() < 1e-9);
     }
 
     #[test]

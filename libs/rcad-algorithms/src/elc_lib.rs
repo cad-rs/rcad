@@ -346,7 +346,8 @@ pub fn parabola_point_at(parab: &Parabola3, t: f64) -> DVec3 {
 /// - Order 2: d²P/dt² = (1/p, 0)
 /// - Order 3+: All higher derivatives are zero
 pub fn parabola_derivative(parab: &Parabola3, t: f64, order: usize) -> DVec3 {
-    let dir_perp = parab.normal.cross(parab.axis_dir).normalize();
+    // dir_perp forms a right-handed system: axis_dir × normal gives perpendicular direction
+    let dir_perp = parab.axis_dir.cross(parab.normal).normalize();
     let p = parab.focal_param;
 
     if p.abs() < 1e-15 {
@@ -782,7 +783,8 @@ mod tests {
             focal_param: 2.0,
         };
 
-        let dir_perp = parab.normal.cross(parab.axis_dir).normalize();
+        // dir_perp forms a right-handed system: axis_dir × normal
+        let dir_perp = parab.axis_dir.cross(parab.normal).normalize();
 
         // First derivative at t=0: (0, 0) + dir_perp = (1, 0, 0)
         let d1 = parabola_derivative(&parab, 0.0, 1);

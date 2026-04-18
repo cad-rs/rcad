@@ -1385,7 +1385,6 @@ fn extract_surface_silhouettes(
         | Surface3::Revolution(_)
         | Surface3::Ruled(_)
         | Surface3::Coons(_)
-        | Surface3::Gordon(_)
         | Surface3::Pipe(_) => {
             curves.extend(extract_numerical_silhouettes(
                 surface, view_dir, domain, opts, brep,

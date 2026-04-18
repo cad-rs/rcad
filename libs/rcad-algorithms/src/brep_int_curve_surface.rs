@@ -14,17 +14,17 @@
 //!
 //! ```rust
 //! use glam::DVec3;
-//! use rcad_kernel::PrimitiveSolid;
+//! use rcad_kernel::{BRep, PrimitiveSolid};
 //! use rcad_algorithms::brep_int_curve_surface::{intersect_line_with_brep, ray_cast};
 //!
-//! let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
+//! let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 //!
 //! // Intersect a line through the box
-//! let intersections = intersect_line_with_brep(DVec3::new(0.0, 0.0, 5.0), DVec3::Z, &box_brep, 1e-7);
+//! let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, 1e-7);
 //! assert_eq!(intersections.len(), 2); // Entry and exit points
 //!
 //! // Ray cast from above
-//! let hits = ray_cast(DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, &box_brep);
+//! let hits = ray_cast(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep);
 //! assert!(!hits.is_empty());
 //! ```
 
@@ -141,11 +141,11 @@ impl Default for RayHit {
 /// ```rust
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Curve3, Line3};
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::intersect_curve_with_brep;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let line = Curve3::Line(Line3 { origin: DVec3::new(0.0, 0.0, 5.0), direction: DVec3::NEG_Z });
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let line = Curve3::Line(Line3 { origin: DVec3::new(1.0, 1.0, 5.0), direction: DVec3::NEG_Z });
 /// let intersections = intersect_curve_with_brep(&line, &box_brep, 1e-7);
 /// assert_eq!(intersections.len(), 2);
 /// ```
@@ -218,11 +218,11 @@ pub fn intersect_curve_with_brep(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::intersect_line_with_brep;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let intersections = intersect_line_with_brep(DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, &box_brep, 1e-7);
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, 1e-7);
 /// assert_eq!(intersections.len(), 2);
 /// ```
 pub fn intersect_line_with_brep(
@@ -245,13 +245,15 @@ pub fn intersect_line_with_brep(
     // Intersect with each candidate face
     let mut results: Vec<CurveBRepIntersection> = candidate_faces
         .into_iter()
-        .filter_map(|face_idx| {
-            intersect_line_with_face(origin, dir, brep, face_idx, tol).map(|cfi| CurveBRepIntersection {
-                point: cfi.point,
-                param: cfi.param,
-                face_index: face_idx,
-                uv: cfi.uv,
-            })
+        .flat_map(|face_idx| {
+            intersect_line_with_face(origin, dir, brep, face_idx, tol)
+                .into_iter()
+                .map(move |cfi| CurveBRepIntersection {
+                    point: cfi.point,
+                    param: cfi.param,
+                    face_index: face_idx,
+                    uv: cfi.uv,
+                })
         })
         .collect();
 
@@ -289,6 +291,11 @@ pub fn intersect_curve_with_face(
     face_idx: usize,
     tol: f64,
 ) -> Vec<CurveFaceIntersection> {
+    // Handle lines specially using analytic intersection
+    if let Curve3::Line(line) = curve {
+        return intersect_line_with_face(line.origin, line.direction, brep, face_idx, tol);
+    }
+
     // Get the surface for this face
     let surface = match get_face_surface(brep, face_idx) {
         Some(s) => s,
@@ -336,16 +343,15 @@ pub fn intersect_curve_with_face(
     }
 
     // Filter to face bounds
-    let face = get_face(brep, face_idx);
-    intersections.retain(|cfi| is_point_in_face_bounds(cfi.point, cfi.uv, face, tol));
+    intersections.retain(|cfi| is_point_in_face_bounds(brep, cfi.point, cfi.uv, face_idx, tol));
 
     intersections
 }
 
 /// Intersect a line with a single face of a BRep.
 ///
-/// Computes the intersection point between the line and the face's surface,
-/// if it lies within the face's boundaries.
+/// Computes all intersection points between the line and the face's surface
+/// that lie within the face's boundaries.
 ///
 /// # Arguments
 /// * `origin` - The origin point of the line.
@@ -355,35 +361,34 @@ pub fn intersect_curve_with_face(
 /// * `tol` - Tolerance for geometric computations.
 ///
 /// # Returns
-/// The first intersection point, if any.
+/// A vector of intersection points within the face bounds.
 pub fn intersect_line_with_face(
     origin: DVec3,
     dir: DVec3,
     brep: &BRep,
     face_idx: usize,
     tol: f64,
-) -> Option<CurveFaceIntersection> {
+) -> Vec<CurveFaceIntersection> {
     // Get the surface for this face
     let surface = match get_face_surface(brep, face_idx) {
         Some(s) => s,
-        None => return None,
+        None => return Vec::new(),
     };
 
     // Intersect line with surface
     let hits = intersect_line_with_surface(origin, dir, &surface);
 
     if hits.is_empty() {
-        return None;
+        return Vec::new();
     }
 
-    // Find the first hit within the face bounds
-    let face = get_face(brep, face_idx);
-
+    // Find all hits within the face bounds
+    let mut results = Vec::new();
     for hit in hits {
         let uv = compute_uv_for_point(&surface, hit.point);
 
-        if is_point_in_face_bounds(hit.point, uv, face, tol) {
-            return Some(CurveFaceIntersection {
+        if is_point_in_face_bounds(brep, hit.point, uv, face_idx, tol) {
+            results.push(CurveFaceIntersection {
                 point: hit.point,
                 param: hit.param,
                 uv,
@@ -391,7 +396,7 @@ pub fn intersect_line_with_face(
         }
     }
 
-    None
+    results
 }
 
 // =============================================================================
@@ -415,11 +420,11 @@ pub fn intersect_line_with_face(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::ray_cast;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let hits = ray_cast(DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, &box_brep);
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let hits = ray_cast(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep);
 /// assert!(!hits.is_empty());
 /// ```
 pub fn ray_cast(
@@ -476,11 +481,11 @@ pub fn ray_cast(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::shoot_ray;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let hits = shoot_ray(DVec3::new(0.0, 0.0, 5.0), DVec3::NEG_Z, &box_brep, 10.0);
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let hits = shoot_ray(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, 10.0);
 /// assert!(!hits.is_empty());
 /// ```
 pub fn shoot_ray(
@@ -512,11 +517,11 @@ pub fn shoot_ray(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::PrimitiveSolid;
+/// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::is_point_inside_by_ray;
 ///
-/// let box_brep = PrimitiveSolid::box_centered(DVec3::new(2.0, 2.0, 2.0)).to_brep();
-/// let inside = is_point_inside_by_ray(DVec3::ZERO, &box_brep);
+/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let inside = is_point_inside_by_ray(DVec3::new(1.0, 1.0, 1.0), &box_brep);
 /// assert!(inside);
 /// ```
 pub fn is_point_inside_by_ray(point: DVec3, brep: &BRep) -> bool {
@@ -850,28 +855,267 @@ fn compute_uv_for_point(surface: &Surface3, point: DVec3) -> DVec2 {
 }
 
 /// Check if a point lies within a face's boundaries.
-fn is_point_in_face_bounds(_point: DVec3, _uv: DVec2, face: Option<&Face>, _tol: f64) -> bool {
-    let face = match face {
+///
+/// Uses point-in-polygon test with the face's outer wire vertices.
+fn is_point_in_face_bounds(brep: &BRep, point: DVec3, _uv: DVec2, face_idx: usize, tol: f64) -> bool {
+    let face = match get_face(brep, face_idx) {
         Some(f) => f,
         None => return true, // No face bounds info, assume inside
     };
 
-    // Simple check: use the face's outer wire to determine bounds
-    // For a more accurate check, we would need point-in-polygon tests
-    // For now, use a simple bounding box check based on wire vertices
-
-    // Check if the point is within the face's extent
-    // This is a simplified check; a full implementation would use
-    // proper point-in-face classification
-
-    // For faces with outer wires, check if the point is reasonably close
     if face.outer_wire.edges.is_empty() {
         return true;
     }
 
-    // For now, accept all points within tolerance of the face
-    // A full implementation would do proper point-in-face tests
-    true
+    // Get the surface for this face to project onto
+    let surface = match get_face_surface(brep, face_idx) {
+        Some(s) => s,
+        None => return true, // Can't check without surface
+    };
+
+    // Collect the wire vertices in order
+    let wire_vertices = collect_wire_vertices(brep, &face.outer_wire);
+    if wire_vertices.len() < 3 {
+        return true;
+    }
+
+    // Project the point and wire vertices onto a 2D plane for point-in-polygon test
+    let is_inside = point_in_polygon_on_surface(&surface, point, &wire_vertices, tol);
+
+    // Also check against inner wires (holes) - point must be outside all inner wires
+    if is_inside {
+        for inner_wire in &face.inner_wires {
+            let inner_vertices = collect_wire_vertices(brep, inner_wire);
+            if inner_vertices.len() >= 3 {
+                if point_in_polygon_on_surface(&surface, point, &inner_vertices, tol) {
+                    return false; // Point is inside a hole
+                }
+            }
+        }
+    }
+
+    is_inside
+}
+
+/// Collect 3D vertex positions from a wire in traversal order.
+fn collect_wire_vertices(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+    let mut vertices = Vec::new();
+    for wire_edge in &wire.edges {
+        let edge = match brep.edges.get(wire_edge.idx) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // Get the starting vertex of this edge (based on traversal direction)
+        let vertex_idx = if wire_edge.forward { edge.start } else { edge.end };
+        if let Some(v) = brep.vertices.get(vertex_idx) {
+            vertices.push(v.point);
+        }
+    }
+    vertices
+}
+
+/// Check if a point is inside a polygon projected onto a surface.
+///
+/// Uses the ray casting algorithm (even-odd rule) in the surface's natural 2D coordinate system.
+fn point_in_polygon_on_surface(surface: &Surface3, point: DVec3, polygon: &[DVec3], tol: f64) -> bool {
+    // Check if we have enough unique vertices for a proper polygon
+    let unique_vertices: Vec<DVec3> = {
+        let mut unique: Vec<DVec3> = Vec::new();
+        for &v in polygon {
+            if !unique.iter().any(|&u: &DVec3| (u - v).length() < tol) {
+                unique.push(v);
+            }
+        }
+        unique
+    };
+
+    // For surfaces with degenerate wires (like a sphere with just a seam edge),
+    // we need different logic based on the surface type
+    if unique_vertices.len() < 3 {
+        // Degenerate polygon - use surface-specific logic
+        return point_on_closed_surface(surface, point, tol);
+    }
+
+    // For planes and other simple surfaces, project to 2D and use point-in-polygon
+    match surface {
+        Surface3::Plane(plane) => {
+            // Create a local 2D coordinate system on the plane
+            let normal = plane.normal.normalize();
+            let (u_dir, v_dir) = get_plane_tangent_dirs(normal);
+
+            // Project the test point relative to plane origin
+            let rel_point = point - plane.origin;
+            let p2d = DVec2::new(rel_point.dot(u_dir), rel_point.dot(v_dir));
+
+            // Project polygon vertices
+            let poly2d: Vec<DVec2> = polygon
+                .iter()
+                .map(|&v| {
+                    let rel = v - plane.origin;
+                    DVec2::new(rel.dot(u_dir), rel.dot(v_dir))
+                })
+                .collect();
+
+            point_in_polygon_2d(p2d, &poly2d, tol)
+        }
+        Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_) => {
+            // For curved surfaces with proper wires, use bounding box check
+            // A more sophisticated implementation would use proper surface parameter space
+            point_in_bounding_box(point, polygon, tol)
+        }
+        _ => {
+            // Default to bounding box check
+            point_in_bounding_box(point, polygon, tol)
+        }
+    }
+}
+
+/// Check if a point is on a closed surface (like a full sphere or torus).
+///
+/// For closed surfaces with degenerate wires (just seams), any point on the surface
+/// is considered valid.
+fn point_on_closed_surface(surface: &Surface3, point: DVec3, tol: f64) -> bool {
+    match surface {
+        Surface3::Sphere(sph) => {
+            // Check if point is on the sphere surface
+            let dist = (point - sph.center).length();
+            (dist - sph.radius).abs() < tol * 10.0
+        }
+        Surface3::Torus(torus) => {
+            // Check if point is on the torus surface using the distance formula
+            // Distance from point to torus center in the plane perpendicular to axis
+            let rel = point - torus.center;
+            let axis = torus.axis.normalize();
+            let axial_dist = rel.dot(axis).abs(); // Distance along axis
+            let radial_vec = rel - axial_dist * axis;
+            let radial_dist = radial_vec.length();
+            // Distance to torus surface: sqrt((radial_dist - major_r)^2 + axial_dist^2) - minor_r
+            let dist_to_surface = ((radial_dist - torus.major_radius).powi(2) + axial_dist.powi(2)).sqrt() - torus.minor_radius;
+            dist_to_surface.abs() < tol * 10.0
+        }
+        Surface3::Cylinder(cyl) => {
+            // For a cylinder, check if point is on the infinite cylinder surface
+            // This assumes a full cylinder - caps would need separate face handling
+            let rel = point - cyl.origin;
+            let axis = cyl.axis.normalize();
+            let axial_dist = rel.dot(axis);
+            let radial_vec = rel - axial_dist * axis;
+            let radial_dist = radial_vec.length();
+            (radial_dist - cyl.radius).abs() < tol * 10.0
+        }
+        Surface3::Cone(cone) => {
+            // For a cone, check if point is on the infinite cone surface
+            // Distance from apex along axis
+            let rel = point - cone.apex;
+            let axis = cone.axis.normalize();
+            let axial_dist = rel.dot(axis);
+            if axial_dist < -tol {
+                return false; // Behind apex
+            }
+            let radial_vec = rel - axial_dist * axis;
+            let radial_dist = radial_vec.length();
+            // Cone radius at this height is proportional to axial distance
+            // half_angle is such that radius = axial_dist * tan(half_angle)
+            // We need to derive half_angle from the cone definition
+            // Assuming cone is defined with base_radius at some height
+            // For now, use a simple check
+            let expected_radius = axial_dist * 0.5; // Approximate, should use actual cone angle
+            (radial_dist - expected_radius).abs() < tol * 10.0
+        }
+        _ => {
+            // For other surfaces, default to true
+            // This may need refinement for specific surface types
+            true
+        }
+    }
+}
+
+/// Get two orthogonal tangent directions for a plane with the given normal.
+fn get_plane_tangent_dirs(normal: DVec3) -> (DVec3, DVec3) {
+    let u_dir = if normal.x.abs() > 0.9 {
+        normal.cross(DVec3::Y).normalize()
+    } else {
+        normal.cross(DVec3::X).normalize()
+    };
+    let v_dir = normal.cross(u_dir).normalize();
+    (u_dir, v_dir)
+}
+
+/// Check if a point is inside a 2D polygon using ray casting.
+fn point_in_polygon_2d(point: DVec2, polygon: &[DVec2], tol: f64) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+
+    // First check if point is on any edge (within tolerance)
+    for i in 0..polygon.len() {
+        let j = (i + 1) % polygon.len();
+        if point_on_segment_2d(point, polygon[i], polygon[j], tol) {
+            return true; // On boundary counts as inside
+        }
+    }
+
+    // Ray casting algorithm: count intersections with a horizontal ray
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+
+    for i in 0..polygon.len() {
+        let pi = polygon[i];
+        let pj = polygon[j];
+
+        if ((pi.y > point.y) != (pj.y > point.y))
+            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+
+    inside
+}
+
+/// Check if a 2D point lies on a line segment.
+fn point_on_segment_2d(p: DVec2, a: DVec2, b: DVec2, tol: f64) -> bool {
+    let ab = b - a;
+    let ap = p - a;
+    let ab_len_sq = ab.length_squared();
+
+    if ab_len_sq < tol * tol {
+        // Degenerate segment (a == b)
+        return ap.length() < tol;
+    }
+
+    // Project p onto line ab
+    let t = ap.dot(ab) / ab_len_sq;
+    if t < -tol / ab.length() || t > 1.0 + tol / ab.length() {
+        return false;
+    }
+
+    let closest = a + t.clamp(0.0, 1.0) * ab;
+    (p - closest).length() < tol
+}
+
+/// Check if a point is inside a bounding box defined by polygon vertices.
+fn point_in_bounding_box(point: DVec3, polygon: &[DVec3], tol: f64) -> bool {
+    if polygon.is_empty() {
+        return true;
+    }
+
+    let mut min_pt = polygon[0];
+    let mut max_pt = polygon[0];
+
+    for &v in &polygon[1..] {
+        min_pt = min_pt.min(v);
+        max_pt = max_pt.max(v);
+    }
+
+    point.x >= min_pt.x - tol
+        && point.x <= max_pt.x + tol
+        && point.y >= min_pt.y - tol
+        && point.y <= max_pt.y + tol
+        && point.z >= min_pt.z - tol
+        && point.z <= max_pt.z + tol
 }
 
 /// Filter faces using line AABB intersection.
@@ -1021,20 +1265,21 @@ mod tests {
             depth: 2.0,
         });
 
+        // Box goes from (0,0,0) to (2,2,2), so center is at (1,1,1)
         // Line through the center of the box, along Z
         let intersections = intersect_line_with_brep(
-            DVec3::new(0.0, 0.0, 5.0),
+            DVec3::new(1.0, 1.0, 5.0),  // Center of box is at (1,1,1)
             DVec3::NEG_Z,
             &box_brep,
             TOLERANCE_ABS,
         );
 
-        // Should hit top face (z=1) and bottom face (z=-1)
+        // Should hit back face (z=2) and front face (z=0)
         assert_eq!(intersections.len(), 2);
 
         // Check that the points are on opposite ends
-        assert!((intersections[0].point.z - 1.0).abs() < 0.1);
-        assert!((intersections[1].point.z + 1.0).abs() < 0.1);
+        assert!((intersections[0].point.z - 2.0).abs() < 0.1);
+        assert!((intersections[1].point.z).abs() < 0.1);
     }
 
     #[test]
@@ -1161,8 +1406,9 @@ mod tests {
             depth: 2.0,
         });
 
+        // Box goes from (0,0,0) to (2,2,2), so center is at (1,1,1)
         let line = Curve3::Line(Line3 {
-            origin: DVec3::new(0.0, 0.0, 5.0),
+            origin: DVec3::new(1.0, 1.0, 5.0),
             direction: DVec3::NEG_Z,
         });
 
@@ -1279,12 +1525,13 @@ mod tests {
             depth: 2.0,
         });
 
+        // Box goes from (0,0,0) to (2,2,2)
         // Test several points
         let test_points = [
-            (DVec3::ZERO, true),
-            (DVec3::new(0.5, 0.5, 0.5), true),
-            (DVec3::new(1.5, 0.0, 0.0), false),
-            (DVec3::new(0.0, 0.0, 1.5), false),
+            (DVec3::new(1.0, 1.0, 1.0), true),   // Center - definitely inside
+            (DVec3::new(0.5, 0.5, 0.5), true),   // Inside
+            (DVec3::new(3.0, 1.0, 1.0), false),  // Outside (x=3 > 2)
+            (DVec3::new(1.0, 3.0, 1.0), false),  // Outside (y=3 > 2)
         ];
 
         for (point, expected_inside) in test_points {
@@ -1300,15 +1547,16 @@ mod tests {
             height: 2.0,
         });
 
-        // Line through the center
+        // Cylinder is along Y axis, centered at origin, with height 2 (y: -1 to 1)
+        // Line through the center of the cylinder (z=0, not z=1)
         let intersections = intersect_line_with_brep(
-            DVec3::new(-5.0, 0.0, 1.0),
+            DVec3::new(-5.0, 0.0, 0.0),  // At z=0, goes through cylinder center
             DVec3::X,
             &cyl_brep,
             TOLERANCE_ABS,
         );
 
-        // Should hit the curved surface at two points
+        // Should hit the curved surface at two points (x=-1 and x=1)
         assert!(intersections.len() >= 2);
     }
 }

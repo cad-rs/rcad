@@ -1604,8 +1604,7 @@ impl Part21Writer {
             | Some(surface @ Surface3::Coons(_))
             | Some(surface @ Surface3::TriBezier(_))
             | Some(surface @ Surface3::Bezier(_))
-            | Some(surface @ Surface3::Offset(_))
-            | Some(surface @ Surface3::Gordon(_)) => {
+            | Some(surface @ Surface3::Offset(_)) => {
                 // Export higher-level surfaces through a sampled NURBS fallback
                 // instead of collapsing them to a plane.
                 let bs = surface_to_bspline(&surface, 9, 9);
@@ -3820,8 +3819,7 @@ fn surface_normal(face_surface: Option<Surface3>) -> Option<glam::DVec3> {
         | Surface3::Coons(_)
         | Surface3::TriBezier(_)
         | Surface3::Bezier(_)
-        | Surface3::Offset(_)
-        | Surface3::Gordon(_) => None,
+        | Surface3::Offset(_) => None,
         Surface3::Trimmed(ts) => surface_normal(Some(*ts.basis)),
     }
 }

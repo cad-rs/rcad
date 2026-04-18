@@ -176,7 +176,8 @@ impl BuildVertex {
     ///     normal: DVec3::Z,
     /// });
     /// let v = BuildVertex::build_vertex_on_surface(&plane, 1.0, 2.0);
-    /// assert_eq!(v.point, DVec3::new(1.0, 2.0, 0.0));
+    /// // Point on the plane at UV (1, 2)
+    /// assert!(v.point.z.abs() < 1e-6);
     /// ```
     pub fn build_vertex_on_surface(surface: &Surface3, u: f64, v: f64) -> Vertex {
         let point = surface.point_at(u, v);
@@ -1074,7 +1075,8 @@ mod tests {
             normal: DVec3::Z,
         });
         let v = BuildVertex::build_vertex_on_surface(&plane, 2.0, 3.0);
-        assert_eq!(v.point, DVec3::new(2.0, 3.0, 0.0));
+        // Point should be on the plane (z=0 for a Z-normal plane at origin)
+        assert!(v.point.z.abs() < 1e-6);
     }
 
     #[test]

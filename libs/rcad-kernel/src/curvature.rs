@@ -78,8 +78,7 @@ pub fn principal_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
         | Surface3::Coons(_)
         | Surface3::Bezier(_)
         | Surface3::Offset(_)
-        | Surface3::Trimmed(_)
-        | Surface3::Gordon(_) => numerical_curvatures(surface, u, v),
+        | Surface3::Trimmed(_) => numerical_curvatures(surface, u, v),
     }
 }
 

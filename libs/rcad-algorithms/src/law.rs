@@ -820,10 +820,13 @@ impl InterpolateLaw {
             // P(t) = v0*H00(s) + h*m0*H10(s) + v1*H01(s) + h*m1*H11(s)
             //
             // Expanding in powers of s:
-            // P(s) = v0 + h*m0*s + (-2*v0 - h*m0 + 2*v1 - h*m1)*s^2 + (v0 + h*m0 - v1 + h*m1)*s^3
+            // s^3: 2v0 + h*m0 - 2v1 + h*m1
+            // s^2: -3v0 - 2h*m0 + 3v1 - h*m1
+            // s^1: h*m0
+            // s^0: v0
 
-            let s2_coef = -2.0 * v0 - h * m0 + 2.0 * v1 - h * m1;
-            let s3_coef = v0 + h * m0 - v1 + h * m1;
+            let s2_coef = -3.0 * v0 - 2.0 * h * m0 + 3.0 * v1 - h * m1;
+            let s3_coef = 2.0 * v0 + h * m0 - 2.0 * v1 + h * m1;
 
             coefficients.push(CubicCoefficients {
                 a: v0,
@@ -1113,18 +1116,19 @@ mod tests {
 
     #[test]
     fn bspline_law_quadratic() {
-        // Quadratic BSpline
+        // Quadratic BSpline (Bezier curve with 3 control points)
         let params = vec![0.0, 0.5, 1.0];
         let values = vec![0.0, 1.0, 0.0];
         let law = BSplineLaw::from_points(&params, &values, 2);
 
-        // Check endpoints
+        // Check endpoints (clamped BSpline passes through endpoints)
         assert!(approx_eq(law.value(0.0), 0.0, 1e-6));
         assert!(approx_eq(law.value(1.0), 0.0, 1e-6));
 
-        // Middle should be close to 1.0 (but not exact for BSpline interpolation)
+        // For quadratic Bezier with control values [0, 1, 0], the max is at t=0.5
+        // value = B0(0.5)*0 + B1(0.5)*1 + B2(0.5)*0 = 0.5
         let mid = law.value(0.5);
-        assert!(mid > 0.5, "mid value should be positive, got {}", mid);
+        assert!(approx_eq(mid, 0.5, 1e-6), "mid value should be 0.5, got {}", mid);
     }
 
     #[test]

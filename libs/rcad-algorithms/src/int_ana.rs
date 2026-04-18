@@ -35,12 +35,16 @@ pub struct LinPlnIntersection {
 ///
 /// # Example
 /// ```
+/// use glam::DVec3;
+/// use rcad_kernel::geom::{Line3, Plane};
+/// use rcad_algorithms::int_ana::intersect_line_plane;
+///
 /// let line = Line3 { origin: DVec3::ZERO, direction: DVec3::Z };
 /// let plane = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };
 /// let result = intersect_line_plane(&line, &plane);
 /// assert!(result.is_some());
-/// let (point, t) = result.unwrap();
-/// assert!((t - 5.0).abs() < 1e-10);
+/// let intersection = result.unwrap();
+/// assert!((intersection.param - 5.0).abs() < 1e-10);
 /// ```
 pub fn intersect_line_plane(line: &Line3, plane: &Plane) -> Option<LinPlnIntersection> {
     let denom = line.direction.dot(plane.normal);
@@ -1096,7 +1100,9 @@ fn solve_quartic(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
         if disc.abs() < TOLERANCE_ABS {
             let y = (-p / 2.0).sqrt();
             let x = y - a / 4.0;
-            return vec![x, -x];
+            let mut roots = vec![x, -x];
+            roots.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            return roots;
         }
         let sqrt_disc = disc.sqrt();
         let y1_sq = (-p + sqrt_disc) / 2.0;
@@ -1113,6 +1119,7 @@ fn solve_quartic(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
             roots.push(y2 - a / 4.0);
             roots.push(-y2 - a / 4.0);
         }
+        roots.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         return roots;
     }
 
