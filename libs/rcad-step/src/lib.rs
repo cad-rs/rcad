@@ -8911,8 +8911,13 @@ mod tests {
     }
 
     /// Helper to count topology elements.
+    /// Counts only topological vertices (those referenced by edges), not tessellation vertices.
     fn count_topology(brep: &BRep) -> (usize, usize, usize, usize) {
-        let vertices = brep.vertices.len();
+        use std::collections::HashSet;
+        let topological_vertices: HashSet<usize> = brep.edges.iter()
+            .flat_map(|e| [e.start, e.end].into_iter())
+            .collect();
+        let vertices = topological_vertices.len();
         let edges = brep.edges.len();
         let shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
         let faces: usize = brep
@@ -8922,6 +8927,54 @@ mod tests {
             .map(|sh| sh.faces.len())
             .sum();
         (vertices, edges, faces, shells)
+    }
+
+    #[test]
+    fn round_trip_boolean_union() {
+        use rcad_algorithms::{BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom};
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        populate_box_geom(&mut a);
+        populate_box_geom(&mut b);
+
+        let (union, _) = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default())
+            .expect("union should succeed");
+
+        let (v1, e1, f1, s1) = count_topology(&union);
+        let round_tripped = round_trip_brep(&union, true);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        assert_eq!(v1, v2, "vertex count should match after round-trip");
+        assert_eq!(e1, e2, "edge count should match after round-trip");
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
+    }
+
+    #[test]
+    fn round_trip_boolean_difference() {
+        use rcad_algorithms::{BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom};
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        populate_box_geom(&mut a);
+        populate_box_geom(&mut b);
+
+        let (diff, _) = boolean_op_simplified(BooleanOpType::Difference, &a, &b, SimplifyOptions::default())
+            .expect("difference should succeed");
+
+        let (v1, e1, f1, s1) = count_topology(&diff);
+        let round_tripped = round_trip_brep(&diff, true);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        assert_eq!(v1, v2, "vertex count should match after round-trip");
+        assert_eq!(e1, e2, "edge count should match after round-trip");
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
     }
 
     #[test]
