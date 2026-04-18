@@ -932,4 +932,73 @@ mod tests {
             "near-coincident vertices difference should succeed"
         );
     }
+
+    // ============================================================================
+    // Near-Tangent Geometry Tests
+    // ============================================================================
+
+    /// Test union of two boxes with faces nearly touching (gap within fuzzy tolerance).
+    /// This verifies the kernel's ability to handle near-tangent plane geometry.
+    #[test]
+    fn test_near_tangent_plane_union() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_with_options, BooleanOptions, BooleanOpType};
+
+        // Two boxes with faces nearly touching (gap = 1e-5, within fuzzy tolerance)
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0 + 1e-5, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Union, &a, &b, opts);
+        assert!(result.is_ok(), "near-tangent union should succeed with fuzzy tolerance");
+    }
+
+    /// Test difference of two boxes with faces nearly touching.
+    /// This verifies the kernel's ability to handle near-tangent plane geometry in difference operations.
+    #[test]
+    fn test_near_tangent_plane_difference() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_with_options, BooleanOptions, BooleanOpType};
+
+        // Two boxes with faces nearly touching (gap = 1e-5, within fuzzy tolerance)
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0 + 1e-5, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Difference, &a, &b, opts);
+        // Difference with near-tangent faces should either succeed or return degenerate result
+        assert!(result.is_ok(), "near-tangent difference should succeed with fuzzy tolerance");
+    }
+
+    /// Test intersection of a cylinder with a near-tangent plane (box face).
+    /// This verifies the kernel's ability to handle near-tangent curved-to-plane geometry.
+    #[test]
+    fn test_near_tangent_cylinder_intersection() {
+        use rcad_modeling::{make_box_brep, make_cylinder_brep};
+        use glam::DVec3;
+        use crate::{boolean_op_with_options, BooleanOptions, BooleanOpType};
+
+        // Cylinder intersecting with a box where the cylinder surface is nearly tangent to a box face
+        let cylinder = make_cylinder_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
+        // Box positioned so its face is nearly tangent to cylinder surface (gap = 1e-5)
+        let box_ = make_box_brep(DVec3::new(1.0 + 1e-5, -2.0, -1.0), DVec3::X, DVec3::Y, 4.0, 4.0, 6.0).unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Intersection, &cylinder, &box_, opts);
+        assert!(result.is_ok(), "near-tangent cylinder-plane intersection should succeed with fuzzy tolerance");
+    }
 }
