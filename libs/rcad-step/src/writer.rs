@@ -4338,6 +4338,56 @@ mod tests {
     }
 
     #[test]
+    fn gmsh_strict_output_has_correct_structure() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        let step = StepWriter::write_string_with_options(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: true,
+                ..Default::default()
+            },
+        );
+
+        // GMSH strict should have MANIFOLD_SOLID_BREP
+        assert!(step.contains("MANIFOLD_SOLID_BREP"), "should contain MANIFOLD_SOLID_BREP");
+        assert!(step.contains("CLOSED_SHELL"), "should contain CLOSED_SHELL");
+        assert!(step.contains("ADVANCED_FACE"), "should contain ADVANCED_FACE");
+
+        // Should NOT have wireframe overlay entities
+        assert!(!step.contains("GEOMETRIC_CURVE_SET"), "should not contain GEOMETRIC_CURVE_SET");
+        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME"), "should not contain wireframe");
+    }
+
+    #[test]
+    fn non_strict_mode_includes_geometry_entities() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        let step = StepWriter::write_string_with_options(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: false,
+                ..Default::default()
+            },
+        );
+
+        // Non-strict should have both solid and wireframe
+        assert!(step.contains("MANIFOLD_SOLID_BREP"), "should contain MANIFOLD_SOLID_BREP");
+        assert!(step.contains("GEOMETRIC_CURVE_SET") || step.contains("SHELL_BASED_SURFACE_MODEL"),
+                "should contain geometric entities");
+    }
+
+    #[test]
     fn exports_general_properties_when_provided() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("test box should be valid");
