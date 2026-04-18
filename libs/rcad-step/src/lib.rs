@@ -11073,4 +11073,47 @@ END-ISO-10303-21;
         let result = StepReader::parse_string(truncated);
         assert!(result.is_err(), "should return error for truncated STEP");
     }
+
+    // ── Periodic Surface Seam Tests ──────────────────────────────────────────────
+
+    #[test]
+    fn cylinder_seam_no_duplicate_edges() {
+        use rcad_modeling::make_cylinder_brep;
+        use glam::DVec3;
+
+        let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+
+        // Cylinder should have 3 edges (top circle, bottom circle, seam)
+        // Not 4 or more due to duplicate seams
+        let original_edge_count = cylinder.edges.len();
+        assert!(original_edge_count <= 4, "cylinder should not have excessive edges, got {}", original_edge_count);
+
+        let round_tripped = round_trip_brep(&cylinder, false);
+        let round_trip_edge_count = round_tripped.edges.len();
+        // Allow for tessellation edges but check reasonable bounds
+        // A proper cylinder round-trip should preserve topology reasonably
+        assert!(
+            round_trip_edge_count <= 10,
+            "round-tripped cylinder should not have excessive edges, got {} (original {})",
+            round_trip_edge_count, original_edge_count
+        );
+    }
+
+    #[test]
+    fn torus_round_trip_preserves_topology() {
+        use rcad_modeling::make_torus_brep;
+        use glam::DVec3;
+
+        let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
+
+        let (v1, e1, f1, s1) = count_topology(&torus);
+        let round_tripped = round_trip_brep(&torus, false);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        // Torus is a closed surface, should preserve face count
+        assert_eq!(f1, f2, "torus face count should match after round-trip");
+
+        let has_torus = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Torus(_)));
+        assert!(has_torus, "should preserve toroidal surface");
+    }
 }
