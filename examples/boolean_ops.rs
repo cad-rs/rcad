@@ -3,12 +3,15 @@
 //! Run: cargo run --example boolean_ops
 
 use glam::DVec3;
-use rcad_algorithms::{BooleanOpType, boolean_op, geom_populate::populate_box_geom};
+use rcad_algorithms::{BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom};
 use rcad_kernel::BRep;
 use rcad_modeling::*;
 use rcad_step::writer::{ExportSelection, StepWriter};
 
 fn main() {
+    // Simplify options: merge coplanar faces for cleaner output
+    let simplify_opts = SimplifyOptions::default();
+
     // ── 1. Union of two overlapping boxes ──────────────────────────────
     println!("1. Union of two overlapping boxes");
     let mut a = make_box_at(0.0, 0.0, 0.0, 3.0, 2.0, 2.0);
@@ -16,22 +19,24 @@ fn main() {
     populate_box_geom(&mut a);
     populate_box_geom(&mut b);
 
-    let union = boolean_op(BooleanOpType::Union, &a, &b).expect("union");
+    let (union, report) = boolean_op_simplified(BooleanOpType::Union, &a, &b, simplify_opts).expect("union");
+    println!("   Simplified: {} faces merged", report.same_domain_face_merges);
     write_step(&union, "output_bool_union.step");
 
     // ── 2. Intersection of two overlapping boxes ───────────────────────
     println!("2. Intersection of two overlapping boxes");
-    let intersection = boolean_op(BooleanOpType::Intersection, &a, &b).expect("intersection");
+    let (intersection, _) = boolean_op_simplified(BooleanOpType::Intersection, &a, &b, simplify_opts).expect("intersection");
     write_step(&intersection, "output_bool_intersection.step");
 
     // ── 3. Difference A - B ────────────────────────────────────────────
     println!("3. Difference A - B");
-    let difference = boolean_op(BooleanOpType::Difference, &a, &b).expect("difference");
+    let (difference, report) = boolean_op_simplified(BooleanOpType::Difference, &a, &b, simplify_opts).expect("difference");
+    println!("   Simplified: {} faces merged", report.same_domain_face_merges);
     write_step(&difference, "output_bool_difference.step");
 
     // ── 4. Difference B - A (asymmetric) ──────────────────────────────
     println!("4. Difference B - A");
-    let diff_ba = boolean_op(BooleanOpType::Difference, &b, &a).expect("difference B-A");
+    let (diff_ba, _) = boolean_op_simplified(BooleanOpType::Difference, &b, &a, simplify_opts).expect("difference B-A");
     write_step(&diff_ba, "output_bool_difference_ba.step");
 
     // ── 5. Box with a rectangular hole (contained subtraction) ────────
@@ -41,7 +46,7 @@ fn main() {
     populate_box_geom(&mut outer);
     populate_box_geom(&mut slot);
 
-    let slotted = boolean_op(BooleanOpType::Difference, &outer, &slot).expect("slot");
+    let (slotted, _) = boolean_op_simplified(BooleanOpType::Difference, &outer, &slot, simplify_opts).expect("slot");
     write_step(&slotted, "output_bool_slot.step");
 
     // ── 6. Three-box union (chained) ──────────────────────────────────
@@ -53,7 +58,7 @@ fn main() {
     populate_box_geom(&mut by);
     populate_box_geom(&mut bz);
 
-    let mut cross = boolean_op(BooleanOpType::Union, &bx, &by).expect("cross xy");
+    let (mut cross, _) = boolean_op_simplified(BooleanOpType::Union, &bx, &by, simplify_opts).expect("cross xy");
     // The result of union doesn't have GeomStore populated for further booleans,
     // so we export the two-arm cross and the third arm separately.
     // For full chaining, populate_box_geom would need to be generalized.

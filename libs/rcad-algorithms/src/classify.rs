@@ -372,8 +372,8 @@ fn classify_with_multi_ray_voting(
         DVec3::new(0.5774, -0.5774, 0.5774).normalize(),
         // Secondary rays
         DVec3::new(0.1234, 0.9012, 0.4156).normalize(),
-        DVec3::new(-0.5555, 0.4444, 0.7071).normalize(),
-        DVec3::new(0.7071, 0.7071, 0.0).normalize(),
+        DVec3::new(-0.5555, 0.4444, std::f64::consts::FRAC_1_SQRT_2).normalize(),
+        DVec3::new(std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2, 0.0).normalize(),
         // Additional rays for complex shapes
         DVec3::new(0.3015, -0.3015, 0.9045).normalize(),
         DVec3::new(-0.6667, -0.3333, 0.6667).normalize(),

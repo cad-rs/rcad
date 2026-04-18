@@ -1016,11 +1016,8 @@ pub fn discretize_edge_on_surface(curve: &Curve3, surface: &Surface3, params: &M
     let mut points = discretize_edge(curve, params);
 
     // Verify points are on the surface and project if needed
-    for point in &mut points {
-        // Find closest point on surface (simplified)
-        let _ = surface; // Surface available for more sophisticated projection
-        *point = *point; // Keep point as-is for now
-    }
+    // Note: Surface available for more sophisticated projection in future
+    let _ = surface;
 
     points
 }
