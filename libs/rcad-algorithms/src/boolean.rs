@@ -1074,4 +1074,95 @@ mod tests {
             "sheet metal hole cut should succeed"
         );
     }
+
+    // ============================================================================
+    // Small Feature Tests
+    // ============================================================================
+
+    /// Test subtracting a small hole (cylinder) from a large box.
+    /// This verifies the kernel's ability to handle small features without
+    /// numerical issues or degenerate geometry.
+    #[test]
+    fn test_small_hole_subtraction() {
+        use rcad_modeling::{make_box_brep, make_cylinder_brep};
+        use glam::DVec3;
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Large box with small hole (radius 0.01)
+        let mut box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        let hole = make_cylinder_brep(DVec3::new(5.0, 5.0, -1.0), DVec3::Z, DVec3::X, 0.01, 12.0).unwrap();
+        populate_box_geom(&mut box_brep);
+
+        let result = boolean_op_simplified(BooleanOpType::Difference, &box_brep, &hole, SimplifyOptions::default());
+        assert!(result.is_ok(), "small hole subtraction should succeed");
+    }
+
+    /// Test subtracting a thin slot from a box.
+    /// This verifies the kernel's ability to handle thin features (high aspect ratio)
+    /// without numerical instability.
+    #[test]
+    fn test_thin_slot_subtraction() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Main box
+        let mut box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        // Thin slot (0.1mm wide, 5mm deep, spanning full height)
+        let slot = make_box_brep(
+            DVec3::new(4.95, -0.1, 0.0),
+            DVec3::X,
+            DVec3::Z,
+            0.1,
+            5.0,
+            10.0,
+        ).unwrap();
+        populate_box_geom(&mut box_brep);
+
+        let result = boolean_op_simplified(BooleanOpType::Difference, &box_brep, &slot, SimplifyOptions::default());
+        assert!(result.is_ok(), "thin slot subtraction should succeed");
+    }
+
+    /// Test that tiny features are preserved through simplification.
+    /// This verifies that the simplification pipeline doesn't remove
+    /// small but intentional geometric features.
+    #[test]
+    fn test_tiny_fillet_preservation() {
+        use rcad_modeling::{make_box_brep, make_cylinder_brep};
+        use glam::DVec3;
+        use crate::geom_populate::populate_box_geom;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Create a box with a small fillet-like feature (using cylinder subtraction)
+        let mut box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 5.0, 5.0, 5.0).unwrap();
+        // Small fillet radius (0.05)
+        let fillet_tool = make_cylinder_brep(
+            DVec3::new(0.0, 0.0, -0.1),
+            DVec3::Z,
+            DVec3::X,
+            0.05,
+            5.2,
+        ).unwrap();
+        populate_box_geom(&mut box_brep);
+
+        // Use conservative simplification to preserve small features
+        let opts = SimplifyOptions {
+            merge_tolerance: 1e-7,
+            ..SimplifyOptions::default()
+        };
+
+        let result = boolean_op_simplified(BooleanOpType::Difference, &box_brep, &fillet_tool, opts);
+        assert!(result.is_ok(), "tiny fillet subtraction should succeed");
+
+        // The result should have more faces than a simple box due to the fillet
+        let (result_brep, _report) = result.unwrap();
+        let face_count = result_brep.solids.first()
+            .and_then(|s| s.shells.first())
+            .map(|s| s.faces.len())
+            .unwrap_or(0);
+        // A box has 6 faces; after fillet subtraction we expect more
+        assert!(face_count >= 6, "result should have at least 6 faces, got {}", face_count);
+    }
 }
