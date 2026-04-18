@@ -10985,4 +10985,61 @@ END-ISO-10303-21;
         assert_eq!(f1, f2, "face count should match after round-trip");
         assert_eq!(s1, s2, "shell count should match after round-trip");
     }
+
+    #[test]
+    fn round_trip_cylinder_surface() {
+        use rcad_modeling::make_cylinder_brep;
+        use glam::DVec3;
+
+        let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+
+        let (v1, e1, f1, s1) = count_topology(&cylinder);
+        let round_tripped = round_trip_brep(&cylinder, false); // non-strict for curved surfaces
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        // For curved surfaces with gmsh_strict: false, topology may differ slightly
+        // but face count should remain stable
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
+
+        // Verify cylindrical surface is preserved
+        let has_cylinder = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cylinder(_)));
+        assert!(has_cylinder, "should preserve cylindrical surface");
+    }
+
+    #[test]
+    fn round_trip_sphere_surface() {
+        use rcad_modeling::make_sphere_brep;
+        use glam::DVec3;
+
+        let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+
+        let (v1, e1, f1, s1) = count_topology(&sphere);
+        let round_tripped = round_trip_brep(&sphere, false);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
+
+        let has_sphere = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Sphere(_)));
+        assert!(has_sphere, "should preserve spherical surface");
+    }
+
+    #[test]
+    fn round_trip_cone_surface() {
+        use rcad_modeling::make_cone_brep;
+        use glam::DVec3;
+
+        let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+
+        let (v1, e1, f1, s1) = count_topology(&cone);
+        let round_tripped = round_trip_brep(&cone, false);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
+
+        let has_cone = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cone(_)));
+        assert!(has_cone, "should preserve conical surface");
+    }
 }
