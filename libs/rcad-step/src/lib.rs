@@ -10952,4 +10952,37 @@ END-ISO-10303-21;
         assert!(summary.contains("Configuration items: 1"));
         assert!(summary.contains("Product definition relationships: 1"));
     }
+
+    #[test]
+    fn round_trip_multi_solid_compound() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use rcad_algorithms::geom_populate::populate_box_geom;
+
+        let mut box1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let mut box2 = make_box_brep(DVec3::new(3.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let mut box3 = make_box_brep(DVec3::new(6.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        populate_box_geom(&mut box1);
+        populate_box_geom(&mut box2);
+        populate_box_geom(&mut box3);
+
+        // Combine into compound by appending breps
+        let mut compound = box1;
+        rcad_scene::append_brep(&mut compound, box2);
+        rcad_scene::append_brep(&mut compound, box3);
+
+        // Verify we have 3 shells (one per box)
+        let shell_count: usize = compound.solids.iter().map(|s| s.shells.len()).sum();
+        assert_eq!(shell_count, 3, "should have 3 shells");
+
+        let (v1, e1, f1, s1) = count_topology(&compound);
+        let round_tripped = round_trip_brep(&compound, true);
+        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+
+        assert_eq!(v1, v2, "vertex count should match after round-trip");
+        assert_eq!(e1, e2, "edge count should match after round-trip");
+        assert_eq!(f1, f2, "face count should match after round-trip");
+        assert_eq!(s1, s2, "shell count should match after round-trip");
+    }
 }
