@@ -10,6 +10,7 @@ wgpu.workspace = true
 rcad-kernel = { path = "../rcad-kernel" }
 rcad-algorithms = { path = "../rcad-algorithms" }
 glam.workspace = true
+serde.workspace = true
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 

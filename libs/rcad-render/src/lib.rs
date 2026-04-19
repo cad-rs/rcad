@@ -1,3 +1,9 @@
+mod environment;
+mod light;
+
+pub use environment::{Environment, EnvironmentType, HdriEnvironment, SkyEnvironment};
+pub use light::{Light, LightId, LightType};
+
 use rcad_kernel::{
     BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
     seam_edge_candidates,
