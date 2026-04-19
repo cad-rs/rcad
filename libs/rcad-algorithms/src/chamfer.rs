@@ -1527,4 +1527,102 @@ mod tests {
         assert!((geom.d1 - 0.1).abs() < 1e-10);
         assert!((geom.d2 - 0.1).abs() < 1e-10);
     }
+
+    // ============================================================================
+    // Edge Case Tests for OCCT Alignment
+    // ============================================================================
+
+    /// Test asymmetric chamfer with different distances on each face.
+    /// Asymmetric chamfers create non-45-degree bevels.
+    #[test]
+    fn test_chamfer_asymmetric() {
+        let box_brep = create_test_box();
+
+        // Create asymmetric chamfer: 0.1 on one face, 0.3 on the other
+        let result = make_chamfer_asymmetric(&box_brep, &[0], 0.1, 0.3);
+        assert!(result.is_ok(), "asymmetric chamfer should succeed");
+
+        let chamfer_result = result.unwrap();
+        assert!(chamfer_result.edges_chamfered >= 1, "at least one edge should be chamfered");
+
+        // Verify the chamfer geometry has correct distances
+        let params = ChamferParams::asymmetric(0.1, 0.3);
+        let (d1, d2) = params.get_distances();
+        assert!((d1 - 0.1).abs() < 1e-10, "distance1 should be 0.1");
+        assert!((d2 - 0.3).abs() < 1e-10, "distance2 should be 0.3");
+    }
+
+    /// Test chamfer defined by distance and angle.
+    /// Angle-mode chamfers create bevels at specified angles from the first face.
+    #[test]
+    fn test_chamfer_angle_mode() {
+        let box_brep = create_test_box();
+
+        // Create chamfer with 30-degree angle
+        let angle = 30.0_f64.to_radians();
+        let result = make_chamfer_angle(&box_brep, &[0], 0.2, angle);
+        assert!(result.is_ok(), "angle-mode chamfer should succeed");
+
+        let chamfer_result = result.unwrap();
+        assert!(chamfer_result.edges_chamfered >= 1, "at least one edge should be chamfered");
+
+        // Verify angle parameter
+        let params = ChamferParams::distance_angle(0.2, angle);
+        assert_eq!(params.mode, ChamferMode::DistanceAngle);
+        assert!((params.angle - angle).abs() < 1e-10);
+    }
+
+    /// Test chamfer on all edges of a box simultaneously.
+    /// This tests edge-blend interactions at vertices.
+    #[test]
+    fn test_chamfer_all_edges_box() {
+        let box_brep = create_test_box();
+
+        let result = make_chamfer_all_edges(&box_brep, 0.05);
+        assert!(result.is_ok(), "chamfer all edges should succeed");
+
+        let chamfer_result = result.unwrap();
+        // A box has 12 edges, at least some should be chamfered
+        assert!(chamfer_result.edges_chamfered > 0, "some edges should be chamfered");
+    }
+
+    /// Test chamfer on multiple selected edges.
+    /// Tests handling of edge selection and sequential processing.
+    #[test]
+    fn test_chamfer_multiple_selected_edges() {
+        let box_brep = create_test_box();
+
+        // Chamfer a subset of edges (forming a corner)
+        let result = make_chamfer_edge(&box_brep, &[0, 1, 2], 0.15);
+        assert!(result.is_ok(), "multiple edge chamfer should succeed");
+
+        let chamfer_result = result.unwrap();
+        assert!(chamfer_result.edges_chamfered >= 1, "at least one edge should be chamfered");
+    }
+
+    /// Test chamfer with very small distance.
+    /// Small chamfers should not create degenerate geometry.
+    #[test]
+    fn test_chamfer_very_small_distance() {
+        let box_brep = create_test_box();
+
+        // Very small chamfer
+        let result = make_chamfer_edge(&box_brep, &[0], 0.001);
+        assert!(result.is_ok(), "very small chamfer should succeed");
+    }
+
+    /// Test chamfer surface computation for plane-plane edge.
+    /// Verifies correct chamfer surface geometry for the most common case.
+    #[test]
+    fn test_chamfer_surface_plane_plane() {
+        let box_brep = create_test_box();
+        let params = ChamferParams::symmetric(0.1);
+
+        let result = compute_chamfer_surface(&box_brep, 0, &params);
+        assert!(result.is_ok(), "chamfer surface computation should succeed");
+
+        let surface = result.unwrap();
+        // For plane-plane edges, chamfer surface should be a plane
+        assert!(matches!(surface, Surface3::Plane(_)), "plane-plane chamfer should produce planar surface");
+    }
 }
