@@ -506,3 +506,288 @@ fn four_bar_linkage() {
     let res = sk.solve();
     assert!(res.converged, "residual={}", res.residual);
 }
+
+// ============================================================================
+// OCCT GCS Alignment Tests - Edge Cases
+// ============================================================================
+
+/// Over-constrained but consistent: extra constraints that are satisfied.
+/// OCCT GCS coverage: redundant_constraints, over_defined_system.
+#[test]
+fn over_constrained_consistent() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(0.0, 0.0, 5.0, 0.0);
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l), 0.0, 0.0));
+    sk.add_constraint(Horizontal(l));
+    sk.add_constraint(LineLength { line: l, length: 5.0 }); // length already 5
+    let res = sk.solve();
+    // Should still converge despite redundant constraint
+    assert!(res.converged || res.residual < 1e-6, "redundant but consistent");
+}
+
+/// Under-constrained: solve should still work with partial constraints.
+/// OCCT GCS coverage: under_defined_system, partial_solution.
+#[test]
+fn under_constrained_line() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(0.0, 0.0, 3.0, 4.0);
+    // Only fix start point - line can still rotate and scale
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l), 0.0, 0.0));
+    assert!(sk.dof() > 0, "should be under-constrained");
+    let res = sk.solve();
+    assert!(res.converged, "under-constrained should still solve");
+}
+
+/// Distance between two fixed points: should remain unchanged.
+/// OCCT GCS coverage: fixed_entities, distance_preservation.
+#[test]
+fn distance_between_fixed_points() {
+    let mut sk = Sketch::new();
+    let p1 = sk.add_point(0.0, 0.0);
+    let p2 = sk.add_point(3.0, 4.0);
+    sk.add_constraint(Constraint::fix_point(p1, 0.0, 0.0));
+    sk.add_constraint(Constraint::fix_point(p2, 3.0, 4.0));
+    sk.add_constraint(Constraint::point_distance(p1, p2, 5.0)); // Already satisfied
+    let res = sk.solve();
+    assert!(res.converged, "distance already satisfied");
+    let c1 = sk.point_coords(PointRef::Point(p1));
+    let c2 = sk.point_coords(PointRef::Point(p2));
+    assert_near(c1.x, 0.0, "p1 x fixed");
+    assert_near(c1.y, 0.0, "p1 y fixed");
+    assert_near(c2.x, 3.0, "p2 x fixed");
+    assert_near(c2.y, 4.0, "p2 y fixed");
+}
+
+/// Arc with fixed radius and center.
+/// OCCT GCS coverage: arc_entity, circular_constraint.
+#[test]
+fn arc_fixed_radius() {
+    let mut sk = Sketch::new();
+    let a = sk.add_arc(0.0, 0.0, 2.0, 0.0, std::f64::consts::PI);
+    sk.add_constraint(Constraint::fix_point(PointRef::Center(a), 0.0, 0.0));
+    sk.add_constraint(Radius { circle: a, radius: 5.0 });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p = sk.entity_params(a);
+    assert_near(p[2], 5.0, "arc radius");
+}
+
+/// Three points collinear.
+/// OCCT GCS coverage: collinear_constraint, three_point_alignment.
+#[test]
+fn three_points_collinear() {
+    let mut sk = Sketch::new();
+    let p1 = sk.add_point(0.0, 0.0);
+    let p2 = sk.add_point(2.0, 2.0);
+    let p3 = sk.add_point(4.0, 1.0); // Not collinear initially
+    sk.add_constraint(Constraint::fix_point(p1, 0.0, 0.0));
+    sk.add_constraint(Constraint::fix_point(p2, 2.0, 2.0));
+    // Use point_on_line via a line through p1-p2
+    let l = sk.add_line(0.0, 0.0, 2.0, 2.0);
+    sk.add_constraint(Constraint::coincident(PointRef::LineStart(l), p1));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l), p2));
+    sk.add_constraint(PointOnLine { point: PointRef::Point(p3), line: l });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    // p3 should be on the line y=x
+    let c3 = sk.point_coords(PointRef::Point(p3));
+    assert_near(c3.x, c3.y, "p3 on line y=x");
+}
+
+/// Circle inside circle (internal tangency).
+/// OCCT GCS coverage: internal_tangency, nested_circles.
+#[test]
+fn circle_circle_internal_tangent() {
+    use rcad_constraints::constraint::Constraint::CircleCircleTangent;
+    let mut sk = Sketch::new();
+    let c1 = sk.add_circle(0.0, 0.0, 5.0);
+    sk.fix_entity(c1);
+    let c2 = sk.add_circle(2.0, 0.0, 2.0);
+    let c2_params = sk.entities[c2].param_start;
+    sk.fix_param(c2_params + 1); // fix cy
+    sk.fix_param(c2_params + 2); // fix r
+    sk.add_constraint(CircleCircleTangent { c1, c2, external: false });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(c1);
+    let p2 = sk.entity_params(c2);
+    let dist = ((p2[0] - p1[0]).powi(2) + (p2[1] - p1[1]).powi(2)).sqrt();
+    assert_near(dist, p1[2] - p2[2], "internal tangency: dist = r1 - r2");
+}
+
+/// Point distance constraint between line endpoint and point.
+/// OCCT GCS coverage: point_distance, endpoint_constraints.
+#[test]
+fn point_line_endpoint_distance() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(0.0, 0.0, 4.0, 0.0); // horizontal line
+    sk.fix_entity(l);
+    let p = sk.add_point(2.0, 5.0);
+    let px = sk.entities[p].param_start;
+    sk.fix_param(px); // fix x, let y adjust
+    // Distance from point to line endpoint
+    sk.add_constraint(Constraint::point_distance(
+        PointRef::Point(p),
+        PointRef::LineEnd(l),
+        3.0,
+    ));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+}
+
+/// Multiple coincident points (chain).
+/// OCCT GCS coverage: chain_constraints, multi_coincident.
+#[test]
+fn chain_coincident_points() {
+    let mut sk = Sketch::new();
+    let p1 = sk.add_point(0.0, 0.0);
+    let p2 = sk.add_point(1.0, 1.0);
+    let p3 = sk.add_point(2.0, 2.0);
+    let p4 = sk.add_point(3.0, 3.0);
+    sk.add_constraint(Constraint::fix_point(p1, 5.0, 5.0));
+    sk.add_constraint(Constraint::coincident(p1, p2));
+    sk.add_constraint(Constraint::coincident(p2, p3));
+    sk.add_constraint(Constraint::coincident(p3, p4));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let c4 = sk.point_coords(PointRef::Point(p4));
+    assert_near(c4.x, 5.0, "chain x");
+    assert_near(c4.y, 5.0, "chain y");
+}
+
+/// Line tangent to circle at endpoint.
+/// OCCT GCS coverage: endpoint_tangency, geometric_continuity.
+#[test]
+fn line_endpoint_tangent_to_circle() {
+    let mut sk = Sketch::new();
+    let c = sk.add_circle(0.0, 0.0, 2.0);
+    sk.fix_entity(c);
+    // Line starting on circle, tangent to it
+    let l = sk.add_line(2.0, 0.0, 4.0, 1.0);
+    sk.add_constraint(PointOnCircle {
+        point: PointRef::LineStart(l),
+        circle: c,
+    });
+    sk.add_constraint(Tangent { circle: c, line: l });
+    let res = sk.solve();
+    // Tangent constraint should pull the line to be tangent
+    assert!(res.converged || res.residual < 0.1, "tangent line to circle");
+}
+
+/// Angle constraint with 45 degrees.
+/// OCCT GCS coverage: arbitrary_angle, diagonal_lines.
+#[test]
+fn angle_45_degrees() {
+    use std::f64::consts::FRAC_PI_4;
+    let mut sk = Sketch::new();
+    let l1 = sk.add_line(0.0, 0.0, 4.0, 0.0); // horizontal
+    let l2 = sk.add_line(0.0, 0.0, 3.0, 1.0);
+    sk.fix_entity(l1);
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l2), 0.0, 0.0));
+    sk.add_constraint(Angle { l1, l2, angle_rad: FRAC_PI_4 });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p2 = sk.entity_params(l2);
+    let dx = p2[2] - p2[0];
+    let dy = p2[3] - p2[1];
+    let angle = (dy / dx).atan();
+    assert_near(angle, FRAC_PI_4, "45° angle");
+}
+
+/// Symmetric points across vertical line.
+/// OCCT GCS coverage: symmetry_vertical, mirror_constraint.
+#[test]
+fn symmetric_across_vertical_line() {
+    use rcad_constraints::constraint::Constraint::Symmetric;
+    let mut sk = Sketch::new();
+    let mirror = sk.add_line(2.0, -5.0, 2.0, 5.0); // vertical line at x=2
+    sk.fix_entity(mirror);
+    let p1 = sk.add_point(0.0, 3.0);
+    sk.add_constraint(Constraint::fix_point(p1, 0.0, 3.0));
+    let p2 = sk.add_point(1.0, 3.0);
+    let p2_y = sk.entities[p2].param_start + 1;
+    sk.fix_param(p2_y);
+    sk.add_constraint(Symmetric {
+        p1: PointRef::Point(p1),
+        p2: PointRef::Point(p2),
+        line: mirror,
+    });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let c2 = sk.point_coords(PointRef::Point(p2));
+    assert_near(c2.x, 4.0, "symmetric x (mirror of 0 across x=2)");
+}
+
+/// Concentric arcs.
+/// OCCT GCS coverage: arc_concentricity, shared_center.
+#[test]
+fn concentric_arcs() {
+    let mut sk = Sketch::new();
+    let a1 = sk.add_arc(0.0, 0.0, 3.0, 0.0, std::f64::consts::PI);
+    let a2 = sk.add_arc(5.0, 2.0, 1.0, 0.0, std::f64::consts::PI);
+    sk.fix_entity(a1);
+    sk.add_constraint(Constraint::Concentric(a1, a2));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let p1 = sk.entity_params(a1);
+    let p2 = sk.entity_params(a2);
+    assert_near(p1[0], p2[0], "concentric arc cx");
+    assert_near(p1[1], p2[1], "concentric arc cy");
+}
+
+/// Complex triangle with angle and length constraints.
+/// OCCT GCS coverage: triangle_solver, multi_constraint_system.
+#[test]
+fn triangle_with_constraints() {
+    let mut sk = Sketch::new();
+    let l1 = sk.add_line(0.0, 0.0, 4.0, 0.0); // base
+    let l2 = sk.add_line(4.0, 0.0, 2.0, 3.0); // right side
+    let l3 = sk.add_line(2.0, 3.0, 0.0, 0.0); // left side
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l1), 0.0, 0.0));
+    sk.add_constraint(Horizontal(l1));
+    sk.add_constraint(LineLength { line: l1, length: 5.0 });
+    sk.add_constraint(LineLength { line: l2, length: 4.0 });
+    sk.add_constraint(LineLength { line: l3, length: 3.0 });
+    // Connect vertices
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l1), PointRef::LineStart(l2)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l2), PointRef::LineStart(l3)));
+    sk.add_constraint(Constraint::coincident(PointRef::LineEnd(l3), PointRef::LineStart(l1)));
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    // Verify 3-4-5 triangle properties
+    let p1 = sk.entity_params(l1);
+    assert_near((p1[2] - p1[0]).abs(), 5.0, "base length");
+}
+
+/// Zero-length line handling.
+/// OCCT GCS coverage: degenerate_geometry, zero_measure.
+#[test]
+fn zero_length_line_handling() {
+    let mut sk = Sketch::new();
+    let l = sk.add_line(2.0, 3.0, 2.0, 3.0); // Zero length
+    sk.add_constraint(Constraint::fix_point(PointRef::LineStart(l), 2.0, 3.0));
+    let res = sk.solve();
+    // Should handle degenerate case gracefully
+    assert!(res.converged || res.residual < 1e-6, "zero-length line");
+}
+
+/// Point on arc (using point_on_circle for arc's circle).
+/// OCCT GCS coverage: point_on_arc, circular_arc_constraint.
+#[test]
+fn point_on_arc() {
+    let mut sk = Sketch::new();
+    let a = sk.add_arc(0.0, 0.0, 3.0, 0.0, std::f64::consts::PI);
+    sk.fix_entity(a);
+    let p = sk.add_point(3.0, 0.0); // On the arc (radius 3, angle 0)
+    let px = sk.entities[p].param_start;
+    sk.fix_param(px);
+    sk.add_constraint(PointOnCircle {
+        point: PointRef::Point(p),
+        circle: a,
+    });
+    let res = sk.solve();
+    assert!(res.converged, "residual={}", res.residual);
+    let c = sk.point_coords(PointRef::Point(p));
+    let r = (c.x * c.x + c.y * c.y).sqrt();
+    assert_near(r, 3.0, "point on arc radius");
+}
