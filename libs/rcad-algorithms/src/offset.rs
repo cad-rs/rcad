@@ -4877,4 +4877,57 @@ mod tests {
             assert!((u.dot(v)).abs() < 1e-10, "u and v should be perpendicular");
         }
     }
+
+    // Edge case tests for OCCT alignment
+
+    #[test]
+    fn offset_torus_handles_positive() {
+        use rcad_kernel::geom::ToroidalSurface;
+
+        let torus = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+
+        let result = offset_surface(&torus, 0.5);
+        assert!(result.is_some(), "offset torus should succeed");
+
+        if let Surface3::Torus(t) = result.unwrap() {
+            assert!((t.minor_radius - 1.5).abs() < 1e-9, "minor radius should increase");
+        }
+    }
+
+    #[test]
+    fn offset_negative_shrinks_sphere() {
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+
+        let offset = offset_surface(&sphere, -0.5).unwrap();
+
+        if let Surface3::Sphere(s) = offset {
+            assert!((s.radius - 1.5).abs() < 1e-9, "radius should decrease with negative offset");
+        } else {
+            panic!("expected Sphere");
+        }
+    }
+
+    #[test]
+    fn offset_cone_preserves_apex() {
+        use rcad_kernel::geom::ConicalSurface;
+
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: std::f64::consts::FRAC_PI_6, // 30 degrees
+        });
+
+        let result = offset_surface(&cone, 0.2);
+        assert!(result.is_some(), "offset cone should succeed");
+    }
 }

@@ -1335,4 +1335,96 @@ mod tests {
             "loft should handle twisted profiles with same vertex count"
         );
     }
+
+    // Edge case tests for sweep_pipe (OCCT alignment)
+
+    #[test]
+    fn sweep_pipe_circular_profile() {
+        use glam::DVec2;
+
+        // Circular profile
+        let mut profile = Vec::new();
+        for i in 0..32 {
+            let angle = i as f64 * std::f64::consts::TAU / 32.0;
+            profile.push(DVec2::new(angle.cos(), angle.sin()));
+        }
+
+        // Straight spine
+        let spine = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 5.0),
+        ];
+
+        let result = sweep_pipe(&profile, &spine);
+        assert!(result.is_ok(), "sweep_pipe with circular profile should succeed");
+
+        let brep = result.unwrap();
+        assert!(!brep.solids.is_empty() || !brep.edges.is_empty(), "should have geometry");
+    }
+
+    #[test]
+    fn sweep_pipe_curved_spine() {
+        use glam::DVec2;
+
+        // Simple rectangular profile
+        let profile = vec![
+            DVec2::new(-0.5, -0.5),
+            DVec2::new(0.5, -0.5),
+            DVec2::new(0.5, 0.5),
+            DVec2::new(-0.5, 0.5),
+        ];
+
+        // Curved spine (quarter circle)
+        let mut spine = Vec::new();
+        for i in 0..=16 {
+            let angle = i as f64 * std::f64::consts::FRAC_PI_2 / 16.0;
+            spine.push(DVec3::new(angle.cos() * 3.0, angle.sin() * 3.0, 0.0));
+        }
+
+        let result = sweep_pipe(&profile, &spine);
+        assert!(result.is_ok(), "sweep_pipe with curved spine should succeed");
+    }
+
+    #[test]
+    fn sweep_pipe_variable_profiles() {
+        use glam::DVec2;
+
+        // Two profiles of different sizes
+        let profile1: Vec<DVec2> = (0..8).map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / 8.0;
+            DVec2::new(angle.cos() * 0.5, angle.sin() * 0.5)
+        }).collect();
+
+        let profile2: Vec<DVec2> = (0..8).map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / 8.0;
+            DVec2::new(angle.cos() * 1.0, angle.sin() * 1.0)
+        }).collect();
+
+        let profiles = vec![profile1, profile2];
+        let spine = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(0.0, 0.0, 2.0),
+        ];
+
+        let result = sweep_pipe_variable(&profiles, &spine);
+        assert!(result.is_ok(), "sweep_pipe_variable should succeed");
+    }
+
+    #[test]
+    fn loft_closed_profiles() {
+        // Two closed circular profiles
+        let n = 16;
+        let profile1: Vec<DVec3> = (0..n).map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / n as f64;
+            DVec3::new(angle.cos(), angle.sin(), 0.0)
+        }).collect();
+
+        let profile2: Vec<DVec3> = (0..n).map(|i| {
+            let angle = i as f64 * std::f64::consts::TAU / n as f64;
+            DVec3::new(angle.cos() * 2.0, angle.sin() * 2.0, 2.0)
+        }).collect();
+
+        let result = loft(&[profile1, profile2]);
+        assert!(result.is_ok(), "loft with closed profiles should succeed");
+    }
 }

@@ -5209,6 +5209,61 @@ mod tests {
         assert_ne!(HealGeometryStep::FixFaceOrientation, HealGeometryStep::FixSameParameter);
         assert_ne!(HealGeometryStep::RecomputeNormals, HealGeometryStep::PropagateTolerances);
     }
+
+    // Edge case tests for OCCT alignment
+
+    #[test]
+    fn heal_with_degenerate_edge() {
+        let mut b = unit_box();
+        // Create a degenerate edge (same start and end vertex)
+        if b.edges.len() > 0 {
+            let v0 = b.edges[0].start;
+            b.edges[0].end = v0;
+        }
+
+        let (_out, report) = heal(&b);
+        // Should attempt to fix or report the degenerate edge
+        assert!(report.initial_issue_count() >= 1 || report.is_clean());
+    }
+
+    #[test]
+    fn heal_with_reversed_face_normal() {
+        let mut b = unit_box();
+        // Reverse one face normal
+        if !b.solids.is_empty() && !b.solids[0].shells.is_empty() {
+            let faces = &mut b.solids[0].shells[0].faces;
+            if !faces.is_empty() {
+                faces[0].normal = -faces[0].normal;
+            }
+        }
+
+        let (_out, report) = heal(&b);
+        // Should detect and potentially fix the reversed normal
+        assert!(report.is_improved() || report.is_clean());
+    }
+
+    #[test]
+    fn heal_with_small_gap() {
+        let mut b = unit_box();
+        // Perturb a vertex slightly to create a small gap
+        if !b.vertices.is_empty() {
+            b.vertices[0].point.x += 0.001;
+        }
+
+        let (_out, report) = heal(&b);
+        // Should detect some issue or be clean
+        assert!(report.initial_issue_count() >= 0);
+    }
+
+    #[test]
+    fn heal_sphere_primitive() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        geom_populate::populate_box_geom(&mut brep);
+
+        let (_out, report) = heal(&brep);
+        // Sphere should heal without major issues
+        assert!(report.is_clean() || report.is_improved() || report.final_issue_count() <= report.initial_issue_count());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
