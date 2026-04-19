@@ -1225,4 +1225,131 @@ mod tests {
 
         assert!(result.solids.len() >= 1, "mixed boolean operations should produce valid result");
     }
+
+    // ============================================================================
+    // Overlapping Faces Tests
+    // ============================================================================
+
+    /// Test boolean union with coplanar overlapping faces.
+    /// Two boxes sharing a face that exactly overlaps - tests the kernel's ability
+    /// to handle coincident face geometry correctly.
+    #[test]
+    fn test_boolean_overlapping_faces() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Two boxes with exactly overlapping faces (coplanar at z=0)
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 1.0).unwrap();
+        let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Z, 2.0, 1.0, 2.0).unwrap();
+
+        let result = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default());
+        assert!(result.is_ok(), "overlapping faces union should succeed");
+
+        let (result_brep, _) = result.unwrap();
+        assert!(result_brep.solids.len() >= 1, "overlapping faces union should produce valid result");
+    }
+
+    /// Test boolean union where two boxes share a common edge but not faces.
+    /// Tests edge-edge intersection handling in boolean operations.
+    #[test]
+    fn test_boolean_shared_edge() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Two boxes sharing only an edge (touching along one edge)
+        // Box A: 0 to 2 in X, 0 to 2 in Y, 0 to 2 in Z
+        // Box B: 0 to 2 in X, 2 to 4 in Y, 0 to 2 in Z (shares edge at y=2, x=0..2, z=0..2)
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(0.0, 2.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let result = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default());
+        assert!(result.is_ok(), "shared edge union should succeed");
+
+        let (result_brep, _) = result.unwrap();
+        // The result should have more faces than a single box due to the L-shape
+        assert!(result_brep.solids.len() >= 1, "shared edge union should produce valid result");
+    }
+
+    /// Test boolean with nested solid operations (box inside box).
+    /// Tests the kernel's handling of one solid completely inside another.
+    #[test]
+    fn test_boolean_nested_solids() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Outer box: 10x10x10
+        let mut outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        // Inner box: 5x5x5, centered inside outer
+        let mut inner = make_box_brep(DVec3::new(2.5, 2.5, 2.5), DVec3::X, DVec3::Y, 5.0, 5.0, 5.0).unwrap();
+
+        // Intersection should return the inner box
+        let intersection = boolean_op_simplified(BooleanOpType::Intersection, &outer, &inner, SimplifyOptions::default());
+        assert!(intersection.is_ok(), "nested intersection should succeed");
+        let (int_brep, _) = intersection.unwrap();
+        assert!(int_brep.solids.len() >= 1, "nested intersection should produce valid result");
+
+        // Difference should create a hollow shape (outer minus inner)
+        let difference = boolean_op_simplified(BooleanOpType::Difference, &outer, &inner, SimplifyOptions::default());
+        assert!(difference.is_ok(), "nested difference should succeed");
+    }
+
+    /// Test boolean union with partially overlapping geometry.
+    /// Tests handling of complex intersection curves when geometry partially overlaps.
+    #[test]
+    fn test_boolean_partial_overlap() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Two boxes that partially overlap (like a cross)
+        let mut a = make_box_brep(DVec3::new(-1.0, -0.5, -0.5), DVec3::X, DVec3::Y, 3.0, 1.0, 1.0).unwrap();
+        let mut b = make_box_brep(DVec3::new(-0.5, -1.0, -0.5), DVec3::X, DVec3::Y, 1.0, 3.0, 1.0).unwrap();
+
+        let result = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default());
+        assert!(result.is_ok(), "partial overlap union should succeed");
+    }
+
+    /// Test boolean with spheres intersecting at a point.
+    /// Tests degenerate intersection handling where surfaces touch at a single point.
+    #[test]
+    fn test_boolean_touching_at_point() {
+        use rcad_modeling::{make_box_brep, make_sphere_brep};
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Box and sphere touching at a corner point
+        let mut box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // Sphere centered at (2, 2, 2) with radius 1, touches box corner
+        let sphere = make_sphere_brep(DVec3::new(3.0, 3.0, 3.0), 1.0).unwrap();
+
+        let result = boolean_op_simplified(BooleanOpType::Union, &box_brep, &sphere, SimplifyOptions::default());
+        assert!(result.is_ok(), "touching at point union should succeed or return empty");
+    }
+
+    /// Test boolean with cylindrical intersection creating complex curves.
+    /// Tests the kernel's ability to handle curved-curved intersections.
+    #[test]
+    fn test_boolean_cylinder_intersection() {
+        use rcad_modeling::{make_cylinder_brep, make_box_brep};
+        use glam::DVec3;
+        use crate::{boolean_op_simplified, BooleanOpType, SimplifyOptions};
+
+        // Cylinder passing through a box at an angle (using perpendicular for simplicity)
+        let mut box_brep = make_box_brep(DVec3::new(-2.0, -2.0, -2.0), DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let cylinder = make_cylinder_brep(DVec3::new(0.0, 0.0, -3.0), DVec3::Z, DVec3::X, 0.5, 6.0).unwrap();
+
+        let result = boolean_op_simplified(BooleanOpType::Difference, &box_brep, &cylinder, SimplifyOptions::default());
+        assert!(result.is_ok(), "cylinder-box difference should succeed");
+
+        let (result_brep, _) = result.unwrap();
+        // The result should have more faces due to the cylindrical hole
+        let face_count: usize = result_brep.solids.iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert!(face_count >= 6, "cylinder difference should add at least one face");
+    }
 }

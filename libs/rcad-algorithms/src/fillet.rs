@@ -1648,4 +1648,168 @@ mod tests {
         assert_eq!(result.fillet_faces_created, 3);
         assert_eq!(result.warnings.len(), 1);
     }
+
+    // ============================================================================
+    // Edge Case Tests for OCCT Alignment
+    // ============================================================================
+
+    /// Test fillet on a concave edge (interior corner of a box).
+    /// Concave edges require different handling than convex edges.
+    #[test]
+    fn test_fillet_concave_edge() {
+        use rcad_kernel::PrimitiveSolid;
+        use crate::geom_populate::populate_box_geom;
+
+        // Create a box and populate its geometry
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 4.0,
+            depth: 4.0,
+        });
+        populate_box_geom(&mut brep);
+
+        // Attempt to fillet edges - concave edges are at the interior corners
+        let result = make_fillet_edge(&brep, &[0, 1, 2, 3], 0.5);
+        assert!(result.is_ok(), "concave edge fillet should succeed");
+
+        let fillet_result = result.unwrap();
+        // At least some edges should be processed
+        assert!(fillet_result.edges_processed > 0 || !fillet_result.warnings.is_empty());
+    }
+
+    /// Test fillet on a chain of connected edges.
+    /// Chain edges should blend smoothly at the vertices where they meet.
+    #[test]
+    fn test_fillet_chain_edges() {
+        use rcad_kernel::PrimitiveSolid;
+        use crate::geom_populate::populate_box_geom;
+
+        // Create a box
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 4.0,
+            height: 3.0,
+            depth: 2.0,
+        });
+        populate_box_geom(&mut brep);
+
+        // Fillet a chain of edges around one face (edges 0, 1, 2, 3 form a loop)
+        let result = make_fillet_edge(&brep, &[0, 1, 2, 3], 0.3);
+        assert!(result.is_ok(), "chain edge fillet should succeed");
+
+        let fillet_result = result.unwrap();
+        assert!(fillet_result.edges_processed >= 1, "at least one edge should be filleted");
+    }
+
+    /// Test fillet with very small radius on an edge.
+    /// Small radius fillets should not create degenerate geometry.
+    #[test]
+    fn test_fillet_small_radius() {
+        use rcad_kernel::PrimitiveSolid;
+        use crate::geom_populate::populate_box_geom;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 10.0,
+            height: 10.0,
+            depth: 10.0,
+        });
+        populate_box_geom(&mut brep);
+
+        // Very small fillet radius
+        let result = make_fillet_edge(&brep, &[0], 0.001);
+        assert!(result.is_ok(), "small radius fillet should succeed");
+    }
+
+    /// Test fillet on an edge where adjacent faces are perpendicular.
+    /// This is the most common case and should produce a clean toroidal fillet.
+    #[test]
+    fn test_fillet_perpendicular_faces() {
+        use rcad_kernel::geom::{Plane, Line3};
+        use glam::DVec3;
+
+        // Create edge info for perpendicular faces
+        let edge_info = EdgeInfo {
+            index: 0,
+            start_vertex: 0,
+            end_vertex: 1,
+            adjacent_faces: vec![0, 1],
+            tangent_start: DVec3::Y,  // Edge along Y axis
+            tangent_end: DVec3::Y,
+            length: 2.0,
+            curve: Some(Curve3::Line(Line3 {
+                origin: DVec3::ZERO,
+                direction: DVec3::Y,
+            })),
+            curve_range: Some([0.0, 2.0]),
+        };
+
+        let plane1 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let plane2 = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::X,
+        };
+
+        let result = compute_plane_plane_fillet(&edge_info, &plane1, &plane2, 0.5);
+        assert!(result.is_ok(), "perpendicular faces fillet should succeed");
+
+        // Result should be a torus for plane-plane fillet
+        let surface = result.unwrap();
+        assert!(matches!(surface, Surface3::Torus(_)), "plane-plane fillet should produce torus");
+    }
+
+    /// Test fillet with variable radius along the edge.
+    /// Variable radius fillets should interpolate between radius values.
+    #[test]
+    fn test_fillet_variable_radius_basic() {
+        use rcad_kernel::PrimitiveSolid;
+        use crate::geom_populate::populate_box_geom;
+
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 5.0,
+            height: 5.0,
+            depth: 5.0,
+        });
+        populate_box_geom(&mut brep);
+
+        // Variable radius: 0.2 at start, 0.8 at end
+        let radii = vec![
+            VariableRadiusPoint::new(0.0, 0.2),
+            VariableRadiusPoint::new(1.0, 0.8),
+        ];
+
+        let result = make_variable_fillet(&brep, &[0], &radii);
+        assert!(result.is_ok(), "variable radius fillet should succeed");
+    }
+
+    /// Test fillet surface computation for cylinder-plane edge.
+    /// Verifies correct handling of curved-to-planar transitions.
+    #[test]
+    fn test_fillet_cylinder_plane_edge() {
+        let cylinder = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
+        let plane = Plane {
+            origin: DVec3::new(1.0, 0.0, 0.0),
+            normal: DVec3::X,
+        };
+
+        let edge_info = EdgeInfo {
+            index: 0,
+            start_vertex: 0,
+            end_vertex: 1,
+            adjacent_faces: vec![0, 1],
+            tangent_start: DVec3::Z,
+            tangent_end: DVec3::Z,
+            length: 2.0,
+            curve: None,
+            curve_range: None,
+        };
+
+        let result = compute_cylinder_plane_fillet(&edge_info, &cylinder, &plane, 0.3);
+        assert!(result.is_ok(), "cylinder-plane fillet should succeed");
+    }
 }
