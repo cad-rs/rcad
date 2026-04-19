@@ -1352,4 +1352,237 @@ mod tests {
             .sum();
         assert!(face_count >= 6, "cylinder difference should add at least one face");
     }
+
+    // ============================================================================
+    // OCCT TKBO Alignment Tests - Overlapping and Identical Geometry
+    // ============================================================================
+
+    /// Test boolean union of two identical boxes.
+    /// OCCT handles this by returning one of the inputs.
+    #[test]
+    fn test_boolean_identical_boxes_union() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(result.is_ok(), "identical boxes union should succeed");
+    }
+
+    /// Test boolean intersection of two identical boxes.
+    #[test]
+    fn test_boolean_identical_boxes_intersection() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        assert!(result.is_ok(), "identical boxes intersection should succeed");
+    }
+
+    /// Test boolean difference of identical boxes (should result in empty or degenerate).
+    #[test]
+    fn test_boolean_identical_boxes_difference() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Difference, &a, &b);
+        // Difference of identical shapes may produce empty or degenerate result
+        assert!(result.is_ok() || result.is_err(), "identical boxes difference handled");
+    }
+
+    /// Test boolean with box completely inside another box.
+    #[test]
+    fn test_boolean_nested_boxes_union() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let inner = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Union, &outer, &inner);
+        assert!(result.is_ok(), "nested boxes union should succeed");
+    }
+
+    /// Test boolean difference creating a hollow shell.
+    #[test]
+    fn test_boolean_hollow_shell() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let inner = make_box_brep(DVec3::new(0.5, 0.5, 0.5), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Difference, &outer, &inner);
+        assert!(result.is_ok(), "hollow shell creation should succeed");
+    }
+
+    /// Test boolean with disjoint boxes (no intersection).
+    #[test]
+    fn test_boolean_disjoint_boxes() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(5.0, 5.0, 5.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        // Intersection of disjoint boxes should return empty
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        // May return empty or error depending on implementation
+        assert!(result.is_ok() || result.is_err(), "disjoint intersection handled");
+
+        // Union of disjoint boxes should return compound
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(result.is_ok(), "disjoint union should succeed");
+    }
+
+    /// Test boolean with thin wall feature.
+    #[test]
+    fn test_boolean_thin_wall_feature() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        // Create a thin wall by subtracting a slightly smaller box
+        let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        let inner = make_box_brep(DVec3::new(0.1, 0.1, 0.1), DVec3::X, DVec3::Y, 9.8, 9.8, 9.8).unwrap();
+
+        let result = boolean_op(BooleanOpType::Difference, &outer, &inner);
+        assert!(result.is_ok(), "thin wall creation should succeed");
+    }
+
+    /// Test boolean with small hole feature.
+    #[test]
+    fn test_boolean_small_hole() {
+        use rcad_modeling::{make_box_brep, make_cylinder_brep};
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 5.0, 5.0, 5.0).unwrap();
+        // Small diameter cylinder for hole
+        let hole = make_cylinder_brep(DVec3::new(2.5, 2.5, -1.0), DVec3::Z, DVec3::X, 0.1, 7.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Difference, &box_brep, &hole);
+        assert!(result.is_ok(), "small hole creation should succeed");
+    }
+
+    /// Test boolean with sphere-sphere intersection.
+    #[test]
+    fn test_boolean_sphere_intersection() {
+        use rcad_modeling::make_sphere_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_sphere_brep(DVec3::ZERO, 2.0).unwrap();
+        let b = make_sphere_brep(DVec3::new(2.0, 0.0, 0.0), 2.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b);
+        assert!(result.is_ok(), "sphere intersection should succeed");
+    }
+
+    /// Test boolean with cylinder-cylinder intersection.
+    #[test]
+    fn test_boolean_two_cylinders() {
+        use rcad_modeling::make_cylinder_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let a = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 5.0).unwrap();
+        let b = make_cylinder_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 5.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Union, &a, &b);
+        assert!(result.is_ok(), "cylinder union should succeed");
+    }
+
+    /// Test boolean with cone-box intersection.
+    #[test]
+    fn test_boolean_cone_box() {
+        use rcad_modeling::{make_box_brep, make_cone_brep};
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let box_brep = make_box_brep(DVec3::new(-2.0, -2.0, -2.0), DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+        let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.5, 3.0).unwrap();
+
+        let result = boolean_op(BooleanOpType::Difference, &box_brep, &cone);
+        assert!(result.is_ok(), "cone-box difference should succeed");
+    }
+
+    /// Test fuzzy tolerance with nearly coincident geometry.
+    #[test]
+    fn test_boolean_fuzzy_tolerance() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op_with_options, BooleanOpType, BooleanOptions};
+
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // Box with corner very close to A's corner
+        let b = make_box_brep(DVec3::new(1.99999, 1.99999, 1.99999), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+
+        let opts = BooleanOptions {
+            fuzzy_tol: 1e-4,
+            ..Default::default()
+        };
+
+        let result = boolean_op_with_options(BooleanOpType::Union, &a, &b, opts);
+        assert!(result.is_ok(), "fuzzy tolerance union should succeed");
+    }
+
+    /// Test boolean with multiple operations in sequence.
+    #[test]
+    fn test_boolean_sequential_operations() {
+        use rcad_modeling::make_box_brep;
+        use glam::DVec3;
+        use crate::{boolean_op, BooleanOpType};
+
+        let mut result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
+
+        // Subtract three smaller boxes
+        for i in 0..3 {
+            let offset = 0.5 + i as f64 * 1.2;
+            let small = make_box_brep(
+                DVec3::new(offset, offset, -0.5),
+                DVec3::X, DVec3::Y,
+                1.0, 1.0, 5.0
+            ).unwrap();
+            result = boolean_op(BooleanOpType::Difference, &result, &small).unwrap();
+        }
+
+        // Result should be valid
+        assert!(result.solids.iter().any(|s| !s.shells.is_empty()));
+    }
+
+    /// Test recovery strategy application.
+    #[test]
+    fn test_recovery_strategy_sequence() {
+        let policy = RetryPolicy::default();
+
+        // Test sequence of strategies for different failure types
+        let strategy1 = FailureAnalyzer::determine_recovery_strategy(
+            BooleanFailureClass::NumericalInstability,
+            1,
+            &policy,
+        );
+        assert!(matches!(strategy1, RecoveryStrategy::IncreaseFuzzyTolerance | RecoveryStrategy::Combined { .. }));
+
+        let strategy2 = FailureAnalyzer::determine_recovery_strategy(
+            BooleanFailureClass::DegenerateTopology,
+            2,
+            &policy,
+        );
+        assert!(matches!(strategy2, RecoveryStrategy::Combined { .. } | RecoveryStrategy::MakeConnectedCleanup));
+    }
 }

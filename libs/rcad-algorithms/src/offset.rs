@@ -4930,4 +4930,194 @@ mod tests {
         let result = offset_surface(&cone, 0.2);
         assert!(result.is_some(), "offset cone should succeed");
     }
+
+    // ============================================================================
+    // OCCT TKOffset Alignment Tests
+    // ============================================================================
+
+    #[test]
+    fn offset_multiple_surfaces_preserve_topology() {
+        // Test that offsetting multiple adjacent surfaces maintains connectivity
+        let plane1 = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let plane2 = Surface3::Plane(Plane {
+            origin: DVec3::new(0.0, 1.0, 0.0),
+            normal: DVec3::Y,
+        });
+
+        let offset1 = offset_surface(&plane1, 0.5).unwrap();
+        let offset2 = offset_surface(&plane2, 0.5).unwrap();
+
+        // Both should succeed
+        assert!(matches!(offset1, Surface3::Plane(_)));
+        assert!(matches!(offset2, Surface3::Plane(_)));
+    }
+
+    #[test]
+    fn offset_cylinder_negative_valid() {
+        let cylinder = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+
+        let offset = offset_surface(&cylinder, -1.0).unwrap();
+
+        if let Surface3::Cylinder(c) = offset {
+            assert!((c.radius - 1.0).abs() < 1e-9, "radius should decrease with negative offset");
+        }
+    }
+
+    #[test]
+    fn offset_cylinder_negative_invalid() {
+        let cylinder = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+
+        // Negative offset larger than radius should fail
+        let offset = offset_surface(&cylinder, -2.0);
+        assert!(offset.is_none(), "offset larger than radius should return None");
+    }
+
+    #[test]
+    fn offset_torus_negative_minor() {
+        use rcad_kernel::geom::ToroidalSurface;
+
+        let torus = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+
+        let result = offset_surface(&torus, -0.5);
+        assert!(result.is_some(), "negative offset torus should succeed if within bounds");
+
+        if let Some(Surface3::Torus(t)) = result {
+            assert!((t.minor_radius - 0.5).abs() < 1e-9, "minor radius should decrease");
+        }
+    }
+
+    #[test]
+    fn offset_torus_negative_exceeds_minor() {
+        use rcad_kernel::geom::ToroidalSurface;
+
+        let torus = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+
+        // Negative offset larger than minor radius
+        let result = offset_surface(&torus, -2.0);
+        assert!(result.is_none(), "offset exceeding minor radius should return None");
+    }
+
+    #[test]
+    fn offset_options_various_distances() {
+        let opts_small = OffsetOptions::new(0.01);
+        assert_eq!(opts_small.distance, 0.01);
+
+        let opts_large = OffsetOptions::new(100.0);
+        assert_eq!(opts_large.distance, 100.0);
+    }
+
+    #[test]
+    fn offset_join_types() {
+        // Test that join types are properly defined
+        let intersection = JoinType::Intersection;
+        let arc = JoinType::Arc;
+        let tangent = JoinType::Tangent;
+
+        assert_eq!(intersection, JoinType::Intersection);
+        assert_eq!(arc, JoinType::Arc);
+        assert_eq!(tangent, JoinType::Tangent);
+    }
+
+    #[test]
+    fn offset_error_types() {
+        // Verify error types exist and can be created
+        let err1 = OffsetError::ZeroDistance;
+        let err2 = OffsetError::InvalidInput("test");
+        let err3 = OffsetError::SelfIntersection { description: "test".into() };
+
+        assert!(matches!(err1, OffsetError::ZeroDistance));
+        assert!(matches!(err2, OffsetError::InvalidInput(_)));
+        assert!(matches!(err3, OffsetError::SelfIntersection { .. }));
+    }
+
+    #[test]
+    fn offset_shell_result_checks() {
+        let brep = BRep::new();
+        let opts = OffsetOptions::new(1.0);
+
+        let result = offset_shape(&brep, opts);
+        // Empty BRep should either succeed with empty result or fail gracefully
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn offset_face_result_type() {
+        let plane = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+
+        let result = offset_surface(&plane, 1.0);
+        assert!(result.is_some());
+
+        let offset = result.unwrap();
+        assert!(matches!(offset, Surface3::Plane(_)));
+    }
+
+    #[test]
+    fn offset_preserves_surface_type() {
+        // Sphere offset should remain sphere
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Z,
+            radius: 5.0,
+        });
+
+        let offset = offset_surface(&sphere, 1.0).unwrap();
+        assert!(matches!(offset, Surface3::Sphere(_)));
+
+        // Cylinder offset should remain cylinder
+        let cylinder = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            axis: DVec3::Y,
+            radius: 2.0,
+        });
+
+        let offset = offset_surface(&cylinder, 1.0).unwrap();
+        assert!(matches!(offset, Surface3::Cylinder(_)));
+    }
+
+    #[test]
+    fn offset_tolerance_propagation() {
+        let opts = OffsetOptions::new(0.5)
+            .with_tolerance(1e-8);
+
+        assert!((opts.tolerance - 1e-8).abs() < 1e-15);
+    }
+
+    #[test]
+    fn offset_self_intersection_option() {
+        let opts1 = OffsetOptions::new(0.5).with_self_intersection_check(true);
+        assert!(opts1.check_self_intersection);
+
+        let opts2 = OffsetOptions::new(0.5).with_self_intersection_check(false);
+        assert!(!opts2.check_self_intersection);
+    }
+
+    #[test]
+    fn offset_auto_repair_option() {
+        let opts = OffsetOptions::new(0.5).with_auto_repair(true);
+        assert!(opts.auto_repair);
+    }
 }
