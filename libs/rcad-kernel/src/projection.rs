@@ -784,4 +784,136 @@ mod tests {
             r.point
         );
     }
+
+    // ============================================================================
+    // OCCT TKGeomBase Alignment Tests - Projection Edge Cases
+    // ============================================================================
+
+    #[test]
+    fn project_onto_cone_surface() {
+        let cone = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: std::f64::consts::FRAC_PI_6,
+        });
+        // Query near the cone surface (not at apex - apex is singular)
+        let q = DVec3::new(1.0, 0.0, 1.0); // Near the cone surface
+        let r = closest_point_on_surface(&cone, q, 16);
+        assert!(r.distance < 0.5, "near-surface projection should be close");
+
+        // Query along axis away from apex
+        let q2 = DVec3::new(0.0, 0.0, 5.0);
+        let r2 = closest_point_on_surface(&cone, q2, 16);
+        assert!(r2.distance > 0.0, "axis projection distance should be positive");
+    }
+
+    #[test]
+    fn project_onto_torus_surface() {
+        let torus = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 3.0,
+            minor_radius: 1.0,
+        });
+        // Query at center (inside hole)
+        let q = DVec3::new(0.0, 0.0, 0.0);
+        let r = closest_point_on_surface(&torus, q, 16);
+        assert!(r.distance > 0.0, "center distance should be positive");
+
+        // Query on outer ring
+        let q2 = DVec3::new(4.0, 0.0, 0.0);
+        let r2 = closest_point_on_surface(&torus, q2, 16);
+        assert!((r2.distance - 0.0).abs() < 0.1, "on-torus distance should be small");
+    }
+
+    #[test]
+    fn project_onto_cylinder_interior() {
+        let cyl = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 2.0,
+        });
+        // Query inside cylinder
+        let q = DVec3::new(0.0, 0.0, 1.0);
+        let r = closest_point_on_surface(&cyl, q, 16);
+        assert!((r.distance - 2.0).abs() < 1e-6, "interior distance should be radius");
+    }
+
+    #[test]
+    fn project_onto_sphere_interior() {
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 3.0,
+        });
+        // Query inside sphere
+        let q = DVec3::new(1.0, 1.0, 1.0);
+        let r = closest_point_on_surface(&sphere, q, 16);
+        assert!(r.distance < 3.0, "interior distance should be less than radius");
+    }
+
+    #[test]
+    fn project_onto_plane_offset() {
+        let plane = Surface3::Plane(Plane {
+            origin: DVec3::new(0.0, 5.0, 0.0),
+            normal: DVec3::Y,
+        });
+        let q = DVec3::new(3.0, 0.0, -2.0);
+        let r = closest_point_on_surface(&plane, q, 8);
+        assert!((r.point.y - 5.0).abs() < 1e-9);
+        assert!((r.distance - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn project_onto_line_at_origin() {
+        let line = Curve3::Line(Line3 {
+            origin: DVec3::ZERO,
+            direction: DVec3::X,
+        });
+        let q = DVec3::new(0.0, 5.0, 0.0);
+        let r = closest_point_on_curve(&line, q, 16);
+        assert!((r.point - DVec3::ZERO).length() < 1e-9);
+        assert!((r.distance - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn project_onto_circle_at_parameter() {
+        let circle = Curve3::Circle(Circle3 {
+            center: DVec3::new(2.0, 3.0, 0.0),
+            normal: DVec3::Z,
+            radius: 1.0,
+        });
+        // Query at parameter 0 (should be at center + radius * X)
+        let q = DVec3::new(3.0, 3.0, 0.0);
+        let r = closest_point_on_curve(&circle, q, 32);
+        assert!((r.point - DVec3::new(3.0, 3.0, 0.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn project_distant_point_onto_sphere() {
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        });
+        // Very distant query
+        let q = DVec3::new(1000.0, 1000.0, 1000.0);
+        let r = closest_point_on_surface(&sphere, q, 16);
+        // Distance should be approximately |q| - radius
+        let expected_dist = q.length() - 1.0;
+        assert!((r.distance - expected_dist).abs() < 1.0, "distant projection distance");
+    }
+
+    #[test]
+    fn project_near_surface_boundary() {
+        let plane = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        // Query very close to plane
+        let q = DVec3::new(1.0, 2.0, 1e-10);
+        let r = closest_point_on_surface(&plane, q, 8);
+        assert!(r.distance < 1e-9, "near-surface distance should be tiny");
+    }
 }

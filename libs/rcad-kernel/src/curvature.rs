@@ -99,6 +99,23 @@ pub fn mean_curvature(surface: &Surface3, u: f64, v: f64) -> f64 {
     (k1 + k2) * 0.5
 }
 
+/// Returns the radius of the osculating sphere at the given point.
+///
+/// This is the reciprocal of the maximum principal curvature magnitude:
+/// `r = 1 / max(|k1|, |k2|)`. Returns `f64::INFINITY` if both curvatures are zero
+/// (flat point), and 0.0 if either curvature is infinite (singular point).
+pub fn osculating_radius(surface: &Surface3, u: f64, v: f64) -> f64 {
+    let (k1, k2) = principal_curvatures(surface, u, v);
+    let k_max = k1.abs().max(k2.abs());
+    if k_max.is_infinite() {
+        0.0
+    } else if k_max < 1e-12 {
+        f64::INFINITY
+    } else {
+        1.0 / k_max
+    }
+}
+
 // ── Numerical fallback for BSpline ───────────────────────────────────────────
 
 /// Finite-difference approximation of principal curvatures for BSpline surfaces.
@@ -299,5 +316,134 @@ mod tests {
         assert!(k2.abs() < 1e-4, "k2 = {k2}");
         assert!(gaussian_curvature(&s, 0.5, 0.5).abs() < 1e-6);
         assert!(mean_curvature(&s, 0.5, 0.5).abs() < 1e-4);
+    }
+
+    // ============================================================================
+    // OCCT TKGeomBase Alignment Tests - Curvature Edge Cases
+    // ============================================================================
+
+    #[test]
+    fn sphere_curvature_isotropic() {
+        // All points on sphere have same principal curvatures
+        let r = 5.0_f64;
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: r,
+        });
+        let (k1, k2) = principal_curvatures(&s, 0.5, 0.5);
+        assert!(approx_eq(k1, 1.0 / r, TOL), "k1 should be 1/r");
+        assert!(approx_eq(k2, 1.0 / r, TOL), "k2 should be 1/r");
+        assert!(approx_eq(gaussian_curvature(&s, 0.5, 0.5), 1.0 / (r * r), TOL));
+    }
+
+    #[test]
+    fn cylinder_curvature_developable() {
+        // Cylinder has one zero curvature (axial), one non-zero (circumferential)
+        let r = 3.0_f64;
+        let s = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: r,
+        });
+        let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
+        // One should be 1/r, the other should be 0
+        let k_max = k1.max(k2);
+        let k_min = k1.min(k2);
+        assert!(approx_eq(k_max, 1.0 / r, TOL), "k_max should be 1/r");
+        assert!(approx_eq(k_min, 0.0, TOL), "k_min should be 0 (developable)");
+        // Gaussian curvature should be 0 (developable surface)
+        assert!(approx_eq(gaussian_curvature(&s, 0.0, 0.0), 0.0, TOL));
+    }
+
+    #[test]
+    fn plane_curvature_zero() {
+        let s = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
+        assert!(approx_eq(k1, 0.0, TOL), "plane k1 should be 0");
+        assert!(approx_eq(k2, 0.0, TOL), "plane k2 should be 0");
+        assert!(approx_eq(gaussian_curvature(&s, 0.0, 0.0), 0.0, TOL));
+        assert!(approx_eq(mean_curvature(&s, 0.0, 0.0), 0.0, TOL));
+    }
+
+    #[test]
+    fn torus_inner_equator_negative_curvature() {
+        // At inner equator (v = π), principal curvatures have opposite signs
+        let big_r = 4.0_f64;
+        let r = 1.0_f64;
+        let s = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Y,
+            major_radius: big_r,
+            minor_radius: r,
+        });
+        // At v = π (inner equator)
+        let (k1, k2) = principal_curvatures(&s, 0.0, std::f64::consts::PI);
+        // One curvature should be positive (tube), one negative (inner side)
+        let k_tube = 1.0 / r;
+        let k_major = -1.0 / (big_r - r); // negative because inner
+        let k_max = k1.max(k2);
+        let k_min = k1.min(k2);
+        assert!(approx_eq(k_max, k_tube, 0.1), "inner equator k_max");
+        assert!(k_min < 0.0, "inner equator k_min should be negative");
+    }
+
+    #[test]
+    fn cone_curvature_singular_at_apex() {
+        // At apex, curvature is undefined/very large
+        let s = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+            half_angle_rad: std::f64::consts::FRAC_PI_6,
+        });
+        // Near apex (small v)
+        let (k1, k2) = principal_curvatures(&s, 0.0, 0.001);
+        // Curvature should be very large near apex
+        // But should not crash
+        assert!(k1.is_finite() && k2.is_finite());
+    }
+
+    #[test]
+    fn osculating_radius_sphere() {
+        let r = 2.0_f64;
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: r,
+        });
+        let osr = osculating_radius(&s, 0.5, 0.5);
+        assert!(approx_eq(osr, r, TOL), "osculating radius should equal sphere radius");
+    }
+
+    #[test]
+    fn mean_curvature_formula() {
+        // Mean curvature H = (k1 + k2) / 2
+        let r = 1.0_f64;
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: r,
+        });
+        let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
+        let h = mean_curvature(&s, 0.0, 0.0);
+        assert!(approx_eq(h, (k1 + k2) / 2.0, TOL), "mean curvature formula");
+    }
+
+    #[test]
+    fn gaussian_curvature_formula() {
+        // Gaussian curvature K = k1 * k2
+        let r = 2.0_f64;
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: r,
+        });
+        let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
+        let k = gaussian_curvature(&s, 0.0, 0.0);
+        assert!(approx_eq(k, k1 * k2, TOL), "gaussian curvature formula");
     }
 }
