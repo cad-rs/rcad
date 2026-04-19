@@ -1015,6 +1015,7 @@ dependencies = [
  "rcad-algorithms",
  "rcad-kernel",
  "rcad-modeling",
+ "serde",
  "wgpu",
 ]
 

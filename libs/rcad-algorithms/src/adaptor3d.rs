@@ -57,6 +57,18 @@ pub struct Curve3dAdaptor {
 }
 
 impl Curve3dAdaptor {
+    fn normalize_range(first: f64, last: f64, default: [f64; 2]) -> (f64, f64) {
+        if first.is_finite() && last.is_finite() {
+            if first <= last {
+                (first, last)
+            } else {
+                (last, first)
+            }
+        } else {
+            (default[0], default[1])
+        }
+    }
+
     /// Creates a new adaptor from a curve reference.
     ///
     /// The domain is initialized to the curve's default (natural) domain.
@@ -71,6 +83,8 @@ impl Curve3dAdaptor {
 
     /// Creates an adaptor with a trimmed parameter range.
     pub fn from_curve_with_range(curve: &Curve3, first: f64, last: f64) -> Self {
+        let default = curve.default_domain();
+        let (first, last) = Self::normalize_range(first, last, default);
         Self {
             curve: curve.clone(),
             first,
@@ -125,10 +139,24 @@ impl Curve3dAdaptor {
     /// A periodic curve has a well-defined period and wraps around seamlessly.
     /// Circles, ellipses, and toroidal curves are periodic.
     pub fn is_periodic(&self) -> bool {
-        matches!(
+        let base_is_periodic = matches!(
             self.curve,
             Curve3::Circle(_) | Curve3::Ellipse(_) | Curve3::CircularHelix(_)
-        )
+        );
+        if !base_is_periodic {
+            return false;
+        }
+
+        // OCCT-style adaptor semantics: a trimmed periodic curve is not treated as periodic
+        // unless the adaptor range still spans a full period.
+        let Some(period) = self.base_period() else {
+            return false;
+        };
+        if !self.first.is_finite() || !self.last.is_finite() {
+            return false;
+        }
+        let span = (self.last - self.first).abs();
+        span >= period - 1e-10
     }
 
     /// Returns the period of the curve if periodic, or `None`.
@@ -136,6 +164,13 @@ impl Curve3dAdaptor {
     /// - Circles and ellipses: `2π`
     /// - Circular helix: `2π` (azimuthal period)
     pub fn period(&self) -> Option<f64> {
+        if !self.is_periodic() {
+            return None;
+        }
+        self.base_period()
+    }
+
+    fn base_period(&self) -> Option<f64> {
         match &self.curve {
             Curve3::Circle(_) | Curve3::Ellipse(_) | Curve3::CircularHelix(_) => Some(2.0 * PI),
             _ => None,
@@ -289,6 +324,18 @@ pub struct SurfaceAdaptor {
 }
 
 impl SurfaceAdaptor {
+    fn normalize_range(first: f64, last: f64, default_first: f64, default_last: f64) -> (f64, f64) {
+        if first.is_finite() && last.is_finite() {
+            if first <= last {
+                (first, last)
+            } else {
+                (last, first)
+            }
+        } else {
+            (default_first, default_last)
+        }
+    }
+
     /// Creates a new adaptor from a surface reference.
     ///
     /// The domain is initialized to the surface's default (natural) domain.
@@ -311,6 +358,9 @@ impl SurfaceAdaptor {
         v_first: f64,
         v_last: f64,
     ) -> Self {
+        let [du0, du1, dv0, dv1] = surface.default_domain();
+        let (u_first, u_last) = Self::normalize_range(u_first, u_last, du0, du1);
+        let (v_first, v_last) = Self::normalize_range(v_first, v_last, dv0, dv1);
         Self {
             surface: surface.clone(),
             u_first,
@@ -444,7 +494,7 @@ impl SurfaceAdaptor {
     /// - Cylinder, cone, sphere, torus: `2π`
     /// - Others: `None`
     pub fn u_period(&self) -> Option<f64> {
-        match &self.surface {
+        let base_period = match &self.surface {
             Surface3::Cylinder(_)
             | Surface3::Sphere(_)
             | Surface3::Cone(_)
@@ -453,7 +503,29 @@ impl SurfaceAdaptor {
             | Surface3::Helicoid(_)
             | Surface3::Pipe(_)
             | Surface3::Revolution(_) => Some(2.0 * PI),
+            Surface3::Trimmed(s) => match s.basis.as_ref() {
+                Surface3::Cylinder(_)
+                | Surface3::Sphere(_)
+                | Surface3::Cone(_)
+                | Surface3::Torus(_)
+                | Surface3::Ellipsoid(_)
+                | Surface3::Helicoid(_)
+                | Surface3::Pipe(_)
+                | Surface3::Revolution(_) => Some(2.0 * PI),
+                _ => None,
+            },
             _ => None,
+        };
+
+        let period = base_period?;
+        if !self.u_first.is_finite() || !self.u_last.is_finite() {
+            return None;
+        }
+        let span = (self.u_last - self.u_first).abs();
+        if span >= period - 1e-10 {
+            Some(period)
+        } else {
+            None
         }
     }
 
@@ -462,9 +534,24 @@ impl SurfaceAdaptor {
     /// - Torus: `2π`
     /// - Others: `None`
     pub fn v_period(&self) -> Option<f64> {
-        match &self.surface {
+        let base_period = match &self.surface {
             Surface3::Torus(_) => Some(2.0 * PI),
+            Surface3::Trimmed(s) => match s.basis.as_ref() {
+                Surface3::Torus(_) => Some(2.0 * PI),
+                _ => None,
+            },
             _ => None,
+        };
+
+        let period = base_period?;
+        if !self.v_first.is_finite() || !self.v_last.is_finite() {
+            return None;
+        }
+        let span = (self.v_last - self.v_first).abs();
+        if span >= period - 1e-10 {
+            Some(period)
+        } else {
+            None
         }
     }
 
@@ -540,6 +627,8 @@ impl CurveOnSurfaceAdaptor {
 
     /// Creates an adaptor with a trimmed parameter range.
     pub fn new_with_range(curve2d: &Curve2d, surface: &Surface3, first: f64, last: f64) -> Self {
+        let default = curve2d.default_domain();
+        let (first, last) = Curve3dAdaptor::normalize_range(first, last, default);
         Self {
             curve2d: curve2d.clone(),
             surface: surface.clone(),
@@ -1075,8 +1164,42 @@ mod tests {
         // The trimmed arc should not be closed
         assert!(!adaptor.is_closed());
 
-        // But it's still periodic in the mathematical sense
-        assert!(adaptor.is_periodic());
+        // Trimmed periodic curves are not considered periodic at adaptor level.
+        assert!(!adaptor.is_periodic());
+        assert!(adaptor.period().is_none());
+    }
+
+    #[test]
+    fn curve_adaptor_with_reversed_trimmed_range_is_normalized() {
+        let circle = Circle3 {
+            center: dvec3(0.0, 0.0, 0.0),
+            normal: dvec3(0.0, 0.0, 1.0),
+            radius: 1.0,
+        };
+        let curve = Curve3::Circle(circle);
+        let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, PI / 2.0, 0.0);
+
+        let domain = adaptor.domain();
+        assert!((domain[0] - 0.0).abs() < 1e-10);
+        assert!((domain[1] - PI / 2.0).abs() < 1e-10);
+        assert!(!adaptor.is_periodic());
+    }
+
+    #[test]
+    fn surface_adaptor_with_reversed_trimmed_range_is_normalized() {
+        let cylinder = CylindricalSurface {
+            origin: dvec3(0.0, 0.0, 0.0),
+            axis: dvec3(0.0, 0.0, 1.0),
+            radius: 1.0,
+        };
+        let surface = Surface3::Cylinder(cylinder);
+        let adaptor = SurfaceAdaptor::from_surface_with_range(&surface, PI, 0.0, 5.0, 0.0);
+
+        let domain = adaptor.domain();
+        assert!((domain[0] - 0.0).abs() < 1e-10);
+        assert!((domain[1] - PI).abs() < 1e-10);
+        assert!((domain[2] - 0.0).abs() < 1e-10);
+        assert!((domain[3] - 5.0).abs() < 1e-10);
     }
 
     #[test]
@@ -1099,5 +1222,44 @@ mod tests {
 
         // Partial cylinder should not be U-closed
         assert!(!adaptor.is_u_closed());
+        assert!(adaptor.u_period().is_none());
+    }
+
+    #[test]
+    fn trimmed_surface_full_u_period_reports_u_period() {
+        let cylinder = CylindricalSurface {
+            origin: dvec3(0.0, 0.0, 0.0),
+            axis: dvec3(0.0, 0.0, 1.0),
+            radius: 1.0,
+        };
+        let trimmed = Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface::new(
+            Surface3::Cylinder(cylinder),
+            0.0,
+            2.0 * PI,
+            -1.0,
+            1.0,
+        ));
+
+        let adaptor = SurfaceAdaptor::from_surface(&trimmed);
+        assert!(adaptor.u_period().is_some());
+    }
+
+    #[test]
+    fn trimmed_surface_partial_u_period_reports_none() {
+        let cylinder = CylindricalSurface {
+            origin: dvec3(0.0, 0.0, 0.0),
+            axis: dvec3(0.0, 0.0, 1.0),
+            radius: 1.0,
+        };
+        let trimmed = Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface::new(
+            Surface3::Cylinder(cylinder),
+            0.0,
+            PI,
+            -1.0,
+            1.0,
+        ));
+
+        let adaptor = SurfaceAdaptor::from_surface(&trimmed);
+        assert!(adaptor.u_period().is_none());
     }
 }

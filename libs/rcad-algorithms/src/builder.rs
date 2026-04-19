@@ -181,13 +181,23 @@ impl SubFace {
                 } else {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
                 };
+                // Offset AWAY from the interior (in direction of outward normal)
                 centroid + self.normal * TOLERANCE_ABS * 10.0
             }
         }
     }
 }
 
-type FaceEntry = (Vec<usize>, Vec<Vec<usize>>, Vec<[usize; 3]>, DVec3, Surface3, Option<[f64; 4]>);
+type FaceEntry = (
+    Vec<usize>,
+    Vec<Vec<usize>>,
+    Vec<[usize; 3]>,
+    DVec3,
+    Surface3,
+    Option<[f64; 4]>,
+    DVec3,
+    f64,
+);
 
 /// Builds result BRep, deduplicating vertices and edges.
 struct ResultBuilder {
@@ -199,6 +209,53 @@ struct ResultBuilder {
 }
 
 impl ResultBuilder {
+    fn estimate_boundary_normal(poly: &[DVec3]) -> DVec3 {
+        if poly.len() < 3 {
+            return DVec3::ZERO;
+        }
+
+        // Newell's method gives a stable polygon normal for arbitrary winding.
+        let mut n = DVec3::ZERO;
+        for i in 0..poly.len() {
+            let p = poly[i];
+            let q = poly[(i + 1) % poly.len()];
+            n.x += (p.y - q.y) * (p.z + q.z);
+            n.y += (p.z - q.z) * (p.x + q.x);
+            n.z += (p.x - q.x) * (p.y + q.y);
+        }
+        let len = n.length();
+        if len > 1e-12 { n / len } else { DVec3::ZERO }
+    }
+
+    fn polygon_signed_area_on_normal(poly: &[DVec3], normal: DVec3) -> f64 {
+        if poly.len() < 3 {
+            return 0.0;
+        }
+        let n = normal.normalize_or_zero();
+        let ax = n.x.abs();
+        let ay = n.y.abs();
+        let az = n.z.abs();
+        let axis = if ax >= ay && ax >= az {
+            0usize
+        } else if ay >= az {
+            1usize
+        } else {
+            2usize
+        };
+
+        let mut area2 = 0.0;
+        for i in 0..poly.len() {
+            let p = poly[i];
+            let q = poly[(i + 1) % poly.len()];
+            area2 += match axis {
+                0 => p.y * q.z - q.y * p.z,
+                1 => p.x * q.z - q.x * p.z,
+                _ => p.x * q.y - q.x * p.y,
+            };
+        }
+        0.5 * area2.abs()
+    }
+
     fn new() -> Self {
         Self {
             vertices: Vec::new(),
@@ -242,7 +299,17 @@ impl ResultBuilder {
     }
 
     fn emit_face_with_origin(&mut self, sub: &SubFace, flip: bool, origin: FaceOrigin) {
-        let normal = if flip { -sub.normal } else { sub.normal };
+        if sub.boundary.len() < 3 {
+            return;
+        }
+
+        let mut normal = if flip { -sub.normal } else { sub.normal };
+        if normal.length_squared() <= 1e-20 {
+            normal = Self::estimate_boundary_normal(&sub.boundary);
+        }
+        if normal.length_squared() <= 1e-20 {
+            return;
+        }
 
         // Add vertices for outer boundary
         let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
@@ -284,8 +351,59 @@ impl ResultBuilder {
             inner_wire_edges.push(wire_edges);
         }
 
-        self.faces
-            .push((edge_indices, inner_wire_edges, tris, normal, sub.surface.clone(), sub.uv_domain));
+        // Deduplicate coincident faces that map to the same topological boundary.
+        // This is common for ON-class split fragments emitted from both sides.
+        let centroid = if sub.boundary.is_empty() {
+            DVec3::ZERO
+        } else {
+            sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64
+        };
+        let area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
+
+        let mut outer_sig = edge_indices.clone();
+        outer_sig.sort_unstable();
+        let nlen = normal.length();
+        let nunit = if nlen > 1e-12 { normal / nlen } else { normal };
+        for (
+            existing_outer,
+            _existing_inner,
+            _existing_tris,
+            existing_normal,
+            _surf,
+            _uv,
+            existing_centroid,
+            existing_area,
+        ) in &self.faces
+        {
+            let mut ex_sig = existing_outer.clone();
+            ex_sig.sort_unstable();
+
+            let elen = existing_normal.length();
+            if elen <= 1e-12 {
+                continue;
+            }
+            let eunit = *existing_normal / elen;
+
+            let sig_match = ex_sig == outer_sig;
+            let geo_match = nunit.dot(eunit).abs() >= 0.99
+                && (*existing_centroid - centroid).length() <= 1e-8
+                && (existing_area - area).abs() <= 1e-8 * existing_area.max(area).max(1.0);
+
+            if sig_match || geo_match {
+                return;
+            }
+        }
+
+        self.faces.push((
+            edge_indices,
+            inner_wire_edges,
+            tris,
+            normal,
+            sub.surface.clone(),
+            sub.uv_domain,
+            centroid,
+            area,
+        ));
         self.face_origins.push(origin);
     }
 
@@ -305,7 +423,7 @@ impl ResultBuilder {
         let mut geom = rcad_kernel::GeomStore::default();
         let mut faces = Vec::new();
 
-        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain) in self.faces {
+        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area) in self.faces {
             let wire = Wire {
                 edges: edge_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
             };
@@ -525,6 +643,12 @@ pub struct BooleanBuilder<'a> {
     glue_tolerance: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceSide {
+    A,
+    B,
+}
+
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         Self {
@@ -539,6 +663,38 @@ impl<'a> BooleanBuilder<'a> {
         self.use_glue = enable;
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
         self
+    }
+
+    /// Unified semantic policy for sub-face retention.
+    ///
+    /// This keeps A/B branches aligned to the same decision table instead of
+    /// maintaining two subtly diverging helper functions.
+    fn keep_subface_policy(op: BooleanOpType, source: SourceSide, class: Classification) -> bool {
+        match op {
+            // Regularized union: keep outside + coincident boundary fragments.
+            // Coincident (`On`) fragments are deduplicated downstream in ResultBuilder.
+            BooleanOpType::Union => {
+                class == Classification::Out || class == Classification::On
+            }
+            BooleanOpType::Intersection => {
+                class == Classification::In || class == Classification::On
+            }
+            BooleanOpType::Difference => match source {
+                SourceSide::A => class == Classification::Out,
+                SourceSide::B => class == Classification::In,
+            },
+        }
+    }
+
+    fn keep_subface(
+        &self,
+        source: SourceSide,
+        fi: usize,
+        class: Classification,
+        other_faces: &[usize],
+    ) -> bool {
+        let _ = (source, fi, other_faces);
+        Self::keep_subface_policy(self.op, source, class)
     }
 
     fn pcurve_matches_face_surface(
@@ -612,17 +768,7 @@ impl<'a> BooleanBuilder<'a> {
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &b_faces, self.ds);
 
-                let keep = match self.op {
-                    BooleanOpType::Union => {
-                        let glued_on =
-                            self.use_glue && class == Classification::On && self.is_glued_face(fi, &b_faces);
-                        class == Classification::Out || (class == Classification::On && !glued_on)
-                    }
-                    BooleanOpType::Intersection => {
-                        class == Classification::In || class == Classification::On
-                    }
-                    BooleanOpType::Difference => class == Classification::Out,
-                };
+                let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
                 if keep {
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(fi));
@@ -637,13 +783,7 @@ impl<'a> BooleanBuilder<'a> {
                 let sample = sub.sample_point();
                 let class = classify_point(sample, &a_faces, self.ds);
 
-                let keep = match self.op {
-                    BooleanOpType::Union => class == Classification::Out,
-                    BooleanOpType::Intersection => {
-                        class == Classification::In || class == Classification::On
-                    }
-                    BooleanOpType::Difference => class == Classification::In,
-                };
+                let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
                 if keep {
                     let flip = self.op == BooleanOpType::Difference;
@@ -712,15 +852,7 @@ impl<'a> BooleanBuilder<'a> {
                         let sample = sub.sample_point();
                         let class = classify_point(sample, &b_faces, self.ds);
 
-                        let keep = match self.op {
-                            BooleanOpType::Union => {
-                                class == Classification::Out || class == Classification::On
-                            }
-                            BooleanOpType::Intersection => {
-                                class == Classification::In || class == Classification::On
-                            }
-                            BooleanOpType::Difference => class == Classification::Out,
-                        };
+                        let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
                         if keep {
                             Some((sub, false, FaceOrigin::FromA(fi)))
@@ -743,13 +875,7 @@ impl<'a> BooleanBuilder<'a> {
                         let sample = sub.sample_point();
                         let class = classify_point(sample, &a_faces, self.ds);
 
-                        let keep = match self.op {
-                            BooleanOpType::Union => class == Classification::Out,
-                            BooleanOpType::Intersection => {
-                                class == Classification::In || class == Classification::On
-                            }
-                            BooleanOpType::Difference => class == Classification::In,
-                        };
+                        let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
                         if keep {
                             let flip = self.op == BooleanOpType::Difference;
@@ -1636,6 +1762,40 @@ impl<'a> BooleanBuilder<'a> {
             return Some(pcurve.clone());
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BooleanBuilder, BooleanOpType, SourceSide};
+    use crate::classify::Classification;
+
+    #[test]
+    fn keep_subface_policy_union_keeps_on() {
+        assert!(BooleanBuilder::keep_subface_policy(
+            BooleanOpType::Union,
+            SourceSide::A,
+            Classification::On,
+        ));
+        assert!(BooleanBuilder::keep_subface_policy(
+            BooleanOpType::Union,
+            SourceSide::B,
+            Classification::On,
+        ));
+    }
+
+    #[test]
+    fn keep_subface_policy_union_still_rejects_inside() {
+        assert!(!BooleanBuilder::keep_subface_policy(
+            BooleanOpType::Union,
+            SourceSide::A,
+            Classification::In,
+        ));
+        assert!(!BooleanBuilder::keep_subface_policy(
+            BooleanOpType::Union,
+            SourceSide::B,
+            Classification::In,
+        ));
     }
 }
 

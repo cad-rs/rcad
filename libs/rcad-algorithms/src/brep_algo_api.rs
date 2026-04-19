@@ -32,7 +32,10 @@ use std::collections::HashMap;
 
 use crate::bopds::ds::DS;
 use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
-use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, VertexOrigin, HistoryStatistics};
+use crate::history::{
+    BooleanHistory, EdgeOrigin, EntityType, FaceOrigin, HistoryStatistics, InputSource,
+    VertexOrigin,
+};
 use crate::pave_filler::PaveFiller;
 use crate::section::section;
 use crate::tolerance::TOLERANCE_ABS;
@@ -271,6 +274,73 @@ impl BRepHistory {
         self.modified_b.get(&source_face_idx).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
+    /// Get result edge indices modified/split from a source edge in shape A.
+    ///
+    /// This mirrors OCCT BuilderShape semantics for non-face entities where
+    /// edges can be preserved or split across the boolean boundary.
+    pub fn modified_edges_from_a(&self, source_edge_idx: usize) -> Vec<usize> {
+        let Some(inner) = self.inner.as_ref() else {
+            return Vec::new();
+        };
+        inner
+            .edge_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, origin)| match origin {
+                EdgeOrigin::FromA(src) | EdgeOrigin::SplitFromA(src) if *src == source_edge_idx => Some(idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Get result edge indices modified/split from a source edge in shape B.
+    pub fn modified_edges_from_b(&self, source_edge_idx: usize) -> Vec<usize> {
+        let Some(inner) = self.inner.as_ref() else {
+            return Vec::new();
+        };
+        inner
+            .edge_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, origin)| match origin {
+                EdgeOrigin::FromB(src) | EdgeOrigin::SplitFromB(src) if *src == source_edge_idx => Some(idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Get result vertex indices preserved from a source vertex in shape A.
+    pub fn modified_vertices_from_a(&self, source_vertex_idx: usize) -> Vec<usize> {
+        let Some(inner) = self.inner.as_ref() else {
+            return Vec::new();
+        };
+        inner
+            .vertex_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, origin)| match origin {
+                VertexOrigin::FromA(src) if *src == source_vertex_idx => Some(idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Get result vertex indices preserved from a source vertex in shape B.
+    pub fn modified_vertices_from_b(&self, source_vertex_idx: usize) -> Vec<usize> {
+        let Some(inner) = self.inner.as_ref() else {
+            return Vec::new();
+        };
+        inner
+            .vertex_origins
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, origin)| match origin {
+                VertexOrigin::FromB(src) if *src == source_vertex_idx => Some(idx),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Get all generated faces.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::Generated()`.
     pub fn generated_faces(&self) -> &[usize] {
@@ -298,24 +368,111 @@ impl BRepHistory {
         self.deleted_b.contains(&source_face_idx)
     }
 
+    /// Check if an edge from shape A was deleted.
+    pub fn is_deleted_edge_from_a(&self, source_edge_idx: usize) -> bool {
+        self.is_deleted_with_source(EntityType::Edge, source_edge_idx, InputSource::A)
+    }
+
+    /// Check if an edge from shape B was deleted.
+    pub fn is_deleted_edge_from_b(&self, source_edge_idx: usize) -> bool {
+        self.is_deleted_with_source(EntityType::Edge, source_edge_idx, InputSource::B)
+    }
+
+    /// Check if a vertex from shape A was deleted.
+    pub fn is_deleted_vertex_from_a(&self, source_vertex_idx: usize) -> bool {
+        self.is_deleted_with_source(EntityType::Vertex, source_vertex_idx, InputSource::A)
+    }
+
+    /// Check if a vertex from shape B was deleted.
+    pub fn is_deleted_vertex_from_b(&self, source_vertex_idx: usize) -> bool {
+        self.is_deleted_with_source(EntityType::Vertex, source_vertex_idx, InputSource::B)
+    }
+
+    /// Check if an edge index appears in deletion history regardless of source side.
+    pub fn is_deleted_edge_any(&self, source_edge_idx: usize) -> bool {
+        self.is_deleted_any(EntityType::Edge, source_edge_idx)
+    }
+
+    /// Check if a vertex index appears in deletion history regardless of source side.
+    pub fn is_deleted_vertex_any(&self, source_vertex_idx: usize) -> bool {
+        self.is_deleted_any(EntityType::Vertex, source_vertex_idx)
+    }
+
     /// Get the underlying BooleanHistory if available.
     pub fn inner(&self) -> Option<&BooleanHistory> {
         self.inner.as_ref()
     }
 
+    fn is_deleted_any(&self, entity_type: EntityType, entity_index: usize) -> bool {
+        self.inner
+            .as_ref()
+            .map(|h| h.tracker.is_deleted(entity_index, entity_type))
+            .unwrap_or(false)
+    }
+
+    fn is_deleted_with_source(
+        &self,
+        entity_type: EntityType,
+        entity_index: usize,
+        source: InputSource,
+    ) -> bool {
+        let Some(inner) = self.inner.as_ref() else {
+            return false;
+        };
+        inner
+            .tracker
+            .deleted_entities()
+            .iter()
+            .any(|r| r.entity_type == entity_type && r.entity_index == entity_index && r.source == Some(source))
+    }
+
     /// Get statistics about the history.
     pub fn statistics(&self) -> HistoryStatistics {
+        let (modified_edges, modified_vertices) = if let Some(inner) = self.inner.as_ref() {
+            (
+                inner
+                    .edge_origins
+                    .iter()
+                    .filter(|o| {
+                        matches!(
+                            o,
+                            EdgeOrigin::FromA(_)
+                                | EdgeOrigin::FromB(_)
+                                | EdgeOrigin::SplitFromA(_)
+                                | EdgeOrigin::SplitFromB(_)
+                        )
+                    })
+                    .count(),
+                inner
+                    .vertex_origins
+                    .iter()
+                    .filter(|o| matches!(o, VertexOrigin::FromA(_) | VertexOrigin::FromB(_)))
+                    .count(),
+            )
+        } else {
+            (0, 0)
+        };
+
+        let (deleted_edges, deleted_vertices) = if let Some(inner) = self.inner.as_ref() {
+            (
+                inner.tracker.deleted_edges().count(),
+                inner.tracker.deleted_vertices().count(),
+            )
+        } else {
+            (0, 0)
+        };
+
         HistoryStatistics {
             modified_faces: self.modified_a.values().map(|v| v.len()).sum::<usize>()
                 + self.modified_b.values().map(|v| v.len()).sum::<usize>(),
-            modified_edges: 0,
-            modified_vertices: 0,
+            modified_edges,
+            modified_vertices,
             generated_faces: self.generated_faces.len(),
             generated_edges: self.generated_edges.len(),
             generated_vertices: self.generated_vertices.len(),
             deleted_faces: self.deleted_a.len() + self.deleted_b.len(),
-            deleted_edges: 0,
-            deleted_vertices: 0,
+            deleted_edges,
+            deleted_vertices,
         }
     }
 }
@@ -379,6 +536,10 @@ impl<'a> BRepAlgoAPI_Common<'a> {
     ///
     /// Returns `true` if the operation succeeded.
     pub fn build(&mut self) -> bool {
+        self.result = None;
+        self.error = None;
+        self.history = BRepHistory::new();
+
         match self.build_internal() {
             Ok(_) => true,
             Err(e) => {
@@ -541,6 +702,10 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
     ///
     /// Returns `true` if the operation succeeded.
     pub fn build(&mut self) -> bool {
+        self.result = None;
+        self.error = None;
+        self.history = BRepHistory::new();
+
         match self.build_internal() {
             Ok(_) => true,
             Err(e) => {
@@ -695,6 +860,10 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
     ///
     /// Returns `true` if the operation succeeded.
     pub fn build(&mut self) -> bool {
+        self.result = None;
+        self.error = None;
+        self.history = BRepHistory::new();
+
         match self.build_internal() {
             Ok(_) => true,
             Err(e) => {
@@ -846,6 +1015,9 @@ impl<'a> BRepAlgoAPI_Section<'a> {
     ///
     /// Returns `true` if the operation succeeded.
     pub fn build(&mut self) -> bool {
+        self.result = None;
+        self.error = None;
+
         match self.build_internal() {
             Ok(_) => true,
             Err(e) => {
@@ -856,6 +1028,11 @@ impl<'a> BRepAlgoAPI_Section<'a> {
     }
 
     fn build_internal(&mut self) -> Result<(), BooleanError> {
+        // Check for empty inputs for API consistency with Common/Fuse/Cut.
+        if self.shape1.solids.is_empty() || self.shape2.solids.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+
         // For section, we compute intersection curves between faces
         // Use the section module with a surface derived from shape2
 
@@ -1115,6 +1292,21 @@ mod tests {
     }
 
     #[test]
+    fn fuse_rebuild_clears_history_when_disabled() {
+        let box1 = unit_box();
+        let box2 = shifted_box(0.5, 0.0, 0.0);
+
+        let mut fuse = BRepAlgoAPI_Fuse::new(&box1, &box2);
+        fuse.set_options(BooleanApiOptions::default().with_history(true));
+        assert!(fuse.build());
+        assert!(fuse.history().is_generated());
+
+        fuse.set_options(BooleanApiOptions::default().with_history(false));
+        assert!(fuse.build());
+        assert!(!fuse.history().is_generated());
+    }
+
+    #[test]
     fn fuse_disjoint_boxes() {
         let box1 = unit_box();
         let box2 = shifted_box(5.0, 5.0, 5.0); // Far apart
@@ -1184,6 +1376,36 @@ mod tests {
         assert!(history.is_generated());
     }
 
+    #[test]
+    fn cut_rebuild_clears_history_when_disabled() {
+        let box1 = unit_box();
+        let box2 = shifted_box(0.25, 0.25, 0.25);
+
+        let mut cut = BRepAlgoAPI_Cut::new(&box1, &box2);
+        cut.set_options(BooleanApiOptions::default().with_history(true));
+        assert!(cut.build());
+        assert!(cut.history().is_generated());
+
+        cut.set_options(BooleanApiOptions::default().with_history(false));
+        assert!(cut.build());
+        assert!(!cut.history().is_generated());
+    }
+
+    #[test]
+    fn common_rebuild_clears_history_when_disabled() {
+        let box1 = unit_box();
+        let box2 = shifted_box(0.5, 0.5, 0.5);
+
+        let mut common = BRepAlgoAPI_Common::new(&box1, &box2);
+        common.set_options(BooleanApiOptions::default().with_history(true));
+        assert!(common.build());
+        assert!(common.history().is_generated());
+
+        common.set_options(BooleanApiOptions::default().with_history(false));
+        assert!(common.build());
+        assert!(!common.history().is_generated());
+    }
+
     // ── BRepAlgoAPI_Section Tests ────────────────────────────────────────────────
 
     #[test]
@@ -1219,6 +1441,68 @@ mod tests {
         assert_eq!(stats.total_deleted(), 0);
     }
 
+    #[test]
+    fn history_edge_vertex_modified_queries() {
+        let mut inner = BooleanHistory::new();
+        inner.edge_origins = vec![
+            EdgeOrigin::FromA(0),
+            EdgeOrigin::SplitFromA(0),
+            EdgeOrigin::FromB(1),
+            EdgeOrigin::Generated,
+        ];
+        inner.vertex_origins = vec![
+            VertexOrigin::FromA(2),
+            VertexOrigin::Intersection,
+            VertexOrigin::FromB(3),
+        ];
+
+        let history = BRepHistory::from_boolean_history(inner);
+
+        assert_eq!(history.modified_edges_from_a(0), vec![0, 1]);
+        assert_eq!(history.modified_edges_from_b(1), vec![2]);
+        assert!(history.modified_edges_from_a(999).is_empty());
+
+        assert_eq!(history.modified_vertices_from_a(2), vec![0]);
+        assert_eq!(history.modified_vertices_from_b(3), vec![2]);
+        assert!(history.modified_vertices_from_b(999).is_empty());
+
+        let stats = history.statistics();
+        assert_eq!(stats.modified_edges, 3);
+        assert_eq!(stats.modified_vertices, 2);
+    }
+
+    #[test]
+    fn history_edge_vertex_deleted_queries() {
+        let mut inner = BooleanHistory::new();
+        inner
+            .tracker
+            .record_edge_deleted_with_source(5, crate::history::DeletionReason::BooleanOperation, InputSource::A);
+        inner
+            .tracker
+            .record_edge_deleted(7, crate::history::DeletionReason::Overlap);
+        inner
+            .tracker
+            .record_vertex_deleted_with_source(11, crate::history::DeletionReason::Tolerance, InputSource::B);
+
+        let history = BRepHistory::from_boolean_history(inner);
+
+        assert!(history.is_deleted_edge_any(5));
+        assert!(history.is_deleted_edge_from_a(5));
+        assert!(!history.is_deleted_edge_from_b(5));
+
+        assert!(history.is_deleted_edge_any(7));
+        assert!(!history.is_deleted_edge_from_a(7));
+        assert!(!history.is_deleted_edge_from_b(7));
+
+        assert!(history.is_deleted_vertex_any(11));
+        assert!(history.is_deleted_vertex_from_b(11));
+        assert!(!history.is_deleted_vertex_from_a(11));
+
+        let stats = history.statistics();
+        assert_eq!(stats.deleted_edges, 2);
+        assert_eq!(stats.deleted_vertices, 1);
+    }
+
     // ── Error Handling Tests ─────────────────────────────────────────────────────
 
     #[test]
@@ -1229,6 +1513,16 @@ mod tests {
         let mut fuse = BRepAlgoAPI_Fuse::new(&empty, &box1);
         assert!(!fuse.build());
         assert!(fuse.error().is_some());
+    }
+
+    #[test]
+    fn section_error_on_empty_input() {
+        let empty = BRep::new();
+        let box1 = unit_box();
+
+        let mut section = BRepAlgoAPI_Section::new(&empty, &box1);
+        assert!(!section.build());
+        assert!(matches!(section.error(), Some(BooleanError::EmptyInput)));
     }
 
     #[test]

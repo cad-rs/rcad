@@ -2333,6 +2333,21 @@ pub fn boolean_op_robust(
 
 /// Run post-operation simplification passes on a BRep.
 pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
+    fn closure_score(brep: &BRep) -> usize {
+        let report = crate::brep_check::validate_solid_closure(brep);
+        report
+            .issues
+            .iter()
+            .map(|iss| match iss {
+                crate::CheckIssue::SolidNotClosed {
+                    boundary_edge_count,
+                    ..
+                } => *boundary_edge_count,
+                _ => 1,
+            })
+            .sum()
+    }
+
     let before = check(brep);
     let mut out = brep.clone();
     let mut report = SimplifyReport {
@@ -2355,25 +2370,47 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
         out = next;
         report.degenerate_faces_removed = n;
     }
+    if options.remove_internal_faces {
+        let (next, n) = remove_internal_faces(&out);
+        out = next;
+        report.internal_faces_removed = n;
+    }
     if options.fix_wire_orientation {
         let (next, n) = fix_wire_orientation(&out, options.merge_tolerance);
         out = next;
         report.wires_fixed = n;
     }
     if options.unify_same_domain_faces {
+        let cur_score = closure_score(&out);
         let (next, n) = unify_same_domain_faces(&out);
-        out = next;
-        report.same_domain_face_merges = n;
-    }
-    if options.remove_internal_faces {
-        let (next, n) = remove_internal_faces(&out);
-        out = next;
-        report.internal_faces_removed = n;
+        let next_score = closure_score(&next);
+        if next_score <= cur_score {
+            out = next;
+            report.same_domain_face_merges = n;
+        }
     }
     if options.remove_small_edges {
+        let cur_score = closure_score(&out);
         let (next, n) = remove_small_edges(&out, options.small_edge_min_length);
-        out = next;
-        report.small_edges_removed = n;
+        let next_score = closure_score(&next);
+        if next_score <= cur_score {
+            out = next;
+            report.small_edges_removed = n;
+        }
+    }
+
+    // Final safety net: never return an open solid from simplification if it
+    // can be repaired into a closed one with the standard solid fixer.
+    if !crate::brep_check::validate_solid_closure(&out).is_clean() {
+        let (fixed, _fix_report) = fix_solid(&out, options.merge_tolerance.max(tolerance::TOLERANCE_ABS));
+        if crate::brep_check::validate_solid_closure(&fixed).is_clean() {
+            out = fixed;
+        } else {
+            let (healed, _heal_report) = heal_comprehensive(&out, &HealingOptions::default());
+            if crate::brep_check::validate_solid_closure(&healed).is_clean() {
+                out = healed;
+            }
+        }
     }
 
     report.issues_after = check(&out).issues.len();
@@ -3873,6 +3910,21 @@ fn validate_uv_regions_compatible(
 fn unify_one_merge_pass(brep: &mut BRep) -> bool {
     use std::collections::HashMap;
 
+    fn closure_score(brep: &BRep) -> usize {
+        let report = crate::brep_check::validate_solid_closure(brep);
+        report
+            .issues
+            .iter()
+            .map(|iss| match iss {
+                crate::CheckIssue::SolidNotClosed {
+                    boundary_edge_count,
+                    ..
+                } => *boundary_edge_count,
+                _ => 1,
+            })
+            .sum()
+    }
+
     fn flat_face_index_of(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
         let mut idx = 0usize;
         for s in 0..si {
@@ -3929,8 +3981,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     return (Some(false), true);
                 }
                 let cross = n1.cross(n2).length();
-                let dot = n1.dot(n2);
-                if cross > ANG_TOL || dot < 0.0 {
+                if cross > ANG_TOL {
                     return (Some(false), true);
                 }
                 let d = (p2.origin - p1.origin).dot(n1).abs();
@@ -4091,6 +4142,20 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     brep.vertices.get(v_idx).map(|v| v.point)
                 };
 
+                let face_outer_vertices = |fi: usize| -> Option<Vec<glam::DVec3>> {
+                    let mut out = Vec::new();
+                    for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
+                        let e = brep.edges.get(we.idx)?;
+                        let v_idx = if we.forward { e.start } else { e.end };
+                        out.push(brep.vertices.get(v_idx)?.point);
+                    }
+                    if out.is_empty() {
+                        None
+                    } else {
+                        Some(out)
+                    }
+                };
+
                 let (same_domain, is_planar) =
                     surfaces_are_same_domain(brep, si, shi, fi1, fi2);
 
@@ -4100,10 +4165,17 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         // For planar faces add a vertex–plane distance sanity check.
                         if is_planar {
                             let n = face1_normal.normalize();
-                            if let (Some(pt1), Some(pt2)) =
-                                (get_face_pt(fi1), get_face_pt(fi2))
+                            if let (Some(pt1), Some(vs1), Some(vs2)) =
+                                (get_face_pt(fi1), face_outer_vertices(fi1), face_outer_vertices(fi2))
                             {
-                                (pt2 - pt1).dot(n).abs() <= 1e-6
+                                const PLANAR_MERGE_TOL: f64 = 1e-6;
+                                let all_vs1_on_plane1 = vs1
+                                    .iter()
+                                    .all(|p| (*p - pt1).dot(n).abs() <= PLANAR_MERGE_TOL);
+                                let all_vs2_on_plane1 = vs2
+                                    .iter()
+                                    .all(|p| (*p - pt1).dot(n).abs() <= PLANAR_MERGE_TOL);
+                                all_vs1_on_plane1 && all_vs2_on_plane1
                             } else {
                                 false
                             }
@@ -4115,8 +4187,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     None => {
                         // No surface data: fall back to per-face normal heuristic.
                         let cross = face1_normal.cross(face2_normal).length();
-                        let dot = face1_normal.dot(face2_normal);
-                        if cross > 1e-6 || dot < 0.0 {
+                        if cross > 1e-6 {
                             false
                         } else if let (Some(pt1), Some(pt2)) =
                             (get_face_pt(fi1), get_face_pt(fi2))
@@ -4160,6 +4231,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 let wire2 = brep.solids[si].shells[shi].faces[fi2].outer_wire.edges.clone();
 
                 if let Some(merged_wire_edges) = splice_wires(&wire1, &wire2, *edge_idx) {
+                    let merged_wire_edges = cleanup_merged_wire_edges(brep, &merged_wire_edges);
                     // Collect inner wires from both faces.
                     let inner1 = brep.solids[si].shells[shi].faces[fi1].inner_wires.clone();
                     let inner2 = brep.solids[si].shells[shi].faces[fi2].inner_wires.clone();
@@ -4177,18 +4249,29 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         mesh_dirty: true,
                     };
 
-                    // Replace fi1 with merged face, remove fi2.
+                    // Replace fi1 with merged face, remove fi2, but only commit if
+                    // the candidate result stays topologically closed.
                     let (keep_idx, remove_idx) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
+                    let mut candidate = brep.clone();
+
                     // Update face_surface mapping: keep keep_idx's surface id.
-                    let kept_flat = flat_face_index_of(brep, si, shi, keep_idx);
-                    let remove_flat = flat_face_index_of(brep, si, shi, remove_idx);
-                    // Remove the higher-indexed face surface entry to keep the vector consistent.
-                    if brep.geom.face_surface.len() > remove_flat {
-                        brep.geom.face_surface.remove(remove_flat);
+                    let kept_flat = flat_face_index_of(&candidate, si, shi, keep_idx);
+                    let remove_flat = flat_face_index_of(&candidate, si, shi, remove_idx);
+                    if candidate.geom.face_surface.len() > remove_flat {
+                        candidate.geom.face_surface.remove(remove_flat);
                     }
-                    let _ = kept_flat; // already correct after removal
-                    brep.solids[si].shells[shi].faces[keep_idx] = merged_face;
-                    brep.solids[si].shells[shi].faces.remove(remove_idx);
+                    let _ = kept_flat;
+
+                    candidate.solids[si].shells[shi].faces[keep_idx] = merged_face;
+                    candidate.solids[si].shells[shi].faces.remove(remove_idx);
+
+                    let current_score = closure_score(brep);
+                    let candidate_score = closure_score(&candidate);
+                    if candidate_score > current_score {
+                        continue;
+                    }
+
+                    *brep = candidate;
                     return true;
                 }
             }
@@ -4227,11 +4310,290 @@ fn splice_wires(
     Some(merged)
 }
 
-/// Remove redundant internal faces from a Boolean Fuse (Union) result.
+fn oriented_edge_vertices(
+    brep: &BRep,
+    we: rcad_kernel::topology::WireEdge,
+) -> Option<(usize, usize)> {
+    let e = brep.edges.get(we.idx)?;
+    if we.forward {
+        Some((e.start, e.end))
+    } else {
+        Some((e.end, e.start))
+    }
+}
+
+fn find_existing_edge_between_vertices(
+    brep: &BRep,
+    from: usize,
+    to: usize,
+) -> Option<rcad_kernel::topology::WireEdge> {
+    for (idx, e) in brep.edges.iter().enumerate() {
+        if e.start == from && e.end == to {
+            return Some(rcad_kernel::topology::WireEdge::fwd(idx));
+        }
+        if e.start == to && e.end == from {
+            return Some(rcad_kernel::topology::WireEdge::rev(idx));
+        }
+    }
+    None
+}
+
+fn points_are_collinear_forward(a: glam::DVec3, b: glam::DVec3, c: glam::DVec3) -> bool {
+    let ab = b - a;
+    let bc = c - b;
+    let ab_len = ab.length();
+    let bc_len = bc.length();
+    if ab_len <= 1e-12 || bc_len <= 1e-12 {
+        return false;
+    }
+
+    let cross = ab.cross(bc).length();
+    let dot = ab.dot(bc);
+    cross <= tolerance::TOLERANCE_ABS * (ab_len + bc_len) && dot > 0.0
+}
+
+fn collapse_collinear_segments_with_existing_bridge(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
+    let mut out = wire.to_vec();
+    if out.len() < 4 {
+        return None;
+    }
+
+    loop {
+        let n = out.len();
+        if n < 4 {
+            break;
+        }
+
+        let mut changed = false;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (u, v1) = oriented_edge_vertices(brep, out[i])?;
+            let (v2, w) = oriented_edge_vertices(brep, out[j])?;
+            if v1 != v2 || u == w {
+                continue;
+            }
+
+            let p_u = brep.vertices.get(u)?.point;
+            let p_v = brep.vertices.get(v1)?.point;
+            let p_w = brep.vertices.get(w)?.point;
+            if !points_are_collinear_forward(p_u, p_v, p_w) {
+                continue;
+            }
+
+            let bridge = match find_existing_edge_between_vertices(brep, u, w) {
+                Some(e) if e.idx != out[i].idx && e.idx != out[j].idx => e,
+                _ => continue,
+            };
+
+            if i + 1 < n {
+                out.splice(i..=i + 1, [bridge]);
+            } else {
+                out.pop();
+                out.remove(0);
+                out.insert(0, bridge);
+            }
+            changed = true;
+            break;
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    if out.len() >= 3 {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+fn wire_is_closed_and_connected(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> bool {
+    if wire.len() < 3 {
+        return false;
+    }
+
+    let Some((first_start, mut prev_end)) = oriented_edge_vertices(brep, wire[0]) else {
+        return false;
+    };
+
+    for we in &wire[1..] {
+        let Some((start, end)) = oriented_edge_vertices(brep, *we) else {
+            return false;
+        };
+        if start != prev_end {
+            return false;
+        }
+        prev_end = end;
+    }
+
+    prev_end == first_start
+}
+
+fn reorder_wire_into_connected_loop(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
+    if wire.is_empty() {
+        return None;
+    }
+
+    let mut unused: Vec<rcad_kernel::topology::WireEdge> = wire.to_vec();
+    let first = unused.remove(0);
+    let mut out = vec![first];
+
+    let (_, mut current_end) = oriented_edge_vertices(brep, first)?;
+
+    while !unused.is_empty() {
+        let mut found_idx: Option<usize> = None;
+        let mut flip = false;
+
+        for (i, we) in unused.iter().enumerate() {
+            let (s, e) = oriented_edge_vertices(brep, *we)?;
+            if s == current_end {
+                found_idx = Some(i);
+                flip = false;
+                break;
+            }
+            if e == current_end {
+                found_idx = Some(i);
+                flip = true;
+                break;
+            }
+        }
+
+        let i = found_idx?;
+        let mut next = unused.remove(i);
+        if flip {
+            next.forward = !next.forward;
+        }
+        let (_, next_end) = oriented_edge_vertices(brep, next)?;
+        out.push(next);
+        current_end = next_end;
+    }
+
+    if wire_is_closed_and_connected(brep, &out) {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+fn cancel_duplicate_segments_by_parity(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
+    use std::collections::HashMap;
+
+    let mut groups: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (i, &we) in wire.iter().enumerate() {
+        let (u, v) = oriented_edge_vertices(brep, we)?;
+        let key = if u <= v { (u, v) } else { (v, u) };
+        groups.entry(key).or_default().push(i);
+    }
+
+    let mut keep = vec![true; wire.len()];
+    for idxs in groups.values() {
+        if idxs.len() >= 2 {
+            let cancel_count = (idxs.len() / 2) * 2;
+            for idx in idxs.iter().take(cancel_count) {
+                keep[*idx] = false;
+            }
+        }
+    }
+
+    let out: Vec<rcad_kernel::topology::WireEdge> = wire
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &we)| if keep[i] { Some(we) } else { None })
+        .collect();
+
+    if out.len() >= 3 {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Remove only locally redundant adjacent segments created by wire splicing.
 ///
-/// After a Union operation, coincident input faces (faces from A and B on
-/// exactly the same plane) can appear duplicated in the result: both input
-/// faces survive classification because they lie precisely on the Boolean
+/// This pass is intentionally conservative: it only drops adjacent pairs that
+/// represent the same geometric segment (same or opposite traversal). If the
+/// cleaned result is not a valid closed wire, it falls back to the original.
+fn cleanup_merged_wire_edges(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> Vec<rcad_kernel::topology::WireEdge> {
+    if wire.len() < 4 {
+        return wire.to_vec();
+    }
+
+    let mut cleaned: Vec<rcad_kernel::topology::WireEdge> = Vec::with_capacity(wire.len());
+
+    for &we in wire {
+        let Some((u, v)) = oriented_edge_vertices(brep, we) else {
+            return wire.to_vec();
+        };
+
+        if let Some(&last) = cleaned.last() {
+            let Some((lu, lv)) = oriented_edge_vertices(brep, last) else {
+                return wire.to_vec();
+            };
+            let same_segment = (lu == u && lv == v) || (lu == v && lv == u);
+            if same_segment {
+                cleaned.pop();
+                continue;
+            }
+        }
+        cleaned.push(we);
+    }
+
+    while cleaned.len() >= 2 {
+        let first = cleaned[0];
+        let last = *cleaned.last().unwrap_or(&cleaned[0]);
+        let Some((fu, fv)) = oriented_edge_vertices(brep, first) else {
+            return wire.to_vec();
+        };
+        let Some((lu, lv)) = oriented_edge_vertices(brep, last) else {
+            return wire.to_vec();
+        };
+        let same_segment = (fu == lu && fv == lv) || (fu == lv && fv == lu);
+        if !same_segment {
+            break;
+        }
+        cleaned.remove(0);
+        cleaned.pop();
+    }
+
+    let stage1 = if wire_is_closed_and_connected(brep, &cleaned) {
+        Some(cleaned)
+    } else if let Some(cancelled) = cancel_duplicate_segments_by_parity(brep, &cleaned) {
+        reorder_wire_into_connected_loop(brep, &cancelled)
+    } else {
+        None
+    };
+
+    let Some(mut out) = stage1 else {
+        return wire.to_vec();
+    };
+
+    if let Some(collapsed) = collapse_collinear_segments_with_existing_bridge(brep, &out) {
+        if let Some(reordered) = reorder_wire_into_connected_loop(brep, &collapsed)
+            && wire_is_closed_and_connected(brep, &reordered)
+        {
+            out = reordered;
+        }
+    }
+
+    out
+}
+
 /// boundary. This function detects such duplicate faces within each shell and
 /// removes the extra copies.
 ///
@@ -5695,6 +6057,59 @@ mod tests {
         let (out, removed) = remove_internal_faces(&brep);
         assert_eq!(removed, 1);
         assert_eq!(out.solids[0].shells[0].faces.len(), 1);
+    }
+
+    #[test]
+    fn cleanup_merged_wire_edges_removes_adjacent_backtrack_pair() {
+        use rcad_kernel::topology::{Edge, Vertex, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // 3
+
+        // Backtrack segment 0<->1, then a valid triangle 0->2->3->0.
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 0, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3
+
+        let wire = vec![
+            WireEdge::fwd(0),
+            WireEdge::rev(0),
+            WireEdge::fwd(1),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+        ];
+
+        let cleaned = cleanup_merged_wire_edges(&mut brep, &wire);
+        let cleaned_sig: Vec<(usize, bool)> = cleaned.iter().map(|we| (we.idx, we.forward)).collect();
+        assert_eq!(cleaned_sig, vec![(1, true), (2, true), (3, true)]);
+        assert!(wire_is_closed_and_connected(&brep, &cleaned));
+    }
+
+    #[test]
+    fn cleanup_merged_wire_edges_falls_back_when_cleanup_breaks_closure() {
+        use rcad_kernel::topology::{Edge, Vertex, WireEdge};
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3
+
+        // Removing the first two edges would produce an invalid open chain.
+        let wire = vec![WireEdge::fwd(0), WireEdge::rev(0), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let cleaned = cleanup_merged_wire_edges(&mut brep, &wire);
+        let cleaned_sig: Vec<(usize, bool)> = cleaned.iter().map(|we| (we.idx, we.forward)).collect();
+        let wire_sig: Vec<(usize, bool)> = wire.iter().map(|we| (we.idx, we.forward)).collect();
+        assert_eq!(cleaned_sig, wire_sig);
     }
 
     #[test]
