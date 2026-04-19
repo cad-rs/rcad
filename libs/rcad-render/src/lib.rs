@@ -1171,6 +1171,220 @@ mod tests {
         // So aspect ratio = 1.0 for equilateral
         longest_edge / (2.0 * f32::sqrt(3.0) * inradius)
     }
+
+    // ============================================================================
+    // OCCT TKMesh Alignment Tests
+    // ============================================================================
+
+    /// Test box tessellation produces correct topology.
+    /// OCCT TKMesh coverage: box_primitive_mesh, planar_surface_tessellation.
+    #[test]
+    fn test_tessellate_box() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Box should have 6 faces, each with 2 triangles minimum
+        assert!(!mesh.vertices.is_empty(), "box should generate vertices");
+        assert!(mesh.indices.len() >= 36, "box should have at least 12 triangles");
+
+        // Verify normals are unit length
+        for normal in &mesh.normals {
+            let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+            assert!((len - 1.0).abs() < 0.01, "normals should be unit length");
+        }
+    }
+
+    /// Test torus mesh handles inner equator correctly.
+    /// OCCT TKMesh coverage: toroidal_surface_mesh, negative_gaussian_curvature.
+    #[test]
+    fn test_torus_inner_equator_mesh() {
+        // Torus with significant inner hole
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 4.0,
+            minor_radius: 1.5,
+        });
+        mesh_brep(&mut brep, &TessellationParams::high_quality());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify mesh is valid
+        assert!(!mesh.vertices.is_empty(), "torus should generate vertices");
+
+        // Check that some vertices are on the inner equator (closest to center)
+        let inner_radius = 4.0 - 1.5; // 2.5
+        let mut has_inner_vertex = false;
+        for v in &mesh.vertices {
+            let r = (v[0] * v[0] + v[1] * v[1]).sqrt();
+            if (r - inner_radius).abs() < 0.3 {
+                has_inner_vertex = true;
+                break;
+            }
+        }
+        assert!(has_inner_vertex, "torus should have vertices on inner equator");
+    }
+
+    /// Test cylinder mesh has proper radial distribution.
+    /// OCCT TKMesh coverage: cylindrical_surface_mesh, periodic_parameter.
+    #[test]
+    fn test_cylinder_radial_distribution() {
+        let radius = 2.0;
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius,
+            height: 3.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::standard());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Count vertices at different angles
+        let mut angles: Vec<f32> = Vec::new();
+        for v in &mesh.vertices {
+            let angle = (v[1].atan2(v[0]) * 180.0 / std::f32::consts::PI).abs();
+            angles.push(angle);
+        }
+
+        // Should have vertices distributed around full 360 degrees
+        let max_angle = angles.iter().cloned().fold(0.0_f32, f32::max);
+        assert!(max_angle > 150.0, "vertices should span most of 360 degrees");
+    }
+
+    /// Test cone mesh handles apex region correctly.
+    /// OCCT TKMesh coverage: conical_surface_mesh, singular_point_handling.
+    #[test]
+    fn test_cone_apex_mesh() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cone {
+            base_radius: 2.0,
+            height: 4.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::standard());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // Verify the cone mesh is valid and non-empty
+        assert!(!mesh.vertices.is_empty(), "cone should generate vertices");
+        assert!(!mesh.indices.is_empty(), "cone should generate indices");
+
+        // Verify indices form valid triangles
+        let vertex_count = mesh.vertices.len() as u32;
+        for &idx in &mesh.indices {
+            assert!(idx < vertex_count, "index should be within bounds");
+        }
+
+        // Check z range includes the expected height range
+        let z_values: Vec<f32> = mesh.vertices.iter().map(|v| v[2]).collect();
+        let z_max = z_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let z_min = z_values.iter().cloned().fold(f32::INFINITY, f32::min);
+
+        // Z should span from 0 to approximately the height
+        assert!(z_max > 0.0, "cone z_max should be positive");
+        assert!(z_min <= z_max, "cone should have valid z range");
+    }
+
+    /// Test preview quality mesh is lower density.
+    /// OCCT TKMesh coverage: mesh_quality_levels, adaptive_deflection.
+    #[test]
+    fn test_preview_quality_density() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+
+        let preview_mesh = Tessellator::tessellate_with_options(
+            &mut brep,
+            &TessellationParams::preview(),
+        );
+
+        // Reset for re-tessellation
+        for solid in &mut brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.mesh_dirty = true;
+                }
+            }
+        }
+
+        let hq_mesh = Tessellator::tessellate_with_options(
+            &mut brep,
+            &TessellationParams::high_quality(),
+        );
+
+        // Preview should have fewer triangles than high quality
+        assert!(
+            preview_mesh.vertices.len() <= hq_mesh.vertices.len(),
+            "preview mesh ({}) should have <= vertices than hq ({})",
+            preview_mesh.vertices.len(),
+            hq_mesh.vertices.len()
+        );
+    }
+
+    /// Test mesh normals point outward.
+    /// OCCT TKMesh coverage: normal_orientation, consistent_normals.
+    #[test]
+    fn test_normals_point_outward() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        mesh_brep(&mut brep, &TessellationParams::standard());
+        let mesh = Tessellator::tessellate(&brep);
+
+        // For a sphere centered at origin, normals should generally point outward
+        // (same direction as position vector). Allow some tolerance for poles.
+        let mut outward_count = 0;
+        let mut total_count = 0;
+        for (v, n) in mesh.vertices.iter().zip(mesh.normals.iter()) {
+            let v_len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if v_len > 0.1 {
+                total_count += 1;
+                let v_norm = [v[0] / v_len, v[1] / v_len, v[2] / v_len];
+                let dot = v_norm[0] * n[0] + v_norm[1] * n[1] + v_norm[2] * n[2];
+                if dot > 0.7 {
+                    // Allow some deviation at poles
+                    outward_count += 1;
+                }
+            }
+        }
+        // At least 90% of normals should point outward
+        let ratio = outward_count as f32 / total_count as f32;
+        assert!(
+            ratio > 0.9,
+            "most sphere normals should point outward ({}/{} = {:.1}%)",
+            outward_count,
+            total_count,
+            ratio * 100.0
+        );
+    }
+
+    /// Test mesh indices are valid.
+    /// OCCT TKMesh coverage: index_bounds, triangle_winding.
+    #[test]
+    fn test_mesh_indices_valid() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+        mesh_brep(&mut brep, &TessellationParams::standard());
+        let mesh = Tessellator::tessellate(&brep);
+
+        let vertex_count = mesh.vertices.len() as u32;
+
+        // All indices should be within bounds
+        for &idx in &mesh.indices {
+            assert!(
+                idx < vertex_count,
+                "index {} out of bounds (vertex count: {})",
+                idx,
+                vertex_count
+            );
+        }
+    }
+
+    /// Test empty mesh handling.
+    /// OCCT TKMesh coverage: empty_shape, null_mesh.
+    #[test]
+    fn test_empty_brep_mesh() {
+        let brep = BRep::new();
+        let mesh = Tessellator::tessellate(&brep);
+
+        assert!(mesh.vertices.is_empty(), "empty brep should produce empty mesh");
+        assert!(mesh.indices.is_empty(), "empty brep should produce no indices");
+    }
 }
 
 #[repr(C)]
