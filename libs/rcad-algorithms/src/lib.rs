@@ -4238,10 +4238,23 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     let mut all_inner = inner1;
                     all_inner.extend(inner2);
 
+                    // Detect figure-8 self-intersecting wires: if the merged outer wire
+                    // visits any vertex more than once, extract the inner sub-loops.
+                    let (outer_edges_raw, extracted_inners) =
+                        extract_inner_loops_from_wire(brep, &merged_wire_edges);
+                    // Re-run cleanup on the outer wire after inner loop extraction,
+                    // since extraction may leave adjacent duplicate segments.
+                    let outer_edges = if extracted_inners.is_empty() {
+                        outer_edges_raw
+                    } else {
+                        cleanup_merged_wire_edges(brep, &outer_edges_raw)
+                    };
+                    all_inner.extend(extracted_inners);
+
                     // Build merged face (mesh_dirty=true; normal reused from face1).
                     let merged_face = rcad_kernel::topology::Face {
                         outer_wire: rcad_kernel::topology::Wire {
-                            edges: merged_wire_edges,
+                            edges: outer_edges,
                         },
                         inner_wires: all_inner,
                         normal: face1_normal,
@@ -4521,11 +4534,78 @@ fn cancel_duplicate_segments_by_parity(
     }
 }
 
-/// Remove only locally redundant adjacent segments created by wire splicing.
+/// Detect figure-8 self-intersecting wires and extract inner sub-loops.
 ///
-/// This pass is intentionally conservative: it only drops adjacent pairs that
-/// represent the same geometric segment (same or opposite traversal). If the
-/// cleaned result is not a valid closed wire, it falls back to the original.
+/// # Background: the figure-8 bug
+///
+/// `unify_one_merge_pass` calls `splice_wires` to merge two coplanar adjacent
+/// faces by removing their shared edge and interleaving the remaining edges.
+/// When the boolean difference cuts a rectangular notch through a face (e.g.
+/// the x=3 face of box A after subtracting box B), the raw result contains
+/// several sub-faces around the notch hole.  As `unify_one_merge_pass` merges
+/// them one by one, a merge step can produce a wire that visits a corner vertex
+/// twice — once on the outer boundary and once on the notch boundary.  The
+/// resulting wire traces a figure-8 path instead of a simple outer loop with a
+/// separate inner loop (hole).
+///
+/// # What this function does
+///
+/// Walk the wire tracking visited start-vertices.  The first time a vertex is
+/// seen twice, the sub-sequence between the two visits is extracted as an inner
+/// wire (hole).  The remaining edges form the outer wire.  The function recurses
+/// on the outer wire to handle multiple holes.
+///
+/// Returns `(outer_wire_edges, inner_wires)`.
+fn extract_inner_loops_from_wire(
+    brep: &BRep,
+    wire: &[rcad_kernel::topology::WireEdge],
+) -> (Vec<rcad_kernel::topology::WireEdge>, Vec<rcad_kernel::topology::Wire>) {
+    use std::collections::HashMap;
+
+    // Build vertex sequence: for each edge in the wire, record the start vertex.
+    let mut verts: Vec<usize> = Vec::with_capacity(wire.len());
+    for &we in wire {
+        let Some((u, _v)) = oriented_edge_vertices(brep, we) else {
+            return (wire.to_vec(), vec![]);
+        };
+        verts.push(u);
+    }
+
+    // Find the first vertex that appears more than once.
+    let mut seen: HashMap<usize, usize> = HashMap::new(); // vertex -> first index
+    let mut split_at: Option<(usize, usize)> = None; // (first_pos, second_pos)
+    for (i, &v) in verts.iter().enumerate() {
+        if let Some(&first) = seen.get(&v) {
+            split_at = Some((first, i));
+            break;
+        }
+        seen.insert(v, i);
+    }
+
+    let Some((start, end)) = split_at else {
+        // No self-intersection — return as-is.
+        return (wire.to_vec(), vec![]);
+    };
+
+    // The sub-loop wire[start..end] is the inner loop.
+    // The outer wire is wire[0..start] + wire[end..].
+    let inner_edges: Vec<rcad_kernel::topology::WireEdge> = wire[start..end].to_vec();
+    let mut outer_edges: Vec<rcad_kernel::topology::WireEdge> = Vec::with_capacity(wire.len() - inner_edges.len());
+    outer_edges.extend_from_slice(&wire[..start]);
+    outer_edges.extend_from_slice(&wire[end..]);
+
+    if inner_edges.len() < 3 || outer_edges.len() < 3 {
+        return (wire.to_vec(), vec![]);
+    }
+
+    let inner_wire = rcad_kernel::topology::Wire { edges: inner_edges };
+
+    // Recursively check the outer wire for further self-intersections.
+    let (final_outer, mut more_inners) = extract_inner_loops_from_wire(brep, &outer_edges);
+    more_inners.push(inner_wire);
+    (final_outer, more_inners)
+}
+
 fn cleanup_merged_wire_edges(
     brep: &BRep,
     wire: &[rcad_kernel::topology::WireEdge],
@@ -6110,6 +6190,195 @@ mod tests {
         let cleaned_sig: Vec<(usize, bool)> = cleaned.iter().map(|we| (we.idx, we.forward)).collect();
         let wire_sig: Vec<(usize, bool)> = wire.iter().map(|we| (we.idx, we.forward)).collect();
         assert_eq!(cleaned_sig, wire_sig);
+    }
+
+    // ── splice_wires tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn splice_wires_basic_two_triangles_sharing_one_edge() {
+        use rcad_kernel::topology::WireEdge;
+        // Triangle A: e0->e1->e2, Triangle B: e3->e4->e1(rev)
+        // Shared edge: e1. After splice, result should be a quad: e0, e3, e4, e2
+        // wire_a = [e0_fwd, e1_fwd, e2_fwd]
+        // wire_b = [e3_fwd, e4_fwd, e1_rev]
+        // splice removes e1 from A, inserts B's remaining edges (e3, e4) in its place
+        let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)];
+        let wire_b = vec![WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::rev(1)];
+
+        let merged = splice_wires(&wire_a, &wire_b, 1).expect("splice should succeed");
+        // e1 at pos_a=1 is replaced by B's edges starting at pos_b+1: e1_rev is at pos_b=2,
+        // so b_edges = [e3_fwd, e4_fwd]
+        // result = [e0_fwd] + [e3_fwd, e4_fwd] + [e2_fwd]
+        let sig: Vec<(usize, bool)> = merged.iter().map(|we| (we.idx, we.forward)).collect();
+        assert_eq!(sig, vec![(0, true), (3, true), (4, true), (2, true)]);
+    }
+
+    #[test]
+    fn splice_wires_shared_edge_not_present_returns_none() {
+        use rcad_kernel::topology::WireEdge;
+        let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)];
+        let wire_b = vec![WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::fwd(5)];
+        // edge 99 is not in either wire
+        assert!(splice_wires(&wire_a, &wire_b, 99).is_none());
+    }
+
+    #[test]
+    fn splice_wires_result_has_correct_length() {
+        use rcad_kernel::topology::WireEdge;
+        // A has 4 edges, B has 3 edges, shared edge removed from both → result = 4-1 + 3-1 = 5
+        let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let wire_b = vec![WireEdge::fwd(4), WireEdge::fwd(5), WireEdge::rev(1)];
+        let merged = splice_wires(&wire_a, &wire_b, 1).expect("splice should succeed");
+        assert_eq!(merged.len(), 5);
+    }
+
+    // ── extract_inner_loops_from_wire tests ───────────────────────────────────
+
+    #[test]
+    fn extract_inner_loops_no_self_intersection_returns_original() {
+        use rcad_kernel::topology::{Edge, Vertex, WireEdge};
+
+        // Simple square: 0->1->2->3->0
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3
+
+        let wire = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
+        assert!(inners.is_empty(), "no inner loops expected for simple square");
+        let sig: Vec<(usize, bool)> = outer.iter().map(|we| (we.idx, we.forward)).collect();
+        let orig: Vec<(usize, bool)> = wire.iter().map(|we| (we.idx, we.forward)).collect();
+        assert_eq!(sig, orig);
+    }
+
+    #[test]
+    fn extract_inner_loops_figure8_splits_into_outer_and_inner() {
+        use rcad_kernel::topology::{Edge, Vertex, WireEdge};
+
+        // Build a figure-8 wire that visits vertex 0 twice:
+        // Outer square: 0->1->2->3->0 (e0,e1,e2,e3)
+        // Inner square: 0->4->5->6->0 (e4,e5,e6,e7)
+        // Figure-8 wire: e0,e1,e2,e3,e4,e5,e6,e7
+        // Vertex 0 appears at positions 0 and 4 → inner = e0..e3, outer = e4..e7
+        let mut brep = BRep::new();
+        for (x, y) in [(0.0,0.0),(1.0,0.0),(1.0,1.0),(0.0,1.0),(2.0,0.0),(3.0,0.0),(3.0,1.0),(2.0,1.0)] {
+            brep.vertices.push(Vertex { point: DVec3::new(x, y, 0.0) });
+        }
+        // Outer square edges
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1
+        brep.edges.push(Edge { start: 2, end: 3 }); // e2
+        brep.edges.push(Edge { start: 3, end: 0 }); // e3
+        // Inner square edges
+        brep.edges.push(Edge { start: 0, end: 4 }); // e4
+        brep.edges.push(Edge { start: 4, end: 5 }); // e5
+        brep.edges.push(Edge { start: 5, end: 6 }); // e6
+        brep.edges.push(Edge { start: 6, end: 0 }); // e7 — ends at 0, so start of next is 0 again
+
+        // Figure-8: first loop is e0,e1,e2,e3 (visits 0 at start and end),
+        // second loop is e4,e5,e6,e7 (also starts at 0).
+        // Wire vertex sequence: 0,1,2,3, 0,4,5,6 → vertex 0 revisited at index 4.
+        let wire = vec![
+            WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3),
+            WireEdge::fwd(4), WireEdge::fwd(5), WireEdge::fwd(6), WireEdge::fwd(7),
+        ];
+
+        let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
+        assert_eq!(inners.len(), 1, "expected exactly one inner loop extracted");
+        // Inner loop = wire[0..4] = e0,e1,e2,e3
+        let inner_sig: Vec<usize> = inners[0].edges.iter().map(|we| we.idx).collect();
+        assert_eq!(inner_sig, vec![0, 1, 2, 3]);
+        // Outer loop = wire[4..] = e4,e5,e6,e7
+        let outer_sig: Vec<usize> = outer.iter().map(|we| we.idx).collect();
+        assert_eq!(outer_sig, vec![4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn extract_inner_loops_degenerate_sub_loop_not_extracted() {
+        use rcad_kernel::topology::{Edge, Vertex, WireEdge};
+
+        // Wire where a revisit would produce a sub-loop of only 2 edges (degenerate).
+        // Vertices: 0,1,2,0,3,4 — revisit at index 3, inner = [0..3] = 3 edges, outer = [3..] = 3 edges
+        // But if inner has < 3 edges, it should not be extracted.
+        // Build: 0->1->0->2->3->4->0 — revisit at index 2, inner = [0..2] = 2 edges → skip
+        let mut brep = BRep::new();
+        for (x, y) in [(0.0,0.0),(1.0,0.0),(0.0,1.0),(1.0,1.0),(2.0,0.0)] {
+            brep.vertices.push(Vertex { point: DVec3::new(x, y, 0.0) });
+        }
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0
+        brep.edges.push(Edge { start: 1, end: 0 }); // e1 — back to 0 (degenerate inner)
+        brep.edges.push(Edge { start: 0, end: 2 }); // e2
+        brep.edges.push(Edge { start: 2, end: 3 }); // e3
+        brep.edges.push(Edge { start: 3, end: 4 }); // e4
+        brep.edges.push(Edge { start: 4, end: 0 }); // e5
+
+        // Vertex sequence: 0,1,0,2,3,4 → revisit at index 2, inner = wire[0..2] = 2 edges → degenerate
+        let wire = vec![
+            WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2),
+            WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::fwd(5),
+        ];
+        let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
+        assert!(inners.is_empty(), "degenerate 2-edge inner loop should not be extracted");
+        let sig: Vec<usize> = outer.iter().map(|we| we.idx).collect();
+        let orig: Vec<usize> = wire.iter().map(|we| we.idx).collect();
+        assert_eq!(sig, orig);
+    }
+
+    // ── integration test: boolean difference produces face with inner wire ────
+
+    #[test]
+    fn boolean_difference_notch_produces_face_with_inner_wire() {
+        use rcad_modeling::make_box_brep;
+        // A = box [0..3] x [0..2] x [0..2]
+        // B = box [1.5..4.5] x [0.5..1.5] x [0.5..1.5]
+        // A-B: the x=3 face of A gets a rectangular notch cut through it.
+        // After simplification, that face should have an inner wire (the notch hole).
+        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 3.0, 2.0, 2.0).unwrap();
+        let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 3.0, 1.0, 1.0).unwrap();
+        for v in &mut b.vertices { v.point += DVec3::new(1.5, 0.5, 0.5); }
+        geom_populate::populate_box_geom(&mut a);
+        geom_populate::populate_box_geom(&mut b);
+
+        let (result, _report) = boolean_op_simplified(
+            BooleanOpType::Difference, &a, &b, SimplifyOptions::default()
+        ).expect("boolean difference should succeed");
+
+        // Find the face with normal ≈ +X at x≈3 — it should have exactly 1 inner wire.
+        let faces_with_inner: Vec<_> = result.solids.iter()
+            .flat_map(|s| &s.shells)
+            .flat_map(|sh| &sh.faces)
+            .filter(|f| {
+                let n = f.normal.normalize_or_zero();
+                n.x > 0.9 && !f.inner_wires.is_empty()
+            })
+            .collect();
+
+        assert_eq!(faces_with_inner.len(), 1,
+            "expected exactly one +X face with an inner wire (the notch hole), got {}",
+            faces_with_inner.len());
+        assert_eq!(faces_with_inner[0].inner_wires.len(), 1,
+            "expected exactly 1 inner wire on the notch face");
+        assert_eq!(faces_with_inner[0].inner_wires[0].edges.len(), 4,
+            "inner wire (notch hole) should have 4 edges");
+
+        // The notch face's outer wire must not be a figure-8 (no vertex visited twice).
+        {
+            let notch_face = faces_with_inner[0];
+            let mut seen = std::collections::HashSet::new();
+            for we in &notch_face.outer_wire.edges {
+                if let Some(e) = result.edges.get(we.idx) {
+                    let v = if we.forward { e.start } else { e.end };
+                    assert!(seen.insert(v),
+                        "notch face outer wire visits vertex {} twice — figure-8 self-intersection", v);
+                }
+            }
+        }
     }
 
     #[test]

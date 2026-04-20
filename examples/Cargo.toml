@@ -21,6 +21,10 @@ name = "boolean_ops"
 path = "boolean_ops.rs"
 
 [[example]]
+name = "diag_diff"
+path = "diag_diff.rs"
+
+[[example]]
 name = "mechanical_part"
 path = "mechanical_part.rs"
 
