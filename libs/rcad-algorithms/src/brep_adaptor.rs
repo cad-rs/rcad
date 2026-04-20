@@ -133,6 +133,30 @@ impl<'a> EdgeAdaptor<'a> {
         [0.0, 1.0]
     }
 
+    /// Returns the first parameter of the edge adaptor domain.
+    /// Analogous to OCCT `BRepAdaptor_Curve::FirstParameter()`.
+    pub fn first_parameter(&self) -> f64 {
+        self.domain()[0]
+    }
+
+    /// Returns the last parameter of the edge adaptor domain.
+    /// Analogous to OCCT `BRepAdaptor_Curve::LastParameter()`.
+    pub fn last_parameter(&self) -> f64 {
+        self.domain()[1]
+    }
+
+    /// Alias for point evaluation.
+    /// Analogous to OCCT `BRepAdaptor_Curve::Value()`.
+    pub fn value(&self, t: f64) -> DVec3 {
+        self.point_at(t)
+    }
+
+    /// Alias for first derivative (tangent) evaluation.
+    /// Analogous to OCCT `BRepAdaptor_Curve::D1()`.
+    pub fn d1(&self, t: f64) -> DVec3 {
+        self.tangent_at(t)
+    }
+
     /// Return the underlying curve reference, if available.
     pub fn curve(&self) -> Option<&Curve3> {
         self.curve
@@ -176,6 +200,12 @@ impl<'a> EdgeAdaptor<'a> {
             Curve3::CircularHelix(_) => None,
             Curve3::SineWave(_) => None,
         }
+    }
+
+    /// Returns true if the underlying edge curve is periodic.
+    /// Analogous to OCCT `BRepAdaptor_Curve::IsPeriodic()`.
+    pub fn is_periodic(&self) -> bool {
+        self.period().is_some()
     }
 
     /// Map normalized parameter [0, 1] to curve's natural parameter.
@@ -366,6 +396,36 @@ impl<'a> FaceAdaptor<'a> {
         self.range
     }
 
+    /// Returns the first U parameter of the face domain.
+    /// Analogous to OCCT `BRepAdaptor_Surface::FirstUParameter()`.
+    pub fn first_u_parameter(&self) -> f64 {
+        self.range[0]
+    }
+
+    /// Returns the last U parameter of the face domain.
+    /// Analogous to OCCT `BRepAdaptor_Surface::LastUParameter()`.
+    pub fn last_u_parameter(&self) -> f64 {
+        self.range[1]
+    }
+
+    /// Returns the first V parameter of the face domain.
+    /// Analogous to OCCT `BRepAdaptor_Surface::FirstVParameter()`.
+    pub fn first_v_parameter(&self) -> f64 {
+        self.range[2]
+    }
+
+    /// Returns the last V parameter of the face domain.
+    /// Analogous to OCCT `BRepAdaptor_Surface::LastVParameter()`.
+    pub fn last_v_parameter(&self) -> f64 {
+        self.range[3]
+    }
+
+    /// Alias for surface value evaluation.
+    /// Analogous to OCCT `BRepAdaptor_Surface::Value()`.
+    pub fn value(&self, u: f64, v: f64) -> DVec3 {
+        self.point_at(u, v)
+    }
+
     /// Return the underlying surface reference, if available.
     pub fn surface(&self) -> Option<&Surface3> {
         self.surface
@@ -443,6 +503,47 @@ impl<'a> FaceAdaptor<'a> {
         }
     }
 
+    /// Returns the U period if the face surface is U-periodic.
+    pub fn u_period(&self) -> Option<f64> {
+        let Some(surface) = self.surface else {
+            return None;
+        };
+        match surface {
+            Surface3::Cylinder(_)
+            | Surface3::Sphere(_)
+            | Surface3::Cone(_)
+            | Surface3::Torus(_)
+            | Surface3::Ellipsoid(_)
+            | Surface3::Pipe(_)
+            | Surface3::Revolution(_) => Some(2.0 * PI),
+            Surface3::Trimmed(inner) => match inner.basis.as_ref() {
+                Surface3::Cylinder(_)
+                | Surface3::Sphere(_)
+                | Surface3::Cone(_)
+                | Surface3::Torus(_)
+                | Surface3::Ellipsoid(_)
+                | Surface3::Pipe(_)
+                | Surface3::Revolution(_) => {
+                    let [u0, u1, _, _] = inner.trim;
+                    let [du0, du1, _, _] = inner.basis.default_domain();
+                    if (u0 - du0).abs() < 1e-10 && (u1 - du1).abs() < 1e-10 {
+                        Some(2.0 * PI)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Returns true if the face surface is U-periodic.
+    /// Analogous to OCCT `BRepAdaptor_Surface::IsUPeriodic()`.
+    pub fn is_u_periodic(&self) -> bool {
+        self.u_period().is_some()
+    }
+
     /// Check if the face's surface is closed in the V direction.
     ///
     /// A surface is V-closed if `S(u, v_min) == S(u, v_max)` for all u.
@@ -495,6 +596,36 @@ impl<'a> FaceAdaptor<'a> {
                 }
             }
         }
+    }
+
+    /// Returns the V period if the face surface is V-periodic.
+    pub fn v_period(&self) -> Option<f64> {
+        let Some(surface) = self.surface else {
+            return None;
+        };
+        match surface {
+            Surface3::Torus(_) => Some(2.0 * PI),
+            Surface3::Trimmed(inner) => {
+                if let Surface3::Torus(_) = inner.basis.as_ref() {
+                    let [_, _, v0, v1] = inner.trim;
+                    let [_, _, dv0, dv1] = inner.basis.default_domain();
+                    if (v0 - dv0).abs() < 1e-10 && (v1 - dv1).abs() < 1e-10 {
+                        Some(2.0 * PI)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns true if the face surface is V-periodic.
+    /// Analogous to OCCT `BRepAdaptor_Surface::IsVPeriodic()`.
+    pub fn is_v_periodic(&self) -> bool {
+        self.v_period().is_some()
     }
 
     /// Get the Face struct for this adaptor's face index.
@@ -746,6 +877,22 @@ impl<'a> WireAdaptor<'a> {
     /// Return the parameter domain of the wire (always [0, 1]).
     pub fn domain(&self) -> [f64; 2] {
         [0.0, 1.0]
+    }
+
+    /// Returns the first parameter of the wire domain.
+    pub fn first_parameter(&self) -> f64 {
+        self.domain()[0]
+    }
+
+    /// Returns the last parameter of the wire domain.
+    pub fn last_parameter(&self) -> f64 {
+        self.domain()[1]
+    }
+
+    /// Alias for wire value evaluation.
+    /// Analogous to OCCT `BRepAdaptor_CompCurve::Value()`.
+    pub fn value(&self, t: f64) -> DVec3 {
+        self.point_at(t)
     }
 
     /// Find the segment containing the given parameter.
@@ -1079,6 +1226,11 @@ mod tests {
         let period = adaptor.period();
         assert!(period.is_some());
         assert!((period.unwrap() - 2.0 * PI).abs() < 1e-10);
+        assert!(adaptor.is_periodic());
+        assert!((adaptor.first_parameter() - 0.0).abs() < 1e-12);
+        assert!((adaptor.last_parameter() - 1.0).abs() < 1e-12);
+        assert!((adaptor.value(0.25) - adaptor.point_at(0.25)).length() < 1e-12);
+        assert!((adaptor.d1(0.25) - adaptor.tangent_at(0.25)).length() < 1e-12);
     }
 
     #[test]
@@ -1175,6 +1327,15 @@ mod tests {
             !adaptor.is_v_closed(),
             "Cylinder should not be V-closed"
         );
+        assert_eq!(adaptor.is_u_periodic(), adaptor.u_period().is_some());
+        assert!(!adaptor.is_v_periodic());
+        assert!(adaptor.v_period().is_none());
+
+        let d = adaptor.domain();
+        assert_eq!(adaptor.first_u_parameter(), d[0]);
+        assert_eq!(adaptor.last_u_parameter(), d[1]);
+        assert_eq!(adaptor.first_v_parameter(), d[2]);
+        assert_eq!(adaptor.last_v_parameter(), d[3]);
     }
 
     #[test]
@@ -1216,6 +1377,9 @@ mod tests {
         let adaptor = WireAdaptor::new(&brep, wire, 0);
 
         assert_eq!(adaptor.num_edges(), 4, "Box face should have 4 edges");
+        assert!((adaptor.first_parameter() - 0.0).abs() < 1e-12);
+        assert!((adaptor.last_parameter() - 1.0).abs() < 1e-12);
+        assert!((adaptor.value(0.3) - adaptor.point_at(0.3)).length() < 1e-12);
     }
 
     #[test]

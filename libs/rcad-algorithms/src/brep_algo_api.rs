@@ -245,7 +245,27 @@ impl BRepHistory {
     /// Returns true if any shapes were modified.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::HasModified()`.
     pub fn has_modified(&self) -> bool {
-        !self.modified_a.is_empty() || !self.modified_b.is_empty()
+        if !self.modified_a.is_empty() || !self.modified_b.is_empty() {
+            return true;
+        }
+        if let Some(inner) = self.inner.as_ref() {
+            let has_modified_edges = inner.edge_origins.iter().any(|o| {
+                matches!(
+                    o,
+                    EdgeOrigin::FromA(_)
+                        | EdgeOrigin::FromB(_)
+                        | EdgeOrigin::SplitFromA(_)
+                        | EdgeOrigin::SplitFromB(_)
+                )
+            });
+            let has_modified_vertices = inner
+                .vertex_origins
+                .iter()
+                .any(|o| matches!(o, VertexOrigin::FromA(_) | VertexOrigin::FromB(_)));
+            has_modified_edges || has_modified_vertices
+        } else {
+            false
+        }
     }
 
     /// Returns true if any shapes were generated.
@@ -259,7 +279,13 @@ impl BRepHistory {
     /// Returns true if any shapes were deleted.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::HasDeleted()`.
     pub fn has_deleted(&self) -> bool {
-        !self.deleted_a.is_empty() || !self.deleted_b.is_empty()
+        if !self.deleted_a.is_empty() || !self.deleted_b.is_empty() {
+            return true;
+        }
+        self.inner
+            .as_ref()
+            .map(|h| h.tracker.has_deleted())
+            .unwrap_or(false)
     }
 
     /// Get the result faces that came from a source face in shape A.
@@ -272,6 +298,18 @@ impl BRepHistory {
     /// Get the result faces that came from a source face in shape B.
     pub fn modified_from_b(&self, source_face_idx: usize) -> &[usize] {
         self.modified_b.get(&source_face_idx).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Get result faces that came from a source face in one input side.
+    ///
+    /// This is a side-dispatch equivalent of OCCT-style `Modified(source)` usage.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn modified_faces(&self, source_face_idx: usize, from_a: bool) -> &[usize] {
+        if from_a {
+            self.modified_from_a(source_face_idx)
+        } else {
+            self.modified_from_b(source_face_idx)
+        }
     }
 
     /// Get result edge indices modified/split from a source edge in shape A.
@@ -309,6 +347,16 @@ impl BRepHistory {
             .collect()
     }
 
+    /// Get result edge indices modified/split from a source edge on one input side.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn modified_edges(&self, source_edge_idx: usize, from_a: bool) -> Vec<usize> {
+        if from_a {
+            self.modified_edges_from_a(source_edge_idx)
+        } else {
+            self.modified_edges_from_b(source_edge_idx)
+        }
+    }
+
     /// Get result vertex indices preserved from a source vertex in shape A.
     pub fn modified_vertices_from_a(&self, source_vertex_idx: usize) -> Vec<usize> {
         let Some(inner) = self.inner.as_ref() else {
@@ -341,6 +389,29 @@ impl BRepHistory {
             .collect()
     }
 
+    /// Get result vertex indices preserved from a source vertex on one input side.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn modified_vertices(&self, source_vertex_idx: usize, from_a: bool) -> Vec<usize> {
+        if from_a {
+            self.modified_vertices_from_a(source_vertex_idx)
+        } else {
+            self.modified_vertices_from_b(source_vertex_idx)
+        }
+    }
+
+    /// Get result entity indices modified from a source entity on one input side.
+    ///
+    /// This is a generic equivalent of OCCT-style `Modified(shape)` dispatch.
+    /// Supported entity types are Face, Edge, and Vertex.
+    pub fn modified(&self, entity_type: EntityType, source_idx: usize, from_a: bool) -> Vec<usize> {
+        match entity_type {
+            EntityType::Face => self.modified_faces(source_idx, from_a).to_vec(),
+            EntityType::Edge => self.modified_edges(source_idx, from_a),
+            EntityType::Vertex => self.modified_vertices(source_idx, from_a),
+            EntityType::Shell | EntityType::Solid => Vec::new(),
+        }
+    }
+
     /// Get all generated faces.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::Generated()`.
     pub fn generated_faces(&self) -> &[usize] {
@@ -357,6 +428,29 @@ impl BRepHistory {
         &self.generated_vertices
     }
 
+    /// Get generated entity indices by entity type.
+    ///
+    /// This is a generic equivalent of OCCT-style `Generated(shape)` dispatch.
+    /// For unsupported entity types (Shell/Solid), returns an empty vector.
+    pub fn generated(&self, entity_type: EntityType) -> Vec<usize> {
+        match entity_type {
+            EntityType::Face => self.generated_faces.to_vec(),
+            EntityType::Edge => self.generated_edges.to_vec(),
+            EntityType::Vertex => self.generated_vertices.to_vec(),
+            EntityType::Shell | EntityType::Solid => Vec::new(),
+        }
+    }
+
+    /// Check whether a result entity index is generated for the given entity type.
+    pub fn is_generated_entity(&self, entity_type: EntityType, result_idx: usize) -> bool {
+        match entity_type {
+            EntityType::Face => self.generated_faces.contains(&result_idx),
+            EntityType::Edge => self.generated_edges.contains(&result_idx),
+            EntityType::Vertex => self.generated_vertices.contains(&result_idx),
+            EntityType::Shell | EntityType::Solid => false,
+        }
+    }
+
     /// Check if a face from shape A was deleted.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::IsDeleted()`.
     pub fn is_deleted_from_a(&self, source_face_idx: usize) -> bool {
@@ -366,6 +460,16 @@ impl BRepHistory {
     /// Check if a face from shape B was deleted.
     pub fn is_deleted_from_b(&self, source_face_idx: usize) -> bool {
         self.deleted_b.contains(&source_face_idx)
+    }
+
+    /// Check if a face from one input side was deleted.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn is_deleted_face(&self, source_face_idx: usize, from_a: bool) -> bool {
+        if from_a {
+            self.is_deleted_from_a(source_face_idx)
+        } else {
+            self.is_deleted_from_b(source_face_idx)
+        }
     }
 
     /// Check if an edge from shape A was deleted.
@@ -378,6 +482,16 @@ impl BRepHistory {
         self.is_deleted_with_source(EntityType::Edge, source_edge_idx, InputSource::B)
     }
 
+    /// Check if an edge from one input side was deleted.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn is_deleted_edge(&self, source_edge_idx: usize, from_a: bool) -> bool {
+        if from_a {
+            self.is_deleted_edge_from_a(source_edge_idx)
+        } else {
+            self.is_deleted_edge_from_b(source_edge_idx)
+        }
+    }
+
     /// Check if a vertex from shape A was deleted.
     pub fn is_deleted_vertex_from_a(&self, source_vertex_idx: usize) -> bool {
         self.is_deleted_with_source(EntityType::Vertex, source_vertex_idx, InputSource::A)
@@ -386,6 +500,29 @@ impl BRepHistory {
     /// Check if a vertex from shape B was deleted.
     pub fn is_deleted_vertex_from_b(&self, source_vertex_idx: usize) -> bool {
         self.is_deleted_with_source(EntityType::Vertex, source_vertex_idx, InputSource::B)
+    }
+
+    /// Check if a vertex from one input side was deleted.
+    /// Set `from_a=true` for shape A, `false` for shape B.
+    pub fn is_deleted_vertex(&self, source_vertex_idx: usize, from_a: bool) -> bool {
+        if from_a {
+            self.is_deleted_vertex_from_a(source_vertex_idx)
+        } else {
+            self.is_deleted_vertex_from_b(source_vertex_idx)
+        }
+    }
+
+    /// Check if an entity from one input side was deleted.
+    ///
+    /// This is a generic equivalent of OCCT-style `IsDeleted(shape)` dispatch.
+    /// Supported entity types are Face, Edge, and Vertex.
+    pub fn is_deleted(&self, entity_type: EntityType, source_idx: usize, from_a: bool) -> bool {
+        match entity_type {
+            EntityType::Face => self.is_deleted_face(source_idx, from_a),
+            EntityType::Edge => self.is_deleted_edge(source_idx, from_a),
+            EntityType::Vertex => self.is_deleted_vertex(source_idx, from_a),
+            EntityType::Shell | EntityType::Solid => false,
+        }
     }
 
     /// Check if an edge index appears in deletion history regardless of source side.
@@ -637,6 +774,16 @@ impl<'a> BRepAlgoAPI_Common<'a> {
         self.error.as_ref()
     }
 
+    /// Returns true if the operation currently has an error status.
+    pub fn has_errors(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Alias for error status query, analogous to OCCT-style status accessors.
+    pub fn error_status(&self) -> Option<&BooleanError> {
+        self.error()
+    }
+
     /// Check if the operation has been built.
     pub fn is_done(&self) -> bool {
         self.result.is_some()
@@ -792,6 +939,16 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
     /// Get the error if the operation failed.
     pub fn error(&self) -> Option<&BooleanError> {
         self.error.as_ref()
+    }
+
+    /// Returns true if the operation currently has an error status.
+    pub fn has_errors(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Alias for error status query, analogous to OCCT-style status accessors.
+    pub fn error_status(&self) -> Option<&BooleanError> {
+        self.error()
     }
 
     /// Check if the operation has been built.
@@ -950,6 +1107,16 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
     /// Get the error if the operation failed.
     pub fn error(&self) -> Option<&BooleanError> {
         self.error.as_ref()
+    }
+
+    /// Returns true if the operation currently has an error status.
+    pub fn has_errors(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Alias for error status query, analogous to OCCT-style status accessors.
+    pub fn error_status(&self) -> Option<&BooleanError> {
+        self.error()
     }
 
     /// Check if the operation has been built.
@@ -1196,6 +1363,16 @@ impl<'a> BRepAlgoAPI_Section<'a> {
     /// Get the error if the operation failed.
     pub fn error(&self) -> Option<&BooleanError> {
         self.error.as_ref()
+    }
+
+    /// Returns true if the operation currently has an error status.
+    pub fn has_errors(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Alias for error status query, analogous to OCCT-style status accessors.
+    pub fn error_status(&self) -> Option<&BooleanError> {
+        self.error()
     }
 
     /// Check if the operation has been built.
@@ -1457,6 +1634,7 @@ mod tests {
         ];
 
         let history = BRepHistory::from_boolean_history(inner);
+        assert!(history.has_modified());
 
         assert_eq!(history.modified_edges_from_a(0), vec![0, 1]);
         assert_eq!(history.modified_edges_from_b(1), vec![2]);
@@ -1485,6 +1663,7 @@ mod tests {
             .record_vertex_deleted_with_source(11, crate::history::DeletionReason::Tolerance, InputSource::B);
 
         let history = BRepHistory::from_boolean_history(inner);
+        assert!(history.has_deleted());
 
         assert!(history.is_deleted_edge_any(5));
         assert!(history.is_deleted_edge_from_a(5));
@@ -1503,6 +1682,98 @@ mod tests {
         assert_eq!(stats.deleted_vertices, 1);
     }
 
+    #[test]
+    fn history_side_dispatch_equivalent_queries() {
+        let mut inner = BooleanHistory::new();
+        inner.face_origins = vec![FaceOrigin::FromA(3), FaceOrigin::FromB(4), FaceOrigin::Generated];
+        inner.edge_origins = vec![EdgeOrigin::FromA(1), EdgeOrigin::SplitFromB(2), EdgeOrigin::Generated];
+        inner.vertex_origins = vec![VertexOrigin::FromA(7), VertexOrigin::FromB(8), VertexOrigin::Intersection];
+        inner
+            .tracker
+            .record_edge_deleted_with_source(11, crate::history::DeletionReason::BooleanOperation, InputSource::A);
+        inner
+            .tracker
+            .record_vertex_deleted_with_source(12, crate::history::DeletionReason::Overlap, InputSource::B);
+        inner.deleted_from_a = vec![3];
+        inner.deleted_from_b = vec![4];
+
+        let history = BRepHistory::from_boolean_history(inner);
+
+        assert_eq!(history.modified_faces(3, true), history.modified_from_a(3));
+        assert_eq!(history.modified_faces(4, false), history.modified_from_b(4));
+
+        assert_eq!(history.modified_edges(1, true), history.modified_edges_from_a(1));
+        assert_eq!(history.modified_edges(2, false), history.modified_edges_from_b(2));
+
+        assert_eq!(history.modified_vertices(7, true), history.modified_vertices_from_a(7));
+        assert_eq!(history.modified_vertices(8, false), history.modified_vertices_from_b(8));
+
+        assert_eq!(history.is_deleted_face(3, true), history.is_deleted_from_a(3));
+        assert_eq!(history.is_deleted_face(4, false), history.is_deleted_from_b(4));
+
+        assert_eq!(history.is_deleted_edge(11, true), history.is_deleted_edge_from_a(11));
+        assert_eq!(history.is_deleted_edge(11, false), history.is_deleted_edge_from_b(11));
+
+        assert_eq!(history.is_deleted_vertex(12, false), history.is_deleted_vertex_from_b(12));
+        assert_eq!(history.is_deleted_vertex(12, true), history.is_deleted_vertex_from_a(12));
+    }
+
+    #[test]
+    fn history_unified_entity_dispatch_queries() {
+        let mut inner = BooleanHistory::new();
+        inner.face_origins = vec![FaceOrigin::FromA(1), FaceOrigin::FromB(2)];
+        inner.edge_origins = vec![EdgeOrigin::SplitFromA(3), EdgeOrigin::FromB(4)];
+        inner.vertex_origins = vec![VertexOrigin::FromA(5), VertexOrigin::FromB(6)];
+        inner.deleted_from_a = vec![1];
+        inner.deleted_from_b = vec![2];
+        inner
+            .tracker
+            .record_edge_deleted_with_source(10, crate::history::DeletionReason::BooleanOperation, InputSource::A);
+        inner
+            .tracker
+            .record_vertex_deleted_with_source(11, crate::history::DeletionReason::Overlap, InputSource::B);
+
+        let history = BRepHistory::from_boolean_history(inner);
+
+        assert_eq!(history.modified(EntityType::Face, 1, true), vec![0]);
+        assert_eq!(history.modified(EntityType::Face, 2, false), vec![1]);
+        assert_eq!(history.modified(EntityType::Edge, 3, true), vec![0]);
+        assert_eq!(history.modified(EntityType::Edge, 4, false), vec![1]);
+        assert_eq!(history.modified(EntityType::Vertex, 5, true), vec![0]);
+        assert_eq!(history.modified(EntityType::Vertex, 6, false), vec![1]);
+        assert!(history.modified(EntityType::Shell, 0, true).is_empty());
+        assert!(history.modified(EntityType::Solid, 0, false).is_empty());
+
+        assert!(history.is_deleted(EntityType::Face, 1, true));
+        assert!(history.is_deleted(EntityType::Face, 2, false));
+        assert!(history.is_deleted(EntityType::Edge, 10, true));
+        assert!(history.is_deleted(EntityType::Vertex, 11, false));
+        assert!(!history.is_deleted(EntityType::Shell, 0, true));
+        assert!(!history.is_deleted(EntityType::Solid, 0, false));
+    }
+
+    #[test]
+    fn history_generated_dispatch_queries() {
+        let mut inner = BooleanHistory::new();
+        inner.face_origins = vec![FaceOrigin::Generated, FaceOrigin::FromA(1)];
+        inner.edge_origins = vec![EdgeOrigin::Generated, EdgeOrigin::FromB(2)];
+        inner.vertex_origins = vec![VertexOrigin::Intersection, VertexOrigin::FromA(3)];
+
+        let history = BRepHistory::from_boolean_history(inner);
+
+        assert_eq!(history.generated(EntityType::Face), vec![0]);
+        assert_eq!(history.generated(EntityType::Edge), vec![0]);
+        assert_eq!(history.generated(EntityType::Vertex), vec![0]);
+        assert!(history.generated(EntityType::Shell).is_empty());
+        assert!(history.generated(EntityType::Solid).is_empty());
+
+        assert!(history.is_generated_entity(EntityType::Face, 0));
+        assert!(history.is_generated_entity(EntityType::Edge, 0));
+        assert!(history.is_generated_entity(EntityType::Vertex, 0));
+        assert!(!history.is_generated_entity(EntityType::Face, 1));
+        assert!(!history.is_generated_entity(EntityType::Shell, 0));
+    }
+
     // ── Error Handling Tests ─────────────────────────────────────────────────────
 
     #[test]
@@ -1513,6 +1784,29 @@ mod tests {
         let mut fuse = BRepAlgoAPI_Fuse::new(&empty, &box1);
         assert!(!fuse.build());
         assert!(fuse.error().is_some());
+        assert!(fuse.has_errors());
+        assert_eq!(fuse.error_status().is_some(), fuse.error().is_some());
+    }
+
+    #[test]
+    fn error_aliases_across_boolean_api_classes() {
+        let empty = BRep::new();
+        let box1 = unit_box();
+
+        let mut common = BRepAlgoAPI_Common::new(&empty, &box1);
+        assert!(!common.build());
+        assert!(common.has_errors());
+        assert_eq!(common.error_status().is_some(), common.error().is_some());
+
+        let mut cut = BRepAlgoAPI_Cut::new(&empty, &box1);
+        assert!(!cut.build());
+        assert!(cut.has_errors());
+        assert_eq!(cut.error_status().is_some(), cut.error().is_some());
+
+        let mut section = BRepAlgoAPI_Section::new(&empty, &box1);
+        assert!(!section.build());
+        assert!(section.has_errors());
+        assert_eq!(section.error_status().is_some(), section.error().is_some());
     }
 
     #[test]

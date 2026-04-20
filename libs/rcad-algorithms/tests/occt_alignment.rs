@@ -120,7 +120,10 @@ fn assert_history_modified_semantics(history: &BRepHistory) {
     let stats = history.statistics();
     assert_eq!(stats.modified_edges, edge_hits);
     assert_eq!(stats.modified_vertices, vertex_hits);
-    assert_eq!(history.has_modified(), stats.modified_faces > 0);
+    assert_eq!(
+        history.has_modified(),
+        stats.modified_faces + stats.modified_edges + stats.modified_vertices > 0
+    );
 }
 
 fn assert_history_deleted_semantics(
@@ -150,7 +153,10 @@ fn assert_history_deleted_semantics(
 
     let stats = history.statistics();
     assert_eq!(stats.deleted_faces, deleted_from_a + deleted_from_b);
-    assert_eq!(history.has_deleted(), stats.deleted_faces > 0);
+    assert_eq!(
+        history.has_deleted(),
+        stats.deleted_faces + stats.deleted_edges + stats.deleted_vertices > 0
+    );
 }
 
 // ============================================================================

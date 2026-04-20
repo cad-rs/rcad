@@ -122,6 +122,18 @@ impl Curve3dAdaptor {
         [self.first, self.last]
     }
 
+    /// Returns the first parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Curve::FirstParameter()`.
+    pub fn first_parameter(&self) -> f64 {
+        self.first
+    }
+
+    /// Returns the last parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Curve::LastParameter()`.
+    pub fn last_parameter(&self) -> f64 {
+        self.last
+    }
+
     /// Returns true if the curve is closed (start point equals end point).
     ///
     /// A curve is considered closed if `point_at(first) ≈ point_at(last)`.
@@ -425,6 +437,30 @@ impl SurfaceAdaptor {
         [self.u_first, self.u_last, self.v_first, self.v_last]
     }
 
+    /// Returns the first U parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Surface::FirstUParameter()`.
+    pub fn first_u_parameter(&self) -> f64 {
+        self.u_first
+    }
+
+    /// Returns the last U parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Surface::LastUParameter()`.
+    pub fn last_u_parameter(&self) -> f64 {
+        self.u_last
+    }
+
+    /// Returns the first V parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Surface::FirstVParameter()`.
+    pub fn first_v_parameter(&self) -> f64 {
+        self.v_first
+    }
+
+    /// Returns the last V parameter of the adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_Surface::LastVParameter()`.
+    pub fn last_v_parameter(&self) -> f64 {
+        self.v_last
+    }
+
     /// Returns true if the surface is closed in the U direction.
     ///
     /// A surface is U-closed if `S(u_first, v) ≈ S(u_last, v)` for all v.
@@ -529,6 +565,12 @@ impl SurfaceAdaptor {
         }
     }
 
+    /// Returns true if the adaptor is periodic in U.
+    /// Analogous to OCCT `Adaptor3d_Surface::IsUPeriodic()`.
+    pub fn is_u_periodic(&self) -> bool {
+        self.u_period().is_some()
+    }
+
     /// Returns the V period if the surface is V-periodic, or `None`.
     ///
     /// - Torus: `2π`
@@ -553,6 +595,12 @@ impl SurfaceAdaptor {
         } else {
             None
         }
+    }
+
+    /// Returns true if the adaptor is periodic in V.
+    /// Analogous to OCCT `Adaptor3d_Surface::IsVPeriodic()`.
+    pub fn is_v_periodic(&self) -> bool {
+        self.v_period().is_some()
     }
 
     /// Returns the surface type as a string for debugging.
@@ -661,6 +709,18 @@ impl CurveOnSurfaceAdaptor {
     /// Returns the parameter domain as `[first, last]`.
     pub fn domain(&self) -> [f64; 2] {
         [self.first, self.last]
+    }
+
+    /// Returns the first parameter of the curve-on-surface adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_CurveOnSurface::FirstParameter()`.
+    pub fn first_parameter(&self) -> f64 {
+        self.first
+    }
+
+    /// Returns the last parameter of the curve-on-surface adaptor domain.
+    /// Analogous to OCCT `Adaptor3d_CurveOnSurface::LastParameter()`.
+    pub fn last_parameter(&self) -> f64 {
+        self.last
     }
 
     /// Returns a reference to the underlying 2D curve.
@@ -1261,5 +1321,58 @@ mod tests {
 
         let adaptor = SurfaceAdaptor::from_surface(&trimmed);
         assert!(adaptor.u_period().is_none());
+    }
+
+    #[test]
+    fn curve_adaptor_first_last_parameter_aliases() {
+        let circle = Circle3 {
+            center: dvec3(0.0, 0.0, 0.0),
+            normal: dvec3(0.0, 0.0, 1.0),
+            radius: 1.0,
+        };
+        let curve = Curve3::Circle(circle);
+        let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, 0.0, PI / 3.0);
+
+        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < 1e-12);
+        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn surface_adaptor_parameter_and_periodic_aliases() {
+        let torus = ToroidalSurface {
+            center: dvec3(0.0, 0.0, 0.0),
+            axis: dvec3(0.0, 0.0, 1.0),
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        };
+        let surface = Surface3::Torus(torus);
+        let adaptor = SurfaceAdaptor::from_surface(&surface);
+
+        let d = adaptor.domain();
+        assert!((adaptor.first_u_parameter() - d[0]).abs() < 1e-12);
+        assert!((adaptor.last_u_parameter() - d[1]).abs() < 1e-12);
+        assert!((adaptor.first_v_parameter() - d[2]).abs() < 1e-12);
+        assert!((adaptor.last_v_parameter() - d[3]).abs() < 1e-12);
+
+        assert_eq!(adaptor.is_u_periodic(), adaptor.u_period().is_some());
+        assert_eq!(adaptor.is_v_periodic(), adaptor.v_period().is_some());
+    }
+
+    #[test]
+    fn curve_on_surface_first_last_parameter_aliases() {
+        let plane = Plane {
+            origin: dvec3(0.0, 0.0, 0.0),
+            normal: dvec3(0.0, 0.0, 1.0),
+        };
+        let surface = Surface3::Plane(plane);
+        let line2d = rcad_kernel::geom::Line2d {
+            origin: dvec2(0.0, 0.0),
+            direction: dvec2(1.0, 0.0),
+        };
+        let curve2d = Curve2d::Line(line2d);
+        let adaptor = CurveOnSurfaceAdaptor::new_with_range(&curve2d, &surface, -2.0, 3.0);
+
+        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < 1e-12);
+        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < 1e-12);
     }
 }
