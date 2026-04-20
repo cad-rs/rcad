@@ -871,26 +871,39 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
         let a = self.ensure_geometry(self.shape1);
         let b = self.ensure_geometry(self.shape2);
 
-        let mut ds = if self.options.fuzzy_value > TOLERANCE_ABS {
-            DS::new_with_fuzzy(&a, &b, self.options.fuzzy_value)
+        let (brep, bool_history) = if self.options.fuzzy_value <= TOLERANCE_ABS {
+            // Same pipeline as `boolean_op` / `bop_occt_union`: DS → PaveFiller → Union builder.
+            if self.options.parallel {
+                crate::bop_occt_union::fuse_with_history_par_bvh(&a, &b, self.options.use_bvh)?
+            } else {
+                crate::bop_occt_union::fuse_with_history_bvh(&a, &b, self.options.use_bvh)?
+            }
         } else {
-            DS::new(&a, &b)
-        };
+            let mut ds = DS::new_with_fuzzy(&a, &b, self.options.fuzzy_value);
 
-        let bvh_a = if self.options.use_bvh { Some(bvh::Bvh::build(&a)) } else { None };
-        let bvh_b = if self.options.use_bvh { Some(bvh::Bvh::build(&b)) } else { None };
+            let bvh_a = if self.options.use_bvh {
+                Some(bvh::Bvh::build(&a))
+            } else {
+                None
+            };
+            let bvh_b = if self.options.use_bvh {
+                Some(bvh::Bvh::build(&b))
+            } else {
+                None
+            };
 
-        let mut filler = match (&bvh_a, &bvh_b) {
-            (Some(ba), Some(bb)) => PaveFiller::with_bvh(&mut ds, ba, bb),
-            _ => PaveFiller::new(&mut ds),
-        };
-        filler.perform();
+            let mut filler = match (&bvh_a, &bvh_b) {
+                (Some(ba), Some(bb)) => PaveFiller::with_bvh(&mut ds, ba, bb),
+                _ => PaveFiller::new(&mut ds),
+            };
+            filler.perform();
 
-        let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
-        let (brep, bool_history) = if self.options.parallel {
-            builder.build_with_history_par()?
-        } else {
-            builder.build_with_history()?
+            let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
+            if self.options.parallel {
+                builder.build_with_history_par()?
+            } else {
+                builder.build_with_history()?
+            }
         };
 
         if self.options.history {

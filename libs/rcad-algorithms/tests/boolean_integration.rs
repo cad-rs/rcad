@@ -3,8 +3,12 @@
 /// error path behavior at crate boundary.
 use glam::DVec3;
 use rcad_algorithms::{
-    BooleanError, BooleanOpType, CellExpr, MakerVolume, boolean_op, make_solid_from_region,
+    BooleanError, BooleanOpType, CellExpr, MakerVolume, boolean_op, boolean_op_simplified,
+    make_solid_from_region, SimplifyOptions,
 };
+use rcad_algorithms::bopds::ds::{DS, ShapeOrigin};
+use rcad_algorithms::pave_filler::PaveFiller;
+use rcad_kernel::topology::Face;
 use rcad_kernel::PrimitiveSolid;
 use rcad_kernel::BRep;
 use rcad_kernel::properties::volume;
@@ -12,6 +16,141 @@ use rcad_algorithms::geom_populate;
 use rcad_modeling::{
     make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
 };
+
+fn polygon_area_outer_wire(brep: &BRep, face: &Face) -> f64 {
+    let mut pts: Vec<DVec3> = Vec::new();
+    for we in &face.outer_wire.edges {
+        let e = match brep.edges.get(we.idx) {
+            Some(e) => e,
+            None => continue,
+        };
+        let vi = if we.forward { e.start } else { e.end };
+        if let Some(v) = brep.vertices.get(vi) {
+            pts.push(v.point);
+        }
+    }
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let n = face.normal.normalize_or_zero();
+    let ax = n.x.abs();
+    let ay = n.y.abs();
+    let az = n.z.abs();
+    let axis = if ax >= ay && ax >= az {
+        0usize
+    } else if ay >= az {
+        1usize
+    } else {
+        2usize
+    };
+    let mut area2 = 0.0;
+    for i in 0..pts.len() {
+        let p = pts[i];
+        let q = pts[(i + 1) % pts.len()];
+        area2 += match axis {
+            0 => p.y * q.z - q.y * p.z,
+            1 => p.x * q.z - q.x * p.z,
+            _ => p.x * q.y - q.x * p.y,
+        };
+    }
+    0.5 * area2.abs()
+}
+
+/// Same geometry as `examples/boolean_ops.rs` case 1: overlapping boxes.
+#[test]
+fn overlapping_boxes_union_ds_has_curves_on_a_plus_x_face() {
+    let a = box_at(0.0, 0.0, 0.0, 3.0, 2.0, 2.0);
+    let b = box_at(1.5, 0.5, 0.5, 3.0, 1.0, 1.0);
+
+    let mut ds = DS::new(&a, &b);
+    let mut filler = PaveFiller::new(&mut ds);
+    filler.perform();
+
+    let plus_x: Vec<_> = ds
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            f.origin == ShapeOrigin::ShapeA && f.normal.normalize().dot(DVec3::X) > 0.99
+        })
+        .collect();
+
+    assert!(
+        !plus_x.is_empty(),
+        "expected at least one ShapeA face with +X normal"
+    );
+
+    let max_curves = plus_x
+        .iter()
+        .map(|(_, f)| f.face_info.curves_in.len())
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        max_curves > 0,
+        "B penetrates the interior of A's +X face — DS must register intersection curves so the boolean builder can split that face; got max curves_in={max_curves}"
+    );
+}
+
+/// After union, the contact patch on A's +x side must not collapse back to a
+/// single face covering the full original 2×2 rectangle (area 4): the small
+/// box removes the centre — remaining exterior is a frame, not a solid quad.
+#[test]
+fn overlapping_boxes_union_no_full_area_plus_x_contact_face() {
+    let a = box_at(0.0, 0.0, 0.0, 3.0, 2.0, 2.0);
+    let b = box_at(1.5, 0.5, 0.5, 3.0, 1.0, 1.0);
+
+    let (u, _) = boolean_op_simplified(
+        BooleanOpType::Union,
+        &a,
+        &b,
+        SimplifyOptions::default(),
+    )
+    .expect("union");
+
+    const FULL_A_PLUS_X_AREA: f64 = 4.0; // h * d = 2 * 2 on yz
+    let tol = 0.05;
+
+    // Wrong topology: one outer quad of full 2×2 with no hole. Correct: outer ~4 with inner wire(s), or smaller outers.
+    let mut saw_invalid_full_fill = false;
+    for solid in &u.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let n = face.normal.normalize_or_zero();
+                if n.dot(DVec3::X) <= 0.99 {
+                    continue;
+                }
+                let mut xs = 0.0f64;
+                let mut npts = 0usize;
+                for we in &face.outer_wire.edges {
+                    let Some(e) = u.edges.get(we.idx) else { continue };
+                    let vi = if we.forward { e.start } else { e.end };
+                    if let Some(v) = u.vertices.get(vi) {
+                        xs += v.point.x;
+                        npts += 1;
+                    }
+                }
+                if npts == 0 {
+                    continue;
+                }
+                let x_avg = xs / npts as f64;
+                if (x_avg - 3.0).abs() > 0.05 {
+                    continue;
+                }
+                let a = polygon_area_outer_wire(&u, face);
+                if a >= FULL_A_PLUS_X_AREA - tol && face.inner_wires.is_empty() {
+                    saw_invalid_full_fill = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        !saw_invalid_full_fill,
+        "expected no solid 2×2 +X patch at x≈3 without inner wires (frame should have a hole)"
+    );
+}
 
 fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
     let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
@@ -715,3 +854,4 @@ fn l_shaped_by_difference() {
     assert!(face_count(&result) >= 6);
     assert!(all_triangles_valid(&result));
 }
+

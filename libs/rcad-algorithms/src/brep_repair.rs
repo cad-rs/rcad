@@ -6598,6 +6598,9 @@ pub fn merge_bspline_faces(
     if result.geom.face_surface_range.len() > remove_flat {
         result.geom.face_surface_range.remove(remove_flat);
     }
+    if result.geom.face_tolerance.len() > remove_flat {
+        result.geom.face_tolerance.remove(remove_flat);
+    }
 
     // Replace the kept face and remove the other
     result.solids[si].shells[shi].faces[keep_idx] = merged_face;

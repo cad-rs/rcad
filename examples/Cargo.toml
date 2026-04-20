@@ -25,6 +25,10 @@ name = "diag_diff"
 path = "diag_diff.rs"
 
 [[example]]
+name = "boolean_union_open_edges"
+path = "boolean_union_open_edges.rs"
+
+[[example]]
 name = "mechanical_part"
 path = "mechanical_part.rs"
 
@@ -131,3 +135,7 @@ path = "non_manifold_topology.rs"
 [[example]]
 name = "step_gmsh_test"
 path = "step_gmsh_test.rs"
+
+[[example]]
+name = "diag_intersect"
+path = "diag_intersect.rs"

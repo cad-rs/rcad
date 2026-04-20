@@ -966,15 +966,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rcad-constraints"
-version = "0.1.0"
-dependencies = [
- "glam",
- "rcad-kernel",
- "rcad-modeling",
-]
-
-[[package]]
 name = "rcad-examples"
 version = "0.1.0"
 dependencies = [

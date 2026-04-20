@@ -839,9 +839,10 @@ impl SurfaceEval for SphericalSurface {
             + self.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
-        let y_ax = self.axis.cross(x_ax).normalize();
-        (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis).normalize()
+        // Same rule as other implicit-looking surfaces: derive from `point_at` so shading
+        // never disagrees with the tessellation geometry (no second trigonometric path).
+        let p = self.point_at(u, v);
+        (p - self.center).normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, PI]

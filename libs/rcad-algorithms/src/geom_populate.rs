@@ -62,6 +62,75 @@ pub fn populate_box_geom(brep: &mut BRep) {
     }
 }
 
+/// Fixes stale plane surface origins in `geom` after boolean operations.
+///
+/// The boolean builder already stores the correct `Surface3` for each face
+/// (including cylinders, spheres, etc.) but plane origins may point to the
+/// original operand's vertex positions rather than the result's vertices.
+/// This function walks every face whose surface is a `Surface3::Plane` and
+/// recomputes the origin from the first vertex of the face's outer wire.
+///
+/// Non-plane surfaces (cylinders, spheres, cones, tori) are left untouched.
+/// Existing edge curves are preserved; only missing straight-line curves are added.
+pub fn recompute_plane_surfaces(brep: &mut BRep) {
+    // --- Fix plane surface origins ---
+    // Collect new origin for each face in flat iteration order.
+    let mut face_origins: Vec<DVec3> = Vec::new();
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let origin = face
+                    .outer_wire
+                    .edges
+                    .first()
+                    .and_then(|we| brep.edges.get(we.idx))
+                    .map(|e| brep.vertices[e.start].point)
+                    .unwrap_or(DVec3::ZERO);
+                face_origins.push(origin);
+            }
+        }
+    }
+
+    // Update only Plane origins; leave all other surface types untouched.
+    let n = face_origins.len().min(brep.geom.face_surface.len());
+    for i in 0..n {
+        let Some(surf_idx) = brep.geom.face_surface[i] else { continue };
+        let Some(surf) = brep.geom.surfaces.get_mut(surf_idx) else { continue };
+        if let Surface3::Plane(p) = surf {
+            p.origin = face_origins[i];
+        }
+    }
+
+    // --- Add straight-line edge curves only where missing ---
+    // Preserve existing curves (e.g. circles on cylinder intersection edges).
+    let n_edges = brep.edges.len();
+    if brep.geom.edge_curve.len() < n_edges {
+        brep.geom.edge_curve.resize(n_edges, None);
+    }
+    if brep.geom.edge_curve_range.len() < n_edges {
+        brep.geom.edge_curve_range.resize(n_edges, None);
+    }
+    if brep.geom.edge_degenerated.len() < n_edges {
+        brep.geom.edge_degenerated.resize(n_edges, false);
+    }
+
+    for (ei, edge) in brep.edges.iter().enumerate() {
+        if brep.geom.edge_curve[ei].is_some() {
+            continue; // already has a curve
+        }
+        let p0 = brep.vertices[edge.start].point;
+        let p1 = brep.vertices[edge.end].point;
+        let delta = p1 - p0;
+        let len = delta.length();
+        let dir = if len > 1e-12 { delta / len } else { DVec3::X };
+        let curve_idx = brep.geom.curves.len();
+        brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
+        brep.geom.edge_curve[ei] = Some(curve_idx);
+        brep.geom.edge_curve_range[ei] = Some([0.0, (p1 - p0).dot(dir)]);
+        brep.geom.edge_degenerated[ei] = len <= 1e-12;
+    }
+}
+
 /// Populate `edge_pcurves` for edges adjacent to curved faces that currently
 /// lack a PCurve entry.
 ///

@@ -1,7 +1,10 @@
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::geom::{any_perpendicular, Curve3, CurveEval, Surface3, SurfaceEval};
 use std::collections::HashMap;
+use std::f64::consts::PI;
+
+use crate::offset::project_point_to_surface_uv;
 
 /// 曲面高质量三角化结果。
 #[derive(Debug, Clone)]
@@ -914,6 +917,142 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
     }
 }
 
+/// Absolute span (radians on periodic axes) below which a finite stored trim is treated
+/// as degenerate (STEP often ships near-zero boxes → one-strip tessellation).
+const DEGENERATE_TRIM_ABS_MIN: f64 = 0.08;
+/// Minimum span as a fraction of a full period / natural range before we prefer a hull from wire vertices.
+const DEGENERATE_TRIM_REL: f64 = 1.0 / 64.0;
+
+/// Canonical periodic / bounded metadata for analytic surfaces used in [`clamp_domain_to_vertices`].
+#[derive(Clone, Copy)]
+struct CanonicalUvAxes {
+    /// Period in `u` when `u` is periodic (e.g. azimuth / longitude), else `None`.
+    u_period: Option<f64>,
+    /// Period in `v` when `v` is periodic (torus minor angle), else `None`.
+    v_period: Option<f64>,
+    /// Natural finite bounds for a non-periodic `v` (e.g. sphere colatitude in `[0, π]`).
+    v_natural: Option<(f64, f64)>,
+}
+
+fn canonical_uv_axes(surf: &Surface3) -> CanonicalUvAxes {
+    use std::f64::consts::{PI, TAU};
+    match surf {
+        Surface3::Cylinder(_) => CanonicalUvAxes {
+            u_period: Some(TAU),
+            v_period: None,
+            v_natural: None,
+        },
+        Surface3::Cone(_) => CanonicalUvAxes {
+            u_period: Some(TAU),
+            v_period: None,
+            v_natural: None,
+        },
+        Surface3::Sphere(_) => CanonicalUvAxes {
+            u_period: Some(TAU),
+            v_period: None,
+            v_natural: Some((0.0, PI)),
+        },
+        Surface3::Torus(_) => CanonicalUvAxes {
+            u_period: Some(TAU),
+            v_period: Some(TAU),
+            v_natural: None,
+        },
+        Surface3::Trimmed(t) => canonical_uv_axes(t.basis.as_ref()),
+        Surface3::Offset(o) => canonical_uv_axes(o.basis.as_ref()),
+        _ => CanonicalUvAxes {
+            u_period: None,
+            v_period: None,
+            v_natural: None,
+        },
+    }
+}
+
+fn span_too_small_for_axis(span: f64, period: Option<f64>, natural: Option<(f64, f64)>) -> bool {
+    if span < 1e-12 {
+        return true;
+    }
+    if let Some(p) = period {
+        let thr = DEGENERATE_TRIM_ABS_MIN.max(p * DEGENERATE_TRIM_REL);
+        return span < thr;
+    }
+    if let Some((lo, hi)) = natural {
+        if lo.is_finite() && hi.is_finite() {
+            let range = (hi - lo).abs();
+            if range > 1e-12 {
+                let thr = DEGENERATE_TRIM_ABS_MIN.max(range * DEGENERATE_TRIM_REL);
+                return span < thr;
+            }
+        }
+    }
+    false
+}
+
+/// Unwrap a sequence of angles in wire order so min/max reflect a contiguous patch (same idea as STEP seam handling).
+fn unwrap_1d_periodic_chain(vals: &mut [f64], period: f64) {
+    if vals.len() < 2 {
+        return;
+    }
+    let mut offset = 0.0;
+    let mut previous = vals[0];
+    for v in vals.iter_mut().skip(1) {
+        let raw = *v + offset;
+        let delta = raw - previous;
+        if delta > period * 0.5 {
+            offset -= period;
+        } else if delta < -period * 0.5 {
+            offset += period;
+        }
+        *v += offset;
+        previous = *v;
+    }
+}
+
+/// UV bounding box from boundary vertices (with margins), using the same projection as offset/PCurve code.
+fn hull_uv_box_from_wire(surf: &Surface3, pts: &[DVec3]) -> Option<(f64, f64, f64, f64)> {
+    if pts.is_empty() {
+        return None;
+    }
+    let ax = canonical_uv_axes(surf);
+    let mut uv_pairs: Vec<[f64; 2]> = Vec::with_capacity(pts.len());
+    for &p in pts {
+        uv_pairs.push(project_point_to_surface_uv(p, surf, None)?);
+    }
+    let mut us: Vec<f64> = uv_pairs.iter().map(|a| a[0]).collect();
+    let mut vs: Vec<f64> = uv_pairs.iter().map(|a| a[1]).collect();
+    if let Some(per) = ax.u_period {
+        unwrap_1d_periodic_chain(&mut us, per);
+    }
+    if let Some(per) = ax.v_period {
+        unwrap_1d_periodic_chain(&mut vs, per);
+    }
+    let u_min = us.iter().copied().fold(f64::INFINITY, f64::min);
+    let u_max = us.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let v_min = vs.iter().copied().fold(f64::INFINITY, f64::min);
+    let v_max = vs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if !u_min.is_finite() || !v_min.is_finite() {
+        return None;
+    }
+    let mu = (u_max - u_min).abs() * 0.05 + 1e-3;
+    let mv = (v_max - v_min).abs() * 0.05 + 1e-3;
+    let mut nu0 = u_min - mu;
+    let mut nu1 = u_max + mu;
+    let mut nv0 = v_min - mv;
+    let mut nv1 = v_max + mv;
+    if let Some((lo, hi)) = ax.v_natural {
+        nv0 = nv0.max(lo);
+        nv1 = nv1.min(hi);
+    }
+    Some((nu0, nu1, nv0, nv1))
+}
+
+fn fallback_infinite_domain(u0: f64, u1: f64, v0: f64, v1: f64) -> (f64, f64, f64, f64) {
+    let eff_u0 = if u0.is_finite() { u0 } else { -10.0 };
+    let eff_u1 = if u1.is_finite() { u1 } else { 10.0 };
+    let eff_v0 = if v0.is_finite() { v0 } else { -10.0 };
+    let eff_v1 = if v1.is_finite() { v1 } else { 10.0 };
+    (eff_u0, eff_u1, eff_v0, eff_v1)
+}
+
 /// Clamp a potentially infinite UV domain to the range spanned by the face's
 /// wire vertices projected onto the surface parameters.
 fn clamp_domain_to_vertices(
@@ -922,11 +1061,26 @@ fn clamp_domain_to_vertices(
     surf: &Surface3,
     u0: f64, u1: f64, v0: f64, v1: f64,
 ) -> (f64, f64, f64, f64) {
-
-    // Only clamp axes that are infinite.
+    let ax = canonical_uv_axes(surf);
     let need_u = !u0.is_finite() || !u1.is_finite();
     let need_v = !v0.is_finite() || !v1.is_finite();
-    if !need_u && !need_v {
+    let du = if u0.is_finite() && u1.is_finite() {
+        (u1 - u0).abs()
+    } else {
+        f64::NAN
+    };
+    let dv = if v0.is_finite() && v1.is_finite() {
+        (v1 - v0).abs()
+    } else {
+        f64::NAN
+    };
+
+    let u_want_hull =
+        need_u || (du.is_finite() && span_too_small_for_axis(du, ax.u_period, None));
+    let v_want_hull = need_v
+        || (dv.is_finite() && span_too_small_for_axis(dv, ax.v_period, ax.v_natural));
+
+    if !u_want_hull && !v_want_hull {
         return (u0, u1, v0, v1);
     }
 
@@ -961,7 +1115,6 @@ fn clamp_domain_to_vertices(
     match surf {
         Surface3::Plane(plane) => {
             // Project vertices onto the plane's local UV frame.
-            use rcad_kernel::geom::any_perpendicular;
             let u_ax = any_perpendicular(plane.normal);
             let v_ax = plane.normal.cross(u_ax).normalize_or_zero();
             let us: Vec<f64> = pts.iter().map(|&p| (p - plane.origin).dot(u_ax)).collect();
@@ -974,39 +1127,23 @@ fn clamp_domain_to_vertices(
             let mv = (pv1 - pv0).abs() * 0.05 + 1e-6;
             (pu0 - mu, pu1 + mu, pv0 - mv, pv1 + mv)
         }
-        Surface3::Cylinder(cyl) => {
-            let eff_v0 = if v0.is_finite() { v0 } else {
-                pts.iter().map(|&p| (p - cyl.origin).dot(cyl.axis))
-                    .fold(f64::INFINITY, f64::min)
-            };
-            let eff_v1 = if v1.is_finite() { v1 } else {
-                pts.iter().map(|&p| (p - cyl.origin).dot(cyl.axis))
-                    .fold(f64::NEG_INFINITY, f64::max)
-            };
-            let eff_u0 = if u0.is_finite() { u0 } else { 0.0 };
-            let eff_u1 = if u1.is_finite() { u1 } else { 2.0 * std::f64::consts::PI };
-            (eff_u0, eff_u1, eff_v0, eff_v1)
+        Surface3::Cylinder(_)
+        | Surface3::Cone(_)
+        | Surface3::Sphere(_)
+        | Surface3::Torus(_)
+        | Surface3::Trimmed(_)
+        | Surface3::Offset(_) => {
+            if let Some((nu0, nu1, nv0, nv1)) = hull_uv_box_from_wire(surf, &pts) {
+                let out_u0 = if u_want_hull { nu0 } else { u0 };
+                let out_u1 = if u_want_hull { nu1 } else { u1 };
+                let out_v0 = if v_want_hull { nv0 } else { v0 };
+                let out_v1 = if v_want_hull { nv1 } else { v1 };
+                (out_u0, out_u1, out_v0, out_v1)
+            } else {
+                fallback_infinite_domain(u0, u1, v0, v1)
+            }
         }
-        Surface3::Cone(con) => {
-            let eff_v0 = if v0.is_finite() { v0 } else {
-                pts.iter().map(|&p| (p - con.apex).dot(con.axis))
-                    .fold(f64::INFINITY, f64::min).max(0.0)
-            };
-            let eff_v1 = if v1.is_finite() { v1 } else {
-                pts.iter().map(|&p| (p - con.apex).dot(con.axis))
-                    .fold(f64::NEG_INFINITY, f64::max).max(0.0)
-            };
-            let eff_u0 = if u0.is_finite() { u0 } else { 0.0 };
-            let eff_u1 = if u1.is_finite() { u1 } else { 2.0 * std::f64::consts::PI };
-            (eff_u0, eff_u1, eff_v0, eff_v1)
-        }
-        _ => {
-            let eff_u0 = if u0.is_finite() { u0 } else { -10.0 };
-            let eff_u1 = if u1.is_finite() { u1 } else { 10.0 };
-            let eff_v0 = if v0.is_finite() { v0 } else { -10.0 };
-            let eff_v1 = if v1.is_finite() { v1 } else { 10.0 };
-            (eff_u0, eff_u1, eff_v0, eff_v1)
-        }
+        _ => fallback_infinite_domain(u0, u1, v0, v1),
     }
 }
 

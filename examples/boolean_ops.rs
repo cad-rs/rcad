@@ -240,7 +240,7 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
     println!("   [diag] 几何唯一边段数 = {unique_segments}");
     println!("   [diag] 重复边段组数 = {repeated_groups}, 重复边段总数 = {repeated_total}");
     println!("   [diag] 补丁边界边段数(去内部共享) = {boundary_segments}");
-    println!("   [diag] 共线分段合并后边数 = {merged_collinear_total} (期望 8)");
+    println!("   [diag] 共线分段合并后边数 = {merged_collinear_total} (矩形接触环理想约 4；带孔或分片时会更多)");
 }
 
 fn segment_key(a: DVec3, b: DVec3) -> String {

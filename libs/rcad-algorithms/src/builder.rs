@@ -200,6 +200,10 @@ type FaceEntry = (
 );
 
 /// Builds result BRep, deduplicating vertices and edges.
+///
+/// **Open shells (union):** T-junctions can leave a long edge with no matching partner. After all
+/// faces are emitted, [`subdivide_edges_at_interior_vertices`] splits such edges at any result
+/// vertex that lies in the segment interior so adjacent faces share edge references.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
     vertex_map: HashMap<u64, usize>, // hash of position → index
@@ -311,7 +315,6 @@ impl ResultBuilder {
             return;
         }
 
-        // Add vertices for outer boundary
         let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
 
         // Add edges for outer boundary
@@ -322,7 +325,7 @@ impl ResultBuilder {
             edge_indices.push(ei);
         }
 
-        // Triangulate outer boundary
+        // Triangulate outer boundary (use original positions for stability on difference / holes).
         let mut tris = triangulate_polygon(&sub.boundary, normal);
         // Remap triangle indices from local (0..n) to result vertex indices
         for tri in &mut tris {
@@ -407,7 +410,150 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    fn build(self) -> (BRep, BooleanHistory) {
+    /// When an edge’s open segment passes through another result vertex (classic
+    /// T-junction), replace that edge in all wires by a chain of shorter edges
+    /// through those vertices so adjacent faces share identical topology.
+    fn subdivide_edges_at_interior_vertices(&mut self) {
+        const POS_TOL: f64 = TOLERANCE_ABS * 1000.0;
+        const PASS_MAX: usize = 32;
+
+        for _ in 0..PASS_MAX {
+            let n_edges = self.edges.len();
+            let mut vertex_sequences: Vec<Option<Vec<usize>>> = vec![None; n_edges];
+
+            for ei in 0..n_edges {
+                vertex_sequences[ei] = Self::edge_interior_vertex_sequence(
+                    ei,
+                    &self.vertices,
+                    &self.edges,
+                    POS_TOL,
+                );
+            }
+
+            let mut replacements: Vec<Option<Vec<usize>>> = vec![None; n_edges];
+            let mut any = false;
+            for ei in 0..n_edges {
+                let Some(seq) = vertex_sequences[ei].as_ref() else {
+                    continue;
+                };
+                if seq.len() < 3 {
+                    continue;
+                }
+                let mut chain = Vec::with_capacity(seq.len().saturating_sub(1));
+                for w in seq.windows(2) {
+                    if points_coincide(self.vertices[w[0]], self.vertices[w[1]]) {
+                        continue;
+                    }
+                    chain.push(self.add_edge(w[0], w[1]));
+                }
+                if chain.len() <= 1 {
+                    continue;
+                }
+                replacements[ei] = Some(chain);
+                any = true;
+            }
+
+            if !any {
+                break;
+            }
+
+            for (outer, inner, _, _, _, _, _, _) in &mut self.faces {
+                *outer = Self::replace_edge_ids_in_wire(outer, &replacements);
+                for iw in inner.iter_mut() {
+                    *iw = Self::replace_edge_ids_in_wire(iw, &replacements);
+                }
+            }
+        }
+    }
+
+    fn edge_interior_vertex_sequence(
+        ei: usize,
+        vertices: &[DVec3],
+        edges: &[(usize, usize)],
+        pos_tol: f64,
+    ) -> Option<Vec<usize>> {
+        let (va, vb) = edges.get(ei).copied()?;
+        if va == vb {
+            return None;
+        }
+        let pa = vertices[va];
+        let pb = vertices[vb];
+        let ab = pb - pa;
+        let l2 = ab.length_squared();
+        if l2 < 1e-30 {
+            return None;
+        }
+        // Avoid splitting very short edges (curved intersections, near-degenerate trims);
+        // T-junction repair targets long seam segments on planar unions.
+        if ab.length() < TOLERANCE_ABS * 10_000.0 {
+            return None;
+        }
+        let mut interior: Vec<usize> = Vec::new();
+        for (k, &pk) in vertices.iter().enumerate() {
+            if k == va || k == vb {
+                continue;
+            }
+            let t = (pk - pa).dot(ab) / l2;
+            if t <= 1e-10 || t >= 1.0 - 1e-10 {
+                continue;
+            }
+            let proj = pa + ab * t;
+            if (pk - proj).length() <= pos_tol {
+                interior.push(k);
+            }
+        }
+        if interior.is_empty() {
+            return None;
+        }
+        interior.sort_by(|&i, &j| {
+            let ti = (vertices[i] - pa).dot(ab) / l2;
+            let tj = (vertices[j] - pa).dot(ab) / l2;
+            ti.total_cmp(&tj)
+        });
+        interior.dedup_by(|a, b| points_coincide(vertices[*a], vertices[*b]));
+
+        let mut seq: Vec<usize> = vec![va];
+        for &vk in &interior {
+            if Some(&vk) == seq.last() {
+                continue;
+            }
+            if let Some(&last) = seq.last() {
+                if points_coincide(vertices[vk], vertices[last]) {
+                    continue;
+                }
+            }
+            seq.push(vk);
+        }
+        if seq.last().copied() != Some(vb) {
+            if let Some(&last) = seq.last() {
+                if points_coincide(vertices[vb], vertices[last]) {
+                    seq.pop();
+                }
+            }
+            seq.push(vb);
+        }
+        if seq.len() < 3 {
+            return None;
+        }
+        Some(seq)
+    }
+
+    fn replace_edge_ids_in_wire(wire: &[usize], rep: &[Option<Vec<usize>>]) -> Vec<usize> {
+        let mut out = Vec::with_capacity(wire.len() * 2);
+        for &eid in wire {
+            if let Some(chain) = rep.get(eid).and_then(|r| r.as_ref()) {
+                out.extend_from_slice(chain);
+            } else {
+                out.push(eid);
+            }
+        }
+        out
+    }
+
+    fn build(mut self, subdivide_t_junction_seams: bool) -> (BRep, BooleanHistory) {
+        if subdivide_t_junction_seams {
+            self.subdivide_edges_at_interior_vertices();
+        }
         let vertices = self
             .vertices
             .into_iter()
@@ -792,7 +938,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        let (brep, mut history) = result.build();
+        let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
             return Err(BooleanError::DegenerateResult);
         }
@@ -894,7 +1040,7 @@ impl<'a> BooleanBuilder<'a> {
             result.emit_face_with_origin(&sub, flip, origin);
         }
 
-        let (brep, mut history) = result.build();
+        let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
             return Err(BooleanError::DegenerateResult);
         }
@@ -998,7 +1144,7 @@ impl<'a> BooleanBuilder<'a> {
         let boundary_2d: Vec<DVec2> = boundary_3d.iter().map(|&p| project_to_2d(p)).collect();
 
         // Process each intersection curve to split the polygon
-        let mut polygons_2d: Vec<Vec<DVec2>> = vec![boundary_2d];
+        let mut polygons_2d: Vec<Vec<DVec2>> = vec![boundary_2d.clone()];
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
         // may fall inside the circle — we must use a vertex-based sample instead.
@@ -1070,6 +1216,68 @@ impl<'a> BooleanBuilder<'a> {
             {
                 polygons_2d = new_polys;
             }
+        }
+
+        // Insert intersection endpoints that lie on polygon edges so wires share vertices.
+        // Include endpoints from **all** DS intersection curves that lie on this plane, not only
+        // `curves_in` for this face — otherwise partner faces (e.g. B lateral vs A +X) miss
+        // imprint points and T-junctions remain.
+        let edge_tol = (TOLERANCE_ABS * 1e4).max(1e-9);
+        let plane_tol = (TOLERANCE_ABS * 1e5).max(1e-7);
+        let n_plane = plane.normal.normalize_or_zero();
+        let dist_plane = |p: DVec3| -> f64 { (p - plane.origin).dot(n_plane).abs() };
+
+        let mut imprint_uv: Vec<DVec2> = face
+            .face_info
+            .curves_in
+            .iter()
+            .flat_map(|&ci| {
+                let ic = &self.ds.intersection_curves[ci];
+                [
+                    project_to_2d(self.ds.vertices[ic.start_vertex].point),
+                    project_to_2d(self.ds.vertices[ic.end_vertex].point),
+                ]
+            })
+            .collect();
+        // Bounding box of this face in UV (expand slightly) — only add global imprint points
+        // near this face so unrelated coplanar curves elsewhere do not disturb the polygon.
+        let (mut umin, mut umax, mut vmin, mut vmax) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+        for &q in &boundary_2d {
+            umin = umin.min(q.x);
+            umax = umax.max(q.x);
+            vmin = vmin.min(q.y);
+            vmax = vmax.max(q.y);
+        }
+        let margin = plane_tol * 100.0;
+        umin -= margin;
+        umax += margin;
+        vmin -= margin;
+        vmax += margin;
+        let in_uv_aabb = |q: DVec2| q.x >= umin && q.x <= umax && q.y >= vmin && q.y <= vmax;
+
+        for ic in &self.ds.intersection_curves {
+            let p0 = self.ds.vertices[ic.start_vertex].point;
+            let p1 = self.ds.vertices[ic.end_vertex].point;
+            if dist_plane(p0) <= plane_tol && dist_plane(p1) <= plane_tol {
+                let q0 = project_to_2d(p0);
+                let q1 = project_to_2d(p1);
+                if in_uv_aabb(q0) {
+                    imprint_uv.push(q0);
+                }
+                if in_uv_aabb(q1) {
+                    imprint_uv.push(q1);
+                }
+            }
+        }
+        imprint_uv.sort_by(|a, b| {
+            a.x.partial_cmp(&b.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        imprint_uv.dedup_by(|a, b| (*a - *b).length_squared() < edge_tol * edge_tol);
+
+        for poly in &mut polygons_2d {
+            *poly = insert_points_on_polygon_edges(poly, &imprint_uv, edge_tol);
         }
 
         polygons_2d
@@ -3161,6 +3369,74 @@ fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
         j = i;
     }
     inside
+}
+
+/// Insert imprint points that fall on (or very near) polygon edges so ResultBuilder wires share
+/// vertices along coplanar seams instead of creating overlapping segments with T-junctions.
+fn insert_points_on_polygon_edges(poly: &[DVec2], imprint: &[DVec2], tol: f64) -> Vec<DVec2> {
+    let n = poly.len();
+    if n < 3 {
+        return poly.to_vec();
+    }
+    let mut out: Vec<DVec2> = Vec::with_capacity(n + imprint.len());
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        out.push(a);
+        let mut splits: Vec<(f64, DVec2)> = Vec::new();
+        for &p in imprint {
+            if let Some(t) = segment_closest_param_2d(a, b, p, tol) {
+                if t > tol && t < 1.0 - tol {
+                    splits.push((t, a + (b - a) * t));
+                }
+            }
+        }
+        splits.sort_by(|u, v| u.0.partial_cmp(&v.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (_, q) in splits {
+            if out
+                .last()
+                .map(|last| (*last - q).length() > tol * 0.5)
+                .unwrap_or(true)
+            {
+                out.push(q);
+            }
+        }
+    }
+    dedup_consecutive_poly2d(&out, tol)
+}
+
+/// Closest-point parameter t in [0,1] on segment ab if p is within `tol` of the segment.
+fn segment_closest_param_2d(a: DVec2, b: DVec2, p: DVec2, tol: f64) -> Option<f64> {
+    let ab = b - a;
+    let l2 = ab.length_squared();
+    if l2 < tol * tol {
+        return None;
+    }
+    let t = ((p - a).dot(ab) / l2).clamp(0.0, 1.0);
+    let closest = a + ab * t;
+    // Lenient perpendicular tolerance: imprint projections can sit slightly off the segment
+    // after mixed plane lifts (union box test).
+    if (p - closest).length() <= tol * 200.0 {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+fn dedup_consecutive_poly2d(poly: &[DVec2], tol: f64) -> Vec<DVec2> {
+    if poly.is_empty() {
+        return vec![];
+    }
+    let mut v: Vec<DVec2> = Vec::with_capacity(poly.len());
+    for &p in poly {
+        if v.is_empty() || (p - v[v.len() - 1]).length() > tol * 0.5 {
+            v.push(p);
+        }
+    }
+    if v.len() > 2 && (v[0] - v[v.len() - 1]).length() <= tol * 0.5 {
+        v.pop();
+    }
+    v
 }
 
 /// Split a 2D polygon by an infinite line through `point` with direction `dir`.

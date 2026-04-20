@@ -293,8 +293,7 @@ pub fn sampled_pcurve_on_cone(
 /// analytic form.  Returns a [`BSplineCurve2`] interpolated through the
 /// projected (u, v) points.
 ///
-/// # Panics
-/// Panics if the 33 projected points are all coincident (degenerate curve).
+/// When projection collapses (e.g. very short edges), fall back to a UV line.
 pub fn fallback_pcurve_by_projection(
     curve: &rcad_kernel::geom::Curve3,
     t_range: &[f64; 2],
@@ -328,9 +327,20 @@ pub fn fallback_pcurve_by_projection(
         }
     }
 
-    let bspline =
-        interpolate_points_2d(&pts).expect("fallback curve samples should not be degenerate");
-    Curve2d::BSpline(bspline)
+    match interpolate_points_2d(&pts) {
+        Ok(bspline) => Curve2d::BSpline(bspline),
+        Err(_) => {
+            let a = pts[0];
+            let b = *pts.last().unwrap_or(&a);
+            let d = b - a;
+            let dir = if d.length_squared() > 1e-24 {
+                d.normalize()
+            } else {
+                DVec2::X
+            };
+            Curve2d::Line(Line2d { origin: a, direction: dir })
+        }
+    }
 }
 
 /// Project a 3D polyline onto `surface` and interpolate a [`BSplineCurve2`].
