@@ -16,6 +16,15 @@ use wgpu::util::DeviceExt;
 /// Re-exported from [`rcad_algorithms::TessellationParams`].
 pub type TessellationOptions = TessellationParams;
 
+/// Legacy options for [`Tessellator::tessellate_with_line_options`].
+///
+/// Topology edges and UV seam edges are always emitted separately
+/// ([`Mesh::line_indices`] vs [`Mesh::seam_line_indices`]). B-rep edges follow
+/// [`DisplayMode`] like other mesh lines; seam visibility is optional via
+/// [`WgpuRenderer::set_show_seam_edges`]. This struct is kept for API compatibility and ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TessellateLineOptions {}
+
 /// Edited topology/geometry entities used to drive incremental mesh invalidation.
 ///
 /// Indices are optional and may be mixed: if both vertices and edges are listed,
@@ -418,7 +427,10 @@ pub fn pick_edge(
 pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// Non-seam B-rep edges (line list indices into `vertices`).
     pub line_indices: Vec<u32>,
+    /// UV / periodic seam edges only (same vertex buffer as solid + `line_indices`).
+    pub seam_line_indices: Vec<u32>,
     /// Per-vertex smooth normals (same length as `vertices`).  When empty the
     /// renderer uploads zero normals, which triggers the flat-shading fallback
     /// in the fragment shader.
@@ -481,6 +493,7 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
         vertices,
         indices,
         line_indices: Vec::new(),
+        seam_line_indices: Vec::new(),
         normals: Vec::new(),
     })
 }
@@ -523,6 +536,7 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         vertices,
         indices,
         line_indices: Vec::new(),
+        seam_line_indices: Vec::new(),
         normals: Vec::new(),
     })
 }
@@ -535,8 +549,11 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     let total_vertices = meshes.iter().map(|mesh| mesh.vertices.len()).sum();
     let total_indices = meshes.iter().map(|mesh| mesh.indices.len()).sum();
     let total_line_indices = meshes.iter().map(|mesh| mesh.line_indices.len()).sum();
+    let total_seam_line_indices = meshes.iter().map(|mesh| mesh.seam_line_indices.len()).sum();
 
-    if total_vertices == 0 || (total_indices == 0 && total_line_indices == 0) {
+    if total_vertices == 0
+        || (total_indices == 0 && total_line_indices == 0 && total_seam_line_indices == 0)
+    {
         return None;
     }
 
@@ -544,6 +561,7 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     let mut normals: Vec<[f32; 3]> = Vec::with_capacity(total_vertices);
     let mut indices = Vec::with_capacity(total_indices);
     let mut line_indices = Vec::with_capacity(total_line_indices);
+    let mut seam_line_indices = Vec::with_capacity(total_seam_line_indices);
     let mut vertex_offset = 0u32;
 
     for mesh in meshes {
@@ -551,6 +569,11 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
         normals.extend_from_slice(&mesh.normals);
         indices.extend(mesh.indices.iter().map(|index| index + vertex_offset));
         line_indices.extend(mesh.line_indices.iter().map(|index| index + vertex_offset));
+        seam_line_indices.extend(
+            mesh.seam_line_indices
+                .iter()
+                .map(|index| index + vertex_offset),
+        );
         vertex_offset += mesh.vertices.len() as u32;
     }
 
@@ -561,6 +584,7 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
         vertices,
         indices,
         line_indices,
+        seam_line_indices,
         normals,
     })
 }
@@ -664,7 +688,16 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
 pub struct Tessellator;
 
 impl Tessellator {
+    /// Build a render [`Mesh`] from an already-tessellated `BRep` (uses existing face triangles).
+    ///
+    /// Topology edges go to [`Mesh::line_indices`]; UV / periodic seam edges go to
+    /// [`Mesh::seam_line_indices`]. Optional seam overlay: [`WgpuRenderer::set_show_seam_edges`].
     pub fn tessellate(brep: &BRep) -> Mesh {
+        Self::tessellate_with_line_options(brep, &TessellateLineOptions::default())
+    }
+
+    /// Same as [`tessellate`](Self::tessellate); `line` is ignored (API compatibility).
+    pub fn tessellate_with_line_options(brep: &BRep, line: &TessellateLineOptions) -> Mesh {
         let mut flat_verts: Vec<[f32; 3]> = brep
             .vertices
             .iter()
@@ -674,6 +707,7 @@ impl Tessellator {
         let n_verts = flat_verts.len();
         let mut indices: Vec<u32> = Vec::new();
         let mut line_indices: Vec<u32> = Vec::with_capacity(brep.edges.len() * 2);
+        let mut seam_line_indices: Vec<u32> = Vec::with_capacity(32);
 
         for solid in &brep.solids {
             for shell in &solid.shells {
@@ -771,29 +805,33 @@ impl Tessellator {
         }
 
         for (edge_idx, edge) in brep.edges.iter().enumerate() {
-            if seam_edges.contains(&edge_idx) {
-                // Do not draw periodic seam edges in wireframe overlays.
-                continue;
-            }
+            let is_seam = seam_edges.contains(&edge_idx);
+            let line_target = if is_seam {
+                &mut seam_line_indices
+            } else {
+                &mut line_indices
+            };
             if let Some(pts) = sample_edge_curve_points(brep, edge_idx) {
                 let base = flat_verts.len() as u32;
                 let n = pts.len();
                 normals.extend(std::iter::repeat([0.0f32; 3]).take(n));
                 for i in 0..(n - 1) as u32 {
-                    line_indices.push(base + i);
-                    line_indices.push(base + i + 1);
+                    line_target.push(base + i);
+                    line_target.push(base + i + 1);
                 }
                 flat_verts.extend_from_slice(&pts);
             } else {
-                line_indices.push(edge.start as u32);
-                line_indices.push(edge.end as u32);
+                line_target.push(edge.start as u32);
+                line_target.push(edge.end as u32);
             }
         }
+        let _ = line; // options reserved for API compatibility
 
         Mesh {
             vertices: flat_verts,
             indices,
             line_indices,
+            seam_line_indices,
             normals,
         }
     }
@@ -805,8 +843,17 @@ impl Tessellator {
     ///
     /// Analogous to `BRepMesh_IncrementalMesh` with explicit deflection/angular arguments in OCCT.
     pub fn tessellate_with_options(brep: &mut BRep, options: &TessellationOptions) -> Mesh {
+        Self::tessellate_with_options_and_line_options(brep, options, &TessellateLineOptions::default())
+    }
+
+    /// Like [`tessellate_with_options`](Self::tessellate_with_options); `line` is ignored (API compatibility).
+    pub fn tessellate_with_options_and_line_options(
+        brep: &mut BRep,
+        options: &TessellationOptions,
+        line: &TessellateLineOptions,
+    ) -> Mesh {
         mesh_brep(brep, options);
-        Self::tessellate(brep)
+        Self::tessellate_with_line_options(brep, line)
     }
 
     /// Incrementally invalidate mesh cache for faces affected by edited entities.
@@ -876,6 +923,17 @@ impl Tessellator {
         Self::invalidate_cache_for_edits(brep, edits);
         Self::tessellate_with_options(brep, options)
     }
+
+    /// Like [`tessellate_after_edits`](Self::tessellate_after_edits); `line` is ignored (API compatibility).
+    pub fn tessellate_after_edits_with_line_options(
+        brep: &mut BRep,
+        edits: &EditedModelDelta,
+        options: &TessellationOptions,
+        line: &TessellateLineOptions,
+    ) -> Mesh {
+        Self::invalidate_cache_for_edits(brep, edits);
+        Self::tessellate_with_options_and_line_options(brep, options, line)
+    }
 }
 
 #[cfg(test)]
@@ -885,13 +943,17 @@ mod tests {
     use rcad_kernel::{BRep, PrimitiveSolid};
 
     #[test]
-    fn tessellate_sphere_hides_seam_edges_in_line_indices() {
+    fn tessellate_sphere_puts_seams_in_seam_line_indices() {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert!(
             mesh.line_indices.is_empty(),
-            "full sphere should not render seam wireframe edge"
+            "single periodic face: no non-seam edges in line_indices"
+        );
+        assert!(
+            !mesh.seam_line_indices.is_empty(),
+            "sphere seam geometry should live in seam_line_indices"
         );
     }
 
@@ -905,6 +967,7 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert_eq!(mesh.line_indices.len(), brep.edges.len() * 2);
+        assert!(mesh.seam_line_indices.is_empty(), "box has no UV seams");
     }
 
     #[test]
@@ -1574,7 +1637,8 @@ fn analytic_surface_normal_at_point(surface: &Surface3, point: glam::DVec3) -> O
             }
             let x_axis = any_perpendicular(axis);
             let y_axis = axis.cross(x_axis).normalize_or_zero();
-            let radial = (point - sphere.center).normalize_or_zero();
+            let delta = point - sphere.center;
+            let radial = delta.normalize_or_zero();
             if radial.length_squared() <= 1e-20 {
                 return None;
             }
@@ -2190,6 +2254,11 @@ pub struct WgpuRenderer {
     index_count: std::sync::Mutex<u32>,
     line_index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     line_index_count: std::sync::Mutex<u32>,
+    seam_line_index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
+    seam_line_index_count: std::sync::Mutex<u32>,
+    show_seam_edges: std::sync::Mutex<bool>,
+    material_brep_edge_line_bind_group: wgpu::BindGroup,
+    material_seam_edge_line_bind_group: wgpu::BindGroup,
     highlight_face_vertex_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     highlight_face_index_buffer: std::sync::Mutex<Option<wgpu::Buffer>>,
     highlight_face_index_count: std::sync::Mutex<u32>,
@@ -2459,6 +2528,42 @@ impl WgpuRenderer {
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: material_edge_highlight_buffer.as_entire_binding(),
+                }],
+            });
+        let material_brep_edge_line_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("B-rep Edge Line Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.42, 0.42, 0.46, 1.0],
+                    flags: [1.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let material_seam_edge_line_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Seam Edge Line Material Buffer"),
+                contents: bytemuck::cast_slice(&[MaterialUniform {
+                    color: [0.90, 0.42, 0.18, 1.0],
+                    flags: [1.0, 0.0, 0.0, 0.0],
+                }]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let material_brep_edge_line_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("B-rep Edge Line Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_brep_edge_line_buffer.as_entire_binding(),
+                }],
+            });
+        let material_seam_edge_line_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Seam Edge Line Material Bind Group"),
+                layout: &material_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_seam_edge_line_buffer.as_entire_binding(),
                 }],
             });
         let material_transparent_bind_group =
@@ -2746,6 +2851,11 @@ impl WgpuRenderer {
             index_count: std::sync::Mutex::new(0),
             line_index_buffer: std::sync::Mutex::new(None),
             line_index_count: std::sync::Mutex::new(0),
+            seam_line_index_buffer: std::sync::Mutex::new(None),
+            seam_line_index_count: std::sync::Mutex::new(0),
+            show_seam_edges: std::sync::Mutex::new(false),
+            material_brep_edge_line_bind_group,
+            material_seam_edge_line_bind_group,
             highlight_face_vertex_buffer: std::sync::Mutex::new(None),
             highlight_face_index_buffer: std::sync::Mutex::new(None),
             highlight_face_index_count: std::sync::Mutex::new(0),
@@ -2873,6 +2983,21 @@ impl WgpuRenderer {
                 },
             ));
             *self.line_index_count.lock().expect("render mutex poisoned") = mesh.line_indices.len() as u32;
+        }
+
+        if mesh.seam_line_indices.is_empty() {
+            *self.seam_line_index_buffer.lock().expect("render mutex poisoned") = None;
+            *self.seam_line_index_count.lock().expect("render mutex poisoned") = 0;
+        } else {
+            *self.seam_line_index_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Seam Line Index Buffer"),
+                    contents: bytemuck::cast_slice(&mesh.seam_line_indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ));
+            *self.seam_line_index_count.lock().expect("render mutex poisoned") =
+                mesh.seam_line_indices.len() as u32;
         }
     }
 
@@ -3048,6 +3173,7 @@ impl WgpuRenderer {
         use_depth_pipeline: bool,
     ) {
         let mode = *self.display_mode.lock().expect("render mutex poisoned");
+        let show_seam_edges = *self.show_seam_edges.lock().expect("render mutex poisoned");
 
         // Draw grid first (behind everything)
         if *self.show_grid.lock().expect("render mutex poisoned") {
@@ -3059,6 +3185,8 @@ impl WgpuRenderer {
         let count = *self.index_count.lock().expect("render mutex poisoned");
         let lib_guard = self.line_index_buffer.lock().expect("render mutex poisoned");
         let lcount = *self.line_index_count.lock().expect("render mutex poisoned");
+        let slib_guard = self.seam_line_index_buffer.lock().expect("render mutex poisoned");
+        let scount = *self.seam_line_index_count.lock().expect("render mutex poisoned");
 
         // Draw model based on display mode
         let draw_triangles = matches!(
@@ -3070,22 +3198,39 @@ impl WgpuRenderer {
             DisplayMode::Wireframe | DisplayMode::SolidWithEdges | DisplayMode::Transparent
         );
 
+        let draw_brep_lines = draw_wireframe && lcount > 0;
+        let draw_seam_lines = draw_wireframe && show_seam_edges && scount > 0;
+
+        let line_pipeline = if use_depth_pipeline {
+            &self.pipeline_line_depth
+        } else {
+            &self.pipeline_line
+        };
+
         // In transparent mode, draw wireframe first so it's behind the translucent surface
-        if mode == DisplayMode::Transparent
-            && draw_wireframe
-            && lcount > 0
-            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
-        {
-            if use_depth_pipeline {
-                render_pass.set_pipeline(&self.pipeline_line_depth);
-            } else {
-                render_pass.set_pipeline(&self.pipeline_line);
+        if mode == DisplayMode::Transparent && draw_wireframe {
+            if let Some(vb) = vb_guard.as_ref() {
+                if draw_brep_lines
+                    && let Some(lib) = lib_guard.as_ref()
+                {
+                    render_pass.set_pipeline(line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.material_brep_edge_line_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, vb.slice(..));
+                    render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..lcount, 0, 0..1);
+                }
+                if draw_seam_lines
+                    && let Some(slib) = slib_guard.as_ref()
+                {
+                    render_pass.set_pipeline(line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.material_seam_edge_line_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, vb.slice(..));
+                    render_pass.set_index_buffer(slib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..scount, 0, 0..1);
+                }
             }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, vb.slice(..));
-            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..lcount, 0, 0..1);
         }
 
         // Draw triangles
@@ -3111,21 +3256,29 @@ impl WgpuRenderer {
         }
 
         // Draw wireframe (non-transparent modes)
-        if draw_wireframe
-            && mode != DisplayMode::Transparent
-            && lcount > 0
-            && let (Some(vb), Some(lib)) = (vb_guard.as_ref(), lib_guard.as_ref())
-        {
-            if use_depth_pipeline {
-                render_pass.set_pipeline(&self.pipeline_line_depth);
-            } else {
-                render_pass.set_pipeline(&self.pipeline_line);
+        if draw_wireframe && mode != DisplayMode::Transparent {
+            if let Some(vb) = vb_guard.as_ref() {
+                if draw_brep_lines
+                    && let Some(lib) = lib_guard.as_ref()
+                {
+                    render_pass.set_pipeline(line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.material_brep_edge_line_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, vb.slice(..));
+                    render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..lcount, 0, 0..1);
+                }
+                if draw_seam_lines
+                    && let Some(slib) = slib_guard.as_ref()
+                {
+                    render_pass.set_pipeline(line_pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    render_pass.set_bind_group(1, &self.material_seam_edge_line_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, vb.slice(..));
+                    render_pass.set_index_buffer(slib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..scount, 0, 0..1);
+                }
             }
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.material_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, vb.slice(..));
-            render_pass.set_index_buffer(lib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..lcount, 0, 0..1);
         }
 
         // Draw face highlights
@@ -3347,6 +3500,15 @@ impl WgpuRenderer {
 
     pub fn display_mode(&self) -> DisplayMode {
         *self.display_mode.lock().expect("render mutex poisoned")
+    }
+
+    /// Show UV / periodic seam edges ([`Mesh::seam_line_indices`]) when the display mode draws edges.
+    pub fn set_show_seam_edges(&self, show: bool) {
+        *self.show_seam_edges.lock().expect("render mutex poisoned") = show;
+    }
+
+    pub fn show_seam_edges(&self) -> bool {
+        *self.show_seam_edges.lock().expect("render mutex poisoned")
     }
 
     pub fn set_show_grid(&self, show: bool) {
