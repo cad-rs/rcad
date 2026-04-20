@@ -38,7 +38,6 @@ A parametric solid modeling kernel implemented in Rust, designed for CAD/CAE app
 | `rcad-iges` | IGES format support |
 | `rcad-render` | wgpu rendering, picking, HLR stroke lines |
 | `rcad-scene` | Scene management, tool states |
-| `rcad-constraints` | 2D sketch constraints |
 
 ## Building
 

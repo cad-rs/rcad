@@ -7,7 +7,6 @@ members = [
     "libs/rcad-step",
     "libs/rcad-render",
     "libs/rcad-scene",
-    "libs/rcad-constraints",
     "examples",
 ]
 
