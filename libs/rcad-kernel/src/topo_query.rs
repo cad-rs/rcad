@@ -5,7 +5,24 @@
 //! on `brep.edges` / `brep.vertices` for edge/vertex-level queries.
 //! They are safe to call on an empty BRep (return 0 or empty Vec).
 
+use std::collections::HashSet;
+
+use crate::topology::WireEdge;
 use crate::BRep;
+
+/// Returns wire edges in order, keeping only the **first** occurrence of each
+/// `edge_idx` (semantic edge — one row per `brep.edges[i]` in tree UIs).
+///
+/// Closed periodic faces often list the same seam edge twice (e.g. forward then
+/// reverse) so the boundary is closed; the duplicate [`WireEdge`] entries are
+/// not separate semantic edges.
+pub fn semantic_wire_edges<'a>(edges: &'a [WireEdge]) -> Vec<&'a WireEdge> {
+    let mut seen = HashSet::new();
+    edges
+        .iter()
+        .filter(|we| seen.insert(we.idx))
+        .collect()
+}
 
 /// Returns the flat face indices (in `solids[0].shells[0].faces`) that
 /// reference `edge_idx` in their outer wire.
@@ -246,5 +263,21 @@ mod tests {
             seam_edge_candidates(&brep).is_empty(),
             "a box should have no seam edge candidates"
         );
+    }
+
+    #[test]
+    fn semantic_wire_edges_dedupes_seam_duplicates() {
+        use crate::topology::WireEdge;
+
+        let w = [
+            WireEdge::fwd(0),
+            WireEdge::rev(0),
+            WireEdge::fwd(1),
+        ];
+        let s = semantic_wire_edges(&w);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].idx, 0);
+        assert!(s[0].forward);
+        assert_eq!(s[1].idx, 1);
     }
 }

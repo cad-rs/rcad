@@ -3325,11 +3325,15 @@ impl WgpuRenderer {
         }
     }
 
+    /// `use_depth_pipeline` must match the active render pass: `true` when the pass has a
+    /// depth attachment (e.g. eframe with `depth_buffer` set); `false` for the separate gizmo
+    /// overlay pass in [`Self::render_with_axis_gizmo`] (color-only pass).
     pub fn draw_axis_gizmo_in_render_pass(
         &self,
         render_pass: &mut wgpu::RenderPass<'_>,
         viewport_origin_px: [u32; 2],
         viewport_size_px: [u32; 2],
+        use_depth_pipeline: bool,
     ) {
         if !*self.show_axis_gizmo.lock().expect("render mutex poisoned") {
             return;
@@ -3366,11 +3370,11 @@ impl WgpuRenderer {
         near_axes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         for (_, axis_index) in far_axes {
-            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index);
+            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index, use_depth_pipeline);
         }
-        self.draw_gizmo_center_in_render_pass(render_pass);
+        self.draw_gizmo_center_in_render_pass(render_pass, use_depth_pipeline);
         for (_, axis_index) in near_axes {
-            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index);
+            self.draw_gizmo_axis_in_render_pass(render_pass, axis_index, use_depth_pipeline);
         }
 
         render_pass.set_viewport(
@@ -3392,9 +3396,14 @@ impl WgpuRenderer {
         &self,
         render_pass: &mut wgpu::RenderPass<'_>,
         axis_index: usize,
+        use_depth_pipeline: bool,
     ) {
         let axis = &self.gizmo_axes_buffers[axis_index];
-        render_pass.set_pipeline(&self.pipeline);
+        if use_depth_pipeline {
+            render_pass.set_pipeline(&self.pipeline_depth);
+        } else {
+            render_pass.set_pipeline(&self.pipeline);
+        }
         render_pass.set_bind_group(0, &self.gizmo_camera_bind_group, &[]);
         render_pass.set_bind_group(1, &self.gizmo_axes_material_bind_groups[axis_index], &[]);
         render_pass.set_vertex_buffer(0, axis.vertex_buffer.slice(..));
@@ -3402,8 +3411,16 @@ impl WgpuRenderer {
         render_pass.draw_indexed(0..axis.index_count, 0, 0..1);
     }
 
-    fn draw_gizmo_center_in_render_pass(&self, render_pass: &mut wgpu::RenderPass<'_>) {
-        render_pass.set_pipeline(&self.pipeline);
+    fn draw_gizmo_center_in_render_pass(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        use_depth_pipeline: bool,
+    ) {
+        if use_depth_pipeline {
+            render_pass.set_pipeline(&self.pipeline_depth);
+        } else {
+            render_pass.set_pipeline(&self.pipeline);
+        }
         render_pass.set_bind_group(0, &self.gizmo_camera_bind_group, &[]);
         render_pass.set_bind_group(1, &self.gizmo_center_material_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.gizmo_center_buffers.vertex_buffer.slice(..));
@@ -3610,7 +3627,15 @@ impl WgpuRenderer {
             && width > 0
             && height > 0
         {
-            render_pass.set_scissor_rect(x, y, width.max(1), height.max(1));
+            let w = width.max(1);
+            let h = height.max(1);
+            // Match the NDC → pixel mapping to the clipped region. Without this, iced's
+            // shader `render` path uses the default full-target viewport while the camera
+            // aspect comes from the shader widget only — geometry is stretched and depth
+            // ordering breaks (e.g. cylinder side overdraws caps). Egui embeds in a pass
+            // whose viewport already matches the paint rect.
+            render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+            render_pass.set_scissor_rect(x, y, w, h);
         }
 
         self.draw_in_render_pass(&mut render_pass, use_depth_pipeline);
@@ -3644,8 +3669,11 @@ impl WgpuRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            gizmo_pass.set_scissor_rect(x, y, width.max(1), height.max(1));
-            self.draw_axis_gizmo_in_render_pass(&mut gizmo_pass, [x, y], [width, height]);
+            let gw = width.max(1);
+            let gh = height.max(1);
+            gizmo_pass.set_viewport(x as f32, y as f32, gw as f32, gh as f32, 0.0, 1.0);
+            gizmo_pass.set_scissor_rect(x, y, gw, gh);
+            self.draw_axis_gizmo_in_render_pass(&mut gizmo_pass, [x, y], [width, height], false);
         }
     }
 

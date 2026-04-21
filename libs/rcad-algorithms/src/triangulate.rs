@@ -616,20 +616,26 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                 out
                             };
                             if (t1 - t0).abs() >= two_pi * 0.999 {
-                                let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
-                                let y_ax = c.normal.cross(x_ax);
-                                let v0 = p_start - c.center;
-                                let v1 = p_end - c.center;
-                                let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
-                                let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
-                                let mut dt = a1 - a0;
-                                if dt > std::f64::consts::PI {
-                                    dt -= two_pi;
-                                } else if dt < -std::f64::consts::PI {
-                                    dt += two_pi;
+                                // Seam edge: same geometric vertex at start/end — do not shrink the
+                                // parameter interval using angle deltas (they collapse to 0).
+                                let seam =
+                                    (p_start - p_end).length() <= 1e-9 * c.radius.max(1.0).max(1e-6);
+                                if !seam {
+                                    let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
+                                    let y_ax = c.normal.cross(x_ax);
+                                    let v0 = p_start - c.center;
+                                    let v1 = p_end - c.center;
+                                    let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                                    let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                                    let mut dt = a1 - a0;
+                                    if dt > std::f64::consts::PI {
+                                        dt -= two_pi;
+                                    } else if dt < -std::f64::consts::PI {
+                                        dt += two_pi;
+                                    }
+                                    t0 = a0;
+                                    t1 = a0 + dt;
                                 }
-                                t0 = a0;
-                                t1 = a0 + dt;
                             }
                         }
                         Curve3::Ellipse(e) => {
@@ -791,6 +797,10 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
     !(has_neg && has_pos)
 }
 
+/// Max product of clamped plane `(Δu)(Δv)` below which [`mesh_brep`] skips
+/// analytic [`triangulate_surface`] and uses wire sampling (see seam-only circle caps).
+const PLANE_UV_SLIVER_MAX: f64 = 1e-10;
+
 /// Tessellate all faces of a BRep in-place, writing triangle indices into
 /// `face.triangles`.
 ///
@@ -847,6 +857,8 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                     .triangles
                     .clear();
 
+                let mut filled = false;
+
                 if let Some((surf, domain)) = surf_and_domain {
                     let [u0, u1, v0, v1] = domain;
 
@@ -856,38 +868,35 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                         brep, face_flat_idx, &surf, u0, u1, v0, v1,
                     );
 
-                    if (u1 - u0).abs() < 1e-10 || (v1 - v0).abs() < 1e-10 {
-                        face_flat_idx += 1;
-                        continue;
-                    }
+                    let plane_analytic_ok = !matches!(surf, Surface3::Plane(_))
+                        || (u1 - u0).abs() * (v1 - v0).abs() >= PLANE_UV_SLIVER_MAX;
 
-                    let mesh = triangulate_surface(
-                        &surf,
-                        [u0, u1],
-                        [v0, v1],
-                        params,
-                    );
-
-                    if mesh.triangles.is_empty() {
-                        face_flat_idx += 1;
-                        continue;
+                    let domain_ok = (u1 - u0).abs() >= 1e-10 && (v1 - v0).abs() >= 1e-10;
+                    if domain_ok && plane_analytic_ok {
+                        let mesh = triangulate_surface(&surf, [u0, u1], [v0, v1], params);
+                        if !mesh.triangles.is_empty() {
+                            // Append new vertices and remap triangle indices.
+                            let base = brep.vertices.len();
+                            for &pt in &mesh.vertices {
+                                brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
+                            }
+                            let tris: Vec<[usize; 3]> = mesh
+                                .triangles
+                                .iter()
+                                .map(|&[a, b, c]| [base + a, base + b, base + c])
+                                .collect();
+                            brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                                .triangles = tris;
+                            filled = true;
+                        }
                     }
+                }
 
-                    // Append new vertices and remap triangle indices.
-                    let base = brep.vertices.len();
-                    for &pt in &mesh.vertices {
-                        brep.vertices.push(rcad_kernel::topology::Vertex { point: pt });
-                    }
-                    let tris: Vec<[usize; 3]> = mesh
-                        .triangles
-                        .iter()
-                        .map(|&[a, b, c]| [base + a, base + b, base + c])
-                        .collect();
-                    brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
-                        .triangles = tris;
-                } else {
-                    // Fallback for faces without bound surface:
-                    // sample curved outer-wire edges into a polygon then ear-clip.
+                if !filled {
+                    // Faces without a surface, degenerate UV trim, or analytic tessellation that
+                    // collapsed (e.g. plane caps bounded by a single circle edge — hull from corner
+                    // vertices is a sliver; weld removes all triangles): sample the full outer
+                    // wire (including curved edges) and ear-clip.
                     let face_ref = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
                     let poly_pts = sample_wire_polygon_points(brep, &face_ref.outer_wire);
                     if poly_pts.len() >= 3 {
