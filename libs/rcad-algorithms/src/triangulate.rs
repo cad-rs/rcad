@@ -1073,7 +1073,8 @@ fn clamp_domain_to_vertices(
         return (u0, u1, v0, v1);
     }
 
-    // Collect wire vertices for this face.
+    // Collect sampled wire points for this face so curved boundaries
+    // (e.g. cylinder/cone circles) contribute to UV hull estimation.
     let face = brep
         .solids
         .iter()
@@ -1085,17 +1086,21 @@ fn clamp_domain_to_vertices(
         return (u0, u1, v0, v1);
     };
 
-    let pts: Vec<DVec3> = face
-        .outer_wire
-        .edges
-        .iter()
-        .filter_map(|we| {
-            brep.edges.get(we.idx).and_then(|e| {
-                let vi = if we.forward { e.start } else { e.end };
-                brep.vertices.get(vi).map(|v| v.point)
+    let mut pts = sample_wire_polygon_points(brep, &face.outer_wire);
+    if pts.is_empty() {
+        // Fallback to topological endpoints when wire sampling is unavailable.
+        pts = face
+            .outer_wire
+            .edges
+            .iter()
+            .filter_map(|we| {
+                brep.edges.get(we.idx).and_then(|e| {
+                    let vi = if we.forward { e.start } else { e.end };
+                    brep.vertices.get(vi).map(|v| v.point)
+                })
             })
-        })
-        .collect();
+            .collect();
+    }
 
     if pts.is_empty() {
         return (u0, u1, v0, v1);
