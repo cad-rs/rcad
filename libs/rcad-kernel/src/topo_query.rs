@@ -180,6 +180,54 @@ pub fn vertex_indices(brep: &BRep) -> Vec<usize> {
     out
 }
 
+/// Topological vertex indices suitable for creator display/picking overlays.
+///
+/// Starts from [`vertex_indices`] and filters out interior degree-2 chain points
+/// that are near-collinear with their two incident edges (a common pattern for
+/// curve/polyline sampling points).
+pub fn display_vertex_indices(brep: &BRep) -> Vec<usize> {
+    const COLLINEAR_CHAIN_DOT_THRESHOLD: f64 = -0.965_925_826; // cos(165deg)
+
+    vertex_indices(brep)
+        .into_iter()
+        .filter(|&vi| {
+            let adj = vertex_adjacent_edges(brep, vi);
+            if adj.len() != 2 {
+                return true;
+            }
+
+            let center = match brep.vertices.get(vi) {
+                Some(v) => v.point,
+                None => return false,
+            };
+
+            let mut dirs = Vec::with_capacity(2);
+            for ei in adj {
+                let Some(edge) = brep.edges.get(ei) else {
+                    return true;
+                };
+                let other = if edge.start == vi { edge.end } else { edge.start };
+                let Some(other_pt) = brep.vertices.get(other).map(|v| v.point) else {
+                    return true;
+                };
+                let d = other_pt - center;
+                let len = d.length();
+                if len <= 1e-12 {
+                    return true;
+                }
+                dirs.push(d / len);
+            }
+
+            if dirs.len() != 2 {
+                return true;
+            }
+
+            // Keep true corners/features; drop near-collinear chain interiors.
+            dirs[0].dot(dirs[1]) > COLLINEAR_CHAIN_DOT_THRESHOLD
+        })
+        .collect()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

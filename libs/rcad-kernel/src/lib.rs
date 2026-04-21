@@ -161,9 +161,11 @@ pub use tolerance::{
     finalize_tolerance_hierarchy,
 };
 pub use topo_query::{
+    brep_vertex_count,
+    display_vertex_indices,
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
     seam_edge_candidates, semantic_wire_edges,
-    vertex_adjacent_edges, vertex_count, vertex_indices, brep_vertex_count,
+    vertex_adjacent_edges, vertex_count, vertex_indices,
 };
 pub use topo_simplify::merge_collinear_edges_in_wires;
 pub use brep_graph::{

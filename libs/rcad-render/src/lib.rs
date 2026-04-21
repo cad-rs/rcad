@@ -6,7 +6,7 @@ pub use light::{Light, LightId, LightType};
 
 use rcad_kernel::{
     BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
-    seam_edge_candidates, vertex_indices, vertex_adjacent_edges,
+    display_vertex_indices, seam_edge_candidates, vertex_adjacent_edges,
 };
 use rcad_kernel::topology::WireEdge;
 use rcad_algorithms::{TessellationParams, mesh_brep};
@@ -505,7 +505,7 @@ pub fn pick_vertex(
         glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let mut best: Option<(f32, f32, usize)> = None;
 
-    for vi in vertex_indices(brep) {
+    for vi in display_vertex_indices(brep) {
         let p = to_vec3(brep.vertices.get(vi)?.point);
         let s = project_to_screen(vp, p, viewport_size)?;
         let dx = cursor_pos[0] - s[0];
@@ -798,7 +798,7 @@ pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
         return None;
     }
     const MAX_VERTEX_DOTS: usize = 20_000;
-    let feature_indices = vertex_indices(brep);
+    let feature_indices = display_vertex_indices(brep);
     if feature_indices.is_empty() {
         return None;
     }
@@ -1320,10 +1320,10 @@ impl Tessellator {
         }
     }
 
-    /// Re-tessellate dirty faces using the given quality options, then build a GPU [`Mesh`].
+    /// Re-tessellate all faces using the given quality options, then build a GPU [`Mesh`].
     ///
-    /// Calls [`rcad_algorithms::mesh_brep`] to recompute triangles for any face whose
-    /// `mesh_dirty` flag is set, then delegates to [`Tessellator::tessellate`].
+    /// This intentionally discards cached face triangles before meshing to avoid
+    /// stale import-time tessellation artifacts.
     ///
     /// Analogous to `BRepMesh_IncrementalMesh` with explicit deflection/angular arguments in OCCT.
     pub fn tessellate_with_options(brep: &mut BRep, options: &TessellationOptions) -> Mesh {
@@ -1336,6 +1336,8 @@ impl Tessellator {
         options: &TessellationOptions,
         line: &TessellateLineOptions,
     ) -> Mesh {
+        // Do a full rebuild instead of selectively reusing cached face triangles.
+        brep.invalidate_mesh();
         mesh_brep(brep, options);
         Self::tessellate_with_line_options(brep, line)
     }
@@ -1604,6 +1606,48 @@ mod tests {
         assert!(
             mesh.nodes.len() > 100,
             "torus should have sufficient mesh nodes for double curvature"
+        );
+    }
+
+    #[test]
+    fn tessellate_with_options_rebuilds_cached_sphere_torus_triangles() {
+        let mut sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        for solid in &mut sphere.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.triangles = vec![[0, 1, 2]];
+                    face.mesh_dirty = false;
+                }
+            }
+        }
+        let sphere_mesh = Tessellator::tessellate_with_options(
+            &mut sphere,
+            &TessellationParams::default(),
+        );
+        assert!(
+            sphere_mesh.indices.len() > 3,
+            "sphere faces should be re-tessellated instead of reusing coarse cached triangles"
+        );
+
+        let mut torus = BRep::from_primitive(PrimitiveSolid::Torus {
+            major_radius: 2.0,
+            minor_radius: 0.5,
+        });
+        for solid in &mut torus.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.triangles = vec![[0, 1, 2]];
+                    face.mesh_dirty = false;
+                }
+            }
+        }
+        let torus_mesh = Tessellator::tessellate_with_options(
+            &mut torus,
+            &TessellationParams::default(),
+        );
+        assert!(
+            torus_mesh.indices.len() > 3,
+            "torus faces should be re-tessellated instead of reusing coarse cached triangles"
         );
     }
 
