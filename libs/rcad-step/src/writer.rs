@@ -1027,10 +1027,10 @@ impl Part21Writer {
             .map(|(_, _, _, curve, forward)| (*curve, *forward))
             .collect();
 
-        // Strict gmsh-like ordering/orientation for cylindrical side face:
+        // Strict gmsh-like ordering/orientation for periodic side faces:
         // top circle (F) -> seam (F) -> bottom circle (T) -> seam (T)
         if self.gmsh_strict
-            && matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)))
+            && matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
             && seam_edge_indices.len() == 1
             && edge_entries.len() == 4
         {
@@ -1046,7 +1046,15 @@ impl Part21Writer {
                     .collect();
 
                 if let (Some(seam_curve), 2) = (seam_curve, circle_entries.len()) {
-                    let axis = canonicalize_axis_sign(glam::DVec3::Z);
+                    let axis = face_surface
+                        .as_ref()
+                        .and_then(|surf| match surf {
+                            Surface3::Cylinder(cyl) => Some(canonicalize_axis_sign(cyl.axis.normalize_or_zero())),
+                            Surface3::Cone(cone) => Some(canonicalize_axis_sign(cone.axis_dir())),
+                            _ => None,
+                        })
+                        .filter(|axis| axis.length_squared() > 1e-18)
+                        .unwrap_or_else(|| canonicalize_axis_sign(glam::DVec3::Z));
                     let z_of = |vid: usize| -> f64 {
                         brep.vertices
                             .get(vid)
