@@ -10,7 +10,7 @@
 
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Wire};
-use rcad_kernel::{BRep, semantic_vertex_indices};
+use rcad_kernel::{BRep, vertex_indices};
 
 use crate::brep_tools::ShapeType;
 
@@ -912,7 +912,7 @@ impl ShapeExplorer {
     /// Number of shapes of the given type.
     pub fn count_subshapes(brep: &BRep, shape_type: ShapeType) -> usize {
         match shape_type {
-            ShapeType::Vertex => semantic_vertex_indices(brep).len(),
+            ShapeType::Vertex => vertex_indices(brep).len(),
             ShapeType::Edge => brep.edges.len(),
             ShapeType::Wire => {
                 // Count all wires (outer and inner) across all faces
@@ -977,7 +977,7 @@ impl ShapeExplorer {
     /// # Returns
     /// Vector of all vertex indices used by edges.
     pub fn all_vertices(brep: &BRep) -> Vec<usize> {
-        semantic_vertex_indices(brep)
+        vertex_indices(brep)
     }
 
     /// Find faces that share a given edge.
@@ -1103,7 +1103,7 @@ impl ShapeExplorer {
 
         format!(
             "BRep topology: {} vertices, {} edges, {} wires, {} faces, {} shells, {} solids",
-            semantic_vertex_indices(brep).len(),
+            vertex_indices(brep).len(),
             brep.edges.len(),
             wire_count,
             face_count,

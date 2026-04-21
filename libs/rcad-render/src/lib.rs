@@ -6,7 +6,7 @@ pub use light::{Light, LightId, LightType};
 
 use rcad_kernel::{
     BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
-    seam_edge_candidates, semantic_vertex_indices, vertex_adjacent_edges,
+    seam_edge_candidates, vertex_indices, vertex_adjacent_edges,
 };
 use rcad_kernel::topology::WireEdge;
 use rcad_algorithms::{TessellationParams, mesh_brep};
@@ -274,7 +274,7 @@ impl SelectionState {
             SelectionMode::Edge => {
                 let hit = pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px)
                     .or_else(|| {
-                        pick_semantic_vertex(
+                        pick_vertex(
                             brep,
                             camera,
                             aspect,
@@ -332,7 +332,7 @@ impl SelectionState {
             SelectionMode::Edge => {
                 self.hovered_edge = pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px)
                     .or_else(|| {
-                        pick_semantic_vertex(
+                        pick_vertex(
                             brep,
                             camera,
                             aspect,
@@ -489,8 +489,8 @@ where
     best.map(|(_, _, idx)| idx)
 }
 
-/// Pick the nearest semantic vertex in screen space.
-pub fn pick_semantic_vertex(
+/// Pick the nearest topological vertex in screen space.
+pub fn pick_vertex(
     brep: &BRep,
     camera: &Camera,
     aspect: f32,
@@ -505,7 +505,7 @@ pub fn pick_semantic_vertex(
         glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let mut best: Option<(f32, f32, usize)> = None;
 
-    for vi in semantic_vertex_indices(brep) {
+    for vi in vertex_indices(brep) {
         let p = to_vec3(brep.vertices.get(vi)?.point);
         let s = project_to_screen(vp, p, viewport_size)?;
         let dx = cursor_pos[0] - s[0];
@@ -798,7 +798,7 @@ pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
         return None;
     }
     const MAX_VERTEX_DOTS: usize = 20_000;
-    let feature_indices = semantic_vertex_indices(brep);
+    let feature_indices = vertex_indices(brep);
     if feature_indices.is_empty() {
         return None;
     }
