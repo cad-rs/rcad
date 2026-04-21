@@ -1,4 +1,4 @@
-//! Example: Phase D — STEP color, STEP assembly, BSpline export, and HLR.
+//! Example: STEP color, STEP assembly, B-spline export, and HLR.
 //!
 //! Demonstrates:
 //!   1. STEP colored export — solid-level and per-face colors
@@ -194,7 +194,7 @@ fn demo_hlr() {
 
 fn main() {
     println!("╔═══════════════════════════════════════╗");
-    println!("║         RCAD Phase D Demo             ║");
+    println!("║       RCAD STEP / Color / HLR Demo      ║");
     println!("║  STEP Color · Assembly · BSpline · HLR║");
     println!("╚═══════════════════════════════════════╝");
 
@@ -203,5 +203,5 @@ fn main() {
     demo_bspline_step();
     demo_hlr();
 
-    println!("\n✓ Phase D demo complete. Check the generated .step and .svg files.");
+    println!("\n✓ STEP / color / HLR demo complete. Check the generated .step and .svg files.");
 }

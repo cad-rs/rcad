@@ -1122,23 +1122,23 @@ pub fn fit_polygon(points: &[DVec3]) -> Option<FittedPolygon> {
     }
 
     // Transform back to 3D
-    let vertices: Vec<DVec3> = hull_2d
+    let nodes: Vec<DVec3> = hull_2d
         .iter()
         .map(|&p2d| plane.point + p2d.x * u + p2d.y * v)
         .collect();
 
     // Compute area using shoelace formula in 3D
     let mut area = 0.0;
-    let n = vertices.len();
+    let n = nodes.len();
     for i in 0..n {
         let j = (i + 1) % n;
-        let cross = vertices[i].cross(vertices[j]);
+        let cross = nodes[i].cross(nodes[j]);
         area += cross.dot(normal);
     }
     area = area.abs() / 2.0;
 
     Some(FittedPolygon {
-        vertices,
+        vertices: nodes,
         plane_point: plane.point,
         plane_normal: plane.normal,
         area,
@@ -2467,11 +2467,11 @@ fn grow_region(
 /// Triangle mesh for surface reconstruction output.
 #[derive(Debug, Clone)]
 pub struct TriangleMesh {
-    /// Vertex positions.
-    pub vertices: Vec<DVec3>,
-    /// Triangle indices (3 vertex indices per triangle).
+    /// Node positions.
+    pub nodes: Vec<DVec3>,
+    /// Triangle indices (3 node indices per triangle).
     pub triangles: Vec<[usize; 3]>,
-    /// Vertex normals (optional).
+    /// Node normals (optional).
     pub normals: Option<Vec<DVec3>>,
 }
 
@@ -2484,7 +2484,7 @@ impl Default for TriangleMesh {
 impl TriangleMesh {
     pub fn new() -> Self {
         Self {
-            vertices: Vec::new(),
+            nodes: Vec::new(),
             triangles: Vec::new(),
             normals: None,
         }
@@ -2493,9 +2493,9 @@ impl TriangleMesh {
     /// Computes face normals for the mesh.
     pub fn compute_face_normals(&self) -> Vec<DVec3> {
         self.triangles.iter().map(|&[i, j, k]| {
-            let a = self.vertices[i];
-            let b = self.vertices[j];
-            let c = self.vertices[k];
+            let a = self.nodes[i];
+            let b = self.nodes[j];
+            let c = self.nodes[k];
             let normal = (b - a).cross(c - a);
             let len = normal.length();
             if len > 1e-10 {
@@ -2506,25 +2506,25 @@ impl TriangleMesh {
         }).collect()
     }
 
-    /// Computes vertex normals by averaging adjacent face normals.
-    pub fn compute_vertex_normals(&self) -> Vec<DVec3> {
+    /// Computes node normals by averaging adjacent face normals.
+    pub fn compute_node_normals(&self) -> Vec<DVec3> {
         let face_normals = self.compute_face_normals();
-        let mut vertex_normals = vec![DVec3::ZERO; self.vertices.len()];
+        let mut node_normals = vec![DVec3::ZERO; self.nodes.len()];
 
         for (tri, &normal) in self.triangles.iter().zip(face_normals.iter()) {
             for &idx in tri {
-                vertex_normals[idx] += normal;
+                node_normals[idx] += normal;
             }
         }
 
-        for normal in &mut vertex_normals {
+        for normal in &mut node_normals {
             let len = normal.length();
             if len > 1e-10 {
                 *normal /= len;
             }
         }
 
-        vertex_normals
+        node_normals
     }
 }
 
@@ -2650,14 +2650,14 @@ fn marching_cubes(
                 let cz = min.z + (iz as f64 + 0.5) * dz;
 
                 // Create a simple cube face approximation
-                let base_idx = mesh.vertices.len();
+                let base_idx = mesh.nodes.len();
                 let size = dx.min(dy).min(dz) * 0.5;
 
-                // Add vertices for a small quad
-                mesh.vertices.push(DVec3::new(cx - size, cy - size, cz));
-                mesh.vertices.push(DVec3::new(cx + size, cy - size, cz));
-                mesh.vertices.push(DVec3::new(cx + size, cy + size, cz));
-                mesh.vertices.push(DVec3::new(cx - size, cy + size, cz));
+                // Add nodes for a small quad
+                mesh.nodes.push(DVec3::new(cx - size, cy - size, cz));
+                mesh.nodes.push(DVec3::new(cx + size, cy - size, cz));
+                mesh.nodes.push(DVec3::new(cx + size, cy + size, cz));
+                mesh.nodes.push(DVec3::new(cx - size, cy + size, cz));
 
                 mesh.triangles.push([base_idx, base_idx + 1, base_idx + 2]);
                 mesh.triangles.push([base_idx, base_idx + 2, base_idx + 3]);
@@ -2665,7 +2665,7 @@ fn marching_cubes(
         }
     }
 
-    if mesh.vertices.is_empty() {
+    if mesh.nodes.is_empty() {
         None
     } else {
         Some(mesh)
@@ -2765,10 +2765,10 @@ pub fn ball_pivoting_reconstruction(
                 }
 
                 if valid {
-                    let base_idx = mesh.vertices.len();
-                    mesh.vertices.push(p0);
-                    mesh.vertices.push(p1);
-                    mesh.vertices.push(p2);
+                    let base_idx = mesh.nodes.len();
+                    mesh.nodes.push(p0);
+                    mesh.nodes.push(p1);
+                    mesh.nodes.push(p2);
                     mesh.triangles.push([base_idx, base_idx + 1, base_idx + 2]);
 
                     used_edges.insert((i0, i1));
@@ -2787,7 +2787,7 @@ pub fn ball_pivoting_reconstruction(
         }
     }
 
-    if mesh.vertices.is_empty() {
+    if mesh.nodes.is_empty() {
         // Fallback: simple Delaunay triangulation
         return delaunay_reconstruction(points, normals);
     }
@@ -2825,10 +2825,10 @@ pub fn ball_pivoting_reconstruction(
                 if let Some(cc) = compute_circumcenter(p0, p1, p2) {
                     let cr = (p0 - cc).length();
                     if cr <= r {
-                        let base_idx = mesh.vertices.len();
-                        mesh.vertices.push(p0);
-                        mesh.vertices.push(p1);
-                        mesh.vertices.push(p2);
+                        let base_idx = mesh.nodes.len();
+                        mesh.nodes.push(p0);
+                        mesh.nodes.push(p1);
+                        mesh.nodes.push(p2);
                         mesh.triangles.push([base_idx, base_idx + 1, base_idx + 2]);
 
                         new_edges.push((i0, i2));
@@ -2845,7 +2845,7 @@ pub fn ball_pivoting_reconstruction(
         }
     }
 
-    if mesh.vertices.is_empty() {
+    if mesh.nodes.is_empty() {
         None
     } else {
         Some(mesh)
@@ -2904,7 +2904,7 @@ pub fn delaunay_reconstruction(
     let triangles_2d = delaunay_triangulation_2d(&projected_2d);
 
     // Convert back to 3D
-    mesh.vertices = points.to_vec();
+    mesh.nodes = points.to_vec();
     mesh.triangles = triangles_2d;
 
     Some(mesh)
@@ -2930,10 +2930,10 @@ fn delaunay_triangulation_2d(points: &[DVec2]) -> Vec<[usize; 3]> {
     let p2 = DVec2::new(min_x + 3.0 * delta, min_y - delta);
     let p3 = DVec2::new(min_x, min_y + 3.0 * delta);
 
-    let super_vertices = [n, n + 1, n + 2];
+    let super_nodes = [n, n + 1, n + 2];
     let all_points: Vec<DVec2> = points.iter().copied().chain([p1, p2, p3]).collect();
 
-    triangles.push(super_vertices);
+    triangles.push(super_nodes);
 
     // Add points one by one
     for i in 0..n {
@@ -3004,7 +3004,7 @@ fn delaunay_triangulation_2d(points: &[DVec2]) -> Vec<[usize; 3]> {
         triangles = new_triangles;
     }
 
-    // Remove triangles containing super-triangle vertices
+    // Remove triangles containing super-triangle nodes
     triangles.retain(|&tri| tri[0] < n && tri[1] < n && tri[2] < n);
 
     triangles
@@ -3036,12 +3036,12 @@ pub fn generate_consistent_mesh(
     let mut mesh = delaunay_reconstruction(points, normals)?;
 
     // Orient faces consistently
-    let vertex_normals = mesh.compute_vertex_normals();
+    let node_normals = mesh.compute_node_normals();
 
     for tri in &mut mesh.triangles {
-        let a = mesh.vertices[tri[0]];
-        let b = mesh.vertices[tri[1]];
-        let c = mesh.vertices[tri[2]];
+        let a = mesh.nodes[tri[0]];
+        let b = mesh.nodes[tri[1]];
+        let c = mesh.nodes[tri[2]];
 
         let face_normal = (b - a).cross(c - a);
         let len = face_normal.length();
@@ -3050,8 +3050,8 @@ pub fn generate_consistent_mesh(
         }
         let face_normal = face_normal / len;
 
-        // Compare with vertex normals
-        let avg_normal = (vertex_normals[tri[0]] + vertex_normals[tri[1]] + vertex_normals[tri[2]]) / 3.0;
+        // Compare with node normals
+        let avg_normal = (node_normals[tri[0]] + node_normals[tri[1]] + node_normals[tri[2]]) / 3.0;
 
         if face_normal.dot(avg_normal) < 0.0 {
             // Flip triangle
@@ -3059,7 +3059,7 @@ pub fn generate_consistent_mesh(
         }
     }
 
-    mesh.normals = Some(vertex_normals);
+    mesh.normals = Some(node_normals);
     Some(mesh)
 }
 
@@ -3331,7 +3331,7 @@ pub fn extract_points_from_brep_mesh(brep: &rcad_kernel::BRep) -> PointCloud {
     for solid in &brep.solids {
         for shell in &solid.shells {
             for face in &shell.faces {
-                // Add vertices from triangles
+                // Add triangle node positions from `brep.vertices`
                 for &[i, j, k] in &face.triangles {
                     if let (Some(a), Some(b), Some(c)) = (
                         brep.vertices.get(i),
@@ -3344,7 +3344,7 @@ pub fn extract_points_from_brep_mesh(brep: &rcad_kernel::BRep) -> PointCloud {
                     }
                 }
 
-                // If no triangles, add wire vertices
+                // If no triangles, add outer-wire vertex positions
                 if face.triangles.is_empty() {
                     for we in &face.outer_wire.edges {
                         if let Some(edge) = brep.edges.get(we.idx) {
@@ -3364,9 +3364,9 @@ pub fn extract_points_from_brep_mesh(brep: &rcad_kernel::BRep) -> PointCloud {
 
 /// Extracts a point cloud from a triangulated mesh.
 ///
-/// Takes the vertices directly from a SurfaceMesh.
+/// Takes node positions directly from a `SurfaceMesh`.
 pub fn extract_points_from_mesh(mesh: &crate::triangulate::SurfaceMesh) -> PointCloud {
-    PointCloud::from_vec(mesh.vertices.clone())
+    PointCloud::from_vec(mesh.nodes.clone())
 }
 
 /// Samples points uniformly from a BRep's surfaces.
@@ -4058,17 +4058,17 @@ mod tests {
     #[test]
     fn test_triangle_mesh_basics() {
         let mut mesh = TriangleMesh::new();
-        mesh.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(1.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(0.0, 1.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(1.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 1.0, 0.0));
         mesh.triangles.push([0, 1, 2]);
 
         let face_normals = mesh.compute_face_normals();
         assert_eq!(face_normals.len(), 1);
         assert!(face_normals[0].z.abs() > 0.9, "Face normal should point along Z");
 
-        let vertex_normals = mesh.compute_vertex_normals();
-        assert_eq!(vertex_normals.len(), 3);
+        let node_normals = mesh.compute_node_normals();
+        assert_eq!(node_normals.len(), 3);
     }
 
     #[test]
@@ -4093,7 +4093,7 @@ mod tests {
         let result = poisson_reconstruction(&points, &normals, &config);
         // May or may not produce output depending on implicit function
         if let Some(mesh) = result {
-            assert!(!mesh.vertices.is_empty());
+            assert!(!mesh.nodes.is_empty());
             assert!(!mesh.triangles.is_empty());
         }
     }
@@ -4116,7 +4116,7 @@ mod tests {
         assert!(result.is_some(), "Delaunay reconstruction should succeed");
         let mesh = result.unwrap();
 
-        assert_eq!(mesh.vertices.len(), 25, "Should have all input vertices");
+        assert_eq!(mesh.nodes.len(), 25, "Should have all input nodes");
         assert!(!mesh.triangles.is_empty(), "Should have triangles");
     }
 
@@ -4143,7 +4143,7 @@ mod tests {
 
         // BPA may or may not find valid triangles
         if let Some(mesh) = result {
-            assert!(!mesh.vertices.is_empty());
+            assert!(!mesh.nodes.is_empty());
         }
     }
 
@@ -4165,8 +4165,8 @@ mod tests {
         let mesh = result.unwrap();
 
         assert!(mesh.normals.is_some(), "Should have computed normals");
-        let vertex_normals = mesh.normals.unwrap();
-        assert_eq!(vertex_normals.len(), mesh.vertices.len());
+        let node_normals = mesh.normals.unwrap();
+        assert_eq!(node_normals.len(), mesh.nodes.len());
     }
 
     // =========================================================================

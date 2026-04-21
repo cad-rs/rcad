@@ -107,6 +107,7 @@ pub struct CreationController {
     active_tool: Tool,
     command_state: CommandState,
     work_plane: WorkPlane,
+    edge_pick_radius_px: f32,
 }
 
 impl Default for CreationController {
@@ -115,6 +116,7 @@ impl Default for CreationController {
             active_tool: Tool::SelectFace,
             command_state: CommandState::Idle,
             work_plane: WorkPlane::XY,
+            edge_pick_radius_px: DEFAULT_EDGE_PICK_RADIUS_PX,
         }
     }
 }
@@ -130,6 +132,16 @@ impl CreationController {
 
     pub fn work_plane(&self) -> WorkPlane {
         self.work_plane
+    }
+
+    /// Pixel radius used when picking edges in selection mode.
+    pub fn edge_pick_radius_px(&self) -> f32 {
+        self.edge_pick_radius_px
+    }
+
+    /// Update edge pick radius in pixels. Clamped to a practical range.
+    pub fn set_edge_pick_radius_px(&mut self, radius_px: f32) {
+        self.edge_pick_radius_px = radius_px.clamp(2.0, 32.0);
     }
 
     pub fn set_work_plane(&mut self, plane: WorkPlane) {
@@ -359,7 +371,7 @@ impl CreationController {
                     aspect,
                     viewport,
                     cursor,
-                    DEFAULT_EDGE_PICK_RADIUS_PX,
+                    self.edge_pick_radius_px,
                 );
                 None
             }
@@ -680,7 +692,7 @@ impl CreationController {
                         aspect,
                         viewport,
                         cursor,
-                        DEFAULT_EDGE_PICK_RADIUS_PX,
+                        self.edge_pick_radius_px,
                     );
                 }
             }

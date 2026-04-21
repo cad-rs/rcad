@@ -1,4 +1,4 @@
-//! Example: Phase J — Ellipse2d PCurve, curve2d_range, STEP Curve2d I/O, STEP tolerance import.
+//! Example: Ellipse2d PCurve, curve2d_range, STEP Curve2d I/O, STEP tolerance import.
 //!
 //! Demonstrates:
 //!   1. Ellipse2d: construction and evaluation at canonical parameter values
@@ -383,7 +383,7 @@ END-ISO-10303-21;
 
 fn main() {
     println!("╔════════════════════════════════════════════════════╗");
-    println!("║              RCAD Phase J Demo                     ║");
+    println!("║            RCAD STEP Curve2d Demo                   ║");
     println!("║  Ellipse2d · curve2d_range · STEP Curve2d I/O     ║");
     println!("║  STEP Tolerance Import                             ║");
     println!("╚════════════════════════════════════════════════════╝");
@@ -394,5 +394,5 @@ fn main() {
     demo_step_bspline2d_export();
     demo_step_tolerance_import();
 
-    println!("\n✓ Phase J demo complete.");
+    println!("\n✓ STEP Curve2d demo complete.");
 }

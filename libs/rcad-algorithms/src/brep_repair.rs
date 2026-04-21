@@ -7463,19 +7463,19 @@ pub fn repair_shell_closure(shell: &Shell, brep: &BRep, tolerance: f64) -> Shell
 
 fn estimate_chain_area(chain: &[usize], brep: &BRep) -> f64 {
     if chain.len() < 3 { return 0.0; }
-    let mut vertices: Vec<DVec3> = Vec::new();
+    let mut nodes: Vec<DVec3> = Vec::new();
     for &ei in chain {
         if let Some(edge) = brep.edges.get(ei)
             && let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
-                if vertices.is_empty() { vertices.push(s.point); }
-                vertices.push(e.point);
+                if nodes.is_empty() { nodes.push(s.point); }
+                nodes.push(e.point);
             }
     }
-    if vertices.len() < 3 { return 0.0; }
+    if nodes.len() < 3 { return 0.0; }
     let mut area = 0.0;
-    for i in 0..vertices.len() {
-        let j = (i + 1) % vertices.len();
-        area += vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+    for i in 0..nodes.len() {
+        let j = (i + 1) % nodes.len();
+        area += nodes[i].x * nodes[j].y - nodes[j].x * nodes[i].y;
     }
     (area / 2.0).abs()
 }
@@ -7483,19 +7483,19 @@ fn estimate_chain_area(chain: &[usize], brep: &BRep) -> f64 {
 fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> Option<Face> {
     if chain.len() < 3 { return None; }
     let mut wire_edges: Vec<WireEdge> = Vec::new();
-    let mut vertices: Vec<DVec3> = Vec::new();
+    let mut nodes: Vec<DVec3> = Vec::new();
     for (i, &ei) in chain.iter().enumerate() {
         let edge = brep.edges.get(ei)?;
         wire_edges.push(WireEdge::fwd(ei));
-        if i == 0 { vertices.push(brep.vertices.get(edge.start)?.point); }
-        vertices.push(brep.vertices.get(edge.end)?.point);
+        if i == 0 { nodes.push(brep.vertices.get(edge.start)?.point); }
+        nodes.push(brep.vertices.get(edge.end)?.point);
     }
     let mut normal = DVec3::ZERO;
-    for i in 0..vertices.len() {
-        let j = (i + 1) % vertices.len();
-        normal.x += (vertices[i].y - vertices[j].y) * (vertices[i].z + vertices[j].z);
-        normal.y += (vertices[i].z - vertices[j].z) * (vertices[i].x + vertices[j].x);
-        normal.z += (vertices[i].x - vertices[j].x) * (vertices[i].y + vertices[j].y);
+    for i in 0..nodes.len() {
+        let j = (i + 1) % nodes.len();
+        normal.x += (nodes[i].y - nodes[j].y) * (nodes[i].z + nodes[j].z);
+        normal.y += (nodes[i].z - nodes[j].z) * (nodes[i].x + nodes[j].x);
+        normal.z += (nodes[i].x - nodes[j].x) * (nodes[i].y + nodes[j].y);
     }
     let len = normal.length();
     if len > 1e-10 { normal /= len; } else { normal = DVec3::Z; }

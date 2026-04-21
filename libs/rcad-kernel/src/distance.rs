@@ -114,10 +114,10 @@ pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
 /// use rcad_kernel::distance::point_to_shape_distance;
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-/// // from_primitive for Box produces a unit box at origin.
-/// // A point above the box at (0, 0, 5) should be ~4 units from the top face.
-/// let d = point_to_shape_distance(DVec3::new(0.0, 0.0, 5.0), &box_brep);
-/// assert!(d.distance > 0.0);
+/// // `from_primitive` box spans `[0,w]×[0,h]×[0,d]`. Use a point off the
+/// // coordinate planes so infinite-plane face projections are not ambiguous.
+/// let d = point_to_shape_distance(DVec3::new(10.0, 10.0, 10.0), &box_brep);
+/// assert!(d.distance > 7.5 && d.distance < 20.0);
 /// ```
 pub fn point_to_shape_distance(query: DVec3, brep: &BRep) -> ShapeDistance {
     match closest_on_brep(query, brep) {

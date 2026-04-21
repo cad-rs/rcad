@@ -1299,7 +1299,7 @@ impl ParallelCheckConfig {
 /// Timing information for a check phase.
 #[derive(Debug, Clone, Default)]
 pub struct CheckPhaseTiming {
-    /// Phase name.
+    /// Short label for this timing row (for example, `"faces"`).
     pub phase: String,
     /// Duration in milliseconds.
     pub duration_ms: u64,
@@ -2121,7 +2121,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
         || total_edges >= config.parallel_threshold
         || total_vertices >= config.parallel_threshold;
 
-    // Phase 1: Face checking
+    // Face checking
     let mut face_results = Vec::new();
     if config.check_faces {
         let phase_start = Instant::now();
@@ -2148,7 +2148,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
         }
     }
 
-    // Phase 2: Edge checking
+    // Edge checking
     let mut edge_results = Vec::new();
     if config.check_edges {
         let phase_start = Instant::now();
@@ -2185,7 +2185,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
         }
     }
 
-    // Phase 3: Vertex checking
+    // Vertex checking
     if config.check_vertices {
         let phase_start = Instant::now();
 
@@ -2229,7 +2229,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
         });
     }
 
-    // Phase 4: Shell validation
+    // Shell validation
     let mut shell_results = Vec::new();
     if config.check_shells {
         let phase_start = Instant::now();
@@ -2241,7 +2241,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
         });
     }
 
-    // Phase 5: Solid validation
+    // Solid validation
     let mut solid_results = Vec::new();
     if config.check_solids {
         let phase_start = Instant::now();

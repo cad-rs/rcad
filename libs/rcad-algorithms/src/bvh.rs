@@ -1,17 +1,17 @@
-//! BVH（包围体层次，Bounding Volume Hierarchy）加速结构。
+//! Bounding Volume Hierarchy (BVH) for spatial acceleration.
 //!
-//! 使用 SAH（Surface Area Heuristic）构建，加速以下查询：
-//! - 射线拾取（ray picking）
-//! - 形状最小距离（min_distance）
-//! - 间隙/重叠检测（detect_gaps_overlaps）
+//! Built with the SAH (Surface Area Heuristic) to speed up:
+//! - Ray picking
+//! - `min_distance` between shapes
+//! - Gap / overlap detection (`detect_gaps_overlaps`)
 //!
-//! 类比 OCCT `BVH_Tree` / `BVH_Builder`。
+//! Analogous to OCCT `BVH_Tree` / `BVH_Builder`.
 
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::SurfaceEval;
 
-/// 轴对齐包围盒（AABB）。
+/// Axis-aligned bounding box (AABB).
 #[derive(Debug, Clone, Copy)]
 pub struct Aabb {
     pub min: DVec3,
@@ -19,7 +19,7 @@ pub struct Aabb {
 }
 
 impl Aabb {
-    /// 空 AABB（min > max，不包含任何点）。
+    /// Empty AABB (`min > max`, contains no points).
     pub fn empty() -> Self {
         Self {
             min: DVec3::splat(f64::INFINITY),
@@ -27,7 +27,7 @@ impl Aabb {
         }
     }
 
-    /// 从两个点构建 AABB。
+    /// Build an AABB that encloses all given points.
     pub fn from_points(pts: &[DVec3]) -> Self {
         let mut aabb = Self::empty();
         for &p in pts {
@@ -36,33 +36,33 @@ impl Aabb {
         aabb
     }
 
-    /// 扩展以包含一个点。
+    /// Expand to include one point.
     pub fn expand_point(&mut self, p: DVec3) {
         self.min = self.min.min(p);
         self.max = self.max.max(p);
     }
 
-    /// 扩展以包含另一个 AABB。
+    /// Expand to include another AABB.
     pub fn expand_aabb(&mut self, other: &Aabb) {
         self.min = self.min.min(other.min);
         self.max = self.max.max(other.max);
     }
 
-    /// 返回 AABB 中心点。
+    /// AABB center.
     pub fn center(&self) -> DVec3 {
         (self.min + self.max) * 0.5
     }
 
-    /// 返回 AABB 的表面积（用于 SAH）。
+    /// Surface area (for SAH cost).
     pub fn surface_area(&self) -> f64 {
         let d = self.max - self.min;
         if d.x < 0.0 || d.y < 0.0 || d.z < 0.0 {
-            return 0.0; // 空 AABB
+            return 0.0; // empty AABB
         }
         2.0 * (d.x * d.y + d.y * d.z + d.z * d.x)
     }
 
-    /// 检测与另一个 AABB 是否相交。
+    /// Whether this AABB intersects another.
     pub fn intersects(&self, other: &Aabb) -> bool {
         self.min.x <= other.max.x
             && self.max.x >= other.min.x
@@ -72,7 +72,7 @@ impl Aabb {
             && self.max.z >= other.min.z
     }
 
-    /// 检测射线与 AABB 是否相交，返回最近交点参数 t（仅正向）。
+    /// Ray–AABB intersection; returns entry parameter `t` along the ray (forward hits only).
     pub fn ray_intersect(&self, origin: DVec3, inv_dir: DVec3) -> Option<f64> {
         let t1 = (self.min - origin) * inv_dir;
         let t2 = (self.max - origin) * inv_dir;
@@ -90,29 +90,29 @@ impl Aabb {
         }
     }
 
-    /// 点到 AABB 的最小距离平方。
+    /// Squared minimum distance from a point to this AABB.
     pub fn point_dist_sq(&self, p: DVec3) -> f64 {
         let clamped = p.clamp(self.min, self.max);
         (p - clamped).length_squared()
     }
 
-    /// 检测点是否在 AABB 内（含边界）。
+    /// Whether a point lies inside the AABB (inclusive of the boundary).
     pub fn contains_point(&self, p: DVec3) -> bool {
         p.cmpge(self.min).all() && p.cmple(self.max).all()
     }
 }
 
-/// BVH 节点（内部节点或叶节点）。
+/// BVH node (internal or leaf).
 #[derive(Debug, Clone)]
 enum BvhNode {
-    /// 叶节点：包含若干面的索引。
+    /// Leaf: holds a range of face indices.
     Leaf {
         aabb: Aabb,
-        /// 面索引范围（在 `Bvh.face_indices` 中的 [start, end)）。
+        /// Face index range `[start, end)` into `Bvh.face_indices`.
         start: usize,
         end: usize,
     },
-    /// 内部节点：包含左右子节点索引（在 `Bvh.nodes` 中）。
+    /// Internal node: indices of left/right children in `Bvh.nodes`.
     Internal {
         aabb: Aabb,
         left: usize,
@@ -129,31 +129,31 @@ impl BvhNode {
     }
 }
 
-/// BVH 树，绑定到一个 BRep 的面集合。
+/// BVH over the faces of one `BRep`.
 ///
-/// 构建后可用于射线拾取、最近面查询等加速操作。
+/// After construction, supports accelerated ray casts, nearest-face queries, etc.
 pub struct Bvh {
-    /// 节点数组（根节点为 index 0）。
+    /// Node array (root at index `0`).
     nodes: Vec<BvhNode>,
-    /// 面索引数组（叶节点通过 [start, end) 引用此数组）。
+    /// Face index array (leaves reference `[start, end)` ranges).
     face_indices: Vec<usize>,
-    /// 每个面的 AABB（按原始面索引存储）。
+    /// Per-face AABBs (indexed by original face index).
     face_aabbs: Vec<Aabb>,
-    /// 每个面的中心点（用于 SAH 排序）。
+    /// Per-face centers (for SAH splits).
     face_centers: Vec<DVec3>,
 }
 
-/// 每个叶节点最多包含的面数。
+/// Maximum number of faces per leaf.
 const MAX_LEAF_SIZE: usize = 4;
 
-/// SAH 划分候选数（在每个轴上采样的划分位置数）。
+/// Number of SAH bucket boundaries sampled along each axis.
 const SAH_BUCKETS: usize = 8;
 
 impl Bvh {
-    /// 为 BRep 的所有面构建 BVH 树。
+    /// Build a BVH over all faces of `brep`.
     ///
-    /// 采样策略：每个面取 boundary 顶点 + 面法向偏移少量采样点，
-    /// 保证 AABB 能覆盖整个面（含曲面面片的近似范围）。
+    /// Sampling: each face uses boundary vertices plus a small grid of interior samples
+    /// on curved patches so the AABB conservatively covers the face.
     pub fn build(brep: &BRep) -> Self {
         let faces = &brep.solids[0].shells[0].faces;
         let n_faces = faces.len();
@@ -164,7 +164,7 @@ impl Bvh {
         for (fi, face) in faces.iter().enumerate() {
             let mut aabb = Aabb::empty();
 
-            // 从边界顶点构建 AABB
+            // Seed AABB from boundary vertices
             for &wire_edge in &face.outer_wire.edges {
                 let edge = &brep.edges[wire_edge.idx];
                 let v0 = brep.vertices[edge.start].point;
@@ -173,12 +173,12 @@ impl Bvh {
                 aabb.expand_point(v1);
             }
 
-            // 对于曲面面片，额外采样面内部点扩展 AABB
+            // For curved faces, expand with interior UV samples
             if let Some(surf_idx) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
                 let surface = &brep.geom.surfaces[surf_idx];
                 let domain = surface.default_domain();
                 let [u0, u1, v0, v1] = domain;
-                // 采样 3x3 网格以覆盖曲面范围
+                // 3×3 grid over the default UV domain
                 for i in 0..=2 {
                     for j in 0..=2 {
                         let u = u0 + (u1 - u0) * i as f64 / 2.0;
@@ -191,7 +191,7 @@ impl Bvh {
                 }
             }
 
-            // 退化面保护：至少给一个微小体积
+            // Degenerate faces: nudge AABB to non-zero extent
             let size = aabb.max - aabb.min;
             if size.x < 1e-10 { aabb.min.x -= 1e-10; aabb.max.x += 1e-10; }
             if size.y < 1e-10 { aabb.min.y -= 1e-10; aabb.max.y += 1e-10; }
@@ -217,50 +217,50 @@ impl Bvh {
         bvh
     }
 
-    /// 递归构建 BVH 节点，返回新节点在 `nodes` 中的索引。
+    /// Recursively build nodes; returns the new node index in `nodes`.
     fn build_recursive(&mut self, start: usize, end: usize) -> usize {
         let count = end - start;
 
-        // 计算当前范围的 AABB
+        // Union AABB for the current face range
         let mut aabb = Aabb::empty();
         for i in start..end {
             aabb.expand_aabb(&self.face_aabbs[self.face_indices[i]]);
         }
 
-        // 叶节点条件：面数足够少
+        // Leaf when few enough faces
         if count <= MAX_LEAF_SIZE {
             let node_idx = self.nodes.len();
             self.nodes.push(BvhNode::Leaf { aabb, start, end });
             return node_idx;
         }
 
-        // SAH 选择最佳划分轴和划分位置
+        // SAH: pick axis and split plane
         let (split_axis, split_pos) = self.sah_split(start, end, &aabb);
 
-        // 按划分位置重排 face_indices
+        // Partition `face_indices` in place
         let mid = self.partition(start, end, split_axis, split_pos);
 
-        // 防止退化划分（所有面都在同一侧）
+        // Avoid degenerate splits (all faces on one side)
         let mid = if mid == start || mid == end {
             (start + end) / 2
         } else {
             mid
         };
 
-        // 占位（先 push 内部节点，再递归）
+        // Placeholder internal node before recursing into children
         let node_idx = self.nodes.len();
         self.nodes.push(BvhNode::Internal { aabb: Aabb::empty(), left: 0, right: 0 });
 
         let left = self.build_recursive(start, mid);
         let right = self.build_recursive(mid, end);
 
-        // 更新内部节点
+        // Fill in internal node AABB and child links
         self.nodes[node_idx] = BvhNode::Internal { aabb, left, right };
 
         node_idx
     }
 
-    /// SAH 选择最佳划分：返回 (轴索引 0/1/2, 划分位置)。
+    /// SAH split: returns `(axis 0/1/2, split coordinate)`.
     fn sah_split(&self, start: usize, end: usize, parent_aabb: &Aabb) -> (usize, f64) {
         let parent_sa = parent_aabb.surface_area().max(1e-30);
         let mut best_cost = f64::INFINITY;
@@ -323,7 +323,7 @@ impl Bvh {
             }
         }
 
-        // 如果没有找到有效划分，按最长轴中点划分
+        // Fallback: split at midpoint along the longest AABB axis
         if best_cost.is_infinite() {
             let d = parent_aabb.max - parent_aabb.min;
             best_axis = if d.x >= d.y && d.x >= d.z { 0 } else if d.y >= d.z { 1 } else { 2 };
@@ -333,7 +333,7 @@ impl Bvh {
         (best_axis, best_pos)
     }
 
-    /// 按轴和位置将 face_indices[start..end] 原地分区，返回分界索引。
+    /// In-place partition of `face_indices[start..end]`; returns the split index.
     fn partition(&mut self, start: usize, end: usize, axis: usize, split_pos: f64) -> usize {
         let mut mid = start;
         for i in start..end {
@@ -352,12 +352,12 @@ impl Bvh {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // 查询 API
+    // Query API
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// 射线拾取：返回第一个与射线相交的面索引及 t 值。
+    /// Ray cast: first face hit and ray parameter `t`.
     ///
-    /// `origin`：射线起点；`dir`：射线方向（无需归一化）。
+    /// `origin` is the ray origin; `dir` is the direction (need not be unit).
     pub fn ray_cast(&self, origin: DVec3, dir: DVec3) -> Option<(usize, f64)> {
         if self.nodes.is_empty() {
             return None;
@@ -382,7 +382,7 @@ impl Bvh {
             Some(t) => t,
         };
 
-        // 如果 AABB 交点已经比当前最佳更远，剪枝
+        // Prune if AABB entry is farther than the best hit so far
         if let Some((_, best_t)) = best
             && t_hit > *best_t {
                 return;
@@ -392,7 +392,7 @@ impl Bvh {
             BvhNode::Leaf { start, end, .. } => {
                 for i in *start..*end {
                     let fi = self.face_indices[i];
-                    // 简单用面 AABB 作为粗检（精确射线-面相交留给调用方）
+                    // Coarse test: face AABB only (exact ray–face test is caller’s job)
                     if let Some(t) = self.face_aabbs[fi].ray_intersect(origin, inv_dir) {
                         let update = best.is_none_or(|(_, bt)| t < bt);
                         if update {
@@ -408,9 +408,9 @@ impl Bvh {
         }
     }
 
-    /// 返回所有与给定 AABB 相交的面索引。
+    /// All face indices whose AABB intersects `query`.
     ///
-    /// 用于间隙/重叠检测的候选面对筛选。
+    /// Used to cull face pairs for gap/overlap detection.
     pub fn query_aabb(&self, query: &Aabb) -> Vec<usize> {
         let mut result = Vec::new();
         if !self.nodes.is_empty() {
@@ -440,9 +440,9 @@ impl Bvh {
         }
     }
 
-    /// 返回距离给定点最近的 k 个面索引（近似，按 AABB 距离排序）。
+    /// Up to `max_k` nearest faces to `point` (approximate, sorted by AABB distance).
     ///
-    /// `max_dist`：搜索半径（超出则不返回）。
+    /// `max_dist` is the search radius (faces farther away are omitted).
     pub fn nearest_faces(&self, point: DVec3, max_dist: f64, max_k: usize) -> Vec<(usize, f64)> {
         let mut candidates: Vec<(usize, f64)> = Vec::new();
         if self.nodes.is_empty() {
@@ -484,9 +484,9 @@ impl Bvh {
         }
     }
 
-    /// 返回与另一个 BVH 可能相交的面对候选列表。
+    /// Candidate face pairs between two BVHs whose AABBs may intersect.
     ///
-    /// 用于布尔运算前的面对筛选（替代 O(n²) 暴力遍历）。
+    /// Culls pairs before Boolean operations instead of an O(n²) brute force.
     pub fn candidate_pairs(bvh_a: &Bvh, bvh_b: &Bvh) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
         if bvh_a.nodes.is_empty() || bvh_b.nodes.is_empty() {
@@ -533,7 +533,7 @@ impl Bvh {
         }
     }
 
-    /// 返回 BVH 的统计信息（用于调试和性能分析）。
+    /// Debug / profiling statistics for this BVH.
     pub fn stats(&self) -> BvhStats {
         let mut stats = BvhStats::default();
         if !self.nodes.is_empty() {
@@ -559,7 +559,7 @@ impl Bvh {
     }
 }
 
-/// BVH 统计信息。
+/// Aggregated BVH statistics.
 #[derive(Debug, Default)]
 pub struct BvhStats {
     pub node_count: usize,
@@ -593,7 +593,7 @@ mod tests {
         });
         let bvh = Bvh::build(&brep);
         let stats = bvh.stats();
-        // 长方体有 6 个面
+        // A box has 6 faces
         assert_eq!(stats.total_leaf_faces, 6);
         assert!(stats.node_count > 0);
     }
@@ -607,7 +607,7 @@ mod tests {
         });
         let bvh = Bvh::build(&brep);
 
-        // 查询整个模型范围，应该返回所有 6 个面
+        // Large query AABB should return all 6 faces
         let big_aabb = Aabb {
             min: DVec3::splat(-10.0),
             max: DVec3::splat(10.0),
@@ -625,7 +625,7 @@ mod tests {
         });
         let bvh = Bvh::build(&brep);
 
-        // 查询远离模型的位置，应该返回空
+        // Query far from the model should return nothing
         let far_aabb = Aabb {
             min: DVec3::splat(100.0),
             max: DVec3::splat(200.0),
@@ -649,7 +649,7 @@ mod tests {
         let bvh_a = Bvh::build(&box_a);
         let bvh_b = Bvh::build(&box_b);
 
-        // 两个完全重叠的长方体：所有面对都应该是候选
+        // Two coincident boxes: expect a non-empty candidate pair set
         let pairs = Bvh::candidate_pairs(&bvh_a, &bvh_b);
         assert!(!pairs.is_empty());
     }
@@ -669,7 +669,7 @@ mod tests {
             min: DVec3::ZERO,
             max: DVec3::ONE,
         };
-        // 单位立方体表面积 = 6
+        // Unit cube surface area is 6
         assert!((aabb.surface_area() - 6.0).abs() < 1e-10);
     }
 
@@ -680,11 +680,11 @@ mod tests {
             max: DVec3::ONE,
         };
         let inv_dir = DVec3::new(1.0, 1.0, 1.0); // dir = (1,1,1)
-        // 从 (-1,-1,-1) 射向 (1,1,1) 方向，应该相交
+        // Ray from (-1,-1,-1) toward (1,1,1) should hit
         let origin = DVec3::splat(-1.0);
         assert!(aabb.ray_intersect(origin, inv_dir).is_some());
 
-        // 从 (-1,-1,-1) 射向 (-1,-1,-1) 方向（背向），不应该相交
+        // Ray pointing away from the box should miss
         let inv_dir_back = DVec3::new(-1.0, -1.0, -1.0);
         assert!(aabb.ray_intersect(origin, inv_dir_back).is_none());
     }

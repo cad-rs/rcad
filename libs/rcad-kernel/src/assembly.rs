@@ -4,40 +4,40 @@ use serde::{Deserialize, Serialize};
 use crate::BRep;
 use crate::appearance::Color;
 
-/// 装配体组件引用：可以是一个独立 BRep 实体或嵌套的子装配体。
+/// Assembly shape reference: either a standalone BRep solid or a nested sub-assembly.
 ///
-/// 类比 OCCT `XCAFDoc_ShapeTool` 的 shape reference。
+/// Analogous to an OCCT `XCAFDoc_ShapeTool` shape reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)] // BRep leaf is the common case; boxing would churn the API.
 pub enum ShapeRef {
-    /// 叶节点：一个几何实体。
+    /// Leaf: a single geometric body.
     Brep(BRep),
-    /// 非叶节点：嵌套子装配体（box 避免递归类型无限大小）。
+    /// Non-leaf: nested sub-assembly (`Box` avoids infinite recursive type size).
     Assembly(Box<Assembly>),
 }
 
-/// 装配体中的一个组件实例。
+/// One component instance inside an assembly.
 ///
-/// 同一个 `ShapeRef` 可被多个 `Component` 引用（实例化），
-/// 每个实例有独立的变换和颜色覆盖。
+/// The same `ShapeRef` may be referenced by multiple `Component`s (instancing);
+/// each instance has its own transform and optional color override.
 ///
-/// 类比 OCCT `NEXT_ASSEMBLY_USAGE_OCCURENCE` + `XCAFDoc_Location`。
+/// Analogous to OCCT `NEXT_ASSEMBLY_USAGE_OCCURENCE` + `XCAFDoc_Location`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Component {
-    /// 组件名称（用于选择、导出标注）。
+    /// Component name (selection, export labels).
     pub name: String,
-    /// 几何内容（BRep 实体或子装配体）。
+    /// Geometry content (BRep body or sub-assembly).
     pub shape: ShapeRef,
-    /// 相对于父装配体坐标系的变换（位置 + 旋转 + 缩放）。
+    /// Transform in the parent assembly frame (translation + rotation + scale).
     pub transform: SerializableAffine3,
-    /// 可选颜色覆盖（覆盖 shape 自身的颜色）。
+    /// Optional color override (overrides the shape’s own color).
     pub color: Option<Color>,
-    /// 是否可见（用于渲染过滤）。
+    /// Visibility flag (render filtering).
     pub visible: bool,
 }
 
 impl Component {
-    /// 创建一个位于原点、无旋转的 BRep 组件。
+    /// Create a BRep component at the origin with identity rotation.
     pub fn from_brep(name: impl Into<String>, brep: BRep) -> Self {
         Self {
             name: name.into(),
@@ -48,7 +48,7 @@ impl Component {
         }
     }
 
-    /// 创建一个位于原点、无旋转的子装配体组件。
+    /// Create a sub-assembly component at the origin with identity rotation.
     pub fn from_assembly(name: impl Into<String>, asm: Assembly) -> Self {
         Self {
             name: name.into(),
@@ -59,40 +59,40 @@ impl Component {
         }
     }
 
-    /// 设置变换矩阵（Builder 风格）。
+    /// Set the transform (builder style).
     pub fn with_transform(mut self, transform: DAffine3) -> Self {
         self.transform = SerializableAffine3(transform);
         self
     }
 
-    /// 设置颜色覆盖（Builder 风格）。
+    /// Set color override (builder style).
     pub fn with_color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
-    /// 获取此组件的世界变换矩阵。
+    /// World-space affine transform for this component.
     pub fn affine(&self) -> DAffine3 {
         self.transform.0
     }
 }
 
-/// 层级装配体。
+/// Hierarchical assembly.
 ///
-/// 可以包含多个 `Component`，每个组件有独立的变换。
-/// 支持嵌套（装配体内嵌套子装配体）。
+/// Holds multiple `Component`s, each with its own transform.
+/// Nesting is supported (assemblies inside assemblies).
 ///
-/// 类比 OCCT `XCAFDoc_ShapeTool` 管理的 shape 层级。
+/// Analogous to the shape hierarchy managed by OCCT `XCAFDoc_ShapeTool`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Assembly {
-    /// 装配体名称。
+    /// Assembly name.
     pub name: String,
-    /// 子组件列表（有序，用于渲染和遍历）。
+    /// Child components in order (rendering and traversal).
     pub components: Vec<Component>,
 }
 
 impl Assembly {
-    /// 创建一个空装配体。
+    /// Create an empty assembly.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -100,15 +100,15 @@ impl Assembly {
         }
     }
 
-    /// 添加一个组件。
+    /// Append a component.
     pub fn add(&mut self, component: Component) -> &mut Self {
         self.components.push(component);
         self
     }
 
-    /// 返回此装配体中所有 BRep 叶节点（展平，带世界变换矩阵）。
+    /// All BRep leaves in this assembly (flattened) with world transforms.
     ///
-    /// 用于渲染、导出、碰撞检测等需要遍历所有几何实体的场景。
+    /// Used for rendering, export, collision queries, and any traversal over solid bodies.
     pub fn flatten(&self) -> Vec<FlatComponent> {
         let mut result = Vec::new();
         self.flatten_recursive(DAffine3::IDENTITY, &mut result);
@@ -137,7 +137,7 @@ impl Assembly {
         }
     }
 
-    /// 递归查找指定名称的组件（深度优先）。
+    /// Find a direct or nested component by name (depth-first).
     pub fn find_component(&self, name: &str) -> Option<&Component> {
         for component in &self.components {
             if component.name == name {
@@ -151,12 +151,12 @@ impl Assembly {
         None
     }
 
-    /// 返回此装配体中直接子组件数量。
+    /// Number of immediate child components.
     pub fn component_count(&self) -> usize {
         self.components.len()
     }
 
-    /// 递归计算总叶节点（BRep）数量。
+    /// Total BRep leaf count (recursive).
     pub fn leaf_count(&self) -> usize {
         self.components.iter().map(|c| match &c.shape {
             ShapeRef::Brep(_) => 1,
@@ -165,7 +165,7 @@ impl Assembly {
     }
 }
 
-/// 展平后的叶节点（单个 BRep + 世界变换）。
+/// Flattened leaf: one BRep with a world transform.
 #[derive(Debug, Clone)]
 pub struct FlatComponent {
     pub name: String,
@@ -174,7 +174,7 @@ pub struct FlatComponent {
     pub color: Option<Color>,
 }
 
-/// `DAffine3` 的可序列化包装（glam 的 DAffine3 不直接支持 serde）。
+/// Serde-friendly wrapper around `DAffine3` (glam’s type does not implement serde directly).
 #[derive(Debug, Clone, Copy)]
 pub struct SerializableAffine3(pub DAffine3);
 

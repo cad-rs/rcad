@@ -1,4 +1,4 @@
-mod environment;
+﻿mod environment;
 mod light;
 
 pub use environment::{Environment, EnvironmentType, HdriEnvironment, SkyEnvironment};
@@ -6,8 +6,9 @@ pub use light::{Light, LightId, LightType};
 
 use rcad_kernel::{
     BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
-    seam_edge_candidates,
+    seam_edge_candidates, semantic_vertex_indices, vertex_adjacent_edges,
 };
+use rcad_kernel::topology::WireEdge;
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use wgpu::util::DeviceExt;
 
@@ -31,7 +32,7 @@ pub struct TessellateLineOptions {}
 /// all adjacent faces of either set will be invalidated.
 #[derive(Debug, Clone, Default)]
 pub struct EditedModelDelta {
-    /// Modified vertex indices in `BRep.vertices`.
+    /// Modified vertex indices in `BRep.nodes`.
     pub modified_vertices: Vec<usize>,
     /// Modified edge indices in `BRep.edges`.
     pub modified_edges: Vec<usize>,
@@ -271,7 +272,28 @@ impl SelectionState {
                 }
             }
             SelectionMode::Edge => {
-                let hit = pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px);
+                let hit = pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px)
+                    .or_else(|| {
+                        pick_semantic_vertex(
+                            brep,
+                            camera,
+                            aspect,
+                            viewport,
+                            cursor,
+                            edge_pick_radius_px,
+                        )
+                        .and_then(|vi| {
+                            pick_edge_from_candidates(
+                                brep,
+                                camera,
+                                aspect,
+                                viewport,
+                                cursor,
+                                edge_pick_radius_px,
+                                vertex_adjacent_edges(brep, vi).into_iter(),
+                            )
+                        })
+                    });
                 if self.additive_select {
                     if let Some(idx) = hit {
                         toggle_index(&mut self.selected_edges, idx);
@@ -308,8 +330,28 @@ impl SelectionState {
                 self.hovered_edge = None;
             }
             SelectionMode::Edge => {
-                self.hovered_edge =
-                    pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px);
+                self.hovered_edge = pick_edge(brep, camera, aspect, viewport, cursor, edge_pick_radius_px)
+                    .or_else(|| {
+                        pick_semantic_vertex(
+                            brep,
+                            camera,
+                            aspect,
+                            viewport,
+                            cursor,
+                            edge_pick_radius_px,
+                        )
+                        .and_then(|vi| {
+                            pick_edge_from_candidates(
+                                brep,
+                                camera,
+                                aspect,
+                                viewport,
+                                cursor,
+                                edge_pick_radius_px,
+                                vertex_adjacent_edges(brep, vi).into_iter(),
+                            )
+                        })
+                    });
                 self.hovered_face = None;
             }
         }
@@ -391,6 +433,29 @@ pub fn pick_edge(
     cursor_pos: [f32; 2],
     max_distance_px: f32,
 ) -> Option<usize> {
+    pick_edge_from_candidates(
+        brep,
+        camera,
+        aspect,
+        viewport_size,
+        cursor_pos,
+        max_distance_px,
+        0..brep.edges.len(),
+    )
+}
+
+fn pick_edge_from_candidates<I>(
+    brep: &BRep,
+    camera: &Camera,
+    aspect: f32,
+    viewport_size: [f32; 2],
+    cursor_pos: [f32; 2],
+    max_distance_px: f32,
+    candidates: I,
+) -> Option<usize>
+where
+    I: IntoIterator<Item = usize>,
+{
     if viewport_size[0] <= 1.0 || viewport_size[1] <= 1.0 {
         return None;
     }
@@ -399,7 +464,8 @@ pub fn pick_edge(
         glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let mut best: Option<(f32, f32, usize)> = None;
 
-    for (idx, edge) in brep.edges.iter().enumerate() {
+    for idx in candidates {
+        let edge = brep.edges.get(idx)?;
         let p0 = to_vec3(brep.vertices.get(edge.start)?.point);
         let p1 = to_vec3(brep.vertices.get(edge.end)?.point);
 
@@ -423,19 +489,72 @@ pub fn pick_edge(
     best.map(|(_, _, idx)| idx)
 }
 
+/// Pick the nearest semantic vertex in screen space.
+pub fn pick_semantic_vertex(
+    brep: &BRep,
+    camera: &Camera,
+    aspect: f32,
+    viewport_size: [f32; 2],
+    cursor_pos: [f32; 2],
+    max_distance_px: f32,
+) -> Option<usize> {
+    if viewport_size[0] <= 1.0 || viewport_size[1] <= 1.0 {
+        return None;
+    }
+    let vp =
+        glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
+    let mut best: Option<(f32, f32, usize)> = None;
+
+    for vi in semantic_vertex_indices(brep) {
+        let p = to_vec3(brep.vertices.get(vi)?.point);
+        let s = project_to_screen(vp, p, viewport_size)?;
+        let dx = cursor_pos[0] - s[0];
+        let dy = cursor_pos[1] - s[1];
+        let distance = (dx * dx + dy * dy).sqrt();
+        if distance > max_distance_px {
+            continue;
+        }
+        let depth = s[2];
+        match best {
+            Some((best_dist, best_depth, _))
+                if distance > best_dist
+                    || ((distance - best_dist).abs() < 1e-3 && depth >= best_depth) => {}
+            _ => best = Some((distance, depth, vi)),
+        }
+    }
+
+    best.map(|(_, _, vi)| vi)
+}
+
+/// Triangulation/sampling node in render meshes.
+pub type Node3 = [f32; 3];
+
 #[derive(Clone, Debug)]
 pub struct Mesh {
-    pub vertices: Vec<[f32; 3]>,
+    /// Triangulation/sample nodes (not topological vertices).
+    pub nodes: Vec<Node3>,
     pub indices: Vec<u32>,
-    /// B-rep topology edges for solid+edges / wireframe (line list indices into `vertices`).
+    /// B-rep topology edges for solid+edges / wireframe (line list indices into `nodes`).
     pub line_indices: Vec<u32>,
     /// UV / periodic seam highlight only: duplicate indices of seam edges (same vertex buffer);
-    /// drawn when [`WgpuRenderer::set_show_seam_edges`] is on — not the wireframe body itself.
+    /// drawn when [`WgpuRenderer::set_show_seam_edges`] is on 鈥?not the wireframe body itself.
     pub seam_line_indices: Vec<u32>,
-    /// Per-vertex smooth normals (same length as `vertices`).  When empty the
+    /// Per-node smooth normals (same length as `nodes`).  When empty the
     /// renderer uploads zero normals, which triggers the flat-shading fallback
     /// in the fragment shader.
     pub normals: Vec<[f32; 3]>,
+}
+
+impl Mesh {
+    /// Triangulation/sample nodes.
+    pub fn nodes(&self) -> &[Node3] {
+        &self.nodes
+    }
+
+    /// Number of triangulation/sample nodes.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
 }
 
 #[repr(C)]
@@ -484,14 +603,14 @@ pub fn build_faces_highlight_mesh(brep: &BRep, face_indices: &[usize]) -> Option
         return None;
     }
 
-    let vertices: Vec<[f32; 3]> = brep
+    let nodes: Vec<[f32; 3]> = brep
         .vertices
         .iter()
         .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
         .collect();
 
     Some(Mesh {
-        vertices,
+        nodes,
         indices,
         line_indices: Vec::new(),
         seam_line_indices: Vec::new(),
@@ -508,24 +627,24 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         return None;
     }
 
-    let mut vertices: Vec<[f32; 3]> = brep
+    let mut nodes: Vec<[f32; 3]> = brep
         .vertices
         .iter()
         .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
         .collect();
-    let mut dummy_normals: Vec<[f32; 3]> = vec![[0.0; 3]; vertices.len()];
+    let mut dummy_normals: Vec<[f32; 3]> = vec![[0.0; 3]; nodes.len()];
     let mut indices: Vec<u32> = Vec::with_capacity(edge_indices.len() * 2);
     for &edge_index in edge_indices {
         let edge = brep.edges.get(edge_index)?;
         if let Some(pts) = sample_edge_curve_points(brep, edge_index) {
-            let base = vertices.len() as u32;
+            let base = nodes.len() as u32;
             let n = pts.len();
             dummy_normals.extend(std::iter::repeat_n([0.0f32; 3], n));
             for i in 0..(n - 1) as u32 {
                 indices.push(base + i);
                 indices.push(base + i + 1);
             }
-            vertices.extend_from_slice(&pts);
+            nodes.extend_from_slice(&pts);
         } else {
             indices.push(edge.start as u32);
             indices.push(edge.end as u32);
@@ -534,7 +653,7 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
     drop(dummy_normals);
 
     Some(Mesh {
-        vertices,
+        nodes,
         indices,
         line_indices: Vec::new(),
         seam_line_indices: Vec::new(),
@@ -542,47 +661,127 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
     })
 }
 
+/// Line list (`Mesh::indices` pairs) tracing each selected face鈥檚 outer and inner wires.
+///
+/// Used in wireframe display so face selection/hover is visible without filled triangles.
+/// Shared edges between two selected faces are drawn once (`edge_idx` de-duplication).
+pub fn build_faces_selection_outline_mesh(brep: &BRep, face_indices: &[usize]) -> Option<Mesh> {
+    if face_indices.is_empty() {
+        return None;
+    }
+
+    let selected: std::collections::HashSet<usize> = face_indices.iter().copied().collect();
+    let mut seen_edge = std::collections::HashSet::new();
+
+    let mut nodes: Vec<[f32; 3]> = brep
+        .vertices
+        .iter()
+        .map(|v| [v.point.x as f32, v.point.y as f32, v.point.z as f32])
+        .collect();
+    let mut indices: Vec<u32> = Vec::new();
+
+    let mut face_i = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                if selected.contains(&face_i) {
+                    for wire in std::iter::once(&face.outer_wire).chain(face.inner_wires.iter()) {
+                        for we in &wire.edges {
+                            if seen_edge.insert(we.idx) {
+                                append_wire_edge_as_line_list(brep, *we, &mut nodes, &mut indices);
+                            }
+                        }
+                    }
+                }
+                face_i += 1;
+            }
+        }
+    }
+
+    if indices.is_empty() {
+        None
+    } else {
+        Some(Mesh {
+            nodes,
+            indices,
+            line_indices: Vec::new(),
+            seam_line_indices: Vec::new(),
+            normals: Vec::new(),
+        })
+    }
+}
+
+fn append_wire_edge_as_line_list(
+    brep: &BRep,
+    we: WireEdge,
+    nodes: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+) {
+    let Some(edge) = brep.edges.get(we.idx) else {
+        return;
+    };
+    if let Some(mut pts) = sample_edge_curve_points(brep, we.idx) {
+        if !we.forward {
+            pts.reverse();
+        }
+        let base = nodes.len() as u32;
+        for i in 0..(pts.len() - 1) as u32 {
+            indices.push(base + i);
+            indices.push(base + i + 1);
+        }
+        nodes.extend_from_slice(&pts);
+    } else {
+        let (a, b) = if we.forward {
+            (edge.start, edge.end)
+        } else {
+            (edge.end, edge.start)
+        };
+        indices.push(a as u32);
+        indices.push(b as u32);
+    }
+}
+
 pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     if meshes.is_empty() {
         return None;
     }
 
-    let total_vertices = meshes.iter().map(|mesh| mesh.vertices.len()).sum();
+    let total_nodes = meshes.iter().map(|mesh| mesh.nodes.len()).sum();
     let total_indices = meshes.iter().map(|mesh| mesh.indices.len()).sum();
     let total_line_indices = meshes.iter().map(|mesh| mesh.line_indices.len()).sum();
     let total_seam_line_indices = meshes.iter().map(|mesh| mesh.seam_line_indices.len()).sum();
 
-    if total_vertices == 0
+    if total_nodes == 0
         || (total_indices == 0 && total_line_indices == 0 && total_seam_line_indices == 0)
     {
         return None;
     }
 
-    let mut vertices = Vec::with_capacity(total_vertices);
-    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(total_vertices);
+    let mut nodes = Vec::with_capacity(total_nodes);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(total_nodes);
     let mut indices = Vec::with_capacity(total_indices);
     let mut line_indices = Vec::with_capacity(total_line_indices);
     let mut seam_line_indices = Vec::with_capacity(total_seam_line_indices);
-    let mut vertex_offset = 0u32;
+    let mut node_offset = 0u32;
 
     for mesh in meshes {
-        vertices.extend_from_slice(&mesh.vertices);
+        nodes.extend_from_slice(&mesh.nodes);
         normals.extend_from_slice(&mesh.normals);
-        indices.extend(mesh.indices.iter().map(|index| index + vertex_offset));
-        line_indices.extend(mesh.line_indices.iter().map(|index| index + vertex_offset));
+        indices.extend(mesh.indices.iter().map(|index| index + node_offset));
+        line_indices.extend(mesh.line_indices.iter().map(|index| index + node_offset));
         seam_line_indices.extend(
             mesh.seam_line_indices
                 .iter()
-                .map(|index| index + vertex_offset),
+                .map(|index| index + node_offset),
         );
-        vertex_offset += mesh.vertices.len() as u32;
+        node_offset += mesh.nodes.len() as u32;
     }
 
     // If only some meshes had normals fill missing entries with zero.
-    normals.resize(vertices.len(), [0.0, 0.0, 0.0]);
+    normals.resize(nodes.len(), [0.0, 0.0, 0.0]);
 
     Some(Mesh {
-        vertices,
+        nodes,
         indices,
         line_indices,
         seam_line_indices,
@@ -590,49 +789,193 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     })
 }
 
+/// Build visible 3D vertex dots as tiny octahedrons.
+///
+/// This is used by Creator overlays to make edge endpoint targeting easier.
+/// Only topological edge endpoints are considered; sampled polyline points are excluded.
+pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
+    if brep.vertices.is_empty() {
+        return None;
+    }
+    const MAX_VERTEX_DOTS: usize = 20_000;
+    let feature_indices = semantic_vertex_indices(brep);
+    if feature_indices.is_empty() {
+        return None;
+    }
+
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for &vi in &feature_indices {
+        let Some(v) = brep.vertices.get(vi) else {
+            continue;
+        };
+        let p = glam::Vec3::new(v.point.x as f32, v.point.y as f32, v.point.z as f32);
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let diag = (max - min).length();
+    // Keep dots visible across scales while avoiding excessive overlap.
+    let r = (diag * 0.006).clamp(0.01, 0.5);
+    let dot_count = feature_indices.len().min(MAX_VERTEX_DOTS);
+    let step = feature_indices.len().div_ceil(dot_count.max(1));
+
+    let mut nodes: Vec<[f32; 3]> = Vec::with_capacity(dot_count * 6);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(dot_count * 6);
+    let mut indices: Vec<u32> = Vec::with_capacity(dot_count * 8 * 3);
+
+    for (i, &vi) in feature_indices.iter().enumerate() {
+        if i % step != 0 {
+            continue;
+        }
+        if nodes.len() >= dot_count * 6 {
+            break;
+        }
+        let Some(v) = brep.vertices.get(vi) else {
+            continue;
+        };
+        let c = glam::Vec3::new(v.point.x as f32, v.point.y as f32, v.point.z as f32);
+        let px = c + glam::Vec3::X * r;
+        let mx = c - glam::Vec3::X * r;
+        let py = c + glam::Vec3::Y * r;
+        let my = c - glam::Vec3::Y * r;
+        let pz = c + glam::Vec3::Z * r;
+        let mz = c - glam::Vec3::Z * r;
+
+        let base = nodes.len() as u32;
+        let pts = [px, mx, py, my, pz, mz];
+        for p in pts {
+            nodes.push(p.to_array());
+            normals.push((p - c).normalize_or_zero().to_array());
+        }
+
+        // Octahedron faces.
+        let top = base + 4;
+        let bottom = base + 5;
+        let right = base;
+        let left = base + 1;
+        let front = base + 2;
+        let back = base + 3;
+        indices.extend_from_slice(&[
+            top, right, front, top, front, left, top, left, back, top, back, right, bottom,
+            front, right, bottom, left, front, bottom, back, left, bottom, right, back,
+        ]);
+    }
+
+    Some(Mesh {
+        nodes,
+        indices,
+        line_indices: Vec::new(),
+        seam_line_indices: Vec::new(),
+        normals,
+    })
+}
+
 /// Merged face highlights + B-rep edge pick geometry for [`WgpuRenderer::upload_highlights`],
 /// shared by egui and iced Creator viewports.
+///
+/// When `wireframe_face_outlines` is true, selected faces are **not** tessellated into highlight
+/// triangles; instead their outer/inner wire boundaries are merged into the edge highlight line
+/// mesh so selection remains visible in wireframe-only mode.
 pub fn upload_brep_selection_highlights(
     renderer: &WgpuRenderer,
     device: &wgpu::Device,
     brep: &BRep,
     selected_faces: &[usize],
     selected_edges: &[usize],
+    show_vertex_dots: bool,
     preview_mesh: Option<&Mesh>,
+    wireframe_face_outlines: bool,
 ) {
-    let selected_face_mesh = build_faces_highlight_mesh(brep, selected_faces);
+    let selected_face_tris = if wireframe_face_outlines {
+        None
+    } else {
+        build_faces_highlight_mesh(brep, selected_faces)
+    };
+    let face_outline_lines = if wireframe_face_outlines {
+        build_faces_selection_outline_mesh(brep, selected_faces)
+    } else {
+        None
+    };
+
     let mut face_parts: Vec<&Mesh> = Vec::new();
-    if let Some(mesh) = selected_face_mesh.as_ref() {
+    if let Some(mesh) = selected_face_tris.as_ref() {
+        face_parts.push(mesh);
+    }
+    let vertex_dots = if show_vertex_dots {
+        build_vertex_dots_mesh(brep)
+    } else {
+        None
+    };
+    if let Some(mesh) = vertex_dots.as_ref() {
         face_parts.push(mesh);
     }
     if let Some(mesh) = preview_mesh {
         face_parts.push(mesh);
     }
     let face_mesh = merge_meshes(&face_parts);
-    let edge_mesh = build_edges_highlight_mesh(brep, selected_edges);
+
+    let edge_pick = build_edges_highlight_mesh(brep, selected_edges);
+    let edge_mesh = match (edge_pick, face_outline_lines) {
+        (Some(a), Some(b)) => merge_meshes(&[&a, &b]),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+
     renderer.upload_highlights(device, face_mesh.as_ref(), edge_mesh.as_ref());
 }
 
-/// Perspective aspect from a **snapped** pixel width/height (e.g. egui’s rounded physical rect).
+/// Perspective aspect from a **snapped** pixel width/height (e.g. egui鈥檚 rounded physical rect).
 #[inline]
 pub fn projection_aspect_from_pixel_size(width_px: u32, height_px: u32) -> f32 {
     width_px.max(1) as f32 / height_px.max(1) as f32
 }
 
-/// Returns `(projection_aspect, depth_attachment_w, depth_attachment_h)` for
-/// [`WgpuRenderer::prepare_scene_with_depth`].
+/// Float viewport + integer scissor for embedding (e.g. iced `Primitive::render`).
+///
+/// `iced_wgpu` sets [`wgpu::RenderPass::set_viewport`] from **unrounded** `bounds * scale_factor`
+/// but [`wgpu::RenderPass::set_scissor_rect`] from the **snapped** intersection with the target.
+/// Using the same integer rect for both breaks NDC mapping vs the camera aspect and shows up as
+/// depth ordering artifacts on solids.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewportClip {
+    pub viewport: (f32, f32, f32, f32),
+    pub scissor: (u32, u32, u32, u32),
+}
+
+impl ViewportClip {
+    /// Viewport and scissor use the same pixel rectangle (legacy behaviour).
+    #[inline]
+    pub fn uniform(x: u32, y: u32, w: u32, h: u32) -> Self {
+        let w = w.max(1);
+        let h = h.max(1);
+        Self {
+            viewport: (x as f32, y as f32, w as f32, h as f32),
+            scissor: (x, y, w, h),
+        }
+    }
+}
+
+/// Returns `(projection_aspect, depth_attachment_w, depth_attachment_h, physical_clip_xywh)` for
+/// [`WgpuRenderer::prepare_scene_with_depth`] and matching viewport/scissor in
+/// [`WgpuRenderer::render`].
 ///
 /// Matches iced 0.14 `iced_wgpu` shader primitives: scale logical bounds to physical pixels,
 /// intersect with the full target `0..full_target_pixels`, then snap corners like
 /// [`iced_core::Rectangle::snap`] (rounded top-left and rounded bottom-right).
 ///
-/// `depth_attachment_*` are always the full render target size — the depth texture must match
+/// `depth_attachment_*` are always the full render target size 鈥?the depth texture must match
 /// the color attachment; only the perspective aspect uses the clipped widget.
+///
+/// The first return value is aspect from the **snapped** clip (for callers that align viewport to
+/// the same rect). For iced, prefer `bounds * scale_factor` float width/height for
+/// [`WgpuRenderer::update_camera`] and use [`ViewportClip`] with a float viewport plus the
+/// fourth tuple for scissor only.
 pub fn shader_widget_projection_aspect_and_depth_target(
     full_target_pixels: (u32, u32),
     widget_bounds_logical_xywh: (f32, f32, f32, f32),
     scale_factor: f32,
-) -> (f32, u32, u32) {
+) -> (f32, u32, u32, (u32, u32, u32, u32)) {
     let (lx, ly, lw, lh) = widget_bounds_logical_xywh;
     let wx = lx * scale_factor;
     let wy = ly * scale_factor;
@@ -662,7 +1005,7 @@ pub fn shader_widget_projection_aspect_and_depth_target(
         }
     };
 
-    let snap_clip_size = |x: f32, y: f32, w: f32, h: f32| -> Option<(u32, u32)> {
+    let snap_clip_rect = |x: f32, y: f32, w: f32, h: f32| -> Option<(u32, u32, u32, u32)> {
         let top_left_x = x.round() as i64;
         let top_left_y = y.round() as i64;
         let bottom_right_x = (x + w).round() as i64;
@@ -672,22 +1015,27 @@ pub fn shader_widget_projection_aspect_and_depth_target(
         if cw < 1 || ch < 1 {
             return None;
         }
-        Some((cw as u32, ch as u32))
+        Some((
+            top_left_x.clamp(0, i64::from(u32::MAX)) as u32,
+            top_left_y.clamp(0, i64::from(u32::MAX)) as u32,
+            cw as u32,
+            ch as u32,
+        ))
     };
 
-    let (cw, ch) = intersect_f32(widget, full)
-        .and_then(|(x, y, w, h)| snap_clip_size(x, y, w, h))
-        .unwrap_or_else(|| {
-            (
-                full_target_pixels.0.max(1),
-                full_target_pixels.1.max(1),
-            )
-        });
-
-    let aspect = cw as f32 / ch as f32;
     let dw = full_target_pixels.0.max(1);
     let dh = full_target_pixels.1.max(1);
-    (aspect, dw, dh)
+
+    match intersect_f32(widget, full).and_then(|(x, y, w, h)| snap_clip_rect(x, y, w, h)) {
+        Some((sx, sy, cw, ch)) => {
+            let aspect = cw as f32 / ch as f32;
+            (aspect, dw, dh, (sx, sy, cw, ch))
+        }
+        None => {
+            let aspect = dw as f32 / dh as f32;
+            (aspect, dw, dh, (0, 0, dw, dh))
+        }
+    }
 }
 
 /// Sample the analytic curve of a BRep edge into a sequence of `[f32; 3]` points
@@ -730,12 +1078,12 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
         out
     };
 
-    // Some imported periodic edges carry a full [0, 2π] range even when the
+    // Some imported periodic edges carry a full [0, 2蟺] range even when the
     // topological edge is only an arc. Rebuild a trimmed range from endpoints.
     //
     // Seam edges (same geometric vertex at start/end on a full turn) must **not** use that
     // angle delta shrink: it collapses span to 0, `sample_edge_curve_points` returns `None`,
-    // and wireframe falls back to a degenerate chord — circles/cylinders disappear in wireframe.
+    // and wireframe falls back to a degenerate chord 鈥?circles/cylinders disappear in wireframe.
     match curve {
         Curve3::Circle(c) => {
             if (range[1] - range[0]).abs() >= two_pi * 0.999 {
@@ -786,7 +1134,7 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
         _ => {}
     }
 
-    // Straight lines render fine as a single chord — skip sampling.
+    // Straight lines render fine as a single chord 鈥?skip sampling.
     if matches!(curve, Curve3::Line(_)) {
         return None;
     }
@@ -852,7 +1200,7 @@ impl Tessellator {
             }
         }
 
-        // ── Per-vertex smooth normal computation (area-weighted face normal avg) ──
+        // 鈹€鈹€ Per-node smooth normal computation (area-weighted face normal avg) 鈹€鈹€
         let mut normal_accum = vec![[0.0f64; 3]; n_verts];
         let mut face_flat_idx = 0usize;
         for solid in &brep.solids {
@@ -871,7 +1219,7 @@ impl Tessellator {
                         let c = brep.vertices[tri[2]].point;
                         let e1 = b - a;
                         let e2 = c - a;
-                        // Area-weighted face normal (magnitude = 2× triangle area)
+                        // Area-weighted face normal (magnitude = 2脳 triangle area)
                         let fn_ = e1.cross(e2);
                         let weight = fn_.length().max(1e-12);
                         for &vi in tri.iter() {
@@ -904,7 +1252,7 @@ impl Tessellator {
             .collect();
 
         // STEP imports can split one visually smooth surface into multiple faces
-        // with duplicate vertex positions. If the split-face normals are already
+        // with duplicate node positions. If the split-face normals are already
         // closely aligned, smooth them together to avoid artificial seam lines.
         smooth_normals_across_coincident_vertices(&flat_verts, &mut normals, 1e-5, 0.95);
 
@@ -964,7 +1312,7 @@ impl Tessellator {
         let _ = line; // options reserved for API compatibility
 
         Mesh {
-            vertices: flat_verts,
+            nodes: flat_verts,
             indices,
             line_indices,
             seam_line_indices,
@@ -1117,8 +1465,8 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert!(
-            mesh.vertices.len() > brep.vertices.len(),
-            "circle edges should append sampled polyline vertices"
+            mesh.nodes.len() > brep.vertices.len(),
+            "circle edges should append sampled polyline nodes"
         );
         assert!(
             mesh.line_indices.len() + mesh.seam_line_indices.len() > brep.edges.len() * 2,
@@ -1135,8 +1483,8 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
 
-        // Verify vertices are generated
-        assert!(!mesh.vertices.is_empty(), "cylinder should generate vertices");
+        // Verify mesh nodes are generated
+        assert!(!mesh.nodes.is_empty(), "cylinder should generate mesh nodes");
 
         // Verify triangles are generated (indices should be divisible by 3)
         assert!(!mesh.indices.is_empty(), "cylinder should generate indices");
@@ -1149,14 +1497,14 @@ mod tests {
         // Verify smooth normals are generated
         assert_eq!(
             mesh.normals.len(),
-            mesh.vertices.len(),
-            "cylinder should have per-vertex normals for smooth shading"
+            mesh.nodes.len(),
+            "cylinder should have per-node normals for smooth shading"
         );
 
         // Verify reasonable mesh density (cylinder should have multiple quads around)
         assert!(
-            mesh.vertices.len() > 20,
-            "cylinder should have sufficient vertices for curvature"
+            mesh.nodes.len() > 20,
+            "cylinder should have sufficient mesh nodes for curvature"
         );
     }
 
@@ -1166,8 +1514,8 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
 
-        // Verify vertices are generated
-        assert!(!mesh.vertices.is_empty(), "sphere should generate vertices");
+        // Verify mesh nodes are generated
+        assert!(!mesh.nodes.is_empty(), "sphere should generate mesh nodes");
 
         // Verify triangles are generated (indices should be divisible by 3)
         assert!(!mesh.indices.is_empty(), "sphere should generate indices");
@@ -1180,14 +1528,14 @@ mod tests {
         // Verify smooth normals are generated
         assert_eq!(
             mesh.normals.len(),
-            mesh.vertices.len(),
-            "sphere should have per-vertex normals for smooth shading"
+            mesh.nodes.len(),
+            "sphere should have per-node normals for smooth shading"
         );
 
         // Verify reasonable mesh density
         assert!(
-            mesh.vertices.len() > 50,
-            "sphere should have sufficient vertices for curvature"
+            mesh.nodes.len() > 50,
+            "sphere should have sufficient mesh nodes for curvature"
         );
     }
 
@@ -1200,8 +1548,8 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
 
-        // Verify vertices are generated
-        assert!(!mesh.vertices.is_empty(), "cone should generate vertices");
+        // Verify mesh nodes are generated
+        assert!(!mesh.nodes.is_empty(), "cone should generate mesh nodes");
 
         // Verify triangles are generated (indices should be divisible by 3)
         assert!(!mesh.indices.is_empty(), "cone should generate indices");
@@ -1214,14 +1562,14 @@ mod tests {
         // Verify smooth normals are generated
         assert_eq!(
             mesh.normals.len(),
-            mesh.vertices.len(),
-            "cone should have per-vertex normals for smooth shading"
+            mesh.nodes.len(),
+            "cone should have per-node normals for smooth shading"
         );
 
         // Verify reasonable mesh density
         assert!(
-            mesh.vertices.len() > 10,
-            "cone should have sufficient vertices for curvature"
+            mesh.nodes.len() > 10,
+            "cone should have sufficient mesh nodes for curvature"
         );
     }
 
@@ -1234,8 +1582,8 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
 
-        // Verify vertices are generated
-        assert!(!mesh.vertices.is_empty(), "torus should generate vertices");
+        // Verify mesh nodes are generated
+        assert!(!mesh.nodes.is_empty(), "torus should generate mesh nodes");
 
         // Verify triangles are generated (indices should be divisible by 3)
         assert!(!mesh.indices.is_empty(), "torus should generate indices");
@@ -1248,14 +1596,14 @@ mod tests {
         // Verify smooth normals are generated
         assert_eq!(
             mesh.normals.len(),
-            mesh.vertices.len(),
-            "torus should have per-vertex normals for smooth shading"
+            mesh.nodes.len(),
+            "torus should have per-node normals for smooth shading"
         );
 
-        // Verify reasonable mesh density (torus is complex, needs many vertices)
+        // Verify reasonable mesh density (torus is complex, needs many mesh nodes)
         assert!(
-            mesh.vertices.len() > 100,
-            "torus should have sufficient vertices for double curvature"
+            mesh.nodes.len() > 100,
+            "torus should have sufficient mesh nodes for double curvature"
         );
     }
 
@@ -1323,7 +1671,7 @@ mod tests {
         let params = TessellationParams::standard();
         let mesh = Tessellator::tessellate_with_options(&mut brep, &params);
 
-        let vertices = &mesh.vertices;
+        let nodes = &mesh.nodes;
         let max_allowed_aspect_ratio = 25.0; // Reasonable threshold for mesh quality
 
         let mut max_aspect_ratio = 0.0f32;
@@ -1335,9 +1683,9 @@ mod tests {
             let i1 = mesh.indices[tri_idx * 3 + 1] as usize;
             let i2 = mesh.indices[tri_idx * 3 + 2] as usize;
 
-            let v0 = glam::Vec3::from(vertices[i0]);
-            let v1 = glam::Vec3::from(vertices[i1]);
-            let v2 = glam::Vec3::from(vertices[i2]);
+            let v0 = glam::Vec3::from(nodes[i0]);
+            let v1 = glam::Vec3::from(nodes[i1]);
+            let v2 = glam::Vec3::from(nodes[i2]);
 
             let aspect_ratio = compute_triangle_aspect_ratio(v0, v1, v2);
             max_aspect_ratio = max_aspect_ratio.max(aspect_ratio);
@@ -1414,7 +1762,7 @@ mod tests {
         let mesh = Tessellator::tessellate(&brep);
 
         // Box should have 6 faces, each with 2 triangles minimum
-        assert!(!mesh.vertices.is_empty(), "box should generate vertices");
+        assert!(!mesh.nodes.is_empty(), "box should generate mesh nodes");
         assert!(mesh.indices.len() >= 36, "box should have at least 12 triangles");
 
         // Verify normals are unit length
@@ -1437,19 +1785,19 @@ mod tests {
         let mesh = Tessellator::tessellate(&brep);
 
         // Verify mesh is valid
-        assert!(!mesh.vertices.is_empty(), "torus should generate vertices");
+        assert!(!mesh.nodes.is_empty(), "torus should generate mesh nodes");
 
-        // Check that some vertices are on the inner equator (closest to center)
+        // Check that some mesh nodes are on the inner equator (closest to center)
         let inner_radius = 4.0 - 1.5; // 2.5
         let mut has_inner_vertex = false;
-        for v in &mesh.vertices {
+        for v in &mesh.nodes {
             let r = (v[0] * v[0] + v[1] * v[1]).sqrt();
             if (r - inner_radius).abs() < 0.3 {
                 has_inner_vertex = true;
                 break;
             }
         }
-        assert!(has_inner_vertex, "torus should have vertices on inner equator");
+        assert!(has_inner_vertex, "torus should have mesh nodes on inner equator");
     }
 
     /// Test cylinder mesh has proper radial distribution.
@@ -1464,16 +1812,16 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::standard());
         let mesh = Tessellator::tessellate(&brep);
 
-        // Count vertices at different angles
+        // Count mesh nodes at different angles
         let mut angles: Vec<f32> = Vec::new();
-        for v in &mesh.vertices {
+        for v in &mesh.nodes {
             let angle = (v[1].atan2(v[0]) * 180.0 / std::f32::consts::PI).abs();
             angles.push(angle);
         }
 
-        // Should have vertices distributed around full 360 degrees
+        // Should have mesh nodes distributed around full 360 degrees
         let max_angle = angles.iter().cloned().fold(0.0_f32, f32::max);
-        assert!(max_angle > 150.0, "vertices should span most of 360 degrees");
+        assert!(max_angle > 150.0, "mesh nodes should span most of 360 degrees");
     }
 
     /// Test cone mesh handles apex region correctly.
@@ -1488,17 +1836,17 @@ mod tests {
         let mesh = Tessellator::tessellate(&brep);
 
         // Verify the cone mesh is valid and non-empty
-        assert!(!mesh.vertices.is_empty(), "cone should generate vertices");
+        assert!(!mesh.nodes.is_empty(), "cone should generate mesh nodes");
         assert!(!mesh.indices.is_empty(), "cone should generate indices");
 
         // Verify indices form valid triangles
-        let vertex_count = mesh.vertices.len() as u32;
+        let node_count = mesh.nodes.len() as u32;
         for &idx in &mesh.indices {
-            assert!(idx < vertex_count, "index should be within bounds");
+            assert!(idx < node_count, "index should be within bounds");
         }
 
         // Check z range includes the expected height range
-        let z_values: Vec<f32> = mesh.vertices.iter().map(|v| v[2]).collect();
+        let z_values: Vec<f32> = mesh.nodes.iter().map(|v| v[2]).collect();
         let z_max = z_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let z_min = z_values.iter().cloned().fold(f32::INFINITY, f32::min);
 
@@ -1534,10 +1882,10 @@ mod tests {
 
         // Preview should have fewer triangles than high quality
         assert!(
-            preview_mesh.vertices.len() <= hq_mesh.vertices.len(),
-            "preview mesh ({}) should have <= vertices than hq ({})",
-            preview_mesh.vertices.len(),
-            hq_mesh.vertices.len()
+            preview_mesh.nodes.len() <= hq_mesh.nodes.len(),
+            "preview mesh ({}) should have <= nodes than hq ({})",
+            preview_mesh.nodes.len(),
+            hq_mesh.nodes.len()
         );
     }
 
@@ -1553,7 +1901,7 @@ mod tests {
         // (same direction as position vector). Allow some tolerance for poles.
         let mut outward_count = 0;
         let mut total_count = 0;
-        for (v, n) in mesh.vertices.iter().zip(mesh.normals.iter()) {
+        for (v, n) in mesh.nodes.iter().zip(mesh.normals.iter()) {
             let v_len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
             if v_len > 0.1 {
                 total_count += 1;
@@ -1587,15 +1935,15 @@ mod tests {
         mesh_brep(&mut brep, &TessellationParams::standard());
         let mesh = Tessellator::tessellate(&brep);
 
-        let vertex_count = mesh.vertices.len() as u32;
+        let node_count = mesh.nodes.len() as u32;
 
         // All indices should be within bounds
         for &idx in &mesh.indices {
             assert!(
-                idx < vertex_count,
-                "index {} out of bounds (vertex count: {})",
+                idx < node_count,
+                "index {} out of bounds (node count: {})",
                 idx,
-                vertex_count
+                node_count
             );
         }
     }
@@ -1607,7 +1955,7 @@ mod tests {
         let brep = BRep::new();
         let mesh = Tessellator::tessellate(&brep);
 
-        assert!(mesh.vertices.is_empty(), "empty brep should produce empty mesh");
+        assert!(mesh.nodes.is_empty(), "empty brep should produce empty mesh");
         assert!(mesh.indices.is_empty(), "empty brep should produce no indices");
     }
 }
@@ -1703,7 +2051,7 @@ impl Default for Camera {
 }
 
 fn smooth_normals_across_coincident_vertices(
-    vertices: &[[f32; 3]],
+    nodes: &[[f32; 3]],
     normals: &mut [[f32; 3]],
     tolerance: f32,
     min_dot: f32,
@@ -1712,7 +2060,7 @@ fn smooth_normals_across_coincident_vertices(
 
     let scale = 1.0 / tolerance.max(1e-9);
     let mut groups: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
-    for (index, &[x, y, z]) in vertices.iter().enumerate() {
+    for (index, &[x, y, z]) in nodes.iter().enumerate() {
         let key = [
             (x * scale).round() as i64,
             (y * scale).round() as i64,
@@ -2013,23 +2361,23 @@ fn build_axis_arrow_mesh(
     let u = dir.cross(arbitrary).normalize();
     let v = dir.cross(u);
 
-    // Shaft: two vertices (origin → shaft_length along dir)
+    // Shaft: two nodes (origin -> shaft_length along dir)
     let shaft_end = dir * shaft_length;
-    let mut vertices = vec![[0.0, 0.0, 0.0], shaft_end.to_array()];
+    let mut nodes = vec![[0.0, 0.0, 0.0], shaft_end.to_array()];
 
     // Line indices for the shaft
     let line_indices = vec![0, 1];
 
     // Cone: base ring at shaft_end, tip at shaft_end + cone_height * dir
     let tip = shaft_end + dir * cone_height;
-    let tip_idx = vertices.len() as u32;
-    vertices.push(tip.to_array());
+    let tip_idx = nodes.len() as u32;
+    nodes.push(tip.to_array());
 
-    let base_start = vertices.len() as u32;
+    let base_start = nodes.len() as u32;
     for i in 0..segments {
         let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
         let point = shaft_end + u * (angle.cos() * cone_radius) + v * (angle.sin() * cone_radius);
-        vertices.push(point.to_array());
+        nodes.push(point.to_array());
     }
 
     // Triangle fan for cone
@@ -2044,8 +2392,8 @@ fn build_axis_arrow_mesh(
     }
 
     // Base cap center
-    let base_center_idx = vertices.len() as u32;
-    vertices.push(shaft_end.to_array());
+    let base_center_idx = nodes.len() as u32;
+    nodes.push(shaft_end.to_array());
     for i in 0..segments {
         let curr = base_start + i;
         let next = base_start + (i + 1) % segments;
@@ -2054,12 +2402,12 @@ fn build_axis_arrow_mesh(
         tri_indices.push(curr);
     }
 
-    (vertices, tri_indices, line_indices)
+    (nodes, tri_indices, line_indices)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_ring_vertices(
-    vertices: &mut Vec<[f32; 3]>,
+fn append_ring_nodes(
+    nodes: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     center: glam::Vec3,
     u: glam::Vec3,
@@ -2070,13 +2418,13 @@ fn append_ring_vertices(
     normal_scale_axis: f32,
     axis: glam::Vec3,
 ) -> u32 {
-    let start = vertices.len() as u32;
+    let start = nodes.len() as u32;
     for i in 0..segments {
         let angle = 2.0 * std::f32::consts::PI * (i as f32) / segments as f32;
         let radial = u * angle.cos() + v * angle.sin();
         let position = center + radial * radius;
         let normal = (radial * normal_scale_xy + axis * normal_scale_axis).normalize_or_zero();
-        vertices.push(position.to_array());
+        nodes.push(position.to_array());
         normals.push(normal.to_array());
     }
     start
@@ -2111,12 +2459,12 @@ fn build_solid_axis_arrow_mesh(
     let u = axis.cross(arbitrary).normalize_or_zero();
     let v = axis.cross(u).normalize_or_zero();
 
-    let mut vertices = Vec::new();
+    let mut nodes = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
-    let shaft_start = append_ring_vertices(
-        &mut vertices,
+    let shaft_start = append_ring_nodes(
+        &mut nodes,
         &mut normals,
         glam::Vec3::ZERO,
         u,
@@ -2128,8 +2476,8 @@ fn build_solid_axis_arrow_mesh(
         axis,
     );
     let shaft_end_center = axis * shaft_length;
-    let shaft_end = append_ring_vertices(
-        &mut vertices,
+    let shaft_end = append_ring_nodes(
+        &mut nodes,
         &mut normals,
         shaft_end_center,
         u,
@@ -2142,8 +2490,8 @@ fn build_solid_axis_arrow_mesh(
     );
     append_ring_indices(&mut indices, shaft_start, shaft_end, segments);
 
-    let cone_base = append_ring_vertices(
-        &mut vertices,
+    let cone_base = append_ring_nodes(
+        &mut nodes,
         &mut normals,
         shaft_end_center,
         u,
@@ -2154,20 +2502,20 @@ fn build_solid_axis_arrow_mesh(
         cone_radius,
         axis,
     );
-    let tip_index = vertices.len() as u32;
+    let tip_index = nodes.len() as u32;
     let tip = shaft_end_center + axis * cone_height;
-    vertices.push(tip.to_array());
+    nodes.push(tip.to_array());
     normals.push(axis.to_array());
     for i in 0..segments {
         let next = (i + 1) % segments;
         indices.extend_from_slice(&[tip_index, cone_base + i, cone_base + next]);
     }
 
-    (vertices, normals, indices)
+    (nodes, normals, indices)
 }
 
 fn build_cube_mesh(half_extent: f32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
-    let mut vertices = Vec::new();
+    let mut nodes = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
@@ -2229,19 +2577,19 @@ fn build_cube_mesh(half_extent: f32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>)
     ];
 
     for (normal, corners) in faces {
-        let start = vertices.len() as u32;
+        let start = nodes.len() as u32;
         for corner in corners {
-            vertices.push(corner.to_array());
+            nodes.push(corner.to_array());
             normals.push(normal.to_array());
         }
         indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
     }
 
-    (vertices, normals, indices)
+    (nodes, normals, indices)
 }
 
-fn interleave_positions_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
-    vertices
+fn interleave_positions_normals(nodes: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
+    nodes
         .iter()
         .zip(normals.iter())
         .map(|(&[px, py, pz], &[nx, ny, nz])| [px, py, pz, nx, ny, nz])
@@ -2258,9 +2606,9 @@ struct GridBuffers {
 
 /// Interleave vertex positions and normals into a flat `Vec<[f32; 6]>` for GPU upload.
 /// If `normals` is empty or a different length, zero normals are used (triggers flat-shading fallback in shader).
-fn interleave_verts_normals(vertices: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
-    let has_normals = normals.len() == vertices.len();
-    vertices
+fn interleave_verts_normals(nodes: &[[f32; 3]], normals: &[[f32; 3]]) -> Vec<[f32; 6]> {
+    let has_normals = normals.len() == nodes.len();
+    nodes
         .iter()
         .enumerate()
         .map(|(i, &[px, py, pz])| {
@@ -2325,13 +2673,13 @@ fn grid_material_uniforms(minor_spacing: f32) -> (MaterialUniform, MaterialUnifo
     )
 }
 
-/// Build an adaptive grid on the XZ plane (Y=0). Returns (vertices, major_line_indices, minor_line_indices).
+/// Build an adaptive grid on the XZ plane (Y=0). Returns (nodes, major_line_indices, minor_line_indices).
 fn build_grid_mesh(
     center: glam::Vec2,
     minor_spacing: f32,
     half_cells: i32,
 ) -> (Vec<[f32; 3]>, Vec<u32>, Vec<u32>) {
-    let mut vertices = Vec::new();
+    let mut nodes = Vec::new();
     let mut major_indices = Vec::new();
     let mut minor_indices = Vec::new();
     let spacing = minor_spacing.max(GRID_MIN_MINOR_SPACING);
@@ -2348,15 +2696,15 @@ fn build_grid_mesh(
         let x0 = start_x as f32 * spacing;
         let x1 = end_x as f32 * spacing;
 
-        let idx = vertices.len() as u32;
-        vertices.push([x0, 0.0, z]);
-        vertices.push([x1, 0.0, z]);
+        let idx = nodes.len() as u32;
+        nodes.push([x0, 0.0, z]);
+        nodes.push([x1, 0.0, z]);
 
         let is_major = step_z.rem_euclid(GRID_MAJOR_LINE_EVERY) == 0 && z.abs() > 0.001;
         let is_origin_line = z.abs() < 0.001;
 
         if is_origin_line {
-            // Skip — the axis handles this
+            // Skip 鈥?the axis handles this
         } else if is_major {
             major_indices.push(idx);
             major_indices.push(idx + 1);
@@ -2372,9 +2720,9 @@ fn build_grid_mesh(
         let z0 = start_z as f32 * spacing;
         let z1 = end_z as f32 * spacing;
 
-        let idx = vertices.len() as u32;
-        vertices.push([x, 0.0, z0]);
-        vertices.push([x, 0.0, z1]);
+        let idx = nodes.len() as u32;
+        nodes.push([x, 0.0, z0]);
+        nodes.push([x, 0.0, z1]);
 
         let is_major = step_x.rem_euclid(GRID_MAJOR_LINE_EVERY) == 0 && x.abs() > 0.001;
         let is_origin_line = x.abs() < 0.001;
@@ -2390,7 +2738,7 @@ fn build_grid_mesh(
         }
     }
 
-    (vertices, major_indices, minor_indices)
+    (nodes, major_indices, minor_indices)
 }
 
 /// Default scale for scene axes (relative to fixed camera distance).
@@ -2486,7 +2834,7 @@ impl WgpuRenderer {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[wgpu::VertexBufferLayout {
-                    // Each vertex is [px, py, pz, nx, ny, nz] = 6 × f32 = 24 bytes.
+                    // Each vertex is [px, py, pz, nx, ny, nz] = 6 脳 f32 = 24 bytes.
                     // The normal component (location 1) is zero for meshes that
                     // do not carry smooth normals (grid, axes, highlights).
                     array_stride: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
@@ -2835,9 +3183,9 @@ impl WgpuRenderer {
 
         // Build axis arrows (X=red, Y=green, Z=blue)
         let axis_colors: [[f32; 4]; 3] = [
-            [1.0, 0.2, 0.2, 1.0], // X — red
-            [0.2, 1.0, 0.2, 1.0], // Y — green
-            [0.3, 0.5, 1.0, 1.0], // Z — blue
+            [1.0, 0.2, 0.2, 1.0], // X 鈥?red
+            [0.2, 1.0, 0.2, 1.0], // Y 鈥?green
+            [0.3, 0.5, 1.0, 1.0], // Z 鈥?blue
         ];
         let axis_dirs = [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z];
         let axis_names = ["X", "Y", "Z"];
@@ -3109,7 +3457,7 @@ impl WgpuRenderer {
     }
 
     pub fn upload_mesh(&self, device: &wgpu::Device, mesh: &Mesh) {
-        let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
+        let interleaved = interleave_verts_normals(&mesh.nodes, &mesh.normals);
         *self.vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -3165,7 +3513,7 @@ impl WgpuRenderer {
         edge_mesh: Option<&Mesh>,
     ) {
         if let Some(mesh) = face_mesh {
-            let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
+            let interleaved = interleave_verts_normals(&mesh.nodes, &mesh.normals);
             *self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Face Vertex Buffer"),
@@ -3188,7 +3536,7 @@ impl WgpuRenderer {
         }
 
         if let Some(mesh) = edge_mesh {
-            let interleaved = interleave_verts_normals(&mesh.vertices, &mesh.normals);
+            let interleaved = interleave_verts_normals(&mesh.nodes, &mesh.normals);
             *self.highlight_edge_vertex_buffer.lock().expect("render mutex poisoned") = Some(device.create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("Highlight Edge Vertex Buffer"),
@@ -3356,7 +3704,7 @@ impl WgpuRenderer {
         );
 
         let draw_brep_lines = draw_wireframe && lcount > 0;
-        // UV / periodic seam overlay only — wireframe uses `line_indices` like solid+edges.
+        // UV / periodic seam overlay only 鈥?wireframe uses `line_indices` like solid+edges.
         let draw_seam_lines = draw_wireframe && scount > 0 && show_seam_edges;
 
         let line_pipeline = if use_depth_pipeline {
@@ -3437,11 +3785,14 @@ impl WgpuRenderer {
                 }
             }
 
-        // Draw face highlights
+        // Draw face highlights (filled triangles). Skip in wireframe-only: the main mesh already
+        // omits triangles; leaving highlights on makes selected/hovered faces look like a larger
+        // 鈥渟heet鈥?over the edge wireframe.
         let hvb_guard = self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned");
         let hib_guard = self.highlight_face_index_buffer.lock().expect("render mutex poisoned");
         let hcount = *self.highlight_face_index_count.lock().expect("render mutex poisoned");
         if hcount > 0
+            && mode != DisplayMode::Wireframe
             && let (Some(vb), Some(ib)) = (hvb_guard.as_ref(), hib_guard.as_ref())
         {
             if use_depth_pipeline {
@@ -3734,7 +4085,7 @@ impl WgpuRenderer {
         }
     }
 
-    /// Topology display mode, optional seam overlay, and view-aligned headlight — RCAD Creator (egui + iced).
+    /// Topology display mode, optional seam overlay, and view-aligned headlight 鈥?RCAD Creator (egui + iced).
     pub fn set_creator_viewport_shading(
         &self,
         camera: &Camera,
@@ -3751,7 +4102,7 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         clear_color: wgpu::Color,
-        clip_bounds: Option<(u32, u32, u32, u32)>,
+        clip_bounds: Option<ViewportClip>,
     ) {
         let use_depth = clip_bounds.is_some();
         let depth_view_guard = self.depth_view.lock().expect("render mutex poisoned");
@@ -3792,19 +4143,20 @@ impl WgpuRenderer {
 
         let use_depth_pipeline = use_depth && depth_view_guard.is_some();
 
-        if let Some((x, y, width, height)) = clip_bounds
-            && width > 0
-            && height > 0
-        {
-            let w = width.max(1);
-            let h = height.max(1);
-            // Match the NDC → pixel mapping to the clipped region. Without this, iced's
-            // shader `render` path uses the default full-target viewport while the camera
-            // aspect comes from the shader widget only — geometry is stretched and depth
-            // ordering breaks (e.g. cylinder side overdraws caps). Egui embeds in a pass
-            // whose viewport already matches the paint rect.
-            render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
-            render_pass.set_scissor_rect(x, y, w, h);
+        if let Some(clip) = clip_bounds {
+            let (vx, vy, vw, vh) = clip.viewport;
+            let (sx, sy, sw, sh) = clip.scissor;
+            let sw = sw.max(1);
+            let sh = sh.max(1);
+            if vw > 0.0 && vh > 0.0 {
+                // Match the NDC 鈫?pixel mapping to the clipped region. Without this, iced's
+                // shader `render` path uses the default full-target viewport while the camera
+                // aspect comes from the shader widget only 鈥?geometry is stretched and depth
+                // ordering breaks (e.g. cylinder side overdraws caps). Egui embeds in a pass
+                // whose viewport already matches the paint rect.
+                render_pass.set_viewport(vx, vy, vw.max(1.0), vh.max(1.0), 0.0, 1.0);
+                render_pass.set_scissor_rect(sx, sy, sw, sh);
+            }
         }
 
         self.draw_in_render_pass(&mut render_pass, use_depth_pipeline);
@@ -3815,34 +4167,41 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         clear_color: wgpu::Color,
-        clip_bounds: Option<(u32, u32, u32, u32)>,
+        clip_bounds: Option<ViewportClip>,
     ) {
         self.render(view, encoder, clear_color, clip_bounds);
 
-        if let Some((x, y, width, height)) = clip_bounds
-            && width > 0
-            && height > 0
-        {
-            let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Axis Gizmo Overlay Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            let gw = width.max(1);
-            let gh = height.max(1);
-            gizmo_pass.set_viewport(x as f32, y as f32, gw as f32, gh as f32, 0.0, 1.0);
-            gizmo_pass.set_scissor_rect(x, y, gw, gh);
-            self.draw_axis_gizmo_in_render_pass(&mut gizmo_pass, [x, y], [width, height], false);
+        if let Some(clip) = clip_bounds {
+            let (vx, vy, vw, vh) = clip.viewport;
+            let (sx, sy, sw, sh) = clip.scissor;
+            let sw = sw.max(1);
+            let sh = sh.max(1);
+            if vw > 0.0 && vh > 0.0 {
+                let mut gizmo_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Axis Gizmo Overlay Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                let vw = vw.max(1.0);
+                let vh = vh.max(1.0);
+                gizmo_pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+                gizmo_pass.set_scissor_rect(sx, sy, sw, sh);
+                let gx = vx.floor().max(0.0) as u32;
+                let gy = vy.floor().max(0.0) as u32;
+                let gw = vw.round().max(1.0) as u32;
+                let gh = vh.round().max(1.0) as u32;
+                self.draw_axis_gizmo_in_render_pass(&mut gizmo_pass, [gx, gy], [gw, gh], false);
+            }
         }
     }
 
@@ -3850,7 +4209,7 @@ impl WgpuRenderer {
         &self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
-        clip_bounds: Option<(u32, u32, u32, u32)>,
+        clip_bounds: Option<ViewportClip>,
     ) {
         self.render(view, encoder, Self::default_clear_color(), clip_bounds);
     }
@@ -3859,7 +4218,7 @@ impl WgpuRenderer {
         &self,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
-        clip_bounds: Option<(u32, u32, u32, u32)>,
+        clip_bounds: Option<ViewportClip>,
     ) {
         self.render_with_axis_gizmo(view, encoder, Self::default_clear_color(), clip_bounds);
     }
@@ -4027,3 +4386,5 @@ impl WgpuRenderer {
         img.save(path).map_err(|e| e.to_string())
     }
 }
+
+

@@ -1,4 +1,4 @@
-//! Example: Phase L — sweep_pipe_variable (variable-section sweep) +
+//! Example: sweep_pipe_variable (variable-section sweep) +
 //!           fillet_edges (multi-edge fillet in one call).
 //!
 //! Demonstrates:
@@ -212,7 +212,7 @@ fn demo_step_export() {
 
 fn main() {
     println!("╔════════════════════════════════════════════════════╗");
-    println!("║              RCAD Phase L Demo                     ║");
+    println!("║         RCAD Variable Sweep / Fillet Demo            ║");
     println!("║  sweep_pipe_variable · fillet_edges                ║");
     println!("╚════════════════════════════════════════════════════╝");
 
@@ -221,5 +221,5 @@ fn main() {
     demo_fillet_edges();
     demo_step_export();
 
-    println!("\n✓ Phase L demo complete.");
+    println!("\n✓ Variable sweep / fillet demo complete.");
 }

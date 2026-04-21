@@ -41,7 +41,8 @@ fn box_fea_geometry_round_trip() {
 
     // Verify topology for FEA
     assert_eq!(face_count(&parsed), 6, "box should have 6 faces");
-    // Note: Vertex count may differ due to triangulation vertices being added
+    // Note: Vertex count may differ because triangulation sample nodes may be
+    // stored as additional `BRep.vertices` entries.
     assert!(vertex_count(&parsed) >= 8, "box should have at least 8 vertices");
     // Note: Edge count may differ in STEP representation
 
@@ -426,8 +427,9 @@ fn multiple_round_trips_consistent() {
             "face count should be consistent after round-trip {}",
             i
         );
-        // Note: Vertex count may differ between round-trips due to triangulation
-        // being stored in the BRep. The key invariant is face count consistency.
+        // Note: Vertex count may differ between round-trips because triangulation
+        // sample nodes may be stored as additional `BRep.vertices` entries.
+        // The key invariant is face count consistency.
     }
 }
 

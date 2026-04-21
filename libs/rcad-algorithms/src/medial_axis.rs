@@ -798,15 +798,15 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
     // Compute Delaunay triangulation
     let triangles = compute_delaunay_2d(sites, opts);
 
-    // Extract Voronoi vertices and edges from Delaunay triangles
-    let mut vertices: Vec<VoronoiVertex2d> = Vec::new();
+    // Extract Voronoi nodes and edges from Delaunay triangles
+    let mut voronoi_nodes: Vec<VoronoiVertex2d> = Vec::new();
     let mut edges: Vec<VoronoiEdge2d> = Vec::new();
     let mut cells: Vec<Vec<usize>> = vec![vec![]; n];
 
     // Map from edge (sorted pair of sites) to Voronoi edge
     let mut edge_map: HashMap<(usize, usize), (usize, Option<usize>)> = HashMap::new();
 
-    // Each Delaunay triangle gives one Voronoi vertex (circumcenter)
+    // Each Delaunay triangle gives one Voronoi node (circumcenter)
     for tri in &triangles {
         let p0 = sites[tri[0]];
         let p1 = sites[tri[1]];
@@ -814,8 +814,8 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
 
         // Compute circumcenter
         if let Some((center, _radius)) = circumcenter(p0, p1, p2) {
-            let v_idx = vertices.len();
-            vertices.push(VoronoiVertex2d {
+            let v_idx = voronoi_nodes.len();
+            voronoi_nodes.push(VoronoiVertex2d {
                 point: center,
                 sites: tri.to_vec(),
             });
@@ -827,7 +827,7 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
                 let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
 
                 if let Some((prev_v, _prev_t)) = edge_map.get(&key).copied() {
-                    // Connect the two Voronoi vertices
+                    // Connect the two Voronoi nodes
                     edges.push(VoronoiEdge2d {
                         start: Some(prev_v),
                         end: Some(v_idx),
@@ -846,7 +846,7 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
 
     VoronoiDiagram2d {
         sites: sites.to_vec(),
-        vertices,
+        vertices: voronoi_nodes,
         edges,
         cells,
     }
@@ -873,7 +873,7 @@ fn compute_delaunay_2d(points: &[DVec2], opts: &MedialAxisOptions) -> Vec<[usize
     let super_p1 = DVec2::new(max_pt.x + margin, min_pt.y - margin);
     let super_p2 = DVec2::new((min_pt.x + max_pt.x) / 2.0, max_pt.y + margin);
 
-    // Extended points array with super-triangle vertices
+    // Extended points array with super-triangle nodes
     let mut all_points = points.to_vec();
     all_points.push(super_p0);
     all_points.push(super_p1);
@@ -948,7 +948,7 @@ fn compute_delaunay_2d(points: &[DVec2], opts: &MedialAxisOptions) -> Vec<[usize
         }
     }
 
-    // Remove triangles that contain super-triangle vertices
+    // Remove triangles that contain super-triangle nodes
     triangles.retain(|tri| tri[0] < n && tri[1] < n && tri[2] < n);
 
     triangles

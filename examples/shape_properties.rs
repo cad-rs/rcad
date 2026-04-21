@@ -1,4 +1,4 @@
-//! Example: Phase C — properties, validity checking, and section planes.
+//! Example: Properties, validity checking, and section planes.
 //!
 //! Demonstrates:
 //!   1. `surface_area`, `volume`, `centroid` from rcad-kernel
@@ -139,7 +139,7 @@ fn main() {
         println!("    - {issue}");
     }
 
-    println!("\nPhase C demo complete.");
+    println!("\nProperties demo complete.");
 }
 
 // ── Profile helpers ────────────────────────────────────────────────────────────

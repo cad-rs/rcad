@@ -166,7 +166,7 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
         if let Some((si, shi, fi, score)) = nearest {
             let face = &brep.solids[si].shells[shi].faces[fi];
             println!(
-                "   [diag] 未找到严格x=3补丁；改为分析最近候选 face={}/{}/{} score={:.6} outer_edges={}",
+                "   [diag] No strict x=3 patch; using nearest candidate face={}/{}/{} score={:.6} outer_edges={}",
                 si,
                 shi,
                 fi,
@@ -175,7 +175,7 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
             );
             patch_faces.push((si, shi, fi));
         } else {
-            println!("   [diag] 未找到目标相交面补丁（x≈3, normal≈+X）");
+            println!("   [diag] No target intersection patch (x≈3, normal≈+X)");
             return;
         }
     }
@@ -235,12 +235,12 @@ fn inspect_union_intersection_face_edges(brep: &BRep) {
         .sum::<usize>();
     let merged_collinear_total = merged_y_edges + merged_z_edges;
 
-    println!("   [diag] Union相交面补丁(x=3): face片数量 = {}", patch_faces.len());
-    println!("   [diag] 补丁原始外环边总数 = {raw_outer_edges}");
-    println!("   [diag] 几何唯一边段数 = {unique_segments}");
-    println!("   [diag] 重复边段组数 = {repeated_groups}, 重复边段总数 = {repeated_total}");
-    println!("   [diag] 补丁边界边段数(去内部共享) = {boundary_segments}");
-    println!("   [diag] 共线分段合并后边数 = {merged_collinear_total} (矩形接触环理想约 4；带孔或分片时会更多)");
+    println!("   [diag] Union intersection patch (x=3): face patch count = {}", patch_faces.len());
+    println!("   [diag] Raw outer-loop edge count = {raw_outer_edges}");
+    println!("   [diag] Unique geometric edge segments = {unique_segments}");
+    println!("   [diag] Repeated segment groups = {repeated_groups}, repeated segment total = {repeated_total}");
+    println!("   [diag] Boundary edge segments (excluding interior sharing) = {boundary_segments}");
+    println!("   [diag] Edges after collinear merge = {merged_collinear_total} (~4 for a simple rectangular contact loop; more with holes or fragments)");
 }
 
 fn segment_key(a: DVec3, b: DVec3) -> String {

@@ -87,6 +87,11 @@ pub fn vertex_count(brep: &BRep) -> usize {
     brep.vertices.len()
 }
 
+/// Number of semantic vertices (topological vertices referenced by edges).
+pub fn semantic_vertex_count(brep: &BRep) -> usize {
+    semantic_vertex_indices(brep).len()
+}
+
 /// Returns `true` if `edge_idx` is a degenerate edge — i.e. its start and end
 /// vertices are the same point (within floating-point equality), or it is
 /// explicitly flagged degenerate in `brep.geom.edge_degenerated`.
@@ -150,6 +155,27 @@ pub fn seam_edge_candidates(brep: &BRep) -> Vec<usize> {
         })
         .map(|(ei, _)| ei)
         .collect()
+}
+
+/// Returns semantic vertex indices (topological vertices).
+///
+/// Semantics:
+/// - includes vertices referenced by any topological edge;
+/// - includes seam-edge vertices;
+/// - de-duplicates by vertex index.
+///
+/// This intentionally does **not** describe triangulation/sample points. Those belong
+/// to render meshes and should be treated as mesh nodes.
+pub fn semantic_vertex_indices(brep: &BRep) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::with_capacity(brep.edges.len() * 2);
+    for edge in &brep.edges {
+        out.push(edge.start);
+        out.push(edge.end);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out.retain(|&vi| vi < brep.vertices.len());
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -279,5 +305,36 @@ mod tests {
         assert_eq!(s[0].idx, 0);
         assert!(s[0].forward);
         assert_eq!(s[1].idx, 1);
+    }
+
+    #[test]
+    fn semantic_vertex_indices_for_chain() {
+        use crate::topology::{Edge, Vertex};
+        use glam::DVec3;
+
+        let mut brep = BRep::new();
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
+        brep.edges.push(Edge { start: 0, end: 1 });
+        brep.edges.push(Edge { start: 1, end: 2 });
+
+        let semantic = semantic_vertex_indices(&brep);
+        assert_eq!(semantic, vec![0, 1, 2], "all topological chain vertices should be included");
+    }
+
+    #[test]
+    fn semantic_vertex_indices_includes_seam_only() {
+        use crate::topology::{Edge, Vertex};
+        use glam::DVec3;
+
+        let mut brep = BRep::new();
+        // Same 3D position, different vertex IDs -> seam candidate.
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 0
+        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.edges.push(Edge { start: 0, end: 1 });
+
+        let semantic = semantic_vertex_indices(&brep);
+        assert_eq!(semantic, vec![0, 1], "seam-edge vertices are semantic vertices");
     }
 }

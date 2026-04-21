@@ -478,7 +478,7 @@ fn compute_face_winding_contribution(
     let mut solid_angle = 0.0;
     let n = verts.len();
 
-    // Fan triangulation from first vertex
+    // Fan triangulation from first polygon corner
     let v0 = verts[0].normalize();
     for i in 1..n - 1 {
         let v1 = verts[i].normalize();

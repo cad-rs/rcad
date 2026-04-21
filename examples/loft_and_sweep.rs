@@ -1,4 +1,4 @@
-//! Example: Phase E — B-Spline Surface STEP Read, Loft, and Pipe Sweep.
+//! Example: B-spline surface STEP read, loft, and pipe sweep.
 //!
 //! Demonstrates:
 //!   1. B_SPLINE_SURFACE_WITH_KNOTS — synthetic STEP string parsed into BRep with analytic surface
@@ -168,7 +168,7 @@ fn demo_pipe_sweep() {
 
 fn main() {
     println!("╔═══════════════════════════════════════════╗");
-    println!("║            RCAD Phase E Demo              ║");
+    println!("║            RCAD Loft / Sweep Demo          ║");
     println!("║   B-Spline Surface · Loft · Pipe Sweep   ║");
     println!("╚═══════════════════════════════════════════╝");
 
@@ -176,5 +176,5 @@ fn main() {
     demo_loft();
     demo_pipe_sweep();
 
-    println!("\n✓ Phase E demo complete. Check loft_solid.step and pipe_sweep.step.");
+    println!("\n✓ Loft / sweep demo complete. Check loft_solid.step and pipe_sweep.step.");
 }

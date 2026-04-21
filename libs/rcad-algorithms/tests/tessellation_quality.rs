@@ -1,4 +1,4 @@
-/// Integration tests for mesh generation and tessellation quality.
+﻿/// Integration tests for mesh generation and tessellation quality.
 ///
 /// These tests verify:
 /// - Quality metrics computation
@@ -30,17 +30,17 @@ fn total_triangle_count(brep: &BRep) -> usize {
 /// Test that quality metrics are computed correctly for a simple triangle.
 #[test]
 fn quality_metrics_simple_triangle() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(1.0, 0.0, 0.0),
         DVec3::new(0.5, 0.866, 0.0), // Equilateral triangle
     ];
     let triangles = vec![[0, 1, 2]];
 
-    let metrics = compute_mesh_quality(&vertices, &triangles);
+    let metrics = compute_mesh_quality(&nodes, &triangles);
 
     assert_eq!(metrics.triangle_count, 1);
-    assert_eq!(metrics.vertex_count, 3);
+    assert_eq!(metrics.node_count, 3);
     assert_eq!(metrics.degenerate_count, 0);
     // Equilateral triangle has aspect ratio ~1.0
     assert!(metrics.max_aspect_ratio < 1.2, "equilateral should have low aspect ratio");
@@ -50,14 +50,14 @@ fn quality_metrics_simple_triangle() {
 /// Test quality metrics for a degenerate triangle.
 #[test]
 fn quality_metrics_degenerate_triangle() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(1.0, 0.0, 0.0),
         DVec3::new(0.5, 0.0, 0.0), // Collinear - degenerate
     ];
     let triangles = vec![[0, 1, 2]];
 
-    let metrics = compute_mesh_quality(&vertices, &triangles);
+    let metrics = compute_mesh_quality(&nodes, &triangles);
 
     // This triangle is degenerate (collinear points)
     assert_eq!(metrics.degenerate_count, 1);
@@ -69,18 +69,18 @@ fn quality_metrics_degenerate_triangle() {
 /// Test quality metrics for a high aspect ratio triangle.
 #[test]
 fn quality_metrics_high_aspect_ratio() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(100.0, 0.0, 0.0),
         DVec3::new(50.0, 0.001, 0.0), // Very thin triangle
     ];
     let triangles = vec![[0, 1, 2]];
 
-    let metrics = compute_mesh_quality(&vertices, &triangles);
+    let metrics = compute_mesh_quality(&nodes, &triangles);
 
     // Edge lengths: 100, ~50, ~50
-    // Max edge = 100, min edge ≈ 50 (since all edges are > 0.001)
-    // Aspect ratio = max_edge / min_edge ≈ 2
+    // Max edge = 100, min edge 鈮?50 (since all edges are > 0.001)
+    // Aspect ratio = max_edge / min_edge 鈮?2
     // For a very thin triangle, aspect ratio depends on edge ratios
     assert!(metrics.max_aspect_ratio > 1.0, "should have aspect ratio > 1");
     // Check that poor aspect ratio count is tracked
@@ -92,7 +92,7 @@ fn quality_metrics_high_aspect_ratio() {
 /// Test quality metrics for a mesh with multiple triangles.
 #[test]
 fn quality_metrics_multiple_triangles() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(1.0, 0.0, 0.0),
         DVec3::new(0.0, 1.0, 0.0),
@@ -100,10 +100,10 @@ fn quality_metrics_multiple_triangles() {
     ];
     let triangles = vec![[0, 1, 2], [1, 3, 2]];
 
-    let metrics = compute_mesh_quality(&vertices, &triangles);
+    let metrics = compute_mesh_quality(&nodes, &triangles);
 
     assert_eq!(metrics.triangle_count, 2);
-    assert_eq!(metrics.vertex_count, 4);
+    assert_eq!(metrics.node_count, 4);
     assert_eq!(metrics.degenerate_count, 0);
     assert!(metrics.average_area > 0.0);
     assert!(metrics.average_edge_length > 0.0);
@@ -113,7 +113,7 @@ fn quality_metrics_multiple_triangles() {
 #[test]
 fn surface_mesh_compute_quality() {
     let mesh = SurfaceMesh {
-        vertices: vec![
+        nodes: vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
@@ -144,14 +144,14 @@ fn sphere_surface_tessellation() {
     let params = TessellationParams::standard();
     let mesh = triangulate_surface(&sphere, [0.0, std::f64::consts::TAU], [0.0, std::f64::consts::PI], &params);
 
-    assert!(!mesh.vertices.is_empty(), "should have vertices");
+    assert!(!mesh.nodes.is_empty(), "should have nodes");
     assert!(!mesh.triangles.is_empty(), "should have triangles");
-    assert_eq!(mesh.normals.len(), mesh.vertices.len(), "normals should match vertices");
+    assert_eq!(mesh.normals.len(), mesh.nodes.len(), "normals should match nodes");
 
-    // Check that all vertices are at radius 1
-    for v in &mesh.vertices {
+    // Check that all nodes are at radius 1
+    for v in &mesh.nodes {
         let dist = v.length();
-        assert!((dist - 1.0).abs() < 0.01, "vertices should be on sphere surface");
+        assert!((dist - 1.0).abs() < 0.01, "nodes should be on sphere surface");
     }
 }
 
@@ -167,13 +167,13 @@ fn cylinder_surface_tessellation() {
     let params = TessellationParams::standard();
     let mesh = triangulate_surface(&cylinder, [0.0, std::f64::consts::TAU], [0.0, 5.0], &params);
 
-    assert!(!mesh.vertices.is_empty());
+    assert!(!mesh.nodes.is_empty());
     assert!(!mesh.triangles.is_empty());
 
-    // Check that vertices are at radius 1 from axis
-    for v in &mesh.vertices {
+    // Check that nodes are at radius 1 from axis
+    for v in &mesh.nodes {
         let radial_dist = (v - DVec3::new(0.0, 0.0, v.z)).length();
-        assert!((radial_dist - 1.0).abs() < 0.01, "vertices should be on cylinder surface");
+        assert!((radial_dist - 1.0).abs() < 0.01, "nodes should be on cylinder surface");
     }
 }
 
@@ -188,12 +188,12 @@ fn plane_surface_tessellation() {
     let params = TessellationParams::standard();
     let mesh = triangulate_surface(&plane, [0.0, 5.0], [0.0, 5.0], &params);
 
-    assert!(!mesh.vertices.is_empty());
+    assert!(!mesh.nodes.is_empty());
     assert!(!mesh.triangles.is_empty());
 
-    // Check that all vertices are at z=0
-    for v in &mesh.vertices {
-        assert!(v.z.abs() < 0.01, "vertices should be on plane");
+    // Check that all nodes are at z=0
+    for v in &mesh.nodes {
+        assert!(v.z.abs() < 0.01, "nodes should be on plane");
     }
 }
 
@@ -325,7 +325,7 @@ fn incremental_mesh_skips_clean_faces() {
 #[test]
 fn adaptive_subdivder_increases_triangles() {
     let mesh = SurfaceMesh {
-        vertices: vec![
+        nodes: vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(10.0, 0.0, 0.0),
             DVec3::new(5.0, 10.0, 0.0),
@@ -347,7 +347,7 @@ fn adaptive_subdivder_increases_triangles() {
 #[test]
 fn adaptive_subdivider_curvature() {
     let mesh = SurfaceMesh {
-        vertices: vec![
+        nodes: vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
@@ -390,7 +390,7 @@ fn adaptive_subdivider_builder() {
 /// Test feature edge detection.
 #[test]
 fn boundary_sensitive_detect_features() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(1.0, 0.0, 0.0),
         DVec3::new(0.0, 1.0, 0.0),
@@ -403,7 +403,7 @@ fn boundary_sensitive_detect_features() {
     let mut tessellator = BoundarySensitiveTessellator::new()
         .with_feature_angle(0.1);
 
-    tessellator.detect_feature_edges(&vertices, &triangles, &normals);
+    tessellator.detect_feature_edges(&nodes, &triangles, &normals);
 
     // Should detect feature edge between the triangles
     assert!(!tessellator.feature_edges.is_empty());
@@ -422,7 +422,7 @@ fn boundary_sensitive_builder() {
 #[test]
 fn boundary_sensitive_preserve_features() {
     let mesh = SurfaceMesh {
-        vertices: vec![
+        nodes: vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
@@ -434,13 +434,13 @@ fn boundary_sensitive_preserve_features() {
 
     let mut tessellator = BoundarySensitiveTessellator::new();
     tessellator.feature_edges.push(rcad_algorithms::FeatureEdge {
-        start_vertex: 0,
-        end_vertex: 1,
+        start_node: 0,
+        end_node: 1,
         feature_angle: 0.5,
     });
 
     let preserved = tessellator.preserve_feature_edges(&mesh);
-    assert_eq!(preserved.vertices.len(), mesh.vertices.len());
+    assert_eq!(preserved.nodes.len(), mesh.nodes.len());
 }
 
 // ============================================================================
@@ -531,7 +531,7 @@ fn incremental_mesher_update_brep() {
 /// Test mesh simplifier reduces triangle count.
 #[test]
 fn mesh_simplifier_reduces_triangles() {
-    let vertices: Vec<DVec3> = (0..9)
+    let nodes: Vec<DVec3> = (0..9)
         .map(|i| {
             let row = i / 3;
             let col = i % 3;
@@ -547,7 +547,7 @@ fn mesh_simplifier_reduces_triangles() {
     ];
 
     let mesh = SurfaceMesh {
-        vertices,
+        nodes,
         triangles,
         normals: vec![DVec3::Z; 9],
         dirty: false,
@@ -580,7 +580,7 @@ fn mesh_simplifier_builder() {
 #[test]
 fn mesh_simplifier_target_count() {
     let mesh = SurfaceMesh {
-        vertices: vec![
+        nodes: vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
             DVec3::new(0.0, 1.0, 0.0),
@@ -669,19 +669,19 @@ fn tessellation_very_large_surface() {
 fn empty_mesh_quality() {
     let metrics = compute_mesh_quality(&[], &[]);
     assert_eq!(metrics.triangle_count, 0);
-    assert_eq!(metrics.vertex_count, 0);
+    assert_eq!(metrics.node_count, 0);
 }
 
 /// Test quality metrics with out-of-bounds indices.
 #[test]
 fn quality_metrics_out_of_bounds() {
-    let vertices = vec![
+    let nodes = vec![
         DVec3::new(0.0, 0.0, 0.0),
         DVec3::new(1.0, 0.0, 0.0),
     ];
     let triangles = vec![[0, 1, 5]]; // Index 5 doesn't exist
 
-    let metrics = compute_mesh_quality(&vertices, &triangles);
+    let metrics = compute_mesh_quality(&nodes, &triangles);
     // Should handle gracefully
     assert_eq!(metrics.triangle_count, 1);
 }
@@ -690,7 +690,7 @@ fn quality_metrics_out_of_bounds() {
 #[test]
 fn surface_mesh_dirty_flag() {
     let mut mesh = SurfaceMesh {
-        vertices: vec![DVec3::ZERO],
+        nodes: vec![DVec3::ZERO],
         triangles: vec![],
         normals: vec![],
         dirty: false,
@@ -702,3 +702,4 @@ fn surface_mesh_dirty_flag() {
     assert!(!mesh.is_clean());
     assert!(mesh.dirty);
 }
+

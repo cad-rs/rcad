@@ -2416,6 +2416,26 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
             report.orthogonal_coplanar_fusions = n;
         }
     }
+    // After orthogonal planar fusion, run same-domain unification once more to
+    // absorb newly adjacent coplanar patches produced by the fuse pass.
+    if options.unify_same_domain_faces {
+        let cur_score = closure_score(&out);
+        let (next, n) = unify_same_domain_faces(&out);
+        let next_score = closure_score(&next);
+        if next_score <= cur_score {
+            out = next;
+            report.same_domain_face_merges += n;
+        }
+    }
+
+    // Kernel-level wire cleanup: collapse consecutive collinear segments so
+    // post-boolean faces do not keep fragmented edge chains.
+    let collinear_edge_merges = rcad_kernel::merge_collinear_edges_in_wires(
+        &mut out,
+        options.merge_tolerance.max(tolerance::TOLERANCE_ABS),
+    );
+    report.wires_fixed += collinear_edge_merges;
+
     if options.remove_small_edges {
         let cur_score = closure_score(&out);
         let (next, n) = remove_small_edges(&out, options.small_edge_min_length);
@@ -3787,7 +3807,7 @@ pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
     (out, total_merges)
 }
 
-/// Phase 2: Check if a shared edge maintains continuity between two faces.
+/// Check if a shared edge maintains continuity between two faces.
 ///
 /// Verifies that PCurve parameterizations align properly where the two faces meet.
 /// This is a topological guard to prevent merging faces with incompatible edge representations.
@@ -3842,14 +3862,13 @@ fn validate_shared_edge_continuity(
     global_fi2 += fi2;
 
     // Note: Full PCurve continuity checks require careful parameterization
-    // analysis which is deferred to Phase 3. For now, we rely on SameParameter
-    // flag as a sufficient guard.
+    // analysis; for now, we rely on SameParameter as a sufficient guard.
 
     // All PCurve continuity checks passed (or were skipped for safety).
     true
 }
 
-/// Phase 2: Validate that two adjacent faces' UV regions are geometrically compatible.
+/// Validate that two adjacent faces' UV regions are geometrically compatible.
 ///
 /// Checks that the parameter domains [u1, u2, v1, v2] for both faces do not
 /// represent disjoint or incompatible regions on their respective surfaces.
@@ -4151,7 +4170,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 (Some(dc <= LIN_TOL), false)
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
-                // Phase 3: BSpline same-domain detection.
+                // BSpline same-domain detection.
                 // Two BSpline surfaces are considered same-domain if they have:
                 // - Identical degrees
                 // - Identical knot vectors (within tolerance)
@@ -4311,8 +4330,8 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                     }
                 };
 
-                // Phase 2: Topological + Geometric Double-Validation
-                // Add extra guards to prevent merging faces with incompatible topology or UV regions.
+                // Topological + geometric double-validation: extra guards so we do not merge
+                // faces with incompatible topology or UV regions.
                 if should_merge {
                     // Check shared edge continuity (PCurve alignment).
                     let edge_continuous = validate_shared_edge_continuity(
@@ -4897,7 +4916,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                 (s1.radius - s2.radius).abs() <= LIN_TOL && (s1.center - s2.center).length() <= LIN_TOL
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
-                // Phase 3: BSpline same-domain detection.
+                // BSpline same-domain detection.
                 const CP_TOL: f64 = 1e-6;
 
                 if b1.degree_u != b2.degree_u || b1.degree_v != b2.degree_v {
@@ -4924,7 +4943,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
         })
     }
 
-    /// Phase 2: Validate face orientation consistency within a shell.
+    /// Validate face orientation consistency within a shell.
     /// Returns false if face orientation is inconsistent with majority orientation,
     /// indicating potential pseudo-internal topology that should not be removed.
     fn validate_face_orientation_consistency(
@@ -4938,11 +4957,11 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
         // and should be preserved rather than removed.
         
         // For now, we accept all orientations as valid (conservative).
-        // Phase 3 can enhance with full BRep solid vs. hollow validation.
+        // Future: could add full BRep solid vs. hollow validation.
         true
     }
 
-    /// Phase 2: Detect if a face pair forms a true internal duplicate vs. pseudo-internal.
+    /// Detect if a face pair forms a true internal duplicate vs. pseudo-internal.
     /// True duplicates have opposite normals and identical/near-identical coverage.
     /// Pseudo-internal faces may share edges but represent distinct original surfaces.
     fn is_true_internal_duplicate(
@@ -5060,7 +5079,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                         let overlap_ratio = overlap as f64 / min_edges as f64;
                         let strong_same_domain = matches!(same_domain_from_geom, Some(true));
                         if overlap == min_edges || (strong_same_domain && overlap_ratio >= 0.75) {
-                            // Phase 2: Validate this is a true internal duplicate, not pseudo-internal.
+                            // Validate this is a true internal duplicate, not pseudo-internal.
                             let is_true_duplicate = is_true_internal_duplicate(
                                 &out,
                                 si,
@@ -5076,7 +5095,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                                 continue;
                             }
 
-                            // Phase 2: Validate orientation consistency before removal.
+                            // Validate orientation consistency before removal.
                             let orientation_valid_i = validate_face_orientation_consistency(&out, si, shi, fi);
                             let orientation_valid_j = validate_face_orientation_consistency(&out, si, shi, fj);
 
@@ -6611,11 +6630,11 @@ mod tests {
         assert_eq!(out.solids[0].shells[0].faces.len(), 2);
     }
 
-    // Phase 2: Topological + Interior Detection Tests
+    // Topological + interior-face detection tests
 
     #[test]
-    fn remove_internal_faces_phase2_preserves_pseudo_internal_faces() {
-        // Phase 2 test: two coplanar squares with same normal but only partial edge overlap.
+    fn remove_internal_faces_preserves_pseudo_internal_faces() {
+        // Two coplanar squares with same normal but only partial edge overlap.
         // These should NOT be removed because they're not true duplicates
         // (don't have opposite normals and don't share ALL edges).
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
@@ -6680,7 +6699,7 @@ mod tests {
         });
 
         let (out, removed) = remove_internal_faces(&brep);
-        // Phase 2 should preserve these because:
+        // Should preserve these because:
         // - normals are NOT opposite (both Z)
         // - edges don't fully overlap (different boundary segments)
         assert_eq!(removed, 0, "pseudo-internal faces should not be removed");
@@ -6688,9 +6707,8 @@ mod tests {
     }
 
     #[test]
-    fn remove_internal_faces_phase2_detects_true_duplicates_with_opposite_normals() {
-        // Phase 2 test: verify that true duplicates (opposite normals + full edge overlap)
-        // ARE still removed correctly by Phase 2.
+    fn remove_internal_faces_detects_true_duplicates_with_opposite_normals() {
+        // True duplicates (opposite normals + full edge overlap) are still removed.
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
@@ -6741,7 +6759,7 @@ mod tests {
         });
 
         let (out, removed) = remove_internal_faces(&brep);
-        // Phase 2 should remove f2 because:
+        // Should remove f2 because:
         // - normals are opposite (-dot < 0.999)
         // - all edges fully overlap (100%)
         // - is_true_internal_duplicate detects opposite orientation + full coverage
@@ -7020,11 +7038,11 @@ mod tests {
         assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two cone halves should merge");
     }
 
-    // Phase 2: Topological + Geometric Double-Validation Tests
+    // Same-domain merge + geometric validation tests
 
     #[test]
-    fn unify_same_domain_phase2_respects_uv_region_boundaries() {
-        // Phase 2: same-domain merge must still run when `face_surface_range` encodes two
+    fn unify_same_domain_respects_uv_region_boundaries() {
+        // Same-domain merge must still run when `face_surface_range` encodes two
         // adjacent UV patches on one analytic plane (u-adjacent rectangles).
         //
         // Use the same *topologically valid* two-face layout as
@@ -7093,12 +7111,12 @@ mod tests {
         ];
 
         let (out, merges) = unify_same_domain_faces(&brep);
-        assert_eq!(merges, 1, "UV-compatible coplanar faces should merge in Phase 2");
+        assert_eq!(merges, 1, "UV-compatible coplanar faces should merge");
         assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two adjacent coplanar faces should merge");
     }
 
     #[test]
-    fn unify_same_domain_phase2_different_surface_domains_do_not_merge() {
+    fn unify_same_domain_different_surface_domains_do_not_merge() {
         // Two cylindrical faces from completely different cylinders should not merge
         // even if they happen to be geometrically coplanar at some point.
         use rcad_kernel::geom::{CylindricalSurface, Surface3};
@@ -7261,7 +7279,7 @@ mod tests {
         assert!(all_triangles_valid(&result));
     }
 
-    // ─── Phase 4 edge case tests ───────────────────────────────────────
+    // ─── Boolean edge case tests ───────────────────────────────────────
 
     #[test]
     fn identical_boxes_union() {

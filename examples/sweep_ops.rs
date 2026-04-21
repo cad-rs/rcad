@@ -1,4 +1,4 @@
-//! Example: Linear extrusion and revolution using the Phase B sweep API.
+//! Example: Linear extrusion and revolution using the sweep API.
 //!
 //! Demonstrates `extrude()` and `revolve()` from rcad-modeling.
 //!

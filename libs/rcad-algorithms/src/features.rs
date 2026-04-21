@@ -449,7 +449,7 @@ mod tests {
             depth: 4.0,
         });
 
-        // Profile: a 1脳1 square centred at origin on the Z=0 plane
+        // Profile: a 1×1 square centred at origin on the Z=0 plane
         let profile = vec![
             DVec3::new(-0.5, 0.0, -0.5),
             DVec3::new( 0.5, 0.0, -0.5),
@@ -475,7 +475,7 @@ mod tests {
             depth: 4.0,
         });
 
-        // Profile: a 0.5脳0.5 square, extruded 3.0 through the 2.0-tall box
+        // Profile: a 0.5×0.5 square, extruded 3.0 through the 2.0-tall box
         let profile = vec![
             DVec3::new(-0.25, 0.0, -0.25),
             DVec3::new( 0.25, 0.0, -0.25),

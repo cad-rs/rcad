@@ -21,6 +21,10 @@ name = "boolean_ops"
 path = "boolean_ops.rs"
 
 [[example]]
+name = "boolean_union_two_boxes"
+path = "boolean_union_two_boxes.rs"
+
+[[example]]
 name = "diag_diff"
 path = "diag_diff.rs"
 

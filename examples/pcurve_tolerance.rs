@@ -1,4 +1,4 @@
-//! Example: Phase I — 2D B-Spline PCurve + Per-Entity Tolerance System.
+//! Example: 2D B-spline PCurve and per-entity tolerance system.
 //!
 //! Demonstrates:
 //!   1. BSplineCurve2 evaluation: degree-1 and degree-3 curves in UV parameter space
@@ -216,7 +216,7 @@ fn demo_tolerance() {
 
 fn main() {
     println!("╔════════════════════════════════════════════════════╗");
-    println!("║              RCAD Phase I Demo                     ║");
+    println!("║           RCAD PCurve / Tolerance Demo               ║");
     println!("║   2D B-Spline PCurve · Per-Entity Tolerance        ║");
     println!("╚════════════════════════════════════════════════════╝");
 
@@ -224,5 +224,5 @@ fn main() {
     demo_curve2d_in_geomstore();
     demo_tolerance();
 
-    println!("\n✓ Phase I demo complete.");
+    println!("\n✓ PCurve / tolerance demo complete.");
 }

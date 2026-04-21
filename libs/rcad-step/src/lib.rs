@@ -106,6 +106,8 @@ struct ParsedStep {
     edge_curves: HashMap<u64, (u64, u64, Option<u64>)>,
     oriented_edges: HashMap<u64, (u64, bool)>,
     edge_loops: HashMap<u64, Vec<u64>>,
+    /// VERTEX_LOOP: loop id → referenced VERTEX_POINT id (gmsh-style sphere outer bound).
+    vertex_loops: HashMap<u64, u64>,
     face_bounds: HashMap<u64, u64>,
     advanced_faces: HashMap<u64, AdvancedFaceRecord>,
     closed_shells: HashMap<u64, Vec<u64>>,
@@ -118,51 +120,51 @@ struct ParsedStep {
     compounds: HashMap<u64, Vec<u64>>,
     /// COMPSOLID: maps entity id -> list of solid references
     compsolids: HashMap<u64, Vec<u64>>,
-    /// SURFACE_CURVE: maps step id 鈫?(3d_curve_ref, pcurve_ref_list, same_parameter)
+    /// SURFACE_CURVE: maps step id ->(3d_curve_ref, pcurve_ref_list, same_parameter)
     surface_curves: HashMap<u64, (u64, Vec<u64>, bool)>,
-    /// PCURVE: maps step id 鈫?(surface_ref, definitional_rep_ref)
+    /// PCURVE: maps step id ->(surface_ref, definitional_rep_ref)
     pcurves: HashMap<u64, (u64, u64)>,
-    /// DEFINITIONAL_REPRESENTATION: maps step id 鈫?curve2d_ref
+    /// DEFINITIONAL_REPRESENTATION: maps step id ->curve2d_ref
     definitional_reps: HashMap<u64, u64>,
     /// 2D cartesian points
     cartesian_points_2d: HashMap<u64, [f64; 2]>,
     /// 2D directions
     directions_2d: HashMap<u64, [f64; 2]>,
-    /// 2D axis2 placements: id 鈫?(location, ref_dir)
+    /// 2D axis2 placements: id ->(location, ref_dir)
     axis2_placements_2d: HashMap<u64, (u64, u64)>,
     /// B-Spline surface: (degree_u, degree_v, ctrl_grid_refs[v][u], mults_u, knots_u, mults_v, knots_v)
     b_spline_surfaces: HashMap<u64, BSplineSurfaceData>,
-    /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id 鈫?(profile_curve_ref, direction_ref)
+    /// SURFACE_OF_LINEAR_EXTRUSION: maps entity id ->(profile_curve_ref, direction_ref)
     linear_extrusions: HashMap<u64, (u64, u64)>,
-    /// SURFACE_OF_REVOLUTION: maps entity id 鈫?(profile_curve_ref, axis_placement_ref)
+    /// SURFACE_OF_REVOLUTION: maps entity id ->(profile_curve_ref, axis_placement_ref)
     revolutions: HashMap<u64, (u64, u64)>,
-    /// RECTANGULAR_TRIMMED_SURFACE: maps entity id 鈫?(basis_surface_ref, [u1,u2,v1,v2])
+    /// RECTANGULAR_TRIMMED_SURFACE: maps entity id ->(basis_surface_ref, [u1,u2,v1,v2])
     rectangular_trimmed_surfaces: HashMap<u64, (u64, [f64; 4])>,
-    /// HYPERBOLA: maps entity id 鈫?(axis2_placement_3d_ref, semi_major, semi_minor)
+    /// HYPERBOLA: maps entity id ->(axis2_placement_3d_ref, semi_major, semi_minor)
     hyperbolas: HashMap<u64, (u64, f64, f64)>,
-    /// PARABOLA: maps entity id 鈫?(axis2_placement_3d_ref, focal_param)
+    /// PARABOLA: maps entity id ->(axis2_placement_3d_ref, focal_param)
     parabolas: HashMap<u64, (u64, f64)>,
-    /// OFFSET_CURVE_3D: maps entity id 鈫?(basis_curve_ref, offset_distance, ref_dir_ref)
+    /// OFFSET_CURVE_3D: maps entity id ->(basis_curve_ref, offset_distance, ref_dir_ref)
     offset_curves_3d: HashMap<u64, (u64, f64, u64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 
-    // 鈹€鈹€ Color / presentation chain 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    /// COLOUR_RGB: id 鈫?[r, g, b]
+    // --- Color / presentation chain ---
+    /// COLOUR_RGB: id ->[r, g, b]
     colour_rgbs: HashMap<u64, [f64; 3]>,
-    /// FILL_AREA_STYLE_COLOUR: id 鈫?colour_rgb_id
+    /// FILL_AREA_STYLE_COLOUR: id ->colour_rgb_id
     fill_area_style_colours: HashMap<u64, u64>,
-    /// FILL_AREA_STYLE: id 鈫?[fasc_id, ...]
+    /// FILL_AREA_STYLE: id ->[fasc_id, ...]
     fill_area_styles: HashMap<u64, Vec<u64>>,
-    /// SURFACE_STYLE_FILL_AREA: id 鈫?fill_area_style_id
+    /// SURFACE_STYLE_FILL_AREA: id ->fill_area_style_id
     surface_style_fill_areas: HashMap<u64, u64>,
-    /// SURFACE_SIDE_STYLE: id 鈫?[ssfa_id, ...]
+    /// SURFACE_SIDE_STYLE: id ->[ssfa_id, ...]
     surface_side_styles: HashMap<u64, Vec<u64>>,
-    /// SURFACE_STYLE_USAGE: id 鈫?surface_side_style_id
+    /// SURFACE_STYLE_USAGE: id ->surface_side_style_id
     surface_style_usages: HashMap<u64, u64>,
-    /// PRESENTATION_STYLE_ASSIGNMENT: id 鈫?[ssu_id, ...]
+    /// PRESENTATION_STYLE_ASSIGNMENT: id ->[ssu_id, ...]
     presentation_style_assignments: HashMap<u64, Vec<u64>>,
-    /// STYLED_ITEM: id 鈫?(shape_step_id, [psa_id, ...])
+    /// STYLED_ITEM: id ->(shape_step_id, [psa_id, ...])
     styled_items: HashMap<u64, (u64, Vec<u64>)>,
 }
 
@@ -187,6 +189,7 @@ impl ParsedStep {
             edge_curves: HashMap::new(),
             oriented_edges: HashMap::new(),
             edge_loops: HashMap::new(),
+            vertex_loops: HashMap::new(),
             face_bounds: HashMap::new(),
             advanced_faces: HashMap::new(),
             closed_shells: HashMap::new(),
@@ -4703,7 +4706,7 @@ impl StepReader {
 
     /// Parse a STEP file, returning both the BRep and an optional color map.
     ///
-    /// Colors are extracted from the `STYLED_ITEM 鈫?COLOUR_RGB` chain.
+    /// Colors are extracted from the `STYLED_ITEM ->COLOUR_RGB` chain.
     /// Returns `None` for color when the file has no color entities.
     pub fn read_file_with_color<P: AsRef<Path>>(
         path: P,
@@ -4919,6 +4922,11 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         parsed.edge_loops.insert(id, items);
                     }
                 }
+                "VERTEX_LOOP" => {
+                    if let Some(vp) = parse_single_ref_after_name(args) {
+                        parsed.vertex_loops.insert(id, vp);
+                    }
+                }
                 "FACE_BOUND" | "FACE_OUTER_BOUND" => {
                     if let Some(loop_ref) = parse_single_ref_after_name(args) {
                         parsed.face_bounds.insert(id, loop_ref);
@@ -4976,7 +4984,7 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         });
                     }
                 }
-                // 鈹€鈹€ Color / presentation chain 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+                // --- Color / presentation chain ---
                 "COLOUR_RGB" => {
                     // COLOUR_RGB('name', r, g, b)
                     if let Some(rgb) = parse_colour_rgb(args) {
@@ -5252,7 +5260,7 @@ fn build_solid_from_shell(parsed: &ParsedStep, shell_ref: u64) -> Result<Option<
     }))
 }
 
-/// Build BRep and return the STEP face-id 鈫?flat-face-index mapping used for color resolution.
+/// Build BRep and return the STEP face-id ->flat-face-index mapping used for color resolution.
 fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, usize>), StepError> {
     let shell_face_sets = collect_shell_faces(parsed);
     let used_vertex_ids = if shell_face_sets.is_empty() {
@@ -5301,7 +5309,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
     let mut solids: Vec<Solid> = Vec::new();
     let mut geom = GeomStore::default();
-    // STEP face id 鈫?flat face index across all shells (for color resolution)
+    // STEP face id ->flat face index across all shells (for color resolution)
     let mut face_id_map: HashMap<u64, usize> = HashMap::new();
     let mut flat_face_idx: usize = 0;
 
@@ -5393,15 +5401,15 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
                 if geom.edge_curve.len() <= idx {
                     geom.edge_curve.resize(idx + 1, None);
                 }
-                // No curve binding needed 鈥?already tessellated into polyline
+                // No curve binding needed --already tessellated into polyline
             }
         }
     }
 
-    // Populate edge_pcurves from SURFACE_CURVE 鈫?PCURVE 鈫?DEFINITIONAL_REPRESENTATION chains
+    // Populate edge_pcurves from SURFACE_CURVE ->PCURVE ->DEFINITIONAL_REPRESENTATION chains
     for (step_curve_id, (inner_3d_ref, pcurve_ids, same_param)) in &parsed.surface_curves {
         // Find which BRep edge this SURFACE_CURVE belongs to
-        // (edge_curves maps step EDGE_CURVE id 鈫?edge; the EDGE_CURVE's curve_ref points here)
+        // (edge_curves maps step EDGE_CURVE id ->edge; the EDGE_CURVE's curve_ref points here)
         let edge_idx = edge_index_by_curve.get(step_curve_id).copied();
         // Also check if any edge_curve entry references this surface_curve indirectly
         let edge_idx = edge_idx.or_else(|| {
@@ -5505,7 +5513,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     Ok((brep, face_id_map))
 }
 
-/// Resolve STYLED_ITEM 鈫?COLOUR_RGB chains into a StepColor.
+/// Resolve STYLED_ITEM ->COLOUR_RGB chains into a StepColor.
 /// Returns None if no color entities were found.
 fn resolve_step_color(parsed: &ParsedStep, face_id_map: &HashMap<u64, usize>) -> Option<StepColor> {
     if parsed.styled_items.is_empty() {
@@ -5672,33 +5680,34 @@ fn collect_used_vertices(
                         entity_type: "FACE_BOUND",
                         id: Some(*bound_id),
                     })?;
-                let oriented_ids =
-                    parsed
-                        .edge_loops
-                        .get(loop_id)
-                        .ok_or(StepError::MissingEntity {
-                            entity_type: "EDGE_LOOP",
-                            id: Some(*loop_id),
-                        })?;
-                for oriented_id in oriented_ids {
-                    let (edge_curve_id, _) =
-                        parsed
-                            .oriented_edges
-                            .get(oriented_id)
-                            .ok_or(StepError::MissingEntity {
-                                entity_type: "ORIENTED_EDGE",
-                                id: Some(*oriented_id),
-                            })?;
-                    let (start, end, _) =
-                        parsed
-                            .edge_curves
-                            .get(edge_curve_id)
-                            .ok_or(StepError::MissingEntity {
-                                entity_type: "EDGE_CURVE",
-                                id: Some(*edge_curve_id),
-                            })?;
-                    used.insert(*start);
-                    used.insert(*end);
+                if let Some(oriented_ids) = parsed.edge_loops.get(loop_id) {
+                    for oriented_id in oriented_ids {
+                        let (edge_curve_id, _) =
+                            parsed
+                                .oriented_edges
+                                .get(oriented_id)
+                                .ok_or(StepError::MissingEntity {
+                                    entity_type: "ORIENTED_EDGE",
+                                    id: Some(*oriented_id),
+                                })?;
+                        let (start, end, _) =
+                            parsed
+                                .edge_curves
+                                .get(edge_curve_id)
+                                .ok_or(StepError::MissingEntity {
+                                    entity_type: "EDGE_CURVE",
+                                    id: Some(*edge_curve_id),
+                                })?;
+                        used.insert(*start);
+                        used.insert(*end);
+                    }
+                } else if let Some(vp_id) = parsed.vertex_loops.get(loop_id) {
+                    used.insert(*vp_id);
+                } else {
+                    return Err(StepError::MissingEntity {
+                        entity_type: "EDGE_LOOP",
+                        id: Some(*loop_id),
+                    });
                 }
             }
         }
@@ -5721,6 +5730,39 @@ fn build_face(
     let bound_ids = parsed.advanced_faces.get(&face_id)?;
     let outer_bound = *bound_ids.bounds.first()?;
     let loop_id = *parsed.face_bounds.get(&outer_bound)?;
+
+    // Single-vertex outer bound (e.g. spherical face in gmsh_strict writer).
+    if let Some(&vp_id) = parsed.vertex_loops.get(&loop_id) {
+        let vidx = *vertex_index_by_id.get(&vp_id)?;
+        let face_vertex_indices = vec![vidx];
+        let face_surface = bound_ids.surface;
+        let triangles = if let Some(surface_ref) = face_surface {
+            triangulate_surface_fallback(
+                parsed,
+                surface_ref,
+                vertices,
+                &face_vertex_indices,
+                false,
+            )
+        } else {
+            Vec::new()
+        };
+        if triangles.is_empty() {
+            return None;
+        }
+        let normal = compute_normal(&triangles[0], vertex_index_by_id, parsed);
+        return Some((
+            Face {
+                outer_wire: Wire { edges: vec![] },
+                inner_wires: Vec::new(),
+                normal,
+                triangles,
+                mesh_dirty: false,
+            },
+            face_surface,
+        ));
+    }
+
     let oriented_ids = parsed.edge_loops.get(&loop_id)?;
 
     let mut polygon: Vec<usize> = Vec::new();
@@ -6923,7 +6965,7 @@ fn triangulate_toroidal_surface(
 /// Infer the angular (theta) range of boundary vertices projected onto a
 /// surface local frame (origin, u_dir, v_dir, axis).
 /// Returns (theta_min, theta_max) in radians.
-/// If `has_seam` is true, the face wraps the full period 鈫?returns (0, 2蟺).
+/// If `has_seam` is true, the face wraps the full period ->returns (0, 2π).
 fn infer_angular_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -6983,7 +7025,7 @@ fn infer_angular_range(
 }
 
 /// Infer polar (phi) range for spherical surfaces from boundary vertices.
-/// Returns (phi_min, phi_max) in [0, 蟺] (north-pole to south-pole).
+/// Returns (phi_min, phi_max) in [0, π] (north-pole to south-pole).
 fn infer_polar_range(
     vertices: &[Vertex],
     face_vertex_indices: &[usize],
@@ -7882,7 +7924,7 @@ fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
 }
 
 fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
-    // Dereference SURFACE_CURVE 鈥?extract the wrapped 3D curve
+    // Dereference SURFACE_CURVE --extract the wrapped 3D curve
     let actual_ref = if let Some(&(inner_ref, _, _)) = parsed.surface_curves.get(&curve_ref) {
         inner_ref
     } else {
@@ -8113,7 +8155,7 @@ fn parse_uncertainty_measure(args: &str) -> Option<f64> {
 }
 
 /// Parse RECTANGULAR_TRIMMED_SURFACE args:
-/// `'name', #basis, u1, u2, v1, v2, .T., .T.` 鈫?`(basis_ref, [u1,u2,v1,v2])`.
+/// `'name', #basis, u1, u2, v1, v2, .T., .T.` ->`(basis_ref, [u1,u2,v1,v2])`.
 fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
     // Extract the single # reference (basis surface)
     let refs = parse_ref_list(args);
@@ -8135,7 +8177,7 @@ fn parse_rectangular_trimmed_surface(args: &str) -> Option<(u64, [f64; 4])> {
     }
 }
 
-/// Parse COLOUR_RGB args: `'name', r, g, b` 鈫?`[r, g, b]`.
+/// Parse COLOUR_RGB args: `'name', r, g, b` ->`[r, g, b]`.
 fn parse_colour_rgb(args: &str) -> Option<[f64; 3]> {
     // Skip the optional name string, then parse three floats.
     let rest = if args.trim_start().starts_with('\'') {
@@ -8168,7 +8210,7 @@ fn parse_last_ref(args: &str) -> Option<u64> {
     parse_ref_list(args).into_iter().last()
 }
 
-/// Parse STYLED_ITEM args: `'name', (#psa,...), #shape` 鈫?`(shape_ref, [psa_refs])`.
+/// Parse STYLED_ITEM args: `'name', (#psa,...), #shape` ->`(shape_ref, [psa_refs])`.
 ///
 /// The writer emits: `STYLED_ITEM('color',(#psa,),#face_id)`
 fn parse_styled_item(args: &str) -> Option<(u64, Vec<u64>)> {
@@ -8263,7 +8305,7 @@ fn parse_trimmed_curve(args: &str) -> Option<(u64, f64, f64)> {
 }
 
 fn parse_parameter_value(s: &str) -> Option<f64> {
-    // s looks like "(PARAMETER_VALUE(0.))" 鈥?find the float inside PARAMETER_VALUE(...)
+    // s looks like "(PARAMETER_VALUE(0.))" --find the float inside PARAMETER_VALUE(...)
     let cursor = s.to_uppercase();
     let pv_pos = cursor.find("PARAMETER_VALUE(")?;
     let after = &s[pv_pos + "PARAMETER_VALUE(".len()..];
@@ -8435,7 +8477,7 @@ fn parse_ref_list(input: &str) -> Vec<u64> {
     refs
 }
 
-/// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` 鈫?`[1.0, 2.0, 3.0]`.
+/// Parse a parenthesized list of floating-point numbers: `(1., 2., 3.)` ->`[1.0, 2.0, 3.0]`.
 fn parse_float_list(input: &str) -> Vec<f64> {
     let inner = input.trim().trim_start_matches('(').trim_end_matches(')');
     inner
@@ -8490,7 +8532,7 @@ fn split_top_level(input: &str, delimiter: char) -> Vec<&str> {
 }
 
 fn parse_cartesian_point_2d(args: &str) -> Option<[f64; 2]> {
-    // CARTESIAN_POINT('name', (x, y)) 鈥?only 2 coordinates
+    // CARTESIAN_POINT('name', (x, y)) --only 2 coordinates
     let inner = args.trim().trim_start_matches('(').trim_end_matches(')');
     let parts = split_top_level(inner, ',');
     if parts.len() != 3 {
@@ -8551,7 +8593,7 @@ fn parse_definitional_rep(args: &str) -> Option<u64> {
     if parts.len() < 2 {
         return None;
     }
-    // The second part is a list like (#14) 鈥?take the first element
+    // The second part is a list like (#14) --take the first element
     let refs = parse_ref_list(parts[1]);
     refs.into_iter().next()
 }
@@ -8560,7 +8602,7 @@ fn parse_definitional_rep(args: &str) -> Option<u64> {
 ///
 /// 2D curves live inside DEFINITIONAL_REPRESENTATION bodies. In the STEP file
 /// they use the same entity names (LINE, CIRCLE) but with 2-component coords.
-/// The reader stores them in the 3D maps (cartesian_points, circles, lines) 鈥?
+/// The reader stores them in the 3D maps (cartesian_points, circles, lines) --
 /// STEP parsers accept them there. We just need to down-convert to Curve2d.
 fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
     if let Some((origin_ref, vector_ref)) = parsed.lines.get(&curve_ref) {
@@ -9506,7 +9548,7 @@ END-ISO-10303-21;
         // All should produce additional edges in the BRep.
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
 
-        // The b-spline alone has 7 control points 鈫?at least 6 edges
+        // The b-spline alone has 7 control points ->at least 6 edges
         // The trimmed lines each contribute 1 edge (2 total)
         // The circle arc contributes 8+ edges
         // Total from curve sets: at least 16 edges beyond the face topology edges

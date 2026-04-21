@@ -1,4 +1,4 @@
-//! Example: Phase K — face_surface_range, LinearExtrusionSurface, RevolutionSurface,
+//! Example: face_surface_range, LinearExtrusionSurface, RevolutionSurface,
 //!           BSplineSurface STEP export, STEP LinearExtrusion import.
 //!
 //! Demonstrates:
@@ -418,7 +418,7 @@ END-ISO-10303-21;
 
 fn main() {
     println!("╔════════════════════════════════════════════════════╗");
-    println!("║              RCAD Phase K Demo                     ║");
+    println!("║           RCAD Swept Surfaces Demo                   ║");
     println!("║  face_surface_range · LinearExtrusion              ║");
     println!("║  Revolution · BSpline STEP export                  ║");
     println!("╚════════════════════════════════════════════════════╝");
@@ -429,5 +429,5 @@ fn main() {
     demo_bspline_surface_step_export();
     demo_step_linear_extrusion_import();
 
-    println!("\n✓ Phase K demo complete.");
+    println!("\n✓ Swept surfaces demo complete.");
 }

@@ -1,4 +1,4 @@
-//! Phase O demo — shape distance, shell sewing, analytic section curves
+//! Shape distance, shell sewing, and analytic section curves
 //!
 //! O.A  Shape-to-shape and point-to-shape minimum distance
 //!      (analogous to OCCT BRepExtrema_DistShapeShape)
@@ -341,7 +341,7 @@ fn demo_section_curves() {
 
 fn main() {
     println!("=================================================");
-    println!("  Phase O Demo: Distance, Sewing, Section Curves");
+    println!("  Distance / sewing / section curves demo");
     println!("=================================================");
 
     demo_shape_distance();
@@ -349,6 +349,6 @@ fn main() {
     demo_section_curves();
 
     println!("\n=================================================");
-    println!("  Phase O: All sections completed successfully");
+    println!("  All sections completed successfully.");
     println!("=================================================");
 }

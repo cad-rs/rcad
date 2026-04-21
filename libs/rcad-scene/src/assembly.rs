@@ -1,12 +1,12 @@
-//! 装配体 / 实例化场景树
+//! Assembly / instancing scene tree.
 //!
-//! # 设计原则
+//! # Design
 //!
-//! - **`Arc<BRep>` 共享**：同一几何体可被多个 [`AssemblyNode`] 引用，不复制顶点数据。
-//! - **`DAffine3` 变换叠加**：每个节点存储相对于父节点的仿射变换，查询时沿路径累积。
-//! - **两种展开方式**：
-//!   - [`Assembly::flatten`] — 返回 `(Arc<BRep>, 世界变换)` 列表，惰性实例化。
-//!   - [`Assembly::to_brep`] — 合并为单一 BRep（调用 `BRep::transformed` + `append_brep`）。
+//! - **`Arc<BRep>` sharing**: one body can be referenced from many [`AssemblyNode`]s without copying mesh data.
+//! - **`DAffine3` transforms**: each node stores its transform relative to its parent; queries accumulate along the path.
+//! - **Two expansion modes**:
+//!   - [`Assembly::flatten`] — `(Arc<BRep>, world transform)` per leaf (lazy instancing).
+//!   - [`Assembly::to_brep`] — fuse into one `BRep` via `BRep::transformed` + `append_brep`.
 
 use std::sync::Arc;
 use std::collections::BTreeMap;
@@ -31,40 +31,40 @@ pub struct AssemblyMetadata {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 核心类型
+// Core types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 装配树中的单个节点。
+/// One node in the assembly tree.
 ///
-/// 节点可以是叶节点（一个具体的 [`BRep`]）或子装配（包含若干子节点）。
-/// `transform` 是相对于父节点的仿射变换，默认为恒等变换。
+/// Either a leaf holding a concrete [`BRep`] or a sub-assembly of child nodes.
+/// `transform` is relative to the parent (defaults to identity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssemblyNode {
-    /// 节点唯一 ID（由所属 [`Assembly`] 分配）。
+    /// Stable id assigned by the owning [`Assembly`].
     pub id: u64,
-    /// 人类可读名称。
+    /// Human-readable label.
     pub name: String,
-    /// 相对于父节点的仿射变换（位置、旋转、缩放）。
+    /// Affine transform relative to the parent (translation / rotation / scale).
     pub transform: DAffine3,
-    /// 节点内容：叶节点几何或子装配列表。
+    /// Payload: shared geometry or nested nodes.
     pub content: NodeContent,
     /// Semantic metadata for this node.
     #[serde(default)]
     pub metadata: AssemblyMetadata,
 }
 
-/// [`AssemblyNode`] 的内容类型。
+/// Payload stored inside an [`AssemblyNode`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeContent {
-    /// 叶节点：持有一个共享 BRep。
+    /// Leaf referencing shared `BRep` data.
     Leaf(Arc<BRep>),
-    /// 子装配：包含若干子节点（可以是叶节点或更深的子装配）。
+    /// Branch node containing an ordered list of children.
     Assembly(Vec<AssemblyNode>),
 }
 
-/// 装配体根结构，持有零或多个顶层 [`AssemblyNode`]。
+/// Root of an assembly document: zero or more top-level [`AssemblyNode`]s.
 ///
-/// # 示例
+/// # Example
 ///
 /// ```
 /// # use std::sync::Arc;
@@ -85,23 +85,23 @@ pub enum NodeContent {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assembly {
-    /// 装配体名称。
+    /// Document / assembly name.
     pub name: String,
-    /// 顶层节点列表（可以是叶节点或子装配）。
+    /// Top-level roots (parts or nested assemblies).
     pub roots: Vec<AssemblyNode>,
     /// Metadata for the whole assembly document.
     #[serde(default)]
     pub metadata: AssemblyMetadata,
-    /// 下一个要分配的节点 ID。
+    /// Monotonic id generator for new nodes.
     next_id: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AssemblyNode 实现
+// `AssemblyNode` impl
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl AssemblyNode {
-    /// 创建叶节点（恒等变换）。
+    /// Leaf with identity transform.
     pub fn new_leaf(id: u64, name: impl Into<String>, brep: Arc<BRep>) -> Self {
         Self {
             id,
@@ -112,7 +112,7 @@ impl AssemblyNode {
         }
     }
 
-    /// 创建带变换的叶节点。
+    /// Leaf with an explicit parent-relative transform.
     pub fn new_leaf_with_transform(
         id: u64,
         name: impl Into<String>,
@@ -128,7 +128,7 @@ impl AssemblyNode {
         }
     }
 
-    /// 创建子装配节点（恒等变换，初始无子节点）。
+    /// Empty branch node (identity transform, no children yet).
     pub fn new_assembly(id: u64, name: impl Into<String>) -> Self {
         Self {
             id,
@@ -139,7 +139,7 @@ impl AssemblyNode {
         }
     }
 
-    /// 返回该节点下所有叶节点，累积 `parent_xform` 后写入 `out`。
+    /// DFS flatten: append every leaf under this node using `parent_xform * self.transform`.
     fn flatten_into(&self, parent_xform: DAffine3, out: &mut Vec<(Arc<BRep>, DAffine3)>) {
         let world = parent_xform * self.transform;
         match &self.content {
@@ -154,7 +154,7 @@ impl AssemblyNode {
         }
     }
 
-    /// 将该节点合并入目标 BRep（递归，累积父变换）。
+    /// Recursively merge leaves into `dst`, applying accumulated transforms.
     fn merge_into(&self, parent_xform: DAffine3, dst: &mut BRep) {
         let world = parent_xform * self.transform;
         match &self.content {
@@ -172,11 +172,11 @@ impl AssemblyNode {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Assembly 实现
+// `Assembly` impl
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl Assembly {
-    /// 创建空装配体。
+    /// Create an empty assembly shell.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -201,7 +201,7 @@ impl Assembly {
         self.metadata.material = Some(material.into());
     }
 
-    // ── 内部 ID 分配 ─────────────────────────────────────────────────────────
+    // --- internal id allocation ---
 
     fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
@@ -209,16 +209,16 @@ impl Assembly {
         id
     }
 
-    // ── 添加节点 ─────────────────────────────────────────────────────────────
+    // --- add nodes ---
 
-    /// 添加顶层叶节点（恒等变换）。返回新节点的 ID。
+    /// Append a root leaf (identity transform); returns the new id.
     pub fn add_part(&mut self, name: impl Into<String>, brep: Arc<BRep>) -> u64 {
         let id = self.alloc_id();
         self.roots.push(AssemblyNode::new_leaf(id, name, brep));
         id
     }
 
-    /// 添加顶层叶节点（带变换）。返回新节点的 ID。
+    /// Append a root leaf with transform; returns the new id.
     pub fn add_part_with_transform(
         &mut self,
         name: impl Into<String>,
@@ -231,13 +231,13 @@ impl Assembly {
         id
     }
 
-    /// 添加一个已构建好的顶层节点（叶节点或子装配均可）。返回其 ID。
+    /// Insert a fully built root node (leaf or branch); returns its id.
     pub fn add_node(&mut self, mut node: AssemblyNode) -> u64 {
-        // 如果 id=0 表示未分配，则分配一个
+        // `id == 0` means "please assign"
         if node.id == 0 {
             node.id = self.alloc_id();
         } else {
-            // 确保 next_id 不冲突
+            // Keep the allocator ahead of user-supplied ids
             if node.id >= self.next_id {
                 self.next_id = node.id + 1;
             }
@@ -247,12 +247,12 @@ impl Assembly {
         id
     }
 
-    // ── 查询 ─────────────────────────────────────────────────────────────────
+    // --- queries ---
 
-    /// 将整棵装配树展开为 `(共享 BRep, 世界变换)` 列表。
+    /// Flatten into `(Arc<BRep>, world transform)` pairs.
     ///
-    /// 列表中每一项对应一个叶节点实例。变换已累积父链路，可直接用于渲染或坐标查询，
-    /// 不复制 BRep 顶点数据。
+    /// One entry per leaf instance; transforms include the full parent chain for rendering
+    /// without copying `BRep` vertices.
     pub fn flatten(&self) -> Vec<(Arc<BRep>, DAffine3)> {
         let mut out = Vec::new();
         for root in &self.roots {
@@ -261,10 +261,10 @@ impl Assembly {
         out
     }
 
-    /// 将整棵装配树合并为单一 [`BRep`]。
+    /// Fuse the hierarchy into one [`BRep`].
     ///
-    /// 对每个叶节点调用 [`BRep::transformed`]（只读副本），然后用 [`append_brep`] 拼接。
-    /// 适用于需要单体 BRep 的场合（布尔运算、STEP 单体导出等）。
+    /// Each leaf is copied via [`BRep::transformed`], then concatenated with [`append_brep`].
+    /// Use this when downstream algorithms require a single solid (Booleans, monolithic STEP, …).
     pub fn to_brep(&self) -> BRep {
         let mut result = BRep::new();
         for root in &self.roots {
@@ -273,7 +273,7 @@ impl Assembly {
         result
     }
 
-    /// 返回装配树中叶节点总数（即实例数）。
+    /// Total leaf count (number of instanced bodies).
     pub fn instance_count(&self) -> usize {
         fn count(node: &AssemblyNode) -> usize {
             match &node.content {
@@ -286,12 +286,12 @@ impl Assembly {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 从 AssemblyComponent (rcad-step) 构建 Assembly 的辅助
+// Helpers for `rcad_step::AssemblyComponent`
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 从一组扁平的 `(name, brep, transform)` 三元组快速构建 [`Assembly`]。
+/// Build an [`Assembly`] from flat `(name, brep, transform)` tuples.
 ///
-/// 这是将 `rcad_step::read_assembly` 返回值转换为场景树的推荐方式。
+/// Convenient when adapting `rcad_step::read_assembly` output into the scene tree.
 pub fn assembly_from_parts(
     name: impl Into<String>,
     parts: impl IntoIterator<Item = (String, BRep, DAffine3)>,
@@ -304,11 +304,11 @@ pub fn assembly_from_parts(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DVec3 便利构造（减少调用侧 boilerplate）
+// `DVec3` convenience helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl Assembly {
-    /// 添加顶层叶节点，仅指定平移（旋转/缩放保持恒等）。
+    /// Append a translated root leaf (rotation/scale stay identity).
     pub fn add_part_at(
         &mut self,
         name: impl Into<String>,

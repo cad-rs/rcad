@@ -1,5 +1,5 @@
-/// Smoke tests for rcad-render's CPU tessellation path.
-/// These do NOT require a GPU — they only test the mesh-building logic.
+﻿/// Smoke tests for rcad-render's CPU tessellation path.
+/// These do NOT require a GPU 鈥?they only test the mesh-building logic.
 use rcad_kernel::BRep;
 use rcad_kernel::PrimitiveSolid;
 use rcad_render::{EditedModelDelta, TessellationOptions, Tessellator};
@@ -17,17 +17,17 @@ fn make_box_brep() -> BRep {
 fn tessellate_empty_brep_no_panic() {
     let empty = BRep::default();
     let mesh = Tessellator::tessellate(&empty);
-    assert!(mesh.vertices.is_empty(), "empty BRep should yield no vertices");
+    assert!(mesh.nodes.is_empty(), "empty BRep should yield no mesh nodes");
     assert!(mesh.indices.is_empty(), "empty BRep should yield no indices");
 }
 
-/// Tessellating a box primitive (no geometry populated) should produce vertices.
+/// Tessellating a box primitive (no geometry populated) should produce mesh nodes.
 #[test]
 fn tessellate_box_has_vertices() {
     let brep = make_box_brep();
     let mesh = Tessellator::tessellate(&brep);
-    // The box primitive has 8 corner vertices
-    assert_eq!(mesh.vertices.len(), 8, "unit box should have 8 vertices");
+    // The box primitive has 8 corner mesh nodes.
+    assert_eq!(mesh.nodes.len(), 8, "unit box should have 8 mesh nodes");
 }
 
 /// Tessellating a box with triangles populated should produce triangle indices.
@@ -43,12 +43,12 @@ fn tessellate_box_with_triangles_has_indices() {
     geom_populate::populate_box_geom(&mut brep);
 
     let mesh = Tessellator::tessellate(&brep);
-    assert!(!mesh.vertices.is_empty(), "should have vertices");
+    assert!(!mesh.nodes.is_empty(), "should have mesh nodes");
     // Triangle indices come in sets of 3
     assert!(mesh.indices.len().is_multiple_of(3), "index count must be divisible by 3");
 }
 
-/// All triangle indices must be within bounds of the vertex buffer.
+/// All triangle indices must be within bounds of the mesh node buffer.
 #[test]
 fn tessellate_box_indices_in_bounds() {
     use rcad_algorithms::geom_populate;
@@ -61,7 +61,7 @@ fn tessellate_box_indices_in_bounds() {
     geom_populate::populate_box_geom(&mut brep);
 
     let mesh = Tessellator::tessellate(&brep);
-    let nv = mesh.vertices.len() as u32;
+    let nv = mesh.nodes.len() as u32;
     for &idx in &mesh.indices {
         assert!(idx < nv, "triangle index {idx} out of bounds (nv={nv})");
     }
@@ -131,3 +131,5 @@ fn invalidate_cache_for_edits_ignores_out_of_range_indices() {
     let marked = Tessellator::invalidate_cache_for_edits(&mut brep, &edits);
     assert_eq!(marked, 0, "out-of-range edits should be ignored safely");
 }
+
+

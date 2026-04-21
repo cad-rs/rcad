@@ -1,4 +1,4 @@
-//! Example: Phase H — Arc Length + Moment of Inertia Tensor.
+//! Example: Arc length and moment of inertia tensor.
 //!
 //! Demonstrates:
 //!   1. Curve arc length: Line3 (analytic), Circle3 (analytic), Ellipse3 (GL16),
@@ -203,7 +203,7 @@ fn demo_box_edge_arc_lengths() {
 
 fn main() {
     println!("╔════════════════════════════════════════════════════╗");
-    println!("║              RCAD Phase H Demo                     ║");
+    println!("║        RCAD Arc Length / Inertia Demo               ║");
     println!("║   Arc Length · Moment of Inertia Tensor            ║");
     println!("╚════════════════════════════════════════════════════╝");
 
@@ -211,5 +211,5 @@ fn main() {
     demo_inertia_tensor();
     demo_box_edge_arc_lengths();
 
-    println!("\n✓ Phase H demo complete.");
+    println!("\n✓ Arc length / inertia demo complete.");
 }

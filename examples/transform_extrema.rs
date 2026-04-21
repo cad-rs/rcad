@@ -1,4 +1,4 @@
-//! Phase P demo — BRep transform, curve-curve extrema, STEP color import
+//! BRep transform, curve–curve extrema, and STEP color import
 //!
 //! P.A  BRep transform / location
 //!      (analogous to OCCT TopLoc_Location + BRepBuilderAPI_Transform)
@@ -284,7 +284,7 @@ fn demo_color_import() {
 
 fn main() {
     println!("=================================================");
-    println!("  Phase P Demo: Transform, Extrema, Color Import");
+    println!("  Transform / extrema / color import demo");
     println!("=================================================");
 
     demo_transform();
@@ -292,6 +292,6 @@ fn main() {
     demo_color_import();
 
     println!("\n=================================================");
-    println!("  Phase P: All sections completed successfully");
+    println!("  All sections completed successfully.");
     println!("=================================================");
 }

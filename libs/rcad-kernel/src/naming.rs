@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::BRep;
+use crate::{BRep, semantic_vertex_indices};
 
 /// A stable reference to a topological entity in a B-Rep.
 ///
@@ -33,14 +33,14 @@ impl PersistentNamingHooks {
     /// Build a baseline naming table with deterministic default labels.
     ///
     /// Generated labels are:
-    /// - vertices: `v0`, `v1`, ...
+    /// - semantic vertices: `v0`, `v1`, ...
     /// - edges: `e0`, `e1`, ...
     /// - faces: `f0`, `f1`, ... (flattened index)
     /// - solids: `s0`, `s1`, ...
     pub fn with_default_labels_for_brep(brep: &BRep) -> Self {
         let mut out = Self::new();
-        for i in 0..brep.vertices.len() {
-            out.bind_unchecked(format!("v{i}"), TopoEntityRef::Vertex(i));
+        for vi in semantic_vertex_indices(brep) {
+            out.bind_unchecked(format!("v{vi}"), TopoEntityRef::Vertex(vi));
         }
         for i in 0..brep.edges.len() {
             out.bind_unchecked(format!("e{i}"), TopoEntityRef::Edge(i));

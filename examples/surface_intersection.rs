@@ -1,4 +1,4 @@
-//! Phase Q demo — surface-surface intersection, trimmed surface
+//! Surface–surface intersection and trimmed surfaces
 //!
 //! Q.C  Surface-surface intersection (GeomAPI_IntSS)
 //!      Analytic pairs: Plane×Plane, Plane×Sphere, Plane×Cylinder,
@@ -406,13 +406,13 @@ fn demo_trimmed() {
 
 fn main() {
     println!("=================================================");
-    println!("  Phase Q Demo: IntSS + TrimmedSurface");
+    println!("  Surface intersection demo: IntSS + TrimmedSurface");
     println!("=================================================");
 
     demo_intss();
     demo_trimmed();
 
     println!("\n=================================================");
-    println!("  Phase Q: All sections completed successfully");
+    println!("  All sections completed successfully.");
     println!("=================================================");
 }

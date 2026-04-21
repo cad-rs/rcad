@@ -1,4 +1,4 @@
-//! Phase R demo — improved boolean ops on curved solids + face imprinting + gap/overlap detection
+//! Boolean operations on curved solids, face imprinting, and gap/overlap detection
 //!
 //! R.A  Curved solid boolean operations
 //!      - Box ∩ Cylinder (Z-axis)
@@ -217,13 +217,13 @@ fn demo_imprint_and_detect() {
 
 fn main() {
     println!("=================================================");
-    println!("  Phase R Demo: Curved Booleans + Imprint");
+    println!("  Boolean + imprint demo");
     println!("=================================================");
 
     demo_curved_boolean();
     demo_imprint_and_detect();
 
     println!("\n=================================================");
-    println!("  Phase R: All sections completed successfully");
+    println!("  All sections completed successfully.");
     println!("=================================================");
 }

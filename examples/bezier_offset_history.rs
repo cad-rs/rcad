@@ -1,4 +1,4 @@
-//! Phase M demo — all five remaining P2 items
+//! Bézier curves, offset curves, and BRep history
 //!
 //! M.1  SameParameter / SameRange edge flags
 //! M.2  Bezier curves and surfaces
@@ -320,7 +320,7 @@ fn demo_m5() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn main() {
-    println!("Phase M — All Remaining P2 Items");
+    println!("Bézier / offset / history");
     println!("=================================");
 
     demo_m1();
@@ -330,5 +330,5 @@ fn main() {
     demo_m5();
 
     println!("\n=================================");
-    println!("All Phase M demos completed successfully.");
+    println!("All demos completed successfully.");
 }

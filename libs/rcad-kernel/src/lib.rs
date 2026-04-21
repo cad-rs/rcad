@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 /// This module describes *what shape is*.
 pub mod geom;
 
-/// 装配体：层级结构、组件实例化、世界变换展平。
+/// Assemblies: hierarchy, instancing, and world-transform flattening.
 ///
-/// 类比 OCCT `XCAFDoc_ShapeTool` 管理的 shape 层级。
+/// Analogous to the shape hierarchy managed by OCCT `XCAFDoc_ShapeTool`.
 pub mod assembly;
 
 /// Topology model types: vertex/edge/face/shell/solid incidence relationships.
@@ -25,6 +25,8 @@ pub mod properties;
 ///
 /// Analogous to OCCT `TopExp_Explorer` and `TopExp::MapShapesAndAncestors`.
 pub mod topo_query;
+/// Topology simplification helpers: wire/edge cleanup for fragmented topology.
+pub mod topo_simplify;
 
 /// Cached graph-topology wrapper with O(1) adjacency, DFS/BFS traversal,
 /// and mutation-dirty tracking.
@@ -160,8 +162,10 @@ pub use tolerance::{
 };
 pub use topo_query::{
     edge_adjacent_faces, edge_count, face_count, face_edges, is_degenerate_edge,
-    seam_edge_candidates, semantic_wire_edges, vertex_adjacent_edges, vertex_count,
+    seam_edge_candidates, semantic_vertex_count, semantic_vertex_indices, semantic_wire_edges,
+    vertex_adjacent_edges, vertex_count,
 };
+pub use topo_simplify::merge_collinear_edges_in_wires;
 pub use brep_graph::{
     BfsFaces, BRepGraph, BRepGraphBuilder, BRepGraphCheckpointData,
     BRepGraphTool, DfsEdgesFromVertex, DfsFaces,

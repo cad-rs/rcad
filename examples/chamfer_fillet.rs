@@ -1,4 +1,4 @@
-//! Example: Phase F — Chamfer and Fillet on BRep edges.
+//! Example: Chamfer and fillet on BRep edges.
 //!
 //! Demonstrates:
 //!   1. chamfer_edge: bevel a single edge of a box with a flat cut
@@ -130,7 +130,7 @@ fn demo_all_edges_chamfer() {
 
 fn main() {
     println!("╔═══════════════════════════════════════════════╗");
-    println!("║            RCAD Phase F Demo                  ║");
+    println!("║            RCAD Chamfer / Fillet Demo        ║");
     println!("║      Chamfer · Fillet · All-edges Chamfer     ║");
     println!("╚═══════════════════════════════════════════════╝");
 
@@ -138,6 +138,6 @@ fn main() {
     demo_fillet();
     demo_all_edges_chamfer();
 
-    println!("\n✓ Phase F demo complete.");
+    println!("\n✓ Chamfer / fillet demo complete.");
     println!("  Output: box_chamfer.step  box_fillet.step  box_all_chamfer.step");
 }

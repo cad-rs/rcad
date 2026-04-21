@@ -1,4 +1,4 @@
-//! Phase N demo — curve fitting, point projection, and analytic boolean intersections
+//! Curve fitting, point projection, and analytic boolean intersections
 //!
 //! N.A  B-spline interpolation and approximation (analogous to OCCT GeomAPI_Interpolate / PointsToBSpline)
 //! N.C  Closest-point projection onto curves and surfaces (analogous to OCCT GeomAPI_ProjectPointOnCurve/Surf)
@@ -447,7 +447,7 @@ fn demo_analytic_booleans() {
 
 fn main() {
     println!("=================================================");
-    println!("  Phase N Demo: Fitting, Projection, Booleans");
+    println!("  Fitting / projection / booleans demo");
     println!("=================================================");
 
     demo_curve_fitting();
@@ -455,6 +455,6 @@ fn main() {
     demo_analytic_booleans();
 
     println!("\n=================================================");
-    println!("  Phase N: All sections completed successfully");
+    println!("  All sections completed successfully.");
     println!("=================================================");
 }

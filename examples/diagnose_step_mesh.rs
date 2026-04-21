@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use rcad_algorithms::{TessellationParams, mesh_brep};
 use rcad_kernel::{BRep, Curve2dEval, Surface3, Wire};
 use rcad_render::Tessellator;
@@ -413,8 +413,8 @@ fn main() {
         .count();
     let nonzero_normals = render_mesh.normals.len().saturating_sub(zero_normals);
     println!(
-        "render_mesh: vertices={} triangles={} line_indices={} normals={} nonzero_normals={} zero_normals={}",
-        render_mesh.vertices.len(),
+        "render_mesh: nodes={} triangles={} line_indices={} normals={} nonzero_normals={} zero_normals={}",
+        render_mesh.nodes.len(),
         render_mesh.indices.len() / 3,
         render_mesh.line_indices.len() / 2,
         render_mesh.normals.len(),
@@ -422,3 +422,5 @@ fn main() {
         zero_normals
     );
 }
+
+

@@ -1,4 +1,4 @@
-//! BRepMesh-style mesh generation for BRep shapes.
+﻿//! BRepMesh-style mesh generation for BRep shapes.
 //!
 //! This module provides mesh generation capabilities similar to OCCT's BRepMesh.
 //! It includes:
@@ -147,11 +147,11 @@ impl MeshParams {
 /// A triangular mesh representing a surface.
 #[derive(Debug, Clone)]
 pub struct Mesh {
-    /// Vertex positions in world coordinates.
-    pub vertices: Vec<DVec3>,
-    /// Triangle indices (3 vertex indices per triangle).
+    /// Node positions (tessellation samples) in world coordinates.
+    pub nodes: Vec<DVec3>,
+    /// Triangle indices (3 node indices per triangle).
     pub triangles: Vec<[u32; 3]>,
-    /// Per-vertex normals.
+    /// Per-node normals.
     pub normals: Vec<DVec3>,
 }
 
@@ -165,7 +165,7 @@ impl Mesh {
     /// Create an empty mesh.
     pub fn new() -> Self {
         Self {
-            vertices: Vec::new(),
+            nodes: Vec::new(),
             triangles: Vec::new(),
             normals: Vec::new(),
         }
@@ -181,21 +181,21 @@ impl Mesh {
         self.triangles.len()
     }
 
-    /// Get the number of vertices.
-    pub fn vertex_count(&self) -> usize {
-        self.vertices.len()
+    /// Get the number of mesh nodes.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
     }
 
     /// Compute the bounding box of the mesh.
     pub fn bounding_box(&self) -> (DVec3, DVec3) {
-        if self.vertices.is_empty() {
+        if self.nodes.is_empty() {
             return (DVec3::ZERO, DVec3::ZERO);
         }
 
-        let mut min = self.vertices[0];
-        let mut max = self.vertices[0];
+        let mut min = self.nodes[0];
+        let mut max = self.nodes[0];
 
-        for &v in &self.vertices {
+        for &v in &self.nodes {
             min = min.min(v);
             max = max.max(v);
         }
@@ -215,8 +215,8 @@ impl Mesh {
 
     /// Merge another mesh into this one.
     pub fn merge(&mut self, other: &Mesh) {
-        let base = self.vertices.len() as u32;
-        self.vertices.extend_from_slice(&other.vertices);
+        let base = self.nodes.len() as u32;
+        self.nodes.extend_from_slice(&other.nodes);
         self.normals.extend_from_slice(&other.normals);
         for tri in &other.triangles {
             self.triangles.push([tri[0] + base, tri[1] + base, tri[2] + base]);
@@ -247,9 +247,9 @@ impl BRepMesh {
         self.face_meshes.iter().map(|m| m.triangle_count()).sum()
     }
 
-    /// Get total vertex count across all faces.
-    pub fn total_vertices(&self) -> usize {
-        self.face_meshes.iter().map(|m| m.vertex_count()).sum()
+    /// Get total mesh node count across all faces.
+    pub fn total_nodes(&self) -> usize {
+        self.face_meshes.iter().map(|m| m.node_count()).sum()
     }
 
     /// Merge all face meshes into a single mesh.
@@ -283,7 +283,7 @@ impl Default for BRepMesh {
 /// * `params` - Mesh generation parameters.
 ///
 /// # Returns
-/// A `Mesh` containing vertices, triangles, and normals.
+/// A `Mesh` containing nodes, triangles, and normals.
 pub fn mesh_face(_face: &Face, surface: &Surface3, params: &MeshParams) -> Mesh {
     let domain = surface.default_domain();
     let [u_min, u_max, v_min, v_max] = domain;
@@ -308,7 +308,7 @@ pub fn mesh_face(_face: &Face, surface: &Surface3, params: &MeshParams) -> Mesh 
     let n_u = estimate_initial_divisions(surface, u_range, v_range, params, true);
     let n_v = estimate_initial_divisions(surface, u_range, v_range, params, false);
 
-    let mut vertices: Vec<DVec3> = Vec::new();
+    let mut nodes: Vec<DVec3> = Vec::new();
     let mut normals: Vec<DVec3> = Vec::new();
     let mut triangles: Vec<[u32; 3]> = Vec::new();
 
@@ -329,15 +329,15 @@ pub fn mesh_face(_face: &Face, surface: &Surface3, params: &MeshParams) -> Mesh 
                 [v0, v1],
                 params,
                 0,
-                &mut vertices,
+                &mut nodes,
                 &mut normals,
                 &mut triangles,
             );
         }
     }
 
-    // Weld vertices
-    let mesh = weld_mesh(Mesh { vertices, triangles, normals });
+    // Weld duplicate mesh nodes
+    let mesh = weld_mesh(Mesh { nodes, triangles, normals });
 
     // Optimize if requested
     if params.optimize && !mesh.triangles.is_empty() {
@@ -380,7 +380,7 @@ fn subdivide_quad_for_face(
     v_range: [f64; 2],
     params: &MeshParams,
     depth: usize,
-    vertices: &mut Vec<DVec3>,
+    nodes: &mut Vec<DVec3>,
     normals: &mut Vec<DVec3>,
     triangles: &mut Vec<[u32; 3]>,
 ) {
@@ -427,13 +427,13 @@ fn subdivide_quad_for_face(
 
     if should_subdivide {
         // Subdivide into 4 sub-quads
-        subdivide_quad_for_face(surface, [u0, um], [v0, vm], params, depth + 1, vertices, normals, triangles);
-        subdivide_quad_for_face(surface, [um, u1], [v0, vm], params, depth + 1, vertices, normals, triangles);
-        subdivide_quad_for_face(surface, [u0, um], [vm, v1], params, depth + 1, vertices, normals, triangles);
-        subdivide_quad_for_face(surface, [um, u1], [vm, v1], params, depth + 1, vertices, normals, triangles);
+        subdivide_quad_for_face(surface, [u0, um], [v0, vm], params, depth + 1, nodes, normals, triangles);
+        subdivide_quad_for_face(surface, [um, u1], [v0, vm], params, depth + 1, nodes, normals, triangles);
+        subdivide_quad_for_face(surface, [u0, um], [vm, v1], params, depth + 1, nodes, normals, triangles);
+        subdivide_quad_for_face(surface, [um, u1], [vm, v1], params, depth + 1, nodes, normals, triangles);
     } else {
         // Emit triangles
-        let n = vertices.len() as u32;
+        let n = nodes.len() as u32;
 
         // Compute normals
         let n00 = surface.normal_at(u0, v0);
@@ -446,7 +446,7 @@ fn subdivide_quad_for_face(
             return;
         }
 
-        vertices.extend_from_slice(&[p00, p10, p11, p01]);
+        nodes.extend_from_slice(&[p00, p10, p11, p01]);
         normals.extend_from_slice(&[n00, n10, n11, n01]);
 
         // Choose diagonal based on edge lengths
@@ -474,22 +474,22 @@ fn normal_angle(n0: DVec3, n1: DVec3) -> f64 {
     cos_angle.acos()
 }
 
-/// Weld duplicate vertices in a mesh.
+/// Weld duplicate mesh nodes in a mesh.
 fn weld_mesh(mesh: Mesh) -> Mesh {
     const WELD_TOLERANCE: f64 = 1e-9;
 
-    if mesh.vertices.is_empty() {
+    if mesh.nodes.is_empty() {
         return mesh;
     }
 
-    let mut remap = vec![0u32; mesh.vertices.len()];
+    let mut remap = vec![0u32; mesh.nodes.len()];
     let mut welded_vertices: Vec<DVec3> = Vec::new();
     let mut welded_normals: Vec<DVec3> = Vec::new();
     let mut normal_counts = Vec::new();
     let mut buckets: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
     let scale = 1.0 / WELD_TOLERANCE;
 
-    for (index, point) in mesh.vertices.iter().enumerate() {
+    for (index, point) in mesh.nodes.iter().enumerate() {
         let key = [
             (point.x * scale).round() as i64,
             (point.y * scale).round() as i64,
@@ -552,7 +552,7 @@ fn weld_mesh(mesh: Mesh) -> Mesh {
         .collect();
 
     Mesh {
-        vertices: welded_vertices,
+        nodes: welded_vertices,
         triangles: welded_triangles,
         normals: welded_normals,
     }
@@ -586,7 +586,7 @@ fn optimize_mesh(mut mesh: Mesh) -> Mesh {
                 let t1 = mesh.triangles[tris[1]];
 
                 // Check if flip would improve quality
-                if should_flip_edge(&mesh.vertices, t0, t1, *edge) {
+                if should_flip_edge(&mesh.nodes, t0, t1, *edge) {
                     // Apply the flip
                     if let Some((new_t0, new_t1)) = flip_edge(t0, t1, *edge) {
                         mesh.triangles[tris[0]] = new_t0;
@@ -602,8 +602,8 @@ fn optimize_mesh(mut mesh: Mesh) -> Mesh {
 }
 
 /// Check if an edge flip would improve triangle quality.
-fn should_flip_edge(vertices: &[DVec3], t0: [u32; 3], t1: [u32; 3], edge: (u32, u32)) -> bool {
-    // Find opposite vertices
+fn should_flip_edge(nodes: &[DVec3], t0: [u32; 3], t1: [u32; 3], edge: (u32, u32)) -> bool {
+    // Find opposite mesh nodes
     let opp0 = t0.iter().find(|&&v| v != edge.0 && v != edge.1).copied().unwrap();
     let opp1 = t1.iter().find(|&&v| v != edge.0 && v != edge.1).copied().unwrap();
 
@@ -612,10 +612,10 @@ fn should_flip_edge(vertices: &[DVec3], t0: [u32; 3], t1: [u32; 3], edge: (u32, 
     }
 
     // Compute current minimum angle
-    let p_opp0 = vertices.get(opp0 as usize);
-    let p_opp1 = vertices.get(opp1 as usize);
-    let p_e0 = vertices.get(edge.0 as usize);
-    let p_e1 = vertices.get(edge.1 as usize);
+    let p_opp0 = nodes.get(opp0 as usize);
+    let p_opp1 = nodes.get(opp1 as usize);
+    let p_e0 = nodes.get(edge.0 as usize);
+    let p_e1 = nodes.get(edge.1 as usize);
 
     let (Some(p_opp0), Some(p_opp1), Some(p_e0), Some(p_e1)) = (p_opp0, p_opp1, p_e0, p_e1) else {
         return false;
@@ -771,7 +771,7 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
     // Compute normals
     let normals = vec![face.normal; poly_pts.len()];
 
-    Mesh { vertices: poly_pts, triangles, normals }
+    Mesh { nodes: poly_pts, triangles, normals }
 }
 
 /// Estimate number of segments for curve discretization.
@@ -788,8 +788,8 @@ fn estimate_curve_segments(curve: &Curve3, span: f64) -> usize {
 }
 
 /// Ear clipping triangulation for 3D polygon.
-fn ear_clip_3d(vertices: &[DVec3], normal: DVec3) -> Vec<[usize; 3]> {
-    let n = vertices.len();
+fn ear_clip_3d(nodes: &[DVec3], normal: DVec3) -> Vec<[usize; 3]> {
+    let n = nodes.len();
     if n < 3 {
         return vec![];
     }
@@ -799,7 +799,7 @@ fn ear_clip_3d(vertices: &[DVec3], normal: DVec3) -> Vec<[usize; 3]> {
 
     // Project to 2D
     let (u_axis, v_axis) = local_basis(normal);
-    let pts_2d: Vec<[f64; 2]> = vertices
+    let pts_2d: Vec<[f64; 2]> = nodes
         .iter()
         .map(|p| [p.dot(u_axis), p.dot(v_axis)])
         .collect();
@@ -849,7 +849,7 @@ fn ear_clip(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
                 continue;
             }
 
-            // Check no other vertex inside this triangle
+            // Check no other mesh node inside this triangle
             let mut contains_other = false;
             for j in 0..len {
                 if j == prev || j == i || j == next {
@@ -1039,9 +1039,9 @@ pub fn mesh_aspect_ratio(mesh: &Mesh) -> f64 {
     for &tri in &mesh.triangles {
         let [i0, i1, i2] = tri;
 
-        let p0 = mesh.vertices.get(i0 as usize);
-        let p1 = mesh.vertices.get(i1 as usize);
-        let p2 = mesh.vertices.get(i2 as usize);
+        let p0 = mesh.nodes.get(i0 as usize);
+        let p1 = mesh.nodes.get(i1 as usize);
+        let p2 = mesh.nodes.get(i2 as usize);
 
         let (Some(p0), Some(p1), Some(p2)) = (p0, p1, p2) else {
             continue;
@@ -1079,9 +1079,9 @@ pub fn mesh_min_angle(mesh: &Mesh) -> f64 {
     for &tri in &mesh.triangles {
         let [i0, i1, i2] = tri;
 
-        let p0 = mesh.vertices.get(i0 as usize);
-        let p1 = mesh.vertices.get(i1 as usize);
-        let p2 = mesh.vertices.get(i2 as usize);
+        let p0 = mesh.nodes.get(i0 as usize);
+        let p1 = mesh.nodes.get(i1 as usize);
+        let p2 = mesh.nodes.get(i2 as usize);
 
         let (Some(p0), Some(p1), Some(p2)) = (p0, p1, p2) else {
             continue;
@@ -1105,9 +1105,9 @@ pub fn mesh_max_edge_length(mesh: &Mesh) -> f64 {
     for &tri in &mesh.triangles {
         let [i0, i1, i2] = tri;
 
-        let p0 = mesh.vertices.get(i0 as usize);
-        let p1 = mesh.vertices.get(i1 as usize);
-        let p2 = mesh.vertices.get(i2 as usize);
+        let p0 = mesh.nodes.get(i0 as usize);
+        let p1 = mesh.nodes.get(i1 as usize);
+        let p2 = mesh.nodes.get(i2 as usize);
 
         let (Some(p0), Some(p1), Some(p2)) = (p0, p1, p2) else {
             continue;
@@ -1143,7 +1143,7 @@ pub fn refine_mesh(mesh: &Mesh, max_edge_length: f64) -> Mesh {
         return mesh.clone();
     }
 
-    let mut vertices = mesh.vertices.clone();
+    let mut nodes = mesh.nodes.clone();
     let mut normals = mesh.normals.clone();
     let mut triangles = Vec::new();
 
@@ -1152,9 +1152,9 @@ pub fn refine_mesh(mesh: &Mesh, max_edge_length: f64) -> Mesh {
     for &tri in &mesh.triangles {
         let [i0, i1, i2] = tri;
 
-        let p0 = vertices[i0 as usize];
-        let p1 = vertices[i1 as usize];
-        let p2 = vertices[i2 as usize];
+        let p0 = nodes[i0 as usize];
+        let p1 = nodes[i1 as usize];
+        let p2 = nodes[i2 as usize];
 
         let e0_len = (p1 - p0).length();
         let e1_len = (p2 - p1).length();
@@ -1166,9 +1166,9 @@ pub fn refine_mesh(mesh: &Mesh, max_edge_length: f64) -> Mesh {
 
         if needs_refinement {
             // Get or create midpoints
-            let m01 = get_or_create_midpoint(i0, i1, &mut vertices, &mut normals, &mut edge_midpoints);
-            let m12 = get_or_create_midpoint(i1, i2, &mut vertices, &mut normals, &mut edge_midpoints);
-            let m20 = get_or_create_midpoint(i2, i0, &mut vertices, &mut normals, &mut edge_midpoints);
+            let m01 = get_or_create_midpoint(i0, i1, &mut nodes, &mut normals, &mut edge_midpoints);
+            let m12 = get_or_create_midpoint(i1, i2, &mut nodes, &mut normals, &mut edge_midpoints);
+            let m20 = get_or_create_midpoint(i2, i0, &mut nodes, &mut normals, &mut edge_midpoints);
 
             // Create 4 new triangles
             triangles.push([i0, m01, m20]);
@@ -1181,17 +1181,17 @@ pub fn refine_mesh(mesh: &Mesh, max_edge_length: f64) -> Mesh {
     }
 
     Mesh {
-        vertices,
+        nodes,
         triangles,
         normals,
     }
 }
 
-/// Get or create a midpoint vertex for an edge.
+/// Get or create a midpoint node for an edge.
 fn get_or_create_midpoint(
     i0: u32,
     i1: u32,
-    vertices: &mut Vec<DVec3>,
+    nodes: &mut Vec<DVec3>,
     normals: &mut Vec<DVec3>,
     edge_midpoints: &mut HashMap<(u32, u32), u32>,
 ) -> u32 {
@@ -1201,16 +1201,16 @@ fn get_or_create_midpoint(
         return idx;
     }
 
-    let p0 = vertices[i0 as usize];
-    let p1 = vertices[i1 as usize];
+    let p0 = nodes[i0 as usize];
+    let p1 = nodes[i1 as usize];
     let mid_point = (p0 + p1) * 0.5;
 
     let n0 = normals.get(i0 as usize).copied().unwrap_or(DVec3::Z);
     let n1 = normals.get(i1 as usize).copied().unwrap_or(DVec3::Z);
     let mid_normal = (n0 + n1).normalize_or_zero();
 
-    let idx = vertices.len() as u32;
-    vertices.push(mid_point);
+    let idx = nodes.len() as u32;
+    nodes.push(mid_point);
     normals.push(mid_normal);
     edge_midpoints.insert(key, idx);
     idx
@@ -1307,8 +1307,8 @@ mod tests {
 
         assert!(!mesh.is_empty());
         assert!(mesh.triangle_count() >= 2);  // At least a basic grid
-        assert_eq!(mesh.vertex_count(), mesh.vertices.len());
-        assert_eq!(mesh.normals.len(), mesh.vertices.len());
+        assert_eq!(mesh.node_count(), mesh.nodes.len());
+        assert_eq!(mesh.normals.len(), mesh.nodes.len());
     }
 
     #[test]
@@ -1323,10 +1323,10 @@ mod tests {
         assert!(!mesh.is_empty());
         assert!(mesh.triangle_count() >= 8);  // Sphere needs many triangles
 
-        // Check that vertices are on the sphere
-        for v in &mesh.vertices {
+        // Check that mesh nodes are on the sphere
+        for v in &mesh.nodes {
             let r = v.length();
-            assert!((r - 1.0).abs() < 0.1, "Vertex not on sphere: r={}", r);
+            assert!((r - 1.0).abs() < 0.1, "Mesh node not on sphere: r={}", r);
         }
     }
 
@@ -1347,15 +1347,15 @@ mod tests {
         let mesh = Mesh::new();
         assert!(mesh.is_empty());
         assert_eq!(mesh.triangle_count(), 0);
-        assert_eq!(mesh.vertex_count(), 0);
+        assert_eq!(mesh.node_count(), 0);
     }
 
     #[test]
     fn mesh_bounding_box() {
         let mut mesh = Mesh::new();
-        mesh.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(1.0, 2.0, 3.0));
-        mesh.vertices.push(DVec3::new(-1.0, -2.0, -3.0));
+        mesh.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(1.0, 2.0, 3.0));
+        mesh.nodes.push(DVec3::new(-1.0, -2.0, -3.0));
 
         let (min, max) = mesh.bounding_box();
         assert!((min - DVec3::new(-1.0, -2.0, -3.0)).length() < 1e-10);
@@ -1365,9 +1365,9 @@ mod tests {
     #[test]
     fn mesh_flip() {
         let mut mesh = Mesh::new();
-        mesh.vertices.push(DVec3::ZERO);
-        mesh.vertices.push(DVec3::X);
-        mesh.vertices.push(DVec3::Y);
+        mesh.nodes.push(DVec3::ZERO);
+        mesh.nodes.push(DVec3::X);
+        mesh.nodes.push(DVec3::Y);
         mesh.triangles.push([0, 1, 2]);
         mesh.normals.push(DVec3::Z);
 
@@ -1380,22 +1380,22 @@ mod tests {
     #[test]
     fn mesh_merge() {
         let mut mesh1 = Mesh::new();
-        mesh1.vertices.push(DVec3::ZERO);
-        mesh1.vertices.push(DVec3::X);
-        mesh1.vertices.push(DVec3::Y);
+        mesh1.nodes.push(DVec3::ZERO);
+        mesh1.nodes.push(DVec3::X);
+        mesh1.nodes.push(DVec3::Y);
         mesh1.triangles.push([0, 1, 2]);
         mesh1.normals = vec![DVec3::Z; 3];
 
         let mut mesh2 = Mesh::new();
-        mesh2.vertices.push(DVec3::new(1.0, 1.0, 0.0));
-        mesh2.vertices.push(DVec3::new(2.0, 1.0, 0.0));
-        mesh2.vertices.push(DVec3::new(1.5, 2.0, 0.0));
+        mesh2.nodes.push(DVec3::new(1.0, 1.0, 0.0));
+        mesh2.nodes.push(DVec3::new(2.0, 1.0, 0.0));
+        mesh2.nodes.push(DVec3::new(1.5, 2.0, 0.0));
         mesh2.triangles.push([0, 1, 2]);
         mesh2.normals = vec![DVec3::Z; 3];
 
         mesh1.merge(&mesh2);
 
-        assert_eq!(mesh1.vertex_count(), 6);
+        assert_eq!(mesh1.node_count(), 6);
         assert_eq!(mesh1.triangle_count(), 2);
         assert_eq!(mesh1.triangles[1], [3, 4, 5]);
     }
@@ -1412,16 +1412,16 @@ mod tests {
         let mut brep_mesh = BRepMesh::new();
 
         let mut mesh1 = Mesh::new();
-        mesh1.vertices.push(DVec3::ZERO);
-        mesh1.vertices.push(DVec3::X);
-        mesh1.vertices.push(DVec3::Y);
+        mesh1.nodes.push(DVec3::ZERO);
+        mesh1.nodes.push(DVec3::X);
+        mesh1.nodes.push(DVec3::Y);
         mesh1.triangles.push([0, 1, 2]);
         mesh1.normals = vec![DVec3::Z; 3];
 
         let mut mesh2 = Mesh::new();
-        mesh2.vertices.push(DVec3::new(1.0, 0.0, 0.0));
-        mesh2.vertices.push(DVec3::new(2.0, 0.0, 0.0));
-        mesh2.vertices.push(DVec3::new(1.5, 1.0, 0.0));
+        mesh2.nodes.push(DVec3::new(1.0, 0.0, 0.0));
+        mesh2.nodes.push(DVec3::new(2.0, 0.0, 0.0));
+        mesh2.nodes.push(DVec3::new(1.5, 1.0, 0.0));
         mesh2.triangles.push([0, 1, 2]);
         mesh2.normals = vec![DVec3::Z; 3];
 
@@ -1430,7 +1430,7 @@ mod tests {
 
         let merged = brep_mesh.to_merged_mesh();
         assert_eq!(merged.triangle_count(), 2);
-        assert_eq!(merged.vertex_count(), 6);
+        assert_eq!(merged.node_count(), 6);
     }
 
     #[test]
@@ -1477,9 +1477,9 @@ mod tests {
     fn mesh_aspect_ratio_equilateral() {
         let mut mesh = Mesh::new();
         // Equilateral triangle
-        mesh.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(1.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(0.5, 0.866, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(1.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.5, 0.866, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1492,9 +1492,9 @@ mod tests {
         let mut mesh = Mesh::new();
         // Degenerate triangle (collinear points with different spacing)
         // This creates max_edge=2, min_edge=1, ratio=2
-        mesh.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(1.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(2.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(1.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(2.0, 0.0, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1504,9 +1504,9 @@ mod tests {
 
         // Test a truly degenerate case where all points are the same
         let mut mesh2 = Mesh::new();
-        mesh2.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh2.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh2.vertices.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh2.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh2.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh2.nodes.push(DVec3::new(0.0, 0.0, 0.0));
         mesh2.triangles.push([0, 1, 2]);
         mesh2.normals = vec![DVec3::Z; 3];
 
@@ -1518,9 +1518,9 @@ mod tests {
     fn mesh_min_angle_equilateral() {
         let mut mesh = Mesh::new();
         // Equilateral triangle has 60 degree angles
-        mesh.vertices.push(DVec3::new(0.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(1.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(0.5, 0.866, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(1.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.5, 0.866, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1532,9 +1532,9 @@ mod tests {
     #[test]
     fn test_mesh_max_edge_length() {
         let mut mesh = Mesh::new();
-        mesh.vertices.push(DVec3::ZERO);
-        mesh.vertices.push(DVec3::new(3.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(0.0, 4.0, 0.0));
+        mesh.nodes.push(DVec3::ZERO);
+        mesh.nodes.push(DVec3::new(3.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.0, 4.0, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1547,9 +1547,9 @@ mod tests {
     #[test]
     fn refine_mesh_basic() {
         let mut mesh = Mesh::new();
-        mesh.vertices.push(DVec3::ZERO);
-        mesh.vertices.push(DVec3::new(10.0, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(5.0, 10.0, 0.0));
+        mesh.nodes.push(DVec3::ZERO);
+        mesh.nodes.push(DVec3::new(10.0, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(5.0, 10.0, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1557,15 +1557,15 @@ mod tests {
 
         // With edges longer than 5.0, the triangle should be subdivided
         assert!(refined.triangle_count() > mesh.triangle_count());
-        assert!(refined.vertex_count() > mesh.vertex_count());
+        assert!(refined.node_count() > mesh.node_count());
     }
 
     #[test]
     fn refine_mesh_no_change() {
         let mut mesh = Mesh::new();
-        mesh.vertices.push(DVec3::ZERO);
-        mesh.vertices.push(DVec3::new(0.1, 0.0, 0.0));
-        mesh.vertices.push(DVec3::new(0.05, 0.1, 0.0));
+        mesh.nodes.push(DVec3::ZERO);
+        mesh.nodes.push(DVec3::new(0.1, 0.0, 0.0));
+        mesh.nodes.push(DVec3::new(0.05, 0.1, 0.0));
         mesh.triangles.push([0, 1, 2]);
         mesh.normals = vec![DVec3::Z; 3];
 
@@ -1573,7 +1573,7 @@ mod tests {
 
         // All edges are shorter than 1.0, no refinement needed
         assert_eq!(refined.triangle_count(), mesh.triangle_count());
-        assert_eq!(refined.vertex_count(), mesh.vertex_count());
+        assert_eq!(refined.node_count(), mesh.node_count());
     }
 
     #[test]
@@ -1660,3 +1660,5 @@ mod tests {
         assert!(!points.is_empty());
     }
 }
+
+

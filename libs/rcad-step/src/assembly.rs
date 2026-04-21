@@ -355,7 +355,9 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
                 let parent_pd = parse_ref(args.get(3).copied().unwrap_or(""));
                 let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
                 let rel_name = unquote(args.get(1).copied().unwrap_or(""));
-                if parent_pd > 0 && child_pd > 0 {
+                // Ignore placement NAUOs from inlined part STEP (empty name); those are
+                // not assembly children of the outer product tree.
+                if parent_pd > 0 && child_pd > 0 && !rel_name.is_empty() {
                     children_of
                         .entry(parent_pd)
                         .or_default()
@@ -684,7 +686,8 @@ fn write_assembly_step(
 /// # Algorithm
 ///
 /// 1. Scan the DATA section for `NEXT_ASSEMBLY_USAGE_OCCURRENCE` (NAUO) entities
-///    to build a parent→child component map.
+///    to build a parent→child component map. Rows with an empty occurrence name
+///    (placement scaffolding from inlined part STEP) are ignored.
 /// 2. For each NAUO child `PRODUCT_DEFINITION`, trace the chain:
 ///    `PRODUCT_DEFINITION` → `PRODUCT_DEFINITION_SHAPE` →
 ///    `SHAPE_DEFINITION_REPRESENTATION` → `SHAPE_REPRESENTATION`.
@@ -716,7 +719,7 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
             if let Some(args) = parse_args(rest) {
                 let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
                 let relation_name = unquote(args.get(1).copied().unwrap_or(""));
-                if child_pd > 0 {
+                if child_pd > 0 && !relation_name.is_empty() {
                     nauo_children.push((child_pd, relation_name));
                 }
             }
@@ -907,8 +910,23 @@ fn build_reverse_map(map: &HashMap<u64, String>) -> HashMap<u64, Vec<u64>> {
     reverse
 }
 
-/// BFS from `start_id`, following all `#N` references, and return the set of
+/// Do not continue BFS through product / assembly entities: those edges can
+/// reference other components' geometry IDs in merged STEP files.
+fn bfs_should_expand_entity(body: &str) -> bool {
+    let b = body.trim_start();
+    !(b.starts_with("PRODUCT(")
+        || b.starts_with("PRODUCT_DEFINITION_FORMATION(")
+        || b.starts_with("PRODUCT_DEFINITION(")
+        || b.starts_with("PRODUCT_DEFINITION_SHAPE(")
+        || b.starts_with("NEXT_ASSEMBLY_USAGE_OCCURRENCE("))
+}
+
+/// BFS from `start_id`, following `#N` references, and return the set of
 /// all reachable entity IDs (including `start_id` itself).
+///
+/// Product and NAUO entities are still **collected** when referenced, but their
+/// outgoing references are not traversed, so one component's subgraph does not
+/// walk into sibling geometry in a merged assembly STEP.
 fn collect_reachable(start_id: u64, map: &HashMap<u64, String>) -> HashSet<u64> {
     let mut visited: HashSet<u64> = HashSet::new();
     let mut queue = vec![start_id];
@@ -918,7 +936,12 @@ fn collect_reachable(start_id: u64, map: &HashMap<u64, String>) -> HashSet<u64> 
         }
         if let Some(body) = map.get(&id) {
             for ref_id in extract_refs(body) {
-                if !visited.contains(&ref_id) {
+                if visited.insert(ref_id)
+                    && map
+                        .get(&ref_id)
+                        .map(|b| bfs_should_expand_entity(b.as_str()))
+                        .unwrap_or(true)
+                {
                     queue.push(ref_id);
                 }
             }
@@ -937,29 +960,75 @@ fn find_shape_rep_for_pd(
     map: &HashMap<u64, String>,
     reverse_map: &HashMap<u64, Vec<u64>>,
 ) -> Option<u64> {
+    /// Prefer a shape representation whose closure actually contains B-rep
+    /// geometry. `StepWriter` may attach multiple `SHAPE_DEFINITION_REPRESENTATION`
+    /// chains (for example `gmsh_strict` placement scaffolding); those often
+    /// point at context-only `SHAPE_REPRESENTATION`s and must not win over the
+    /// real solid/surface model.
+    fn solid_geometry_score(map: &HashMap<u64, String>, sr_id: u64) -> usize {
+        let reach = collect_reachable(sr_id, map);
+        reach
+            .iter()
+            .filter(|&&id| {
+                map.get(&id).is_some_and(|b| {
+                    b.starts_with("MANIFOLD_SOLID_BREP(")
+                        || b.starts_with("ADVANCED_BREP_SHAPE_REPRESENTATION(")
+                        || b.starts_with("MANIFOLD_SURFACE_SHAPE_REPRESENTATION(")
+                        || b.starts_with("SHELL_BASED_SURFACE_MODEL(")
+                })
+            })
+            .count()
+    }
+
+    fn manifold_solid_count(map: &HashMap<u64, String>, sr_id: u64) -> usize {
+        let reach = collect_reachable(sr_id, map);
+        reach
+            .iter()
+            .filter(|&&id| map.get(&id).is_some_and(|b| b.starts_with("MANIFOLD_SOLID_BREP(")))
+            .count()
+    }
+
     // Find PRODUCT_DEFINITION_SHAPE entities that reference pd_id
     let referencing = reverse_map.get(&pd_id)?;
+    let mut candidates: Vec<u64> = Vec::new();
     for &pds_id in referencing {
         let body = map.get(&pds_id)?;
         if !body.starts_with("PRODUCT_DEFINITION_SHAPE(") {
             continue;
         }
-        // Find SHAPE_DEFINITION_REPRESENTATION entities that reference pds_id
         if let Some(referencing_pds) = reverse_map.get(&pds_id) {
             for &sdr_id in referencing_pds {
                 if let Some(sdr_body) = map.get(&sdr_id)
                     && let Some(args_str) =
                         sdr_body.strip_prefix("SHAPE_DEFINITION_REPRESENTATION(")
-                        && let Some(args) = parse_args(args_str) {
-                            let sr_id = parse_ref(args.get(1).copied().unwrap_or(""));
-                            if sr_id > 0 {
-                                return Some(sr_id);
-                            }
-                        }
+                    && let Some(args) = parse_args(args_str)
+                {
+                    let sr_id = parse_ref(args.get(1).copied().unwrap_or(""));
+                    if sr_id > 0 {
+                        candidates.push(sr_id);
+                    }
+                }
             }
         }
     }
-    None
+
+    // Prefer a representation whose BFS closure contains real geometry but only
+    // one solid — merged assemblies can accidentally link two manifolds through
+    // shared context entities when scoring by "any solid" alone.
+    let best_single = candidates.iter().copied().filter(|&c| {
+        solid_geometry_score(map, c) > 0 && manifold_solid_count(map, c) == 1
+    }).max_by_key(|c| solid_geometry_score(map, *c));
+
+    if let Some(sr) = best_single {
+        return Some(sr);
+    }
+
+    let best = candidates.iter().copied().max_by_key(|c| solid_geometry_score(map, *c))?;
+    if solid_geometry_score(map, best) > 0 {
+        Some(best)
+    } else {
+        candidates.first().copied()
+    }
 }
 
 /// Build a self-contained STEP string containing only the entities in

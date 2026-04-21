@@ -516,14 +516,14 @@ pub fn compute_adaptive_samples(
 ) -> Vec<AdaptiveSample> {
     let [u0, u1, v0, v1] = domain;
 
-    // Phase 1: Find silhouette seed points
+    // Find silhouette seed points
     let seeds = find_silhouette_seeds(surface, view_dir, domain, config.base_samples, opts.tangent_tolerance);
 
     if seeds.is_empty() {
         return Vec::new();
     }
 
-    // Phase 2: Trace silhouette curves from seeds
+    // Trace silhouette curves from seeds
     let mut all_samples: Vec<AdaptiveSample> = Vec::new();
     let mut visited: HashSet<(usize, usize)> = HashSet::new();
 
@@ -549,7 +549,7 @@ pub fn compute_adaptive_samples(
         all_samples.extend(curve_samples);
     }
 
-    // Phase 3: Refine samples in high-curvature and near-silhouette regions
+    // Refine samples in high-curvature and near-silhouette regions
     if opts.curvature_adaptive {
         refine_adaptive_samples(surface, view_dir, &mut all_samples, config, opts);
     }
@@ -2397,7 +2397,7 @@ fn extract_numerical_silhouettes(
     let [u0, u1, v0, v1] = domain;
     let mut curves: Vec<Vec<DVec3>> = Vec::new();
 
-    // Phase 1: Find silhouette seed points on a coarse grid
+    // Find silhouette seed points on a coarse grid
     let grid_size = opts.silhouette_samples.max(16);
     let seeds = find_silhouette_seeds(surface, view_dir, domain, grid_size, opts.tangent_tolerance);
 
@@ -2405,7 +2405,7 @@ fn extract_numerical_silhouettes(
         return curves;
     }
 
-    // Phase 2: March from each seed to trace silhouette curves
+    // March from each seed to trace silhouette curves
     let mut visited: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
 
     for (i, j, u, v) in seeds {
@@ -2465,7 +2465,7 @@ fn find_silhouette_seeds(
     // Sample grid and look for sign changes in normal · view_dir
     let mut dot_values: Vec<Vec<f64>> = vec![vec![0.0; grid_size]; grid_size];
 
-    // Compute dot products at grid vertices
+    // Compute dot products at grid sample nodes
     for i in 0..grid_size {
         for j in 0..grid_size {
             let u = u0 + (u1 - u0) * i as f64 / (grid_size - 1) as f64;
