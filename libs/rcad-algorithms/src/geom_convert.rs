@@ -304,7 +304,7 @@ pub fn approx_curve_to_bspline(curve: &Curve3, _tol: f64, _max_degree: usize) ->
     };
 
     // Sample the curve
-    let n_samples = 20.max(4);
+    let n_samples = 20;
     let pts: Vec<DVec3> = (0..n_samples)
         .map(|i| {
             let t = t0 + (t1 - t0) * i as f64 / (n_samples - 1) as f64;
@@ -704,8 +704,8 @@ pub fn approx_surface_to_bspline(surf: &Surface3, _tol: f64, u_deg: usize, v_deg
     let (v0, v1) = if (v1 - v0).abs() > 1e6 { (-10.0, 10.0) } else { (v0, v1) };
 
     // Sample the surface on a grid
-    let n_u = 10.max(2);
-    let n_v = 10.max(2);
+    let n_u = 10;
+    let n_v = 10;
 
     let mut control_points: Vec<Vec<DVec3>> = Vec::new();
     let mut weights: Vec<Vec<f64>> = Vec::new();
@@ -953,7 +953,7 @@ pub fn bspline_surface_to_bezier(spline: &BSplineSurface) -> Vec<Vec<BezierSurfa
     // Now decompose each u-patch in v direction
     let mut result: Vec<Vec<BezierSurface>> = Vec::new();
 
-    for (_u_idx, (pts_col, w_col)) in u_patches.iter().zip(u_weights.iter()).enumerate() {
+    for (pts_col, w_col) in u_patches.iter().zip(u_weights.iter()) {
         let mut v_patches: Vec<BezierSurface> = Vec::new();
 
         // Build v-direction curves and decompose

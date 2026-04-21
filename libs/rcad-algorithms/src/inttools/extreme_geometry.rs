@@ -566,7 +566,7 @@ impl DegenerateGeometryHandler {
                 // For non-line curves, check if they're nearly straight
                 let n = 10;
                 for i in 0..n {
-                    let t = t0 + (t1 - t0) * i as f64 / (n - 1).max(1) as f64;
+                    let _t = t0 + (t1 - t0) * i as f64 / (n - 1).max(1) as f64;
                     // Simple check: compare point distance to chord
                     let mid_t = (t0 + t1) * 0.5;
                     let mid_point = curve.point_at(mid_t);
@@ -807,8 +807,8 @@ pub fn analyze_extreme_geometry(
     let mut max_fuzzy = options.tolerance;
 
     // Check for near-tangent configurations
-    if options.check_near_tangent {
-        if let Some((ref s1, ref s2)) = options.surfaces {
+    if options.check_near_tangent
+        && let Some((ref s1, ref s2)) = options.surfaces {
             let handler = NearTangentHandler::new(options.tolerance, TOLERANCE_ANG.sqrt());
             analysis.near_tangent_configs = handler
                 .detect_near_tangent_configurations(s1, s2, &options.contact_points);
@@ -817,7 +817,6 @@ pub fn analyze_extreme_geometry(
                 max_fuzzy = max_fuzzy.max(config.suggested_fuzzy_adjustment);
             }
         }
-    }
 
     // Check for high aspect ratio edges
     if options.check_aspect_ratio {
@@ -840,8 +839,8 @@ pub fn analyze_extreme_geometry(
     }
 
     // Check for size differences
-    if options.check_size_difference {
-        if let Some(b_rep) = b {
+    if options.check_size_difference
+        && let Some(b_rep) = b {
             let handler = SizeDifferenceHandler::from_adaptive(AdaptiveTolerance::from_scale(
                 compute_brep_scale(a).max(compute_brep_scale(b_rep)),
             ));
@@ -851,13 +850,12 @@ pub fn analyze_extreme_geometry(
                 max_fuzzy = max_fuzzy.max(options.tolerance * sd.suggested_tolerance_multiplier);
             }
         }
-    }
 
     // Determine if any extreme geometry was detected
     analysis.has_extreme_geometry = !analysis.near_tangent_configs.is_empty()
         || analysis.high_aspect_ratio_edges.iter().any(|e| e.is_problematic)
         || !analysis.degenerate_geometry.is_empty()
-        || analysis.size_difference.as_ref().map_or(false, |sd| sd.is_extreme);
+        || analysis.size_difference.as_ref().is_some_and(|sd| sd.is_extreme);
 
     // Build issues summary
     if !analysis.near_tangent_configs.is_empty() {
@@ -878,14 +876,13 @@ pub fn analyze_extreme_geometry(
             analysis.degenerate_geometry.len()
         ));
     }
-    if let Some(ref sd) = analysis.size_difference {
-        if sd.is_extreme {
+    if let Some(ref sd) = analysis.size_difference
+        && sd.is_extreme {
             analysis.issues_summary.push(format!(
                 "Extreme size ratio: {:.1}",
                 sd.size_ratio
             ));
         }
-    }
 
     analysis.recommended_fuzzy_tolerance = max_fuzzy;
     analysis

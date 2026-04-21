@@ -19,7 +19,7 @@
 //!
 //! - Multiple section support: parallel planes, cross-sections along a path
 
-use glam::{DVec2, DVec3};
+use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
@@ -658,7 +658,7 @@ fn section_by_brep_surface(brep: &BRep, tool_brep: &BRep, face_idx: usize) -> Se
 }
 
 /// Find a face in a BRep by index.
-fn find_face_in_brep<'a>(brep: &'a BRep, face_idx: usize) -> Option<&'a rcad_kernel::Face> {
+fn find_face_in_brep(brep: &BRep, face_idx: usize) -> Option<&rcad_kernel::Face> {
     let mut current_idx = 0;
     for solid in &brep.solids {
         for shell in &solid.shells {
@@ -727,14 +727,10 @@ fn convert_surface_curve(
         SurfaceCurve::Polyline(pts) => {
             let is_closed = pts.len() > 2 && pts_close(pts[0], *pts.last().unwrap());
             // Try to fit a BSpline for smoother curves
-            if pts.len() >= 4 {
-                match rcad_kernel::fit::approximate_points(pts, (pts.len() / 2).max(4)) {
-                    Ok(bspline) => {
-                        return (SectionCurveType::BSpline(bspline), Some(pts.clone()), is_closed);
-                    }
-                    Err(_) => {}
+            if pts.len() >= 4
+                && let Ok(bspline) = rcad_kernel::fit::approximate_points(pts, (pts.len() / 2).max(4)) {
+                    return (SectionCurveType::BSpline(bspline), Some(pts.clone()), is_closed);
                 }
-            }
             (SectionCurveType::Polyline(pts.clone()), Some(pts.clone()), is_closed)
         }
     }
@@ -838,7 +834,7 @@ fn signed_distance_to_surface(p: DVec3, surface: &Surface3) -> f64 {
 
             // Distance from axis
             let perp_vec = v - axis * along;
-            let perp_dist = perp_vec.length();
+            let _perp_dist = perp_vec.length();
 
             // Distance from major circle
             let major_circle_pt = torus.center + perp_vec.normalize_or_zero() * torus.major_radius;
@@ -1403,11 +1399,11 @@ fn create_ruled_face(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<
         brep.edges.push(Edge { start: v01_idx, end: v00_idx });
 
         // Triangle 2: v01, v10, v11
-        let e4_idx = brep.edges.len();
+        let _e4_idx = brep.edges.len();
         brep.edges.push(Edge { start: v01_idx, end: v10_idx });
-        let e5_idx = brep.edges.len();
+        let _e5_idx = brep.edges.len();
         brep.edges.push(Edge { start: v10_idx, end: v11_idx });
-        let e6_idx = brep.edges.len();
+        let _e6_idx = brep.edges.len();
         brep.edges.push(Edge { start: v11_idx, end: v01_idx });
 
         // Add first triangle's edges to wire

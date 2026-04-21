@@ -733,13 +733,11 @@ pub fn compute_rollball_surface(
 
 /// Get the surface for a face (by flat index).
 fn get_face_surface(brep: &BRep, flat_face_idx: usize) -> Option<Surface3> {
-    if flat_face_idx < brep.geom.face_surface.len() {
-        if let Some(surf_idx) = brep.geom.face_surface[flat_face_idx] {
-            if surf_idx < brep.geom.surfaces.len() {
+    if flat_face_idx < brep.geom.face_surface.len()
+        && let Some(surf_idx) = brep.geom.face_surface[flat_face_idx]
+            && surf_idx < brep.geom.surfaces.len() {
                 return Some(brep.geom.surfaces[surf_idx].clone());
             }
-        }
-    }
     None
 }
 
@@ -1169,7 +1167,7 @@ fn compute_variable_fillet_for_edge(
     brep: &BRep,
     edge_info: &EdgeInfo,
     radii: &[VariableRadiusPoint],
-    params: &FilletParams,
+    _params: &FilletParams,
 ) -> Result<FilletSurface, FilletError> {
     // Sort radius points by parameter
     let mut sorted_radii = radii.to_vec();

@@ -1008,10 +1008,10 @@ impl BooleanHistory {
         for (idx, origin) in self.face_origins.iter().enumerate() {
             match origin {
                 FaceOrigin::FromA(src_idx) if *src_idx == source_face_idx && from_a => {
-                    return self.tracker.is_face_modified(idx) || self.tracker.modified_faces(*src_idx).len() > 0;
+                    return self.tracker.is_face_modified(idx) || !self.tracker.modified_faces(*src_idx).is_empty();
                 }
                 FaceOrigin::FromB(src_idx) if *src_idx == source_face_idx && !from_a => {
-                    return self.tracker.is_face_modified(idx) || self.tracker.modified_faces(*src_idx).len() > 0;
+                    return self.tracker.is_face_modified(idx) || !self.tracker.modified_faces(*src_idx).is_empty();
                 }
                 _ => {}
             }

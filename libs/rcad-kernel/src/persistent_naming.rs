@@ -161,13 +161,6 @@ impl NamingContext {
         Some(pid)
     }
 
-    /// Unbind a persistent ID from its entity.
-    fn unbind_persistent(&mut self, pid: PersistentId) -> Option<u64> {
-        let entity_id = self.persistent_to_entity.remove(&pid)?;
-        self.entity_to_persistent.remove(&entity_id);
-        Some(entity_id)
-    }
-
     /// Iterate over all (entity_id, persistent_id) pairs.
     pub fn iter(&self) -> impl Iterator<Item = (u64, PersistentId)> + '_ {
         self.entity_to_persistent.iter().map(|(&e, &p)| (e, p))
@@ -216,8 +209,10 @@ pub enum NamingRule {
 /// When a topology operation produces new entities from existing ones,
 /// the `NamePropagationPolicy` determines how names flow to the results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum NamePropagationPolicy {
     /// Keep the original entity's name (for minor modifications).
+    #[default]
     Preserve,
     /// Inherit the parent entity's name with a disambiguating suffix.
     Inherit,
@@ -227,11 +222,6 @@ pub enum NamePropagationPolicy {
     Combine,
 }
 
-impl Default for NamePropagationPolicy {
-    fn default() -> Self {
-        Self::Preserve
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NamingConflictResolution
@@ -495,6 +485,12 @@ impl PersistentNamingEngine {
         }
     }
 
+    /// Default name propagation policy configured via [`Self::with_policy`].
+    #[must_use]
+    pub const fn default_propagation_policy(&self) -> NamePropagationPolicy {
+        self.default_policy
+    }
+
     // ── Cross-Operation History ─────────────────────────────────────────────────
 
     /// Begin a new operation for history tracking.
@@ -603,11 +599,10 @@ impl PersistentNamingEngine {
             return false;
         }
         // Check for conflict.
-        if let Some(existing_entity) = self.context.get_entity(pid) {
-            if existing_entity != entity_id {
+        if let Some(existing_entity) = self.context.get_entity(pid)
+            && existing_entity != entity_id {
                 return false;
             }
-        }
         self.context.bind(entity_id, pid);
 
         // Track event if in an operation.
@@ -826,9 +821,11 @@ impl PersistentNamingEngine {
         before: &NamingContext,
         entity_ids_after: &[u64],
     ) -> NamingStabilityReport {
-        let mut report = NamingStabilityReport::default();
-        report.entity_count_before = before.len();
-        report.entity_count_after = entity_ids_after.len();
+        let mut report = NamingStabilityReport {
+            entity_count_before: before.len(),
+            entity_count_after: entity_ids_after.len(),
+            ..Default::default()
+        };
 
         let mut preserved = 0usize;
         let mut lost = Vec::new();
@@ -848,11 +845,10 @@ impl PersistentNamingEngine {
 
         // Find new names (entities with persistent IDs not in the before context).
         for &entity_id in entity_ids_after {
-            if let Some(pid) = self.context.get_persistent(entity_id) {
-                if !before.has_persistent(pid) {
+            if let Some(pid) = self.context.get_persistent(entity_id)
+                && !before.has_persistent(pid) {
                     new_names.push(entity_id);
                 }
-            }
         }
 
         report.lost_names = lost;
@@ -1378,14 +1374,14 @@ impl CrossOperationHistory {
                     genealogy.current_entity_id = Some(*to_entity);
                 }
             }
-            NamingEvent::Split { source_entity, target_entities, source_persistent_id, target_persistent_ids } => {
+            NamingEvent::Split { source_entity: _, target_entities, source_persistent_id, target_persistent_ids } => {
                 // Mark source as deleted.
                 if let Some(g) = self.genealogy.get_mut(source_persistent_id) {
                     g.is_deleted = true;
                     g.current_entity_id = None;
                 }
                 // Create genealogy for new targets.
-                for (i, (&target_id, &target_pid)) in target_entities.iter().zip(target_persistent_ids.iter()).enumerate() {
+                for (&target_id, &target_pid) in target_entities.iter().zip(target_persistent_ids.iter()) {
                     self.genealogy.entry(target_pid).or_insert_with(|| EntityGenealogy {
                         persistent_id: target_pid,
                         created_in_operation: operation_id,
@@ -1492,9 +1488,10 @@ impl CrossOperationHistory {
 
     /// Generate a comprehensive stability report across all operations.
     pub fn stability_report(&self) -> CrossOperationStabilityReport {
-        let mut report = CrossOperationStabilityReport::default();
-
-        report.total_operations = self.operations.len();
+        let mut report = CrossOperationStabilityReport {
+            total_operations: self.operations.len(),
+            ..Default::default()
+        };
 
         for op in &self.operations {
             report.total_names_preserved += op.stats.names_preserved;

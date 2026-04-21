@@ -545,7 +545,7 @@ fn voxel_sample(points: &[DVec3], target_count: usize) -> Vec<DVec3> {
             ((p.y - min.y) / voxel_size).floor() as i64,
             ((p.z - min.z) / voxel_size).floor() as i64,
         ];
-        voxels.entry(key).or_insert_with(Vec::new).push(p);
+        voxels.entry(key).or_default().push(p);
     }
 
     // Take centroid of each voxel
@@ -806,7 +806,7 @@ pub fn fit_sphere(points: &[DVec3]) -> Option<FittedSphere> {
 /// Solve a 4x4 linear system using Gaussian elimination with partial pivoting.
 fn solve_linear_4x4(a: &[[f64; 4]; 4], b: &[f64; 4]) -> Option<[f64; 4]> {
     const N: usize = 4;
-    let mut m = a.clone();
+    let mut m = *a;
     let mut v = *b;
 
     // Forward elimination
@@ -895,12 +895,11 @@ pub fn fit_cylinder(points: &[DVec3]) -> Option<FittedCylinder> {
     let mut best_error = f64::INFINITY;
 
     for axis in axis_candidates {
-        if let Some(cyl) = fit_cylinder_with_axis(points, centroid, axis) {
-            if cyl.rms_error < best_error {
+        if let Some(cyl) = fit_cylinder_with_axis(points, centroid, axis)
+            && cyl.rms_error < best_error {
                 best_error = cyl.rms_error;
                 best_fit = Some(cyl);
             }
-        }
     }
 
     best_fit
@@ -1032,7 +1031,7 @@ fn fit_circle_2d(points: &[DVec2]) -> Option<FittedCircle> {
 /// Solve a 3x3 linear system using Gaussian elimination.
 fn solve_linear_3x3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
     const N: usize = 3;
-    let mut m = a.clone();
+    let mut m = *a;
     let mut v = *b;
 
     // Forward elimination
@@ -2181,7 +2180,7 @@ fn ransac_sphere_segmentation(
             None => continue,
         };
 
-        if radius < 1e-10 || radius > 1e10 {
+        if !(1e-10..=1e10).contains(&radius) {
             continue;
         }
 
@@ -2327,7 +2326,7 @@ fn ransac_cylinder_segmentation(
         sorted_proj.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let radius = sorted_proj[sorted_proj.len() / 2];
 
-        if radius < 1e-10 || radius > 1e10 {
+        if !(1e-10..=1e10).contains(&radius) {
             continue;
         }
 
@@ -2474,6 +2473,12 @@ pub struct TriangleMesh {
     pub triangles: Vec<[usize; 3]>,
     /// Vertex normals (optional).
     pub normals: Option<Vec<DVec3>>,
+}
+
+impl Default for TriangleMesh {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TriangleMesh {
@@ -2714,7 +2719,7 @@ pub fn ball_pivoting_reconstruction(
             ((p.y - min.y) / grid_size).floor() as i64,
             ((p.z - min.z) / grid_size).floor() as i64,
         ];
-        spatial_index.entry(key).or_insert_with(Vec::new).push(i);
+        spatial_index.entry(key).or_default().push(i);
     }
 
     // Track used edges
@@ -3152,7 +3157,7 @@ fn voxel_grid_sample(points: &[DVec3], config: &AdvancedSamplingConfig) -> Vec<D
             ((p.y - min.y) / voxel_size).floor() as i64,
             ((p.z - min.z) / voxel_size).floor() as i64,
         ];
-        voxels.entry(key).or_insert_with(Vec::new).push(p);
+        voxels.entry(key).or_default().push(p);
     }
 
     voxels.values().map(|pts| {
@@ -3272,12 +3277,11 @@ fn poisson_disk_sample(points: &[DVec3], config: &AdvancedSamplingConfig) -> Vec
                 for dj in -1..=1 {
                     for dk in -1..=1 {
                         let neighbor_key = [key[0] + di, key[1] + dj, key[2] + dk];
-                        if let Some(&idx) = grid.get(&neighbor_key) {
-                            if (result[idx] - candidate).length_squared() < r_sq {
+                        if let Some(&idx) = grid.get(&neighbor_key)
+                            && (result[idx] - candidate).length_squared() < r_sq {
                                 valid = false;
                                 break;
                             }
-                        }
                     }
                     if !valid {
                         break;

@@ -712,10 +712,10 @@ pub fn split_face_by_wire(
             .map(|sh| sh.faces.len()).sum::<usize>()
         + face_idx;
     let orig_surf = brep.geom.face_surface.get(flat_idx).copied().flatten();
-    if flat_idx + 1 <= brep.geom.face_surface.len() {
+    if flat_idx < brep.geom.face_surface.len() {
         brep.geom.face_surface.insert(flat_idx + 1, orig_surf);
     }
-    if flat_idx + 1 <= brep.geom.face_tolerance.len() {
+    if flat_idx < brep.geom.face_tolerance.len() {
         let ft = brep.geom.face_tolerance[flat_idx];
         brep.geom.face_tolerance.insert(flat_idx + 1, ft);
     }

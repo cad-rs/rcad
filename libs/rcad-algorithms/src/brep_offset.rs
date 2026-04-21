@@ -347,7 +347,7 @@ impl<'a> MakeOffset<'a> {
         let wire_normal = self.compute_wire_normal()?;
 
         // Compute offset points for each vertex
-        for (i, we) in self.wire.edges.iter().enumerate() {
+        for we in self.wire.edges.iter() {
             let edge = &self.brep.edges[we.idx];
 
             // Get the curve for this edge

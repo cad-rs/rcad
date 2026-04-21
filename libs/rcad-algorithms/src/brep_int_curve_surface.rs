@@ -323,7 +323,7 @@ pub fn intersect_curve_with_face(
         // Check for sign change (intersection)
         if prev_dist < tol || dist < tol {
             // Already close to surface
-            if prev_dist < tol && (i == 1 || intersections.last().map_or(true, |last: &CurveFaceIntersection| {
+            if prev_dist < tol && (i == 1 || intersections.last().is_none_or(|last: &CurveFaceIntersection| {
                 (last.param - (t - (t1 - t0) / n_samples as f64)).abs() > tol
             })) {
                 intersections.push(CurveFaceIntersection {
@@ -886,11 +886,10 @@ fn is_point_in_face_bounds(brep: &BRep, point: DVec3, _uv: DVec2, face_idx: usiz
     if is_inside {
         for inner_wire in &face.inner_wires {
             let inner_vertices = collect_wire_vertices(brep, inner_wire);
-            if inner_vertices.len() >= 3 {
-                if point_in_polygon_on_surface(&surface, point, &inner_vertices, tol) {
+            if inner_vertices.len() >= 3
+                && point_in_polygon_on_surface(&surface, point, &inner_vertices, tol) {
                     return false; // Point is inside a hole
                 }
-            }
         }
     }
 

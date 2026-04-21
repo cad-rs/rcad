@@ -383,11 +383,10 @@ impl Bvh {
         };
 
         // 如果 AABB 交点已经比当前最佳更远，剪枝
-        if let Some((_, best_t)) = best {
-            if t_hit > *best_t {
+        if let Some((_, best_t)) = best
+            && t_hit > *best_t {
                 return;
             }
-        }
 
         match node {
             BvhNode::Leaf { start, end, .. } => {
@@ -395,7 +394,7 @@ impl Bvh {
                     let fi = self.face_indices[i];
                     // 简单用面 AABB 作为粗检（精确射线-面相交留给调用方）
                     if let Some(t) = self.face_aabbs[fi].ray_intersect(origin, inv_dir) {
-                        let update = best.map_or(true, |(_, bt)| t < bt);
+                        let update = best.is_none_or(|(_, bt)| t < bt);
                         if update {
                             *best = Some((fi, t));
                         }

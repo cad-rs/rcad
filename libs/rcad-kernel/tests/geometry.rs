@@ -10,7 +10,7 @@ use rcad_kernel::{
     closest_point_on_curve, closest_point_on_surface,
     extrema_curve_curve,
     gaussian_curvature, mean_curvature,
-    geom::{Circle3, CylindricalSurface, Curve3, Line3, Plane, SphericalSurface, Surface3},
+    geom::{Circle3, Curve3, Line3, Plane, SphericalSurface, Surface3},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

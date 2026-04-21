@@ -512,7 +512,7 @@ impl BRepGraphHistory {
     /// Generate a naming stability report comparing before and after states.
     pub fn naming_stability_report(
         &self,
-        before_nodes: &[TopoNode],
+        _before_nodes: &[TopoNode],
         after_nodes: &[TopoNode],
     ) -> NamingStabilityReport {
         let before_context = self.naming_engine.context().clone();
@@ -933,7 +933,7 @@ pub fn analyze_naming_sequence(
     history: &[BRepGraphHistory],
     initial_entities: &[TopoNode],
 ) -> CrossOperationNamingAnalysis {
-    use rcad_kernel::persistent_naming::{OperationStats, NamingEvent};
+    use rcad_kernel::persistent_naming::NamingEvent;
 
     if history.is_empty() {
         return CrossOperationNamingAnalysis {
@@ -975,7 +975,7 @@ pub fn analyze_naming_sequence(
 
     let mut cumulative_stability = 1.0;
 
-    for (op_idx, hist) in history.iter().enumerate() {
+    for hist in history.iter() {
         let cross_op = hist.naming_engine().cross_operation_history();
 
         // Copy operation records.
@@ -989,7 +989,7 @@ pub fn analyze_naming_sequence(
             let preserved = op.stats.names_preserved;
             let stability_score = preserved as f64 / total_entities as f64;
 
-            cumulative_stability = cumulative_stability * stability_score;
+            cumulative_stability *= stability_score;
 
             per_operation_stability.push(OperationStabilityMetrics {
                 operation_id: op.id,
@@ -1118,8 +1118,8 @@ pub fn detect_cross_operation_conflicts(
     // Detect reference to deleted entities.
     for chain in &analysis.broken_chains {
         // Check if any genealogy still references this broken chain.
-        if let Some(genealogy) = analysis.entity_genealogy.get(&chain.persistent_id) {
-            if !genealogy.is_deleted && genealogy.evolution.len() > chain.survived_operations {
+        if let Some(genealogy) = analysis.entity_genealogy.get(&chain.persistent_id)
+            && !genealogy.is_deleted && genealogy.evolution.len() > chain.survived_operations {
                 conflicts.push(NamingConflict {
                     persistent_id: chain.persistent_id,
                     involved_operations: vec![chain.broken_at_operation],
@@ -1129,7 +1129,6 @@ pub fn detect_cross_operation_conflicts(
                     auto_resolved: false,
                 });
             }
-        }
     }
 
     conflicts
@@ -1166,8 +1165,8 @@ pub fn generate_stability_recommendations(
     }
 
     // Check for problematic operations.
-    if let Some(problematic) = analysis.most_problematic_operation() {
-        if problematic.stability_score < 0.7 {
+    if let Some(problematic) = analysis.most_problematic_operation()
+        && problematic.stability_score < 0.7 {
             recommendations.push(StabilityRecommendation {
                 priority: 90,
                 category: RecommendationCategory::OperationHandling,
@@ -1181,7 +1180,6 @@ pub fn generate_stability_recommendations(
                 suggestion: Some("Ensure entity mapping is correctly tracked during this operation".to_string()),
             });
         }
-    }
 
     // Check for broken chains.
     if !analysis.broken_chains.is_empty() {
@@ -1684,8 +1682,10 @@ impl NamePropagationRule {
 
 /// Propagation policies for name inheritance through operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum NamePropagationPolicy {
     /// Keep the original entity's name unchanged.
+    #[default]
     Preserve,
     /// Inherit the parent entity's name with a disambiguating suffix.
     Inherit,
@@ -1699,11 +1699,6 @@ pub enum NamePropagationPolicy {
     TopologyBased,
 }
 
-impl Default for NamePropagationPolicy {
-    fn default() -> Self {
-        Self::Preserve
-    }
-}
 
 impl EnhancedNamingContext {
     /// Create a new empty naming context.
@@ -1760,8 +1755,8 @@ impl EnhancedNamingContext {
         match policy {
             NamePropagationPolicy::Preserve | NamePropagationPolicy::Inherit => {
                 // Inherit from the first source that has a persistent ID.
-                if let Some(&source_id) = source_entities.first() {
-                    if let Some(scoped) = self.entity_to_scoped.get(&source_id) {
+                if let Some(&source_id) = source_entities.first()
+                    && let Some(scoped) = self.entity_to_scoped.get(&source_id) {
                         let pid = scoped.persistent_id;
                         let new_scoped = ScopedId::new(pid, self.current_scope.clone());
                         self.entity_to_scoped.insert(entity_id, new_scoped.clone());
@@ -1779,7 +1774,6 @@ impl EnhancedNamingContext {
 
                         return pid;
                     }
-                }
                 self.assign_id(entity_id)
             }
             NamePropagationPolicy::Combine => {
@@ -1842,8 +1836,8 @@ impl EnhancedNamingContext {
         }
 
         // Update genealogy for the source entity.
-        if let Some(pid) = source_pid {
-            if let Some(record) = self.genealogy.get_mut(&pid) {
+        if let Some(pid) = source_pid
+            && let Some(record) = self.genealogy.get_mut(&pid) {
                 record.status = EntityStatus::Split;
                 record.child_ids.extend_from_slice(&result_pids[1..]);
                 record.transformation_chain.push(GenealogyStep {
@@ -1857,7 +1851,6 @@ impl EnhancedNamingContext {
                     scope: self.current_scope.clone(),
                 });
             }
-        }
 
         result_pids
     }
@@ -1914,8 +1907,8 @@ impl EnhancedNamingContext {
 
         // Mark source entities as merged.
         for &source_id in source_entity_ids {
-            if let Some(pid) = self.resolve_persistent(source_id) {
-                if let Some(record) = self.genealogy.get_mut(&pid) {
+            if let Some(pid) = self.resolve_persistent(source_id)
+                && let Some(record) = self.genealogy.get_mut(&pid) {
                     record.status = EntityStatus::Merged;
                     record.child_ids.push(target_pid);
                     record.transformation_chain.push(GenealogyStep {
@@ -1925,7 +1918,6 @@ impl EnhancedNamingContext {
                         scope: self.current_scope.clone(),
                     });
                 }
-            }
         }
 
         target_pid
@@ -1949,7 +1941,7 @@ impl EnhancedNamingContext {
             if entities.len() > 1 {
                 // Check if all entities are active.
                 let active_count = entities.iter()
-                    .filter(|&&entity_id| {
+                    .filter(|&&_entity_id| {
                         self.genealogy.get(&pid)
                             .map(|r| r.status == EntityStatus::Active)
                             .unwrap_or(false)
@@ -2070,11 +2062,10 @@ impl EnhancedNamingContext {
 
     /// Mark an entity as deleted.
     pub fn mark_deleted(&mut self, entity_id: u64) {
-        if let Some(pid) = self.resolve_persistent(entity_id) {
-            if let Some(record) = self.genealogy.get_mut(&pid) {
+        if let Some(pid) = self.resolve_persistent(entity_id)
+            && let Some(record) = self.genealogy.get_mut(&pid) {
                 record.status = EntityStatus::Deleted;
             }
-        }
     }
 
     /// Get all entities with a specific status.

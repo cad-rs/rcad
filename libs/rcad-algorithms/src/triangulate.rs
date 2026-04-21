@@ -2,7 +2,6 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{any_perpendicular, Curve3, CurveEval, Surface3, SurfaceEval};
 use std::collections::HashMap;
-use std::f64::consts::PI;
 
 use crate::offset::project_point_to_surface_uv;
 
@@ -581,15 +580,15 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
         };
 
         let mut sampled = false;
-        if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v) {
-            if let Some(curve) = brep.geom.curves.get(ci) {
-                if !matches!(curve, Curve3::Line(_)) {
+        if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v)
+            && let Some(curve) = brep.geom.curves.get(ci)
+                && !matches!(curve, Curve3::Line(_)) {
                     let Some([r0, r1]) = brep
                         .geom
                         .edge_curve_range
                         .get(we.idx)
                         .and_then(|v| *v)
-                        .or_else(|| match curve {
+                        .or(match curve {
                             Curve3::Circle(_) | Curve3::Ellipse(_) => {
                                 Some([0.0, 2.0 * std::f64::consts::PI])
                             }
@@ -686,8 +685,6 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                         sampled = true;
                     }
                 }
-            }
-        }
 
         if !sampled {
             if pts.is_empty() {
@@ -984,15 +981,14 @@ fn span_too_small_for_axis(span: f64, period: Option<f64>, natural: Option<(f64,
         let thr = DEGENERATE_TRIM_ABS_MIN.max(p * DEGENERATE_TRIM_REL);
         return span < thr;
     }
-    if let Some((lo, hi)) = natural {
-        if lo.is_finite() && hi.is_finite() {
+    if let Some((lo, hi)) = natural
+        && lo.is_finite() && hi.is_finite() {
             let range = (hi - lo).abs();
             if range > 1e-12 {
                 let thr = DEGENERATE_TRIM_ABS_MIN.max(range * DEGENERATE_TRIM_REL);
                 return span < thr;
             }
         }
-    }
     false
 }
 
@@ -1043,8 +1039,8 @@ fn hull_uv_box_from_wire(surf: &Surface3, pts: &[DVec3]) -> Option<(f64, f64, f6
     }
     let mu = (u_max - u_min).abs() * 0.05 + 1e-3;
     let mv = (v_max - v_min).abs() * 0.05 + 1e-3;
-    let mut nu0 = u_min - mu;
-    let mut nu1 = u_max + mu;
+    let nu0 = u_min - mu;
+    let nu1 = u_max + mu;
     let mut nv0 = v_min - mv;
     let mut nv1 = v_max + mv;
     if let Some((lo, hi)) = ax.v_natural {
@@ -1632,7 +1628,7 @@ impl BoundarySensitiveTessellator {
     /// 检测特征边。
     ///
     /// 基于相邻三角形法向量的夹角检测特征边。
-    pub fn detect_feature_edges(&mut self, vertices: &[DVec3], triangles: &[[usize; 3]], normals: &[DVec3]) {
+    pub fn detect_feature_edges(&mut self, vertices: &[DVec3], triangles: &[[usize; 3]], _normals: &[DVec3]) {
         if !self.auto_detect_features {
             return;
         }

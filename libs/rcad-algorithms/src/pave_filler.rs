@@ -2,8 +2,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
-    DS, DSVertex, DSEdge, DSFace, Interference, IntersectionCurve, ShapeOrigin,
-    SharedTopologyInfo, ExtremeGeometryInfo, NearTangentFacePair, NearCoincidentFacePair,
+    DS, DSEdge, Interference, IntersectionCurve, ShapeOrigin, ExtremeGeometryInfo, NearTangentFacePair, NearCoincidentFacePair,
 };
 use crate::bopds::pave::*;
 use crate::bvh::Bvh;
@@ -472,8 +471,8 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let pts1 = self.ds.face_boundary_points(f1_idx);
-        let pts2 = self.ds.face_boundary_points(f2_idx);
+        let _pts1 = self.ds.face_boundary_points(f1_idx);
+        let _pts2 = self.ds.face_boundary_points(f2_idx);
 
         let interior1 = self.sample_face_interior(f1_idx, 4);
         let interior2 = self.sample_face_interior(f2_idx, 4);
@@ -723,7 +722,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // If all faces are fully glued, skip V-F pass
-        self.ds.shared_topology.fully_glued_faces.len() > 0
+        !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
@@ -735,7 +734,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // If all faces are fully glued, skip E-F pass
-        self.ds.shared_topology.fully_glued_faces.len() > 0
+        !self.ds.shared_topology.fully_glued_faces.is_empty()
             && self.ds.shared_topology.fully_glued_faces.len()
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
@@ -1177,8 +1176,8 @@ impl<'a> PaveFiller<'a> {
 
             let candidates = Bvh::candidate_pairs(bvh_a, bvh_b);
             for (fa_brep, fb_brep) in candidates {
-                if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep)) {
-                    if ai != usize::MAX && bi != usize::MAX {
+                if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep))
+                    && ai != usize::MAX && bi != usize::MAX {
                         let af = a_faces[ai];
                         let bf = b_faces[bi];
                         if self.should_skip_glued_face_pair(af, bf) {
@@ -1186,7 +1185,6 @@ impl<'a> PaveFiller<'a> {
                         }
                         self.intersect_face_face(af, bf);
                     }
-                }
             }
         } else {
             // Brute-force: all A-face × B-face pairs
@@ -1313,8 +1311,8 @@ impl<'a> PaveFiller<'a> {
         let tol = self.glue_tolerance;
         let mut shared_edges = Vec::new();
 
-        let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.iter().copied().collect();
-        let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.iter().copied().collect();
+        let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.to_vec();
+        let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.to_vec();
 
         for &e1 in &edges1 {
             for &e2 in &edges2 {
@@ -1792,11 +1790,10 @@ impl<'a> PaveFiller<'a> {
         };
 
         match intersect_sphere_cylinder(sphere, cyl) {
-            SphereCylinderResult::NoIntersection => return,
+            SphereCylinderResult::NoIntersection => (),
             SphereCylinderResult::General => {
                 // Fall back to numeric marching for the quartic case.
                 self.intersect_ff_by_marching(f1, f2);
-                return;
             }
             SphereCylinderResult::TangentCircle(circle) => {
                 let (pca, pcb) = make_circle_pcurves(&circle);
@@ -2422,11 +2419,10 @@ impl<'a> PaveFiller<'a> {
         };
 
         match intersect_cylinder_cone(cyl, cone) {
-            CylinderConeResult::NoIntersection => return,
+            CylinderConeResult::NoIntersection => (),
 
             CylinderConeResult::General => {
                 self.intersect_ff_by_marching(f1, f2);
-                return;
             }
 
             CylinderConeResult::CoaxialCircle(circle) => {
@@ -2496,16 +2492,14 @@ impl<'a> PaveFiller<'a> {
         };
 
         match intersect_cone_cone(cone1, cone2) {
-            ConeConeResult::NoIntersection | ConeConeResult::Coaxial => return,
+            ConeConeResult::NoIntersection | ConeConeResult::Coaxial => (),
 
             ConeConeResult::CoaxialPoint(_pt) => {
                 // Single shared apex — a point contact, not a curve.
-                return;
             }
 
             ConeConeResult::General => {
                 self.intersect_ff_by_marching(f1, f2);
-                return;
             }
 
             ConeConeResult::CoaxialCircle(circle) => {
@@ -2986,7 +2980,7 @@ impl<'a> PaveFiller<'a> {
         let n_u = sampling1.n_u.max(sampling2.n_u);
         let n_v = sampling1.n_v.max(sampling2.n_v);
 
-        let samples = self.generate_surface_samples_grid(&s1, n_u, n_v);
+        let _samples = self.generate_surface_samples_grid(&s1, n_u, n_v);
         // Use multi-scale seed detection for improved robustness
         // Scales: coarse (8x8), medium (16x16), fine (32x32)
         let base_step = self.estimate_step_size(&s1, &s2);
@@ -3781,12 +3775,11 @@ impl<'a> PaveFiller<'a> {
         // Check for edge containment
         let mut has_containment = false;
         for &(e1, e2) in &shared_edges {
-            if let Some(containment) = self.detect_edge_containment(e1, e2, tol) {
-                if containment.is_exact {
+            if let Some(containment) = self.detect_edge_containment(e1, e2, tol)
+                && containment.is_exact {
                     has_containment = true;
                     break;
                 }
-            }
         }
 
         // Determine overlap type
@@ -3852,11 +3845,10 @@ impl<'a> PaveFiller<'a> {
         // Iterate over all edge pairs from different shapes
         for e1_idx in 0..self.ds.a_edge_count {
             for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
-                if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol) {
-                    if overlap.overlap_type != EdgeOverlapType::None {
+                if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol)
+                    && overlap.overlap_type != EdgeOverlapType::None {
                         overlaps.push(overlap);
                     }
-                }
             }
         }
 
@@ -4371,7 +4363,7 @@ impl<'a> PaveFiller<'a> {
         edge1: &DSEdge,
         edge2: &DSEdge,
         param_overlap: &ParamOverlap,
-        tol: f64,
+        _tol: f64,
     ) -> f64 {
         let overlap_range = match param_overlap.overlap_range {
             Some(r) => r,
@@ -4832,7 +4824,7 @@ impl<'a> PaveFiller<'a> {
 
     /// Sample interior points on a face.
     fn sample_face_interior(&self, face_idx: usize, samples_per_dim: usize) -> Vec<DVec3> {
-        let face = &self.ds.faces[face_idx];
+        let _face = &self.ds.faces[face_idx];
         let boundary = self.ds.face_boundary_points(face_idx);
 
         if boundary.len() < 3 {
@@ -4951,7 +4943,7 @@ impl<'a> PaveFiller<'a> {
             let v1 = p1.dot(v_dir);
             let u2 = p2.dot(u_dir);
             let v2 = p2.dot(v_dir);
-            area += (u1 * v2 - u2 * v1);
+            area += u1 * v2 - u2 * v1 ;
         }
 
         area.abs() * 0.5
@@ -4998,8 +4990,8 @@ impl<'a> PaveFiller<'a> {
 
     /// Check if there's a micro-gap between two edges.
     fn check_micro_gap(&self, e1: usize, e2: usize, gap_threshold: f64) -> Option<MicroGapInfo> {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
+        let _edge1 = &self.ds.edges[e1];
+        let _edge2 = &self.ds.edges[e2];
 
         // Sample points along both edges
         let pts1 = self.sample_edge_points(e1, 8);

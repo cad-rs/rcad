@@ -409,13 +409,12 @@ impl Gluer {
         }
 
         // Validate result if requested
-        if self.options.validate_result {
-            if let Err(e) = validate_glued_result(&result) {
+        if self.options.validate_result
+            && let Err(e) = validate_glued_result(&result) {
                 return Err(GluerError::TopologyInconsistency(format!(
                     "Result validation failed: {:?}", e
                 )));
             }
-        }
 
         Ok(GluerResult {
             brep: result,
@@ -761,7 +760,7 @@ fn build_face_bvh(faces: &[(usize, &Face, Aabb, DVec3)]) -> FaceBvhNode {
 
     if faces.len() == 1 {
         return FaceBvhNode {
-            aabb: faces[0].2.clone(),
+            aabb: faces[0].2,
             data: FaceBvhData::Leaf { face_idx: faces[0].0 },
         };
     }
@@ -792,7 +791,7 @@ fn build_face_bvh(faces: &[(usize, &Face, Aabb, DVec3)]) -> FaceBvhNode {
     let left = build_face_bvh(&left_faces);
     let right = build_face_bvh(&right_faces);
 
-    let mut aabb = left.aabb.clone();
+    let mut aabb = left.aabb;
     aabb.expand_aabb(&right.aabb);
 
     FaceBvhNode {
@@ -867,15 +866,15 @@ fn are_faces_coincident(
     }
 
     // Check if vertices of face1 are on face2's plane and vice versa
-    let all_on_plane = verts1.iter().all(|&v| {
+    
+
+    verts1.iter().all(|&v| {
         let dist = (v - center2).dot(face2.normal).abs();
         dist < tolerance * 10.0
     }) && verts2.iter().all(|&v| {
         let dist = (v - center1).dot(face1.normal).abs();
         dist < tolerance * 10.0
-    });
-
-    all_on_plane
+    })
 }
 
 /// Gets the 3D positions of all vertices in a face.
@@ -1108,21 +1107,21 @@ fn concatenate_breps(brep1: &BRep, brep2: &BRep, opts: &GluerOptions) -> GluerRe
     // Copy vertices from brep1
     let v1_count = brep1.vertices.len();
     for v in &brep1.vertices {
-        result.vertices.push(v.clone());
+        result.vertices.push(*v);
         history.vertex_origins.push(VertexOrigin::FromA(result.vertices.len() - 1));
     }
 
     // Copy vertices from brep2
     let v2_offset = result.vertices.len();
     for v in &brep2.vertices {
-        result.vertices.push(v.clone());
+        result.vertices.push(*v);
         history.vertex_origins.push(VertexOrigin::FromB(result.vertices.len() - 1));
     }
 
     // Copy edges from brep1
     let e1_count = brep1.edges.len();
     for e in &brep1.edges {
-        result.edges.push(e.clone());
+        result.edges.push(*e);
         history.edge_origins.push(EdgeOrigin::FromA(result.edges.len() - 1));
     }
 
@@ -1216,7 +1215,7 @@ fn perform_gluing(
 
     // Step 1: Copy vertices from brep1
     for (v_idx, v) in brep1.vertices.iter().enumerate() {
-        result.vertices.push(v.clone());
+        result.vertices.push(*v);
         history.vertex_origins.push(VertexOrigin::FromA(v_idx));
     }
 
@@ -1234,13 +1233,13 @@ fn perform_gluing(
                 };
             } else {
                 let new_idx = result.vertices.len();
-                result.vertices.push(v2.clone());
+                result.vertices.push(*v2);
                 vertex_map.insert(v2_idx, new_idx);
                 history.vertex_origins.push(VertexOrigin::FromB(v2_idx));
             }
         } else {
             let new_idx = result.vertices.len();
-            result.vertices.push(v2.clone());
+            result.vertices.push(*v2);
             vertex_map.insert(v2_idx, new_idx);
             history.vertex_origins.push(VertexOrigin::FromB(v2_idx));
         }
@@ -1248,7 +1247,7 @@ fn perform_gluing(
 
     // Step 3: Copy edges from brep1
     for (e_idx, e) in brep1.edges.iter().enumerate() {
-        result.edges.push(e.clone());
+        result.edges.push(*e);
         history.edge_origins.push(EdgeOrigin::FromA(e_idx));
     }
 

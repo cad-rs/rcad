@@ -26,7 +26,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{
-    BSplineCurve3, BSplineSurface, Circle3, ConicalSurface, Curve3, CylindricalSurface,
+    BSplineCurve3, BSplineSurface, Circle3, ConicalSurface, CylindricalSurface,
     Ellipse3, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
@@ -671,7 +671,8 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{CurveEval, SurfaceEval};
+    use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+    use rcad_kernel::geom::{Curve3, CurveEval, SurfaceEval};
 
     // -------------------------------------------------------------------------
     // Curve Construction Tests

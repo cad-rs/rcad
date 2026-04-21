@@ -959,6 +959,7 @@ pub fn fillet_edges_with_history(
 ///
 /// `nv0a/nv0b` are the setback vertices adjacent to the edge start (`p0`):
 ///   - `nv0a` lies on face `f0`; `nv0b` lies on face `f1`.
+///
 /// `nv1a/nv1b` are the corresponding vertices adjacent to the edge end (`p1`).
 ///
 /// When `start_radius ≈ end_radius` a `CylindricalSurface` is used; otherwise
@@ -1926,9 +1927,9 @@ mod tests {
 
         for &(a, b) in all_edges {
             let key = if a < b { (a, b) } else { (b, a) };
-            if !edge_map.contains_key(&key) {
+            if let std::collections::hash_map::Entry::Vacant(e) = edge_map.entry(key) {
                 let idx = edge_list.len();
-                edge_map.insert(key, idx);
+                e.insert(idx);
                 edge_list.push((a, b));
             }
         }

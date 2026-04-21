@@ -413,14 +413,13 @@ impl BRep {
     ///
     /// Returns `true` if a shape was removed.
     pub fn remove_shape(&mut self, index: usize) -> bool {
-        if let Some(ref mut compound) = self.compound {
-            if index < compound.solids.len() {
+        if let Some(ref mut compound) = self.compound
+            && index < compound.solids.len() {
                 compound.remove_solid(index);
                 // Rebuild flattened solids
                 self.solids = compound.flatten_solids().into_iter().cloned().collect();
                 return true;
             }
-        }
         false
     }
 
@@ -626,7 +625,7 @@ impl BRep {
         ];
 
         // Face surface indices
-        let face_surface: Vec<Option<usize>> = (0..6).map(|i| Some(i)).collect();
+        let face_surface: Vec<Option<usize>> = (0..6).map(Some).collect();
 
         let geom = GeomStore {
             curves: Vec::new(),

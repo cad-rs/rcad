@@ -118,8 +118,6 @@ struct ParsedStep {
     compounds: HashMap<u64, Vec<u64>>,
     /// COMPSOLID: maps entity id -> list of solid references
     compsolids: HashMap<u64, Vec<u64>>,
-    /// Top-level compound references (from SHAPE_REPRESENTATION_RELATIONSHIP)
-    top_level_compounds: Vec<u64>,
     /// SURFACE_CURVE: maps step id 鈫?(3d_curve_ref, pcurve_ref_list, same_parameter)
     surface_curves: HashMap<u64, (u64, Vec<u64>, bool)>,
     /// PCURVE: maps step id 鈫?(surface_ref, definitional_rep_ref)
@@ -199,7 +197,6 @@ impl ParsedStep {
             geometric_curve_sets: Vec::new(),
             compounds: HashMap::new(),
             compsolids: HashMap::new(),
-            top_level_compounds: Vec::new(),
             surface_curves: HashMap::new(),
             pcurves: HashMap::new(),
             definitional_reps: HashMap::new(),
@@ -1927,11 +1924,10 @@ fn extract_layers(content: &str) -> Vec<StepLayer> {
     let mut search = content;
     while let Some(pos) = search.find("PRESENTATION_LAYER_ASSIGNMENT(") {
         let rest = &search[pos + "PRESENTATION_LAYER_ASSIGNMENT(".len()..];
-        if let Some(name) = extract_first_string_arg(rest) {
-            if !layers.iter().any(|l: &StepLayer| l.name == name) {
+        if let Some(name) = extract_first_string_arg(rest)
+            && !layers.iter().any(|l: &StepLayer| l.name == name) {
                 layers.push(StepLayer { name });
             }
-        }
         search = &search[pos + 1..];
     }
     layers
@@ -1966,12 +1962,11 @@ fn extract_general_properties_with_ids(content: &str) -> Vec<(u64, StepGeneralPr
         let Some((entity, args)) = parse_entity_body(body) else {
             continue;
         };
-        if entity.eq_ignore_ascii_case("GENERAL_PROPERTY") {
-            if let Some(name) = extract_nth_string_arg(args, 0) {
+        if entity.eq_ignore_ascii_case("GENERAL_PROPERTY")
+            && let Some(name) = extract_nth_string_arg(args, 0) {
                 let description = extract_nth_string_arg(args, 1);
                 props.push((id, StepGeneralProperty { name, description }));
             }
-        }
     }
 
     props
@@ -2031,7 +2026,6 @@ fn extract_property_definitions(content: &str) -> Vec<StepPropertyDefinition> {
 }
 
 /// Extract the first single-quoted string argument from a STEP entity argument list.
-
 fn extract_property_definition_reprs(content: &str) -> Vec<StepPropertyDefinitionRepr> {
     let Ok(data) = extract_data_section(content) else { return Vec::new(); };
     let mut out = Vec::new();
@@ -2585,7 +2579,7 @@ fn extract_orientation_tolerances(content: &str) -> Vec<StepOrientationTolerance
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
         let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
         // Determine type from name if not set
-        let final_type = orientation_type.unwrap_or_else(|| {
+        let final_type = orientation_type.unwrap_or({
             match name.as_deref() {
                 Some("angularity") => OrientationToleranceType::Angularity,
                 Some("perpendicularity") => OrientationToleranceType::Perpendicularity,
@@ -2638,7 +2632,7 @@ fn extract_form_tolerances(content: &str) -> Vec<StepFormTolerance> {
         let value_entity_id = parts.get(2).and_then(|p| parse_ref(p.trim()));
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
         // Determine type from name if not set
-        let final_type = form_type.unwrap_or_else(|| {
+        let final_type = form_type.unwrap_or({
             match name.as_deref() {
                 Some("flatness") => FormToleranceType::Flatness,
                 Some("straightness") => FormToleranceType::Straightness,
@@ -2688,7 +2682,7 @@ fn extract_runout_tolerances(content: &str) -> Vec<StepRunoutTolerance> {
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
         let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
         // Determine type from name if not set
-        let final_type = runout_type.unwrap_or_else(|| {
+        let final_type = runout_type.unwrap_or({
             match name.as_deref() {
                 Some("circular runout") => RunoutToleranceType::CircularRunout,
                 Some("total runout") => RunoutToleranceType::TotalRunout,
@@ -2737,7 +2731,7 @@ fn extract_profile_tolerances(content: &str) -> Vec<StepProfileTolerance> {
         let shape_aspect_id = parts.get(3).and_then(|p| parse_ref(p.trim()));
         let datum_system_id = parts.get(4).and_then(|p| parse_ref(p.trim()));
         // Determine type from name if not set
-        let final_type = profile_type.unwrap_or_else(|| {
+        let final_type = profile_type.unwrap_or({
             match name.as_deref() {
                 Some("profile of a line") => ProfileToleranceType::ProfileOfALine,
                 Some("profile of a surface") => ProfileToleranceType::ProfileOfASurface,
@@ -3301,7 +3295,7 @@ fn extract_fea_nodes(content: &str) -> Vec<StepFeaNode> {
         let node_number = if entity_upper == "NODE_REPRESENTATION" {
             parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
         } else {
-            parts.get(0).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts.first().and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
         };
         // Find the coordinates - could be a tuple or a reference to a CARTESIAN_POINT
         let coords_str = if entity_upper == "NODE_REPRESENTATION" {
@@ -3355,7 +3349,7 @@ fn extract_fea_elements(content: &str) -> Vec<StepFeaElement> {
         let element_number = if is_element_repr {
             parts.get(1).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
         } else {
-            parts.get(0).and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
+            parts.first().and_then(|p| parse_uint_arg(p.trim())).unwrap_or(id)
         };
         // element_type is string index 1 for ELEMENT_REPRESENTATION, 0 for FEA_ELEMENT
         let element_type = if is_element_repr {
@@ -4027,7 +4021,7 @@ fn extract_configuration_effectivities(content: &str) -> Vec<StepConfigurationEf
         let parts = split_top_level(args, ',');
         out.push(StepConfigurationEffectivity {
             entity_id: id,
-            configuration_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            configuration_id: parts.first().and_then(|p| parse_ref(p.trim())),
             usage_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
             effectivity_start: extract_nth_string_arg(args, 2),
             effectivity_end: extract_nth_string_arg(args, 3),
@@ -4072,7 +4066,7 @@ fn extract_approvals(content: &str) -> Vec<StepApproval> {
         let parts = split_top_level(args, ',');
         // APPROVAL(status, level)
         // status is typically .APPROVED. or a reference to APPROVAL_STATUS
-        let status_str = parts.get(0).map(|s| s.trim()).unwrap_or("");
+        let status_str = parts.first().map(|s| s.trim()).unwrap_or("");
         let status = parse_approval_status(status_str);
 
         out.push(StepApproval {
@@ -4110,7 +4104,7 @@ fn extract_approval_assignments(content: &str) -> Vec<StepApprovalAssignment> {
         let parts = split_top_level(args, ',');
         out.push(StepApprovalAssignment {
             entity_id: id,
-            approval_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            approval_id: parts.first().and_then(|p| parse_ref(p.trim())),
             approved_item_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
             role: extract_nth_string_arg(args, 2),
         });
@@ -4190,7 +4184,7 @@ fn extract_security_classification_assignments(content: &str) -> Vec<StepSecurit
         let parts = split_top_level(args, ',');
         out.push(StepSecurityClassificationAssignment {
             entity_id: id,
-            security_classification_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            security_classification_id: parts.first().and_then(|p| parse_ref(p.trim())),
             classified_item_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
         });
     }
@@ -4291,7 +4285,7 @@ fn extract_document_usage_assignments(content: &str) -> Vec<StepDocumentUsageAss
         let parts = split_top_level(args, ',');
         out.push(StepDocumentUsageAssignment {
             entity_id: id,
-            document_id: parts.get(0).and_then(|p| parse_ref(p.trim())),
+            document_id: parts.first().and_then(|p| parse_ref(p.trim())),
             product_definition_id: parts.get(1).and_then(|p| parse_ref(p.trim())),
             role: extract_nth_string_arg(args, 0), // role is the first (and only) quoted string
         });
@@ -5078,11 +5072,10 @@ fn build_compound_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
             // Check if this is a manifold solid reference
             if parsed.manifold_solids.contains(&elem_ref) {
                 // Build the solid from the manifold solid
-                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref) {
-                    if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
+                    && let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
                         compound.add_solid(None, solid);
                     }
-                }
             }
             // Check for nested compound
             else if parsed.compounds.contains_key(&elem_ref) {
@@ -5090,11 +5083,10 @@ fn build_compound_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
                 compound.add_compound(None, nested);
             }
             // Check for compsolid
-            else if parsed.compsolids.contains_key(&elem_ref) {
-                if let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
+            else if parsed.compsolids.contains_key(&elem_ref)
+                && let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
                     compound.add_comp_solid(None, compsolid);
                 }
-            }
         }
     }
 
@@ -5115,19 +5107,17 @@ fn build_nested_compound(parsed: &ParsedStep, compound_id: u64) -> Result<rcad_k
     if let Some(elems) = parsed.compounds.get(&compound_id) {
         for &elem_ref in elems {
             if parsed.manifold_solids.contains(&elem_ref) {
-                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref) {
-                    if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
+                    && let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
                         compound.add_solid(None, solid);
                     }
-                }
             } else if parsed.compounds.contains_key(&elem_ref) {
                 let nested = build_nested_compound(parsed, elem_ref)?;
                 compound.add_compound(None, nested);
-            } else if parsed.compsolids.contains_key(&elem_ref) {
-                if let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
+            } else if parsed.compsolids.contains_key(&elem_ref)
+                && let Some(compsolid) = build_compsolid_from_step(parsed, elem_ref)? {
                     compound.add_comp_solid(None, compsolid);
                 }
-            }
         }
     }
 
@@ -5136,7 +5126,7 @@ fn build_nested_compound(parsed: &ParsedStep, compound_id: u64) -> Result<rcad_k
 
 /// Build a BRep representing a CompSolid from STEP COMPSOLID entities.
 fn build_compsolid_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
-    use rcad_kernel::topology::CompSolid;
+    
 
     // For now, just use the first compsolid
     if let Some((&id, _solid_refs)) = parsed.compsolids.iter().next() {
@@ -5160,11 +5150,10 @@ fn build_compsolid_from_step(parsed: &ParsedStep, compsolid_id: u64) -> Result<O
     let mut compsolid = CompSolid::new();
 
     for &solid_ref in solid_refs {
-        if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref) {
-            if let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
+        if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref)
+            && let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
                 compsolid.add(solid);
             }
-        }
     }
 
     if compsolid.is_empty() {
@@ -5867,15 +5856,13 @@ fn build_face(
     if let Some(surface_ref) = face_surface
         && sampled_loop_uv_points.len() < 3
         && sampled_loop_points.len() >= 3
-    {
-        if let Some(projected) = project_boundary_points_to_surface_uv(
+        && let Some(projected) = project_boundary_points_to_surface_uv(
             parsed,
             surface_ref,
             &sampled_loop_points,
         ) {
             sampled_loop_uv_points = projected;
         }
-    }
 
     let triangles = if sampled_loop_points.len() >= 3 && is_planar_face {
         triangulate_point_loop(vertices, &sampled_loop_points)
@@ -6204,13 +6191,11 @@ fn triangulate_surface_trim_loop(
         return Vec::new();
     }
 
-    if !matches!(surface, Surface3::Plane(_)) {
-        if let Some(triangles) = triangulate_surface_trim_grid(&surface, vertices, &loop_uv) {
-            if !triangles.is_empty() {
+    if !matches!(surface, Surface3::Plane(_))
+        && let Some(triangles) = triangulate_surface_trim_grid(&surface, vertices, &loop_uv)
+            && !triangles.is_empty() {
                 return triangles;
             }
-        }
-    }
 
     let uv_poly_3d: Vec<glam::DVec3> = loop_uv
         .iter()
@@ -7517,6 +7502,7 @@ fn decode_rcad_tagged_surface(name: &str) -> Option<Surface3> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_bspline_surface_from_data(
     degree_u: usize,
     degree_v: usize,
@@ -7580,7 +7566,7 @@ fn resolve_surface_for_trim_ops(parsed: &ParsedStep, surface_ref: u64) -> Option
 // ═══════════════════════════════════════════════════════════════════════════════
 
 use rcad_kernel::annotation::{
-    Annotation, AnnotationKind, Note, NoteCategory, NoteTarget, View, ViewProjection,
+    Annotation, Note, NoteCategory, View, ViewProjection,
 };
 
 /// Convert a kernel View to STEP view entities.
@@ -7667,7 +7653,7 @@ pub fn step_views_to_kernel(
 ) -> Vec<View> {
     views
         .iter()
-        .filter_map(|step_view| {
+        .map(|step_view| {
             // Find corresponding camera
             let camera = step_view.camera_model_id.and_then(|cam_id| {
                 cameras.iter().find(|c| c.entity_id == cam_id || c.entity_id == step_view.entity_id)
@@ -7714,7 +7700,7 @@ pub fn step_views_to_kernel(
             }
 
             view.custom = true;
-            Some(view)
+            view
         })
         .collect()
 }
@@ -7723,7 +7709,7 @@ pub fn step_views_to_kernel(
 pub fn step_notes_to_kernel(notes: &[StepNote]) -> Vec<Note> {
     notes
         .iter()
-        .filter_map(|step_note| {
+        .map(|step_note| {
             let category = match step_note.name.as_deref() {
                 Some(name) if name.contains("warning") || name.contains("Warning") => NoteCategory::Warning,
                 Some(name) if name.contains("requirement") || name.contains("Requirement") => NoteCategory::Requirement,
@@ -7743,7 +7729,7 @@ pub fn step_notes_to_kernel(notes: &[StepNote]) -> Vec<Note> {
                 note = note.with_author(author.clone());
             }
 
-            Some(note)
+            note
         })
         .collect()
 }
@@ -8851,7 +8837,7 @@ pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
         for &ei in &surface_edges {
             let has_pcurve = brep.geom.edge_pcurves
                 .get(ei)
-                .map_or(false, |v| !v.is_empty());
+                .is_some_and(|v| !v.is_empty());
             if !has_pcurve {
                 issues.push(ExportIssue::MissingPcurve { edge_idx: ei });
             }
@@ -10674,17 +10660,6 @@ END-ISO-10303-21;
 
     // ── AP242 Semantic Parsing Tests ────────────────────────────────────────────
 
-    /// Minimal STEP with a vertex for tests that need geometry
-    const MINIMAL_STEP_PREFIX: &str = r#"ISO-10303-21;
-HEADER;
-FILE_NAME('test','','','','','','');
-FILE_SCHEMA(('AP242'));
-ENDSEC;
-DATA;
-#1=CARTESIAN_POINT('',(0.,0.,0.));
-#2=VERTEX_POINT('',#1);
-"#;
-
     #[test]
     fn extracts_product_definition_relationships() {
         let step = r#"ISO-10303-21;
@@ -10993,9 +10968,9 @@ END-ISO-10303-21;
 
         let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
 
-        let (v1, e1, f1, s1) = count_topology(&cylinder);
+        let (_v1, _e1, f1, s1) = count_topology(&cylinder);
         let round_tripped = round_trip_brep(&cylinder, false); // non-strict for curved surfaces
-        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+        let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
         // For curved surfaces with gmsh_strict: false, topology may differ slightly
         // but face count should remain stable
@@ -11014,9 +10989,9 @@ END-ISO-10303-21;
 
         let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
 
-        let (v1, e1, f1, s1) = count_topology(&sphere);
+        let (_v1, _e1, f1, s1) = count_topology(&sphere);
         let round_tripped = round_trip_brep(&sphere, false);
-        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+        let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
         assert_eq!(f1, f2, "face count should match after round-trip");
         assert_eq!(s1, s2, "shell count should match after round-trip");
@@ -11032,9 +11007,9 @@ END-ISO-10303-21;
 
         let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
 
-        let (v1, e1, f1, s1) = count_topology(&cone);
+        let (_v1, _e1, f1, s1) = count_topology(&cone);
         let round_tripped = round_trip_brep(&cone, false);
-        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+        let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
         assert_eq!(f1, f2, "face count should match after round-trip");
         assert_eq!(s1, s2, "shell count should match after round-trip");
@@ -11106,9 +11081,9 @@ END-ISO-10303-21;
 
         let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
 
-        let (v1, e1, f1, s1) = count_topology(&torus);
+        let (_v1, _e1, f1, _s1) = count_topology(&torus);
         let round_tripped = round_trip_brep(&torus, false);
-        let (v2, e2, f2, s2) = count_topology(&round_tripped);
+        let (_v2, _e2, f2, _s2) = count_topology(&round_tripped);
 
         // Torus is a closed surface, should preserve face count
         assert_eq!(f1, f2, "torus face count should match after round-trip");

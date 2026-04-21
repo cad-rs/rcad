@@ -15,7 +15,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{
     any_perpendicular, BSplineCurve3, Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3,
 };
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::TAU;
 
 // =============================================================================
 // Line Utilities
@@ -222,7 +222,7 @@ pub fn ellipse_parameter(ellipse: &Ellipse3, point: DVec3) -> f64 {
     }
 
     // Initial guess using modified atan2
-    let mut t = (y / b).atan2(x / a);
+    let t = (y / b).atan2(x / a);
 
     // Newton-Raphson refinement for better accuracy
     // We solve: f(t) = atan2(y - b*sin(t), x - a*cos(t)) = 0
@@ -463,7 +463,7 @@ pub fn bspline_derivative(spline: &BSplineCurve3, t: f64, order: usize) -> DVec3
             points = new_points;
         }
 
-        points.get(0).copied().unwrap_or(DVec3::ZERO) / step.powi(order as i32)
+        points.first().copied().unwrap_or(DVec3::ZERO) / step.powi(order as i32)
     }
 }
 
@@ -474,7 +474,7 @@ pub fn bspline_derivative(spline: &BSplineCurve3, t: f64, order: usize) -> DVec3
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::consts::FRAC_PI_4;
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     // -------------------------------------------------------------------------
     // Line Tests

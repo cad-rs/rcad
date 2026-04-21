@@ -622,13 +622,12 @@ pub fn detect_seeds_for_scoped_cleanup(
                 }
             }
             for (ei, &count) in edge_face_count.iter().enumerate() {
-                if count > 2 {
-                    if let Some(edge) = brep.edges.get(ei) {
+                if count > 2
+                    && let Some(edge) = brep.edges.get(ei) {
                         vertex_set.insert(edge.start);
                         vertex_set.insert(edge.end);
                         edge_set.insert(ei);
                     }
-                }
             }
 
             // Strategy 2: Detect edges with multiple PCurves (potential seams on periodic surfaces)
@@ -646,8 +645,8 @@ pub fn detect_seeds_for_scoped_cleanup(
             // Strategy 3: Detect edges where adjacent face normals have large angle (> 45 degrees)
             for (ei, edge) in brep.edges.iter().enumerate() {
                 let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
-                if adj_faces.len() == 2 {
-                    if let (Some(n1), Some(n2)) = (
+                if adj_faces.len() == 2
+                    && let (Some(n1), Some(n2)) = (
                         get_face_normal(brep, adj_faces[0]),
                         get_face_normal(brep, adj_faces[1]),
                     ) {
@@ -660,7 +659,6 @@ pub fn detect_seeds_for_scoped_cleanup(
                             edge_set.insert(ei);
                         }
                     }
-                }
             }
 
             result.strategy_counts.insert("seam_candidates".to_string(), vertex_set.len());
@@ -673,12 +671,11 @@ pub fn detect_seeds_for_scoped_cleanup(
             for edge in &brep.edges {
                 let start = brep.vertices.get(edge.start).map(|v| v.point);
                 let end = brep.vertices.get(edge.end).map(|v| v.point);
-                if let (Some(s), Some(e)) = (start, end) {
-                    if (s - e).length() < config.short_edge_threshold {
+                if let (Some(s), Some(e)) = (start, end)
+                    && (s - e).length() < config.short_edge_threshold {
                         combined.insert(edge.start);
                         combined.insert(edge.end);
                     }
-                }
             }
 
             // High tolerance
@@ -715,29 +712,27 @@ pub fn detect_seeds_for_scoped_cleanup(
                 }
             }
             for (ei, &count) in edge_face_count.iter().enumerate() {
-                if count > 2 {
-                    if let Some(edge) = brep.edges.get(ei) {
+                if count > 2
+                    && let Some(edge) = brep.edges.get(ei) {
                         combined.insert(edge.start);
                         combined.insert(edge.end);
                     }
-                }
             }
 
             // Seam candidate Strategy 2: Edges with multiple PCurves
             for (ei, pcurves) in brep.geom.edge_pcurves.iter().enumerate() {
-                if pcurves.len() > 1 {
-                    if let Some(edge) = brep.edges.get(ei) {
+                if pcurves.len() > 1
+                    && let Some(edge) = brep.edges.get(ei) {
                         combined.insert(edge.start);
                         combined.insert(edge.end);
                     }
-                }
             }
 
             // Seam candidate Strategy 3: Edges with large face normal angle (> 45 degrees)
             for (ei, edge) in brep.edges.iter().enumerate() {
                 let adj_faces = get_edge_adjacent_faces_brep(brep, ei);
-                if adj_faces.len() == 2 {
-                    if let (Some(n1), Some(n2)) = (
+                if adj_faces.len() == 2
+                    && let (Some(n1), Some(n2)) = (
                         get_face_normal(brep, adj_faces[0]),
                         get_face_normal(brep, adj_faces[1]),
                     ) {
@@ -748,7 +743,6 @@ pub fn detect_seeds_for_scoped_cleanup(
                             combined.insert(edge.end);
                         }
                     }
-                }
             }
 
             vertex_set = combined;
@@ -1741,8 +1735,8 @@ pub fn detect_shared_topology_advanced(brep: &BRep, tolerance: f64) -> SharedTop
     let mut processed_edge_pairs: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();
 
-    for (e1, _faces1) in &edge_to_faces {
-        for (e2, _faces2) in &edge_to_faces {
+    for e1 in edge_to_faces.keys() {
+        for e2 in edge_to_faces.keys() {
             if e1 >= e2 {
                 continue;
             }
@@ -1752,11 +1746,10 @@ pub fn detect_shared_topology_advanced(brep: &BRep, tolerance: f64) -> SharedTop
             processed_edge_pairs.insert((*e1, *e2));
 
             // Check if edges have shared geometry
-            if let Some(info) = analyze_shared_edge_pair(brep, *e1, *e2, tol) {
-                if info.geometry_compatible {
+            if let Some(info) = analyze_shared_edge_pair(brep, *e1, *e2, tol)
+                && info.geometry_compatible {
                     report.shared_edges.push(info);
                 }
-            }
         }
     }
 
@@ -2101,11 +2094,10 @@ fn analyze_shared_face_pair(
     let mut shared_edges = Vec::new();
     for &e1 in &edges1 {
         for &e2 in &edges2 {
-            if let Some(info) = analyze_shared_edge_pair(brep, e1, e2, tolerance) {
-                if info.geometry_compatible {
+            if let Some(info) = analyze_shared_edge_pair(brep, e1, e2, tolerance)
+                && info.geometry_compatible {
                     shared_edges.push(e1.min(e2));
                 }
-            }
         }
     }
     shared_edges.sort();
@@ -2245,7 +2237,7 @@ pub fn build_connectivity_graph(brep: &BRep) -> ConnectivityGraph {
     graph.edge_vertices = Vec::with_capacity(n_edges);
 
     // Build vertex adjacency via edges
-    for (ei, edge) in brep.edges.iter().enumerate() {
+    for edge in brep.edges.iter() {
         graph.edge_vertices.push((edge.start, edge.end));
 
         // Add bidirectional vertex adjacency
@@ -2512,8 +2504,8 @@ pub fn detect_connectivity_gaps(brep: &BRep, tolerance: f64) -> Vec<Connectivity
                 }
             }
 
-            if let Some((fa, fb, pa, pb)) = best_pair {
-                if min_dist <= tolerance {
+            if let Some((fa, fb, pa, pb)) = best_pair
+                && min_dist <= tolerance {
                     let gap_type = classify_gap_type(brep, fa, fb, min_dist, tolerance);
                     gaps.push(ConnectivityGap {
                         face_a: fa,
@@ -2526,7 +2518,6 @@ pub fn detect_connectivity_gaps(brep: &BRep, tolerance: f64) -> Vec<Connectivity
                         gap_type,
                     });
                 }
-            }
         }
     }
 
@@ -3181,9 +3172,7 @@ pub fn validate_connectivity(brep: &BRep, tolerance: f64) -> ConnectivityReport 
 
     // Generate suggestions
     if !report.is_connected {
-        report.suggestions.push(format!(
-            "Consider using merge_disconnected_components with ByProximity strategy"
-        ));
+        report.suggestions.push("Consider using merge_disconnected_components with ByProximity strategy".to_string());
     }
 
     if report.weak_connections > report.strong_connections {
@@ -4549,8 +4538,8 @@ pub fn analyze_tolerances(brep: &BRep, default_tolerance: f64) -> ToleranceAnaly
 
     // Compute shape-wide stats
     let all_tols: Vec<f64> = vertex_tols.into_iter()
-        .chain(edge_tols.into_iter())
-        .chain(face_tols.into_iter())
+        .chain(edge_tols)
+        .chain(face_tols)
         .collect();
 
     if !all_tols.is_empty() {
@@ -4780,8 +4769,8 @@ pub fn fix_uv_bounds_violations(brep: &BRep, tolerance: f64) -> (BRep, UvBoundsR
         for we in &face.outer_wire.edges {
             if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
                 for pc in pcurves {
-                    if pc.surface_idx == surface_idx {
-                        if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
+                    if pc.surface_idx == surface_idx
+                        && let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
                             // Check if curve2d needs adjustment
                             let needs_wrap = check_curve2d_needs_wrap(
                                 curve2d,
@@ -4815,7 +4804,6 @@ pub fn fix_uv_bounds_violations(brep: &BRep, tolerance: f64) -> (BRep, UvBoundsR
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -4840,21 +4828,17 @@ fn check_curve2d_needs_wrap(
         let t = i as f64 / 16.0;
         let uv = curve2d.point_at(t);
 
-        if u_wrapped {
-            if let Some(period) = u_period {
-                if uv.x < -period * 0.5 || uv.x > period * 0.5 {
+        if u_wrapped
+            && let Some(period) = u_period
+                && (uv.x < -period * 0.5 || uv.x > period * 0.5) {
                     return true;
                 }
-            }
-        }
 
-        if v_wrapped {
-            if let Some(period) = v_period {
-                if uv.y < -period * 0.5 || uv.y > period * 0.5 {
+        if v_wrapped
+            && let Some(period) = v_period
+                && (uv.y < -period * 0.5 || uv.y > period * 0.5) {
                     return true;
                 }
-            }
-        }
     }
 
     false
@@ -4872,10 +4856,10 @@ fn wrap_curve2d(
     match curve2d {
         Curve2d::Line(line) => {
             // For a line, we can adjust the origin to be within canonical bounds
-            let mut new_line = line.clone();
+            let mut new_line = *line;
 
-            if u_wrapped {
-                if let Some(period) = u_period {
+            if u_wrapped
+                && let Some(period) = u_period {
                     // Wrap the origin's U coordinate
                     while new_line.origin.x < -period * 0.5 {
                         new_line.origin.x += period;
@@ -4884,10 +4868,9 @@ fn wrap_curve2d(
                         new_line.origin.x -= period;
                     }
                 }
-            }
 
-            if v_wrapped {
-                if let Some(period) = v_period {
+            if v_wrapped
+                && let Some(period) = v_period {
                     // Wrap the origin's V coordinate
                     while new_line.origin.y < -period * 0.5 {
                         new_line.origin.y += period;
@@ -4896,7 +4879,6 @@ fn wrap_curve2d(
                         new_line.origin.y -= period;
                     }
                 }
-            }
 
             Some(Curve2d::Line(new_line))
         }
@@ -5040,7 +5022,7 @@ struct SameCurveMergeReport {
 /// This is useful for edges that were split during boolean operations
 /// but should logically be merged back together.
 fn merge_same_curve_edges(brep: &BRep, tolerance: f64) -> (BRep, SameCurveMergeReport) {
-    let mut result = brep.clone();
+    let result = brep.clone();
     let mut report = SameCurveMergeReport::default();
 
     let n = result.edges.len();
@@ -5324,8 +5306,8 @@ pub fn detect_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> Vec<SeamEd
                                 continue;
                             }
 
-                            if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
-                                if let Some(seam_info) = detect_curve2d_seam_crossing(
+                            if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx)
+                                && let Some(seam_info) = detect_curve2d_seam_crossing(
                                     curve2d,
                                     we.forward,
                                     &periodic_info,
@@ -5336,7 +5318,6 @@ pub fn detect_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> Vec<SeamEd
                                 ) {
                                     seam_edges.push(seam_info);
                                 }
-                            }
                         }
                     }
                 }
@@ -5350,8 +5331,8 @@ pub fn detect_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> Vec<SeamEd
                                     continue;
                                 }
 
-                                if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
-                                    if let Some(seam_info) = detect_curve2d_seam_crossing(
+                                if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx)
+                                    && let Some(seam_info) = detect_curve2d_seam_crossing(
                                         curve2d,
                                         we.forward,
                                         &periodic_info,
@@ -5362,7 +5343,6 @@ pub fn detect_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> Vec<SeamEd
                                     ) {
                                         seam_edges.push(seam_info);
                                     }
-                                }
                             }
                         }
                     }
@@ -5381,7 +5361,7 @@ fn detect_curve2d_seam_crossing(
     curve2d: &rcad_kernel::Curve2d,
     forward: bool,
     periodic_info: &PeriodicSurfaceInfo,
-    seam_tolerance: f64,
+    _seam_tolerance: f64,
     edge_idx: usize,
     surface_idx: usize,
     face_idx: usize,
@@ -5481,7 +5461,7 @@ fn detect_curve2d_seam_crossing(
 pub fn split_edge_at_seam(
     brep: &BRep,
     seam_info: &SeamEdgeInfo,
-    tolerance: f64,
+    _tolerance: f64,
 ) -> (BRep, bool) {
     let mut result = brep.clone();
     let mut split_performed = false;
@@ -5606,8 +5586,8 @@ pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                 for we in &face.outer_wire.edges {
                     if let Some(edge) = brep.edges.get(we.idx) {
                         let vi = if we.forward { edge.start } else { edge.end };
-                        if let Some(vertex) = brep.vertices.get(vi) {
-                            if is_vertex_at_degenerate_point(
+                        if let Some(vertex) = brep.vertices.get(vi)
+                            && is_vertex_at_degenerate_point(
                                 vertex,
                                 surface,
                                 &periodic_info,
@@ -5616,7 +5596,6 @@ pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 degenerate_vertices.insert(vi);
                                 degenerate_count += 1;
                             }
-                        }
                     }
                 }
 
@@ -5631,13 +5610,12 @@ pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     for vi in &degenerate_vertices {
         // Find edges incident to this vertex and mark them if needed
         for (ei, edge) in result.edges.iter().enumerate() {
-            if edge.start == *vi || edge.end == *vi {
-                if result.geom.edge_degenerated.len() <= ei {
+            if (edge.start == *vi || edge.end == *vi)
+                && result.geom.edge_degenerated.len() <= ei {
                     result.geom.edge_degenerated.resize(ei + 1, false);
                 }
                 // Note: We don't automatically mark as degenerate - that depends on
                 // whether the edge actually has zero 3D length
-            }
         }
     }
 
@@ -5648,14 +5626,14 @@ pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 fn is_vertex_at_degenerate_point(
     vertex: &Vertex,
     surface: &Surface3,
-    periodic_info: &PeriodicSurfaceInfo,
+    _periodic_info: &PeriodicSurfaceInfo,
     tolerance: f64,
 ) -> bool {
     match surface {
         Surface3::Sphere(sphere) => {
             // Check if vertex is at north or south pole
             let to_vertex = vertex.point - sphere.center;
-            let along_axis = to_vertex.dot(sphere.axis.normalize_or_zero());
+            let _along_axis = to_vertex.dot(sphere.axis.normalize_or_zero());
 
             // At north pole (V=0): vertex is at center + radius * axis
             // At south pole (V=π): vertex is at center - radius * axis
@@ -5682,7 +5660,7 @@ fn is_vertex_at_degenerate_point(
 /// When edges are incorrectly split at a seam, this function attempts to
 /// merge them back together.
 pub fn merge_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> (BRep, usize) {
-    let mut result = brep.clone();
+    let result = brep.clone();
     let mut merged_count = 0;
 
     // Find pairs of edges that could be merged across the seam
@@ -5741,8 +5719,8 @@ pub fn merge_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> (BRep, usiz
                 // Look for edge pairs that span the seam
                 for i in 0..edge_uv_endpoints.len() {
                     for j in (i + 1)..edge_uv_endpoints.len() {
-                        let (ei, uv_start_i, uv_end_i) = edge_uv_endpoints[i];
-                        let (ej, uv_start_j, uv_end_j) = edge_uv_endpoints[j];
+                        let (ei, _uv_start_i, uv_end_i) = edge_uv_endpoints[i];
+                        let (ej, uv_start_j, _uv_end_j) = edge_uv_endpoints[j];
 
                         // Check if one edge ends near U=0 and another starts near U=period
                         // (or vice versa), indicating they should be merged
@@ -6034,8 +6012,10 @@ pub struct SameDomainMatch {
 
 /// Classification of parametric continuity between B-spline surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum BsplineContinuity {
     /// No continuity (disconnected).
+    #[default]
     None,
     /// C0: position continuous.
     C0,
@@ -6049,11 +6029,6 @@ pub enum BsplineContinuity {
     CN,
 }
 
-impl Default for BsplineContinuity {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 /// Information about a merged B-spline face.
 #[derive(Debug, Clone)]
@@ -6345,11 +6320,10 @@ pub fn check_bspline_continuity(
     tolerance: f64,
 ) -> BsplineContinuity {
     // First check if surfaces are same domain
-    if let Some(match_result) = bspline_same_domain(surf1, surf2, tolerance) {
-        if match_result.is_same_domain {
+    if let Some(match_result) = bspline_same_domain(surf1, surf2, tolerance)
+        && match_result.is_same_domain {
             return match_result.continuity;
         }
-    }
 
     // Check for adjacent surfaces (sharing a boundary)
     // This requires checking if the control points at boundaries match
@@ -6485,7 +6459,7 @@ fn check_adjacent_continuity_u(
         }
 
         let n_v1 = row1.len();
-        let n_v2 = row2.len();
+        let _n_v2 = row2.len();
 
         // Check last of row1 vs first of row2
         let dev = row1[n_v1 - 1].distance(row2[0]);
@@ -6590,7 +6564,7 @@ pub fn merge_bspline_faces(
     let (keep_idx, remove_idx) = if fi1 < fi2 { (fi1, fi2) } else { (fi2, fi1) };
 
     // Update face_surface mapping
-    let kept_flat = flat_face_index_global(&result, si, shi, keep_idx);
+    let _kept_flat = flat_face_index_global(&result, si, shi, keep_idx);
     let remove_flat = flat_face_index_global(&result, si, shi, remove_idx);
     if result.geom.face_surface.len() > remove_flat {
         result.geom.face_surface.remove(remove_flat);
@@ -7442,14 +7416,13 @@ pub fn repair_shell_closure(shell: &Shell, brep: &BRep, tolerance: f64) -> Shell
                 if visited.contains(&oe) { continue; }
                 let last = brep.edges.get(chain[chain.len() - 1]);
                 let curr = brep.edges.get(oe);
-                if let (Some(l), Some(c)) = (last, curr) {
-                    if l.end == c.start || l.end == c.end || l.start == c.start || l.start == c.end {
+                if let (Some(l), Some(c)) = (last, curr)
+                    && (l.end == c.start || l.end == c.end || l.start == c.start || l.start == c.end) {
                         chain.push(oe);
                         visited.insert(oe);
                         extended = true;
                         break;
                     }
-                }
             }
             if !extended { break; }
         }
@@ -7492,12 +7465,11 @@ fn estimate_chain_area(chain: &[usize], brep: &BRep) -> f64 {
     if chain.len() < 3 { return 0.0; }
     let mut vertices: Vec<DVec3> = Vec::new();
     for &ei in chain {
-        if let Some(edge) = brep.edges.get(ei) {
-            if let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
+        if let Some(edge) = brep.edges.get(ei)
+            && let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
                 if vertices.is_empty() { vertices.push(s.point); }
                 vertices.push(e.point);
             }
-        }
     }
     if vertices.len() < 3 { return 0.0; }
     let mut area = 0.0;
@@ -7526,7 +7498,7 @@ fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> O
         normal.z += (vertices[i].x - vertices[j].x) * (vertices[i].y + vertices[j].y);
     }
     let len = normal.length();
-    if len > 1e-10 { normal = normal / len; } else { normal = DVec3::Z; }
+    if len > 1e-10 { normal /= len; } else { normal = DVec3::Z; }
     Some(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![], normal, triangles: vec![], mesh_dirty: true })
 }
 
@@ -7621,14 +7593,13 @@ pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationRep
     let mut vertex_faces: HashMap<usize, HashSet<usize>> = HashMap::new();
     for (face_idx, face) in shell.faces.iter().enumerate() {
         for we in &face.outer_wire.edges {
-            if we.idx < n_edges {
-                if let Some(edge) = brep.edges.get(we.idx) {
+            if we.idx < n_edges
+                && let Some(edge) = brep.edges.get(we.idx) {
                     vertex_edges.entry(edge.start).or_default().insert(we.idx);
                     vertex_edges.entry(edge.end).or_default().insert(we.idx);
                     vertex_faces.entry(edge.start).or_default().insert(face_idx);
                     vertex_faces.entry(edge.end).or_default().insert(face_idx);
                 }
-            }
         }
     }
 
@@ -8381,7 +8352,7 @@ fn analyze_shell_containment(
         };
 
         let (min_i, max_i) = shell_bounds.get(i).copied().unwrap_or((DVec3::ZERO, DVec3::ZERO));
-        let vol_i = volume_signs.get(i).copied().unwrap_or(VolumeSign::Unknown);
+        let _vol_i = volume_signs.get(i).copied().unwrap_or(VolumeSign::Unknown);
 
         for j in 0..n_shells {
             if i == j {
@@ -8870,7 +8841,7 @@ fn verify_material_side_consistency(
     let mut consistent = true;
 
     for (sh_idx, shell) in solid.shells.iter().enumerate() {
-        let volume_sign = closure_report.shell_volume_signs.get(sh_idx).copied().unwrap_or(VolumeSign::Unknown);
+        let _volume_sign = closure_report.shell_volume_signs.get(sh_idx).copied().unwrap_or(VolumeSign::Unknown);
         let nesting_depth = closure_report.shell_containment.get(sh_idx).map(|c| c.nesting_depth).unwrap_or(0);
 
         // Determine expected normal direction
@@ -9010,7 +8981,7 @@ pub fn repair_solid(solid: &Solid, brep: &BRep, tolerance: f64) -> SolidRepairRe
 
     // Step 2: Remove degenerate shells
     let mut shells_to_keep = Vec::new();
-    for (sh_idx, shell) in solid.shells.iter().enumerate() {
+    for shell in solid.shells.iter() {
         let volume = compute_shell_volume(shell, brep);
         let closure = check_shell_closure(shell, brep);
 
@@ -9201,7 +9172,7 @@ pub fn fix_uv_gaps(
 
     let Some(solid) = brep.solids.get(solid_idx) else { return (result, report); };
     let Some(shell) = solid.shells.get(shell_idx) else { return (result, report); };
-    let Some(face) = shell.faces.get(face_idx) else { return (result, report); };
+    let Some(_face) = shell.faces.get(face_idx) else { return (result, report); };
 
     // Compute flat face index for geometry lookup
     let flat_face_idx = compute_flat_face_idx_for_repair(brep, solid_idx, shell_idx, face_idx);
@@ -9224,8 +9195,8 @@ pub fn fix_uv_gaps(
 
     // Get surface properties
     let domain = surface.default_domain();
-    let is_u_periodic = matches!(surface, rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Cone(_) | rcad_kernel::geom::Surface3::Torus(_) | rcad_kernel::geom::Surface3::Revolution(_) | rcad_kernel::geom::Surface3::Helicoid(_));
-    let is_v_periodic = matches!(surface, rcad_kernel::geom::Surface3::Torus(_));
+    let _is_u_periodic = matches!(surface, rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Cone(_) | rcad_kernel::geom::Surface3::Torus(_) | rcad_kernel::geom::Surface3::Revolution(_) | rcad_kernel::geom::Surface3::Helicoid(_));
+    let _is_v_periodic = matches!(surface, rcad_kernel::geom::Surface3::Torus(_));
 
     // Process each detected gap
     for gap in gap_report.u_min_gaps.iter().chain(&gap_report.u_max_gaps)
@@ -9399,11 +9370,10 @@ fn repair_single_gap(
                 result.geom.curve2ds.push(new_curve);
 
                 // Update the PCurve reference
-                if let Some(pcs) = result.geom.edge_pcurves.get_mut(gap.edge_idx) {
-                    if let Some(pc) = pcs.iter_mut().find(|p| p.surface_idx == surface_idx) {
+                if let Some(pcs) = result.geom.edge_pcurves.get_mut(gap.edge_idx)
+                    && let Some(pc) = pcs.iter_mut().find(|p| p.surface_idx == surface_idx) {
                         pc.curve2d_idx = new_idx;
                     }
-                }
 
                 Ok(true)
             }
@@ -9438,12 +9408,12 @@ fn extend_pcurve_to_boundary(
     _surface: &rcad_kernel::geom::Surface3,
 ) -> Option<rcad_kernel::Curve2d> {
     use rcad_kernel::Curve2d;
-    use rcad_kernel::geom::Line2d;
+    
 
     match curve2d {
         Curve2d::Line(line) => {
             // For a line, we can simply adjust the endpoint
-            let mut new_line = line.clone();
+            let mut new_line = *line;
 
             // Determine if we're extending from start or end
             let uv_start = curve2d.point_at(range[0]);
@@ -9468,7 +9438,7 @@ fn extend_pcurve_to_boundary(
 
             if extend_start {
                 // Extend from start - adjust origin to target
-                let dir = line.direction.normalize();
+                let _dir = line.direction.normalize();
                 let new_origin = glam::DVec2::new(target_uv.0, target_uv.1);
                 new_line.origin = new_origin;
             } else {
@@ -9493,7 +9463,7 @@ fn extend_pcurve_to_boundary(
 
             if (dist_to_target - radius).abs() < 1e-6 {
                 // Target is on the circle - we can extend
-                Some(Curve2d::Circle(circle.clone()))
+                Some(Curve2d::Circle(*circle))
             } else {
                 None
             }
@@ -9669,7 +9639,7 @@ fn wrap_pcurve_to_domain(
 
     match curve2d {
         Curve2d::Line(line) => {
-            let mut new_line = line.clone();
+            let mut new_line = *line;
 
             // Wrap origin to be within domain
             let u_period = domain[1] - domain[0];
@@ -9921,11 +9891,11 @@ fn check_surface_compatibility(
     let (min2, max2) = compute_bounding_box(&pts2);
 
     // Allow some tolerance for bounding box comparison
-    let bb_overlap = (min1.x - tolerance <= max2.x && max1.x + tolerance >= min2.x) &&
-                     (min1.y - tolerance <= max2.y && max1.y + tolerance >= min2.y) &&
-                     (min1.z - tolerance <= max2.z && max1.z + tolerance >= min2.z);
+    
 
-    bb_overlap
+    (min1.x - tolerance <= max2.x && max1.x + tolerance >= min2.x) &&
+                     (min1.y - tolerance <= max2.y && max1.y + tolerance >= min2.y) &&
+                     (min1.z - tolerance <= max2.z && max1.z + tolerance >= min2.z)
 }
 
 /// Compute bounding box of a set of points.
@@ -9989,7 +9959,7 @@ fn analyze_face_duplication(
         .collect();
 
     // Compare vertex positions
-    let tol_sq = tolerance * tolerance;
+    let _tol_sq = tolerance * tolerance;
     let mut matched_vertices = 0;
     let mut max_deviation = 0.0f64;
 
@@ -10297,7 +10267,7 @@ fn ray_triangle_intersection(
     let s = origin - v0;
     let u = f * s.dot(h);
 
-    if u < 0.0 || u > 1.0 {
+    if !(0.0..=1.0).contains(&u) {
         return false;
     }
 
@@ -10371,7 +10341,7 @@ pub fn remove_internal_faces(brep: &BRep, face_indices: &[usize]) -> (BRep, Inte
     // Identify edges to keep (edges referenced by faces NOT being removed)
     let mut edges_to_keep: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    for (flat_idx, (_, _, face)) in flat_to_local.iter().flat_map(|(idx, &(si, shi, fi))| {
+    for (flat_idx, (_, _, _face)) in flat_to_local.iter().flat_map(|(idx, &(si, shi, fi))| {
         let face = &brep.solids[si].shells[shi].faces[fi];
         Some((idx, (si, shi, face)))
     }) {
@@ -10394,9 +10364,9 @@ pub fn remove_internal_faces(brep: &BRep, face_indices: &[usize]) -> (BRep, Inte
 
     // Also collect edges from faces being kept
     flat_idx = 0;
-    for (si, solid) in brep.solids.iter().enumerate() {
-        for (shi, shell) in solid.shells.iter().enumerate() {
-            for (fi, face) in shell.faces.iter().enumerate() {
+    for solid in brep.solids.iter() {
+        for shell in solid.shells.iter() {
+            for face in shell.faces.iter() {
                 if !remove_set.contains(&flat_idx) {
                     for we in &face.outer_wire.edges {
                         edges_to_keep.insert(we.idx);
@@ -10475,7 +10445,7 @@ fn remove_orphaned_edges(
     brep: &BRep,
     edges_to_keep: &std::collections::HashSet<usize>,
 ) -> (BRep, std::collections::HashMap<usize, usize>) {
-    let n_edges = brep.edges.len();
+    let _n_edges = brep.edges.len();
 
     // Build remap: old_idx -> new_idx
     let mut remap: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -10546,11 +10516,10 @@ fn remove_orphaned_edges(
     // Rebuild edge_pcurves
     let mut new_edge_pcurves: Vec<Vec<rcad_kernel::PCurve>> = vec![Vec::new(); result.edges.len()];
     for (&old_idx, &new_idx) in remap.iter() {
-        if new_idx < new_edge_pcurves.len() {
-            if let Some(pcurves) = brep.geom.edge_pcurves.get(old_idx) {
+        if new_idx < new_edge_pcurves.len()
+            && let Some(pcurves) = brep.geom.edge_pcurves.get(old_idx) {
                 new_edge_pcurves[new_idx] = pcurves.clone();
             }
-        }
     }
 
     // Rebuild edge_degenerated
@@ -10623,11 +10592,10 @@ fn remove_orphaned_vertices(brep: &BRep) -> BRep {
     // Update vertex tolerance array
     let mut new_vertex_tolerance: Vec<f64> = vec![0.0; result.vertices.len()];
     for (old_idx, &new_idx) in remap.iter().enumerate() {
-        if let Some(&tol) = brep.geom.vertex_tolerance.get(old_idx) {
-            if new_idx < new_vertex_tolerance.len() {
+        if let Some(&tol) = brep.geom.vertex_tolerance.get(old_idx)
+            && new_idx < new_vertex_tolerance.len() {
                 new_vertex_tolerance[new_idx] = tol;
             }
-        }
     }
     result.geom.vertex_tolerance = new_vertex_tolerance;
 
@@ -10643,11 +10611,10 @@ fn update_geom_after_removal(
 
     // Update pcurve references to use new edge indices
     for (old_idx, &new_idx) in edge_remap {
-        if let Some(pcurves) = brep.geom.edge_pcurves.get(*old_idx).cloned() {
-            if new_idx < result.geom.edge_pcurves.len() {
+        if let Some(pcurves) = brep.geom.edge_pcurves.get(*old_idx).cloned()
+            && new_idx < result.geom.edge_pcurves.len() {
                 result.geom.edge_pcurves[new_idx] = pcurves;
             }
-        }
     }
 
     result
@@ -10997,12 +10964,11 @@ pub fn propagate_tolerances_post_boolean_op_with_config(
                     let cur_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
                     let new_ftol = cur_ftol.max(max_etol).min(config.max_face_tolerance);
 
-                    if new_ftol > cur_ftol {
-                        if flat_fi < result.geom.face_tolerance.len() {
+                    if new_ftol > cur_ftol
+                        && flat_fi < result.geom.face_tolerance.len() {
                             result.geom.face_tolerance[flat_fi] = new_ftol;
                             report.faces_updated += 1;
                         }
-                    }
                     flat_fi += 1;
                 }
             }
@@ -11297,12 +11263,11 @@ pub fn propagate_tolerances_post_sew_with_config(
 
                     if has_seam_edge {
                         let old_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
-                        if max_etol > old_ftol {
-                            if flat_fi < result.geom.face_tolerance.len() {
+                        if max_etol > old_ftol
+                            && flat_fi < result.geom.face_tolerance.len() {
                                 result.geom.face_tolerance[flat_fi] = max_etol;
                                 report.faces_updated += 1;
                             }
-                        }
                     }
                     flat_fi += 1;
                 }
@@ -11566,12 +11531,11 @@ impl TolerancePropagationEngine {
                         let cur_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
                         let new_ftol = max_etol.min(self.config.max_tolerance);
 
-                        if new_ftol > cur_ftol + 1e-15 {
-                            if flat_fi < result.geom.face_tolerance.len() {
+                        if new_ftol > cur_ftol + 1e-15
+                            && flat_fi < result.geom.face_tolerance.len() {
                                 result.geom.face_tolerance[flat_fi] = new_ftol;
                                 report.faces_updated += 1;
                             }
-                        }
                         flat_fi += 1;
                     }
                 }
@@ -11669,12 +11633,11 @@ impl TolerancePropagationEngine {
                         let ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
 
                         for we in &face.outer_wire.edges {
-                            if we.idx < result.geom.edge_tolerance.len() {
-                                if ftol > result.geom.edge_tolerance[we.idx] {
+                            if we.idx < result.geom.edge_tolerance.len()
+                                && ftol > result.geom.edge_tolerance[we.idx] {
                                     result.geom.edge_tolerance[we.idx] = ftol;
                                     report.edges_updated += 1;
                                 }
-                            }
                         }
                         flat_fi += 1;
                     }
@@ -12408,22 +12371,20 @@ pub fn apply_tolerance_fixes(
             ToleranceFix::IncreaseLower => {
                 match violation.violation_type {
                     ToleranceViolationType::VertexExceedsEdge => {
-                        if let Some(ei) = violation.related_index {
-                            if ei < result.geom.edge_tolerance.len() {
+                        if let Some(ei) = violation.related_index
+                            && ei < result.geom.edge_tolerance.len() {
                                 let new_tol = result.geom.edge_tolerance[ei].max(violation.actual_tolerance);
                                 result.geom.edge_tolerance[ei] = new_tol;
                                 fixes_applied += 1;
                             }
-                        }
                     }
                     ToleranceViolationType::EdgeExceedsFace => {
-                        if let Some(fi) = violation.related_index {
-                            if fi < result.geom.face_tolerance.len() {
+                        if let Some(fi) = violation.related_index
+                            && fi < result.geom.face_tolerance.len() {
                                 let new_tol = result.geom.face_tolerance[fi].max(violation.actual_tolerance);
                                 result.geom.face_tolerance[fi] = new_tol;
                                 fixes_applied += 1;
                             }
-                        }
                     }
                     _ => {}
                 }
@@ -12690,11 +12651,10 @@ fn detect_void_shell_faces(
         // Check if this is a void shell (index > 0)
         if shi > 0 {
             // Check if the solid has multiple shells
-            if let Some(solid) = brep.solids.get(si) {
-                if solid.shells.len() > 1 {
+            if let Some(solid) = brep.solids.get(si)
+                && solid.shells.len() > 1 {
                     result.push(flat_idx);
                 }
-            }
         }
     }
 
@@ -12796,7 +12756,7 @@ fn detect_duplicate_internal_faces(
 /// - Edges shared by MORE than 2 faces (non-manifold or partition faces)
 /// - Faces where all edges are shared but the sharing is unusual
 fn detect_internal_faces_by_connectivity(
-    brep: &BRep,
+    _brep: &BRep,
     faces: &[(usize, usize, usize, &Face)],
     _shared_edge_threshold: f64,
     min_edge_count: usize,
@@ -12829,13 +12789,12 @@ fn detect_internal_faces_by_connectivity(
         // This indicates a partition face (internal face after boolean operation)
         let mut has_non_manifold_edge = false;
         for we in &face.outer_wire.edges {
-            if let Some(face_list) = edge_face_map.get(&(si, we.idx)) {
-                if face_list.len() > 2 {
+            if let Some(face_list) = edge_face_map.get(&(si, we.idx))
+                && face_list.len() > 2 {
                     // This edge is shared by more than 2 faces - potential internal face
                     has_non_manifold_edge = true;
                     break;
                 }
-            }
         }
 
         if has_non_manifold_edge {
@@ -12856,11 +12815,11 @@ fn detect_internal_faces_by_connectivity(
 fn detect_internal_faces_by_material_side(
     brep: &BRep,
     faces: &[(usize, usize, usize, &Face)],
-    tolerance: f64,
+    _tolerance: f64,
 ) -> Vec<usize> {
     let mut result = Vec::new();
 
-    for (flat_idx, &(si, shi, fi, face)) in faces.iter().enumerate() {
+    for (flat_idx, &(si, shi, _fi, face)) in faces.iter().enumerate() {
         // Skip void shell faces (handled separately)
         if shi > 0 {
             continue;
@@ -13284,7 +13243,7 @@ fn check_shell_closure_internal(_brep: &BRep, shell: &Shell) -> ShellClosureChec
     }
 
     let mut open_edges = 0usize;
-    for (_, &count) in &edge_count {
+    for &count in edge_count.values() {
         if count != 2 {
             // Check if edge is a boundary edge (count == 1) or non-manifold (count > 2)
             if count == 1 {
@@ -15485,7 +15444,6 @@ mod tests {
         let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
 
         // Box faces should be processed
-        assert!(report.faces_processed >= 0);
     }
 
     #[test]
@@ -15499,7 +15457,6 @@ mod tests {
         let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
 
         // Cylinder faces should be processed
-        assert!(report.faces_processed >= 0);
     }
 
     #[test]
@@ -15512,7 +15469,6 @@ mod tests {
         let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
 
         // Sphere faces should be processed
-        assert!(report.faces_processed >= 0);
     }
 
     #[test]
@@ -15527,7 +15483,6 @@ mod tests {
         let (_, report) = fix_all_uv_gaps(&brep, &config);
 
         // All faces should be processed
-        assert!(report.faces_processed >= 0);
     }
 
     #[test]
@@ -16831,7 +16786,6 @@ mod tests {
 
         assert_eq!(report.rule_applied, ToleranceRule::Aggressive);
         // Aggressive propagation may update tolerances more
-        assert!(report.vertices_updated + report.edges_updated + report.faces_updated >= 0);
     }
 
     #[test]
@@ -17147,7 +17101,6 @@ mod tests {
         );
 
         // Verify function runs successfully
-        assert!(report.conflicts_detected >= 0);
     }
 
     #[test]
@@ -18386,7 +18339,6 @@ mod tests {
         // The sphere primitive should be well-formed, but we verify the function runs
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
         // Report should have been generated
-        assert!(report.seam_edges_detected >= 0);
     }
 
     #[test]
@@ -18399,7 +18351,6 @@ mod tests {
 
         // Cylinder has a seam edge (the line where U=0 and U=2π meet)
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
-        assert!(report.seam_edges_detected >= 0);
     }
 
     #[test]
@@ -18412,7 +18363,6 @@ mod tests {
 
         // Torus is double-periodic
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
-        assert!(report.seam_edges_detected >= 0);
     }
 
     #[test]
@@ -18425,7 +18375,6 @@ mod tests {
 
         // Cone has a seam and apex
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
-        assert!(report.seam_edges_detected >= 0);
     }
 
     #[test]
@@ -18485,7 +18434,6 @@ mod tests {
 
         // Degenerate point detection may not find all expected points
         // Just verify the function runs without error
-        assert!(count >= 0, "Function should return non-negative count");
         assert_eq!(result.vertices.len(), brep.vertices.len());
     }
 
@@ -18533,7 +18481,6 @@ mod tests {
         let (result, count) = handle_degenerate_points(&brep, 1e-6);
 
         // Degenerate point detection may not find all expected points
-        assert!(count >= 0, "Function should return non-negative count");
         assert_eq!(result.vertices.len(), brep.vertices.len());
     }
 

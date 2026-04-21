@@ -517,19 +517,17 @@ impl ResultBuilder {
             if Some(&vk) == seq.last() {
                 continue;
             }
-            if let Some(&last) = seq.last() {
-                if points_coincide(vertices[vk], vertices[last]) {
+            if let Some(&last) = seq.last()
+                && points_coincide(vertices[vk], vertices[last]) {
                     continue;
                 }
-            }
             seq.push(vk);
         }
         if seq.last().copied() != Some(vb) {
-            if let Some(&last) = seq.last() {
-                if points_coincide(vertices[vb], vertices[last]) {
+            if let Some(&last) = seq.last()
+                && points_coincide(vertices[vb], vertices[last]) {
                     seq.pop();
                 }
-            }
             seq.push(vb);
         }
         if seq.len() < 3 {
@@ -1480,11 +1478,11 @@ impl<'a> BooleanBuilder<'a> {
 
         // Check for bounding box overlap with tolerance margin
         let tol = self.glue_tolerance;
-        let overlap = min1.x - tol <= max2.x && max1.x + tol >= min2.x
-            && min1.y - tol <= max2.y && max1.y + tol >= min2.y
-            && min1.z - tol <= max2.z && max1.z + tol >= min2.z;
+        
 
-        overlap
+        min1.x - tol <= max2.x && max1.x + tol >= min2.x
+            && min1.y - tol <= max2.y && max1.y + tol >= min2.y
+            && min1.z - tol <= max2.z && max1.z + tol >= min2.z
     }
 
     /// Detect all glued face pairs using optimized algorithm.
@@ -2142,7 +2140,7 @@ fn handle_periodic_seam_crossing(
     }
 
     // If no crossings or odd number of crossings (invalid), return original
-    if seam_crossings.is_empty() || seam_crossings.len() % 2 != 0 {
+    if seam_crossings.is_empty() || !seam_crossings.len().is_multiple_of(2) {
         return vec![uv_poly.to_vec()];
     }
 
@@ -2257,7 +2255,7 @@ fn handle_degenerate_points(
                 // Add pole point if polygon contains it
                 if touches_north_pole || touches_south_pole {
                     // Check if pole is inside the UV polygon
-                    let pole_uv = if touches_north_pole {
+                    let _pole_uv = if touches_north_pole {
                         DVec2::new(0.0, 0.0)
                     } else {
                         DVec2::new(0.0, std::f64::consts::PI)
@@ -2624,8 +2622,8 @@ fn split_uv_polygon_at_v_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec
     }
 
     // Build two sub-polygons
-    let (idx1, _, pt1) = crossings[0];
-    let (idx2, _, pt2) = crossings[1];
+    let (_idx1, _, _pt1) = crossings[0];
+    let (_idx2, _, _pt2) = crossings[1];
 
     let mut low_polygon: Vec<DVec2> = Vec::new();
     let mut high_polygon: Vec<DVec2> = Vec::new();
@@ -2856,7 +2854,7 @@ pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DV
     for i in 0..uv_polygon.len() {
         let curr = uv_polygon[i];
         let next_idx = (i + 1) % uv_polygon.len();
-        let next = uv_polygon[next_idx];
+        let _next = uv_polygon[next_idx];
 
         // Add current vertex to appropriate polygon
         if is_low(curr.x) {
@@ -3009,7 +3007,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             let oa = a - origin;
             let t_ray = (oa.x * ab.y - oa.y * ab.x) / denom;
             let s_seg = (oa.x * dir.y - oa.y * dir.x) / denom;
-            if t_ray > -1e-9 && s_seg >= -1e-9 && s_seg <= 1.0 + 1e-9 && t_ray < best_t {
+            if t_ray > -1e-9 && (-1e-9..=1.0 + 1e-9).contains(&s_seg) && t_ray < best_t {
                 best_t = t_ray;
                 best_edge = i;
                 best_pt = a + s_seg.clamp(0.0, 1.0) * ab;
@@ -3385,11 +3383,10 @@ fn insert_points_on_polygon_edges(poly: &[DVec2], imprint: &[DVec2], tol: f64) -
         out.push(a);
         let mut splits: Vec<(f64, DVec2)> = Vec::new();
         for &p in imprint {
-            if let Some(t) = segment_closest_param_2d(a, b, p, tol) {
-                if t > tol && t < 1.0 - tol {
+            if let Some(t) = segment_closest_param_2d(a, b, p, tol)
+                && t > tol && t < 1.0 - tol {
                     splits.push((t, a + (b - a) * t));
                 }
-            }
         }
         splits.sort_by(|u, v| u.0.partial_cmp(&v.0).unwrap_or(std::cmp::Ordering::Equal));
         for (_, q) in splits {

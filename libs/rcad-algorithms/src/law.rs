@@ -639,16 +639,14 @@ impl CompositeLaw {
             }
         }
         // Check if t is just before first segment or after last
-        if let Some(first) = self.segments.first() {
-            if t < first.t1 {
+        if let Some(first) = self.segments.first()
+            && t < first.t1 {
                 return Some((0, first.t1));
             }
-        }
-        if let Some(last) = self.segments.last() {
-            if t > last.t2 {
+        if let Some(last) = self.segments.last()
+            && t > last.t2 {
                 return Some((self.segments.len() - 1, last.t2));
             }
-        }
         None
     }
 }

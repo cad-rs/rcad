@@ -305,12 +305,11 @@ fn main() {
 
                     if let Some((surface, outer, holes)) = &trim_data {
                         let centroid = (a + b + c) / 3.0;
-                        if let Some(uv) = project_to_uv(surface, centroid) {
-                            if !point_is_inside_face_uv(uv, outer, holes) {
+                        if let Some(uv) = project_to_uv(surface, centroid)
+                            && !point_is_inside_face_uv(uv, outer, holes) {
                                 outside_trim_triangles += 1;
                                 face_outside += 1;
                             }
-                        }
                     }
                 }
                 if face_outside > 0 {

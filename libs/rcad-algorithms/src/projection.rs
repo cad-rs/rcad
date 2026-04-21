@@ -475,12 +475,12 @@ pub fn project_wire_on_face(
     };
 
     // Project onto the surface
-    let projected = project_wire_on_surface(wire, brep, surface, direction);
+    
 
     // Clip to face bounds (simplified)
     // A full implementation would intersect with the face's wire
 
-    projected
+    project_wire_on_surface(wire, brep, surface, direction)
 }
 
 /// Project a point along a direction onto a surface.

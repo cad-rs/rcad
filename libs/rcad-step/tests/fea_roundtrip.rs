@@ -27,10 +27,6 @@ fn vertex_count(brep: &rcad_kernel::BRep) -> usize {
     brep.vertices.len()
 }
 
-fn edge_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.edges.len()
-}
-
 // ============================================================================
 // FEA Entity Round-Trip Tests
 // ============================================================================
@@ -158,7 +154,7 @@ fn multiple_primitives_sequential_round_trip() {
     for (name, brep) in primitives {
         let step_str = StepWriter::write_string(&brep, all_faces_selection());
         let parsed = StepReader::parse_string(&step_str)
-            .expect(&format!("{} should parse", name));
+            .unwrap_or_else(|_| panic!("{} should parse", name));
         assert!(face_count(&parsed) > 0, "{} should have faces", name);
     }
 }
@@ -194,7 +190,7 @@ fn many_boxes_round_trip() {
     }
 
     // Write and parse each individually
-    let total_faces: usize = breps.iter().map(|b| face_count(b)).sum();
+    let total_faces: usize = breps.iter().map(face_count).sum();
     assert_eq!(total_faces, (grid_size.pow(3) * 6) as usize, "should have correct face count");
 
     // Test round-trip for each
@@ -233,7 +229,7 @@ fn deep_nesting_parsing() {
     for iteration in 0..5 {
         let step_str = StepWriter::write_string(&current, all_faces_selection());
         current = StepReader::parse_string(&step_str)
-            .expect(&format!("iteration {} should succeed", iteration));
+            .unwrap_or_else(|_| panic!("iteration {} should succeed", iteration));
     }
 
     // Final result should still be valid
@@ -374,7 +370,7 @@ fn corrupted_step_returns_error() {
 #[test]
 fn binary_garbage_returns_error() {
     let garbage: String = (0..255u8)
-        .map(|b| char::from(b))
+        .map(char::from)
         .collect();
 
     let result = StepReader::parse_string(&garbage);
@@ -422,7 +418,7 @@ fn multiple_round_trips_consistent() {
     for i in 0..10 {
         let step_str = StepWriter::write_string(&current, all_faces_selection());
         current = StepReader::parse_string(&step_str)
-            .expect(&format!("round-trip {} should succeed", i));
+            .unwrap_or_else(|_| panic!("round-trip {} should succeed", i));
 
         assert_eq!(
             face_count(&current),

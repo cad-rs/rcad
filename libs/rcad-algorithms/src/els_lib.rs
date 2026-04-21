@@ -374,7 +374,7 @@ pub fn torus_tangent_u(torus: &ToroidalSurface, u: f64, v: f64) -> DVec3 {
     let dcenter_du = torus.major_radius * (-u.sin() * x_ax + u.cos() * y_ax);
 
     // Derivative of radial direction w.r.t. u
-    let dradial_du = (-u.sin() * x_ax + u.cos() * y_ax);
+    let dradial_du = -u.sin() * x_ax + u.cos() * y_ax;
 
     dcenter_du + torus.minor_radius * v.cos() * dradial_du
 }

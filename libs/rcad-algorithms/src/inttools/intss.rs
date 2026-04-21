@@ -1685,7 +1685,7 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
                 if (end_j - start_i).length() <= stitch_tol {
                     let chain_j = chains.remove(j);
                     let mut merged = chain_j;
-                    merged.extend(chains[i].drain(..));
+                    merged.append(&mut chains[i]);
                     chains[i] = merged;
                     changed = true;
                     break 'outer;
@@ -1694,7 +1694,7 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
                 if (start_j - start_i).length() <= stitch_tol {
                     let chain_j = chains.remove(j);
                     let mut merged: Vec<DVec3> = chain_j.into_iter().rev().collect();
-                    merged.extend(chains[i].drain(..));
+                    merged.append(&mut chains[i]);
                     chains[i] = merged;
                     changed = true;
                     break 'outer;

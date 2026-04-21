@@ -685,8 +685,8 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
         }
 
         // Check for sphere (ball-end fillet)
-        if let Some(sphere) = face_sphere(brep, si, shi, fi) {
-            if sphere.radius > 0.0 && sphere.radius <= max_blend_radius {
+        if let Some(sphere) = face_sphere(brep, si, shi, fi)
+            && sphere.radius > 0.0 && sphere.radius <= max_blend_radius {
                 let face = &brep.solids[si].shells[shi].faces[fi];
                 return Some(BlendFeature {
                     face_indices: vec![fi],
@@ -697,11 +697,10 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
                     normal: face.normal.normalize_or_zero(),
                 });
             }
-        }
 
         // Check for cylinder with small radius (edge fillet)
-        if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
-            if cyl.radius > 0.0 && cyl.radius <= max_blend_radius {
+        if let Some(cyl) = face_cylinder(brep, si, shi, fi)
+            && cyl.radius > 0.0 && cyl.radius <= max_blend_radius {
                 let face = &brep.solids[si].shells[shi].faces[fi];
                 let sample_point = cyl.origin;
                 return Some(BlendFeature {
@@ -713,12 +712,11 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
                     normal: face.normal.normalize_or_zero(),
                 });
             }
-        }
     }
 
     // Check for chamfer (small planar face connecting two other faces at an angle)
-    if max_chamfer_distance > 0.0 {
-        if let Some(_plane) = face_plane(brep, si, shi, fi) {
+    if max_chamfer_distance > 0.0
+        && let Some(_plane) = face_plane(brep, si, shi, fi) {
             // Heuristic: small planar face that connects two non-parallel faces
             // This is a simplified check; a full implementation would analyze
             // the adjacent faces and check if they meet at an angle
@@ -740,7 +738,6 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
                 });
             }
         }
-    }
 
     None
 }
@@ -749,11 +746,10 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
 fn get_face_sample_point(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
     let face = &brep.solids[si].shells[shi].faces[fi];
     for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            if let Some(v) = brep.vertices.get(edge.start) {
+        if let Some(edge) = brep.edges.get(we.idx)
+            && let Some(v) = brep.vertices.get(edge.start) {
                 return Some(v.point);
             }
-        }
     }
     None
 }
@@ -1080,12 +1076,11 @@ pub fn detect_conical_features(
         let face = &shell.faces[start];
         let mut sample_point: Option<DVec3> = None;
         for we in &face.outer_wire.edges {
-            if let Some(edge) = brep.edges.get(we.idx) {
-                if let Some(v) = brep.vertices.get(edge.start) {
+            if let Some(edge) = brep.edges.get(we.idx)
+                && let Some(v) = brep.vertices.get(edge.start) {
                     sample_point = Some(v.point);
                     break;
                 }
-            }
         }
 
         let reference_radius = if let Some(pt) = sample_point {
@@ -1293,11 +1288,10 @@ pub fn detect_slot_features(
             if let Some(plane) = face_plane(brep, si, shi, fi) {
                 planes.push(plane);
             }
-            if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
-                if cyl.radius <= max_width {
+            if let Some(cyl) = face_cylinder(brep, si, shi, fi)
+                && cyl.radius <= max_width {
                     cylinders.push((cyl, fi));
                 }
-            }
 
             let face_edges: Vec<usize> = {
                 let f = &shell.faces[fi];
@@ -1521,12 +1515,11 @@ pub fn detect_pocket_features(
             if let Some(plane) = face_plane(brep, si, shi, fi) {
                 wall_planes.push(plane);
             }
-            if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
-                if cyl.radius <= max_diameter {
+            if let Some(cyl) = face_cylinder(brep, si, shi, fi)
+                && cyl.radius <= max_diameter {
                     has_cylindrical_walls = true;
                     cylindrical_radius = cyl.radius;
                 }
-            }
 
             let face_edges: Vec<usize> = {
                 let f = &shell.faces[fi];
@@ -1743,11 +1736,10 @@ pub fn detect_pockets(brep: &BRep, config: &PocketDetectionConfig) -> Vec<Pocket
             if let Some(plane) = face_plane(brep, si, shi, fi) {
                 planar_faces.push((plane, fi));
             }
-            if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
-                if cyl.radius <= config.max_diameter {
+            if let Some(cyl) = face_cylinder(brep, si, shi, fi)
+                && cyl.radius <= config.max_diameter {
                     cylindrical_walls.push((cyl, fi));
                 }
-            }
 
             let face_edges: Vec<usize> = {
                 let f = &shell.faces[fi];
@@ -1884,7 +1876,7 @@ fn analyze_pocket_enhanced(
 
     // Determine through vs blind pocket
     let (is_through, bottom_face_index, wall_face_indices) =
-        classify_pocket_type(brep, si, shi, group, &cylindrical_walls, &planar_faces, config);
+        classify_pocket_type(brep, si, shi, group, cylindrical_walls, planar_faces, config);
 
     Some(PocketFeature {
         face_indices: group.to_vec(),
@@ -1912,7 +1904,7 @@ fn classify_pocket_type(
     planar_faces: &[(Plane, usize)],
     config: &PocketDetectionConfig,
 ) -> (bool, Option<usize>, Vec<usize>) {
-    let group_set: HashSet<usize> = group.iter().copied().collect();
+    let _group_set: HashSet<usize> = group.iter().copied().collect();
 
     // Collect wall face indices (cylindrical faces are typically walls)
     let wall_face_indices: Vec<usize> = cylindrical_walls
@@ -2223,13 +2215,13 @@ fn analyze_boss_group(
 /// Find the top face of a boss (planar face at the maximum extent).
 fn find_top_face(
     brep: &BRep,
-    si: usize,
-    shi: usize,
+    _si: usize,
+    _shi: usize,
     wall_faces: &[usize],
     axis: DVec3,
     t_max: f64,
 ) -> Option<usize> {
-    let group_set: HashSet<usize> = wall_faces.iter().copied().collect();
+    let _group_set: HashSet<usize> = wall_faces.iter().copied().collect();
 
     // Find faces adjacent to the top edge of the cylindrical wall
     let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
@@ -2461,29 +2453,26 @@ fn detect_fillet_face(
     max_radius: f64,
 ) -> Option<(f64, DVec3, DVec3)> {
     // Check for torus (typical fillet)
-    if let Some(torus) = face_torus(brep, si, shi, fi) {
-        if torus.minor_radius > 0.0 && torus.minor_radius <= max_radius {
+    if let Some(torus) = face_torus(brep, si, shi, fi)
+        && torus.minor_radius > 0.0 && torus.minor_radius <= max_radius {
             let sample_point = torus.center;
             return Some((torus.minor_radius, torus.axis.normalize_or_zero(), sample_point));
         }
-    }
 
     // Check for sphere (ball-end fillet)
-    if let Some(sphere) = face_sphere(brep, si, shi, fi) {
-        if sphere.radius > 0.0 && sphere.radius <= max_radius {
+    if let Some(sphere) = face_sphere(brep, si, shi, fi)
+        && sphere.radius > 0.0 && sphere.radius <= max_radius {
             return Some((sphere.radius, DVec3::Z, sphere.center));
         }
-    }
 
     // Check for cylinder with small radius (edge fillet)
-    if let Some(cyl) = face_cylinder(brep, si, shi, fi) {
-        if cyl.radius > 0.0 && cyl.radius <= max_radius {
+    if let Some(cyl) = face_cylinder(brep, si, shi, fi)
+        && cyl.radius > 0.0 && cyl.radius <= max_radius {
             // Verify this is actually a fillet and not a hole/boss
             // by checking the normal orientation
             let sample_point = cyl.origin;
             return Some((cyl.radius, cyl.axis.normalize_or_zero(), sample_point));
         }
-    }
 
     None
 }
@@ -2658,7 +2647,7 @@ fn find_adjacent_faces(
     for &fi in group {
         // Find all edges for this face (would need to access the face)
         // For now, iterate through all edges
-        for (_, faces) in edge_to_faces {
+        for faces in edge_to_faces.values() {
             if faces.contains(&fi) {
                 for &nfi in faces {
                     if !group_set.contains(&nfi) {
@@ -2693,7 +2682,7 @@ fn find_adjacent_faces(
 pub fn remove_feature_with_healing<F>(
     brep: &BRep,
     feature_idx: usize,
-    feature_type: FeatureType,
+    _feature_type: FeatureType,
     features: &[F],
     healing_tolerance: f64,
 ) -> BRep
@@ -3049,7 +3038,7 @@ pub fn detect_connected_feature_groups(
     // Build feature adjacency graph through shared edges
     let mut feature_adjacency: HashMap<(usize, FeatureType), HashSet<(usize, FeatureType)>> = HashMap::new();
 
-    for (_, feature_list) in &face_to_features {
+    for feature_list in face_to_features.values() {
         // All features sharing a face are connected
         for i in 0..feature_list.len() {
             for j in (i + 1)..feature_list.len() {
@@ -3185,7 +3174,7 @@ pub fn detect_hole_patterns(
     }
 
     let radius_tol = radius_tolerance.max(1e-6);
-    let spacing_tol = spacing_tolerance.max(0.01).min(0.5); // Clamp to reasonable range
+    let _spacing_tol = spacing_tolerance.max(0.01).min(0.5); // Clamp to reasonable range
 
     // Group features by similar radius and axis direction
     let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -3718,7 +3707,7 @@ fn try_boolean_with_retry(
 ) -> Result<(BRep, bool), crate::BooleanError> {
     // First attempt with default fuzzy tolerance.
     match boolean_op(op, a, b) {
-        Ok(result) => return Ok((result, false)),
+        Ok(result) => Ok((result, false)),
         Err(first_err) => {
             // Build retry ladder based on multiplier.
             let ladder: Vec<f64> = (1..=max_retries)
@@ -3737,10 +3726,10 @@ fn try_boolean_with_retry(
             match boolean_op_robust(op, a, b, robust_opts) {
                 Ok((result, _exec_report)) => {
                     report.retry_attempts += _exec_report.retry_count;
-                    return Ok((result, true));
+                    Ok((result, true))
                 }
                 Err(_) => {
-                    return Err(first_err);
+                    Err(first_err)
                 }
             }
         }
@@ -4073,15 +4062,12 @@ fn process_feature_group(
 
     // Process conical features
     for &idx in &group.conical_indices {
-        if let Some(feature) = conical_features.get(idx) {
-            if feature.is_hole {
-                if let Ok(fill) = make_fill_cone(feature, margin) {
-                    if boolean_op(BooleanOpType::Union, &current, &fill).is_ok() {
+        if let Some(feature) = conical_features.get(idx)
+            && feature.is_hole
+                && let Ok(fill) = make_fill_cone(feature, margin)
+                    && boolean_op(BooleanOpType::Union, &current, &fill).is_ok() {
                         report.base.conical_features_removed += 1;
                     }
-                }
-            }
-        }
     }
 
     Ok(current)
@@ -4843,7 +4829,7 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
                 bottom_face_index = Some(afi);
             }
         }
-        if let Some(sphere) = face_sphere(brep, si, shi, afi) {
+        if let Some(_sphere) = face_sphere(brep, si, shi, afi) {
             // Spherical bottom (ball-end drill)
             has_conical_bottom = true;
             bottom_face_index = Some(afi);
@@ -5309,11 +5295,10 @@ fn faces_share_vertex(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
     }
 
     for we in &face_b.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            if vertices_a.contains(&edge.start) || vertices_a.contains(&edge.end) {
+        if let Some(edge) = brep.edges.get(we.idx)
+            && (vertices_a.contains(&edge.start) || vertices_a.contains(&edge.end)) {
                 return true;
             }
-        }
     }
 
     false
@@ -5532,7 +5517,7 @@ fn boolean_op_with_options(
     // A full implementation would respect all options
     if options.fuzzy_tol > 0.0 {
         let robust_opts = BooleanRobustOptions {
-            base: options.clone(),
+            base: options,
             fuzzy_retry_ladder: vec![options.fuzzy_tol],
             retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
             extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),

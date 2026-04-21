@@ -5,6 +5,7 @@ use crate::tolerance::*;
 
 /// A numerically sampled intersection curve.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct SampledCurve {
     pub points: Vec<DVec3>,
     pub is_closed: bool,
@@ -14,16 +15,6 @@ pub struct SampledCurve {
     pub step_reduced: bool,
 }
 
-impl Default for SampledCurve {
-    fn default() -> Self {
-        Self {
-            points: Vec::new(),
-            is_closed: false,
-            oscillation_count: 0,
-            step_reduced: false,
-        }
-    }
-}
 
 /// Configuration for adaptive marching behavior.
 #[derive(Debug, Clone, Copy)]

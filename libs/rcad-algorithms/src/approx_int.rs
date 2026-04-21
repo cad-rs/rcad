@@ -33,7 +33,7 @@
 //! ```
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Circle3, Curve2d, Curve2dEval, Curve3, CurveEval, Line3, Surface3, SurfaceEval};
+use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::fit::{interpolate_points, interpolate_points_2d};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -581,7 +581,7 @@ fn project_point_to_surface_uv(
 ///
 /// # Returns
 /// An approximating BSplineCurve2.
-pub fn approximate_2d_curve(points: &[(DVec2, f64)], tol: f64) -> BSplineCurve2 {
+pub fn approximate_2d_curve(points: &[(DVec2, f64)], _tol: f64) -> BSplineCurve2 {
     if points.is_empty() {
         return BSplineCurve2 {
             degree: 1,
@@ -796,7 +796,7 @@ pub fn sample_curve_segment(curve: &Curve3, t_start: f64, t_end: f64, n_points: 
 ///
 /// # Returns
 /// An approximating BSplineCurve3.
-pub fn approximate_polyline(polyline: &[DVec3], tol: f64) -> Option<BSplineCurve3> {
+pub fn approximate_polyline(polyline: &[DVec3], _tol: f64) -> Option<BSplineCurve3> {
     if polyline.len() < 2 {
         return None;
     }
@@ -878,6 +878,7 @@ pub fn approximate_intersection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rcad_kernel::geom::{Circle3, Line3};
     use std::f64::consts::PI;
 
     #[test]

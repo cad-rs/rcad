@@ -32,7 +32,6 @@ use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_kernel::{BRep, GeomStore};
 use std::collections::HashMap;
 
-use crate::tolerance::TOLERANCE_ABS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
@@ -238,8 +237,8 @@ impl BuildWire {
             edges: edges.iter().enumerate().map(|(i, _)| WireEdge::fwd(i)).collect(),
         };
 
-        if check_closed {
-            if !validate_wire_closed_internal(&wire, edges, vertices, tol) {
+        if check_closed
+            && !validate_wire_closed_internal(&wire, edges, vertices, tol) {
                 let first_v = vertices[edges[wire.edges.first().unwrap().idx].start];
                 let last_v = vertices[edges[wire.edges.last().unwrap().idx].end];
                 let gap = (first_v.point - last_v.point).length();
@@ -249,7 +248,6 @@ impl BuildWire {
                     last_vertex: last_v.point,
                 });
             }
-        }
 
         Ok(wire)
     }
@@ -276,7 +274,7 @@ impl BuildWire {
         }
 
         // Check for degenerate edges (zero-length)
-        for (_i, edge) in edges.iter().enumerate() {
+        for edge in edges.iter() {
             if edge.start >= vertices.len() || edge.end >= vertices.len() {
                 return Err(BuildError::InvalidVertexIndex {
                     vertex_idx: edge.start.max(edge.end),
@@ -1045,6 +1043,7 @@ impl BRepBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::TOLERANCE_ABS;
     use rcad_kernel::geom::{Line3, Plane};
 
     // ──────────────────────────────────────────────────────────────────────

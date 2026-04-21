@@ -121,10 +121,6 @@ name = "diagnose_step_mesh"
 path = "diagnose_step_mesh.rs"
 
 [[example]]
-name = "gordon_surface"
-path = "gordon_surface.rs"
-
-[[example]]
 name = "offset_shell"
 path = "offset_shell.rs"
 

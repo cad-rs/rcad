@@ -109,6 +109,7 @@ struct GlobalSection {
 
 /// Directory Entry (DE) record for an IGES entity.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields mirror the DE record; not all are consumed by the reader yet.
 struct DirectoryEntry {
     /// Entity type number.
     entity_type: i32,
@@ -139,14 +140,13 @@ struct DirectoryEntry {
 /// Parameter Data (PD) for an IGES entity.
 #[derive(Debug, Clone)]
 struct ParameterData {
-    /// Entity type (should match DE).
-    entity_type: i32,
     /// Parsed parameter values.
     values: Vec<IgesValue>,
 }
 
 /// An IGES parameter value.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // `Pointer` / `Hollerith` payloads are stored for round-trip fidelity.
 enum IgesValue {
     Int(i64),
     Float(f64),
@@ -253,9 +253,11 @@ impl IgesReader {
             param_text.push_str(data.trim_end());
         }
 
-        let mut global = GlobalSection::default();
-        global.param_delim = ',';
-        global.record_delim = ';';
+        let mut global = GlobalSection {
+            param_delim: ',',
+            record_delim: ';',
+            ..Default::default()
+        };
 
         // Parse global parameters (comma-separated, semicolon-terminated)
         let params = Self::split_parameters(&param_text, ',', ';');
@@ -271,7 +273,7 @@ impl IgesReader {
         // 8: units flag
         // ...
 
-        if params.len() > 0 {
+        if !params.is_empty() {
             if let Some(s) = Self::parse_hollerith(&params[0]) {
                 if let Some(c) = s.chars().next() {
                     global.param_delim = c;
@@ -398,7 +400,6 @@ impl IgesReader {
         // Group P lines by DE reference (columns 65-72)
         let mut current_de: Option<i32> = None;
         let mut current_params: Vec<String> = Vec::new();
-        let mut current_type: i32 = 0;
 
         for line in lines {
             // Extract DE pointer from columns 65-72 (right-aligned)
@@ -421,28 +422,13 @@ impl IgesReader {
                 if let Some(de_seq) = current_de {
                     if !current_params.is_empty() {
                         let values = Self::parse_parameter_values(&current_params.join(""))?;
-                        result.insert(
-                            de_seq,
-                            ParameterData {
-                                entity_type: current_type,
-                                values,
-                            },
-                        );
+                        result.insert(de_seq, ParameterData { values });
                     }
                 }
 
                 // Start new entity
                 current_de = Some(de_seq);
                 current_params.clear();
-                current_type = 0;
-
-                // First line starts with entity type
-                let trimmed = param_part.trim_start();
-                if let Some(idx) = trimmed.find(',') {
-                    if let Ok(t) = trimmed[..idx].parse::<i32>() {
-                        current_type = t;
-                    }
-                }
                 current_params.push(param_part.trim_end().to_string());
             } else if current_de.is_some() {
                 // Continue current entity
@@ -454,13 +440,7 @@ impl IgesReader {
         if let Some(de_seq) = current_de {
             if !current_params.is_empty() {
                 let values = Self::parse_parameter_values(&current_params.join(""))?;
-                result.insert(
-                    de_seq,
-                    ParameterData {
-                        entity_type: current_type,
-                        values,
-                    },
-                );
+                result.insert(de_seq, ParameterData { values });
             }
         }
 
@@ -567,11 +547,11 @@ impl IgesReader {
     fn split_parameters(s: &str, param_delim: char, record_delim: char) -> Vec<String> {
         let mut params = Vec::new();
         let mut current = String::new();
-        let mut chars = s.chars().peekable();
+        let chars = s.chars().peekable();
         let mut in_hollerith = false;
         let mut holl_count = 0;
 
-        while let Some(c) = chars.next() {
+        for c in chars {
             if in_hollerith {
                 current.push(c);
                 holl_count -= 1;
@@ -613,7 +593,7 @@ impl IgesReader {
 
     /// Build a BRep from parsed IGES data.
     fn build_brep(parsed: &ParsedIges) -> Result<BRep, IgesError> {
-        let mut builder = IgesBrepBuilder::new(parsed);
+        let mut builder = IgesBrepBuilder::new();
 
         // First pass: parse all geometric entities
         for (seq, pd) in &parsed.parameter_data {
@@ -640,31 +620,25 @@ impl IgesReader {
 // ============================================================================
 
 /// Helper for building BRep from IGES entities.
-struct IgesBrepBuilder<'a> {
-    parsed: &'a ParsedIges,
+struct IgesBrepBuilder {
     brep: BRep,
     // Maps from IGES entity pointers to RCAD indices
     point_map: HashMap<i32, usize>,       // pointer -> vertex index
     curve_map: HashMap<i32, usize>,       // pointer -> curve index in GeomStore
     surface_map: HashMap<i32, usize>,     // pointer -> surface index in GeomStore
-    curve2d_map: HashMap<i32, usize>,     // pointer -> curve2d index
     // Parsed geometry cache
     points: HashMap<i32, DVec3>,
-    directions: HashMap<i32, DVec3>,
     transformations: HashMap<i32, glam::DAffine3>,
 }
 
-impl<'a> IgesBrepBuilder<'a> {
-    fn new(parsed: &'a ParsedIges) -> Self {
+impl IgesBrepBuilder {
+    fn new() -> Self {
         Self {
-            parsed,
             brep: BRep::new(),
             point_map: HashMap::new(),
             curve_map: HashMap::new(),
             surface_map: HashMap::new(),
-            curve2d_map: HashMap::new(),
             points: HashMap::new(),
-            directions: HashMap::new(),
             transformations: HashMap::new(),
         }
     }
@@ -864,8 +838,8 @@ impl<'a> IgesBrepBuilder<'a> {
                     de.sequence
                 )));
             }
-            for i in 0..n_ctrl {
-                weights[i] = self.get_float(&pd.values[idx + i])?;
+            for (i, w) in weights.iter_mut().enumerate().take(n_ctrl) {
+                *w = self.get_float(&pd.values[idx + i])?;
             }
             idx += n_ctrl;
         }
@@ -964,9 +938,9 @@ impl<'a> IgesBrepBuilder<'a> {
                     format!("B-Spline Surface entity {} has insufficient weights", de.sequence)
                 ));
             }
-            for i in 0..n_ctrl_u {
-                for j in 0..n_ctrl_v {
-                    weights[i][j] = self.get_float(&pd.values[idx + i * n_ctrl_v + j])?;
+            for (i, row) in weights.iter_mut().enumerate().take(n_ctrl_u) {
+                for (j, w) in row.iter_mut().enumerate().take(n_ctrl_v) {
+                    *w = self.get_float(&pd.values[idx + i * n_ctrl_v + j])?;
                 }
             }
             idx += n_ctrl_u * n_ctrl_v;

@@ -558,7 +558,7 @@ pub fn linear_sweep_face(
     let face = brep.solids.first()
         .and_then(|s| s.shells.first())
         .and_then(|sh| sh.faces.get(face_idx))
-        .ok_or_else(|| SweepError::InvalidParameter("face_idx out of range"))?;
+        .ok_or(SweepError::InvalidParameter("face_idx out of range"))?;
 
     let pts: Vec<DVec3> = face.outer_wire.edges.iter()
         .filter_map(|we| {
@@ -588,7 +588,7 @@ pub fn linear_sweep_wire(
     let face = brep.solids.first()
         .and_then(|s| s.shells.first())
         .and_then(|sh| sh.faces.get(wire_idx))
-        .ok_or_else(|| SweepError::InvalidParameter("wire_idx out of range"))?;
+        .ok_or(SweepError::InvalidParameter("wire_idx out of range"))?;
 
     let pts: Vec<DVec3> = face.outer_wire.edges.iter()
         .filter_map(|we| {
@@ -818,7 +818,7 @@ pub fn rotational_sweep_face(
     let face = brep.solids.first()
         .and_then(|s| s.shells.first())
         .and_then(|sh| sh.faces.get(face_idx))
-        .ok_or_else(|| SweepError::InvalidParameter("face_idx out of range"))?;
+        .ok_or(SweepError::InvalidParameter("face_idx out of range"))?;
 
     let pts: Vec<DVec3> = face.outer_wire.edges.iter()
         .filter_map(|we| {
@@ -1291,7 +1291,7 @@ fn compute_corner_arc(
     let dot = dir_in.dot(dir_out);
     let angle = dot.acos();
 
-    if angle < 1e-6 || angle > std::f64::consts::PI - 1e-6 {
+    if !(1e-6..=std::f64::consts::PI - 1e-6).contains(&angle) {
         return vec![p_corner];
     }
 

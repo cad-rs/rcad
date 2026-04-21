@@ -1326,7 +1326,7 @@ fn project_point_to_sphere_uv(
 
     let z = v.dot(axis); // Height along axis (positive = towards axis direction)
     let radial = v - axis * z; // Projection onto equatorial plane
-    let r_xy = radial.length();
+    let _r_xy = radial.length();
 
     // Compute u (longitude): angle in the equatorial plane
     // radial = r_xy * (cos(u) * x_ax + sin(u) * y_ax) * v.sin()
@@ -1899,7 +1899,7 @@ fn offset_edge(
 
     if face_indices.len() == 1 {
         // Boundary edge: project onto single offset surface
-        let surf = offset_surfaces.get(face_indices[0]).and_then(|s| s.as_ref())?;
+        let _surf = offset_surfaces.get(face_indices[0]).and_then(|s| s.as_ref())?;
 
         // Compute offset points at edge endpoints
         let [t0, t1] = range.unwrap_or_else(|| curve.default_domain());
@@ -3208,7 +3208,7 @@ pub fn hollow_solid_with_options(
             continue;
         }
         for we in &face.outer_wire.edges {
-            let e = &brep.edges[we.idx];
+            let _e = &brep.edges[we.idx];
             // Check if this edge is shared with a kept face
             let is_shared = shell.faces.iter().enumerate().any(|(fj, fj_face)| {
                 !open_set.contains(&fj)

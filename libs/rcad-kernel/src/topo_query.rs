@@ -16,7 +16,7 @@ use crate::BRep;
 /// Closed periodic faces often list the same seam edge twice (e.g. forward then
 /// reverse) so the boundary is closed; the duplicate [`WireEdge`] entries are
 /// not separate semantic edges.
-pub fn semantic_wire_edges<'a>(edges: &'a [WireEdge]) -> Vec<&'a WireEdge> {
+pub fn semantic_wire_edges(edges: &[WireEdge]) -> Vec<&WireEdge> {
     let mut seen = HashSet::new();
     edges
         .iter()

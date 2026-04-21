@@ -151,8 +151,10 @@ mod tests {
 
     #[test]
     fn test_gds_to_brep() {
-        let mut library = GdsLibrary::default();
-        library.name = "test".to_string();
+        let mut library = GdsLibrary {
+            name: "test".to_string(),
+            ..Default::default()
+        };
         library.structures.insert("TOP".to_string(), GdsStructure {
             name: "TOP".to_string(),
             boundaries: vec![create_test_boundary()],

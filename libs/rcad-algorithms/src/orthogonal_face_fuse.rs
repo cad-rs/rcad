@@ -167,8 +167,8 @@ fn try_fuse_orthogonal_group(
     let n0 = ring_vertices[0].len();
     let outer_wire = Wire {
         edges: (0..n0).map(|i| {
-            let w = WireEdge::fwd(ei + i);
-            w
+            
+            WireEdge::fwd(ei + i)
         })
         .collect(),
     };
@@ -183,8 +183,8 @@ fn try_fuse_orthogonal_group(
         inner_wires.push(Wire {
             edges: (0..n)
                 .map(|i| {
-                    let w = WireEdge::fwd(ei + i);
-                    w
+                    
+                    WireEdge::fwd(ei + i)
                 })
                 .collect(),
         });
@@ -410,7 +410,7 @@ fn segments_to_rings(segs: &[((f64, f64), (f64, f64))], scale: f64) -> Option<Ve
     let mut out: Vec<Vec<(f64, f64)>> = Vec::new();
     loop {
         let Some(&v0) = adj.keys().next() else { break };
-        if adj.get(&v0).map_or(true, |n| n.is_empty()) {
+        if adj.get(&v0).is_none_or(|n| n.is_empty()) {
             adj.remove(&v0);
             continue;
         }

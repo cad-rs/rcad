@@ -708,7 +708,7 @@ fn refine_adaptive_samples(
     view_dir: DVec3,
     samples: &mut Vec<AdaptiveSample>,
     config: &AdaptiveSamplingConfig,
-    opts: &HlrOptions,
+    _opts: &HlrOptions,
 ) {
     if samples.len() < 2 {
         return;
@@ -1033,7 +1033,7 @@ impl TriBvh {
             };
         }
 
-        let triangle_aabbs: Vec<TriAabb> = triangles.iter().map(|t| TriAabb::from_triangle(t)).collect();
+        let triangle_aabbs: Vec<TriAabb> = triangles.iter().map(TriAabb::from_triangle).collect();
         let triangle_centers: Vec<DVec3> = triangle_aabbs.iter().map(|a| a.center()).collect();
 
         let tri_indices: Vec<usize> = (0..triangles.len()).collect();
@@ -1230,11 +1230,10 @@ impl TriBvh {
         match node {
             TriBvhNode::Leaf { tris, .. } => {
                 for &ti in tris {
-                    if let Some(t) = ray_triangle_intersect(origin, dir, &triangles[ti]) {
-                        if t < dist_to_eye - 1e-4 {
+                    if let Some(t) = ray_triangle_intersect(origin, dir, &triangles[ti])
+                        && t < dist_to_eye - 1e-4 {
                             return true;
                         }
-                    }
                 }
                 false
             }
@@ -1319,7 +1318,7 @@ pub fn extract_silhouette_curves(brep: &BRep, view_dir: DVec3, opts: &HlrOptions
                 Some(r) => r,
                 None => surface.default_domain(),
             };
-            let [u0, u1, v0, v1] = domain;
+            let [_u0, _u1, _v0, _v1] = domain;
 
             // Extract silhouettes based on surface type
             let face_curves = extract_surface_silhouettes(
@@ -1352,7 +1351,7 @@ fn extract_surface_silhouettes(
     line_samples: usize,
     dense_curve_samples: usize,
 ) -> Vec<Vec<DVec3>> {
-    let [u0, u1, v0, v1] = domain;
+    let [_u0, _u1, v0, v1] = domain;
     let mut curves: Vec<Vec<DVec3>> = Vec::new();
 
     match surface {
@@ -1571,7 +1570,7 @@ fn extract_ellipsoid_silhouettes(
     opts: &HlrOptions,
     samples: usize,
 ) -> Vec<Vec<DVec3>> {
-    use rcad_kernel::geom::SurfaceEval;
+    
     use std::f64::consts::PI;
 
     // Build the orthonormal frame of the ellipsoid
@@ -1742,10 +1741,10 @@ fn extract_ellipsoid_silhouettes_numerical(
     // Sort points by angle around the silhouette center (approximation)
     if silhouette_points.len() >= 3 {
         // Compute centroid
-        let centroid = silhouette_points.iter().sum::<DVec3>() / silhouette_points.len() as f64;
+        let _centroid = silhouette_points.iter().sum::<DVec3>() / silhouette_points.len() as f64;
 
         // Build the orthonormal frame
-        let (axis, x_axis, y_axis) = orthonormal_frame(ell.axis, ell.ref_dir);
+        let (_axis, x_axis, y_axis) = orthonormal_frame(ell.axis, ell.ref_dir);
 
         // Sort by angle in the local XY plane (projected)
         silhouette_points.sort_by(|a, b| {
@@ -1835,8 +1834,8 @@ fn is_approximately_helical_on_cylinder(
 
     // Sample the curve and check if points lie on the cylinder surface
     // and the curve makes an angle with the axis
-    let Some(v_start) = brep.vertices.get(edge.start) else { return false; };
-    let Some(v_end) = brep.vertices.get(edge.end) else { return false; };
+    let Some(_v_start) = brep.vertices.get(edge.start) else { return false; };
+    let Some(_v_end) = brep.vertices.get(edge.end) else { return false; };
 
     let [t0, t1] = curve.default_domain();
     let samples = 16;
@@ -1890,8 +1889,8 @@ fn is_approximately_helical_on_cone(
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
 
-    let Some(v_start) = brep.vertices.get(edge.start) else { return false; };
-    let Some(v_end) = brep.vertices.get(edge.end) else { return false; };
+    let Some(_v_start) = brep.vertices.get(edge.start) else { return false; };
+    let Some(_v_end) = brep.vertices.get(edge.end) else { return false; };
 
     let [t0, t1] = curve.default_domain();
     let samples = 16;
@@ -1955,7 +1954,7 @@ pub fn is_seam_edge(
     // A seam edge has two PCurves on the same surface with different u values
     // (typically 0 and 2π)
 
-    let Some(edge) = brep.edges.get(edge_idx) else {
+    let Some(_edge) = brep.edges.get(edge_idx) else {
         return false;
     };
 
@@ -2023,7 +2022,7 @@ pub fn compute_curve_visibility_on_surface(
     camera: &HlrCamera,
     opts: &HlrOptions,
 ) -> Option<CurveSurfaceIntersection> {
-    let edge = brep.edges.get(edge_idx)?;
+    let _edge = brep.edges.get(edge_idx)?;
     let surface = brep.geom.surfaces.get(surface_idx)?;
 
     // Get the edge curve
@@ -2061,8 +2060,8 @@ pub fn compute_curve_visibility_on_surface(
     // Compute visibility at each sample point
     let mut visibility = Vec::with_capacity(num_samples);
 
-    for (i, &pt) in points.iter().enumerate() {
-        let dist = (camera.eye - pt).length();
+    for &pt in points.iter() {
+        let _dist = (camera.eye - pt).length();
         let is_visible = true; // Will be computed by the main HLR pipeline
         visibility.push(is_visible);
     }
@@ -2187,10 +2186,10 @@ pub fn classify_edges(
 fn classify_single_edge(
     brep: &BRep,
     edge_idx: usize,
-    camera: &HlrCamera,
+    _camera: &HlrCamera,
     opts: &HlrOptions,
 ) -> EdgeClassInfo {
-    let Some(edge) = brep.edges.get(edge_idx) else {
+    let Some(_edge) = brep.edges.get(edge_idx) else {
         return EdgeClassInfo {
             edge_idx,
             classification: EdgeClassification::Hidden,
@@ -2203,7 +2202,7 @@ fn classify_single_edge(
 
     // Get the surface this edge is on (if any)
     let surface_idx = get_edge_surface(brep, edge_idx);
-    let on_curved_surface = surface_idx.map_or(false, |idx| {
+    let on_curved_surface = surface_idx.is_some_and(|idx| {
         matches!(
             brep.geom.surfaces.get(idx),
             Some(Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_) | Surface3::Torus(_))
@@ -2211,8 +2210,8 @@ fn classify_single_edge(
     });
 
     // Check for thread edge
-    if let Some(idx) = surface_idx {
-        if let Some(surface) = brep.geom.surfaces.get(idx) {
+    if let Some(idx) = surface_idx
+        && let Some(surface) = brep.geom.surfaces.get(idx) {
             if opts.detect_thread_edges && is_thread_edge(brep, edge_idx, surface) {
                 return EdgeClassInfo {
                     edge_idx,
@@ -2235,7 +2234,6 @@ fn classify_single_edge(
                 };
             }
         }
-    }
 
     // Default classification - will be updated during HLR processing
     EdgeClassInfo {
@@ -2351,7 +2349,7 @@ impl SilhouetteSpatialIndex {
 
             for idx in candidates {
                 let dist = (self.points[idx] - point).length();
-                if best.map_or(true, |(_, d)| dist < d) {
+                if best.is_none_or(|(_, d)| dist < d) {
                     best = Some((idx, dist));
                 }
             }
@@ -2818,7 +2816,7 @@ fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
     }
 
     // Generate control points using Catmull-Rom style interpolation
-    let degree = 3.min(n - 1);
+    let _degree = 3.min(n - 1);
     let num_samples = (total_len / tolerance).ceil() as usize;
     let num_samples = num_samples.max(10).min(1000);
 
@@ -3017,7 +3015,7 @@ fn process_world_pts_with_bvh(
     view: &DMat4,
     triangles: &[[DVec3; 3]],
     bvh: Option<&TriBvh>,
-    opts: &HlrOptions,
+    _opts: &HlrOptions,
     result: &mut HlrResult,
 ) {
     if world_pts.len() < 2 {
@@ -3107,7 +3105,7 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
 pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> HlrResult {
     let view = look_at(camera.eye, camera.target, camera.up);
     let triangles = collect_triangles(brep);
-    let edge_samples = opts.edge_samples.max(2);
+    let _edge_samples = opts.edge_samples.max(2);
     let mut result = HlrResult::default();
 
     // Build BVH for acceleration if enabled and we have enough triangles
@@ -3208,7 +3206,7 @@ pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> Hl
         .iter()
         .flat_map(|c| c.world_pts.iter().copied())
         .collect();
-    let spatial_index = SilhouetteSpatialIndex::build(&all_silhouette_points, 0.1);
+    let _spatial_index = SilhouetteSpatialIndex::build(&all_silhouette_points, 0.1);
 
     for sil in silhouette_curves {
         process_world_pts_with_bvh(
@@ -3239,7 +3237,7 @@ fn process_single_edge(
     opts: &HlrOptions,
     edge_classifications: &[EdgeClassInfo],
 ) -> Vec<HlrSegment> {
-    let mut segments: Vec<HlrSegment> = Vec::new();
+    let segments: Vec<HlrSegment> = Vec::new();
 
     let Some(edge) = brep.edges.get(edge_idx) else { return segments; };
     let Some(v_start) = brep.vertices.get(edge.start) else { return segments; };
@@ -3271,7 +3269,7 @@ fn process_single_edge(
     });
 
     let is_other_curve = edge_curve
-        .map_or(false, |c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
+        .is_some_and(|c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
         && circle_info.is_none();
 
     // Adaptive sampling for curved edges on curved surfaces
@@ -3508,7 +3506,7 @@ pub fn hlr_assembly(
             });
 
             let is_other_curve = edge_curve
-                .map_or(false, |c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
+                .is_some_and(|c| !matches!(c, rcad_kernel::geom::Curve3::Line(_)))
                 && circle_info.is_none();
 
             let edge_samples = if circle_info.is_some() || is_other_curve {

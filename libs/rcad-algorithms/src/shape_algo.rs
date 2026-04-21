@@ -574,11 +574,10 @@ fn get_face_surfaces<'a>(brep: &'a BRep, shell: &rcad_kernel::topology::Shell) -
 
     for (i, _face) in shell.faces.iter().enumerate() {
         let face_idx = face_offset + i;
-        if let Some(&Some(surf_idx)) = brep.geom.face_surface.get(face_idx) {
-            if let Some(surf) = brep.geom.surfaces.get(surf_idx) {
+        if let Some(&Some(surf_idx)) = brep.geom.face_surface.get(face_idx)
+            && let Some(surf) = brep.geom.surfaces.get(surf_idx) {
                 surfaces.push(surf);
             }
-        }
     }
 
     surfaces

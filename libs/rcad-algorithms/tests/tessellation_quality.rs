@@ -8,20 +8,11 @@
 use glam::DVec3;
 use rcad_algorithms::{
     triangulate_surface, mesh_brep,
-    TessellationParams, SurfaceMesh, MeshQualityMetrics, compute_mesh_quality,
+    TessellationParams, SurfaceMesh, compute_mesh_quality,
     AdaptiveSubdivider, BoundarySensitiveTessellator, IncrementalMesher, MeshDelta,
     MeshSimplifier,
 };
 use rcad_kernel::{BRep, PrimitiveSolid, geom::{Surface3, SphericalSurface, CylindricalSurface, Plane}};
-use rcad_modeling::{make_box_brep, make_sphere_brep, make_cylinder_brep};
-
-fn face_count(brep: &BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .count()
-}
 
 fn total_triangle_count(brep: &BRep) -> usize {
     brep.solids

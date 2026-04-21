@@ -565,7 +565,7 @@ fn multiple_roundtrips_stable() {
 
     for iteration in 0..5 {
         let step = StepWriter::write_string(&current, all_faces_selection());
-        current = StepReader::parse_string(&step).expect(&format!("iteration {}", iteration));
+        current = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
 
         assert_eq!(
             face_count(&current),
@@ -680,7 +680,7 @@ fn multiple_boolean_roundtrip() {
     // Roundtrip each result
     for (i, brep) in results.iter().enumerate() {
         let step = StepWriter::write_string(brep, all_faces_selection());
-        let parsed = StepReader::parse_string(&step).expect(&format!("parse result {}", i));
+        let parsed = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("parse result {}", i));
         assert_eq!(solid_count(&parsed), 1, "result {} should have 1 solid", i);
     }
 }
@@ -768,7 +768,7 @@ fn empty_string_error() {
 /// OCCT TKDESTEP coverage: error_handling, binary_input.
 #[test]
 fn binary_garbage_error() {
-    let garbage: String = (0..255u8).map(|b| char::from(b)).collect();
+    let garbage: String = (0..255u8).map(char::from).collect();
 
     let result = StepReader::parse_string(&garbage);
     assert!(result.is_err(), "binary garbage should fail");
@@ -999,7 +999,7 @@ fn combined_transform_roundtrip() {
     let parsed = StepReader::parse_string(&step).expect("parse transformed box");
 
     let bbox = parsed.bounding_box().expect("should have bounds");
-    let [min, max] = bbox;
+    let [min, _max] = bbox;
 
     // Box should be at offset location
     assert!(min.x > 8.0, "x should be translated");

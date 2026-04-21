@@ -711,15 +711,14 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
             let start_idx = if we.forward { edge.start } else { edge.end };
             let end_idx = if we.forward { edge.end } else { edge.start };
 
-            if let Some(v) = brep.vertices.get(start_idx) {
-                if poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9 {
+            if let Some(v) = brep.vertices.get(start_idx)
+                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9) {
                     poly_pts.push(v.point);
                 }
-            }
 
             // Sample edge curve if present
-            if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v) {
-                if let Some(curve) = brep.geom.curves.get(ci) {
+            if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v)
+                && let Some(curve) = brep.geom.curves.get(ci) {
                     let range = brep.geom.edge_curve_range.get(we.idx)
                         .and_then(|v| *v)
                         .unwrap_or_else(|| curve.default_domain());
@@ -742,14 +741,12 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
                         }
                     }
                 }
-            }
 
             // Add end point
-            if let Some(v) = brep.vertices.get(end_idx) {
-                if poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9 {
+            if let Some(v) = brep.vertices.get(end_idx)
+                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9) {
                     poly_pts.push(v.point);
                 }
-            }
         }
     }
 
@@ -1013,7 +1010,7 @@ fn discretize_edge_in_range(curve: &Curve3, t0: f64, t1: f64, params: &MeshParam
 pub fn discretize_edge_on_surface(curve: &Curve3, surface: &Surface3, params: &MeshParams) -> Vec<DVec3> {
     // For now, just use the 3D curve discretization
     // In a full implementation, we would also check surface deviation
-    let mut points = discretize_edge(curve, params);
+    let points = discretize_edge(curve, params);
 
     // Verify points are on the surface and project if needed
     // Note: Surface available for more sophisticated projection in future

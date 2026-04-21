@@ -432,8 +432,8 @@ pub fn add_edge_to_bbox(brep: &BRep, edge_idx: usize, bbox: &mut BoundingBox) {
     }
 
     // Sample points along the curve if available
-    if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c) {
-        if let Some(curve) = brep.geom.curves.get(curve_idx) {
+    if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
+        && let Some(curve) = brep.geom.curves.get(curve_idx) {
             let range = brep.geom.edge_curve_range.get(edge_idx)
                 .copied()
                 .flatten()
@@ -449,7 +449,6 @@ pub fn add_edge_to_bbox(brep: &BRep, edge_idx: usize, bbox: &mut BoundingBox) {
                 }
             }
         }
-    }
 }
 
 /// Add a vertex to a bounding box.

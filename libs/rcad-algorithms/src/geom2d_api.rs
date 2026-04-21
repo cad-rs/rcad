@@ -9,7 +9,7 @@
 //! - Angle and curvature analysis
 
 use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, BSplineCurve2, Line2d, Circle2d, Ellipse2d};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, BSplineCurve2};
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -660,6 +660,7 @@ fn gauss_solve_2d(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rcad_kernel::geom::{Circle2d, Ellipse2d, Line2d};
     use std::f64::consts::FRAC_PI_2;
 
     // ── Curve-Curve Intersection Tests ───────────────────────────────────────────

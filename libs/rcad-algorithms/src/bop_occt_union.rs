@@ -123,13 +123,12 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
                     "union: DS pave_block vertex out of range",
                 ));
             }
-            if let Some(ni) = pb.new_edge {
-                if ni >= ne {
+            if let Some(ni) = pb.new_edge
+                && ni >= ne {
                     return Err(BooleanError::InvalidResult(
                         "union: DS pave_block new_edge out of range",
                     ));
                 }
-            }
         }
     }
 
@@ -316,11 +315,10 @@ fn validate_brep_topology_indices(
         if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() {
             return Err(BooleanError::InvalidResult(msg));
         }
-        if let Some(ci) = brep.geom.edge_curve.get(eidx).copied().flatten() {
-            if ci >= brep.geom.curves.len() {
+        if let Some(ci) = brep.geom.edge_curve.get(eidx).copied().flatten()
+            && ci >= brep.geom.curves.len() {
                 return Err(BooleanError::InvalidResult(msg));
             }
-        }
     }
 
     for solid in &brep.solids {
@@ -364,12 +362,12 @@ fn optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
         .solids
         .first()
         .and_then(|s| s.shells.first())
-        .map_or(false, |sh| !sh.faces.is_empty());
+        .is_some_and(|sh| !sh.faces.is_empty());
     let has_faces_b = b
         .solids
         .first()
         .and_then(|s| s.shells.first())
-        .map_or(false, |sh| !sh.faces.is_empty());
+        .is_some_and(|sh| !sh.faces.is_empty());
     (
         if has_faces_a {
             Some(bvh::Bvh::build(a))

@@ -112,8 +112,8 @@ impl GdsReader {
 
                     // In GDS, AREF has 3 points: origin, column spacing point, row spacing point
                     // The column/row offsets are calculated from these points
-                    let col_offset = aref.xy.get(1).map(|&p| p).unwrap_or((0, 0));
-                    let row_offset = aref.xy.get(2).map(|&p| p).unwrap_or((0, 0));
+                    let col_offset = aref.xy.get(1).copied().unwrap_or((0, 0));
+                    let row_offset = aref.xy.get(2).copied().unwrap_or((0, 0));
 
                     result.references.push(GdsReference {
                         cell_name: aref.sname.clone(),

@@ -428,12 +428,10 @@ pub fn find_supporting_face(brep: &BRep, point: DVec3) -> Option<usize> {
             let domain = surface_domain(&surf);
             if uv.x >= domain[0] - tolerance && uv.x <= domain[1] + tolerance
                 && uv.y >= domain[2] - tolerance && uv.y <= domain[3] + tolerance
-            {
-                if dist < best_dist {
+                && dist < best_dist {
                     best_dist = dist;
                     best_face = Some(face_idx);
                 }
-            }
         }
     }
 
@@ -471,12 +469,11 @@ pub fn find_supporting_edge(brep: &BRep, point: DVec3) -> Option<usize> {
             .and_then(|r| *r)
             .unwrap_or_else(|| curve.default_domain());
 
-        if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance {
-            if dist < best_dist {
+        if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance
+            && dist < best_dist {
                 best_dist = dist;
                 best_edge = Some(edge_idx);
             }
-        }
     }
 
     best_edge

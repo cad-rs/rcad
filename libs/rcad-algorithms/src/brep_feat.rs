@@ -899,8 +899,8 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
     for si in 0..num_sections - 1 {
         for i in 0..n {
             let j = (i + 1) % n;
-            let base0 = si * n;
-            let base1 = (si + 1) * n;
+            let _base0 = si * n;
+            let _base1 = (si + 1) * n;
 
             // Compute face normal
             let p0 = sections[si][i];

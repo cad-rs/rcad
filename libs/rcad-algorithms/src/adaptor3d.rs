@@ -300,7 +300,7 @@ impl Curve3dAdaptor {
 /// Returns the coefficient for central finite difference approximation.
 fn central_diff_coefficient(order: usize, i: usize) -> f64 {
     // Binomial coefficients with alternating signs
-    let sign = if (order - i) % 2 == 0 { 1.0 } else { -1.0 };
+    let sign = if (order - i).is_multiple_of(2) { 1.0 } else { -1.0 };
     sign * binomial(order, i)
 }
 

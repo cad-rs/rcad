@@ -2669,7 +2669,7 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
     let mut operators_executed = 0usize;
 
     // Build healing options from config
-    let options = config.healing_options.clone();
+    let options = config.healing_options;
     let mut current_tolerance = config.base_tolerance;
 
     // Record initial stage
@@ -2910,7 +2910,7 @@ fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire)
 ///
 /// Returns (modified BRep, count of faces split).
 fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usize) {
-    use rcad_kernel::geom::{Surface3, CylindricalSurface, ToroidalSurface, SphericalSurface, ConicalSurface};
+    use rcad_kernel::geom::Surface3;
     use std::f64::consts::PI;
 
     let mut result = brep.clone();
@@ -2929,7 +2929,7 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
                     .and_then(|opt| *opt)
                     .and_then(|si| result.geom.surfaces.get(si));
 
-                let should_split = surface.map_or(false, |s| {
+                let should_split = surface.is_some_and(|s| {
                     match s {
                         Surface3::Cylinder(_) => params.split_cylinders,
                         Surface3::Torus(_) => params.split_tori,
@@ -2996,18 +2996,18 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
 ///
 /// Returns (modified BRep, count of edge splits).
 fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (BRep, usize) {
-    use rcad_kernel::geom::{Curve3, CurveEval};
+    use rcad_kernel::geom::CurveEval;
 
-    let mut result = brep.clone();
+    let result = brep.clone();
     let mut split_count = 0usize;
-    let tolerance = params.tolerance;
+    let _tolerance = params.tolerance;
 
     if !params.check_curves {
         return (result, 0);
     }
 
     // Analyze each edge's curve for continuity breaks
-    for (edge_idx, edge) in brep.edges.iter().enumerate() {
+    for (edge_idx, _edge) in brep.edges.iter().enumerate() {
         let curve = brep.geom.edge_curve.get(edge_idx)
             .and_then(|opt| *opt)
             .and_then(|ci| brep.geom.curves.get(ci));
@@ -3201,7 +3201,7 @@ fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -
 ///
 /// Returns (modified BRep, count of surfaces converted).
 fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> (BRep, usize) {
-    use rcad_kernel::geom::{Surface3, BSplineSurface, BezierSurface};
+    use rcad_kernel::geom::Surface3;
 
     let mut result = brep.clone();
     let mut conversion_count = 0usize;
@@ -3221,12 +3221,11 @@ fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> 
             } else {
                 // Multiple patches - for now, keep the first one
                 // A full implementation would create new faces for each patch
-                if let Some(first) = bezier_patches.into_iter().next() {
-                    if first.control_points.len() - 1 <= params.max_degree {
+                if let Some(first) = bezier_patches.into_iter().next()
+                    && first.control_points.len() - 1 <= params.max_degree {
                         result.geom.surfaces[idx] = Surface3::Bezier(first);
                         conversion_count += 1;
                     }
-                }
             }
         }
     }
@@ -3301,7 +3300,7 @@ fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usiz
     result.apply_transform(transform);
 
     // Scale tolerances if requested
-    let mut modification_count = brep.vertices.len() + brep.edges.len();
+    let modification_count = brep.vertices.len() + brep.edges.len();
 
     if params.scale_tolerances {
         let scale_factor = params.scale_x.max(params.scale_y).max(params.scale_z);
@@ -3407,7 +3406,9 @@ fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep
     let (result, fixed_count) = fix_same_parameter_with_scan(brep, params.tolerance);
 
     // If enforcing, run additional pass on edges that might have been missed
-    let result = if params.enforce {
+    
+
+    if params.enforce {
         let mut enforced = result.clone();
         // Mark all edges as needing SameParameter check
         enforced.geom.edge_same_parameter.clear();
@@ -3416,9 +3417,7 @@ fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep
         (final_result, fixed_count + additional_fixed)
     } else {
         (result, fixed_count)
-    };
-
-    result
+    }
 }
 
 /// Remove internal faces after boolean operations (RemoveInternalFaces operator).
@@ -3434,7 +3433,7 @@ fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOpera
     let mut total_removed = 0usize;
 
     // Build a topology graph to analyze face connectivity
-    let graph = BRepGraph::from_brep(&result);
+    let _graph = BRepGraph::from_brep(&result);
 
     // Identify candidate internal faces
     // An internal face typically:
@@ -3515,7 +3514,7 @@ fn identify_internal_faces(brep: &BRep, solid_idx: usize, params: &RemoveInterna
                 total_edges += 1;
 
                 // Count how many other faces share this edge
-                let edge = &brep.edges[we.idx];
+                let _edge = &brep.edges[we.idx];
                 let mut face_count = 0usize;
 
                 for (other_shell_idx, other_shell) in solid.shells.iter().enumerate() {
@@ -3571,7 +3570,7 @@ fn heal_geometry_operator(brep: &BRep, params: &HealGeometryOperator) -> (BRep, 
 
     let sequence = params.get_sequence();
 
-    for pass in 0..params.max_passes {
+    for _pass in 0..params.max_passes {
         let pass_start_totals = (
             total_report.vertices_merged,
             total_report.faces_reoriented,
@@ -3691,8 +3690,8 @@ pub fn run_healing_pipeline_with_rollback(
 
     for (op_idx, op) in operators.iter().enumerate() {
         // Check for cancellation
-        if let Some(cb) = progress_callback {
-            if cb.is_cancelled() {
+        if let Some(cb) = progress_callback
+            && cb.is_cancelled() {
                 let final_brep = current.clone();
                 let report = PipelineExecutionReport {
                     aggregation,
@@ -3704,7 +3703,6 @@ pub fn run_healing_pipeline_with_rollback(
                 };
                 return (final_brep, report);
             }
-        }
 
         // Notify progress callback
         if let Some(cb) = progress_callback {
@@ -3801,11 +3799,10 @@ pub fn run_healing_pipeline_with_rollback(
 
         // Handle rollback
         if should_rollback {
-            if let Some(ref reason) = rollback_reason {
-                if let Some(cb) = progress_callback {
+            if let Some(ref reason) = rollback_reason
+                && let Some(cb) = progress_callback {
                     cb.on_error(op_idx, reason);
                 }
-            }
 
             // Find the best snapshot to rollback to
             let rollback_idx = if issues_before <= issues_after {
@@ -3895,37 +3892,35 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
     // Build options from config
     let options = HealingOptions {
         tolerance: config.base_tolerance,
-        ..config.healing_options.clone()
+        ..config.healing_options
     };
 
-    for (op_idx, op_with_cond) in config.operators.iter().enumerate() {
+    for op_with_cond in config.operators.iter() {
         // Check dependencies
         let mut skip = false;
         let mut skip_reason = None;
 
         for &dep_idx in &op_with_cond.dependencies {
-            if let Some(dep_result) = operator_results.get(dep_idx) {
-                if !dep_result.changed && op_with_cond.skip_on_dependency_failure {
+            if let Some(dep_result) = operator_results.get(dep_idx)
+                && !dep_result.changed && op_with_cond.skip_on_dependency_failure {
                     skip = true;
                     skip_reason = Some(format!("Dependency {} made no changes", dep_idx));
                     break;
                 }
-            }
         }
 
         // Check condition if dependencies passed
-        if !skip {
-            if let Some(ref condition) = op_with_cond.condition {
+        if !skip
+            && let Some(ref condition) = op_with_cond.condition {
                 let (_, temp_report) = analyze_and_heal(&current, HealingOptions {
                     mode: HealingMode::AnalyzeOnly,
-                    ..options.clone()
+                    ..options
                 });
                 if !condition.evaluate(&current, &temp_report, &operator_results) {
                     skip = true;
                     skip_reason = Some("Condition not met".to_string());
                 }
             }
-        }
 
         if skip {
             operator_results.push(OperatorResult {
@@ -3952,7 +3947,7 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
         // Run the operator
         let (next, _) = run_healing_operator_chain(
             &current,
-            options.clone(),
+            options,
             &[simple_op.clone()],
         );
         current = next;
@@ -4526,7 +4521,6 @@ mod tests {
         // Then convert to Bezier
         let bezier_params = SurfaceToBezierOperator::default();
         let (result, conversions) = surface_to_bezier_operator(&bspline_sphere, &bezier_params);
-        assert!(conversions >= 0);
         let _ = result;
     }
 
@@ -4834,7 +4828,6 @@ mod tests {
         let params = DirectFacesOperator::default();
         let (result, fixed) = direct_faces_operator(&b, &params);
         // Verify operator runs successfully
-        assert!(fixed >= 0);
         assert_eq!(result.vertices.len(), b.vertices.len());
     }
 
@@ -5252,7 +5245,6 @@ mod tests {
 
         let (_out, report) = heal(&b);
         // Should detect some issue or be clean
-        assert!(report.initial_issue_count() >= 0);
     }
 
     #[test]
@@ -5284,7 +5276,7 @@ mod tests {
 ///
 /// # Returns
 /// Repaired B-Rep and count of fixes applied.
-pub fn fix_solid(brep: &BRep, tolerance: f64) -> (BRep, SolidFixReport) {
+pub fn fix_solid(brep: &BRep, _tolerance: f64) -> (BRep, SolidFixReport) {
     use crate::brep_repair::{fix_face_orientation, recompute_face_normals};
     use rcad_kernel::BRepGraph;
 
@@ -5347,7 +5339,7 @@ pub fn fix_solid(brep: &BRep, tolerance: f64) -> (BRep, SolidFixReport) {
             // If most normals are inconsistent, note orientation issues
             if outward_count > 0 && inward_count > 0 {
                 let ratio = outward_count as f64 / (outward_count + inward_count) as f64;
-                if ratio < 0.3 || ratio > 0.7 {
+                if !(0.3..=0.7).contains(&ratio) {
                     report.orientation_inconsistencies += 1;
                 }
             }
@@ -5465,11 +5457,10 @@ pub fn fix_wire(brep: &BRep, tolerance: f64) -> (BRep, WireFixReport) {
         let start_pt = current.vertices.get(edge.start).map(|v| v.point);
         let end_pt = current.vertices.get(edge.end).map(|v| v.point);
 
-        if let (Some(s), Some(e)) = (start_pt, end_pt) {
-            if (s - e).length() < tolerance {
+        if let (Some(s), Some(e)) = (start_pt, end_pt)
+            && (s - e).length() < tolerance {
                 report.degenerate_edges.push(ei);
             }
-        }
     }
 
     // Step 4: Compute wire quality metrics
@@ -5721,11 +5712,10 @@ impl ComprehensiveHealingReport {
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
 
-        if let Some(ref wr) = self.wire_report {
-            if wr.total_fixes > 0 {
+        if let Some(ref wr) = self.wire_report
+            && wr.total_fixes > 0 {
                 parts.push(format!("wires: {} fixes", wr.total_fixes));
             }
-        }
 
         if let Some(ref rr) = self.repair_report {
             let repairs = rr.vertices_merged + rr.faces_reoriented + rr.wires_fixed;
@@ -5734,11 +5724,10 @@ impl ComprehensiveHealingReport {
             }
         }
 
-        if let Some(ref sr) = self.solid_report {
-            if sr.total_fixes > 0 {
+        if let Some(ref sr) = self.solid_report
+            && sr.total_fixes > 0 {
                 parts.push(format!("solid: {} fixes", sr.total_fixes));
             }
-        }
 
         if parts.is_empty() {
             if self.is_clean {

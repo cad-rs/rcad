@@ -339,11 +339,11 @@ fn round_corners_2d(
         // We don't emit the next vertex here if the next corner is active
         // (it will emit `prev` itself).
         if ci < walk_end - 1 {
-            if corners[ni].as_ref().map_or(false, |c| c.active) {
+            if corners[ni].as_ref().is_some_and(|c| c.active) {
                 // The start of segment [i..ni] was already pushed above.
                 // The end (ni setback point on incoming edge) will be pushed in
                 // the next iteration as `c.prev`. Nothing to add here.
-            } else if corners[i].as_ref().map_or(false, |c| c.active) {
+            } else if corners[i].as_ref().is_some_and(|c| c.active) {
                 // i was active, ni is not — the outgoing next_pt is ni itself,
                 // nothing extra to emit.
             }

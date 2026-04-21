@@ -572,12 +572,11 @@ pub fn is_valid_brep(brep: &BRep) -> bool {
     }
 
     // Check geometry associations
-    for (_edge_idx, curve_opt) in brep.geom.edge_curve.iter().enumerate() {
-        if let Some(curve_idx) = curve_opt {
-            if *curve_idx >= brep.geom.curves.len() {
+    for curve_opt in brep.geom.edge_curve.iter() {
+        if let Some(curve_idx) = curve_opt
+            && *curve_idx >= brep.geom.curves.len() {
                 return false;
             }
-        }
     }
 
     // Check closed shells for solids
@@ -645,13 +644,13 @@ pub fn check_orientation(brep: &BRep) -> Vec<OrientationIssue> {
             }
 
             // Check individual faces
-            for (_local_face_idx, face) in shell.faces.iter().enumerate() {
+            for face in shell.faces.iter() {
                 // Check if face normal is consistent with the surface normal
                 // Note: For curved surfaces (cylinder, sphere, etc.), the normal varies across
                 // the surface, so we only perform this check for planar surfaces where the
                 // normal is constant.
-                if let Some(surf) = get_face_surface(brep, face_idx) {
-                    if matches!(surf, Surface3::Plane(_)) {
+                if let Some(surf) = get_face_surface(brep, face_idx)
+                    && matches!(surf, Surface3::Plane(_)) {
                         // For planar surfaces, check that the face normal matches the surface normal
                         let domain = surf.default_domain();
                         let u_mid = (domain[0] + domain[1]) / 2.0;
@@ -673,7 +672,6 @@ pub fn check_orientation(brep: &BRep) -> Vec<OrientationIssue> {
                     // For curved surfaces, the face normal represents the overall orientation
                     // (inward/outward relative to the solid), not a specific point normal.
                     // Skip the normal consistency check for curved surfaces.
-                }
 
                 face_idx += 1;
             }

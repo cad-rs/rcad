@@ -1057,50 +1057,6 @@ impl SurfaceEval for Surface3 {
     }
 }
 
-/// Evaluate all Lagrange basis functions for the given nodes at t.
-///
-/// Uses safer numerical handling with explicit tolerance for near-singular cases.
-/// Returns basis functions that satisfy partition of unity (sum = 1).
-fn lagrange_basis(nodes: &[f64], t: f64) -> Vec<f64> {
-    let n = nodes.len();
-    if n == 0 {
-        return vec![];
-    }
-
-    let mut basis = vec![1.0; n];
-    let tol = 1e-14;
-
-    for i in 0..n {
-        for j in 0..n {
-            if i != j {
-                let denom = nodes[i] - nodes[j];
-                if denom.abs() > tol {
-                    basis[i] *= (t - nodes[j]) / denom;
-                } else {
-                    // Nodes too close - this indicates invalid input,
-                    // but we handle gracefully by setting to 0
-                    basis[i] = 0.0;
-                }
-            }
-        }
-
-        // Guard against NaN/Inf
-        if !basis[i].is_finite() {
-            basis[i] = 0.0;
-        }
-    }
-
-    // Ensure partition of unity for stability
-    let sum: f64 = basis.iter().sum();
-    if sum.abs() > tol {
-        for b in &mut basis {
-            *b /= sum;
-        }
-    }
-
-    basis
-}
-
 fn remap_unit_to_curve_domain(curve: &Curve3, t: f64) -> f64 {
     let [t0, t1] = curve.default_domain();
     if !t0.is_finite() || !t1.is_finite() {

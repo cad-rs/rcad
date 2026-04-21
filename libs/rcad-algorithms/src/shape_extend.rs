@@ -8,8 +8,8 @@
 //! - `ShapeExtend_MsgRegistrator`: Message registration with shape context
 //! - `ShapeExtend_Explorer`: Extended shape exploration utilities
 
-use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::topology::{Face, Shell, Wire};
+use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::topology::{Face, Wire};
 use rcad_kernel::BRep;
 
 use crate::brep_tools::ShapeType;
@@ -186,7 +186,7 @@ impl WireData {
     /// Note: This method returns the cached value if available.
     /// Use `is_closed_with_brep` for accurate checking with topology.
     pub fn is_closed(&self) -> bool {
-        self.closed.unwrap_or_else(|| self.edges.len() > 0)
+        self.closed.unwrap_or(!self.edges.is_empty())
     }
 
     /// Check if the wire is closed using BRep topology.
@@ -257,9 +257,9 @@ impl WireData {
             }
 
             // Try to get curve bounds from geometry store
-            if let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
-                if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c) {
-                    if let Some(curve) = brep.geom.curves.get(curve_idx) {
+            if let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r)
+                && let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
+                    && let Some(curve) = brep.geom.curves.get(curve_idx) {
                         // Approximate length by sampling
                         let steps = 10;
                         let du = (range[1] - range[0]) / steps as f64;
@@ -271,8 +271,6 @@ impl WireData {
                             total += (p2 - p1).length();
                         }
                     }
-                }
-            }
         }
 
         total

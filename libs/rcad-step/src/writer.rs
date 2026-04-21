@@ -10,7 +10,7 @@ use crate::{
     StepOrientationTolerance, StepFormTolerance, StepRunoutTolerance, StepProfileTolerance,
     StepDatumReferenceFrame, StepDatumTarget, StepToleranceZoneDefinitionEnhanced,
     OrientationToleranceType, FormToleranceType, RunoutToleranceType, ProfileToleranceType,
-    DatumTargetType, ToleranceZoneShape, ToleranceZonePosition,
+    DatumTargetType,
 };
 // View and annotation types
 use crate::{
@@ -310,7 +310,6 @@ struct Part21Writer {
     header: StepHeader,
     gmsh_strict: bool,
     strict_plane_closed_ellipse_done: bool,
-    strict_wire_circle_to_line_done: bool,
 }
 
 impl Part21Writer {
@@ -331,7 +330,6 @@ impl Part21Writer {
             header,
             gmsh_strict,
             strict_plane_closed_ellipse_done: false,
-            strict_wire_circle_to_line_done: false,
         }
     }
 
@@ -422,11 +420,10 @@ impl Part21Writer {
             let gp = self.general_property(&prop.name, desc);
             self.property_definition(&prop.name, desc, gp);
         }
-        if matches!(self.protocol, StepProtocol::Ap242) {
-            if let Some(meta) = ap242_metadata {
+        if matches!(self.protocol, StepProtocol::Ap242)
+            && let Some(meta) = ap242_metadata {
                 self.write_ap242_metadata(meta);
             }
-        }
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
         let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
@@ -503,18 +500,16 @@ impl Part21Writer {
         }
 
         // Handle compound structure
-        if is_compound {
-            if let Some(compound) = brep.as_compound() {
+        if is_compound
+            && let Some(compound) = brep.as_compound() {
                 compound_items = self.write_compound_structure(compound, &solid_items);
             }
-        }
 
         // Handle compsolid structure
-        if is_compsolid {
-            if let Some(compsolid) = brep.as_compsolid() {
+        if is_compsolid
+            && let Some(compsolid) = brep.as_compsolid() {
                 compsolid_items = self.write_compsolid_structure(compsolid, &solid_items);
             }
-        }
 
         if has_triangle_fallback {
             // Keep manifold solids for shells that were exported analytically.
@@ -1247,7 +1242,7 @@ impl Part21Writer {
                 normal: n_axis,
             };
             let extra_surface = find_peer_plane_surface_for_line_edge(brep, edge_idx, base_plane)
-                .or_else(|| Some((None, base_plane)));
+                .or(Some((None, base_plane)));
 
             if let Some((peer_surface_idx, peer_plane)) = extra_surface
                 && let Some(extra_curve2d) =
@@ -1321,7 +1316,7 @@ impl Part21Writer {
             .cloned()
             .unwrap_or_default();
 
-        let mut basis_curve = match face_surface.clone() {
+        let basis_curve = match face_surface.clone() {
             Some(Surface3::Sphere(sphere)) => {
                 let a = (start_pt - sphere.center).normalize_or_zero();
                 let b = (end_pt - sphere.center).normalize_or_zero();
@@ -1433,8 +1428,8 @@ impl Part21Writer {
         let final_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
             let mut periodic_extra_curve2d: Option<Curve2d> = None;
-            if self.gmsh_strict && (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1 {
-                if let Some(pc0) = pcurves.first()
+            if self.gmsh_strict && (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1
+                && let Some(pc0) = pcurves.first()
                     && let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
                 {
                     let eps = 1e-9;
@@ -1444,7 +1439,6 @@ impl Part21Writer {
                         periodic_extra_curve2d = Some(Curve2d::Line(l1));
                     }
                 }
-            }
 
             for (pc_i, pc) in pcurves.iter().enumerate() {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
@@ -1765,12 +1759,12 @@ impl Part21Writer {
             return self.edge_curve("edge", v0, v1, basis, true);
         };
 
-        let start_point = brep
+        let _start_point = brep
             .vertices
             .get(edge.start)
             .map(|v| dvec3_to_array(v.point))
             .unwrap_or([0.0, 0.0, 0.0]);
-        let end_point = brep
+        let _end_point = brep
             .vertices
             .get(edge.end)
             .map(|v| dvec3_to_array(v.point))
@@ -1925,16 +1919,16 @@ impl Part21Writer {
                 let mut pcurve_ids = Vec::new();
                 let mut periodic_extra_curve2d: Option<Curve2d> = None;
                 let mut periodic_line_dup_for_seam = false;
-                if self.gmsh_strict && pcurves.len() == 1 {
-                    if let Some(pc0) = pcurves.first() {
+                if self.gmsh_strict && pcurves.len() == 1
+                    && let Some(pc0) = pcurves.first() {
                         let is_periodic_u_surface = matches!(
                             brep.geom.surfaces.get(pc0.surface_idx),
                             Some(Surface3::Torus(_))
                                 | Some(Surface3::Cylinder(_))
                                 | Some(Surface3::Cone(_))
                         );
-                        if is_periodic_u_surface {
-                            if let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned() {
+                        if is_periodic_u_surface
+                            && let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned() {
                                 let eps = 1e-9;
                                 let mut l1 = l0;
                                 let mut duplicated = false;
@@ -1947,9 +1941,7 @@ impl Part21Writer {
                                     periodic_line_dup_for_seam = true;
                                 }
                             }
-                        }
                     }
-                }
                 let mut first_plane: Option<rcad_kernel::geom::Plane> = None;
                 let mut first_is_line = false;
                 for (pc_i, pc) in pcurves.iter().enumerate() {
@@ -1998,14 +1990,13 @@ impl Part21Writer {
                     let pcurve_id = self.pcurve(surface_id, def_rep);
                     pcurve_ids.push(pcurve_id);
 
-                    if pc_i == 0 {
-                        if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                    if pc_i == 0
+                        && let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
                             let extra_param = self.write_curve2d(Some(extra_curve2d));
                             let extra_def = self.definitional_representation(extra_param);
                             let extra_pc = self.pcurve(surface_id, extra_def);
                             pcurve_ids.push(extra_pc);
                         }
-                    }
                     }
 
                 if self.gmsh_strict
@@ -2726,22 +2717,6 @@ impl Part21Writer {
         ))
     }
 
-    fn trimmed_curve_with_points(
-        &mut self,
-        basis_curve: u64,
-        start_point: [f64; 3],
-        end_point: [f64; 3],
-        t0: f64,
-        t1: f64,
-    ) -> u64 {
-        let p0 = self.cartesian_point("", start_point);
-        let p1 = self.cartesian_point("", end_point);
-        self.push(format!(
-            "TRIMMED_CURVE('',#{},(#{},PARAMETER_VALUE({:.12})),(#{},PARAMETER_VALUE({:.12})),.T.,.PARAMETER.)",
-            basis_curve, p0, t0, p1, t1
-        ))
-    }
-
     fn vector(&mut self, name: &str, direction: u64, magnitude: f64) -> u64 {
         self.push(format!(
             "VECTOR('{}',#{},{:.9})",
@@ -2758,18 +2733,6 @@ impl Part21Writer {
 
     fn line(&mut self, name: &str, origin: u64, vector: u64) -> u64 {
         self.push(format!("LINE('{}',#{},#{})", name, origin, vector))
-    }
-
-    fn emit_unreferenced_line_padding(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        let origin = self.cartesian_point("strict_pad_origin", [0.0, 0.0, 0.0]);
-        let dir = self.direction("strict_pad_dir", [1.0, 0.0, 0.0]);
-        let vec = self.vector("strict_pad_vec", dir, 1.0);
-        for _ in 0..count {
-            let _ = self.line("strict_pad_line", origin, vec);
-        }
     }
 
     fn circle(&mut self, name: &str, placement: u64, radius: f64) -> u64 {
@@ -3828,15 +3791,13 @@ fn find_plane_surface_for_edge(
                 let has_edge = oriented_face_edges(brep, face)
                     .iter()
                     .any(|entry| entry.edge_idx == edge_idx);
-                if has_edge {
-                    if let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied() {
-                        if let Some(Surface3::Plane(plane)) =
+                if has_edge
+                    && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
+                        && let Some(Surface3::Plane(plane)) =
                             brep.geom.surfaces.get(surface_idx).cloned()
                         {
                             return Some((surface_idx, plane));
                         }
-                    }
-                }
                 face_index += 1;
             }
         }
@@ -3892,14 +3853,6 @@ fn planes_equivalent(
     }
     let dist = (a.origin - b.origin).dot(na).abs();
     dist <= tol
-}
-
-fn find_peer_plane_for_line_edge(
-    brep: &BRep,
-    edge_idx: usize,
-    exclude: rcad_kernel::geom::Plane,
-) -> Option<rcad_kernel::geom::Plane> {
-    find_peer_plane_surface_for_line_edge(brep, edge_idx, exclude).map(|(_, plane)| plane)
 }
 
 fn count_plane_face_occurrences_for_line_edge(brep: &BRep, edge_idx: usize) -> usize {
@@ -4256,7 +4209,7 @@ mod tests {
     use crate::{
         StepDatum, StepDimensionalLocation, StepDimensionalSize, StepGeometricTolerance,
         StepGeometricToleranceWithDatumReference,
-        StepPropertyDefinitionRepr, StepReader,
+        StepPropertyDefinitionRepr, StepReader, ToleranceZonePosition, ToleranceZoneShape,
     };
     use glam::DVec3;
     use rcad_modeling::make_box_brep;

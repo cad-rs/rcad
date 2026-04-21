@@ -20,7 +20,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{Curve3, Line3, Surface3, Plane};
+use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use std::collections::HashMap;
 
@@ -362,7 +362,7 @@ pub fn draft_cylindrical_face(
     validate_draft_params(params)?;
 
     let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
-    let face = shell.faces.get(face_index).ok_or(DraftError::NoFaces)?;
+    let _face = shell.faces.get(face_index).ok_or(DraftError::NoFaces)?;
 
     // Get surface geometry
     let surface = brep.geom.face_surface.get(face_index).and_then(|o| o.as_ref());
@@ -423,7 +423,7 @@ pub fn draft_conical_face(
     validate_draft_params(params)?;
 
     let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
-    let face = shell.faces.get(face_index).ok_or(DraftError::NoFaces)?;
+    let _face = shell.faces.get(face_index).ok_or(DraftError::NoFaces)?;
 
     let surface = brep.geom.face_surface.get(face_index).and_then(|o| o.as_ref());
     let surface = surface.ok_or_else(|| DraftError::UnsupportedSurface {
@@ -456,10 +456,10 @@ pub fn draft_conical_face(
     // Compute new vertex positions
     let mut new_pts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
     let tan_effective = effective_draft.tan();
-    let tan_original = cone.half_angle_rad.tan();
+    let _tan_original = cone.half_angle_rad.tan();
 
     for (vi, v) in brep.vertices.iter().enumerate() {
-        let h = (v.point - neutral).dot(pull);
+        let _h = (v.point - neutral).dot(pull);
         let radial_vec = v.point - cone.apex;
         let radial_dist = radial_vec.reject_from(axis).length();
         let axial_dist = radial_vec.dot(axis).abs();
@@ -525,7 +525,7 @@ pub fn draft_face_general(
     }
 
     // Compute new face normals
-    let new_face_normals: Vec<DVec3> = shell.faces.iter().enumerate().map(|(fi, f)| {
+    let new_face_normals: Vec<DVec3> = shell.faces.iter().map(|f| {
         compute_rotated_normal(&f.normal, pull, params.draft_angle)
     }).collect();
 
@@ -682,7 +682,7 @@ pub fn detect_parting_line(
     let mut parting_edges = Vec::new();
     let mut parting_points = Vec::new();
 
-    for (fi, face) in shell.faces.iter().enumerate() {
+    for face in shell.faces.iter() {
         let normal = face.normal.normalize();
         let draft_angle = compute_draft_angle(&normal, pull);
 
@@ -701,12 +701,11 @@ pub fn detect_parting_line(
 
     // Collect points from parting edges
     for &ei in &parting_edges {
-        if let Some(edge) = brep.edges.get(ei) {
-            if let (Some(vs), Some(ve)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
+        if let Some(edge) = brep.edges.get(ei)
+            && let (Some(vs), Some(ve)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
                 parting_points.push(vs.point);
                 parting_points.push(ve.point);
             }
-        }
     }
 
     // Determine if parting line is closed
@@ -1056,7 +1055,7 @@ fn find_faces_with_edge(brep: &BRep, edge_index: usize) -> Vec<usize> {
     faces
 }
 
-fn group_connected_faces(brep: &BRep, faces: &[Face]) -> Vec<Vec<usize>> {
+fn group_connected_faces(_brep: &BRep, faces: &[Face]) -> Vec<Vec<usize>> {
     // Build edge-to-face adjacency
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
     for (fi, face) in faces.iter().enumerate() {
@@ -1198,7 +1197,7 @@ fn compute_feature_properties(
     (center, size, (h_min, h_max))
 }
 
-fn evaluate_draft_direction(brep: &BRep, faces: &[Face], direction: DVec3) -> f64 {
+fn evaluate_draft_direction(_brep: &BRep, faces: &[Face], direction: DVec3) -> f64 {
     let mut score = 0.0;
 
     for face in faces {

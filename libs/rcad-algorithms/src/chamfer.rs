@@ -37,8 +37,8 @@
 
 use glam::DVec3;
 use rcad_kernel::{
-    BRep, PrimitiveSolid,
-    geom::{Curve3, Surface3, Line3, Plane, CylindricalSurface},
+    BRep,
+    geom::{Curve3, Surface3, Line3, Plane},
     topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
 use std::collections::HashMap;
@@ -143,14 +143,13 @@ impl ChamferParams {
                 reason: "distance2 must be positive for asymmetric mode".to_string(),
             });
         }
-        if self.mode == ChamferMode::DistanceAngle {
-            if self.angle <= 0.0 || self.angle >= std::f64::consts::FRAC_PI_2 {
+        if self.mode == ChamferMode::DistanceAngle
+            && (self.angle <= 0.0 || self.angle >= std::f64::consts::FRAC_PI_2) {
                 return Err(ChamferError::InvalidAngle {
                     value: self.angle,
                     reason: "angle must be between 0 and 90 degrees".to_string(),
                 });
             }
-        }
         Ok(())
     }
 
@@ -977,7 +976,7 @@ pub fn trim_adjacent_faces(
 /// 4. Updates the shell topology
 fn apply_chamfer_to_brep(
     brep: &mut BRep,
-    edge_info: &EdgeInfo,
+    _edge_info: &EdgeInfo,
     _face_infos: &[AdjacentFaceInfo],
     chamfer_geom: &ChamferGeometry,
     _params: &ChamferParams,
@@ -1032,8 +1031,8 @@ fn apply_chamfer_to_brep(
     brep.geom.surfaces.push(chamfer_geom.chamfer_surface.clone());
 
     // Add the face to the first shell
-    if let Some(solid) = brep.solids.first_mut() {
-        if let Some(shell) = solid.shells.first_mut() {
+    if let Some(solid) = brep.solids.first_mut()
+        && let Some(shell) = solid.shells.first_mut() {
             shell.faces.push(chamfer_face);
 
             // Add surface reference for the new face
@@ -1042,7 +1041,6 @@ fn apply_chamfer_to_brep(
             }
             brep.geom.face_surface.push(Some(surf_idx));
         }
-    }
 
     Ok(1) // One chamfer face created
 }
@@ -1176,7 +1174,7 @@ fn get_adjacent_face_infos(
 
         let surface_type = surface_index
             .and_then(|si| brep.geom.surfaces.get(si))
-            .map(|s| SurfaceType::from(s))
+            .map(SurfaceType::from)
             .unwrap_or(SurfaceType::Other);
 
         face_infos.push(AdjacentFaceInfo {
@@ -1214,6 +1212,7 @@ fn find_face_indices(brep: &BRep, flat_face_idx: usize) -> (usize, usize, usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rcad_kernel::geom::{CylindricalSurface, PrimitiveSolid};
 
     fn create_test_box() -> BRep {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Box {

@@ -12,13 +12,12 @@
 
 use glam::DVec3;
 use rcad_algorithms::{
-    offset::{offset_shell, offset_solid, hollow_solid, offset_surface, OffsetOptions, OffsetResult},
+    offset::{offset_shell, offset_solid, hollow_solid, offset_surface, OffsetOptions},
     thicken::{thicken_shell, thick_solid_with_removed_faces},
     geom_populate,
 };
 use rcad_kernel::{BRep, PrimitiveSolid};
 use rcad_kernel::geom::{Surface3, Plane, SphericalSurface, CylindricalSurface};
-use rcad_kernel::SurfaceEval;
 
 fn separator(title: &str) {
     println!("\n──────────────────────────────────────────");
@@ -153,7 +152,7 @@ fn demo_offset_shell() {
 
     // With options
     {
-        let opts = OffsetOptions::new(0.2)
+        let _opts = OffsetOptions::new(0.2)
             .with_tolerance(1e-6)
             .with_self_intersection_check(true);
 
@@ -254,13 +253,11 @@ fn demo_thicken_shell() {
     {
         let mut brep = make_box_with_geom();
         // Remove top face to create open shell
-        if let Some(s) = brep.solids.first_mut() {
-            if let Some(sh) = s.shells.first_mut() {
-                if sh.faces.len() > 1 {
+        if let Some(s) = brep.solids.first_mut()
+            && let Some(sh) = s.shells.first_mut()
+                && sh.faces.len() > 1 {
                     sh.faces.pop();
                 }
-            }
-        }
 
         let result = thicken_shell(&brep, 0.1);
         assert!(result.is_some(), "thicken_shell should succeed for open shell");

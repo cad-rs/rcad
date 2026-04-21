@@ -322,7 +322,7 @@ fn select_faces_by_connectivity(
 
     // Build face adjacency through shared edges
     let mut face_adjacency: Vec<HashSet<usize>> = vec![HashSet::new(); n];
-    for (_, faces) in &edge_to_faces {
+    for faces in edge_to_faces.values() {
         for &f1 in faces {
             for &f2 in faces {
                 if f1 != f2 {
@@ -341,11 +341,10 @@ fn select_faces_by_connectivity(
             continue;
         }
 
-        if let Some(max) = max_faces {
-            if selected.len() >= max {
+        if let Some(max) = max_faces
+            && selected.len() >= max {
                 break;
             }
-        }
 
         selected.insert(fi);
 
@@ -1056,8 +1055,8 @@ pub fn thicken_solid(brep: &BRep, options: &ThickeningOptions) -> Option<Thicken
 
         if analysis.would_intersect {
             if options.self_intersection.auto_reduce {
-                if let Some(recommended) = analysis.recommended_thickness {
-                    if recommended >= options.self_intersection.min_thickness {
+                if let Some(recommended) = analysis.recommended_thickness
+                    && recommended >= options.self_intersection.min_thickness {
                         warnings.push(ThickeningWarning::ThicknessAutoReduced {
                             original: thickness,
                             reduced: recommended,
@@ -1065,7 +1064,6 @@ pub fn thicken_solid(brep: &BRep, options: &ThickeningOptions) -> Option<Thicken
                         actual_thickness = Some(recommended);
                         thickness = recommended;
                     }
-                }
             } else if options.self_intersection.abort_on_detection {
                 return None;
             } else {
@@ -1280,7 +1278,7 @@ fn create_lateral_faces(
                 let edge_len = (p1 - p0).length();
                 let thickness_len = (p3 - p0).length();
                 let aspect_ratio = edge_len / thickness_len.max(1e-10);
-                options.lateral_faces.max_aspect_ratio.map_or(false, |max_ratio| aspect_ratio > max_ratio)
+                options.lateral_faces.max_aspect_ratio.is_some_and(|max_ratio| aspect_ratio > max_ratio)
             } else {
                 false
             };

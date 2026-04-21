@@ -450,10 +450,10 @@ pub fn detect_non_manifold_topology(brep: &BRep) -> DetailedNonManifoldReport {
 /// around the vertex. If there are multiple disconnected fans, the
 /// vertex has a "bow-tie" configuration.
 fn compute_edge_fan_count(
-    vertex_idx: usize,
+    _vertex_idx: usize,
     incident_edges: &[usize],
     graph: &BRepGraph,
-    brep: &BRep,
+    _brep: &BRep,
 ) -> usize {
     if incident_edges.len() <= 2 {
         return 1;
@@ -591,17 +591,17 @@ pub fn split_non_manifold_edges(brep: &BRep) -> (BRep, EdgeSplitReport) {
 
         // We need to create (n_faces / 2) edge copies (rounded up if odd)
         // Each new edge will be assigned to 2 faces (except possibly one if odd)
-        let n_new_edges = (n_faces + 1) / 2;
+        let n_new_edges = n_faces.div_ceil(2);
 
         // Collect new edge indices
         let mut new_edge_indices = Vec::with_capacity(n_new_edges);
         new_edge_indices.push(edge_idx); // Keep original for first pair
 
         // Create edge copies
-        let original_edge = result.edges[edge_idx].clone();
+        let original_edge = result.edges[edge_idx];
         for _ in 1..n_new_edges {
             let new_idx = result.edges.len();
-            result.edges.push(original_edge.clone());
+            result.edges.push(original_edge);
             new_edge_indices.push(new_idx);
             report.new_edges_created += 1;
         }
@@ -1107,14 +1107,14 @@ fn split_non_manifold_edges_detailed(brep: &BRep) -> (BRep, ManifoldConversionRe
         }
 
         // Create edge copies
-        let n_new_edges = (n_faces + 1) / 2;
+        let n_new_edges = n_faces.div_ceil(2);
         let mut new_edge_indices = Vec::with_capacity(n_new_edges);
         new_edge_indices.push(edge_idx);
 
-        let original_edge = result.edges[edge_idx].clone();
+        let original_edge = result.edges[edge_idx];
         for _ in 1..n_new_edges {
             let new_idx = result.edges.len();
-            result.edges.push(original_edge.clone());
+            result.edges.push(original_edge);
             new_edge_indices.push(new_idx);
             report.new_edges_created += 1;
 
@@ -1225,7 +1225,7 @@ fn duplicate_non_manifold_vertices(brep: &BRep) -> (BRep, VertexDuplicationRepor
 
         for fan in fans.iter().skip(1) {
             let new_vertex_idx = result.vertices.len();
-            result.vertices.push(result.vertices[original_vertex].clone());
+            result.vertices.push(result.vertices[original_vertex]);
             new_vertices.push(new_vertex_idx);
             edge_assignments.push(fan.clone());
             report.vertices_duplicated += 1;
@@ -1263,10 +1263,10 @@ fn duplicate_non_manifold_vertices(brep: &BRep) -> (BRep, VertexDuplicationRepor
 
 /// Compute edge fans at a vertex (groups of edges forming separate manifold regions).
 fn compute_edge_fans(
-    vertex_idx: usize,
+    _vertex_idx: usize,
     incident_edges: &[usize],
     graph: &BRepGraph,
-    brep: &BRep,
+    _brep: &BRep,
 ) -> Vec<Vec<usize>> {
     if incident_edges.len() <= 2 {
         return vec![incident_edges.to_vec()];
@@ -1340,7 +1340,7 @@ fn remove_vertices(brep: &BRep, vertex_indices: &[usize]) -> BRep {
     }
 
     // Filter vertices
-    result.vertices.retain(|v| {
+    result.vertices.retain(|_v| {
         // Keep vertex if it's not in the removal set
         // This is a placeholder - actual logic uses index
         true
@@ -1350,7 +1350,7 @@ fn remove_vertices(brep: &BRep, vertex_indices: &[usize]) -> BRep {
     let mut new_vertices = Vec::new();
     for (old_idx, v) in brep.vertices.iter().enumerate() {
         if !vertex_set.contains(&old_idx) {
-            new_vertices.push(v.clone());
+            new_vertices.push(*v);
         }
     }
     result.vertices = new_vertices;
@@ -1378,7 +1378,7 @@ fn stitch_boundary_edges(brep: &BRep, tolerance: f64) -> (BRep, StitchReport) {
         return (brep.clone(), report);
     }
 
-    let mut result = brep.clone();
+    let result = brep.clone();
 
     // Find pairs of boundary edges that can be stitched
     for i in 0..boundary.len() {

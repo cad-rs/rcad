@@ -417,7 +417,7 @@ pub fn rectangular_pattern_transform(
     let stagger_offset = match params.stagger {
         StaggerConfig::None => DVec3::ZERO,
         StaggerConfig::OddRows if j % 2 == 1 => dir1 * (params.spacing1 * 0.5),
-        StaggerConfig::EvenRows if j % 2 == 0 && j > 0 => dir1 * (params.spacing1 * 0.5),
+        StaggerConfig::EvenRows if j.is_multiple_of(2) && j > 0 => dir1 * (params.spacing1 * 0.5),
         _ => DVec3::ZERO,
     };
     let col_offset = dir1 * (i as f64 * params.spacing1);
@@ -528,7 +528,7 @@ pub fn path_pattern(
     if params.parameters.is_empty() {
         return Err(PatternError::EmptyParameters);
     }
-    if params.parameters.iter().any(|&t| t < 0.0 || t > 1.0) {
+    if params.parameters.iter().any(|&t| !(0.0..=1.0).contains(&t)) {
         return Err(PatternError::InvalidParameter);
     }
 
@@ -887,7 +887,7 @@ fn append_transformed_brep(
 
     // Transform and copy vertices
     for v in &source.vertices {
-        let p = mat.transform_point3(v.point.into());
+        let p = mat.transform_point3(v.point);
         target.vertices.push(Vertex {
             point: DVec3::new(p.x, p.y, p.z),
         });
@@ -959,7 +959,7 @@ fn append_transformed_brep(
                 outer_wire: Wire { edges: wire_edges },
                 inner_wires,
                 normal: {
-                    let rotated = mat.transform_vector3(face.normal.into());
+                    let rotated = mat.transform_vector3(face.normal);
                     DVec3::new(rotated.x, rotated.y, rotated.z).normalize_or(face.normal)
                 },
                 triangles: face.triangles.iter().map(|[i, j, k]| [i + v_offset, j + v_offset, k + v_offset]).collect(),
@@ -984,11 +984,11 @@ fn append_transformed_brep(
 
 fn transform_curve(curve: &Curve3, mat: &DMat4) -> Curve3 {
     let transform_point = |p: DVec3| {
-        let r = mat.transform_point3(p.into());
+        let r = mat.transform_point3(p);
         DVec3::new(r.x, r.y, r.z)
     };
     let transform_direction = |v: DVec3| {
-        let r = mat.transform_vector3(v.into());
+        let r = mat.transform_vector3(v);
         DVec3::new(r.x, r.y, r.z).normalize_or(v)
     };
 
@@ -1036,11 +1036,11 @@ fn transform_curve(curve: &Curve3, mat: &DMat4) -> Curve3 {
 
 fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
     let transform_point = |p: DVec3| {
-        let r = mat.transform_point3(p.into());
+        let r = mat.transform_point3(p);
         DVec3::new(r.x, r.y, r.z)
     };
     let transform_direction = |v: DVec3| {
-        let r = mat.transform_vector3(v.into());
+        let r = mat.transform_vector3(v);
         DVec3::new(r.x, r.y, r.z).normalize_or(v)
     };
 

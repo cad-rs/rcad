@@ -256,10 +256,10 @@ fn grow_selected_faces_basic() {
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
     let ctrl = CreationController::default();
-    let mut sel = SelectionState::default();
-
-    // Select just face 0.
-    sel.selected_faces = vec![0];
+    let mut sel = SelectionState {
+        selected_faces: vec![0],
+        ..Default::default()
+    };
     ctrl.grow_selected_faces(&brep, &mut sel);
 
     // After growing, should have more faces.
@@ -280,10 +280,10 @@ fn grow_selected_edges_basic() {
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
     let ctrl = CreationController::default();
-    let mut sel = SelectionState::default();
-
-    // Select just edge 0.
-    sel.selected_edges = vec![0];
+    let mut sel = SelectionState {
+        selected_edges: vec![0],
+        ..Default::default()
+    };
     ctrl.grow_selected_edges(&brep, &mut sel);
 
     assert!(

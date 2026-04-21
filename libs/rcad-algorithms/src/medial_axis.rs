@@ -813,7 +813,7 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
         let p2 = sites[tri[2]];
 
         // Compute circumcenter
-        if let Some((center, radius)) = circumcenter(p0, p1, p2) {
+        if let Some((center, _radius)) = circumcenter(p0, p1, p2) {
             let v_idx = vertices.len();
             vertices.push(VoronoiVertex2d {
                 point: center,
@@ -826,7 +826,7 @@ pub fn compute_voronoi_2d(sites: &[DVec2], opts: &MedialAxisOptions) -> VoronoiD
                 let i2 = tri[(k + 1) % 3];
                 let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
 
-                if let Some((prev_v, prev_t)) = edge_map.get(&key).copied() {
+                if let Some((prev_v, _prev_t)) = edge_map.get(&key).copied() {
                     // Connect the two Voronoi vertices
                     edges.push(VoronoiEdge2d {
                         start: Some(prev_v),
@@ -894,11 +894,10 @@ fn compute_delaunay_2d(points: &[DVec2], opts: &MedialAxisOptions) -> Vec<[usize
             let c1 = all_points[tri[1]];
             let c2 = all_points[tri[2]];
 
-            if let Some((center, radius)) = circumcenter(c0, c1, c2) {
-                if (p - center).length() < radius + opts.tolerance {
+            if let Some((center, radius)) = circumcenter(c0, c1, c2)
+                && (p - center).length() < radius + opts.tolerance {
                     bad_triangles.push(t_idx);
                 }
-            }
         }
 
         // Find the boundary polygon of the cavity
@@ -981,7 +980,7 @@ fn circumcenter(p0: DVec2, p1: DVec2, p2: DVec2) -> Option<(DVec2, f64)> {
 fn extract_medial_axis_from_voronoi(
     voronoi: &VoronoiDiagram2d,
     polygon: &[DVec2],
-    opts: &MedialAxisOptions,
+    _opts: &MedialAxisOptions,
 ) -> MedialAxis2d {
     let mut result = MedialAxis2d::default();
 
@@ -1297,11 +1296,10 @@ fn compute_shell_medial_surface(
     // Collect all face surfaces
     let mut face_idx = 0;
     for face in &shell.faces {
-        if let Some(&Some(surf_idx)) = brep.geom.face_surface.get(face_idx) {
-            if let Some(surf) = brep.geom.surfaces.get(surf_idx) {
+        if let Some(&Some(surf_idx)) = brep.geom.face_surface.get(face_idx)
+            && let Some(surf) = brep.geom.surfaces.get(surf_idx) {
                 sample_surface_medial_points(surf, face, face_idx, brep, opts, result);
             }
-        }
         face_idx += 1;
     }
 }
@@ -1391,8 +1389,8 @@ fn distance_to_boundary_3d(point: &DVec3, face: &Face, brep: &BRep) -> f64 {
 
     // Check distance to outer wire edges
     for we in &face.outer_wire.edges {
-        if let Some(&Some(curve_idx)) = brep.geom.edge_curve.get(we.idx) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+        if let Some(&Some(curve_idx)) = brep.geom.edge_curve.get(we.idx)
+            && let Some(curve) = brep.geom.curves.get(curve_idx) {
                 let [t0, t1] = curve.default_domain();
                 if t0.is_finite() && t1.is_finite() {
                     // Sample curve points
@@ -1404,14 +1402,13 @@ fn distance_to_boundary_3d(point: &DVec3, face: &Face, brep: &BRep) -> f64 {
                     }
                 }
             }
-        }
     }
 
     // Check distance to inner wire edges
     for wire in &face.inner_wires {
         for we in &wire.edges {
-            if let Some(&Some(curve_idx)) = brep.geom.edge_curve.get(we.idx) {
-                if let Some(curve) = brep.geom.curves.get(curve_idx) {
+            if let Some(&Some(curve_idx)) = brep.geom.edge_curve.get(we.idx)
+                && let Some(curve) = brep.geom.curves.get(curve_idx) {
                     let [t0, t1] = curve.default_domain();
                     if t0.is_finite() && t1.is_finite() {
                         for k in 0..20 {
@@ -1422,7 +1419,6 @@ fn distance_to_boundary_3d(point: &DVec3, face: &Face, brep: &BRep) -> f64 {
                         }
                     }
                 }
-            }
         }
     }
 
@@ -1992,8 +1988,8 @@ fn compute_point_distance_to_brep(point: &DVec3, brep: &BRep, _opts: &MedialAxis
 
     // Check distance to each face
     for (face_idx, face) in brep.geom.face_surface.iter().enumerate() {
-        if let Some(surf_idx) = face {
-            if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
+        if let Some(surf_idx) = face
+            && let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
                 let dist = distance_point_to_surface(point, surf);
                 if dist < min_dist {
                     min_dist = dist;
@@ -2009,7 +2005,6 @@ fn compute_point_distance_to_brep(point: &DVec3, brep: &BRep, _opts: &MedialAxis
                     }
                 }
             }
-        }
     }
 
     (min_dist, inside)
@@ -2078,8 +2073,8 @@ fn build_medial_faces(surface: &mut MedialSurface) {
         }
 
         // Try to find a loop starting from this edge
-        if let Some(loop_vertices) = find_edge_loop(start_edge_idx, &adj, &surface.edges) {
-            if loop_vertices.len() >= 3 {
+        if let Some(loop_vertices) = find_edge_loop(start_edge_idx, &adj, &surface.edges)
+            && loop_vertices.len() >= 3 {
                 let radii: Vec<f64> = loop_vertices
                     .iter()
                     .filter_map(|&v| surface.vertices.get(v).map(|v| v.radius))
@@ -2108,7 +2103,6 @@ fn build_medial_faces(surface: &mut MedialSurface) {
                     max_radius,
                 });
             }
-        }
     }
 }
 
@@ -2158,14 +2152,12 @@ fn compute_opposing_face_pairs(brep: &BRep, _opts: &MedialAxisOptions) -> Vec<(u
         .iter()
         .enumerate()
         .filter_map(|(idx, fs)| {
-            if let Some(surf_idx) = fs {
-                if let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) {
-                    if let Some(face) = shell.faces.get(idx) {
+            if let Some(surf_idx) = fs
+                && let Some(shell) = brep.solids.first().and_then(|s| s.shells.first())
+                    && let Some(face) = shell.faces.get(idx) {
                         let surf = brep.geom.surfaces.get(*surf_idx);
                         return Some((idx, face, surf));
                     }
-                }
-            }
             None
         })
         .collect();
@@ -2198,13 +2190,13 @@ fn compute_opposing_face_pairs(brep: &BRep, _opts: &MedialAxisOptions) -> Vec<(u
 }
 
 fn find_associated_face_pairs(
-    point: &DVec3,
+    _point: &DVec3,
     face_pairs: &[(usize, usize, f64)],
-    tolerance: f64,
+    _tolerance: f64,
 ) -> Vec<(usize, usize)> {
     face_pairs
         .iter()
-        .filter_map(|&(f1, f2, distance)| {
+        .filter_map(|&(f1, f2, _distance)| {
             // Check if the point is approximately midway between the faces
             // This is a simplified check
             Some((f1, f2))
@@ -2298,12 +2290,10 @@ fn create_mid_surface_patch(
     let half_length = length / 2.0;
     let half_width = (start_v.thickness + end_v.thickness) / 4.0;
 
-    let corners = vec![
-        center - u_dir * half_length - v_dir * half_width,
+    let corners = [center - u_dir * half_length - v_dir * half_width,
         center + u_dir * half_length - v_dir * half_width,
         center + u_dir * half_length + v_dir * half_width,
-        center - u_dir * half_length + v_dir * half_width,
-    ];
+        center - u_dir * half_length + v_dir * half_width];
 
     // Add vertices
     let v_indices: Vec<usize> = corners
@@ -2361,7 +2351,7 @@ fn create_mid_surface_patch(
     face_thickness.push((start_v.thickness + end_v.thickness) / 2.0);
 
     // Map to original faces
-    if let Some(&(f1, f2)) = start_v.face_pairs.first() {
+    if let Some(&(f1, _f2)) = start_v.face_pairs.first() {
         face_mapping.push((face_idx, f1));
     }
 }
@@ -2371,7 +2361,7 @@ fn create_mid_surface_point(
     mid_brep: &mut BRep,
     face_thickness: &mut Vec<f64>,
     face_mapping: &mut Vec<(usize, usize)>,
-    opts: &MidSurfaceOptions,
+    _opts: &MidSurfaceOptions,
 ) {
     // Create a small triangular patch at this point
     let normal = vertex.normal;
@@ -2385,11 +2375,9 @@ fn create_mid_surface_point(
 
     let r = vertex.thickness / 4.0;
 
-    let corners = vec![
-        vertex.point + u_dir * r,
+    let corners = [vertex.point + u_dir * r,
         vertex.point - u_dir * r / 2.0 + v_dir * r * 0.866,
-        vertex.point - u_dir * r / 2.0 - v_dir * r * 0.866,
-    ];
+        vertex.point - u_dir * r / 2.0 - v_dir * r * 0.866];
 
     // Add vertices
     let v_indices: Vec<usize> = corners
@@ -2502,7 +2490,7 @@ fn cluster_thin_regions(regions: &mut [ThinRegion], max_distance: f64) {
     }
 
     let mut cluster_ids: Vec<usize> = (0..n).collect();
-    let mut next_cluster_id = n;
+    let _next_cluster_id = n;
 
     // Merge nearby regions
     for i in 0..n {
@@ -2728,7 +2716,7 @@ fn estimate_stiffness_improvement(ribs: &[RibPlacement], medial: &MedialSurface)
     }
 
     // Simplified estimate: total rib volume / original volume
-    let total_rib_volume: f64 = ribs
+    let _total_rib_volume: f64 = ribs
         .iter()
         .map(|r| {
             let length = (r.end - r.start).length();
@@ -2804,13 +2792,12 @@ fn ray_cast_to_boundary(point: &DVec3, direction: &DVec3, brep: &BRep, opts: &Me
     let mut min_distance = f64::MAX;
 
     // Check intersection with each face
-    for (_face_idx, face_surf) in brep.geom.face_surface.iter().enumerate() {
-        if let Some(surf_idx) = face_surf {
-            if let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
+    for face_surf in brep.geom.face_surface.iter() {
+        if let Some(surf_idx) = face_surf
+            && let Some(surf) = brep.geom.surfaces.get(*surf_idx) {
                 let distance = ray_surface_intersection(point, direction, surf, opts);
                 min_distance = min_distance.min(distance);
             }
-        }
     }
 
     min_distance
@@ -2997,12 +2984,10 @@ pub fn compute_mid_surface(brep: &BRep, opts: &MedialAxisOptions) -> MidSurfaceR
 
         // Create a small quad face
         let r = vertex.radius * 0.5;
-        let corners = vec![
-            vertex.point + DVec3::new(-r, -r, 0.0),
+        let corners = [vertex.point + DVec3::new(-r, -r, 0.0),
             vertex.point + DVec3::new(r, -r, 0.0),
             vertex.point + DVec3::new(r, r, 0.0),
-            vertex.point + DVec3::new(-r, r, 0.0),
-        ];
+            vertex.point + DVec3::new(-r, r, 0.0)];
 
         // Add vertices
         let v_indices: Vec<usize> = corners

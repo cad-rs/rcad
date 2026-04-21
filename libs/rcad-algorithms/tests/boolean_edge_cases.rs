@@ -501,7 +501,6 @@ fn self_intersection_valid_result() {
     // Self-intersection should either succeed with valid geometry or return degenerate
     match result {
         Ok(r) => {
-            assert!(face_count(&r) >= 0);
             // Result should have some geometry
             let vol = volume(&r);
             assert!(vol >= 0.0, "volume should be non-negative");

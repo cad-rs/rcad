@@ -7,7 +7,7 @@
 //!   4. Non-manifold topology analysis
 //!   5. Repair hints generation
 //!   6. Graph traversal (DFS/BFS)
-//!   7. Mutation tracking and history
+//!   7. Dirty flags and `BRepGraph::checkpoint_data` / `restore_from_data`
 //!
 //! Run:
 //!   cargo run -p rcad-examples --example non_manifold_topology
@@ -16,7 +16,7 @@ use glam::DVec3;
 use rcad_kernel::{
     BRep, BRepGraph, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge,
     PrimitiveSolid,
-    brep_graph::{RepairHint, BRepGraphHistory},
+    brep_graph::RepairHint,
 };
 
 fn separator(title: &str) {
@@ -141,11 +141,10 @@ fn demo_manifold_detection() {
             depth: 1.0,
         });
         // Remove one face
-        if let Some(s) = brep.solids.first_mut() {
-            if let Some(sh) = s.shells.first_mut() {
+        if let Some(s) = brep.solids.first_mut()
+            && let Some(sh) = s.shells.first_mut() {
                 sh.faces.pop();
             }
-        }
 
         let graph = BRepGraph::from_brep(&brep);
 
@@ -222,6 +221,8 @@ fn build_tripod() -> BRep {
             }],
         }],
         geom: Default::default(),
+        compound: None,
+        compsolid: None,
     }
 }
 
@@ -352,11 +353,11 @@ fn demo_traversal() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. Mutation tracking and history
+// 7. Dirty flags and graph checkpoint (public checkpoint API)
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn demo_mutation_tracking() {
-    separator("7. Mutation Tracking and History");
+    separator("7. Dirty Flags and Checkpoint Rollback");
 
     let brep = BRep::from_primitive(PrimitiveSolid::Box {
         width: 1.0,
@@ -365,47 +366,28 @@ fn demo_mutation_tracking() {
     });
     let mut graph = BRepGraph::from_brep(&brep);
 
-    // RAII mutation guard
-    {
-        let mut guard = graph.begin_mutation();
-        guard.graph().mark_face_modified(0);
-        guard.graph().mark_edge_modified(1);
-        guard.graph().mark_vertex_modified(2);
+    graph.mark_face_modified(0);
+    graph.mark_edge_modified(1);
+    graph.mark_vertex_modified(2);
 
-        println!("  During mutation:");
-        println!("    Modified faces: {:?}", guard.graph().modified_faces());
-        println!("    Modified edges: {:?}", guard.graph().modified_edges());
-        println!("    Modified vertices: {:?}", guard.graph().modified_vertices());
-
-        // Commit with history
-        let mut history = BRepGraphHistory::new();
-        guard.commit_with_history(&mut history, Some("test_mutation".to_string()))
-            .expect("commit should succeed");
-
-        println!("  History events: {}", history.len());
-        let event = history.last().unwrap();
-        println!("    Label: {:?}", event.label);
-        println!("    Topology changed: {}", event.topology_changed);
-    }
-
-    // Check that changes persisted
-    println!("\n  After commit:");
+    println!("  After marking:");
     println!("    Modified faces: {:?}", graph.modified_faces());
     println!("    Modified edges: {:?}", graph.modified_edges());
+    println!("    Modified vertices: {:?}", graph.modified_vertices());
 
-    // Checkpoint and rollback
-    {
-        let checkpoint = graph.checkpoint();
-        graph.mark_face_modified(5);
-        graph.mark_edge_modified(7);
-        println!("\n  Before rollback:");
-        println!("    Modified faces: {:?}", graph.modified_faces());
+    let checkpoint = graph.checkpoint_data();
+    graph.mark_face_modified(5);
+    graph.mark_edge_modified(7);
+    println!("\n  Before rollback:");
+    println!("    Modified faces: {:?}", graph.modified_faces());
 
-        graph.restore_from_checkpoint(&checkpoint);
-        println!("  After rollback:");
-        println!("    Modified faces: {:?}", graph.modified_faces());
-        assert!(!graph.modified_faces().contains(&5), "face 5 should not be modified after rollback");
-    }
+    graph.restore_from_data(&checkpoint);
+    println!("  After rollback:");
+    println!("    Modified faces: {:?}", graph.modified_faces());
+    assert!(
+        !graph.modified_faces().contains(&5),
+        "face 5 should not be modified after rollback"
+    );
 
     println!("  PASS");
 }

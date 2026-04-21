@@ -196,7 +196,7 @@ impl ClassifyContext {
             .collect()
     }
 
-    fn build_solid_bvh(&self, face_indices: &[usize], face_aabbs: &[Aabb]) -> Bvh {
+    fn build_solid_bvh(&self, _face_indices: &[usize], _face_aabbs: &[Aabb]) -> Bvh {
         // Create a minimal BRep-like structure for BVH building
         // For now, we'll skip BVH and use linear search for simplicity
         // BVH optimization can be added later
@@ -256,7 +256,7 @@ impl ClassifyContext {
         // Split work across threads
         let n_threads = thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
         let n_threads = n_threads.min(points.len()); // Don't create more threads than points
-        let chunk_size = (points.len() + n_threads - 1) / n_threads;
+        let chunk_size = points.len().div_ceil(n_threads);
 
         let ds = Arc::clone(&self.ds);
         let tolerance = self.tolerance;

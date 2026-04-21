@@ -17,7 +17,6 @@ use rcad_kernel::topology::*;
 
 use crate::bopds::ds::{DS, ShapeOrigin};
 use crate::builder::SubFace;
-use crate::bvh::{Aabb, Bvh};
 use crate::pave_filler::PaveFiller;
 use crate::triangulate::triangulate_polygon;
 
@@ -879,8 +878,8 @@ fn find_pcurve_for_face(
 ) -> Option<rcad_kernel::geom::Curve2d> {
     use crate::bopds::ds::Interference;
     for interference in &ds.interferences {
-        if let Interference::FaceFace { f1, f2, curves, .. } = interference {
-            if curves.contains(&curve_idx) {
+        if let Interference::FaceFace { f1, f2, curves, .. } = interference
+            && curves.contains(&curve_idx) {
                 let ic = &ds.intersection_curves[curve_idx];
                 if *f1 == face_idx {
                     return ic.pcurve_on_a.clone();
@@ -888,7 +887,6 @@ fn find_pcurve_for_face(
                     return ic.pcurve_on_b.clone();
                 }
             }
-        }
     }
     None
 }
@@ -939,11 +937,10 @@ fn curved_subface_boundary_3d(
             }
             for uv in trim_uv {
                 let p3 = surface.point_at(uv.x, uv.y);
-                if point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1) {
-                    if deduped.iter().all(|q| (p3 - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
+                if (point_in_polygon_2d(uv_poly, *uv) || point_near_polygon_2d(uv_poly, *uv, 0.1))
+                    && deduped.iter().all(|q| (p3 - *q).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS) {
                         deduped.push(p3);
                     }
-                }
             }
         }
     }

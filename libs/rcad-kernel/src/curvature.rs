@@ -384,7 +384,7 @@ mod tests {
         let (k1, k2) = principal_curvatures(&s, 0.0, std::f64::consts::PI);
         // One curvature should be positive (tube), one negative (inner side)
         let k_tube = 1.0 / r;
-        let k_major = -1.0 / (big_r - r); // negative because inner
+        let _k_major = -1.0 / (big_r - r); // negative because inner
         let k_max = k1.max(k2);
         let k_min = k1.min(k2);
         assert!(approx_eq(k_max, k_tube, 0.1), "inner equator k_max");

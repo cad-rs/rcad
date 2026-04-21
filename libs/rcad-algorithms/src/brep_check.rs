@@ -1515,7 +1515,7 @@ impl RicherValidityReport {
     /// A short human-readable summary of this report.
     pub fn summary(&self) -> String {
         let issues = self.check_result.issues.len();
-        let euler_issues = self.euler.iter().filter(|e| e.genus.map_or(true, |g| g < 0)).count();
+        let euler_issues = self.euler.iter().filter(|e| e.genus.is_none_or(|g| g < 0)).count();
         let orient_issues = self.orientation.inconsistent_face_count;
         if self.is_fully_valid {
             format!(
@@ -1685,8 +1685,8 @@ pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAna
                 for we in &face_ref.outer_wire.edges {
                     if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
                         for pc in pcurves {
-                            if pc.surface_idx == surface_idx {
-                                if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
+                            if pc.surface_idx == surface_idx
+                                && let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
                                     has_pcurve_data = true;
                                     // Sample the curve
                                     for i in 0..=16 {
@@ -1698,7 +1698,6 @@ pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAna
                                         v_max = v_max.max(uv.y);
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -1959,7 +1958,7 @@ fn analyze_single_wire_quality(
     }
 
     // A vertex should appear at most twice: once as end of one edge, once as start of next
-    for (_, occurrences) in &vertex_occurrences {
+    for occurrences in vertex_occurrences.values() {
         if occurrences.len() > 2 {
             metrics.has_self_intersection = true;
             break;
@@ -2060,8 +2059,8 @@ pub fn check_surface_continuity(brep: &BRep, tolerance: f64) -> GeometryValidati
         let (si1, shi1, fi1) = faces[0];
         let (si2, shi2, fi2) = faces[1];
 
-        let face1 = &brep.solids[si1].shells[shi1].faces[fi1];
-        let face2 = &brep.solids[si2].shells[shi2].faces[fi2];
+        let _face1 = &brep.solids[si1].shells[shi1].faces[fi1];
+        let _face2 = &brep.solids[si2].shells[shi2].faces[fi2];
 
         // Get surface indices
         let flat_face_idx1 = get_flat_face_index(brep, si1, shi1, fi1);
@@ -2092,7 +2091,7 @@ pub fn check_surface_continuity(brep: &BRep, tolerance: f64) -> GeometryValidati
 
             // Sample along the edge
             for alpha in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                let sample_pt = v1_pt.lerp(v2_pt, alpha);
+                let _sample_pt = v1_pt.lerp(v2_pt, alpha);
 
                 // Get UV coordinates from PCurves
                 let uv1 = get_edge_uv_at(brep, edge_idx, alpha, surf_idx1);
@@ -2736,17 +2735,15 @@ pub fn check_vertex_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceV
             };
 
             // Check if edge has 3D curve
-            if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) {
-                if let Some(curve) = brep.geom.curves.get(curve_idx) {
-                    if let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
+            if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v)
+                && let Some(curve) = brep.geom.curves.get(curve_idx)
+                    && let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
                         // Determine which endpoint corresponds to this vertex
                         let t = if edge.start == vertex_idx { range[0] } else { range[1] };
                         let curve_pt = curve.point_at(t);
                         let deviation = (curve_pt - vertex.point).length();
                         max_deviation = max_deviation.max(deviation);
                     }
-                }
-            }
         }
 
         if max_deviation > stored_tol {
@@ -2786,9 +2783,9 @@ pub fn check_edge_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceVal
         };
 
         // Check against 3D curve if available
-        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
-                if let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
+        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v)
+            && let Some(curve) = brep.geom.curves.get(curve_idx)
+                && let Some(range) = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
                     let curve_start = curve.point_at(range[0]);
                     let curve_end = curve.point_at(range[1]);
 
@@ -2817,8 +2814,6 @@ pub fn check_edge_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceVal
                         });
                     }
                 }
-            }
-        }
     }
 
     report

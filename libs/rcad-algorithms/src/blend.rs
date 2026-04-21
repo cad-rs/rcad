@@ -42,8 +42,8 @@ use glam::DVec3;
 use rcad_kernel::{
     BRep,
     SurfaceEval, CurveEval,
-    geom::{Curve3, Surface3, Line3, Circle3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
-    topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
+    geom::{Curve3, Surface3, Line3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
+    topology::{Edge, Face, Shell, Solid, Vertex, Wire},
 };
 use crate::tolerance::TOLERANCE_ABS;
 
@@ -777,7 +777,7 @@ fn compute_blend_boundary_curve(
     let mut boundary_points = Vec::with_capacity(n_samples);
 
     // Get reference direction for computing boundary position
-    let p0 = spine.point_at(domain[0]);
+    let _p0 = spine.point_at(domain[0]);
     let ref_dir = if let Some(t) = compute_spine_tangent(spine, domain[0]) {
         t.any_orthonormal_pair().0
     } else {
@@ -822,7 +822,7 @@ fn compute_blend_boundary_curve(
 pub fn compute_spine_curve(
     brep: &BRep,
     edge_idx: usize,
-    radius: f64,
+    _radius: f64,
     params: &BlendParams,
 ) -> Result<Curve3, BlendError> {
     let edge = brep.edges.get(edge_idx).ok_or_else(|| {
@@ -999,7 +999,7 @@ pub fn blend_edge_to_face(
     });
 
     // Create face surface if not present (use face normal)
-    let face_surface = face_surface.unwrap_or_else(|| {
+    let face_surface = face_surface.unwrap_or({
         Surface3::Plane(Plane {
             origin: v0.point,
             normal: face.normal,
@@ -1100,7 +1100,7 @@ pub fn blend_vertex(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute surface normal at a point near the surface.
-fn compute_surface_normal_at_point(surf: &Surface3, point: &DVec3, tol: f64) -> DVec3 {
+fn compute_surface_normal_at_point(surf: &Surface3, point: &DVec3, _tol: f64) -> DVec3 {
     // For now, use a simple approach - evaluate at default UV
     // A proper implementation would project the point onto the surface
     let domain = surf.default_domain();
@@ -1256,7 +1256,7 @@ fn project_offset_along_normal(
     tangent: &DVec3,
     distance: f64,
     ref_dir: &DVec3,
-    tol: f64,
+    _tol: f64,
 ) -> DVec3 {
     // Get surface normal at nearest point
     let domain = surf.default_domain();
@@ -1363,7 +1363,7 @@ fn create_bspline_pipe_surface(
     spine_points: &[DVec3],
     tangents: &[DVec3],
     radius: f64,
-    tol: f64,
+    _tol: f64,
 ) -> Result<Surface3, BlendError> {
     let n_u = spine_points.len();
     let n_v = 20; // Number of points around circumference

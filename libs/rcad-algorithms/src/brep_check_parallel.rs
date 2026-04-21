@@ -576,8 +576,8 @@ fn check_wire_self_intersection_local(
         *vertex_count.entry(ev).or_insert(0) += 1;
     }
     for (&vidx, &count) in &vertex_count {
-        if count > 2 {
-            if vidx < vertices.len() {
+        if count > 2
+            && vidx < vertices.len() {
                 issues.push(CheckIssue::SelfIntersectingWire {
                     solid,
                     shell,
@@ -586,7 +586,6 @@ fn check_wire_self_intersection_local(
                     vertex: vidx,
                 });
             }
-        }
     }
 }
 
@@ -905,7 +904,7 @@ pub fn check_parallel_with_batch_size(brep: &BRep, batch_size: usize) -> CheckRe
 ///
 /// Vector of `CheckResult`s, one per input BRep.
 pub fn check_many_parallel(breps: &[BRep]) -> Vec<CheckResult> {
-    breps.par_iter().map(|brep| check_parallel(brep)).collect()
+    breps.par_iter().map(check_parallel).collect()
 }
 
 /// Check multiple BReps in parallel with options.
@@ -1413,7 +1412,9 @@ pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckRes
         .collect();
 
     // Configure thread pool if specified
-    let results = if num_threads > 0 {
+    
+
+    if num_threads > 0 {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -1427,9 +1428,7 @@ pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckRes
         face_items.par_iter()
             .map(|&(si, shi, fi)| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
             .collect()
-    };
-
-    results
+    }
 }
 
 /// Check a single face and return a detailed result.
@@ -1644,7 +1643,9 @@ pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckRes
     // Pre-compute edge face counts
     let edge_face_counts = compute_edge_face_counts_parallel(brep, brep.edges.len());
 
-    let results = if num_threads > 0 {
+    
+
+    if num_threads > 0 {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -1660,9 +1661,7 @@ pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckRes
             .enumerate()
             .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
             .collect()
-    };
-
-    results
+    }
 }
 
 /// Check a single edge and return a detailed result.
@@ -1707,10 +1706,10 @@ fn check_single_edge(
 
     // Check SameParameter condition
     let mut edge_tolerance = tolerance;
-    if let Some(curve_idx) = brep.geom.edge_curve.get(eidx).and_then(|c| *c) {
-        if let Some(curve) = brep.geom.curves.get(curve_idx) {
-            if let Some(range) = brep.geom.edge_curve_range.get(eidx).and_then(|r| *r) {
-                if start_valid && end_valid {
+    if let Some(curve_idx) = brep.geom.edge_curve.get(eidx).and_then(|c| *c)
+        && let Some(curve) = brep.geom.curves.get(curve_idx)
+            && let Some(range) = brep.geom.edge_curve_range.get(eidx).and_then(|r| *r)
+                && start_valid && end_valid {
                     let eval_start = curve.point_at(range[0]);
                     let eval_end = curve.point_at(range[1]);
                     let start_gap = (eval_start - start_pt).length();
@@ -1722,9 +1721,6 @@ fn check_single_edge(
                         issues.push(EdgeCheckIssue::SameParameterViolation { start_gap, end_gap });
                     }
                 }
-            }
-        }
-    }
 
     EdgeCheckResult {
         edge_idx: eidx,
@@ -1909,7 +1905,7 @@ fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, bre
     }
 
     // For a properly oriented shell, each edge should have one forward and one backward reference
-    for (_, orientations) in &edge_orientations {
+    for orientations in edge_orientations.values() {
         if orientations.len() == 2 {
             // Adjacent faces should have opposite orientations for shared edges
             if orientations[0] == orientations[1] {
@@ -2048,7 +2044,7 @@ fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
 
 /// Compute the volume of a shell using signed volume method.
 fn compute_shell_volume(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> f64 {
-    use std::collections::HashMap;
+    
 
     let n_edges = brep.edges.len();
     let mut volume = 0.0_f64;
@@ -2905,7 +2901,6 @@ mod tests {
         assert!(!results.is_empty(), "Sphere should have faces");
         // Verify basic structure
         for result in &results {
-            assert!(result.outer_wire_edge_count >= 0);
         }
     }
 

@@ -20,12 +20,12 @@ use rcad_algorithms::{
     brep_algo_api::{
         BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse, BRepHistory, BooleanApiOptions,
     },
-    sweep::{linear_sweep, rotational_sweep, pipe_sweep, SweepOptions, SweepMode,
+    sweep::{linear_sweep, rotational_sweep, pipe_sweep, SweepMode,
             linear_law_sweep, LinearLaw, handle_pipe_corners},
-    offset::{offset_surface, OffsetResult, OffsetOptions},
+    offset::offset_surface,
     healing::{heal, heal_comprehensive, HealingOptions,
-              fix_solid, fix_wire, SolidFixReport, WireFixReport},
-    brep_check::{check, CheckResult},
+              fix_solid, fix_wire},
+    brep_check::check,
     history::{EdgeOrigin as HistEdgeOrigin, VertexOrigin as HistVertexOrigin},
 };
 use rcad_kernel::BRep;
@@ -217,7 +217,6 @@ fn boolean_identical_boxes_intersection() {
     let result = boolean_op(BooleanOpType::Intersection, &b1, &b2);
     match result {
         Ok(r) => {
-            assert!(face_count(&r) >= 0);
             assert!(all_triangles_valid(&r));
         }
         Err(BooleanError::DegenerateResult) => {}
@@ -425,12 +424,9 @@ fn boolean_thin_slot_subtraction() {
         SimplifyOptions::default(),
     );
 
-    match result {
-        Ok((r, _)) => {
-            assert!(face_count(&r) >= 6);
-            assert!(all_triangles_valid(&r));
-        }
-        Err(_) => {}
+    if let Ok((r, _)) = result {
+        assert!(face_count(&r) >= 6);
+        assert!(all_triangles_valid(&r));
     }
 }
 
@@ -775,7 +771,7 @@ fn healing_degenerate_edge() {
         brep.edges[0].end = v0; // Zero-length edge
     }
 
-    let (healed, report) = heal(&brep);
+    let (_healed, report) = heal(&brep);
 
     // Should detect or fix the degenerate edge
     assert!(report.initial_issue_count() >= 1 || report.is_clean());
@@ -794,7 +790,7 @@ fn healing_reversed_face_normal() {
         face.normal = -face.normal;
     }
 
-    let (healed, report) = heal(&brep);
+    let (_healed, report) = heal(&brep);
 
     // Should detect and fix the reversed normal
     assert!(report.is_improved() || report.is_clean());
@@ -805,10 +801,10 @@ fn healing_reversed_face_normal() {
 fn repair_fix_solid_closure() {
     let brep = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
 
-    let (fixed, report) = fix_solid(&brep, 1e-6);
+    let (_fixed, report) = fix_solid(&brep, 1e-6);
 
     // A valid box should pass solid checks
-    assert!(report.unclosed_shells.is_empty() || report.total_fixes >= 0);
+    assert!(report.unclosed_shells.is_empty());
 }
 
 /// Test fix_wire for wire issues.
@@ -816,7 +812,7 @@ fn repair_fix_solid_closure() {
 fn repair_fix_wire_issues() {
     let brep = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
 
-    let (fixed, report) = fix_wire(&brep, 1e-6);
+    let (_fixed, report) = fix_wire(&brep, 1e-6);
 
     // A valid box should have clean wires
     assert!(report.is_clean() || report.wires_with_issues == 0);
@@ -828,7 +824,7 @@ fn repair_comprehensive_healing() {
     let brep = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
 
     let options = HealingOptions::default();
-    let (healed, report) = heal_comprehensive(&brep, &options);
+    let (_healed, report) = heal_comprehensive(&brep, &options);
 
     // Should produce valid result
     assert!(report.is_clean || report.final_check.issues.is_empty());
@@ -844,10 +840,7 @@ fn healing_small_wire_gap() {
         brep.vertices[0].point.x += 1e-4;
     }
 
-    let (healed, report) = heal(&brep);
-
-    // Should detect the gap issue
-    assert!(report.initial_issue_count() >= 0);
+    let (_healed, _report) = heal(&brep);
 }
 
 /// Test healing of self-intersecting shell detection.
@@ -873,7 +866,7 @@ fn repair_merge_coplanar_faces() {
         .expect("union should succeed");
 
     // Run healing on the result
-    let (healed, report) = heal(&union);
+    let (healed, _report) = heal(&union);
 
     // Should produce valid geometry
     assert!(all_triangles_valid(&healed));
@@ -890,10 +883,7 @@ fn repair_detect_non_manifold_edge() {
     let result = boolean_op(BooleanOpType::Union, &b1, &b2);
 
     if let Ok(union) = result {
-        let (fixed, report) = fix_solid(&union, 1e-6);
-
-        // Should detect or report on manifoldness
-        assert!(report.non_manifold_edges >= 0);
+        let (_fixed, _report) = fix_solid(&union, 1e-6);
     }
 }
 
@@ -951,12 +941,9 @@ fn boolean_internal_cavity() {
         SimplifyOptions::default(),
     );
 
-    match result {
-        Ok((r, _)) => {
-            assert!(face_count(&r) >= 10, "hollow box should have inner and outer faces");
-            assert!(all_triangles_valid(&r));
-        }
-        Err(_) => {}
+    if let Ok((r, _)) = result {
+        assert!(face_count(&r) >= 10, "hollow box should have inner and outer faces");
+        assert!(all_triangles_valid(&r));
     }
 }
 
@@ -1049,7 +1036,7 @@ fn brep_algoapi_cut_history_deleted_semantics() {
         .flat_map(|sh| &sh.faces)
         .count();
 
-    assert_history_deleted_semantics(&history, outer_face_count, inner_face_count, 24, 24);
+    assert_history_deleted_semantics(history, outer_face_count, inner_face_count, 24, 24);
 }
 
 /// Test that history modified edge/vertex queries are self-consistent with
@@ -1066,7 +1053,7 @@ fn brep_algoapi_cut_history_modified_edge_vertex_semantics() {
 
     let history = cut.history();
     assert!(history.is_generated(), "history should be generated");
-    assert_history_modified_semantics(&history);
+    assert_history_modified_semantics(history);
 }
 
 /// Fuse-path counterpart of cut history modified semantics.
@@ -1082,7 +1069,7 @@ fn brep_algoapi_fuse_history_modified_edge_vertex_semantics() {
 
     let history = fuse.history();
     assert!(history.is_generated(), "history should be generated");
-    assert_history_modified_semantics(&history);
+    assert_history_modified_semantics(history);
 }
 
 /// Fuse-path counterpart of cut history deleted semantics.
@@ -1115,7 +1102,7 @@ fn brep_algoapi_fuse_history_deleted_semantics() {
     let max_edge_scan = a.edges.len().max(b.edges.len());
     let max_vertex_scan = a.vertices.len().max(b.vertices.len());
     assert_history_deleted_semantics(
-        &history,
+        history,
         face_count_a,
         face_count_b,
         max_edge_scan,
@@ -1136,7 +1123,7 @@ fn brep_algoapi_common_history_modified_edge_vertex_semantics() {
 
     let history = common.history();
     assert!(history.is_generated(), "history should be generated");
-    assert_history_modified_semantics(&history);
+    assert_history_modified_semantics(history);
 }
 
 /// Common-path counterpart of cut/fuse history deleted semantics.
@@ -1169,7 +1156,7 @@ fn brep_algoapi_common_history_deleted_semantics() {
     let max_edge_scan = a.edges.len().max(b.edges.len());
     let max_vertex_scan = a.vertices.len().max(b.vertices.len());
     assert_history_deleted_semantics(
-        &history,
+        history,
         face_count_a,
         face_count_b,
         max_edge_scan,

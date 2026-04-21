@@ -30,7 +30,7 @@
 //! ```
 
 use rcad_kernel::BRep;
-use rcad_kernel::topology::{Face, WireEdge};
+use rcad_kernel::topology::Face;
 pub use crate::brep_tools::ShapeType;
 
 // =============================================================================

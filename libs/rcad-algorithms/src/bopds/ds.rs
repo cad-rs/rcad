@@ -693,8 +693,8 @@ impl DS {
                     return false;
                 }
                 // Check parameter ranges overlap
-                let p1_start = l1.origin + d1 * edge1.t_range[0];
-                let p1_end = l1.origin + d1 * edge1.t_range[1];
+                let _p1_start = l1.origin + d1 * edge1.t_range[0];
+                let _p1_end = l1.origin + d1 * edge1.t_range[1];
                 let p2_start = l2.origin + d2 * edge2.t_range[0];
                 let p2_end = l2.origin + d2 * edge2.t_range[1];
 

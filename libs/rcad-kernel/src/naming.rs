@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn propagate_face_remap_drops_removed_faces() {
-        let brep = unit_box();
+        let _brep = unit_box();
         let mut hooks = PersistentNamingHooks::new();
         hooks.bind("top", TopoEntityRef::Face(5));
         hooks.bind("bottom", TopoEntityRef::Face(0));
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn propagate_remaps_edge_and_vertex_indices() {
-        let brep = unit_box();
+        let _brep = unit_box();
         let mut hooks = PersistentNamingHooks::new();
         hooks.bind("edge_a", TopoEntityRef::Edge(3));
         hooks.bind("vert_b", TopoEntityRef::Vertex(5));

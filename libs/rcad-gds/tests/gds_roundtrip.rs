@@ -6,8 +6,10 @@ use glam::DVec2;
 /// Test basic roundtrip: create library -> write -> read -> compare
 #[test]
 fn test_basic_roundtrip() {
-    let mut library = GdsLibrary::default();
-    library.name = "ROUNDTRIP_TEST".to_string();
+    let mut library = GdsLibrary {
+        name: "ROUNDTRIP_TEST".to_string(),
+        ..Default::default()
+    };
 
     let structure = GdsStructure {
         name: "TOP".to_string(),
@@ -57,8 +59,10 @@ fn test_basic_roundtrip() {
 /// Test conversion to BRep
 #[test]
 fn test_to_brep() {
-    let mut library = GdsLibrary::default();
-    library.name = "BREP_TEST".to_string();
+    let mut library = GdsLibrary {
+        name: "BREP_TEST".to_string(),
+        ..Default::default()
+    };
 
     let structure = GdsStructure {
         name: "TOP".to_string(),
@@ -90,8 +94,10 @@ fn test_to_brep() {
 /// Test hierarchical structure
 #[test]
 fn test_hierarchical() {
-    let mut library = GdsLibrary::default();
-    library.name = "HIER_TEST".to_string();
+    let mut library = GdsLibrary {
+        name: "HIER_TEST".to_string(),
+        ..Default::default()
+    };
 
     // Create leaf cell
     let leaf = GdsStructure {

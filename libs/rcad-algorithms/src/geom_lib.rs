@@ -1136,7 +1136,7 @@ fn check_bspline_curve_continuity(curve: &BSplineCurve3, tol: f64) -> usize {
 
         // Only consider internal knots (not the endpoints)
         if i > degree && i + multiplicity < knots.len() - degree {
-            let continuity = if multiplicity > degree { 0 } else { degree - multiplicity };
+            let continuity = degree.saturating_sub(multiplicity);
             min_continuity = min_continuity.min(continuity);
         }
 
@@ -1219,7 +1219,7 @@ fn check_knot_continuity(knots: &[f64], degree: usize, tol: f64) -> usize {
 
         // Only consider internal knots
         if i > degree && i + multiplicity < knots.len() - degree {
-            let continuity = if multiplicity > degree { 0 } else { degree - multiplicity };
+            let continuity = degree.saturating_sub(multiplicity);
             min_continuity = min_continuity.min(continuity);
         }
 

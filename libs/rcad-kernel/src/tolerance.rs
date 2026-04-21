@@ -303,11 +303,10 @@ pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
         }
     }
     for (ei, &ftol) in edge_from_face.iter().enumerate() {
-        if let Some(etol) = brep.geom.edge_tolerance.get_mut(ei) {
-            if ftol > *etol {
+        if let Some(etol) = brep.geom.edge_tolerance.get_mut(ei)
+            && ftol > *etol {
                 *etol = ftol;
             }
-        }
     }
 
     // Step 2: edge → vertex.
@@ -316,16 +315,14 @@ pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
         let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(CONFUSION);
         let st = brep.edges[ei].start;
         let en = brep.edges[ei].end;
-        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(st) {
-            if etol > *vtol {
+        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(st)
+            && etol > *vtol {
                 *vtol = etol;
             }
-        }
-        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(en) {
-            if etol > *vtol {
+        if let Some(vtol) = brep.geom.vertex_tolerance.get_mut(en)
+            && etol > *vtol {
                 *vtol = etol;
             }
-        }
     }
 }
 

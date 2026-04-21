@@ -729,11 +729,11 @@ impl<'a> BRepAlgoAPI_Common<'a> {
         // Apply post-processing
         let mut result = brep;
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options.clone());
+            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
             result = healed;
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options.clone());
+            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
             result = simplified;
         }
 
@@ -912,11 +912,11 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
 
         let mut result = brep;
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options.clone());
+            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
             result = healed;
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options.clone());
+            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
             result = simplified;
         }
 
@@ -1080,11 +1080,11 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
 
         let mut result = brep;
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options.clone());
+            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
             result = healed;
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options.clone());
+            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
             result = simplified;
         }
 
@@ -1259,13 +1259,12 @@ impl<'a> BRepAlgoAPI_Section<'a> {
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for (face_idx, _face) in shell.faces.iter().enumerate() {
-                    if let Some(surf_idx) = brep.geom.face_surface.get(face_idx).and_then(|o| *o) {
-                        if let Some(rcad_kernel::geom::Surface3::Plane(plane)) =
+                    if let Some(surf_idx) = brep.geom.face_surface.get(face_idx).and_then(|o| *o)
+                        && let Some(rcad_kernel::geom::Surface3::Plane(plane)) =
                             brep.geom.surfaces.get(surf_idx)
                         {
                             return Some(*plane);
                         }
-                    }
                 }
             }
         }

@@ -5,7 +5,7 @@
 /// - History propagation works correctly
 /// - Name conflicts are resolved deterministically
 use glam::DVec3;
-use rcad_algorithms::{BooleanOpType, boolean_op_with_history, FaceOrigin, EdgeOrigin, VertexOrigin};
+use rcad_algorithms::{BooleanOpType, boolean_op_with_history, FaceOrigin};
 use rcad_kernel::{BRep, PersistentNamingHooks, TopoEntityRef, PrimitiveSolid};
 use rcad_modeling::{make_box_brep, make_sphere_brep, make_cylinder_brep};
 
@@ -24,7 +24,7 @@ fn face_count(brep: &BRep) -> usize {
 /// Verify that face names persist correctly through a union operation.
 #[test]
 fn face_names_persist_through_union() {
-    let mut b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box1");
+    let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box1");
     let b2 = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0)
         .expect("box2");
 
@@ -40,7 +40,7 @@ fn face_names_persist_through_union() {
         .expect("union should succeed");
 
     // Propagate names
-    let (result_names, report) = history.propagate_persistent_naming(&result, &names_a, &names_b);
+    let (result_names, _report) = history.propagate_persistent_naming(&result, &names_a, &names_b);
 
     // Check that at least some names were propagated
     let propagated_count = names_a.iter()
@@ -74,7 +74,7 @@ fn edge_names_persist_through_difference() {
     let (result_names, _report) = history.propagate_persistent_naming(&result, &names_a, &names_b);
 
     // At least one edge name should survive
-    let has_surviving_name = names_a.iter()
+    let _has_surviving_name = names_a.iter()
         .any(|(name, _)| result_names.resolve(name).is_some());
 
     // Note: Edge propagation depends on edge_origins being populated
@@ -100,7 +100,7 @@ fn vertex_names_persist_through_intersection() {
         .expect("intersection should succeed");
 
     // Propagate names
-    let (result_names, _report) = history.propagate_persistent_naming(&result, &names_a, &names_b);
+    let (_result_names, _report) = history.propagate_persistent_naming(&result, &names_a, &names_b);
 
     // Verify result has geometry
     assert!(face_count(&result) > 0);
@@ -131,7 +131,7 @@ fn solid_names_propagation() {
     // Verify the propagation mechanism works when the data is available.
     if !history.solid_origins.is_empty() {
         // If solid origins are tracked, at least one name should propagate
-        let has_solid_name = result_names.resolve("solid_a").is_some()
+        let _has_solid_name = result_names.resolve("solid_a").is_some()
             || result_names.resolve("solid_b").is_some();
         // Note: This assertion is conditional on implementation behavior
         println!("Solid origins tracked: {:?}", history.solid_origins);
@@ -216,12 +216,12 @@ fn history_chained_operations() {
         .expect("box2");
 
     // First operation
-    let (ab, history_ab) = boolean_op_with_history(BooleanOpType::Union, &b1, &b2)
+    let (ab, _history_ab) = boolean_op_with_history(BooleanOpType::Union, &b1, &b2)
         .expect("first union should succeed");
 
     // Bind names after first operation
-    let names_ab = PersistentNamingHooks::new();
-    let names_c = PersistentNamingHooks::new();
+    let _names_ab = PersistentNamingHooks::new();
+    let _names_c = PersistentNamingHooks::new();
 
     // Second operation
     let b3 = make_box_brep(DVec3::new(1.0, 0.0, 3.0), DVec3::X, DVec3::Y, 3.0, 3.0, 3.0)
@@ -364,7 +364,7 @@ fn multiple_collisions_deterministic() {
     let mut names_b = PersistentNamingHooks::new();
     names_b.bind("shared_name", TopoEntityRef::Face(0));
 
-    let (result_names, report) = history.propagate_persistent_naming(
+    let (result_names, _report) = history.propagate_persistent_naming(
         &result_brep,
         &names_a,
         &names_b,
@@ -438,7 +438,7 @@ fn naming_through_intersection() {
     let (result, history) = boolean_op_with_history(BooleanOpType::Intersection, &a, &b)
         .expect("intersection should succeed");
 
-    let (result_names, report) = history.propagate_persistent_naming(
+    let (_result_names, report) = history.propagate_persistent_naming(
         &result,
         &names_a,
         &names_b,

@@ -148,8 +148,8 @@ pub fn find_surface_through_edges(
         let end_pt = brep.vertices[edge.end].point;
 
         // Try to sample from the curve if available
-        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
+            && let Some(curve) = brep.geom.curves.get(curve_idx) {
                 // Get parameter range
                 let range = brep.geom.edge_curve_range.get(edge_idx)
                     .copied()
@@ -163,7 +163,6 @@ pub fn find_surface_through_edges(
                 }
                 continue;
             }
-        }
 
         // Fallback: interpolate between vertices
         for i in 0..samples_per_edge {
@@ -206,8 +205,8 @@ pub fn find_surface_through_points(
     let mut best_error = f64::INFINITY;
 
     // Try plane fit first
-    if let Some(plane) = fit_plane_to_points(points) {
-        if plane.rms_error < best_error && plane.rms_error < scale_tol {
+    if let Some(plane) = fit_plane_to_points(points)
+        && plane.rms_error < best_error && plane.rms_error < scale_tol {
             best_error = plane.rms_error;
             best_fit = Some(FoundSurface {
                 surface: Surface3::Plane(rcad_kernel::geom::Plane {
@@ -218,12 +217,11 @@ pub fn find_surface_through_points(
                 surface_type: FittedSurfaceType::Plane,
             });
         }
-    }
 
     // Try sphere fit
-    if points.len() >= 4 {
-        if let Some(sphere) = fit_sphere_to_points(points) {
-            if sphere.rms_error < best_error && sphere.rms_error < scale_tol {
+    if points.len() >= 4
+        && let Some(sphere) = fit_sphere_to_points(points)
+            && sphere.rms_error < best_error && sphere.rms_error < scale_tol {
                 best_error = sphere.rms_error;
                 best_fit = Some(FoundSurface {
                     surface: Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
@@ -235,13 +233,11 @@ pub fn find_surface_through_points(
                     surface_type: FittedSurfaceType::Sphere,
                 });
             }
-        }
-    }
 
     // Try cylinder fit
-    if points.len() >= 5 {
-        if let Some(cylinder) = fit_cylinder_to_points(points) {
-            if cylinder.rms_error < best_error && cylinder.rms_error < scale_tol {
+    if points.len() >= 5
+        && let Some(cylinder) = fit_cylinder_to_points(points)
+            && cylinder.rms_error < best_error && cylinder.rms_error < scale_tol {
                 best_error = cylinder.rms_error;
                 best_fit = Some(FoundSurface {
                     surface: Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
@@ -253,13 +249,11 @@ pub fn find_surface_through_points(
                     surface_type: FittedSurfaceType::Cylinder,
                 });
             }
-        }
-    }
 
     // Try cone fit
-    if points.len() >= 5 {
-        if let Some(cone) = fit_cone_to_points(points) {
-            if cone.rms_error < best_error && cone.rms_error < scale_tol {
+    if points.len() >= 5
+        && let Some(cone) = fit_cone_to_points(points)
+            && cone.rms_error < best_error && cone.rms_error < scale_tol {
                 best_error = cone.rms_error;
                 best_fit = Some(FoundSurface {
                     surface: Surface3::Cone(rcad_kernel::geom::ConicalSurface {
@@ -272,8 +266,6 @@ pub fn find_surface_through_points(
                     surface_type: FittedSurfaceType::Cone,
                 });
             }
-        }
-    }
 
     // If no analytic surface fit well, create a BSpline surface
     if best_fit.is_none() {
@@ -531,7 +523,7 @@ fn fit_cone_to_points(points: &[DVec3]) -> Option<FittedCone> {
     cov[2][0] = cov[0][2];
     cov[2][1] = cov[1][2];
 
-    let (eigenvalues, eigenvectors) = compute_eigendecomposition(&cov);
+    let (_eigenvalues, eigenvectors) = compute_eigendecomposition(&cov);
 
     // For a cone, the axis might be any of the principal directions
     // Try all three and pick the best fit
@@ -540,12 +532,11 @@ fn fit_cone_to_points(points: &[DVec3]) -> Option<FittedCone> {
 
     for i in 0..3 {
         let axis = eigenvectors[i].normalize_or(DVec3::Z);
-        if let Some(cone) = fit_cone_with_axis(points, centroid, axis) {
-            if cone.rms_error < best_error {
+        if let Some(cone) = fit_cone_with_axis(points, centroid, axis)
+            && cone.rms_error < best_error {
                 best_error = cone.rms_error;
                 best_fit = Some(cone);
             }
-        }
     }
 
     best_fit
@@ -628,8 +619,8 @@ fn fit_cone_with_axis(points: &[DVec3], centroid: DVec3, axis: DVec3) -> Option<
 fn fit_bspline_surface_to_points(points: &[DVec3]) -> Result<FoundSurface, BRepLibError> {
     // Create a simple bilinear BSpline surface through the points
     // For simplicity, we create a degree 1 (bilinear) surface
-    let (bb_min, bb_max) = compute_bounding_box(points);
-    let centroid = compute_centroid(points);
+    let (_bb_min, _bb_max) = compute_bounding_box(points);
+    let _centroid = compute_centroid(points);
 
     // Create a simple plane as fallback
     let plane = fit_plane_to_points(points).ok_or_else(|| {
@@ -1364,7 +1355,7 @@ fn get_face_by_flat_index(brep: &BRep, face_idx: usize) -> Result<(&Face, usize)
 fn compute_surface_normal(surface: &Surface3) -> DVec3 {
     match surface {
         Surface3::Plane(p) => p.normal,
-        Surface3::Sphere(s) => DVec3::Z, // Default, actual normal varies by point
+        Surface3::Sphere(_s) => DVec3::Z, // Default, actual normal varies by point
         Surface3::Cylinder(c) => c.axis.normalize_or(DVec3::Z),
         Surface3::Cone(c) => c.axis.normalize_or(DVec3::Z),
         Surface3::Torus(t) => t.axis.normalize_or(DVec3::Z),

@@ -395,7 +395,7 @@ fn check_bounds_degeneracy(surf: &Surface3) -> bool {
 }
 
 /// Check derivative continuity at a point using finite differences.
-fn check_derivative_continuity(surf: &Surface3, u: f64, v: f64, tolerance: f64) -> bool {
+fn check_derivative_continuity(surf: &Surface3, u: f64, v: f64, _tolerance: f64) -> bool {
     let eps = 1e-6;
 
     let p = surf.point_at(u, v);
@@ -572,7 +572,7 @@ fn detect_curve_self_intersections(curve: &Curve3, n_samples: usize) -> Vec<Curv
         .collect();
 
     // Check for non-adjacent segments that intersect
-    let tol = 1e-6;
+    let _tol = 1e-6;
 
     for i in 0..points.len() - 1 {
         // Only check segments that are not adjacent (at least 2 apart)
@@ -630,7 +630,7 @@ fn segment_intersection_2d(
     let t = (dx * d2[1] - dy * d2[0]) / cross;
     let s = (dx * d1[1] - dy * d1[0]) / cross;
 
-    if t >= 0.0 && t <= 1.0 && s >= 0.0 && s <= 1.0 {
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&s) {
         Some((t, s))
     } else {
         None
@@ -794,8 +794,8 @@ pub fn analyze_wire(
         vertex_set.insert(end);
 
         // Compute edge length if geometry is available
-        if let Some(curve_idx) = brep.geom.edge_curve.get(we.idx).and_then(|opt| *opt) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+        if let Some(curve_idx) = brep.geom.edge_curve.get(we.idx).and_then(|opt| *opt)
+            && let Some(curve) = brep.geom.curves.get(curve_idx) {
                 let range = brep.geom.edge_curve_range.get(we.idx)
                     .and_then(|r| *r)
                     .unwrap_or_else(|| {
@@ -816,7 +816,6 @@ pub fn analyze_wire(
                 }
                 report.length += len;
             }
-        }
     }
 
     report.vertex_count = vertex_set.len();
@@ -992,15 +991,14 @@ pub fn analyze_face(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: u
     report.has_surface = surface_idx.is_some();
 
     // Analyze surface
-    if let Some(idx) = surface_idx {
-        if let Some(surface) = brep.geom.surfaces.get(idx) {
+    if let Some(idx) = surface_idx
+        && let Some(surface) = brep.geom.surfaces.get(idx) {
             report.surface_report = Some(analyze_surface(surface));
 
             // Get parameter domain
             let domain = surface.default_domain();
             report.param_domain = Some((domain[0], domain[1], domain[2], domain[3]));
         }
-    }
 
     // Analyze wires
     report.wire_reports = check_face_wires(brep, solid_idx, shell_idx, face_idx);
@@ -1059,8 +1057,8 @@ fn check_surface_wire_consistency(
             let is_degenerate = brep.geom.edge_degenerated.get(we.idx).copied().unwrap_or(false);
             if !is_degenerate {
                 // Check if the edge's 3D curve lies on the surface
-                if let Some(curve_idx) = brep.geom.edge_curve.get(we.idx).and_then(|opt| *opt) {
-                    if let Some(curve) = brep.geom.curves.get(curve_idx) {
+                if let Some(curve_idx) = brep.geom.edge_curve.get(we.idx).and_then(|opt| *opt)
+                    && let Some(curve) = brep.geom.curves.get(curve_idx) {
                         let range = brep.geom.edge_curve_range.get(we.idx)
                             .and_then(|r| *r)
                             .unwrap_or_else(|| {
@@ -1091,7 +1089,6 @@ fn check_surface_wire_consistency(
                             });
                         }
                     }
-                }
             }
         }
     }
@@ -1755,16 +1752,14 @@ pub fn check_face_uv_consistency(
                 // Check bounds with tolerance for periodic surfaces
                 let (is_u_periodic, is_v_periodic) = detect_periodicity(surface);
 
-                if !is_u_periodic {
-                    if uv.x < surface_domain[0] - tolerance || uv.x > surface_domain[1] + tolerance {
+                if !is_u_periodic
+                    && (uv.x < surface_domain[0] - tolerance || uv.x > surface_domain[1] + tolerance) {
                         outside_bounds = true;
                     }
-                }
-                if !is_v_periodic {
-                    if uv.y < surface_domain[2] - tolerance || uv.y > surface_domain[3] + tolerance {
+                if !is_v_periodic
+                    && (uv.y < surface_domain[2] - tolerance || uv.y > surface_domain[3] + tolerance) {
                         outside_bounds = true;
                     }
-                }
             }
 
             if outside_bounds {
@@ -1848,7 +1843,7 @@ pub fn check_face_uv_consistency(
 
 /// Check if seam edge PCurves are consistent.
 fn check_seam_edge_consistency(
-    edge_idx: usize,
+    _edge_idx: usize,
     pcurves: &[&PCurve],
     brep: &BRep,
     surface: &Surface3,
@@ -2100,7 +2095,7 @@ fn analyze_edge_continuity(
     tolerance: f64,
     report: &mut ContinuityReport,
 ) -> GeometricContinuity {
-    let Some(edge) = brep.edges.get(edge_idx) else {
+    let Some(_edge) = brep.edges.get(edge_idx) else {
         return GeometricContinuity::None;
     };
 
@@ -2123,7 +2118,7 @@ fn analyze_edge_continuity(
     let n_samples = 10usize;
     let dt = (range[1] - range[0]) / n_samples as f64;
 
-    let mut max_pos_gap = 0.0_f64;
+    let max_pos_gap = 0.0_f64;
     let mut max_tangent_dev = 0.0_f64;
     let mut max_curvature_dev = 0.0_f64;
     let mut continuity = GeometricContinuity::C2;
@@ -2158,8 +2153,8 @@ fn analyze_edge_continuity(
             dot.acos() // Angle between n1 and n2
         };
 
-        if normal_angle > tolerance {
-            if normal_angle > 1e-3 {
+        if normal_angle > tolerance
+            && normal_angle > 1e-3 {
                 // Tangent plane deviation
                 max_tangent_dev = max_tangent_dev.max(normal_angle);
                 if normal_angle > 0.1 {
@@ -2175,7 +2170,6 @@ fn analyze_edge_continuity(
                     });
                 }
             }
-        }
 
         // Check curvature continuity (simplified: compare normal derivative)
         let eps = 1e-6;
@@ -2185,7 +2179,7 @@ fn analyze_edge_continuity(
         let p_plus = curve.point_at(t_plus);
         let p_minus = curve.point_at(t_minus);
 
-        let tangent_dir = (p_plus - p_minus).normalize();
+        let _tangent_dir = (p_plus - p_minus).normalize();
 
         // Compute curvature-related metrics
         // For full curvature continuity, we would need to compute principal curvatures
@@ -2221,7 +2215,7 @@ fn compute_normal_at_edge_point(
     p3d: DVec3,
     surface: &Surface3,
     _edge_idx: usize,
-    brep: &BRep,
+    _brep: &BRep,
     _forward: Option<bool>,
 ) -> Option<DVec3> {
     // For analytical surfaces, project the point and compute normal
@@ -2416,7 +2410,7 @@ pub fn analyze_isoparametric_curves(
     };
 
     let domain = surface.default_domain();
-    let [u_min, u_max, v_min, v_max] = domain;
+    let [_u_min, _u_max, _v_min, _v_max] = domain;
 
     // Get the face's UV bounds from PCurves
     let face_bounds = get_face_uv_bounds(solid_idx, shell_idx, face_idx, brep, surface_idx);
@@ -2722,7 +2716,7 @@ fn segment_segment_distance_3d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> f6
     let t = (a * f - b * c) / denom;
 
     // Check if closest points are within segments
-    if s >= 0.0 && s <= 1.0 && t >= 0.0 && t <= 1.0 {
+    if (0.0..=1.0).contains(&s) && (0.0..=1.0).contains(&t) {
         // Closest points are interior to both segments
         let closest1 = p1 + d1 * s;
         let closest2 = p3 + d2 * t;
@@ -2738,25 +2732,25 @@ fn segment_segment_distance_3d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> f6
 
     // Check s = 0 (p1) against segment 2
     let t_at_s0 = (f) / e;
-    if t_at_s0 >= 0.0 && t_at_s0 <= 1.0 {
+    if (0.0..=1.0).contains(&t_at_s0) {
         min_dist = min_dist.min((p1 - (p3 + d2 * t_at_s0)).length());
     }
 
     // Check s = 1 (p2) against segment 2
     let t_at_s1 = (f + b) / e;
-    if t_at_s1 >= 0.0 && t_at_s1 <= 1.0 {
+    if (0.0..=1.0).contains(&t_at_s1) {
         min_dist = min_dist.min((p2 - (p3 + d2 * t_at_s1)).length());
     }
 
     // Check t = 0 (p3) against segment 1
     let s_at_t0 = -c / a;
-    if s_at_t0 >= 0.0 && s_at_t0 <= 1.0 {
+    if (0.0..=1.0).contains(&s_at_t0) {
         min_dist = min_dist.min(((p1 + d1 * s_at_t0) - p3).length());
     }
 
     // Check t = 1 (p4) against segment 1
     let s_at_t1 = (b - c) / a;
-    if s_at_t1 >= 0.0 && s_at_t1 <= 1.0 {
+    if (0.0..=1.0).contains(&s_at_t1) {
         min_dist = min_dist.min(((p1 + d1 * s_at_t1) - p4).length());
     }
 
@@ -3070,23 +3064,21 @@ pub fn detect_uv_gaps(
             if is_u_periodic {
                 let u_period = domain[1] - domain[0];
                 let gap = check_periodic_gap(*edge_idx, curve2d, &range, UvDirection::U, u_period, surface);
-                if let Some(g) = gap {
-                    if g.gap_size > tolerance {
+                if let Some(g) = gap
+                    && g.gap_size > tolerance {
                         report.periodic_boundary_gaps.push(g);
                         report.total_gap_count += 1;
                     }
-                }
             }
 
             if is_v_periodic {
                 let v_period = domain[3] - domain[2];
                 let gap = check_periodic_gap(*edge_idx, curve2d, &range, UvDirection::V, v_period, surface);
-                if let Some(g) = gap {
-                    if g.gap_size > tolerance {
+                if let Some(g) = gap
+                    && g.gap_size > tolerance {
                         report.periodic_boundary_gaps.push(g);
                         report.total_gap_count += 1;
                     }
-                }
             }
         }
     }
@@ -3139,8 +3131,8 @@ fn check_periodic_gap(
     // Gap at seam (discontinuity in wrapped parameter)
     let seam_gap = if (normalized_start * normalized_end < 0.0) && !wraps_correctly {
         // Crossing zero - potential seam gap
-        let gap = normalized_start.abs().min(normalized_end.abs());
-        gap
+        
+        normalized_start.abs().min(normalized_end.abs())
     } else {
         0.0
     };
@@ -4135,11 +4127,10 @@ fn analyze_crossing_pcurve(
             let normalized_end = ((uv_end.x - domain[0]) % u_period) / u_period;
 
             // If both endpoints are near the seam, the wrap should be consistent
-            if normalized_start < tolerance / u_period || normalized_start > 1.0 - tolerance / u_period {
-                if normalized_end < tolerance / u_period || normalized_end > 1.0 - tolerance / u_period {
+            if (normalized_start < tolerance / u_period || normalized_start > 1.0 - tolerance / u_period)
+                && (normalized_end < tolerance / u_period || normalized_end > 1.0 - tolerance / u_period) {
                     crossing.is_valid = true;
                 }
-            }
 
             return Some(crossing);
         }
@@ -4276,11 +4267,10 @@ pub fn analyze_surface_bounds_for_face(
     for we in &face.outer_wire.edges {
         if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
             for pc in pcurves {
-                if let Some(si) = surface_idx {
-                    if pc.surface_idx != si {
+                if let Some(si) = surface_idx
+                    && pc.surface_idx != si {
                         continue;
                     }
-                }
 
                 if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
                     let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
@@ -4306,11 +4296,10 @@ pub fn analyze_surface_bounds_for_face(
         for we in &wire.edges {
             if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
                 for pc in pcurves {
-                    if let Some(si) = surface_idx {
-                        if pc.surface_idx != si {
+                    if let Some(si) = surface_idx
+                        && pc.surface_idx != si {
                             continue;
                         }
-                    }
 
                     if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
                         let range = brep.geom.curve2d_range.get(pc.curve2d_idx)
@@ -4432,17 +4421,16 @@ pub fn analyze_surface_bounds_for_face(
 }
 
 /// Find the surface index for a face in the BRep.
-fn find_surface_index_for_face(face: &Face, brep: &BRep, target_surface: &Surface3) -> Option<usize> {
+fn find_surface_index_for_face(_face: &Face, brep: &BRep, target_surface: &Surface3) -> Option<usize> {
     // Search through face surfaces to find matching surface
-    for (idx, surface_opt) in brep.geom.face_surface.iter().enumerate() {
-        if let Some(surface_idx) = surface_opt {
-            if let Some(surface) = brep.geom.surfaces.get(*surface_idx) {
+    for surface_opt in brep.geom.face_surface.iter() {
+        if let Some(surface_idx) = surface_opt
+            && let Some(surface) = brep.geom.surfaces.get(*surface_idx) {
                 // Compare surface pointers or content
                 if std::ptr::eq(surface, target_surface) {
                     return Some(*surface_idx);
                 }
             }
-        }
     }
     None
 }
@@ -4563,7 +4551,7 @@ pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &BRep) -> UvConsi
         return report;
     };
 
-    let domain = surface.default_domain();
+    let _domain = surface.default_domain();
     let tolerance = 1e-6;
     let mut orientations_match = true;
 
@@ -5162,7 +5150,7 @@ fn detect_surface_folding(
             // Check if this is in a non-singular region
             let singular = detect_singular_points(surface);
             let is_near_singular = singular.iter().any(|s| {
-                let domain = surface.default_domain();
+                let _domain = surface.default_domain();
                 let sing_uv = s.uv;
                 (sing_uv.0 - *u).abs() < du * 2.0 && (sing_uv.1 - *v).abs() < dv * 2.0
             });
@@ -5401,11 +5389,7 @@ mod tests {
         });
 
         // Analyze the cylindrical face (first face)
-        let report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
-
-        // Cylinder face should have proper bounds handling
-        // The cylindrical face has periodic U bounds
-        assert!(report.seam_edge_count >= 0);
+        let _report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5414,11 +5398,7 @@ mod tests {
             radius: 1.0,
         });
 
-        // Analyze the spherical face
-        let report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
-
-        // Sphere has degenerate edges at poles
-        assert!(report.degenerate_edge_count >= 0);
+        let _report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5429,11 +5409,7 @@ mod tests {
             depth: 1.0,
         });
 
-        // Check UV consistency for the first face
-        let report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
-
-        // Box faces should have consistent UV (or no PCurve data for primitives)
-        assert!(report.edges_checked >= 0);
+        let _report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5443,11 +5419,7 @@ mod tests {
             height: 2.0,
         });
 
-        // Check UV consistency for the cylindrical face
-        let report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
-
-        // Cylinder has a seam edge
-        assert!(report.pcurves_analyzed >= 0);
+        let _report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5672,12 +5644,7 @@ mod tests {
             depth: 1.0,
         });
 
-        // Analyze the first face of the box
-        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
-
-        // Box faces are planes with infinite bounds - no gaps expected
-        // (unless PCurves are defined with specific bounds)
-        assert!(report.total_gap_count >= 0);
+        let _report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5700,11 +5667,7 @@ mod tests {
             radius: 1.0,
         });
 
-        // Analyze the spherical face
-        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
-
-        // Sphere is U-periodic
-        assert!(report.total_gap_count >= 0);
+        let _report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5732,12 +5695,7 @@ mod tests {
             depth: 1.0,
         });
 
-        // Analyze the first face of the box
-        let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
-
-        // Check basic report structure
-        assert!(report.overlap_count >= 0);
-        assert!(report.overlapping_pairs.len() >= 0);
+        let _report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5747,11 +5705,7 @@ mod tests {
             minor_radius: 0.5,
         });
 
-        // Analyze the toroidal face
-        let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
-
-        // Torus is U and V periodic
-        assert!(report.overlap_count >= 0);
+        let _report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
     }
 
     #[test]
@@ -5781,10 +5735,7 @@ mod tests {
 
         // Box should have 6 faces, each with a valid trimming loop
         // The function returns default if indices are invalid
-        // Check basic report structure
-        if report.loop_count >= 1 {
-            assert!(report.outer_wire.edge_count >= 0);
-        }
+        assert!(report.loop_count >= 1);
     }
 
     #[test]
@@ -6131,11 +6082,7 @@ mod tests {
             radius: 1.0,
         });
 
-        let report = check_face_uv_consistency_by_idx(0, &brep);
-
-        // Basic structure checks
-        assert!(report.edges_analyzed >= 0);
-        assert!(report.pcurves_analyzed >= 0);
+        let _report = check_face_uv_consistency_by_idx(0, &brep);
     }
 
     #[test]
@@ -6145,10 +6092,7 @@ mod tests {
             height: 2.0,
         });
 
-        let report = check_face_uv_consistency_by_idx(0, &brep);
-
-        // Basic structure checks
-        assert!(report.edges_analyzed >= 0);
+        let _report = check_face_uv_consistency_by_idx(0, &brep);
     }
 
     #[test]
@@ -6159,10 +6103,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = check_face_uv_consistency_by_idx(0, &brep);
-
-        // Basic structure checks
-        assert!(report.edges_analyzed >= 0);
+        let _report = check_face_uv_consistency_by_idx(0, &brep);
     }
 
     #[test]
@@ -6192,7 +6133,6 @@ mod tests {
         // For a well-formed sphere, deviation should be small
         // If no samples are taken (primitive solids may not have explicit edge curves),
         // that's OK - we just check the structure is valid
-        assert!(deviation.samples_taken >= 0);
         if deviation.samples_taken > 0 {
             assert!(deviation.min_deviation.is_finite() || deviation.min_deviation == f64::INFINITY);
             assert!(deviation.max_deviation >= 0.0);
@@ -6210,7 +6150,6 @@ mod tests {
 
         // Basic structure checks
         // If no samples are taken, that's OK for primitive solids
-        assert!(deviation.samples_taken >= 0);
         if deviation.samples_taken > 0 {
             assert!(deviation.avg_deviation >= 0.0 || deviation.avg_deviation == 0.0);
         }
@@ -6224,11 +6163,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let deviation = compute_surface_deviation(0, &brep, 16);
-
-        // Basic structure checks
-        // If no samples are taken, that's OK for primitive solids
-        assert!(deviation.samples_taken >= 0);
+        let _deviation = compute_surface_deviation(0, &brep, 16);
     }
 
     #[test]

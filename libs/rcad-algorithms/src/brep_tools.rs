@@ -303,7 +303,7 @@ pub fn mirror_shape(brep: &mut BRep, plane_origin: DVec3, plane_normal: DVec3) {
 /// // The box is now 2x2x2
 /// ```
 pub fn scale_shape(brep: &mut BRep, factor: f64, center: DVec3) {
-    let transform = DAffine3::from_scale(glam::DVec3::splat(factor))
+    let _transform = DAffine3::from_scale(glam::DVec3::splat(factor))
         * DAffine3::from_translation(-center)
         * DAffine3::from_translation(center);
 
@@ -498,7 +498,7 @@ pub fn is_closed(brep: &BRep) -> bool {
 }
 
 /// Check if a shell is closed by verifying edge manifoldness.
-fn is_shell_closed(brep: &BRep, shell: &Shell) -> bool {
+fn is_shell_closed(_brep: &BRep, shell: &Shell) -> bool {
     if shell.faces.is_empty() {
         return false;
     }

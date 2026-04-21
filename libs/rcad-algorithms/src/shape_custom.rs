@@ -192,7 +192,7 @@ fn reduce_curve_degree(
 
     // Fit with target degree
     let fitted = fit_curve_to_points(&samples, target_degree, tolerance);
-    let (new_curve, max_dev) = fitted?;
+    let (new_curve, _max_dev) = fitted?;
 
     // Check deviation
     let mut max_deviation: f64 = 0.0;
@@ -232,11 +232,10 @@ fn remove_redundant_control_points(
     let mut i = degree;
     while i < knots.len() - degree - 1 {
         let k = knots[i];
-        if k > knots[degree] && k < knots[knots.len() - degree - 1] {
-            if interior_knots.last().map_or(true, |&last| (k - last).abs() > 1e-10) {
+        if k > knots[degree] && k < knots[knots.len() - degree - 1]
+            && interior_knots.last().is_none_or(|&last| (k - last).abs() > 1e-10) {
                 interior_knots.push(k);
             }
-        }
         i += 1;
     }
 
@@ -307,7 +306,7 @@ fn try_remove_knot(
     // Sample the original curve and fit to new knot vector
     let n_samples = n_ctrl.max(20);
     let [t0, t1] = curve.default_domain();
-    let samples: Vec<DVec3> = (0..n_samples)
+    let _samples: Vec<DVec3> = (0..n_samples)
         .map(|i| {
             let t = t0 + (t1 - t0) * i as f64 / (n_samples - 1) as f64;
             curve.point_at(t)
@@ -442,13 +441,13 @@ pub fn simplify_bspline_surface(
 ) -> SimplificationResult<BSplineSurface> {
     let original_degree_u = surface.degree_u;
     let original_degree_v = surface.degree_v;
-    let original_ctrl_pts = surface.control_points.len() * surface.control_points.get(0).map_or(0, |r| r.len());
+    let original_ctrl_pts = surface.control_points.len() * surface.control_points.first().map_or(0, |r| r.len());
 
     // If already within constraints, return as-is
     if surface.degree_u <= opts.max_degree
         && surface.degree_v <= opts.max_degree
         && surface.control_points.len() <= 4
-        && surface.control_points.get(0).map_or(true, |r| r.len() <= 4)
+        && surface.control_points.first().is_none_or(|r| r.len() <= 4)
     {
         return SimplificationResult {
             geometry: surface.clone(),
@@ -457,7 +456,7 @@ pub fn simplify_bspline_surface(
             original_degree: original_degree_u.max(original_degree_v),
             final_degree: surface.degree_u.max(surface.degree_v),
             original_ctrl_pts,
-            final_ctrl_pts: surface.control_points.len() * surface.control_points.get(0).map_or(0, |r| r.len()),
+            final_ctrl_pts: surface.control_points.len() * surface.control_points.first().map_or(0, |r| r.len()),
         };
     }
 
@@ -466,26 +465,24 @@ pub fn simplify_bspline_surface(
     let mut was_simplified = false;
 
     // Reduce U degree
-    if current.degree_u > opts.max_degree {
-        if let Some((new_surf, dev)) = reduce_surface_degree_u(&current, opts.max_degree, opts.tolerance) {
+    if current.degree_u > opts.max_degree
+        && let Some((new_surf, dev)) = reduce_surface_degree_u(&current, opts.max_degree, opts.tolerance) {
             total_deviation = total_deviation.max(dev);
             current = new_surf;
             was_simplified = true;
         }
-    }
 
     // Reduce V degree
-    if current.degree_v > opts.max_degree {
-        if let Some((new_surf, dev)) = reduce_surface_degree_v(&current, opts.max_degree, opts.tolerance) {
+    if current.degree_v > opts.max_degree
+        && let Some((new_surf, dev)) = reduce_surface_degree_v(&current, opts.max_degree, opts.tolerance) {
             total_deviation = total_deviation.max(dev);
             current = new_surf;
             was_simplified = true;
         }
-    }
 
     // Compute final values before moving current
     let final_degree = current.degree_u.max(current.degree_v);
-    let final_ctrl_pts = current.control_points.len() * current.control_points.get(0).map_or(0, |r| r.len());
+    let final_ctrl_pts = current.control_points.len() * current.control_points.first().map_or(0, |r| r.len());
 
     SimplificationResult {
         geometry: current,
@@ -510,7 +507,7 @@ fn reduce_surface_degree_u(
 
     // Sample surface and refit
     let n_u = surface.control_points.len().max(10);
-    let n_v = surface.control_points.get(0)?.len().max(10);
+    let n_v = surface.control_points.first()?.len().max(10);
     let [u0, u1, v0, v1] = surface.default_domain();
 
     let mut samples: Vec<Vec<DVec3>> = Vec::new();
@@ -546,7 +543,7 @@ fn reduce_surface_degree_v(
     }
 
     let n_u = surface.control_points.len().max(10);
-    let n_v = surface.control_points.get(0)?.len().max(10);
+    let n_v = surface.control_points.first()?.len().max(10);
     let [u0, u1, v0, v1] = surface.default_domain();
 
     let mut samples: Vec<Vec<DVec3>> = Vec::new();
@@ -577,7 +574,7 @@ fn fit_surface_to_grid(
     degree_v: usize,
 ) -> Option<BSplineSurface> {
     let n_u = points.len();
-    let n_v = points.get(0)?.len();
+    let n_v = points.first()?.len();
 
     if n_u < 2 || n_v < 2 {
         return None;
@@ -814,7 +811,7 @@ pub fn surface_degrees(surface: &Surface3) -> (usize, usize) {
         Surface3::BSpline(b) => (b.degree_u, b.degree_v),
         Surface3::Bezier(b) => {
             let du = b.control_points.len().saturating_sub(1);
-            let dv = b.control_points.get(0).map_or(0, |r| r.len().saturating_sub(1));
+            let dv = b.control_points.first().map_or(0, |r| r.len().saturating_sub(1));
             (du, dv)
         }
         Surface3::Plane(_) => (1, 1),
@@ -994,7 +991,11 @@ pub fn curve_to_bspline_from_edge(
             let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
 
             // Convert to BSpline
-            let bspline = match curve {
+            
+
+            // If there's a parameter range, we may need to extract a segment
+            // For now, return the full BSpline
+            match curve {
                 Curve3::BSpline(b) => b.clone(),
                 Curve3::Line(l) => {
                     if let Some([t0, t1]) = range {
@@ -1014,11 +1015,7 @@ pub fn curve_to_bspline_from_edge(
                 Curve3::Ellipse(e) => ellipse_to_bspline(e),
                 Curve3::Bezier(b) => bezier_curve_to_bspline(b),
                 _ => curve_to_bspline(curve, 32),
-            };
-
-            // If there's a parameter range, we may need to extract a segment
-            // For now, return the full BSpline
-            bspline
+            }
         }
         _ => {
             // Fallback: create a line between vertices
@@ -1642,7 +1639,7 @@ fn try_detect_cone(surface: &BSplineSurface, tolerance: f64) -> Option<ConicalSu
     let half_angle = slope.atan().abs();
     let radius = intercept.max(0.0);
 
-    if half_angle < 1e-6 || half_angle > PI / 2.0 - 1e-6 {
+    if !(1e-6..=PI / 2.0 - 1e-6).contains(&half_angle) {
         return None; // Degenerate cone
     }
 
@@ -1687,7 +1684,7 @@ fn try_detect_torus(surface: &BSplineSurface, tolerance: f64) -> Option<Toroidal
     }
 
     // Find the axis (smallest eigenvalue direction for torus)
-    let mut axis = DVec3::Z;
+    let axis = DVec3::Z;
 
     // Try to find distances from the axis
     let mut distances: Vec<f64> = Vec::new();
@@ -1752,11 +1749,10 @@ pub fn simplify_geometry(brep: &BRep, tolerance: f64) -> BRep {
     let mut result = brep.clone();
 
     for surface in &mut result.geom.surfaces {
-        if let Surface3::BSpline(bspline) = surface {
-            if let Some(analytic) = try_convert_to_analytic(bspline, tolerance) {
+        if let Surface3::BSpline(bspline) = surface
+            && let Some(analytic) = try_convert_to_analytic(bspline, tolerance) {
                 *surface = analytic;
             }
-        }
     }
 
     result
@@ -1798,10 +1794,10 @@ fn resolve_to_direct_surface(surface: &Surface3) -> Surface3 {
     match surface {
         Surface3::Trimmed(t) => {
             // Resolve the underlying surface
-            let resolved = resolve_to_direct_surface(&t.basis);
+            
             // For now, return the resolved basis (losing trim info)
             // A more complete implementation would rebuild with proper UV bounds
-            resolved
+            resolve_to_direct_surface(&t.basis)
         }
         Surface3::Offset(_) => {
             // Offset surfaces don't have a simple direct form

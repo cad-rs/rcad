@@ -1,18 +1,14 @@
 /// Tests for extreme geometry detection and handling in boolean operations.
 use glam::DVec3;
 use rcad_algorithms::{
-    AspectRatioAdaptiveTolerance, DegenerateGeometryHandler, DegenerateType,
-    HighAspectRatioEdge, NearDegenerateGeometry, NearTangentHandler, NearTangentSeverity,
+    AspectRatioAdaptiveTolerance, DegenerateGeometryHandler, DegenerateType, NearTangentHandler, NearTangentSeverity,
     SizeDifferenceHandler, SizeDifferenceAnalysis,
     ExtremeGeometryAnalysis, ExtremeGeometryAnalysisOptions,
-    analyze_extreme_geometry, analyze_size_difference,
-    detect_high_aspect_ratio_edges, detect_near_degenerate_geometry,
-    detect_near_tangent_configurations,
+    analyze_extreme_geometry,
     ExtremeGeometryRetryConfig, ExtremeGeometryRetryPolicy,
-    ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
+    ASPECT_RATIO_THRESHOLD,
 };
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{Surface3, Plane, SphericalSurface};
 use rcad_algorithms::tolerance::{TOLERANCE_ABS, AdaptiveTolerance, ToleranceLevel};
 
 // ── Near-Tangent Geometry Tests ────────────────────────────────────────────────
@@ -113,12 +109,6 @@ fn near_tangent_adjust_tolerance_with_configs() {
 // ── High Aspect Ratio Tests ────────────────────────────────────────────────────
 
 #[test]
-fn aspect_ratio_thresholds() {
-    assert!(ASPECT_RATIO_THRESHOLD > 0.0);
-    assert!(ASPECT_RATIO_VERY_HIGH > ASPECT_RATIO_THRESHOLD);
-}
-
-#[test]
 fn aspect_ratio_adaptive_tolerance_default() {
     let aat = AspectRatioAdaptiveTolerance::default();
     assert!(aat.base_tolerance > 0.0);
@@ -176,11 +166,6 @@ fn degenerate_type_variants() {
 }
 
 // ── Size Difference Tests ────────────────────────────────────────────────────────
-
-#[test]
-fn size_ratio_threshold() {
-    assert!(SIZE_RATIO_THRESHOLD > 0.0);
-}
 
 #[test]
 fn size_difference_handler_default() {
@@ -277,15 +262,17 @@ fn extreme_geometry_build_retry_ladder_with_size_difference() {
     let config = ExtremeGeometryRetryConfig::default();
     let base_ladder = vec![TOLERANCE_ABS * 10.0];
 
-    let mut analysis = ExtremeGeometryAnalysis::default();
-    analysis.size_difference = Some(SizeDifferenceAnalysis {
-        size_a: 1000.0,
-        size_b: 1.0,
-        size_ratio: 1000.0,
-        is_extreme: true,
-        suggested_tolerance_multiplier: 100.0,
-        use_relative_tolerances: true,
-    });
+    let analysis = ExtremeGeometryAnalysis {
+        size_difference: Some(SizeDifferenceAnalysis {
+            size_a: 1000.0,
+            size_b: 1.0,
+            size_ratio: 1000.0,
+            is_extreme: true,
+            suggested_tolerance_multiplier: 100.0,
+            use_relative_tolerances: true,
+        }),
+        ..Default::default()
+    };
 
     let ladder = config.build_retry_ladder(&base_ladder, &analysis);
     // Should include tolerance for size difference

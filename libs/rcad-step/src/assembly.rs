@@ -349,9 +349,9 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
     let mut children_of: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
     let mut all_child_pds: HashSet<u64> = HashSet::new();
 
-    for (_id, body) in &entity_map {
-        if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
-            if let Some(args) = parse_args(rest) {
+    for body in entity_map.values() {
+        if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE")
+            && let Some(args) = parse_args(rest) {
                 let parent_pd = parse_ref(args.get(3).copied().unwrap_or(""));
                 let child_pd = parse_ref(args.get(4).copied().unwrap_or(""));
                 let rel_name = unquote(args.get(1).copied().unwrap_or(""));
@@ -363,7 +363,6 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
                     all_child_pds.insert(child_pd);
                 }
             }
-        }
     }
 
     // Find root PD(s): PDs that appear in NAUOs (as parent or child) but are
@@ -399,7 +398,6 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
         reverse_map: &HashMap<u64, Vec<u64>>,
         children_of: &HashMap<u64, Vec<(u64, String)>>,
         merged_brep: &BRep,
-        step: &str,
     ) -> AssemblyNode {
         let name = resolve_product_name(pd_id, entity_map)
             .unwrap_or_else(|| format!("node_{}", pd_id));
@@ -417,7 +415,6 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
                         reverse_map,
                         children_of,
                         merged_brep,
-                        step,
                     )
                 })
                 .collect();
@@ -445,7 +442,6 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
             &reverse_map,
             &children_of,
             &merged_brep,
-            step,
         ))
     } else {
         let children: Vec<AssemblyNode> = root_pds
@@ -457,7 +453,6 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
                     &reverse_map,
                     &children_of,
                     &merged_brep,
-                    step,
                 )
             })
             .collect();
@@ -715,7 +710,7 @@ pub fn read_assembly(step: &str) -> Result<Vec<AssemblyComponent>, StepError> {
     let mut nauo_children: Vec<(u64, String)> = Vec::new();
     let mut has_nauo = false;
 
-    for (_id, body) in &entity_map {
+    for body in entity_map.values() {
         if let Some(rest) = strip_entity_name(body, "NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
             has_nauo = true;
             if let Some(args) = parse_args(rest) {
@@ -889,11 +884,10 @@ fn extract_refs(body: &str) -> Vec<u64> {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i > start {
-                if let Ok(n) = body[start..i].parse::<u64>() {
+            if i > start
+                && let Ok(n) = body[start..i].parse::<u64>() {
                     refs.push(n);
                 }
-            }
         } else {
             i += 1;
         }
@@ -953,18 +947,15 @@ fn find_shape_rep_for_pd(
         // Find SHAPE_DEFINITION_REPRESENTATION entities that reference pds_id
         if let Some(referencing_pds) = reverse_map.get(&pds_id) {
             for &sdr_id in referencing_pds {
-                if let Some(sdr_body) = map.get(&sdr_id) {
-                    if let Some(args_str) =
+                if let Some(sdr_body) = map.get(&sdr_id)
+                    && let Some(args_str) =
                         sdr_body.strip_prefix("SHAPE_DEFINITION_REPRESENTATION(")
-                    {
-                        if let Some(args) = parse_args(args_str) {
+                        && let Some(args) = parse_args(args_str) {
                             let sr_id = parse_ref(args.get(1).copied().unwrap_or(""));
                             if sr_id > 0 {
                                 return Some(sr_id);
                             }
                         }
-                    }
-                }
             }
         }
     }
@@ -1015,15 +1006,14 @@ fn parse_entity_map(step: &str) -> std::collections::HashMap<u64, String> {
         if !in_data {
             continue;
         }
-        if let Some(stripped) = line.strip_prefix('#') {
-            if let Some(eq) = stripped.find('=') {
+        if let Some(stripped) = line.strip_prefix('#')
+            && let Some(eq) = stripped.find('=') {
                 let id_str = &stripped[..eq];
                 let body = stripped[eq + 1..].trim_end_matches(';');
                 if let Ok(id) = id_str.parse::<u64>() {
                     map.insert(id, body.to_string());
                 }
             }
-        }
     }
     map
 }
@@ -1031,18 +1021,15 @@ fn parse_entity_map(step: &str) -> std::collections::HashMap<u64, String> {
 /// If `body` starts with `ENTITY_NAME(`, return the argument string (after the
 /// opening paren, before the matching closing paren).
 fn strip_entity_name<'a>(body: &'a str, entity: &str) -> Option<&'a str> {
-    let prefix = entity;
-    if body.starts_with(prefix) {
-        body[prefix.len()..].strip_prefix('(')
+    if let Some(rest) = body.strip_prefix(entity) {
+        rest.strip_prefix('(')
     } else if let Some(inner) = body.strip_prefix('(') {
         // compound entity: ( ENTITY_NAME() ... )
         // Find the sub-entity by scanning for the name inside compound parens
         let inner = inner.trim();
-        if inner.starts_with(entity) {
-            inner[entity.len()..].strip_prefix('(')
-        } else {
-            None
-        }
+        inner
+            .strip_prefix(entity)
+            .and_then(|rest| rest.strip_prefix('('))
     } else {
         None
     }
@@ -1104,7 +1091,7 @@ fn resolve_product_name(
 ) -> Option<String> {
     // PD body: PRODUCT_DEFINITION('','',#formation,#ctx)
     let pd_body = map.get(&pd_id)?;
-    let pd_args = parse_args(pd_body.strip_prefix("PRODUCT_DEFINITION(")?.strip_suffix(')')?.as_ref())?;
+    let pd_args = parse_args(pd_body.strip_prefix("PRODUCT_DEFINITION(")?.strip_suffix(')')?)?;
     // Actually strip_entity_name handles compound; simpler approach:
     let formation_id = pd_args.get(2).map(|s| parse_ref(s))?;
     if formation_id == 0 {
@@ -1124,7 +1111,7 @@ fn resolve_product_name(
 
     // Product body: PRODUCT('id','name','desc',(#ctx))
     let prod_body = map.get(&prod_id)?;
-    let prod_args = parse_args(prod_body.strip_prefix("PRODUCT(")?.strip_suffix(')')?.as_ref())?;
+    let prod_args = parse_args(prod_body.strip_prefix("PRODUCT(")?.strip_suffix(')')?)?;
     // name is the second field (index 1)
     prod_args.get(1).map(|s| unquote(s))
 }
@@ -1136,11 +1123,10 @@ fn find_root_product_name(map: &std::collections::HashMap<u64, String>) -> Optio
     ids.sort();
     for id in ids {
         let body = &map[&id];
-        if body.starts_with("PRODUCT(") {
-            if let Some(args) = parse_args(body.strip_prefix("PRODUCT(")?.strip_suffix(')')?) {
+        if body.starts_with("PRODUCT(")
+            && let Some(args) = parse_args(body.strip_prefix("PRODUCT(")?.strip_suffix(')')?) {
                 return args.get(1).map(|s| unquote(s));
             }
-        }
     }
     None
 }

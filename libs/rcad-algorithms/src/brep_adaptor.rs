@@ -380,11 +380,10 @@ impl<'a> FaceAdaptor<'a> {
         // Check if face orientation should flip the normal.
         // In this implementation, we use the stored face normal direction
         // to determine the correct orientation.
-        if let Some(face) = self.get_face() {
-            if normal.dot(face.normal) < 0.0 {
+        if let Some(face) = self.get_face()
+            && normal.dot(face.normal) < 0.0 {
                 normal = -normal;
             }
-        }
 
         normal
     }
@@ -836,7 +835,7 @@ impl<'a> WireAdaptor<'a> {
     pub fn point_at(&self, t: f64) -> DVec3 {
         let t = t.clamp(0.0, 1.0);
         let seg = self.find_segment(t);
-        let local_t = self.local_parameter(t, &seg);
+        let local_t = self.local_parameter(t, seg);
 
         // Create an edge adaptor for this segment.
         let adaptor = self.create_edge_adaptor(seg.edge_idx, seg.reversed);
@@ -849,7 +848,7 @@ impl<'a> WireAdaptor<'a> {
     pub fn tangent_at(&self, t: f64) -> DVec3 {
         let t = t.clamp(0.0, 1.0);
         let seg = self.find_segment(t);
-        let local_t = self.local_parameter(t, &seg);
+        let local_t = self.local_parameter(t, seg);
 
         let adaptor = self.create_edge_adaptor(seg.edge_idx, seg.reversed);
         adaptor.tangent_at(local_t)
@@ -939,8 +938,8 @@ impl<'a> WireAdaptor<'a> {
     /// Compute the approximate arc-length of an edge.
     fn compute_edge_length(brep: &BRep, edge_idx: usize) -> f64 {
         // Try to compute from curve.
-        if let Some(&curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|o| o.as_ref()) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+        if let Some(&curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|o| o.as_ref())
+            && let Some(curve) = brep.geom.curves.get(curve_idx) {
                 let range = brep
                     .geom
                     .edge_curve_range
@@ -951,7 +950,6 @@ impl<'a> WireAdaptor<'a> {
                 // Use numerical integration for arc-length.
                 return Self::arc_length_numerical(curve, range[0], range[1]);
             }
-        }
 
         // Fall back to vertex distance.
         let Some(edge) = brep.edges.get(edge_idx) else {
@@ -974,8 +972,8 @@ impl<'a> WireAdaptor<'a> {
             (0.0, 0.5688888888888889),
             (-0.5384693101056831, 0.47862867049936647),
             (0.5384693101056831, 0.47862867049936647),
-            (-0.9061798459386640, 0.23692688505618908),
-            (0.9061798459386640, 0.23692688505618908),
+            (-0.906_179_845_938_664, 0.23692688505618908),
+            (0.906_179_845_938_664, 0.23692688505618908),
         ];
 
         let dt = t1 - t0;

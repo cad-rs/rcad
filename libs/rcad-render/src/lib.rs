@@ -18,10 +18,10 @@ pub type TessellationOptions = TessellationParams;
 
 /// Legacy options for [`Tessellator::tessellate_with_line_options`].
 ///
-/// Topology edges and UV seam edges are always emitted separately
-/// ([`Mesh::line_indices`] vs [`Mesh::seam_line_indices`]). B-rep edges follow
-/// [`DisplayMode`] like other mesh lines; seam visibility is optional via
-/// [`WgpuRenderer::set_show_seam_edges`]. This struct is kept for API compatibility and ignored.
+/// Topology wire ([`Mesh::line_indices`]) is always emitted for every B-rep edge. Edges flagged as
+/// UV / periodic seams additionally duplicate the same line segments into [`Mesh::seam_line_indices`]
+/// for the optional overlay ([`WgpuRenderer::set_show_seam_edges`]). This struct is kept for API
+/// compatibility and ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TessellateLineOptions {}
 
@@ -427,9 +427,10 @@ pub fn pick_edge(
 pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
-    /// Non-seam B-rep edges (line list indices into `vertices`).
+    /// B-rep topology edges for solid+edges / wireframe (line list indices into `vertices`).
     pub line_indices: Vec<u32>,
-    /// UV / periodic seam edges only (same vertex buffer as solid + `line_indices`).
+    /// UV / periodic seam highlight only: duplicate indices of seam edges (same vertex buffer);
+    /// drawn when [`WgpuRenderer::set_show_seam_edges`] is on — not the wireframe body itself.
     pub seam_line_indices: Vec<u32>,
     /// Per-vertex smooth normals (same length as `vertices`).  When empty the
     /// renderer uploads zero normals, which triggers the flat-shading fallback
@@ -519,7 +520,7 @@ pub fn build_edges_highlight_mesh(brep: &BRep, edge_indices: &[usize]) -> Option
         if let Some(pts) = sample_edge_curve_points(brep, edge_index) {
             let base = vertices.len() as u32;
             let n = pts.len();
-            dummy_normals.extend(std::iter::repeat([0.0f32; 3]).take(n));
+            dummy_normals.extend(std::iter::repeat_n([0.0f32; 3], n));
             for i in 0..(n - 1) as u32 {
                 indices.push(base + i);
                 indices.push(base + i + 1);
@@ -589,6 +590,106 @@ pub fn merge_meshes(meshes: &[&Mesh]) -> Option<Mesh> {
     })
 }
 
+/// Merged face highlights + B-rep edge pick geometry for [`WgpuRenderer::upload_highlights`],
+/// shared by egui and iced Creator viewports.
+pub fn upload_brep_selection_highlights(
+    renderer: &WgpuRenderer,
+    device: &wgpu::Device,
+    brep: &BRep,
+    selected_faces: &[usize],
+    selected_edges: &[usize],
+    preview_mesh: Option<&Mesh>,
+) {
+    let selected_face_mesh = build_faces_highlight_mesh(brep, selected_faces);
+    let mut face_parts: Vec<&Mesh> = Vec::new();
+    if let Some(mesh) = selected_face_mesh.as_ref() {
+        face_parts.push(mesh);
+    }
+    if let Some(mesh) = preview_mesh {
+        face_parts.push(mesh);
+    }
+    let face_mesh = merge_meshes(&face_parts);
+    let edge_mesh = build_edges_highlight_mesh(brep, selected_edges);
+    renderer.upload_highlights(device, face_mesh.as_ref(), edge_mesh.as_ref());
+}
+
+/// Perspective aspect from a **snapped** pixel width/height (e.g. egui’s rounded physical rect).
+#[inline]
+pub fn projection_aspect_from_pixel_size(width_px: u32, height_px: u32) -> f32 {
+    width_px.max(1) as f32 / height_px.max(1) as f32
+}
+
+/// Returns `(projection_aspect, depth_attachment_w, depth_attachment_h)` for
+/// [`WgpuRenderer::prepare_scene_with_depth`].
+///
+/// Matches iced 0.14 `iced_wgpu` shader primitives: scale logical bounds to physical pixels,
+/// intersect with the full target `0..full_target_pixels`, then snap corners like
+/// [`iced_core::Rectangle::snap`] (rounded top-left and rounded bottom-right).
+///
+/// `depth_attachment_*` are always the full render target size — the depth texture must match
+/// the color attachment; only the perspective aspect uses the clipped widget.
+pub fn shader_widget_projection_aspect_and_depth_target(
+    full_target_pixels: (u32, u32),
+    widget_bounds_logical_xywh: (f32, f32, f32, f32),
+    scale_factor: f32,
+) -> (f32, u32, u32) {
+    let (lx, ly, lw, lh) = widget_bounds_logical_xywh;
+    let wx = lx * scale_factor;
+    let wy = ly * scale_factor;
+    let ww = lw * scale_factor;
+    let wh = lh * scale_factor;
+
+    let tw = full_target_pixels.0 as f32;
+    let th = full_target_pixels.1 as f32;
+    let full = (0.0f32, 0.0f32, tw, th);
+    let widget = (wx, wy, ww, wh);
+
+    let intersect_f32 = |a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)| -> Option<(f32, f32, f32, f32)> {
+        let x = a.0.max(b.0);
+        let y = a.1.max(b.1);
+        let ax1 = a.0 + a.2;
+        let ay1 = a.1 + a.3;
+        let bx1 = b.0 + b.2;
+        let by1 = b.1 + b.3;
+        let lower_right_x = ax1.min(bx1);
+        let lower_right_y = ay1.min(by1);
+        let w = lower_right_x - x;
+        let h = lower_right_y - y;
+        if w > 0.0 && h > 0.0 {
+            Some((x, y, w, h))
+        } else {
+            None
+        }
+    };
+
+    let snap_clip_size = |x: f32, y: f32, w: f32, h: f32| -> Option<(u32, u32)> {
+        let top_left_x = x.round() as i64;
+        let top_left_y = y.round() as i64;
+        let bottom_right_x = (x + w).round() as i64;
+        let bottom_right_y = (y + h).round() as i64;
+        let cw = bottom_right_x.checked_sub(top_left_x)?;
+        let ch = bottom_right_y.checked_sub(top_left_y)?;
+        if cw < 1 || ch < 1 {
+            return None;
+        }
+        Some((cw as u32, ch as u32))
+    };
+
+    let (cw, ch) = intersect_f32(widget, full)
+        .and_then(|(x, y, w, h)| snap_clip_size(x, y, w, h))
+        .unwrap_or_else(|| {
+            (
+                full_target_pixels.0.max(1),
+                full_target_pixels.1.max(1),
+            )
+        });
+
+    let aspect = cw as f32 / ch as f32;
+    let dw = full_target_pixels.0.max(1);
+    let dh = full_target_pixels.1.max(1);
+    (aspect, dw, dh)
+}
+
 /// Sample the analytic curve of a BRep edge into a sequence of `[f32; 3]` points
 /// (including both endpoints). Returns `None` for straight lines or missing geometry,
 /// signalling the caller to fall back to a single-chord segment.
@@ -602,7 +703,19 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
         .and_then(|v| *v)
         .or_else(|| match curve {
             Curve3::Circle(_) | Curve3::Ellipse(_) => Some([0.0, 2.0 * std::f64::consts::PI]),
-            _ => None,
+            _ => {
+                let [a, b] = curve.default_domain();
+                if a.is_finite() && b.is_finite() {
+                    let span = (b - a).abs();
+                    if span > 1e-12 {
+                        Some([a, b])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
         })?;
     let edge = brep.edges.get(edge_idx)?;
     let p_start = brep.vertices.get(edge.start)?.point;
@@ -619,39 +732,55 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
 
     // Some imported periodic edges carry a full [0, 2π] range even when the
     // topological edge is only an arc. Rebuild a trimmed range from endpoints.
+    //
+    // Seam edges (same geometric vertex at start/end on a full turn) must **not** use that
+    // angle delta shrink: it collapses span to 0, `sample_edge_curve_points` returns `None`,
+    // and wireframe falls back to a degenerate chord — circles/cylinders disappear in wireframe.
     match curve {
         Curve3::Circle(c) => {
             if (range[1] - range[0]).abs() >= two_pi * 0.999 {
-                let x_ax = any_perpendicular(c.normal);
-                let y_ax = c.normal.cross(x_ax);
-                let v0 = p_start - c.center;
-                let v1 = p_end - c.center;
-                let t0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
-                let t1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
-                let mut dt = t1 - t0;
-                if dt > std::f64::consts::PI {
-                    dt -= two_pi;
-                } else if dt < -std::f64::consts::PI {
-                    dt += two_pi;
+                let seam =
+                    (p_start - p_end).length() <= 1e-9 * c.radius.max(1.0).max(1e-6);
+                if !seam {
+                    let x_ax = any_perpendicular(c.normal);
+                    let y_ax = c.normal.cross(x_ax);
+                    let v0 = p_start - c.center;
+                    let v1 = p_end - c.center;
+                    let t0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                    let t1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                    let mut dt = t1 - t0;
+                    if dt > std::f64::consts::PI {
+                        dt -= two_pi;
+                    } else if dt < -std::f64::consts::PI {
+                        dt += two_pi;
+                    }
+                    range = [t0, t0 + dt];
                 }
-                range = [t0, t0 + dt];
             }
         }
         Curve3::Ellipse(e) => {
             if (range[1] - range[0]).abs() >= two_pi * 0.999 {
-                let x_ax = e.major_dir.normalize();
-                let y_ax = e.normal.cross(x_ax).normalize();
-                let v0 = p_start - e.center;
-                let v1 = p_end - e.center;
-                let t0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
-                let t1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
-                let mut dt = t1 - t0;
-                if dt > std::f64::consts::PI {
-                    dt -= two_pi;
-                } else if dt < -std::f64::consts::PI {
-                    dt += two_pi;
+                let seam_tol = 1e-9 * e.major_radius.max(e.minor_radius).max(1.0).max(1e-6);
+                let seam = (p_start - p_end).length() <= seam_tol;
+                if !seam {
+                    let x_ax = e.major_dir.normalize();
+                    let y_ax = e.normal.cross(x_ax).normalize();
+                    let v0 = p_start - e.center;
+                    let v1 = p_end - e.center;
+                    let t0 = wrap_2pi(
+                        (v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius),
+                    );
+                    let t1 = wrap_2pi(
+                        (v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius),
+                    );
+                    let mut dt = t1 - t0;
+                    if dt > std::f64::consts::PI {
+                        dt -= two_pi;
+                    } else if dt < -std::f64::consts::PI {
+                        dt += two_pi;
+                    }
+                    range = [t0, t0 + dt];
                 }
-                range = [t0, t0 + dt];
             }
         }
         _ => {}
@@ -690,8 +819,10 @@ pub struct Tessellator;
 impl Tessellator {
     /// Build a render [`Mesh`] from an already-tessellated `BRep` (uses existing face triangles).
     ///
-    /// Topology edges go to [`Mesh::line_indices`]; UV / periodic seam edges go to
-    /// [`Mesh::seam_line_indices`]. Optional seam overlay: [`WgpuRenderer::set_show_seam_edges`].
+    /// Every B-rep edge is tessellated into [`Mesh::line_indices`]. Edges classified as UV /
+    /// periodic seams also duplicate the same segments into [`Mesh::seam_line_indices`] for the
+    /// optional seam overlay ([`WgpuRenderer::set_show_seam_edges`]); wireframe uses
+    /// [`Mesh::line_indices`] only.
     pub fn tessellate(brep: &BRep) -> Mesh {
         Self::tessellate_with_line_options(brep, &TessellateLineOptions::default())
     }
@@ -806,23 +937,28 @@ impl Tessellator {
 
         for (edge_idx, edge) in brep.edges.iter().enumerate() {
             let is_seam = seam_edges.contains(&edge_idx);
-            let line_target = if is_seam {
-                &mut seam_line_indices
-            } else {
-                &mut line_indices
-            };
             if let Some(pts) = sample_edge_curve_points(brep, edge_idx) {
                 let base = flat_verts.len() as u32;
                 let n = pts.len();
-                normals.extend(std::iter::repeat([0.0f32; 3]).take(n));
+                normals.extend(std::iter::repeat_n([0.0f32; 3], n));
                 for i in 0..(n - 1) as u32 {
-                    line_target.push(base + i);
-                    line_target.push(base + i + 1);
+                    line_indices.push(base + i);
+                    line_indices.push(base + i + 1);
+                }
+                if is_seam {
+                    for i in 0..(n - 1) as u32 {
+                        seam_line_indices.push(base + i);
+                        seam_line_indices.push(base + i + 1);
+                    }
                 }
                 flat_verts.extend_from_slice(&pts);
             } else {
-                line_target.push(edge.start as u32);
-                line_target.push(edge.end as u32);
+                line_indices.push(edge.start as u32);
+                line_indices.push(edge.end as u32);
+                if is_seam {
+                    seam_line_indices.push(edge.start as u32);
+                    seam_line_indices.push(edge.end as u32);
+                }
             }
         }
         let _ = line; // options reserved for API compatibility
@@ -943,17 +1079,18 @@ mod tests {
     use rcad_kernel::{BRep, PrimitiveSolid};
 
     #[test]
-    fn tessellate_sphere_puts_seams_in_seam_line_indices() {
+    fn tessellate_sphere_topology_in_line_indices_seam_duplicate_for_overlay() {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         mesh_brep(&mut brep, &TessellationParams::default());
         let mesh = Tessellator::tessellate(&brep);
         assert!(
-            mesh.line_indices.is_empty(),
-            "single periodic face: no non-seam edges in line_indices"
+            !mesh.line_indices.is_empty(),
+            "wireframe/solid+edges use line_indices for all topology edges"
         );
-        assert!(
-            !mesh.seam_line_indices.is_empty(),
-            "sphere seam geometry should live in seam_line_indices"
+        assert_eq!(
+            mesh.seam_line_indices.len(),
+            mesh.line_indices.len(),
+            "UV-classified seam edges duplicate into seam_line_indices for optional overlay only"
         );
     }
 
@@ -968,6 +1105,25 @@ mod tests {
         let mesh = Tessellator::tessellate(&brep);
         assert_eq!(mesh.line_indices.len(), brep.edges.len() * 2);
         assert!(mesh.seam_line_indices.is_empty(), "box has no UV seams");
+    }
+
+    /// Full-circle seam edges must be polyline-sampled (not a degenerate chord) so wireframe mode shows caps.
+    #[test]
+    fn tessellate_cylinder_curved_edges_emit_extra_vertices_for_lines() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        mesh_brep(&mut brep, &TessellationParams::default());
+        let mesh = Tessellator::tessellate(&brep);
+        assert!(
+            mesh.vertices.len() > brep.vertices.len(),
+            "circle edges should append sampled polyline vertices"
+        );
+        assert!(
+            mesh.line_indices.len() + mesh.seam_line_indices.len() > brep.edges.len() * 2,
+            "sampled circles should add more than one line segment per curved edge"
+        );
     }
 
     #[test]
@@ -1901,6 +2057,7 @@ fn build_axis_arrow_mesh(
     (vertices, tri_indices, line_indices)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_ring_vertices(
     vertices: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
@@ -3199,7 +3356,8 @@ impl WgpuRenderer {
         );
 
         let draw_brep_lines = draw_wireframe && lcount > 0;
-        let draw_seam_lines = draw_wireframe && show_seam_edges && scount > 0;
+        // UV / periodic seam overlay only — wireframe uses `line_indices` like solid+edges.
+        let draw_seam_lines = draw_wireframe && scount > 0 && show_seam_edges;
 
         let line_pipeline = if use_depth_pipeline {
             &self.pipeline_line_depth
@@ -3208,8 +3366,8 @@ impl WgpuRenderer {
         };
 
         // In transparent mode, draw wireframe first so it's behind the translucent surface
-        if mode == DisplayMode::Transparent && draw_wireframe {
-            if let Some(vb) = vb_guard.as_ref() {
+        if mode == DisplayMode::Transparent && draw_wireframe
+            && let Some(vb) = vb_guard.as_ref() {
                 if draw_brep_lines
                     && let Some(lib) = lib_guard.as_ref()
                 {
@@ -3231,7 +3389,6 @@ impl WgpuRenderer {
                     render_pass.draw_indexed(0..scount, 0, 0..1);
                 }
             }
-        }
 
         // Draw triangles
         if draw_triangles
@@ -3256,8 +3413,8 @@ impl WgpuRenderer {
         }
 
         // Draw wireframe (non-transparent modes)
-        if draw_wireframe && mode != DisplayMode::Transparent {
-            if let Some(vb) = vb_guard.as_ref() {
+        if draw_wireframe && mode != DisplayMode::Transparent
+            && let Some(vb) = vb_guard.as_ref() {
                 if draw_brep_lines
                     && let Some(lib) = lib_guard.as_ref()
                 {
@@ -3279,7 +3436,6 @@ impl WgpuRenderer {
                     render_pass.draw_indexed(0..scount, 0, 0..1);
                 }
             }
-        }
 
         // Draw face highlights
         let hvb_guard = self.highlight_face_vertex_buffer.lock().expect("render mutex poisoned");
@@ -3519,7 +3675,8 @@ impl WgpuRenderer {
         *self.display_mode.lock().expect("render mutex poisoned")
     }
 
-    /// Show UV / periodic seam edges ([`Mesh::seam_line_indices`]) when the display mode draws edges.
+    /// Show UV / periodic seam **overlay** ([`Mesh::seam_line_indices`]) when the display mode draws
+    /// edges. Wireframe topology uses [`Mesh::line_indices`] only.
     pub fn set_show_seam_edges(&self, show: bool) {
         *self.show_seam_edges.lock().expect("render mutex poisoned") = show;
     }
@@ -3575,6 +3732,18 @@ impl WgpuRenderer {
         if dir.length_squared() > 1e-6 {
             *self.light_dir.lock().expect("render mutex poisoned") = dir;
         }
+    }
+
+    /// Topology display mode, optional seam overlay, and view-aligned headlight — RCAD Creator (egui + iced).
+    pub fn set_creator_viewport_shading(
+        &self,
+        camera: &Camera,
+        display_mode: DisplayMode,
+        show_seam_edges: bool,
+    ) {
+        self.set_display_mode(display_mode);
+        self.set_show_seam_edges(show_seam_edges);
+        self.set_headlight(camera);
     }
 
     pub fn render(

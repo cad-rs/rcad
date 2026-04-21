@@ -53,7 +53,7 @@
 use crate::{BRep, Edge, Face, PCurve, Vertex};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BRepGraph
@@ -536,8 +536,7 @@ impl BRepGraph {
             let len_i = (pb - pa).length();
 
             let mut matched = false;
-            for j in (i + 1)..boundary.len() {
-                let ej = boundary[j];
+            for &ej in boundary.iter().skip(i + 1) {
                 if paired.contains(&ej) {
                     continue;
                 }
@@ -762,21 +761,19 @@ impl BRepGraphBuilder {
 
     /// Add an edge→face incidence entry.
     pub fn add_edge_face(&mut self, edge_idx: usize, face_idx: usize) -> &mut Self {
-        if let Some(adj) = self.edge_to_faces.get_mut(edge_idx) {
-            if !adj.contains(&face_idx) {
+        if let Some(adj) = self.edge_to_faces.get_mut(edge_idx)
+            && !adj.contains(&face_idx) {
                 adj.push(face_idx);
             }
-        }
         self
     }
 
     /// Add a face→edge incidence entry.
     pub fn add_face_edge(&mut self, face_idx: usize, edge_idx: usize) -> &mut Self {
-        if let Some(adj) = self.face_to_edges.get_mut(face_idx) {
-            if !adj.contains(&edge_idx) {
+        if let Some(adj) = self.face_to_edges.get_mut(face_idx)
+            && !adj.contains(&edge_idx) {
                 adj.push(edge_idx);
             }
-        }
         self
     }
 

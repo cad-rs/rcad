@@ -8,6 +8,7 @@ use crate::appearance::Color;
 ///
 /// 类比 OCCT `XCAFDoc_ShapeTool` 的 shape reference。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)] // BRep leaf is the common case; boxing would churn the API.
 pub enum ShapeRef {
     /// 叶节点：一个几何实体。
     Brep(BRep),
@@ -126,7 +127,7 @@ impl Assembly {
                         name: component.name.clone(),
                         brep: brep.clone(),
                         world_transform,
-                        color: component.color.clone(),
+                        color: component.color,
                     });
                 }
                 ShapeRef::Assembly(sub_asm) => {
@@ -142,11 +143,10 @@ impl Assembly {
             if component.name == name {
                 return Some(component);
             }
-            if let ShapeRef::Assembly(sub) = &component.shape {
-                if let Some(found) = sub.find_component(name) {
+            if let ShapeRef::Assembly(sub) = &component.shape
+                && let Some(found) = sub.find_component(name) {
                     return Some(found);
                 }
-            }
         }
         None
     }

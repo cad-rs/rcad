@@ -11,6 +11,7 @@ use std::fmt;
 /// This enum provides more specific failure types than `BooleanRetryClass`,
 /// enabling targeted recovery strategies for each failure mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum BooleanFailureClass {
     /// Result has degenerate edges or faces (zero-length edges, degenerate triangles).
     DegenerateTopology,
@@ -25,6 +26,7 @@ pub enum BooleanFailureClass {
     /// Input geometry is structurally invalid (empty, missing data).
     InvalidInput,
     /// Unknown or unclassified failure.
+    #[default]
     Unknown,
 }
 
@@ -82,11 +84,6 @@ impl fmt::Display for BooleanFailureClass {
     }
 }
 
-impl Default for BooleanFailureClass {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 /// Recovery strategy to apply for a specific failure class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,11 +411,10 @@ impl BooleanDiagnosticReport {
                 });
             }
 
-            if let Some(strategy) = attempt.recovery_strategy {
-                if !self.recovery_strategies_applied.contains(&strategy) {
+            if let Some(strategy) = attempt.recovery_strategy
+                && !self.recovery_strategies_applied.contains(&strategy) {
                     self.recovery_strategies_applied.push(strategy);
                 }
-            }
         }
     }
 

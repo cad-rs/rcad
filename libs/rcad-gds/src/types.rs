@@ -25,21 +25,13 @@ impl Default for GdsUnits {
 
 /// GDS library (top-level container).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GdsLibrary {
     pub name: String,
     pub units: GdsUnits,
     pub structures: std::collections::HashMap<String, GdsStructure>,
 }
 
-impl Default for GdsLibrary {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            units: GdsUnits::default(),
-            structures: std::collections::HashMap::new(),
-        }
-    }
-}
 
 /// GDS structure (cell).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -61,17 +53,14 @@ pub struct GdsBoundary {
 
 /// GDS path (wire with width).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum EndCapType {
+    #[default]
     Flush,
     Round,
     Square,
 }
 
-impl Default for EndCapType {
-    fn default() -> Self {
-        Self::Flush
-    }
-}
 
 /// GDS path (wire).
 #[derive(Debug, Clone, Serialize, Deserialize)]

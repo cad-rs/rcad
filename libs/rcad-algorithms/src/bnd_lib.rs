@@ -392,8 +392,8 @@ pub fn edge_bounds(brep: &BRep, edge_idx: usize, tol: f64) -> BoundingBox {
     }
 
     // Sample along the curve if available
-    if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c) {
-        if let Some(curve) = brep.geom.curves.get(curve_idx) {
+    if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
+        && let Some(curve) = brep.geom.curves.get(curve_idx) {
             let range = brep.geom.edge_curve_range.get(edge_idx)
                 .copied()
                 .flatten()
@@ -401,7 +401,6 @@ pub fn edge_bounds(brep: &BRep, edge_idx: usize, tol: f64) -> BoundingBox {
 
             add_curve_to_box(curve, range[0], range[1], &mut bbox, 0.0);
         }
-    }
 
     // Add tolerance padding
     if tol > 0.0 && bbox.is_valid() {
@@ -437,8 +436,8 @@ pub fn optimized_bounds(brep: &BRep, tol: f64) -> BoundingBox {
     // For faces with curved surfaces, add a few more sample points
     let n_faces = count_brep_faces(brep);
     for face_idx in 0..n_faces {
-        if let Some(surface_idx) = brep.geom.face_surface.get(face_idx).and_then(|s| *s) {
-            if let Some(surface) = brep.geom.surfaces.get(surface_idx) {
+        if let Some(surface_idx) = brep.geom.face_surface.get(face_idx).and_then(|s| *s)
+            && let Some(surface) = brep.geom.surfaces.get(surface_idx) {
                 // Only sample non-planar surfaces
                 if !matches!(surface, Surface3::Plane(_)) {
                     let domain = brep.geom.face_surface_range.get(face_idx)
@@ -464,7 +463,6 @@ pub fn optimized_bounds(brep: &BRep, tol: f64) -> BoundingBox {
                     }
                 }
             }
-        }
     }
 
     // Add tolerance padding
@@ -497,8 +495,8 @@ pub fn precise_bounds(brep: &BRep, n_samples: usize) -> BoundingBox {
     // Process all faces with high sampling
     let n_faces = count_brep_faces(brep);
     for face_idx in 0..n_faces {
-        if let Some(surface_idx) = brep.geom.face_surface.get(face_idx).and_then(|s| *s) {
-            if let Some(surface) = brep.geom.surfaces.get(surface_idx) {
+        if let Some(surface_idx) = brep.geom.face_surface.get(face_idx).and_then(|s| *s)
+            && let Some(surface) = brep.geom.surfaces.get(surface_idx) {
                 let domain = brep.geom.face_surface_range.get(face_idx)
                     .copied()
                     .flatten()
@@ -518,13 +516,12 @@ pub fn precise_bounds(brep: &BRep, n_samples: usize) -> BoundingBox {
                     }
                 }
             }
-        }
     }
 
     // Process all edges with high sampling
     for edge_idx in 0..brep.edges.len() {
-        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c) {
-            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|c| *c)
+            && let Some(curve) = brep.geom.curves.get(curve_idx) {
                 let range = brep.geom.edge_curve_range.get(edge_idx)
                     .copied()
                     .flatten()
@@ -540,7 +537,6 @@ pub fn precise_bounds(brep: &BRep, n_samples: usize) -> BoundingBox {
                     }
                 }
             }
-        }
     }
 
     bbox
@@ -621,7 +617,7 @@ impl BoundingSphere {
             if dist > radius {
                 let new_radius = (radius + dist) * 0.5;
                 let direction = (p - center).normalize_or_zero();
-                center = center + direction * (new_radius - radius);
+                center += direction * (new_radius - radius);
                 radius = new_radius;
             }
         }
