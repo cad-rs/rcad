@@ -1165,6 +1165,31 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
 pub struct Tessellator;
 
 impl Tessellator {
+    fn invalidate_cached_sphere_torus_faces(brep: &mut BRep) -> usize {
+        let mut marked = 0usize;
+        let mut flat_fi = 0usize;
+        for solid in &mut brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    let should_force_rebuild = brep
+                        .geom
+                        .face_surface
+                        .get(flat_fi)
+                        .and_then(|surface_idx| *surface_idx)
+                        .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx))
+                        .map(|surface| matches!(surface, Surface3::Sphere(_) | Surface3::Torus(_)))
+                        .unwrap_or(false);
+                    if should_force_rebuild && !face.mesh_dirty {
+                        face.mesh_dirty = true;
+                        marked += 1;
+                    }
+                    flat_fi += 1;
+                }
+            }
+        }
+        marked
+    }
+
     /// Build a render [`Mesh`] from an already-tessellated `BRep` (uses existing face triangles).
     ///
     /// Every B-rep edge is tessellated into [`Mesh::line_indices`]. Edges classified as UV /
@@ -1320,10 +1345,10 @@ impl Tessellator {
         }
     }
 
-    /// Re-tessellate all faces using the given quality options, then build a GPU [`Mesh`].
+    /// Re-tessellate dirty faces using the given quality options, then build a GPU [`Mesh`].
     ///
-    /// This intentionally discards cached face triangles before meshing to avoid
-    /// stale import-time tessellation artifacts.
+    /// Sphere/torus cached triangles are force-invalidated first so stale
+    /// import-time triangulation is not reused.
     ///
     /// Analogous to `BRepMesh_IncrementalMesh` with explicit deflection/angular arguments in OCCT.
     pub fn tessellate_with_options(brep: &mut BRep, options: &TessellationOptions) -> Mesh {
@@ -1336,8 +1361,7 @@ impl Tessellator {
         options: &TessellationOptions,
         line: &TessellateLineOptions,
     ) -> Mesh {
-        // Do a full rebuild instead of selectively reusing cached face triangles.
-        brep.invalidate_mesh();
+        let _ = Self::invalidate_cached_sphere_torus_faces(brep);
         mesh_brep(brep, options);
         Self::tessellate_with_line_options(brep, line)
     }
@@ -1649,6 +1673,87 @@ mod tests {
             torus_mesh.indices.len() > 3,
             "torus faces should be re-tessellated instead of reusing coarse cached triangles"
         );
+    }
+
+    #[test]
+    fn tessellate_with_options_keeps_cached_planar_triangles() {
+        let mut box_brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 2.0,
+            depth: 2.0,
+        });
+        for solid in &mut box_brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.triangles = vec![[0, 1, 2]];
+                    face.mesh_dirty = false;
+                }
+            }
+        }
+
+        let box_mesh = Tessellator::tessellate_with_options(
+            &mut box_brep,
+            &TessellationParams::default(),
+        );
+        // 6 planar faces, each preserving one cached triangle.
+        assert_eq!(
+            box_mesh.indices.len(),
+            18,
+            "planar faces should keep cached triangles instead of forced re-tessellation"
+        );
+    }
+
+    #[test]
+    fn tessellate_with_options_keeps_cached_cylinder_cone_triangles() {
+        let mut cylinder = BRep::from_primitive(PrimitiveSolid::Cylinder {
+            radius: 1.0,
+            height: 2.0,
+        });
+        mesh_brep(&mut cylinder, &TessellationParams::default());
+        for solid in &mut cylinder.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.triangles.truncate(1);
+                    face.mesh_dirty = false;
+                }
+            }
+        }
+        let _ = Tessellator::tessellate_with_options(&mut cylinder, &TessellationParams::default());
+        for solid in &cylinder.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    assert!(
+                        face.triangles.len() == 1,
+                        "cylinder faces should keep cached triangles (avoid misaligned retessellation)"
+                    );
+                }
+            }
+        }
+
+        let mut cone = BRep::from_primitive(PrimitiveSolid::Cone {
+            base_radius: 1.0,
+            height: 2.0,
+        });
+        mesh_brep(&mut cone, &TessellationParams::default());
+        for solid in &mut cone.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    face.triangles.truncate(1);
+                    face.mesh_dirty = false;
+                }
+            }
+        }
+        let _ = Tessellator::tessellate_with_options(&mut cone, &TessellationParams::default());
+        for solid in &cone.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    assert!(
+                        face.triangles.len() == 1,
+                        "cone faces should keep cached triangles (avoid misaligned retessellation)"
+                    );
+                }
+            }
+        }
     }
 
     /// Test adaptive tessellation with edge-sensitive refinement.
