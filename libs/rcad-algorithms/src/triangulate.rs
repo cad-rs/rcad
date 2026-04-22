@@ -527,6 +527,69 @@ pub fn triangulate_polygon(nodes: &[DVec3], normal: DVec3) -> Vec<[usize; 3]> {
     ear_clip(&pts_2d)
 }
 
+/// Triangulate an outer ring with optional hole rings.
+///
+/// Returns local indices into `outer + holes` point order.
+fn triangulate_polygon_with_holes(
+    outer: &[DVec3],
+    holes: &[Vec<DVec3>],
+    normal: DVec3,
+) -> Vec<[usize; 3]> {
+    if outer.len() < 3 {
+        return Vec::new();
+    }
+    let (u_axis, v_axis) = local_basis(normal);
+    let mut flat: Vec<f64> = Vec::new();
+    let mut hole_starts: Vec<usize> = Vec::new();
+    let mut vertex_count = 0usize;
+
+    for p in outer {
+        flat.push(p.dot(u_axis));
+        flat.push(p.dot(v_axis));
+        vertex_count += 1;
+    }
+    for hole in holes {
+        if hole.len() < 3 {
+            continue;
+        }
+        hole_starts.push(vertex_count);
+        for p in hole {
+            flat.push(p.dot(u_axis));
+            flat.push(p.dot(v_axis));
+            vertex_count += 1;
+        }
+    }
+
+    let indices = earcutr::earcut(&flat, &hole_starts, 2).unwrap_or_default();
+    let mut tris = Vec::new();
+    for tri in indices.chunks_exact(3) {
+        tris.push([tri[0], tri[1], tri[2]]);
+    }
+    tris
+}
+
+fn estimate_polygon_normal(points: &[DVec3]) -> Option<DVec3> {
+    if points.len() < 3 {
+        return None;
+    }
+    // Newell-style robust polygon normal estimate from boundary points.
+    let mut n = DVec3::ZERO;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        n.x += (a.y - b.y) * (a.z + b.z);
+        n.y += (a.z - b.z) * (a.x + b.x);
+        n.z += (a.x - b.x) * (a.y + b.y);
+    }
+    let len2 = n.length_squared();
+    if len2 <= 1e-20 {
+        None
+    } else {
+        Some(n / len2.sqrt())
+    }
+}
+
+
 fn local_basis(normal: DVec3) -> (DVec3, DVec3) {
     let ref_dir = if normal.x.abs() < 0.9 {
         DVec3::X
@@ -543,13 +606,22 @@ fn local_basis(normal: DVec3) -> (DVec3, DVec3) {
 /// Curved edges are sampled using their analytic 3D curve + edge range.
 /// Straight or missing-geometry edges contribute only their end vertex.
 fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+    use std::collections::HashSet;
     let mut pts: Vec<DVec3> = Vec::new();
     let two_pi = 2.0 * std::f64::consts::PI;
+    let mut seen_edge_indices: HashSet<usize> = HashSet::new();
 
     for we in &wire.edges {
+        // Some imported wires repeat seam/periodic edges to force loop closure.
+        // Keep one geometric contribution per topological edge to avoid
+        // self-overlapping polygon chains that destabilize ear clipping.
+        if !seen_edge_indices.insert(we.idx) {
+            continue;
+        }
         let Some(edge) = brep.edges.get(we.idx) else {
             continue;
         };
+        let topo_closed = edge.start == edge.end;
 
         let start_idx = if we.forward { edge.start } else { edge.end };
         let end_idx = if we.forward { edge.end } else { edge.start };
@@ -562,6 +634,13 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
             Some(v) => v.point,
             None => continue,
         };
+        let edge_tol = brep
+            .geom
+            .edge_tolerance
+            .get(we.idx)
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0);
 
         let mut sampled = false;
         if let Some(ci) = brep.geom.edge_curve.get(we.idx).and_then(|v| *v)
@@ -584,9 +663,69 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
 
                     let mut t0 = r0;
                     let mut t1 = r1;
+                    if matches!(curve, Curve3::Circle(_) | Curve3::Ellipse(_)) {
+                        // Robust unit disambiguation by endpoint fit against topological
+                        // edge vertices; avoids misclassifying valid unwrapped radians.
+                        let range_rad = [t0, t1];
+                        let range_deg = [t0.to_radians(), t1.to_radians()];
+                        let err_for = |r: [f64; 2]| -> f64 {
+                            let a = curve.point_at(r[0]);
+                            let b = curve.point_at(r[1]);
+                            let e_direct = (a - p_start).length() + (b - p_end).length();
+                            let e_swapped = (a - p_end).length() + (b - p_start).length();
+                            e_direct.min(e_swapped)
+                        };
+                        let err_rad = err_for(range_rad);
+                        let err_deg = err_for(range_deg);
+                        let max_abs = t0.abs().max(t1.abs());
+                        let span_abs = (t1 - t0).abs();
+                        let seam_like = (p_start - p_end).length() <= 1e-7;
+                        let degree_likely_by_magnitude =
+                            max_abs > two_pi + 1e-9 && max_abs <= 360.0 + 1e-6;
+                        let tie =
+                            (err_deg - err_rad).abs() <= 1e-8 * (1.0 + err_rad.abs().max(err_deg.abs()));
+                        if err_deg + 1e-9 < err_rad
+                            || (tie && degree_likely_by_magnitude)
+                            || (seam_like && degree_likely_by_magnitude && span_abs > two_pi * 1.5)
+                        {
+                            t0 = range_deg[0];
+                            t1 = range_deg[1];
+                        }
+                    }
                     if !we.forward {
                         std::mem::swap(&mut t0, &mut t1);
                     }
+                    let near_full_turn = ((t1 - t0).abs() - two_pi).abs() <= 1e-3;
+                    let choose_arc_delta = |a0: f64, a1: f64, span_hint: f64| -> f64 {
+                        let mut minor = a1 - a0;
+                        if minor > std::f64::consts::PI {
+                            minor -= two_pi;
+                        } else if minor < -std::f64::consts::PI {
+                            minor += two_pi;
+                        }
+                        let major = if minor >= 0.0 {
+                            minor - two_pi
+                        } else {
+                            minor + two_pi
+                        };
+                        if !span_hint.is_finite() || span_hint.abs() <= 1e-12 {
+                            return minor;
+                        }
+                        let score = |cand: f64| -> f64 {
+                            let mag = (cand.abs() - span_hint.abs()).abs();
+                            let sign_penalty = if cand.signum() == span_hint.signum() {
+                                0.0
+                            } else {
+                                two_pi
+                            };
+                            mag + sign_penalty
+                        };
+                        if score(major) < score(minor) {
+                            major
+                        } else {
+                            minor
+                        }
+                    };
 
                     // Repair clearly wrong full-period range on circular/elliptic edges.
                     match curve {
@@ -598,24 +737,58 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                 }
                                 out
                             };
-                            if (t1 - t0).abs() >= two_pi * 0.999 {
-                                // Seam edge: same geometric vertex at start/end 鈥?do not shrink the
-                                // parameter interval using angle deltas (they collapse to 0).
-                                let seam =
-                                    (p_start - p_end).length() <= 1e-9 * c.radius.max(1.0).max(1e-6);
-                                if !seam {
+                            let span_hint = t1 - t0;
+                            let multi_turn = span_hint.abs() > two_pi + 1e-6;
+                            // Seam edge: same geometric vertex at start/end.
+                            let seam_tol = (1e-7 * c.radius.max(1.0)).max(edge_tol * 5.0).max(1e-8);
+                            let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
+                            if seam {
+                                // Only force full turn when source trim already indicates
+                                // a near-full period.
+                                if topo_closed {
+                                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                    t0 = 0.0;
+                                    t1 = sign * two_pi;
+                                } else if near_full_turn {
+                                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                    t0 = 0.0;
+                                    t1 = sign * two_pi;
+                                }
+                            } else {
+                                if near_full_turn {
                                     let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
                                     let y_ax = c.normal.cross(x_ax);
                                     let v0 = p_start - c.center;
                                     let v1 = p_end - c.center;
                                     let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
                                     let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
-                                    let mut dt = a1 - a0;
-                                    if dt > std::f64::consts::PI {
-                                        dt -= two_pi;
-                                    } else if dt < -std::f64::consts::PI {
-                                        dt += two_pi;
+                                    let reliable_hint = span_hint.signum() * 1e-3;
+                                    let mut dt = choose_arc_delta(a0, a1, reliable_hint);
+                                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
                                     }
+                                    let chord = (p_end - p_start).length();
+                                    let chord_tol = 1e-8 * c.radius.max(1.0);
+                                    if chord > chord_tol && dt.abs() < 1e-3 {
+                                        let ratio = (chord / (2.0 * c.radius.max(1e-12))).clamp(0.0, 1.0);
+                                        let minor = (2.0 * ratio.asin()).clamp(1e-6, std::f64::consts::PI);
+                                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                        dt = sign * minor;
+                                    }
+                                    t0 = a0;
+                                    t1 = a0 + dt;
+                                } else if multi_turn {
+                                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                                    // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
+                                    let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
+                                    let y_ax = c.normal.cross(x_ax);
+                                    let v0 = p_start - c.center;
+                                    let v1 = p_end - c.center;
+                                    let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                                    let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                                    let reliable_hint = span_hint.signum() * two_pi;
+                                    let dt = choose_arc_delta(a0, a1, reliable_hint);
                                     t0 = a0;
                                     t1 = a0 + dt;
                                 }
@@ -629,21 +802,54 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                 }
                                 out
                             };
-                            if (t1 - t0).abs() >= two_pi * 0.999 {
-                                let x_ax = e.major_dir.normalize();
-                                let y_ax = e.normal.cross(x_ax).normalize();
-                                let v0 = p_start - e.center;
-                                let v1 = p_end - e.center;
-                                let a0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
-                                let a1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
-                                let mut dt = a1 - a0;
-                                if dt > std::f64::consts::PI {
-                                    dt -= two_pi;
-                                } else if dt < -std::f64::consts::PI {
-                                    dt += two_pi;
+                            let span_hint = t1 - t0;
+                            let multi_turn = span_hint.abs() > two_pi + 1e-6;
+                            let seam_tol = (1e-7 * e.major_radius.max(e.minor_radius).max(1.0))
+                                .max(edge_tol * 5.0)
+                                .max(1e-8);
+                            let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
+                            if seam {
+                                // Only force full turn when source trim already indicates
+                                // a near-full period.
+                                if topo_closed {
+                                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                    t0 = 0.0;
+                                    t1 = sign * two_pi;
+                                } else if near_full_turn {
+                                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                    t0 = 0.0;
+                                    t1 = sign * two_pi;
                                 }
-                                t0 = a0;
-                                t1 = a0 + dt;
+                            } else {
+                                if near_full_turn {
+                                    let x_ax = e.major_dir.normalize();
+                                    let y_ax = e.normal.cross(x_ax).normalize();
+                                    let v0 = p_start - e.center;
+                                    let v1 = p_end - e.center;
+                                    let a0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                                    let a1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                                    let reliable_hint = span_hint.signum() * 1e-3;
+                                    let mut dt = choose_arc_delta(a0, a1, reliable_hint);
+                                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
+                                    }
+                                    t0 = a0;
+                                    t1 = a0 + dt;
+                                } else if multi_turn {
+                                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                                    // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
+                                    let x_ax = e.major_dir.normalize();
+                                    let y_ax = e.normal.cross(x_ax).normalize();
+                                    let v0 = p_start - e.center;
+                                    let v1 = p_end - e.center;
+                                    let a0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                                    let a1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                                    let reliable_hint = span_hint.signum() * two_pi;
+                                    let dt = choose_arc_delta(a0, a1, reliable_hint);
+                                    t0 = a0;
+                                    t1 = a0 + dt;
+                                }
                             }
                         }
                         _ => {}
@@ -659,12 +865,16 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                             Curve3::Ellipse(_) => 24,
                             _ => 16,
                         };
-                        for i in 0..=n_segs {
-                            if !pts.is_empty() && i == 0 {
-                                continue;
-                            }
+                        if pts.is_empty() {
+                            pts.push(p_start);
+                        }
+                        for i in 1..=n_segs {
                             let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
                             pts.push(curve.point_at(t));
+                        }
+                        // Keep sampled chain anchored to topological edge endpoints.
+                        if let Some(last) = pts.last_mut() {
+                            *last = p_end;
                         }
                         sampled = true;
                     }
@@ -849,11 +1059,19 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                         brep, face_flat_idx, &surf, u0, u1, v0, v1,
                     );
 
-                    let plane_analytic_ok = !matches!(surf, Surface3::Plane(_))
+                    let is_plane = matches!(surf, Surface3::Plane(_));
+                    let plane_analytic_ok = !is_plane
                         || (u1 - u0).abs() * (v1 - v0).abs() >= PLANE_UV_SLIVER_MAX;
 
                     let domain_ok = (u1 - u0).abs() >= 1e-10 && (v1 - v0).abs() >= 1e-10;
-                    if domain_ok && plane_analytic_ok {
+                    let has_inner_wires = !brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
+                        .inner_wires
+                        .is_empty();
+                    // `triangulate_surface` currently emits a domain patch and does not carve
+                    // hole loops. For faces with inner wires, force wire-based fallback path.
+                    // Imported planar faces frequently have concave boundaries / holes.
+                    // Prefer wire-based triangulation for planes to preserve trims exactly.
+                    if domain_ok && plane_analytic_ok && !has_inner_wires && !is_plane {
                         let mesh = triangulate_surface(&surf, [u0, u1], [v0, v1], params);
                         if !mesh.triangles.is_empty() {
                             // Append new vertices and remap triangle indices.
@@ -879,9 +1097,35 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                     // vertices is a sliver; weld removes all triangles): sample the full outer
                     // wire (including curved edges) and ear-clip.
                     let face_ref = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
-                    let poly_pts = sample_wire_polygon_points(brep, &face_ref.outer_wire);
-                    if poly_pts.len() >= 3 {
-                        let local_tris = triangulate_polygon(&poly_pts, face_ref.normal);
+                    let outer_pts = sample_wire_polygon_points(brep, &face_ref.outer_wire);
+                    let hole_pts: Vec<Vec<DVec3>> = face_ref
+                        .inner_wires
+                        .iter()
+                        .map(|wire| sample_wire_polygon_points(brep, wire))
+                        .filter(|pts| pts.len() >= 3)
+                        .collect();
+                    if outer_pts.len() >= 3 {
+                        let mut poly_pts = outer_pts.clone();
+                        for hole in &hole_pts {
+                            poly_pts.extend_from_slice(hole);
+                        }
+                        let fallback_normal =
+                            estimate_polygon_normal(&outer_pts).unwrap_or(face_ref.normal);
+                        let local_tris = if hole_pts.is_empty() {
+                            triangulate_polygon(&outer_pts, fallback_normal)
+                        } else {
+                            triangulate_polygon_with_holes(&outer_pts, &hole_pts, fallback_normal)
+                        };
+                        if std::env::var("RCAD_DEBUG_FACE_TRI").is_ok() && !hole_pts.is_empty() {
+                            eprintln!(
+                                "[rcad-tri][debug] face_flat={} outer_pts={} holes={} hole_pts_total={} tris={}",
+                                face_flat_idx,
+                                outer_pts.len(),
+                                hole_pts.len(),
+                                hole_pts.iter().map(|h| h.len()).sum::<usize>(),
+                                local_tris.len()
+                            );
+                        }
                         if !local_tris.is_empty() {
                             let base = brep.vertices.len();
                             for &pt in &poly_pts {

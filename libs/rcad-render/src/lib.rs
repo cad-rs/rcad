@@ -1068,14 +1068,81 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
     let edge = brep.edges.get(edge_idx)?;
     let p_start = brep.vertices.get(edge.start)?.point;
     let p_end = brep.vertices.get(edge.end)?.point;
+    let topo_closed = edge.start == edge.end;
+    let edge_tol = brep
+        .geom
+        .edge_tolerance
+        .get(edge_idx)
+        .copied()
+        .unwrap_or(0.0)
+        .max(0.0);
 
     let two_pi = 2.0 * std::f64::consts::PI;
+    if matches!(curve, Curve3::Circle(_) | Curve3::Ellipse(_)) {
+        // Robust unit disambiguation: choose radians vs degrees by endpoint fit
+        // against topological edge vertices. This avoids misclassifying valid
+        // unwrapped radian ranges (e.g. >2π) as degrees.
+        let range_rad = range;
+        let range_deg = [range[0].to_radians(), range[1].to_radians()];
+        let err_for = |r: [f64; 2]| -> f64 {
+            let a = curve.point_at(r[0]);
+            let b = curve.point_at(r[1]);
+            let e_direct = (a - p_start).length() + (b - p_end).length();
+            let e_swapped = (a - p_end).length() + (b - p_start).length();
+            e_direct.min(e_swapped)
+        };
+        let err_rad = err_for(range_rad);
+        let err_deg = err_for(range_deg);
+        let max_abs = range[0].abs().max(range[1].abs());
+        let span_abs = (range[1] - range[0]).abs();
+        let seam_like = (p_start - p_end).length() <= 1e-7;
+        let degree_likely_by_magnitude = max_abs > two_pi + 1e-9 && max_abs <= 360.0 + 1e-6;
+        let tie = (err_deg - err_rad).abs() <= 1e-8 * (1.0 + err_rad.abs().max(err_deg.abs()));
+        if err_deg + 1e-9 < err_rad
+            || (tie && degree_likely_by_magnitude)
+            || (seam_like && degree_likely_by_magnitude && span_abs > two_pi * 1.5)
+        {
+            range = range_deg;
+        }
+    }
+    let near_full_turn = ((range[1] - range[0]).abs() - two_pi).abs() <= 1e-3;
+
     let wrap_2pi = |t: f64| -> f64 {
         let mut out = t % two_pi;
         if out < 0.0 {
             out += two_pi;
         }
         out
+    };
+    let choose_arc_delta = |a0: f64, a1: f64, span_hint: f64| -> f64 {
+        let mut minor = a1 - a0;
+        if minor > std::f64::consts::PI {
+            minor -= two_pi;
+        } else if minor < -std::f64::consts::PI {
+            minor += two_pi;
+        }
+        let major = if minor >= 0.0 {
+            minor - two_pi
+        } else {
+            minor + two_pi
+        };
+        if !span_hint.is_finite() || span_hint.abs() <= 1e-12 {
+            return minor;
+        }
+        let score = |cand: f64| -> f64 {
+            let mag = (cand.abs() - span_hint.abs()).abs();
+            let sign_penalty = if cand.signum() == span_hint.signum() {
+                0.0
+            } else {
+                two_pi
+            };
+            mag + sign_penalty
+        };
+        if score(major) < score(minor) {
+            major
+        } else {
+            minor
+        }
     };
 
     // Some imported periodic edges carry a full [0, 2蟺] range even when the
@@ -1086,47 +1153,105 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
     // and wireframe falls back to a degenerate chord 鈥?circles/cylinders disappear in wireframe.
     match curve {
         Curve3::Circle(c) => {
-            if (range[1] - range[0]).abs() >= two_pi * 0.999 {
-                let seam =
-                    (p_start - p_end).length() <= 1e-9 * c.radius.max(1.0).max(1e-6);
-                if !seam {
+            let span_hint = range[1] - range[0];
+            let multi_turn = span_hint.abs() > two_pi + 1e-6;
+            let seam_tol = (1e-7 * c.radius.max(1.0)).max(edge_tol * 5.0).max(1e-8);
+            let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
+            if seam {
+                // Topologically closed circular edges are full turns.
+                if topo_closed {
+                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                    range = [0.0, sign * two_pi];
+                } else if near_full_turn {
+                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                    range = [0.0, sign * two_pi];
+                }
+            } else {
+                if near_full_turn {
                     let x_ax = any_perpendicular(c.normal);
                     let y_ax = c.normal.cross(x_ax);
                     let v0 = p_start - c.center;
                     let v1 = p_end - c.center;
                     let t0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
                     let t1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
-                    let mut dt = t1 - t0;
-                    if dt > std::f64::consts::PI {
-                        dt -= two_pi;
-                    } else if dt < -std::f64::consts::PI {
-                        dt += two_pi;
+                    // Imported full-turn ranges on non-seam edges are often unreliable.
+                    // In that case prefer the minor arc between endpoints.
+                    let reliable_hint = span_hint.signum() * 1e-3;
+                    let mut dt = choose_arc_delta(t0, t1, reliable_hint);
+                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
                     }
+                    let chord = (p_end - p_start).length();
+                    let chord_tol = 1e-8 * c.radius.max(1.0);
+                    if chord > chord_tol && dt.abs() < 1e-3 {
+                        let ratio = (chord / (2.0 * c.radius.max(1e-12))).clamp(0.0, 1.0);
+                        let minor = (2.0 * ratio.asin()).clamp(1e-6, std::f64::consts::PI);
+                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                        dt = sign * minor;
+                    }
+                    range = [t0, t0 + dt];
+                } else if multi_turn {
+                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                    // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
+                    let x_ax = any_perpendicular(c.normal);
+                    let y_ax = c.normal.cross(x_ax);
+                    let v0 = p_start - c.center;
+                    let v1 = p_end - c.center;
+                    let t0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
+                    let t1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
+                    let reliable_hint = span_hint.signum() * two_pi;
+                    let dt = choose_arc_delta(t0, t1, reliable_hint);
                     range = [t0, t0 + dt];
                 }
             }
         }
         Curve3::Ellipse(e) => {
-            if (range[1] - range[0]).abs() >= two_pi * 0.999 {
-                let seam_tol = 1e-9 * e.major_radius.max(e.minor_radius).max(1.0).max(1e-6);
-                let seam = (p_start - p_end).length() <= seam_tol;
-                if !seam {
+            let span_hint = range[1] - range[0];
+            let multi_turn = span_hint.abs() > two_pi + 1e-6;
+            let seam_tol = (1e-7 * e.major_radius.max(e.minor_radius).max(1.0))
+                .max(edge_tol * 5.0)
+                .max(1e-8);
+            let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
+            if seam {
+                // Topologically closed elliptic edges are full turns.
+                if topo_closed {
+                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                    range = [0.0, sign * two_pi];
+                } else if near_full_turn {
+                    let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                    range = [0.0, sign * two_pi];
+                }
+            } else {
+                if near_full_turn {
                     let x_ax = e.major_dir.normalize();
                     let y_ax = e.normal.cross(x_ax).normalize();
                     let v0 = p_start - e.center;
                     let v1 = p_end - e.center;
-                    let t0 = wrap_2pi(
-                        (v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius),
-                    );
-                    let t1 = wrap_2pi(
-                        (v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius),
-                    );
-                    let mut dt = t1 - t0;
-                    if dt > std::f64::consts::PI {
-                        dt -= two_pi;
-                    } else if dt < -std::f64::consts::PI {
-                        dt += two_pi;
+                    let t0 =
+                        wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                    let t1 =
+                        wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                    let reliable_hint = span_hint.signum() * 1e-3;
+                    let mut dt = choose_arc_delta(t0, t1, reliable_hint);
+                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                        let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
+                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
                     }
+                    range = [t0, t0 + dt];
+                } else if multi_turn {
+                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                    // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
+                    let x_ax = e.major_dir.normalize();
+                    let y_ax = e.normal.cross(x_ax).normalize();
+                    let v0 = p_start - e.center;
+                    let v1 = p_end - e.center;
+                    let t0 =
+                        wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
+                    let t1 =
+                        wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
+                    let reliable_hint = span_hint.signum() * two_pi;
+                    let dt = choose_arc_delta(t0, t1, reliable_hint);
                     range = [t0, t0 + dt];
                 }
             }
@@ -1152,13 +1277,19 @@ fn sample_edge_curve_points(brep: &BRep, edge_idx: usize) -> Option<Vec<[f32; 3]
         Curve3::Ellipse(_) => 32,
         _ => 24,
     };
-    let pts: Vec<[f32; 3]> = (0..=n_segs)
+    let mut pts: Vec<[f32; 3]> = (0..=n_segs)
         .map(|i| {
             let t = t1 + (t2 - t1) * (i as f64 / n_segs as f64);
             let p = curve.point_at(t);
             [p.x as f32, p.y as f32, p.z as f32]
         })
         .collect();
+    if let Some(first) = pts.first_mut() {
+        *first = [p_start.x as f32, p_start.y as f32, p_start.z as f32];
+    }
+    if let Some(last) = pts.last_mut() {
+        *last = [p_end.x as f32, p_end.y as f32, p_end.z as f32];
+    }
     Some(pts)
 }
 

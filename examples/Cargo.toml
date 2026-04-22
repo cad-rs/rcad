@@ -139,3 +139,9 @@ path = "step_gmsh_test.rs"
 [[example]]
 name = "diag_intersect"
 path = "diag_intersect.rs"
+
+
+
+
+
+

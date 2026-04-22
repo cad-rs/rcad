@@ -103,12 +103,14 @@ struct ParsedStep {
     conical_surfaces: HashMap<u64, (u64, f64, f64)>,
     toroidal_surfaces: HashMap<u64, (u64, f64, f64)>,
     vertex_points: HashMap<u64, u64>,
-    edge_curves: HashMap<u64, (u64, u64, Option<u64>)>,
+    /// EDGE_CURVE id -> (start_vertex, end_vertex, curve_ref, same_sense)
+    edge_curves: HashMap<u64, (u64, u64, Option<u64>, bool)>,
     oriented_edges: HashMap<u64, (u64, bool)>,
     edge_loops: HashMap<u64, Vec<u64>>,
     /// VERTEX_LOOP: loop id → referenced VERTEX_POINT id (gmsh-style sphere outer bound).
     vertex_loops: HashMap<u64, u64>,
-    face_bounds: HashMap<u64, u64>,
+    /// FACE_BOUND / FACE_OUTER_BOUND id -> (loop_ref, is_outer)
+    face_bounds: HashMap<u64, (u64, bool)>,
     advanced_faces: HashMap<u64, AdvancedFaceRecord>,
     closed_shells: HashMap<u64, Vec<u64>>,
     open_shells: HashMap<u64, Vec<u64>>,
@@ -4908,8 +4910,10 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                     }
                 }
                 "EDGE_CURVE" => {
-                    if let Some((start, end, curve_ref)) = parse_edge_curve_vertices(args) {
-                        parsed.edge_curves.insert(id, (start, end, curve_ref));
+                    if let Some((start, end, curve_ref, same_sense)) = parse_edge_curve_vertices(args) {
+                        parsed
+                            .edge_curves
+                            .insert(id, (start, end, curve_ref, same_sense));
                     }
                 }
                 "ORIENTED_EDGE" => {
@@ -4927,9 +4931,14 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         parsed.vertex_loops.insert(id, vp);
                     }
                 }
-                "FACE_BOUND" | "FACE_OUTER_BOUND" => {
+                "FACE_BOUND" => {
                     if let Some(loop_ref) = parse_single_ref_after_name(args) {
-                        parsed.face_bounds.insert(id, loop_ref);
+                        parsed.face_bounds.insert(id, (loop_ref, false));
+                    }
+                }
+                "FACE_OUTER_BOUND" => {
+                    if let Some(loop_ref) = parse_single_ref_after_name(args) {
+                        parsed.face_bounds.insert(id, (loop_ref, true));
                     }
                 }
                 "ADVANCED_FACE" => {
@@ -5351,7 +5360,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     }
 
     // Preserve standalone edges that are not part of any face loop.
-    for (edge_curve_id, (start_id, end_id, curve_ref)) in &parsed.edge_curves {
+    for (edge_curve_id, (start_id, end_id, curve_ref, same_sense)) in &parsed.edge_curves {
         if edge_index_by_curve.contains_key(edge_curve_id) {
             continue;
         }
@@ -5379,6 +5388,40 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
             curve_store_index_by_step.insert(step_curve, cidx);
             Some(cidx)
         });
+        if geom.edge_curve_range.len() <= idx {
+            geom.edge_curve_range.resize(idx + 1, None);
+        }
+        if let Some(Some(cidx)) = geom.edge_curve.get(idx)
+            && let Some(curve) = geom.curves.get(*cidx)
+            && let (Some(p0), Some(p1)) = (vertices.get(start).map(|v| v.point), vertices.get(end).map(|v| v.point))
+        {
+            let explicit_trim_range = curve_ref.and_then(|step_curve| {
+                if let Some((_, t0, t1)) = parsed.trimmed_curves.get(&step_curve) {
+                    return Some([*t0, *t1]);
+                }
+                parsed
+                    .surface_curves
+                    .get(&step_curve)
+                    .and_then(|(inner_ref, _, _)| {
+                        parsed
+                            .trimmed_curves
+                            .get(inner_ref)
+                            .map(|(_, t0, t1)| [*t0, *t1])
+                    })
+            });
+            let mut t_range = explicit_trim_range.unwrap_or_else(|| match curve {
+                Curve3::Line(line) => {
+                    let t0 = (p0 - line.origin).dot(line.direction);
+                    let t1 = (p1 - line.origin).dot(line.direction);
+                    [t0, t1]
+                }
+                _ => curve.default_domain(),
+            });
+            if !same_sense {
+                t_range.swap(0, 1);
+            }
+            geom.edge_curve_range[idx] = Some(t_range);
+        }
     }
 
     // Preserve standalone 1D curves from GEOMETRIC_CURVE_SET as semantic edges
@@ -5439,7 +5482,7 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
             parsed
                 .edge_curves
                 .iter()
-                .find_map(|(ec_id, (_, _, curve_ref))| {
+                .find_map(|(ec_id, (_, _, curve_ref, _))| {
                     if curve_ref.as_ref() == Some(step_curve_id) {
                         edge_index_by_curve.get(ec_id).copied()
                     } else {
@@ -5582,7 +5625,7 @@ fn resolve_step_color(parsed: &ParsedStep, face_id_map: &HashMap<u64, usize>) ->
 
 fn collect_edge_vertices(parsed: &ParsedStep) -> BTreeSet<u64> {
     let mut used = BTreeSet::new();
-    for (start, end, _) in parsed.edge_curves.values() {
+    for (start, end, _, _) in parsed.edge_curves.values() {
         used.insert(*start);
         used.insert(*end);
     }
@@ -5696,7 +5739,7 @@ fn collect_used_vertices(
                     id: Some(*face_id),
                 })?;
             for bound_id in &bound_ids.bounds {
-                let loop_id = parsed
+                let (loop_id, _) = parsed
                     .face_bounds
                     .get(bound_id)
                     .ok_or(StepError::MissingEntity {
@@ -5713,7 +5756,7 @@ fn collect_used_vertices(
                                     entity_type: "ORIENTED_EDGE",
                                     id: Some(*oriented_id),
                                 })?;
-                        let (start, end, _) =
+                        let (start, end, _, _) =
                             parsed
                                 .edge_curves
                                 .get(edge_curve_id)
@@ -5751,34 +5794,41 @@ fn build_face(
     curve_store_index_by_step: &mut HashMap<u64, usize>,
 ) -> Option<(Face, Option<u64>)> {
     let bound_ids = parsed.advanced_faces.get(&face_id)?;
-    let outer_bound = *bound_ids.bounds.first()?;
-    let loop_id = *parsed.face_bounds.get(&outer_bound)?;
+    // Determine outer loop from FACE_OUTER_BOUND marker when available.
+    // Some STEP writers do not guarantee bound list ordering.
+    let outer_bound = bound_ids
+        .bounds
+        .iter()
+        .copied()
+        .find(|bid| {
+            parsed
+                .face_bounds
+                .get(bid)
+                .map(|(_, is_outer)| *is_outer)
+                .unwrap_or(false)
+        })
+        .unwrap_or(*bound_ids.bounds.first()?);
+    let (loop_id, _) = *parsed.face_bounds.get(&outer_bound)?;
 
     // Single-vertex outer bound (e.g. spherical face in gmsh_strict writer).
-    if let Some(&vp_id) = parsed.vertex_loops.get(&loop_id) {
-        let vidx = *vertex_index_by_id.get(&vp_id)?;
-        let face_vertex_indices = vec![vidx];
+    if let Some(&_vp_id) = parsed.vertex_loops.get(&loop_id) {
         let face_surface = bound_ids.surface;
         let triangles = if let Some(surface_ref) = face_surface {
             triangulate_surface_fallback(
                 parsed,
                 surface_ref,
                 vertices,
-                &face_vertex_indices,
+                &[],
                 false,
             )
         } else {
             Vec::new()
         };
-        if triangles.is_empty() {
-            return None;
-        }
-        let normal = compute_normal(&triangles[0], vertex_index_by_id, parsed);
         return Some((
             Face {
                 outer_wire: Wire { edges: vec![] },
                 inner_wires: Vec::new(),
-                normal,
+                normal: glam::DVec3::new(0.0, 0.0, 1.0),
                 triangles,
                 mesh_dirty: false,
             },
@@ -5804,7 +5854,7 @@ fn build_face(
 
     for oriented_id in oriented_ids {
         let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
-        let (start_id, end_id, curve_ref) = *parsed.edge_curves.get(&edge_curve_id)?;
+        let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
 
         let (from_vertex_id, to_vertex_id) = if orientation {
             (start_id, end_id)
@@ -5846,66 +5896,61 @@ fn build_face(
             }
         }
 
-        let edge_index = if let Some(idx) = edge_index_by_curve.get(&edge_curve_id) {
-            *idx
-        } else {
-            let idx = edges.len();
-            edges.push(Edge {
-                start: *vertex_index_by_id.get(&start_id)?,
-                end: *vertex_index_by_id.get(&end_id)?,
-            });
-            edge_index_by_curve.insert(edge_curve_id, idx);
-
-            if geom.edge_curve.len() <= idx {
-                geom.edge_curve.resize(idx + 1, None);
-            }
-            geom.edge_curve[idx] = curve_ref.and_then(|step_curve| {
-                if let Some(existing) = curve_store_index_by_step.get(&step_curve) {
-                    return Some(*existing);
-                }
-                let curve = resolve_curve(parsed, step_curve)?;
-                let cidx = geom.curves.len();
-                geom.curves.push(curve);
-                curve_store_index_by_step.insert(step_curve, cidx);
-                Some(cidx)
-            });
-
-            // Populate edge_curve_range from vertex positions
-            if geom.edge_curve_range.len() <= idx {
-                geom.edge_curve_range.resize(idx + 1, None);
-            }
-            if geom.edge_degenerated.len() <= idx {
-                geom.edge_degenerated.resize(idx + 1, false);
-            }
-            if let Some(Some(cidx)) = geom.edge_curve.get(idx)
-                && let Some(curve) = geom.curves.get(*cidx)
-            {
-                let p0 = vertices
-                    .get(*vertex_index_by_id.get(&start_id)?)
-                    .map(|v| v.point);
-                let p1 = vertices
-                    .get(*vertex_index_by_id.get(&end_id)?)
-                    .map(|v| v.point);
-                if let (Some(p0), Some(p1)) = (p0, p1) {
-                    let t_range = match curve {
-                        Curve3::Line(line) => {
-                            let t0 = (p0 - line.origin).dot(line.direction);
-                            let t1 = (p1 - line.origin).dot(line.direction);
-                            [t0, t1]
-                        }
-                        _ => curve.default_domain(),
-                    };
-                    geom.edge_curve_range[idx] = Some(t_range);
-                    let len = (p1 - p0).length();
-                    geom.edge_degenerated[idx] = len <= 1e-12;
-                }
-            }
-            idx
-        };
+        let edge_index = ensure_edge_index(
+            parsed,
+            start_id,
+            end_id,
+            curve_ref,
+            same_sense,
+            vertices,
+            vertex_index_by_id,
+            edges,
+            edge_index_by_curve,
+            geom,
+            curve_store_index_by_step,
+            edge_curve_id,
+        )?;
         wire_edge_indices.push(WireEdge {
             idx: edge_index,
             forward: orientation,
         });
+    }
+
+    // Import all non-outer bounds as inner wires (holes).
+    let mut inner_wires: Vec<Wire> = Vec::new();
+    for inner_bound in bound_ids.bounds.iter().copied().filter(|bid| *bid != outer_bound) {
+        let Some((inner_loop_id, _)) = parsed.face_bounds.get(&inner_bound).copied() else {
+            continue;
+        };
+        let Some(inner_oriented_ids) = parsed.edge_loops.get(&inner_loop_id) else {
+            continue;
+        };
+        let mut inner_edges = Vec::new();
+        for oriented_id in inner_oriented_ids {
+            let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
+            let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
+            let edge_index = ensure_edge_index(
+                parsed,
+                start_id,
+                end_id,
+                curve_ref,
+                same_sense,
+                vertices,
+                vertex_index_by_id,
+                edges,
+                edge_index_by_curve,
+                geom,
+                curve_store_index_by_step,
+                edge_curve_id,
+            )?;
+            inner_edges.push(WireEdge {
+                idx: edge_index,
+                forward: orientation,
+            });
+        }
+        if !inner_edges.is_empty() {
+            inner_wires.push(Wire { edges: inner_edges });
+        }
     }
 
     while polygon.len() > 1 && polygon.first() == polygon.last() {
@@ -5978,24 +6023,141 @@ fn build_face(
     } else {
         Vec::new()
     };
-    if triangles.is_empty() {
-        return None;
-    }
-
-    let normal = compute_normal(&triangles[0], vertex_index_by_id, parsed);
+    let force_rebuild = triangles.is_empty() || !inner_wires.is_empty() || is_planar_face;
+    let normal = if force_rebuild {
+        estimate_loop_normal(&sampled_loop_points).unwrap_or(glam::DVec3::new(0.0, 0.0, 1.0))
+    } else {
+        triangles
+            .first()
+            .map(|tri| compute_normal(tri, vertex_index_by_id, parsed))
+            .unwrap_or(glam::DVec3::new(0.0, 0.0, 1.0))
+    };
+    let parser_triangles = if force_rebuild { Vec::new() } else { triangles };
 
     Some((
         Face {
             outer_wire: Wire {
                 edges: wire_edge_indices,
             },
-            inner_wires: Vec::new(),
+            inner_wires: inner_wires.clone(),
             normal,
-            triangles,
-            mesh_dirty: false,
+            triangles: parser_triangles,
+            // Stable transitional mode:
+            // - keep parser triangles for curved faces that already tessellate correctly
+            // - force rebuild for planar faces and hole faces
+            mesh_dirty: force_rebuild,
         },
         bound_ids.surface,
     ))
+}
+
+fn estimate_loop_normal(points: &[glam::DVec3]) -> Option<glam::DVec3> {
+    if points.len() < 3 {
+        return None;
+    }
+    // Newell normal estimate for a 3D boundary loop.
+    let mut n = glam::DVec3::ZERO;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        n.x += (a.y - b.y) * (a.z + b.z);
+        n.y += (a.z - b.z) * (a.x + b.x);
+        n.z += (a.x - b.x) * (a.y + b.y);
+    }
+    let len2 = n.length_squared();
+    if len2 <= 1e-20 {
+        None
+    } else {
+        Some(n / len2.sqrt())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_edge_index(
+    parsed: &ParsedStep,
+    start_id: u64,
+    end_id: u64,
+    curve_ref: Option<u64>,
+    same_sense: bool,
+    vertices: &[Vertex],
+    vertex_index_by_id: &HashMap<u64, usize>,
+    edges: &mut Vec<Edge>,
+    edge_index_by_curve: &mut HashMap<u64, usize>,
+    geom: &mut GeomStore,
+    curve_store_index_by_step: &mut HashMap<u64, usize>,
+    edge_curve_id: u64,
+) -> Option<usize> {
+    if let Some(idx) = edge_index_by_curve.get(&edge_curve_id) {
+        return Some(*idx);
+    }
+    let idx = edges.len();
+    edges.push(Edge {
+        start: *vertex_index_by_id.get(&start_id)?,
+        end: *vertex_index_by_id.get(&end_id)?,
+    });
+    edge_index_by_curve.insert(edge_curve_id, idx);
+
+    if geom.edge_curve.len() <= idx {
+        geom.edge_curve.resize(idx + 1, None);
+    }
+    geom.edge_curve[idx] = curve_ref.and_then(|step_curve| {
+        if let Some(existing) = curve_store_index_by_step.get(&step_curve) {
+            return Some(*existing);
+        }
+        let curve = resolve_curve(parsed, step_curve)?;
+        let cidx = geom.curves.len();
+        geom.curves.push(curve);
+        curve_store_index_by_step.insert(step_curve, cidx);
+        Some(cidx)
+    });
+
+    if geom.edge_curve_range.len() <= idx {
+        geom.edge_curve_range.resize(idx + 1, None);
+    }
+    if geom.edge_degenerated.len() <= idx {
+        geom.edge_degenerated.resize(idx + 1, false);
+    }
+    let explicit_trim_range = curve_ref.and_then(|step_curve| {
+        if let Some((_, t0, t1)) = parsed.trimmed_curves.get(&step_curve) {
+            return Some([*t0, *t1]);
+        }
+        parsed
+            .surface_curves
+            .get(&step_curve)
+            .and_then(|(inner_ref, _, _)| {
+                parsed
+                    .trimmed_curves
+                    .get(inner_ref)
+                    .map(|(_, t0, t1)| [*t0, *t1])
+            })
+    });
+    if let Some(Some(cidx)) = geom.edge_curve.get(idx)
+        && let Some(curve) = geom.curves.get(*cidx)
+    {
+        let p0 = vertices
+            .get(*vertex_index_by_id.get(&start_id)?)
+            .map(|v| v.point);
+        let p1 = vertices
+            .get(*vertex_index_by_id.get(&end_id)?)
+            .map(|v| v.point);
+        if let (Some(p0), Some(p1)) = (p0, p1) {
+            let mut t_range = explicit_trim_range.unwrap_or_else(|| match curve {
+                Curve3::Line(line) => {
+                    let t0 = (p0 - line.origin).dot(line.direction);
+                    let t1 = (p1 - line.origin).dot(line.direction);
+                    [t0, t1]
+                }
+                _ => curve.default_domain(),
+            });
+            if !same_sense {
+                t_range.swap(0, 1);
+            }
+            geom.edge_curve_range[idx] = Some(t_range);
+            let len = (p1 - p0).length();
+            geom.edge_degenerated[idx] = len <= 1e-12;
+        }
+    }
+    Some(idx)
 }
 
 fn compute_normal(
@@ -6094,7 +6256,7 @@ fn sample_oriented_edge_points(
     edge_curve_id: u64,
     orientation: bool,
 ) -> Option<Vec<glam::DVec3>> {
-    let (start_id, end_id, curve_ref) = *parsed.edge_curves.get(&edge_curve_id)?;
+    let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
     let start = vertex_point_from_ref(parsed, start_id)?;
     let end = vertex_point_from_ref(parsed, end_id)?;
 
@@ -6129,7 +6291,7 @@ fn sample_oriented_edge_points(
         points[last] = end;
     }
 
-    if !orientation {
+    if orientation != same_sense {
         points.reverse();
     }
     Some(points)
@@ -6141,7 +6303,7 @@ fn sample_oriented_edge_uv_points(
     orientation: bool,
     surface_ref: u64,
 ) -> Option<Vec<glam::DVec2>> {
-    let (_, _, curve_ref) = *parsed.edge_curves.get(&edge_curve_id)?;
+    let (_, _, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
     let step_curve_id = curve_ref?;
     let (_, pcurve_refs, _) = parsed
         .surface_curves
@@ -6167,7 +6329,7 @@ fn sample_oriented_edge_uv_points(
     let curve2d_ref = *parsed.definitional_reps.get(&def_ref)?;
 
     let mut points = sample_curve2d_points(parsed, curve2d_ref)?;
-    if !orientation {
+    if orientation != same_sense {
         points.reverse();
     }
     Some(points)
@@ -7376,7 +7538,7 @@ fn parse_single_ref_after_name(args: &str) -> Option<u64> {
     None
 }
 
-fn parse_edge_curve_vertices(args: &str) -> Option<(u64, u64, Option<u64>)> {
+fn parse_edge_curve_vertices(args: &str) -> Option<(u64, u64, Option<u64>, bool)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 4 {
         return None;
@@ -7384,7 +7546,8 @@ fn parse_edge_curve_vertices(args: &str) -> Option<(u64, u64, Option<u64>)> {
     let start = parse_ref(parts[1])?;
     let end = parse_ref(parts[2])?;
     let curve_ref = parse_ref(parts[3]);
-    Some((start, end, curve_ref))
+    let same_sense = parts.get(4).and_then(|s| parse_bool_arg(s)).unwrap_or(true);
+    Some((start, end, curve_ref, same_sense))
 }
 
 fn parse_axis2_placement(args: &str) -> Option<(u64, u64, Option<u64>)> {
