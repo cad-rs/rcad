@@ -115,15 +115,14 @@ struct FaceExportResult {
 impl StepWriter {
     /// Export BRep to STEP with GMSH/OCCT-compatible format.
     ///
-    /// Uses AP214 protocol with `gmsh_strict` mode enabled for maximum
-    /// compatibility with GMSH and other OCCT-based viewers.
+    /// Uses AP214 protocol with the standard export path by default.
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
         Self::write_string_with_options(
             brep,
             selection,
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
-                gmsh_strict: true,  // Enable GMSH/OCCT compatibility by default
+                gmsh_strict: false,
                 ..Default::default()
             },
         )
@@ -425,7 +424,25 @@ impl Part21Writer {
                 self.write_ap242_metadata(meta);
             }
         let selected_face_set: BTreeSet<usize> = selection.selected_faces.iter().copied().collect();
-        let selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
+        let mut selected_edge_set: BTreeSet<usize> = selection.selected_edges.iter().copied().collect();
+        // If faces are selected, include their boundary edges in the 1D export so
+        // wire entities are preserved alongside surface subsets.
+        if !selected_face_set.is_empty() {
+            let mut face_index = 0usize;
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        if selected_face_set.contains(&face_index) {
+                            selected_edge_set.extend(face.outer_wire.edges.iter().map(|we| we.idx));
+                            for inner in &face.inner_wires {
+                                selected_edge_set.extend(inner.edges.iter().map(|we| we.idx));
+                            }
+                        }
+                        face_index += 1;
+                    }
+                }
+            }
+        }
         let export_all = selected_face_set.is_empty() && selected_edge_set.is_empty();
 
         // Check if this is a compound BRep
@@ -806,7 +823,10 @@ impl Part21Writer {
                 }
             }
 
-            if !edge_items.is_empty() {
+            let include_wire_overlay = primary_rep.is_none()
+                || !selected_edge_set.is_empty()
+                || !selected_face_set.is_empty();
+            if include_wire_overlay && !edge_items.is_empty() {
                 let curve_sets: Vec<u64> = vec![self.geometric_curve_set("wireframe", &edge_items)];
                 let wire_rep = self.geometrically_bounded_wireframe_shape_representation(
                     "rcad_export",
@@ -976,35 +996,24 @@ impl Part21Writer {
             self.gmsh_strict,
         );
 
-        // Match gmsh/OCCT style for spheres: a single face with a VERTEX_LOOP bound.
-        if self.gmsh_strict
-            && matches!(face_surface.as_ref(), Some(Surface3::Sphere(_)))
-            && !oriented_edges.is_empty()
-        {
-            let vertex_id = self.vertex_point_by_index(brep, oriented_edges[0].start);
-            let loop_id = self.vertex_loop("sphere_loop", vertex_id);
-            let bound = if self.gmsh_strict {
-                self.face_bound("outer_bound", loop_id, true)
-            } else {
-                self.face_outer_bound("outer_bound", loop_id, true)
-            };
-            return FaceExportResult {
-                face_ids: vec![self.advanced_face("face", &[bound], surface, face_orientation)],
-                used_triangle_fallback: false,
-            };
-        }
-
         // Detect seam edges: same edge_idx appearing multiple times
         let seam_edge_indices = detect_seam_edge_indices(face);
 
         let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
-                if self.gmsh_strict {
-                    self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
+                let has_surface_parametrics = brep
+                    .geom
+                    .edge_pcurves
+                    .get(edge.edge_idx)
+                    .is_some_and(|pcs| !pcs.is_empty());
+                if has_surface_parametrics {
+                    // OCCT-compatible behavior: keep seam edge definition from imported
+                    // SURFACE_CURVE/PCURVE whenever available.
+                    self.write_edge_curve_by_index(brep, edge.edge_idx)
                 } else {
-                    // Keep legacy mode behavior unchanged.
-                    self.write_seam_edge_curve(brep, edge.edge_idx, face_surface.clone())
+                    // Fallback only when seam parametrics are actually missing.
+                    self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
                 }
             } else {
                 if self.gmsh_strict {
@@ -1081,11 +1090,7 @@ impl Part21Writer {
         }
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
-        let face_bound = if self.gmsh_strict {
-            self.face_bound("outer_bound", edge_loop, true)
-        } else {
-            self.face_outer_bound("outer_bound", edge_loop, true)
-        };
+        let face_bound = self.face_bound("outer_bound", edge_loop, true);
         FaceExportResult {
             face_ids: vec![self.advanced_face(
                 "face",
@@ -2850,10 +2855,6 @@ impl Part21Writer {
         ))
     }
 
-    fn vertex_loop(&mut self, name: &str, vertex: u64) -> u64 {
-        self.push(format!("VERTEX_LOOP('{}',#{})", name, vertex))
-    }
-
     fn edge_loop(&mut self, name: &str, oriented_edges: &[u64]) -> u64 {
         self.push(format!("EDGE_LOOP('{}',({}))", name, refs(oriented_edges)))
     }
@@ -4228,7 +4229,7 @@ mod tests {
     fn exports_full_box_and_reimports() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
             .expect("test box should be valid");
-        // Default now uses gmsh_strict for GMSH/OCCT compatibility
+        // Default export path favors standard solid-only representation.
         let step = StepWriter::write_string(
             &brep,
             ExportSelection {
@@ -4243,14 +4244,14 @@ mod tests {
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(step.contains("CLOSED_SHELL"));
-        // gmsh_strict mode does NOT include wireframe overlays
+        // Full solid export should not include wireframe overlays by default.
         assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
         assert!(!step.contains("GEOMETRIC_CURVE_SET"));
         assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
     }
 
     #[test]
-    fn exports_non_strict_includes_wireframe() {
+    fn non_strict_full_solid_omits_wireframe_overlay() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
             .expect("test box should be valid");
         let step = StepWriter::write_string_with_options(
@@ -4261,17 +4262,15 @@ mod tests {
             },
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
-                gmsh_strict: false,  // Non-strict mode includes wireframe
+                gmsh_strict: false,
                 ..Default::default()
             },
         );
 
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
-        // Non-strict mode includes wireframe overlay for visualization
-        assert!(step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
-        assert!(step.contains("GEOMETRIC_CURVE_SET"));
-        assert!(step.contains("SHAPE_REPRESENTATION_RELATIONSHIP"));
+        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
         assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
     }
 
@@ -4342,10 +4341,9 @@ mod tests {
             },
         );
 
-        // Non-strict should have both solid and wireframe
+        // Non-strict still keeps full solid topology.
         assert!(step.contains("MANIFOLD_SOLID_BREP"), "should contain MANIFOLD_SOLID_BREP");
-        assert!(step.contains("GEOMETRIC_CURVE_SET") || step.contains("SHELL_BASED_SURFACE_MODEL"),
-                "should contain geometric entities");
+        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
     }
 
     #[test]
@@ -4732,6 +4730,33 @@ mod tests {
     }
 
     #[test]
+    fn selected_faces_also_export_boundary_wire_entities() {
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("test box should be valid");
+        let step = StepWriter::write_string_with_options(
+            &brep,
+            ExportSelection {
+                selected_faces: &[0],
+                selected_edges: &[],
+            },
+            &StepWriteOptions {
+                protocol: StepProtocol::Ap214,
+                gmsh_strict: false,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            step.contains("GEOMETRIC_CURVE_SET"),
+            "selected-face export should include boundary 1D entities"
+        );
+        assert!(
+            step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"),
+            "selected-face export should include wireframe representation"
+        );
+    }
+
+    #[test]
     fn exports_analytic_surfaces_from_hfss() {
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
         let step = StepWriter::write_string(
@@ -4750,16 +4775,9 @@ mod tests {
         assert!(step.contains("TOROIDAL_SURFACE"));
         assert!(step.contains("CONICAL_SURFACE"));
 
-        // Standalone 1D curves (GEOMETRIC_CURVE_SET) must also be exported
-        // alongside the solid geometry.
-        assert!(
-            step.contains("GEOMETRIC_CURVE_SET"),
-            "standalone wireframe edges should be exported"
-        );
-        assert!(
-            step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"),
-            "wireframe shape representation should be present"
-        );
+        // Full solid export intentionally omits overlay wireframe representation.
+        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
+        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
     }
 
     #[test]
@@ -4827,6 +4845,90 @@ mod tests {
             "expected at least 1 cone face after round-trip, got {}",
             cone_count
         );
+    }
+
+    #[test]
+    fn creator_style_hfss_keeps_sphere_cylinder_cone_as_solids() {
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let original_solid_count = brep.solids.len();
+
+        // Match creator save path: standard write_string defaults.
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+
+        // Solid topology must remain in exported STEP.
+        assert!(
+            step.contains("MANIFOLD_SOLID_BREP"),
+            "export should contain solid entities"
+        );
+
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse");
+        assert!(
+            !reparsed.solids.is_empty(),
+            "re-exported model should contain solids"
+        );
+        assert_eq!(
+            reparsed.solids.len(),
+            original_solid_count,
+            "solid count should remain stable for creator-style save"
+        );
+
+        let mut sphere_faces = 0usize;
+        let mut cylinder_faces = 0usize;
+        let mut cone_faces = 0usize;
+        let mut sphere_solids = 0usize;
+        let mut cylinder_solids = 0usize;
+        let mut cone_solids = 0usize;
+        let mut face_flat_idx = 0usize;
+        for solid in &reparsed.solids {
+            let mut solid_has_sphere = false;
+            let mut solid_has_cylinder = false;
+            let mut solid_has_cone = false;
+            for shell in &solid.shells {
+                for _face in &shell.faces {
+                    if let Some(Some(surface_idx)) = reparsed.geom.face_surface.get(face_flat_idx) {
+                        match reparsed.geom.surfaces.get(*surface_idx) {
+                            Some(Surface3::Sphere(_)) => solid_has_sphere = true,
+                            Some(Surface3::Cylinder(_)) => solid_has_cylinder = true,
+                            Some(Surface3::Cone(_)) => solid_has_cone = true,
+                            _ => {}
+                        }
+                    }
+                    face_flat_idx += 1;
+                }
+            }
+            if solid_has_sphere {
+                sphere_solids += 1;
+            }
+            if solid_has_cylinder {
+                cylinder_solids += 1;
+            }
+            if solid_has_cone {
+                cone_solids += 1;
+            }
+        }
+        for sid in reparsed.geom.face_surface.iter().flatten() {
+            match reparsed.geom.surfaces.get(*sid) {
+                Some(Surface3::Sphere(_)) => sphere_faces += 1,
+                Some(Surface3::Cylinder(_)) => cylinder_faces += 1,
+                Some(Surface3::Cone(_)) => cone_faces += 1,
+                _ => {}
+            }
+        }
+        assert!(sphere_faces > 0, "sphere should remain analytic after save");
+        assert!(cylinder_faces > 0, "cylinder should remain analytic after save");
+        assert!(cone_faces > 0, "cone should remain analytic after save");
+        assert!(sphere_solids > 0, "sphere should belong to at least one solid");
+        assert!(
+            cylinder_solids > 0,
+            "cylinder should belong to at least one solid"
+        );
+        assert!(cone_solids > 0, "cone should belong to at least one solid");
     }
 
     #[test]
