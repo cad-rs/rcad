@@ -5381,28 +5381,51 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         });
     }
 
-    // Sample standalone 1D curves from GEOMETRIC_CURVE_SET (Polyline1/2/3 etc.)
+    // Preserve standalone 1D curves from GEOMETRIC_CURVE_SET as semantic edges
+    // bound to original curve geometry (plus optional trim range), instead of
+    // tessellating them into polyline segments.
     for curve_set in &parsed.geometric_curve_sets {
         for &curve_ref in curve_set {
-            let points = sample_standalone_curve(parsed, curve_ref);
-            if points.len() < 2 {
+            let (basis_curve_ref, trim_range) = if let Some(&(underlying_ref, t0, t1)) =
+                parsed.trimmed_curves.get(&curve_ref)
+            {
+                (underlying_ref, Some([t0, t1]))
+            } else {
+                (curve_ref, None)
+            };
+            let Some(curve) = resolve_curve(parsed, basis_curve_ref) else {
                 continue;
+            };
+            let points = sample_standalone_curve(parsed, curve_ref);
+            let (Some(start), Some(end)) = (points.first().copied(), points.last().copied()) else {
+                continue;
+            };
+            let start_idx = vertices.len();
+            vertices.push(Vertex { point: start });
+            let end_idx = vertices.len();
+            vertices.push(Vertex { point: end });
+
+            let edge_idx = edges.len();
+            edges.push(Edge {
+                start: start_idx,
+                end: end_idx,
+            });
+            if geom.edge_curve.len() <= edge_idx {
+                geom.edge_curve.resize(edge_idx + 1, None);
             }
-            let base = vertices.len();
-            for p in &points {
-                vertices.push(Vertex { point: *p });
+            if geom.edge_curve_range.len() <= edge_idx {
+                geom.edge_curve_range.resize(edge_idx + 1, None);
             }
-            for i in 0..points.len() - 1 {
-                let idx = edges.len();
-                edges.push(Edge {
-                    start: base + i,
-                    end: base + i + 1,
-                });
-                if geom.edge_curve.len() <= idx {
-                    geom.edge_curve.resize(idx + 1, None);
-                }
-                // No curve binding needed --already tessellated into polyline
-            }
+            let curve_idx = if let Some(existing) = curve_store_index_by_step.get(&basis_curve_ref) {
+                *existing
+            } else {
+                let cidx = geom.curves.len();
+                geom.curves.push(curve);
+                curve_store_index_by_step.insert(basis_curve_ref, cidx);
+                cidx
+            };
+            geom.edge_curve[edge_idx] = Some(curve_idx);
+            geom.edge_curve_range[edge_idx] = trim_range;
         }
     }
 
@@ -8299,8 +8322,14 @@ fn parse_trimmed_curve(args: &str) -> Option<(u64, f64, f64)> {
         return None;
     }
     let curve_ref = parse_ref(parts[1])?;
-    let t0 = parse_parameter_value(parts[2])?;
-    let t1 = parse_parameter_value(parts[3])?;
+    let mut t0 = parse_parameter_value(parts[2])?;
+    let mut t1 = parse_parameter_value(parts[3])?;
+    // OCCT exports rely on sense_agreement for traversal direction.
+    // We normalize by swapping bounds for `.F.` so downstream edge-range
+    // consumers can keep a single [t0, t1] representation.
+    if parts.len() >= 5 && parts[4].trim().eq_ignore_ascii_case(".F.") {
+        std::mem::swap(&mut t0, &mut t1);
+    }
     Some((curve_ref, t0, t1))
 }
 
@@ -9542,21 +9571,28 @@ END-ISO-10303-21;
     }
 
     #[test]
-    fn samples_geometric_curve_sets_from_hfss() {
+    fn preserves_geometric_curve_sets_from_hfss() {
         // hfss.step has GEOMETRIC_CURVE_SET with Polyline1 (2 trimmed lines),
         // Polyline2 (b-spline), and Polyline3 (trimmed circle arc 0..135 deg).
-        // All should produce additional edges in the BRep.
+        // Each referenced curve should be preserved as at least one BRep edge.
         let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
 
-        // The b-spline alone has 7 control points ->at least 6 edges
-        // The trimmed lines each contribute 1 edge (2 total)
-        // The circle arc contributes 8+ edges
-        // Total from curve sets: at least 16 edges beyond the face topology edges
+        // The known geometric curve sets in hfss.step contain at least 4 curve refs.
         let total_edges = brep.edges.len();
         assert!(
-            total_edges >= 20,
+            total_edges >= 4,
             "expected geometric curve set edges, got total edge count = {total_edges}"
         );
+    }
+
+    #[test]
+    fn parse_trimmed_curve_false_sense_swaps_bounds() {
+        let (_, t0, t1) = parse_trimmed_curve(
+            "'arc',#42,(PARAMETER_VALUE(0.0)),(PARAMETER_VALUE(135.0)),.F.,.PARAMETER.",
+        )
+        .expect("trimmed curve should parse");
+        assert_eq!(t0, 135.0);
+        assert_eq!(t1, 0.0);
     }
 
     #[test]

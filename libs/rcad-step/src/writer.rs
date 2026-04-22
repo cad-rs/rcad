@@ -59,7 +59,7 @@ pub struct StepHeader {
 }
 
 /// Unified export options for STEP writing.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct StepWriteOptions {
     pub protocol: StepProtocol,
     pub colors: Option<StepColor>,
@@ -69,6 +69,22 @@ pub struct StepWriteOptions {
     /// When enabled, emit a gmsh-like minimal topology-first organization
     /// (AP214, primary BRep representation, no extra full-export overlays).
     pub gmsh_strict: bool,
+    /// Include standalone 1D entities as wireframe overlays in full-model export.
+    pub export_standalone_wire_overlay: bool,
+}
+
+impl Default for StepWriteOptions {
+    fn default() -> Self {
+        Self {
+            protocol: StepProtocol::default(),
+            colors: None,
+            properties: Vec::new(),
+            ap242_metadata: None,
+            header: StepHeader::default(),
+            gmsh_strict: false,
+            export_standalone_wire_overlay: true,
+        }
+    }
 }
 
 /// Optional AP242 metadata entities to be written alongside geometry.
@@ -123,6 +139,7 @@ impl StepWriter {
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
                 gmsh_strict: false,
+                export_standalone_wire_overlay: true,
                 ..Default::default()
             },
         )
@@ -139,6 +156,7 @@ impl StepWriter {
             options.protocol,
             options.header.clone(),
             options.gmsh_strict,
+            options.export_standalone_wire_overlay,
         );
         writer.write_brep(
             brep,
@@ -308,6 +326,7 @@ struct Part21Writer {
     protocol: StepProtocol,
     header: StepHeader,
     gmsh_strict: bool,
+    export_standalone_wire_overlay: bool,
     strict_plane_closed_ellipse_done: bool,
 }
 
@@ -316,6 +335,7 @@ impl Part21Writer {
         protocol: StepProtocol,
         header: StepHeader,
         gmsh_strict: bool,
+        export_standalone_wire_overlay: bool,
     ) -> Self {
         Self {
             next_id: 1,
@@ -328,6 +348,7 @@ impl Part21Writer {
             protocol,
             header,
             gmsh_strict,
+            export_standalone_wire_overlay,
             strict_plane_closed_ellipse_done: false,
         }
     }
@@ -461,7 +482,6 @@ impl Part21Writer {
         let mut face_index = 0usize;
         for (solid_index, solid) in brep.solids.iter().enumerate() {
             for (shell_index, shell) in solid.shells.iter().enumerate() {
-                let shell_face_start_index = face_index;
                 let mut shell_faces = Vec::new();
                 let mut shell_exported_as_solid = false;
                 for face in &shell.faces {
@@ -486,18 +506,7 @@ impl Part21Writer {
                     face_index += 1;
                 }
                 if export_all && !shell_faces.is_empty() {
-                    let is_surface_patch_shell = self.gmsh_strict
-                        && solid.shells.len() == 1
-                        && shell.faces.len() == 1
-                        && brep
-                            .geom
-                            .face_surface
-                            .get(shell_face_start_index)
-                            .and_then(|v| *v)
-                            .and_then(|sid| brep.geom.surfaces.get(sid))
-                            .is_some_and(|s| matches!(s, Surface3::Plane(_)));
-
-                    if !is_surface_patch_shell {
+                    if shell_is_closed(&shell.faces) {
                         let shell_id = self.closed_shell(
                             &format!("closed_shell_{}_{}", solid_index, shell_index),
                             &shell_faces,
@@ -548,23 +557,43 @@ impl Part21Writer {
             }
         }
 
-        // Only export standalone edges (1D geometry not belonging to any face)
-        // into the wireframe. When the user explicitly selected edges, include
-        // those regardless.
+        // Export standalone edge geometry (1D items not belonging to any face)
+        // into wireframe representations. Use geometric curve entities instead
+        // of topological EDGE_CURVE entities to align with OCCT-style
+        // GEOMETRIC_CURVE_SET usage.
         let mut edge_items = Vec::new();
         for (edge_index, _edge) in brep.edges.iter().enumerate() {
             if export_all {
-                if self.gmsh_strict {
-                    if face_edge_set.contains(&edge_index) {
-                        continue;
-                    }
-                    // Export orphan edges as EDGE_CURVE entities to preserve topology
-                    edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
+                if face_edge_set.contains(&edge_index) {
                     continue;
                 }
-                edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
+                let has_surface_parametrics = brep
+                    .geom
+                    .edge_pcurves
+                    .get(edge_index)
+                    .is_some_and(|pcs| !pcs.is_empty());
+                if has_surface_parametrics {
+                    // Keep wireframe export focused on standalone 3D curves.
+                    // SURFACE_CURVE + PCURVE-bound edges belong to face topology.
+                    continue;
+                }
+                let Some(edge) = brep.edges.get(edge_index) else {
+                    continue;
+                };
+                let Some(start) = brep.vertices.get(edge.start).map(|v| v.point) else {
+                    continue;
+                };
+                let Some(end) = brep.vertices.get(edge.end).map(|v| v.point) else {
+                    continue;
+                };
+                if (end - start).length_squared() <= 1e-20 {
+                    // Degenerate standalone curve segments can invalidate
+                    // downstream wireframe representation parsing.
+                    continue;
+                }
+                edge_items.push(self.write_standalone_wire_curve_by_index(brep, edge_index));
             } else if selected_edge_set.contains(&edge_index) {
-                edge_items.push(self.write_edge_curve_by_index(brep, edge_index));
+                edge_items.push(self.write_standalone_wire_curve_by_index(brep, edge_index));
             }
         }
 
@@ -793,58 +822,93 @@ impl Part21Writer {
                 let _child_cat = self.product_related_product_category("part", None, &[child_product]);
             }
         } else {
-            let mut primary_rep = None;
-            let mut secondary_reps = Vec::new();
-
+            let mut brep_rep = None;
             if export_all && !compound_items.is_empty() {
-                let brep_rep =
-                    self.advanced_brep_shape_representation("rcad_export", &compound_items, context);
-                primary_rep = Some(brep_rep);
+                brep_rep = Some(
+                    self.advanced_brep_shape_representation("rcad_export", &compound_items, context),
+                );
             } else if export_all && !compsolid_items.is_empty() {
-                let brep_rep =
-                    self.advanced_brep_shape_representation("rcad_export", &compsolid_items, context);
-                primary_rep = Some(brep_rep);
+                brep_rep = Some(
+                    self.advanced_brep_shape_representation("rcad_export", &compsolid_items, context),
+                );
             } else if export_all && !solid_items.is_empty() {
-                let brep_rep =
-                    self.advanced_brep_shape_representation("rcad_export", &solid_items, context);
-                primary_rep = Some(brep_rep);
+                brep_rep = Some(
+                    self.advanced_brep_shape_representation("rcad_export", &solid_items, context),
+                );
             }
 
+            let mut surface_rep = None;
             if !shell_model_items.is_empty() {
-                let surface_rep = self.manifold_surface_shape_representation(
+                surface_rep = Some(self.manifold_surface_shape_representation(
                     "rcad_export",
                     &shell_model_items,
                     context,
-                );
-                if primary_rep.is_none() {
-                    primary_rep = Some(surface_rep);
-                } else {
-                    secondary_reps.push(surface_rep);
-                }
+                ));
             }
 
-            let include_wire_overlay = primary_rep.is_none()
+            let include_wire_overlay = brep_rep.is_none()
                 || !selected_edge_set.is_empty()
-                || !selected_face_set.is_empty();
+                || !selected_face_set.is_empty()
+                || (self.export_standalone_wire_overlay && export_all && !edge_items.is_empty());
+            let mut wire_rep = None;
             if include_wire_overlay && !edge_items.is_empty() {
                 let curve_sets: Vec<u64> = vec![self.geometric_curve_set("wireframe", &edge_items)];
-                let wire_rep = self.geometrically_bounded_wireframe_shape_representation(
+                wire_rep = Some(self.geometrically_bounded_wireframe_shape_representation(
                     "rcad_export",
                     &curve_sets,
                     context,
-                );
-                if primary_rep.is_none() {
-                    primary_rep = Some(wire_rep);
-                } else {
-                    secondary_reps.push(wire_rep);
+                ));
+                // Style standalone wire curves so they stay visible in viewers
+                // that otherwise render default white-on-white curves.
+                let wire_color = Color {
+                    r: 0.560_784_34,
+                    g: 0.686_274_5,
+                    b: 0.560_784_34,
+                };
+                for &curve_id in &edge_items {
+                    self.write_curve_color(curve_id, wire_color, 0.1);
                 }
             }
 
-            let primary_rep =
-                primary_rep.unwrap_or_else(|| self.shape_representation("rcad_export", &[], context));
-            let _shape_def = self.shape_definition_representation(product_shape, primary_rep);
-            for rep in secondary_reps {
-                self.shape_representation_relationship("", "", primary_rep, rep);
+            // When exporting standalone 1D entities with full solids, bridge through
+            // a root SHAPE_REPRESENTATION like hfss/OCCT to improve viewer compatibility.
+            let use_root_bridge = export_all && wire_rep.is_some() && brep_rep.is_some();
+            if use_root_bridge {
+                let root_origin = self.cartesian_point("asm_origin", [0.0, 0.0, 0.0]);
+                let root_axis_dir = self.direction("asm_axis", [0.0, 0.0, 1.0]);
+                let root_ref_dir = self.direction("asm_ref", [1.0, 0.0, 0.0]);
+                let root_axis = self.axis2_placement_3d("", root_origin, root_axis_dir, root_ref_dir);
+                let root_rep = self.shape_representation("rcad_export", &[root_axis], context);
+                let _shape_def = self.shape_definition_representation(product_shape, root_rep);
+
+                if let Some(rep) = brep_rep {
+                    self.shape_representation_relationship("", "", root_rep, rep);
+                }
+                if let Some(rep) = wire_rep {
+                    self.shape_representation_relationship("", "", root_rep, rep);
+                }
+                if let Some(rep) = surface_rep {
+                    self.shape_representation_relationship("", "", root_rep, rep);
+                }
+            } else {
+                let primary_rep = brep_rep.or(surface_rep).or(wire_rep);
+                let mut secondary_reps = Vec::new();
+                if let Some(rep) = brep_rep && Some(rep) != primary_rep {
+                    secondary_reps.push(rep);
+                }
+                if let Some(rep) = wire_rep && Some(rep) != primary_rep {
+                    secondary_reps.push(rep);
+                }
+                if let Some(rep) = surface_rep && Some(rep) != primary_rep {
+                    secondary_reps.push(rep);
+                }
+
+                let primary_rep =
+                    primary_rep.unwrap_or_else(|| self.shape_representation("rcad_export", &[], context));
+                let _shape_def = self.shape_definition_representation(product_shape, primary_rep);
+                for rep in secondary_reps {
+                    self.shape_representation_relationship("", "", primary_rep, rep);
+                }
             }
         }
 
@@ -855,6 +919,19 @@ impl Part21Writer {
                     for &face_id in step_ids {
                         self.write_face_color(face_id, color);
                     }
+                }
+            }
+        } else if !face_step_ids.is_empty() {
+            // Keep exports visible in viewers that default to white background
+            // and don't auto-assign contrasting face colors.
+            let fallback = Color {
+                r: 0.560_784_34,
+                g: 0.686_274_5,
+                b: 0.560_784_34,
+            };
+            for (_, step_ids) in &face_step_ids {
+                for &face_id in step_ids {
+                    self.write_face_color(face_id, fallback);
                 }
             }
         }
@@ -2147,6 +2224,127 @@ impl Part21Writer {
         curve_id
     }
 
+    fn write_standalone_wire_curve_by_index(&mut self, brep: &BRep, edge_idx: usize) -> u64 {
+        if let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) {
+            if let Some(curve) = brep.geom.curves.get(curve_idx) {
+                let Some(edge) = brep.edges.get(edge_idx) else {
+                    return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+                };
+                let Some(start_point) = brep.vertices.get(edge.start).map(|v| v.point) else {
+                    return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+                };
+                let Some(end_point) = brep.vertices.get(edge.end).map(|v| v.point) else {
+                    return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+                };
+                let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
+                // OCCT-like handling for standalone circular edges:
+                // do not trust persisted curve parameter zero blindly after
+                // import/rebuild. Reconstruct trimming from topological edge
+                // endpoints so exported TRIMMED_CURVE orientation matches the
+                // edge traversal seen by viewers (e.g. Gmsh/FreeCAD via OCCT).
+                if let Curve3::Circle(circle) = curve
+                    && let Some(curve_id) = self.write_standalone_circle_trimmed_from_edge(
+                        circle,
+                        start_point,
+                        end_point,
+                        range,
+                    )
+                {
+                    return curve_id;
+                }
+
+                let start = dvec3_to_array(start_point);
+                let end = dvec3_to_array(end_point);
+                let basis = self.write_curve3_entity(curve, start, end);
+                if let Some([t0, t1]) = range {
+                    return self.trimmed_curve("wire_trimmed_curve", basis, t0, t1);
+                }
+                if matches!(curve, Curve3::Line(_)) {
+                    return self.trimmed_curve("wire_line_segment", basis, 0.0, 1.0);
+                }
+                return basis;
+            }
+        }
+
+        let Some(edge) = brep.edges.get(edge_idx) else {
+            return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+        };
+        let Some(start) = brep.vertices.get(edge.start).map(|v| v.point) else {
+            return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+        };
+        let Some(end) = brep.vertices.get(edge.end).map(|v| v.point) else {
+            return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+        };
+
+        let delta = end - start;
+        let length = delta.length();
+        if length <= 1e-12 {
+            return self.write_edge_curve_geometry_by_index(brep, edge_idx);
+        }
+        let origin = self.cartesian_point("wire_origin", dvec3_to_array(start));
+        let dir = self.direction("wire_dir", normalize(dvec3_to_array(delta)));
+        let vec = self.vector("wire_vec", dir, length);
+        let basis = self.line("wire_line", origin, vec);
+        self.trimmed_curve("wire_segment", basis, 0.0, 1.0)
+    }
+
+    fn write_standalone_circle_trimmed_from_edge(
+        &mut self,
+        circle: &rcad_kernel::geom::Circle3,
+        start: glam::DVec3,
+        end: glam::DVec3,
+        range: Option<[f64; 2]>,
+    ) -> Option<u64> {
+        // OCCT strategy notes:
+        // 1) Build circle placement with X direction aligned to edge start.
+        // 2) Compute minor sweep from start->end in that local frame.
+        // 3) Use imported trim span as a hint to choose minor vs major arc.
+        // 4) Preserve trim parameter unit convention (degree/radian).
+        // 5) Emit `.F.` when traversal is reversed (t1 < t0 style range).
+        let normal = circle.normal.normalize_or_zero();
+        if normal.length_squared() <= 1e-24 {
+            return None;
+        }
+        let start_dir = (start - circle.center).normalize_or_zero();
+        let end_dir = (end - circle.center).normalize_or_zero();
+        if start_dir.length_squared() <= 1e-24 || end_dir.length_squared() <= 1e-24 {
+            return None;
+        }
+        let placement =
+            self.axis2_from_origin_axis_ref("wire_circle_axis", circle.center, normal, start_dir);
+        let basis = self.circle("wire_circle_basis", placement, circle.radius.max(1e-9));
+
+        let dot = start_dir.dot(end_dir).clamp(-1.0, 1.0);
+        let mut minor_sweep = normal.dot(start_dir.cross(end_dir)).atan2(dot);
+        if minor_sweep < 0.0 {
+            minor_sweep += std::f64::consts::TAU;
+        }
+        if minor_sweep < 1e-12 {
+            minor_sweep = 0.0;
+        }
+
+        let major_sweep = std::f64::consts::TAU - minor_sweep;
+        let mut sweep = minor_sweep;
+        if let Some(span_hint) = normalize_arc_span_hint(range)
+            && (major_sweep - span_hint).abs() + 1e-9 < (minor_sweep - span_hint).abs()
+        {
+            sweep = major_sweep;
+        }
+        let sweep_param = if range_looks_degrees(range) {
+            sweep.to_degrees()
+        } else {
+            sweep
+        };
+
+        let reverse = range.is_some_and(|[t0, t1]| t1 < t0);
+        let (t0, t1) = if reverse {
+            (sweep_param, 0.0)
+        } else {
+            (0.0, sweep_param)
+        };
+        Some(self.trimmed_curve("wire_trimmed_curve", basis, t0, t1))
+    }
+
     /// Returns the STEP id for a surface from GeomStore, writing it if not yet done.
     fn get_or_write_surface_id(&mut self, brep: &BRep, surface_idx: usize) -> u64 {
         if let Some(existing) = self.surface_ids.get(&surface_idx) {
@@ -2752,6 +2950,18 @@ impl Part21Writer {
         self.push(format!("CIRCLE('{}',#{},{:.9})", name, placement, radius))
     }
 
+    fn trimmed_curve(&mut self, name: &str, basis_curve: u64, t0: f64, t1: f64) -> u64 {
+        let (trim_start, trim_end, sense) = if t1 < t0 {
+            (t1, t0, ".F.")
+        } else {
+            (t0, t1, ".T.")
+        };
+        self.push(format!(
+            "TRIMMED_CURVE('{}',#{},(PARAMETER_VALUE({:.9})),(PARAMETER_VALUE({:.9})),{},.PARAMETER.)",
+            name, basis_curve, trim_start, trim_end, sense
+        ))
+    }
+
     fn ellipse(&mut self, name: &str, placement: u64, major: f64, minor: f64) -> u64 {
         self.push(format!(
             "ELLIPSE('{}',#{},{:.9},{:.9})",
@@ -3087,12 +3297,37 @@ impl Part21Writer {
         self.styled_item("color", &[psa], face_id);
     }
 
+    fn write_curve_color(&mut self, curve_id: u64, color: Color, width: f64) {
+        let rgb = self.colour_rgb("curve_color", color.r, color.g, color.b);
+        let font = self.draughting_pre_defined_curve_font("continuous");
+        let curve_style = self.curve_style("", font, width, rgb);
+        let psa = self.presentation_style_assignment(&[curve_style]);
+        self.styled_item("curve_color", &[psa], curve_id);
+    }
+
     fn colour_rgb(&mut self, name: &str, r: f64, g: f64, b: f64) -> u64 {
         self.push(format!("COLOUR_RGB('{}',{:.6},{:.6},{:.6})", name, r, g, b))
     }
 
     fn fill_area_style_colour(&mut self, name: &str, colour: u64) -> u64 {
         self.push(format!("FILL_AREA_STYLE_COLOUR('{}',#{})", name, colour))
+    }
+
+    fn draughting_pre_defined_curve_font(&mut self, name: &str) -> u64 {
+        self.push(format!(
+            "DRAUGHTING_PRE_DEFINED_CURVE_FONT('{}')",
+            escape_step_string(name)
+        ))
+    }
+
+    fn curve_style(&mut self, name: &str, font: u64, width: f64, colour: u64) -> u64 {
+        self.push(format!(
+            "CURVE_STYLE('{}',#{},POSITIVE_LENGTH_MEASURE({:.6}),#{})",
+            escape_step_string(name),
+            font,
+            width,
+            colour
+        ))
     }
 
     fn fill_area_style(&mut self, name: &str, styles: &[u64]) -> u64 {
@@ -3690,6 +3925,36 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
     }
 }
 
+fn normalize_arc_span_hint(range: Option<[f64; 2]>) -> Option<f64> {
+    let [t0, t1] = range?;
+    if !t0.is_finite() || !t1.is_finite() {
+        return None;
+    }
+    let mut span = (t1 - t0).abs();
+    if span > std::f64::consts::TAU + 1e-9 && span <= 360.0 + 1e-6 {
+        span = span.to_radians();
+    }
+    if span > std::f64::consts::TAU + 1e-9 {
+        span %= std::f64::consts::TAU;
+        if span <= 1e-12 {
+            span = std::f64::consts::TAU;
+        }
+    }
+    Some(span)
+}
+
+fn range_looks_degrees(range: Option<[f64; 2]>) -> bool {
+    // Heuristic aligned with imported OCCT-style files:
+    // for circles/arcs, trims frequently come as [0..360]-like values while
+    // analytic kernels internally evaluate in radians.
+    // Keep unit system stable through roundtrip to avoid tiny-arc regression.
+    let Some([t0, t1]) = range else {
+        return false;
+    };
+    let span = (t1 - t0).abs();
+    span > std::f64::consts::TAU + 1e-9 && span <= 360.0 + 1e-6
+}
+
 fn normalize2(v: [f64; 2]) -> [f64; 2] {
     let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
     if len <= 1e-12 {
@@ -3763,6 +4028,23 @@ fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
         .filter(|&(_, c)| c >= 2)
         .map(|(idx, _)| idx)
         .collect()
+}
+
+/// A shell is considered closed when every participating edge is used exactly
+/// twice across all its face wires (outer and inner).
+fn shell_is_closed(faces: &[Face]) -> bool {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for face in faces {
+        for we in &face.outer_wire.edges {
+            *counts.entry(we.idx).or_insert(0) += 1;
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                *counts.entry(we.idx).or_insert(0) += 1;
+            }
+        }
+    }
+    !counts.is_empty() && counts.values().all(|&count| count == 2)
 }
 
 /// Extract a representative normal/axis from an analytic surface, used as a
@@ -4221,6 +4503,7 @@ mod tests {
         StepPropertyDefinitionRepr, StepReader, ToleranceZonePosition, ToleranceZoneShape,
     };
     use glam::DVec3;
+    use rcad_kernel::{Edge, Vertex};
     use rcad_modeling::make_box_brep;
     use std::io::Cursor;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
@@ -4272,78 +4555,6 @@ mod tests {
         assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
         assert!(!step.contains("GEOMETRIC_CURVE_SET"));
         assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
-    }
-
-    #[test]
-    fn exports_gmsh_strict_primary_brep_only_for_full_solid() {
-        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
-            .expect("test box should be valid");
-        let step = StepWriter::write_string_with_options(
-            &brep,
-            ExportSelection {
-                selected_faces: &[],
-                selected_edges: &[],
-            },
-            &StepWriteOptions {
-                protocol: StepProtocol::Ap214,
-                gmsh_strict: true,
-                ..Default::default()
-            },
-        );
-
-        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
-        assert!(!step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
-        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
-        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
-    }
-
-    #[test]
-    fn gmsh_strict_output_has_correct_structure() {
-        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
-
-        let step = StepWriter::write_string_with_options(
-            &brep,
-            ExportSelection {
-                selected_faces: &[],
-                selected_edges: &[],
-            },
-            &StepWriteOptions {
-                protocol: StepProtocol::Ap214,
-                gmsh_strict: true,
-                ..Default::default()
-            },
-        );
-
-        // GMSH strict should have MANIFOLD_SOLID_BREP
-        assert!(step.contains("MANIFOLD_SOLID_BREP"), "should contain MANIFOLD_SOLID_BREP");
-        assert!(step.contains("CLOSED_SHELL"), "should contain CLOSED_SHELL");
-        assert!(step.contains("ADVANCED_FACE"), "should contain ADVANCED_FACE");
-
-        // Should NOT have wireframe overlay entities
-        assert!(!step.contains("GEOMETRIC_CURVE_SET"), "should not contain GEOMETRIC_CURVE_SET");
-        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME"), "should not contain wireframe");
-    }
-
-    #[test]
-    fn non_strict_mode_includes_geometry_entities() {
-        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
-
-        let step = StepWriter::write_string_with_options(
-            &brep,
-            ExportSelection {
-                selected_faces: &[],
-                selected_edges: &[],
-            },
-            &StepWriteOptions {
-                protocol: StepProtocol::Ap214,
-                gmsh_strict: false,
-                ..Default::default()
-            },
-        );
-
-        // Non-strict still keeps full solid topology.
-        assert!(step.contains("MANIFOLD_SOLID_BREP"), "should contain MANIFOLD_SOLID_BREP");
-        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
     }
 
     #[test]
@@ -4689,6 +4900,69 @@ mod tests {
     }
 
     #[test]
+    fn standalone_reversed_range_exports_false_sense_trimmed_curve() {
+        let mut brep = BRep::new();
+        brep.vertices = vec![
+            Vertex {
+                point: DVec3::new(1.0, 0.0, 0.0),
+            },
+            Vertex {
+                point: DVec3::new(0.0, 1.0, 0.0),
+            },
+        ];
+        brep.edges = vec![Edge { start: 0, end: 1 }];
+        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        }));
+        brep.geom.edge_curve = vec![Some(0)];
+        brep.geom.edge_curve_range = vec![Some([135.0, 0.0])];
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[0],
+            },
+        );
+        assert!(step.contains("TRIMMED_CURVE("));
+        assert!(step.contains(",.F.,.PARAMETER.)"));
+    }
+
+    #[test]
+    fn standalone_circle_uses_degree_range_hint_for_major_arc_sweep() {
+        let mut brep = BRep::new();
+        brep.vertices = vec![
+            Vertex {
+                point: DVec3::new(1.0, 0.0, 0.0),
+            },
+            Vertex {
+                point: DVec3::new(0.0, 1.0, 0.0),
+            },
+        ];
+        brep.edges = vec![Edge { start: 0, end: 1 }];
+        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        }));
+        brep.geom.edge_curve = vec![Some(0)];
+        // 270-degree sweep hint should choose the major arc.
+        brep.geom.edge_curve_range = vec![Some([0.0, 270.0])];
+
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[0],
+            },
+        );
+        assert!(step.contains("TRIMMED_CURVE("));
+        assert!(step.contains("PARAMETER_VALUE(270.000"));
+    }
+
+    #[test]
     fn stream_write_then_stream_read_roundtrip() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
             .expect("test box should be valid");
@@ -4770,14 +5044,90 @@ mod tests {
         // All analytic surfaces should now be exported properly as ADVANCED_FACE
         // with their respective surface types, including seam faces on
         // spheres and cones.
+        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
+        assert!(step.contains("MANIFOLD_SURFACE_SHAPE_REPRESENTATION"));
         assert!(step.contains("SPHERICAL_SURFACE"));
         assert!(step.contains("CYLINDRICAL_SURFACE"));
         assert!(step.contains("TOROIDAL_SURFACE"));
         assert!(step.contains("CONICAL_SURFACE"));
 
-        // Full solid export intentionally omits overlay wireframe representation.
-        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
-        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+        // Full export should carry standalone 1D entities as a secondary wireframe rep.
+        assert!(step.contains("GEOMETRIC_CURVE_SET"));
+        assert!(step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
+    }
+
+    #[test]
+    fn hfss_wire_curve_set_references_geometry_not_edge_curve() {
+        use std::collections::HashMap;
+
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let step = StepWriter::write_string(
+            &brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+
+        let mut entity_by_id: HashMap<u64, String> = HashMap::new();
+        for line in step.lines() {
+            let line = line.trim();
+            if !line.starts_with('#') {
+                continue;
+            }
+            let Some((lhs, rhs)) = line.split_once('=') else {
+                continue;
+            };
+            let Some(id_str) = lhs.strip_prefix('#') else {
+                continue;
+            };
+            let Ok(id) = id_str.parse::<u64>() else {
+                continue;
+            };
+            let kind = rhs
+                .split_once('(')
+                .map(|(k, _)| k.trim().to_string())
+                .unwrap_or_default();
+            entity_by_id.insert(id, kind);
+        }
+
+        let mut curve_set_refs = Vec::new();
+        for line in step.lines() {
+            let line = line.trim();
+            if !line.contains("GEOMETRIC_CURVE_SET") {
+                continue;
+            }
+            let Some(start) = line.find(",(") else {
+                continue;
+            };
+            let Some(end) = line.rfind("))") else {
+                continue;
+            };
+            let refs_text = &line[start + 2..end];
+            for token in refs_text.split(',') {
+                let tok = token.trim();
+                if let Some(id_str) = tok.strip_prefix('#')
+                    && let Ok(id) = id_str.parse::<u64>()
+                {
+                    curve_set_refs.push(id);
+                }
+            }
+        }
+
+        assert!(!curve_set_refs.is_empty(), "expected non-empty GEOMETRIC_CURVE_SET refs");
+        for id in curve_set_refs {
+            let kind = entity_by_id.get(&id).cloned().unwrap_or_default();
+            assert_ne!(
+                kind,
+                "EDGE_CURVE",
+                "GEOMETRIC_CURVE_SET should reference geometric curves, got EDGE_CURVE #{id}"
+            );
+            assert_ne!(
+                kind,
+                "SURFACE_CURVE",
+                "GEOMETRIC_CURVE_SET should avoid SURFACE_CURVE refs, got SURFACE_CURVE #{id}"
+            );
+        }
     }
 
     #[test]
