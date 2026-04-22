@@ -3086,8 +3086,8 @@ fn process_world_pts_with_bvh(
 /// Returns 2D projected segments labeled visible/hidden.
 /// `samples` controls how finely each edge is subdivided for occlusion testing
 /// (higher = more accurate but slower; 8 is a reasonable default).
-pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
-    hlr_with_options(brep, camera, HlrOptions::default().with_edge_samples(samples))
+pub fn compute_hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
+    compute_hlr_with_options(brep, camera, HlrOptions::default().with_edge_samples(samples))
 }
 
 /// Perform hidden-line removal with full configuration options.
@@ -3102,7 +3102,7 @@ pub fn hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
 ///
 /// # Returns
 /// An `HlrResult` containing projected 2D segments labeled as visible/hidden.
-pub fn hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> HlrResult {
+pub fn compute_hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> HlrResult {
     let view = look_at(camera.eye, camera.target, camera.up);
     let triangles = collect_triangles(brep);
     let _edge_samples = opts.edge_samples.max(2);
@@ -3680,7 +3680,7 @@ mod tests {
             depth: 1.0,
         });
         let camera = HlrCamera::isometric(5.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         assert!(
             !result.segments.is_empty(),
             "HLR should produce segments for a box"
@@ -3699,7 +3699,7 @@ mod tests {
             depth: 1.0,
         });
         let camera = HlrCamera::isometric(5.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         let svg = hlr_to_svg(&result, 100.0, 20.0);
         assert!(svg.contains("<svg"), "output should be SVG");
         assert!(svg.contains("</svg>"), "SVG should close properly");
@@ -3714,7 +3714,7 @@ mod tests {
             depth: 1.0,
         });
         let camera = HlrCamera::top(5.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         let vis = result.visible().count();
         let hid = result.hidden().count();
         assert!(vis > 0, "top view should have visible edges");
@@ -3728,8 +3728,8 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let front_result = hlr(&brep, &HlrCamera::front(5.0), 8);
-        let right_result = hlr(&brep, &HlrCamera::right(5.0), 8);
+        let front_result = compute_hlr(&brep, &HlrCamera::front(5.0), 8);
+        let right_result = compute_hlr(&brep, &HlrCamera::right(5.0), 8);
         assert!(!front_result.segments.is_empty());
         assert!(!right_result.segments.is_empty());
     }
@@ -3742,7 +3742,7 @@ mod tests {
             depth: 1.0,
         });
         let camera = HlrCamera::isometric(5.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         let svg = hlr_to_svg(&result, 100.0, 20.0);
         // Hidden lines are rendered dashed
         assert!(
@@ -3761,7 +3761,7 @@ mod tests {
             depth: 1.0,
         });
         let camera = HlrCamera::isometric(10.0);
-        let result = hlr(&brep, &camera, 16);
+        let result = compute_hlr(&brep, &camera, 16);
         let total = result.segments.len();
         assert!(total >= 12, "a box has 12 edges, expect at least 12 segments; got {total}");
     }
@@ -3792,7 +3792,7 @@ mod tests {
             .push(Some([0.0, std::f64::consts::PI]));
 
         let camera = HlrCamera::top(5.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
 
         // The circle edge should produce at least one segment.
         assert!(
@@ -3831,7 +3831,7 @@ mod tests {
         // The cylinder axis is +Y.  Use the right-side camera (looking along -X)
         // so the view direction is perpendicular to the axis → two silhouette lines.
         let camera = HlrCamera::right(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         assert!(
             !result.segments.is_empty(),
             "cylinder HLR should produce segments"
@@ -3849,7 +3849,7 @@ mod tests {
         use rcad_kernel::geom::PrimitiveSolid;
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let camera = HlrCamera::front(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         assert!(
             !result.segments.is_empty(),
             "sphere HLR should produce silhouette segments"
@@ -3866,7 +3866,7 @@ mod tests {
         });
         // View from the right (perpendicular to cone axis) → two silhouette generators.
         let camera = HlrCamera::right(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         assert!(
             !result.segments.is_empty(),
             "cone HLR should produce segments"
@@ -3887,7 +3887,7 @@ mod tests {
             minor_radius: 1.0,
         });
         let camera = HlrCamera::front(20.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
         assert!(
             !result.segments.is_empty(),
             "torus HLR should produce silhouette segments"
@@ -3956,7 +3956,7 @@ mod tests {
         });
         let camera = HlrCamera::isometric(5.0);
 
-        let single_hlr = hlr(&brep, &camera, 8);
+        let single_hlr = compute_hlr(&brep, &camera, 8);
         let assembly_result = hlr_assembly(
             &[(brep.clone(), DAffine3::IDENTITY, "box".to_string())],
             &camera, 8,
@@ -4040,7 +4040,7 @@ mod tests {
         });
         let camera = HlrCamera::isometric(5.0);
         let opts = HlrOptions::default().with_edge_samples(16);
-        let result = hlr_with_options(&brep, &camera, opts);
+        let result = compute_hlr_with_options(&brep, &camera, opts);
 
         assert!(!result.segments.is_empty(), "should produce segments");
         // All segments from a box should be edges, not silhouettes
@@ -4054,7 +4054,7 @@ mod tests {
             height: 2.0,
         });
         let camera = HlrCamera::right(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
 
         // Should have both edge and silhouette segments
         let has_silhouette = result.segments.iter().any(|s| s.is_contour());
@@ -4065,7 +4065,7 @@ mod tests {
     fn sphere_silhouettes_are_marked() {
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let camera = HlrCamera::front(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
 
         // All segments from a sphere should be silhouettes (no wire edges)
         assert!(
@@ -4133,7 +4133,7 @@ mod tests {
     fn hlr_result_silhouettes_iterator() {
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let camera = HlrCamera::front(10.0);
-        let result = hlr(&brep, &camera, 8);
+        let result = compute_hlr(&brep, &camera, 8);
 
         let sil_count = result.silhouettes().count();
         assert!(sil_count > 0, "should have silhouette segments");
@@ -4448,13 +4448,13 @@ mod tests {
             .with_parallel(true)
             .with_parallel_threshold(1);
 
-        let result_parallel = hlr_with_options(&brep, &camera, opts_parallel);
+        let result_parallel = compute_hlr_with_options(&brep, &camera, opts_parallel);
 
         // Test with parallel processing disabled
         let opts_serial = HlrOptions::default()
             .with_parallel(false);
 
-        let result_serial = hlr_with_options(&brep, &camera, opts_serial);
+        let result_serial = compute_hlr_with_options(&brep, &camera, opts_serial);
 
         // Both should produce the same number of segments (within tolerance)
         assert!(!result_parallel.segments.is_empty());
@@ -4503,7 +4503,7 @@ mod tests {
             .with_thread_edge_detection(true)
             .with_seam_edge_detection(true);
 
-        let result = hlr_with_options(&brep, &camera, opts);
+        let result = compute_hlr_with_options(&brep, &camera, opts);
 
         assert!(!result.segments.is_empty(), "should have segments");
 
@@ -4531,8 +4531,8 @@ mod tests {
             ..HlrOptions::default()
         };
 
-        let result_tight = hlr_with_options(&brep, &camera, opts_tight);
-        let result_loose = hlr_with_options(&brep, &camera, opts_loose);
+        let result_tight = compute_hlr_with_options(&brep, &camera, opts_tight);
+        let result_loose = compute_hlr_with_options(&brep, &camera, opts_loose);
 
         // Both should produce results
         assert!(!result_tight.segments.is_empty());
@@ -4549,13 +4549,13 @@ mod tests {
         let opts_cached = HlrOptions::default()
             .with_surface_caching(true);
 
-        let result_cached = hlr_with_options(&brep, &camera, opts_cached);
+        let result_cached = compute_hlr_with_options(&brep, &camera, opts_cached);
 
         // Test with caching disabled
         let opts_uncached = HlrOptions::default()
             .with_surface_caching(false);
 
-        let result_uncached = hlr_with_options(&brep, &camera, opts_uncached);
+        let result_uncached = compute_hlr_with_options(&brep, &camera, opts_uncached);
 
         // Both should produce valid results
         assert!(!result_cached.segments.is_empty());

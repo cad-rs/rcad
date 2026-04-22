@@ -5,7 +5,7 @@
 //! Run: cargo run --example properties_gallery
 
 use glam::DVec3;
-use rcad_algorithms::check;
+use rcad_algorithms::check_brep;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
 use rcad_kernel::{BRep, PrimitiveSolid, centroid, surface_area, volume};
@@ -239,7 +239,7 @@ fn add(rows: &mut Vec<Row>, name: &'static str, expected: &'static str, brep: &B
         vol: volume(brep),
         c: centroid(brep),
         expected,
-        valid: check(brep).is_valid(),
+        valid: check_brep(brep).is_valid(),
     });
 }
 

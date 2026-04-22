@@ -25,7 +25,7 @@ use rcad_algorithms::{
     offset::offset_surface,
     healing::{heal, heal_comprehensive, HealingOptions,
               fix_solid, fix_wire},
-    brep_check::check,
+    brep_check::brep_check_analyze,
     history::{EdgeOrigin as HistEdgeOrigin, VertexOrigin as HistVertexOrigin},
 };
 use rcad_kernel::BRep;
@@ -849,7 +849,7 @@ fn healing_self_intersecting_shell_detection() {
     // Create a box and check for self-intersection
     let brep = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
 
-    let check_result = check(&brep);
+    let check_result = brep_check_analyze(&brep);
 
     // Valid box should not have self-intersection
     assert!(check_result.is_valid() || check_result.issues.is_empty());

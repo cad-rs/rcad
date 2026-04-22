@@ -16,7 +16,7 @@ use crate::BRep;
 /// Closed periodic faces often list the same seam edge twice (e.g. forward then
 /// reverse) so the boundary is closed; the duplicate [`WireEdge`] entries are
 /// not separate semantic edges.
-pub fn semantic_wire_edges(edges: &[WireEdge]) -> Vec<&WireEdge> {
+pub fn wire_edges_unique_by_index(edges: &[WireEdge]) -> Vec<&WireEdge> {
     let mut seen = HashSet::new();
     edges
         .iter()
@@ -85,12 +85,12 @@ pub fn edge_count(brep: &BRep) -> usize {
 /// Number of raw entries in `brep.vertices`.
 ///
 /// Note: this storage may include additional triangulation/sample points.
-pub fn brep_vertex_count(brep: &BRep) -> usize {
+pub fn vertex_storage_len(brep: &BRep) -> usize {
     brep.vertices.len()
 }
 
 /// Number of topological vertices referenced by edges.
-pub fn vertex_count(brep: &BRep) -> usize {
+pub fn topological_vertex_count(brep: &BRep) -> usize {
     vertex_indices(brep).len()
 }
 
@@ -131,7 +131,7 @@ pub fn is_degenerate_edge(brep: &BRep, edge_idx: usize) -> bool {
 /// at the same 3D location.
 ///
 /// Analogous to walking seam edges on `BRep_Tool::IsClosed` surfaces in OCCT.
-pub fn seam_edge_candidates(brep: &BRep) -> Vec<usize> {
+pub fn periodic_seam_edge_indices(brep: &BRep) -> Vec<usize> {
     brep.edges
         .iter()
         .enumerate()
@@ -185,7 +185,7 @@ pub fn vertex_indices(brep: &BRep) -> Vec<usize> {
 /// Starts from [`vertex_indices`] and filters out interior degree-2 chain points
 /// that are near-collinear with their two incident edges (a common pattern for
 /// curve/polyline sampling points).
-pub fn display_vertex_indices(brep: &BRep) -> Vec<usize> {
+pub fn salient_vertex_indices(brep: &BRep) -> Vec<usize> {
     const COLLINEAR_CHAIN_DOT_THRESHOLD: f64 = -0.965_925_826; // cos(165deg)
 
     vertex_indices(brep)
@@ -248,7 +248,7 @@ mod tests {
         let brep = box_2x2x2();
         assert_eq!(face_count(&brep), 6);
         assert_eq!(edge_count(&brep), 12);
-        assert_eq!(vertex_count(&brep), 8);
+        assert_eq!(topological_vertex_count(&brep), 8);
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn box_every_vertex_has_three_adjacent_edges() {
         let brep = box_2x2x2();
-        for vi in 0..vertex_count(&brep) {
+        for vi in 0..topological_vertex_count(&brep) {
             let adj = vertex_adjacent_edges(&brep, vi);
             assert_eq!(
                 adj.len(),
@@ -299,7 +299,7 @@ mod tests {
         let brep = BRep::new();
         assert_eq!(face_count(&brep), 0);
         assert_eq!(edge_count(&brep), 0);
-        assert_eq!(vertex_count(&brep), 0);
+        assert_eq!(topological_vertex_count(&brep), 0);
         assert!(edge_adjacent_faces(&brep, 0).is_empty());
         assert!(vertex_adjacent_edges(&brep, 0).is_empty());
         assert!(face_edges(&brep, 0).is_empty());
@@ -332,17 +332,17 @@ mod tests {
     }
 
     #[test]
-    fn seam_edge_candidates_on_box() {
+    fn periodic_seam_edge_indices_on_box() {
         // A plain box has no seam edges.
         let brep = box_2x2x2();
         assert!(
-            seam_edge_candidates(&brep).is_empty(),
+            periodic_seam_edge_indices(&brep).is_empty(),
             "a box should have no seam edge candidates"
         );
     }
 
     #[test]
-    fn semantic_wire_edges_dedupes_seam_duplicates() {
+    fn wire_edges_unique_by_index_dedupes_seam_duplicates() {
         use crate::topology::WireEdge;
 
         let w = [
@@ -350,7 +350,7 @@ mod tests {
             WireEdge::rev(0),
             WireEdge::fwd(1),
         ];
-        let s = semantic_wire_edges(&w);
+        let s = wire_edges_unique_by_index(&w);
         assert_eq!(s.len(), 2);
         assert_eq!(s[0].idx, 0);
         assert!(s[0].forward);

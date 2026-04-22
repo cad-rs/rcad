@@ -6,7 +6,7 @@ pub use light::{Light, LightId, LightType};
 
 use rcad_kernel::{
     BRep, BRepGraph, Curve3, CurveEval, Surface3, SurfaceEval, any_perpendicular,
-    display_vertex_indices, seam_edge_candidates, vertex_adjacent_edges,
+    salient_vertex_indices, periodic_seam_edge_indices, vertex_adjacent_edges,
 };
 use rcad_kernel::topology::WireEdge;
 use rcad_algorithms::{TessellationParams, mesh_brep};
@@ -505,7 +505,7 @@ pub fn pick_vertex(
         glam::Mat4::from_cols_array_2d(&camera.build_view_projection_matrix(aspect.max(0.001)));
     let mut best: Option<(f32, f32, usize)> = None;
 
-    for vi in display_vertex_indices(brep) {
+    for vi in salient_vertex_indices(brep) {
         let p = to_vec3(brep.vertices.get(vi)?.point);
         let s = project_to_screen(vp, p, viewport_size)?;
         let dx = cursor_pos[0] - s[0];
@@ -798,7 +798,7 @@ pub fn build_vertex_dots_mesh(brep: &BRep) -> Option<Mesh> {
         return None;
     }
     const MAX_VERTEX_DOTS: usize = 20_000;
-    let feature_indices = display_vertex_indices(brep);
+    let feature_indices = salient_vertex_indices(brep);
     if feature_indices.is_empty() {
         return None;
     }
@@ -1282,7 +1282,7 @@ impl Tessellator {
         smooth_normals_across_coincident_vertices(&flat_verts, &mut normals, 1e-5, 0.95);
 
         let mut seam_edges: std::collections::HashSet<usize> =
-            seam_edge_candidates(brep).into_iter().collect();
+            periodic_seam_edge_indices(brep).into_iter().collect();
 
         // Some closed periodic faces (notably primitive spheres) represent the
         // seam by repeating the same edge index in the face wire.

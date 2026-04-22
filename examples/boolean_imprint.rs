@@ -6,12 +6,12 @@
 //!      - Box union Box (regression: existing test cases remain stable)
 //!
 //! R.B  Face imprinting + gap/overlap detection
-//!      - imprint_brep: adjacent planar solids share imprinted edge
+//!      - imprint_shape: adjacent planar solids share imprinted edge
 //!      - detect_gaps_overlaps: gap 0.05, overlap 0.1
 
 use glam::DVec3;
 use rcad_algorithms::geom_populate;
-use rcad_algorithms::{BooleanOpType, boolean_op, detect_gaps_overlaps, imprint_brep};
+use rcad_algorithms::{BooleanOpType, boolean_op, detect_gaps_overlaps, imprint_shape};
 use rcad_kernel::{BRep, PrimitiveSolid};
 
 fn separator(title: &str) {
@@ -129,15 +129,15 @@ fn demo_curved_boolean() {
 fn demo_imprint_and_detect() {
     separator("R.B  Face Imprinting + Gap/Overlap Detection");
 
-    // 1. imprint_brep: two adjacent boxes sharing a common face
+    // 1. imprint_shape: two adjacent boxes sharing a common face
     {
         let target = make_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let tool = make_box(1.0, 0.0, 0.0, 1.0, 1.0, 1.0); // touching at x=1 face
 
-        let result = imprint_brep(&target, &tool);
+        let result = imprint_shape(&target, &tool);
         let fc = face_count(&result.brep);
         println!(
-            "imprint_brep (touching boxes): {} result faces, {} seam pairs",
+            "imprint_shape (touching boxes): {} result faces, {} seam pairs",
             fc,
             result.seam_edges.len()
         );

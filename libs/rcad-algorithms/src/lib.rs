@@ -248,7 +248,7 @@ pub use top_loc::{
 
 use rcad_kernel::BRep;
 
-pub use brep_check::{CheckIssue, CheckResult, check,
+pub use brep_check::{CheckIssue, CheckResult, check_brep, brep_check_analyze,
     SuspectEdge, SameParameterDiagnosis, diagnose_same_parameter,
     SuspectSameRangeEdge, SameRangeDiagnosis, diagnose_same_range,
     SuspectFaceSurfaceEdge, FaceSurfaceConsistencyDiagnosis, diagnose_face_surface_consistency,
@@ -371,10 +371,12 @@ pub use history::{
 pub use hlr::{
     AssemblyHlrResult, ComponentHlr, HlrCamera, HlrOptions, HlrResult, HlrSegment,
     SegmentType, SilhouetteCurve3, CurveHint,
-    hlr, hlr_assembly, hlr_to_svg, hlr_with_options, extract_silhouette_curves,
+    compute_hlr, hlr_assembly, hlr_to_svg, compute_hlr_with_options,
+    extract_silhouette_curves,
 };
 pub use imprint::{
-    Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_brep, min_distance,
+    Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_shape,
+    min_distance,
 };
 pub use projection::{
     ProjectionDirection, ProjectionOptions,
@@ -2365,7 +2367,7 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
             .sum()
     }
 
-    let before = check(brep);
+    let before = brep_check_analyze(brep);
     let mut out = brep.clone();
     let mut report = SimplifyReport {
         issues_before: before.issues.len(),
@@ -2460,7 +2462,7 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
         }
     }
 
-    report.issues_after = check(&out).issues.len();
+    report.issues_after = brep_check_analyze(&out).issues.len();
     (out, report)
 }
 
@@ -2477,15 +2479,15 @@ pub fn boolean_op_simplified(
 
 /// Split `target` by one or more `tools` without boolean classification.
 ///
-/// This is a first-stage splitter built on top of [`imprint_brep`]. It keeps
+/// This is a first-stage splitter built on top of [`imprint_shape`]. It keeps
 /// target material and iteratively imprints tool boundaries onto the evolving
 /// target shape.
-pub fn split_brep(target: &BRep, tools: &[BRep]) -> (BRep, SplitterReport) {
-    split_brep_with_options(target, tools, SplitterOptions::default())
+pub fn split_shape(target: &BRep, tools: &[BRep]) -> (BRep, SplitterReport) {
+    split_shape_with_options(target, tools, SplitterOptions::default())
 }
 
-/// Like [`split_brep`] with advanced options.
-pub fn split_brep_with_options(
+/// Like [`split_shape`] with advanced options.
+pub fn split_shape_with_options(
     target: &BRep,
     tools: &[BRep],
     options: SplitterOptions,
@@ -2502,7 +2504,7 @@ pub fn split_brep_with_options(
 /// Returns a step-indexed error if an intermediate split result has structural
 /// validity issues, excluding `NonManifoldEdge` (which can be expected for
 /// split-first intermediate topology).
-pub fn split_brep_checked_with_options(
+pub fn split_shape_checked_with_options(
     target: &BRep,
     tools: &[BRep],
     options: SplitterOptions,
@@ -2540,7 +2542,7 @@ fn split_brep_internal_with_partial_report(
             continue;
         }
 
-        let mut step = imprint_brep(&acc, tool);
+        let mut step = imprint_shape(&acc, tool);
         let seam_edges = step.seam_edges.len();
 
         if options.heal_after_each_step {
@@ -2552,7 +2554,7 @@ fn split_brep_internal_with_partial_report(
         let mut validation_first_issue = None;
         let output_faces = face_count_of(&step.brep);
         if validate_each_step {
-            let validity = check(&step.brep);
+            let validity = brep_check_analyze(&step.brep);
             let (issue_count, first_issue) = splitter_issues_by_level(&validity, options.validation_level);
             validation_issue_count = Some(issue_count);
             validation_first_issue = first_issue.clone();
@@ -2680,7 +2682,7 @@ pub fn split_objects_with_tools_options(
     let mut objects_report = Vec::with_capacity(objects.len());
 
     for (object_index, object) in objects.iter().enumerate() {
-        let (split, report) = split_brep_with_options(object, tools, options);
+        let (split, report) = split_shape_with_options(object, tools, options);
         outputs.push(split);
         objects_report.push(SplitterObjectReport {
             object_index,
@@ -2711,7 +2713,7 @@ pub fn split_objects_with_tools_checked_options(
     let mut objects_report = Vec::with_capacity(objects.len());
 
     for (object_index, object) in objects.iter().enumerate() {
-        let (split, report) = split_brep_checked_with_options(object, tools, options)?;
+        let (split, report) = split_shape_checked_with_options(object, tools, options)?;
         outputs.push(split);
         objects_report.push(SplitterObjectReport {
             object_index,
@@ -2929,7 +2931,7 @@ fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &BRep) -> Vec<usiz
 
 fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
     let mut out = std::collections::BTreeSet::new();
-    for ei in rcad_kernel::seam_edge_candidates(brep) {
+    for ei in rcad_kernel::periodic_seam_edge_indices(brep) {
         if let Some(e) = brep.edges.get(ei) {
             out.insert(e.start);
             out.insert(e.end);
@@ -3003,7 +3005,7 @@ fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> 
 }
 
 fn make_connected_seed_edges_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
-    rcad_kernel::seam_edge_candidates(brep)
+    rcad_kernel::periodic_seam_edge_indices(brep)
 }
 
 fn make_connected_seed_edges(
@@ -3710,7 +3712,7 @@ pub fn general_fuse_split_first_with_options(
             .map(|(_, part)| part.clone())
             .collect();
 
-        let (split, report) = split_brep_with_options(object, &tools, splitter_options);
+        let (split, report) = split_shape_with_options(object, &tools, splitter_options);
         split_face_counts.push(face_count_of(&split));
         object_reports.push(SplitterObjectReport {
             object_index,
@@ -5348,7 +5350,7 @@ mod tests {
     #[test]
     fn split_brep_empty_tools_returns_clone_and_empty_report() {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
-        let (out, report) = split_brep(&target, &[]);
+        let (out, report) = split_shape(&target, &[]);
 
         assert_eq!(face_count(&out), face_count(&target));
         assert!(report.steps.is_empty());
@@ -5388,7 +5390,7 @@ mod tests {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
 
-        let (out, report) = split_brep(&target, &[tool]);
+        let (out, report) = split_shape(&target, &[tool]);
 
         assert_eq!(report.steps.len(), 1);
         assert_eq!(report.steps[0].step_index, 0);
@@ -5412,7 +5414,7 @@ mod tests {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
 
-        let (_out, report) = split_brep_with_options(
+        let (_out, report) = split_shape_with_options(
             &target,
             &[tool],
             SplitterOptions {
@@ -5435,7 +5437,7 @@ mod tests {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let far_tool = box_at(100.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let (out, report) = split_brep_with_options(
+        let (out, report) = split_shape_with_options(
             &target,
             &[far_tool],
             SplitterOptions {
@@ -5458,7 +5460,7 @@ mod tests {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
 
-        let err = split_brep_checked_with_options(&target, &[tool], SplitterOptions::default())
+        let err = split_shape_checked_with_options(&target, &[tool], SplitterOptions::default())
             .expect_err("checked splitter should report invalid intermediate topology");
 
         assert!(matches!(
@@ -6156,7 +6158,7 @@ mod tests {
         let target = box_at(0.0, 0.0, 0.0, 2.0, 2.0, 2.0);
         let tool = box_at(1.0, 0.5, -0.5, 1.0, 1.0, 3.0);
 
-        let err = split_brep_checked_with_options(
+        let err = split_shape_checked_with_options(
             &target,
             &[tool],
             SplitterOptions {
@@ -7195,7 +7197,10 @@ mod tests {
         let (res, report) = boolean_op_healed(BooleanOpType::Union, &a, &b)
             .expect("boolean_op_healed union should succeed");
 
-        assert!(check(&res).is_valid(), "healed result should be valid");
+        assert!(
+            brep_check_analyze(&res).is_valid(),
+            "healed result should be valid"
+        );
         assert!(report.final_result.is_valid(), "healing report should end valid");
     }
 

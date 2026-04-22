@@ -18,7 +18,7 @@
 //!   hlr_top.svg
 
 use glam::DVec3;
-use rcad_algorithms::{HlrCamera, hlr, hlr_to_svg};
+use rcad_algorithms::{HlrCamera, compute_hlr, hlr_to_svg};
 use rcad_kernel::appearance::{Color, StepColor};
 use rcad_kernel::{BRep, PrimitiveSolid};
 use rcad_step::ExportSelection;
@@ -179,7 +179,7 @@ fn demo_hlr() {
     ];
 
     for (filename, camera, label) in &views {
-        let result = hlr(&brep, camera, 16);
+        let result = compute_hlr(&brep, camera, 16);
         let svg = hlr_to_svg(&result, 120.0, 30.0);
         save(filename, &svg);
         println!(

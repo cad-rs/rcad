@@ -1,6 +1,6 @@
 //! Face imprinting and gap/overlap detection.
 //!
-//! **Face imprinting** (`imprint_brep`): splits each face of `target` wherever
+//! **Face imprinting** (`imprint_shape`): splits each face of `target` wherever
 //! the boundary of `tool` crosses it, without performing a boolean classification.
 //! The result is a new BRep whose faces share edges with the tool boundary — a
 //! prerequisite for conformal meshing (FEM/FDTD).
@@ -79,7 +79,7 @@ pub struct GapOverlapReport {
 /// but split where the tool boundary crosses them.
 ///
 /// Analogy: OCCT `BRepAlgoAPI_Splitter` (lightweight variant — keeps all target faces).
-pub fn imprint_brep(target: &BRep, tool: &BRep) -> ImprintResult {
+pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
     // Run PaveFiller to compute intersections
     let mut ds = DS::new(target, tool);
     let mut filler = PaveFiller::new(&mut ds);
@@ -1207,7 +1207,7 @@ mod tests {
         populate_box_geom(&mut target);
         populate_box_geom(&mut tool);
         
-        let result = imprint_brep(&target, &tool);
+        let result = imprint_shape(&target, &tool);
         
         // Result should have faces split where tool boundary crosses target
         assert!(!result.brep.solids[0].shells[0].faces.is_empty());
@@ -1224,7 +1224,7 @@ mod tests {
         populate_box_geom(&mut target);
         populate_box_geom(&mut tool);
         
-        let result = imprint_brep(&target, &tool);
+        let result = imprint_shape(&target, &tool);
         
         // No intersection means no seam edges
         assert!(result.seam_edges.is_empty());
@@ -1241,7 +1241,7 @@ mod tests {
         populate_box_geom(&mut target);
         // Sphere already has geometry populated
         
-        let result = imprint_brep(&target, &tool);
+        let result = imprint_shape(&target, &tool);
         
         // Should have faces (even if just original faces)
         assert!(!result.brep.solids[0].shells[0].faces.is_empty());
@@ -1273,11 +1273,11 @@ mod tests {
     #[test]
     fn test_split_face_by_curves_empty() {
         // Test that split_face_by_curves handles empty curves correctly
-        // This is tested indirectly through imprint_brep with non-overlapping shapes
+        // This is tested indirectly through imprint_shape with non-overlapping shapes
         let target = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
         let tool = make_box(DVec3::new(10.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
         
-        let result = imprint_brep(&target, &tool);
+        let result = imprint_shape(&target, &tool);
         
         // No intersection means faces should not be split
         assert_eq!(result.brep.solids[0].shells[0].faces.len(), 6);

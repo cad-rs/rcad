@@ -296,7 +296,7 @@ fn check_parallel_internal(brep: &BRep, options: &ParallelCheckOptions) -> Paral
 /// Internal sequential check implementation (fallback for small models).
 fn check_sequential_internal(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
     // Use the standard sequential check for basic issues
-    let result = crate::brep_check::check(brep);
+    let result = crate::brep_check::brep_check_analyze(brep);
     let mut parallel_issues = Vec::new();
 
     // Add vertex checks that are specific to parallel module
@@ -2501,7 +2501,7 @@ mod tests {
 
         // Both should produce same results
         let parallel_result = check_parallel(&brep);
-        let sequential_result = crate::brep_check::check(&brep);
+        let sequential_result = crate::brep_check::brep_check_analyze(&brep);
 
         assert_eq!(parallel_result.is_valid(), sequential_result.is_valid());
         assert_eq!(parallel_result.issues.len(), sequential_result.issues.len());
@@ -2531,7 +2531,7 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         let parallel_result = check_parallel(&brep);
-        let sequential_result = crate::brep_check::check(&brep);
+        let sequential_result = crate::brep_check::brep_check_analyze(&brep);
 
         // Both should detect the open wire
         assert!(!parallel_result.is_valid());
@@ -2770,7 +2770,7 @@ mod tests {
         let brep = generate_large_brep(3); // 27 boxes, 162 faces
 
         let parallel_result = check_parallel(&brep);
-        let sequential_result = crate::brep_check::check(&brep);
+        let sequential_result = crate::brep_check::brep_check_analyze(&brep);
 
         // Results should be identical
         assert_eq!(parallel_result.is_valid(), sequential_result.is_valid());

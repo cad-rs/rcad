@@ -356,7 +356,7 @@ impl CheckResult {
 /// Check the validity of a BRep and return a `CheckResult` with any issues found.
 ///
 /// Analogous to OCCT `BRepCheck_Analyzer::Perform()`.
-pub fn check(brep: &BRep) -> CheckResult {
+pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
     let mut issues = Vec::new();
     let n_edges = brep.edges.len();
     let n_verts = brep.vertices.len();
@@ -566,6 +566,9 @@ pub fn check(brep: &BRep) -> CheckResult {
 
     CheckResult { issues }
 }
+
+/// Convenience short alias for [`brep_check_analyze`].
+pub fn check_brep(brep: &BRep) -> CheckResult { brep_check_analyze(brep) }
 
 /// Check a single wire for self-intersecting topology.
 ///
@@ -1536,10 +1539,10 @@ impl RicherValidityReport {
 /// Run all available validity checks on `brep` and return a consolidated report.
 ///
 /// This is the preferred entry point for comprehensive BRep validation:
-/// it combines the basic `check()`, shell topology, Euler analysis, and
+/// it combines the basic `brep_check_analyze()`, shell topology, Euler analysis, and
 /// orientation consistency into a single call.
 pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
-    let check_result = check(brep);
+    let check_result = brep_check_analyze(brep);
     let shell_topology = analyze_shell_topology(brep);
     let euler = euler_analysis(brep);
     let orientation = check_orientation_consistency(brep);
@@ -3083,7 +3086,7 @@ impl ComprehensiveCheckResult {
 /// - Tolerance validation (consistency, propagation)
 /// - Quality metrics (aspect ratio, degenerate geometry, sliver faces)
 pub fn check_comprehensive(brep: &BRep, tolerance: f64) -> ComprehensiveCheckResult {
-    let basic_check = check(brep);
+    let basic_check = brep_check_analyze(brep);
     let geometry = check_surface_continuity(brep, tolerance);
     let geometry_curves = check_curve_surface_consistency(brep, tolerance);
     let topology_shell = validate_shell_orientation(brep);
@@ -3277,7 +3280,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result.is_valid(),
             "unit box should pass all checks; issues: {:?}",
@@ -3327,7 +3330,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(!result.is_valid(), "open wire should be detected");
         assert!(
             result
@@ -3362,7 +3365,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3397,7 +3400,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3435,7 +3438,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3454,7 +3457,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::ZERO });
         brep.edges.push(Edge { start: 0, end: 99 }); // vertex 99 doesn't exist
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3521,7 +3524,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face1, face2, face3] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3573,7 +3576,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3671,7 +3674,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result
                 .issues
@@ -3689,7 +3692,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let result = check(&brep);
+        let result = brep_check_analyze(&brep);
         assert!(
             result.is_valid(),
             "unit box should pass all checks including manifold and self-intersection; issues: {:?}",

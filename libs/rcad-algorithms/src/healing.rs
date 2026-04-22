@@ -7,7 +7,9 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::{BSplineSurface, BezierSurface};
 
-use crate::brep_check::{CheckIssue, CheckResult, check, diagnose_same_parameter, diagnose_same_range};
+use crate::brep_check::{
+    CheckIssue, CheckResult, brep_check_analyze, diagnose_same_parameter, diagnose_same_range,
+};
 use crate::brep_repair::{
     MakeConnectedReport, RepairReport, fix_same_parameter_with_scan,
     fix_same_range_with_scan, make_connected_iterative_with_growth_cap, repair,
@@ -229,7 +231,7 @@ pub fn diagnose_all(brep: &BRep, tolerance: f64) -> ComprehensiveDiagnosis {
     };
 
     ComprehensiveDiagnosis {
-        topology: check(brep),
+        topology: brep_check_analyze(brep),
         surface_uv: analyze_surface_uv_consistency(brep, tolerance),
         wire_quality: analyze_wire_quality(brep, tolerance),
         same_parameter: diagnose_same_parameter(brep, tolerance),
@@ -1921,7 +1923,7 @@ impl HealingReport {
 
 /// Analyze and heal a BRep using the provided options.
 pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
-    let initial = check(brep);
+    let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
     if matches!(options.mode, HealingMode::AnalyzeOnly) {
@@ -1993,7 +1995,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         current = reconnected;
         make_connected_passes.push(mc_report);
 
-        let chk = check(&current);
+        let chk = brep_check_analyze(&current);
         stages.push(HealingStageReport {
             stage: HealingStage::PreMakeConnected,
             pass_index: None,
@@ -2034,7 +2036,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             same_parameter_fixed,
         });
 
-        let chk = check(&current);
+        let chk = brep_check_analyze(&current);
         stages.push(HealingStageReport {
             stage: HealingStage::ParametricConsistencyPass,
             pass_index: None,
@@ -2074,7 +2076,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             && rep.same_parameter_fixed == 0;
         passes.push(rep);
 
-        let mut chk = check(&current);
+        let mut chk = brep_check_analyze(&current);
         stages.push(HealingStageReport {
             stage: HealingStage::RepairPass,
             pass_index: Some(pass_idx),
@@ -2094,7 +2096,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
                 same_parameter_fixed,
             });
 
-            chk = check(&current);
+            chk = brep_check_analyze(&current);
             stages.push(HealingStageReport {
                 stage: HealingStage::ParametricConsistencyPass,
                 pass_index: Some(pass_idx),
@@ -2136,7 +2138,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
             let mc_no_changes = mc_report.vertices_merged == 0 && mc_report.small_edges_removed == 0;
             make_connected_passes.push(mc_report);
 
-            let chk = check(&current);
+            let chk = brep_check_analyze(&current);
             stages.push(HealingStageReport {
                 stage: HealingStage::MakeConnectedPass,
                 pass_index: Some(pass_idx),
@@ -2190,7 +2192,7 @@ pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingR
         }
     }
 
-    let final_result = check(&current);
+    let final_result = brep_check_analyze(&current);
     let final_stats = HealingIssueStats::from_check_result(&final_result);
     stages.push(HealingStageReport {
         stage: HealingStage::FinalCheck,
@@ -2243,7 +2245,7 @@ pub fn run_healing_operator_chain(
     options: HealingOptions,
     operators: &[HealingOperator],
 ) -> (BRep, HealingReport) {
-    let initial = check(brep);
+    let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
     let mut current = brep.clone();
 
@@ -2257,7 +2259,7 @@ pub fn run_healing_operator_chain(
     }];
 
     if matches!(options.mode, HealingMode::AnalyzeOnly) || initial.is_valid() {
-        let final_result = check(&current);
+        let final_result = brep_check_analyze(&current);
         let final_stats = HealingIssueStats::from_check_result(&final_result);
         stages.push(HealingStageReport {
             stage: HealingStage::FinalCheck,
@@ -2291,7 +2293,7 @@ pub fn run_healing_operator_chain(
                 );
                 current = next;
                 make_connected_passes.push(mc_report);
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::MakeConnectedPass,
                     pass_index: Some(op_idx),
@@ -2306,7 +2308,7 @@ pub fn run_healing_operator_chain(
                     same_range_fixed,
                     same_parameter_fixed,
                 });
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::ParametricConsistencyPass,
                     pass_index: Some(op_idx),
@@ -2317,7 +2319,7 @@ pub fn run_healing_operator_chain(
                 let (next, rep) = repair(&current, options.tolerance);
                 current = next;
                 passes.push(rep);
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::RepairPass,
                     pass_index: Some(op_idx),
@@ -2331,7 +2333,7 @@ pub fn run_healing_operator_chain(
                     options.tolerance * 10.0, // max_gap = 10x tolerance
                 );
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::RepairPass,
                     pass_index: Some(op_idx),
@@ -2344,7 +2346,7 @@ pub fn run_healing_operator_chain(
                     options.tolerance,
                 );
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::ParametricConsistencyPass,
                     pass_index: Some(op_idx),
@@ -2352,7 +2354,7 @@ pub fn run_healing_operator_chain(
                 });
             }
             HealingOperator::StopIfClean => {
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::OperatorChainStep,
                     pass_index: Some(op_idx),
@@ -2365,7 +2367,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::FixSmallAreaFaces => {
                 let (next, removed) = fix_small_area_faces(&current, options.tolerance);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2380,7 +2382,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::FixSliverFaces => {
                 let (next, fixed) = fix_sliver_faces(&current, options.tolerance);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2394,7 +2396,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::FixNonManifold => {
                 let (next, fixed) = fix_non_manifold(&current, options.tolerance);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::TopologyRepairPass,
                     pass_index: Some(op_idx),
@@ -2412,7 +2414,7 @@ pub fn run_healing_operator_chain(
                     options.tolerance,
                     ToleranceFlowDirection::BottomUp,
                 );
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::FinalizePass,
                     pass_index: Some(op_idx),
@@ -2422,7 +2424,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::UnifySameDomain => {
                 let (next, merged) = unify_same_domain_faces(&current, options.tolerance);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::TopologyRepairPass,
                     pass_index: Some(op_idx),
@@ -2436,7 +2438,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::RemoveInternalFaces => {
                 let (next, removed) = remove_internal_faces(&current);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::TopologyRepairPass,
                     pass_index: Some(op_idx),
@@ -2450,7 +2452,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::SplitAngle(params) => {
                 let (next, splits) = split_angle_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2464,7 +2466,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::SplitContinuity(params) => {
                 let (next, splits) = split_continuity_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2479,7 +2481,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::ConvertToBSpline(params) => {
                 let (next, conversions) = convert_to_bspline_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2493,7 +2495,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::SurfaceToBezier(params) => {
                 let (next, conversions) = surface_to_bezier_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2507,7 +2509,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::ScaleShape(params) => {
                 let (next, modifications) = scale_shape_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2521,7 +2523,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::DirectFaces(params) => {
                 let (next, faces_fixed) = direct_faces_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2535,7 +2537,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::SameParameter(params) => {
                 let (next, edges_fixed) = same_parameter_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::ParametricConsistencyPass,
                     pass_index: Some(op_idx),
@@ -2549,7 +2551,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::RemoveInternalFacesOp(params) => {
                 let (next, faces_removed) = remove_internal_faces_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::TopologyRepairPass,
                     pass_index: Some(op_idx),
@@ -2563,7 +2565,7 @@ pub fn run_healing_operator_chain(
             HealingOperator::HealGeometry(params) => {
                 let (next, report) = heal_geometry_operator(&current, params);
                 current = next;
-                let chk = check(&current);
+                let chk = brep_check_analyze(&current);
                 stages.push(HealingStageReport {
                     stage: HealingStage::GeometryRepairPass,
                     pass_index: Some(op_idx),
@@ -2574,7 +2576,7 @@ pub fn run_healing_operator_chain(
         }
     }
 
-    let final_result = check(&current);
+    let final_result = brep_check_analyze(&current);
     let final_stats = HealingIssueStats::from_check_result(&final_result);
     stages.push(HealingStageReport {
         stage: HealingStage::FinalCheck,
@@ -2627,7 +2629,7 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
     use std::time::Instant;
 
     let start_time = Instant::now();
-    let initial = check(brep);
+    let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
     // Early exit if shape is already clean and stop_on_clean is true
@@ -2730,7 +2732,7 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
         }
     }
 
-    let final_result = check(&current);
+    let final_result = brep_check_analyze(&current);
     let final_stats = HealingIssueStats::from_check_result(&final_result);
     let total_elapsed = start_time.elapsed().as_secs_f64();
 
@@ -3685,7 +3687,7 @@ pub fn run_healing_pipeline_with_rollback(
         ));
     }
 
-    let initial_issues = check(brep).issues.len();
+    let initial_issues = brep_check_analyze(brep).issues.len();
     let mut best_state = (brep.clone(), initial_issues, 0); // (brep, issues, operator_index)
 
     for (op_idx, op) in operators.iter().enumerate() {
@@ -3730,12 +3732,12 @@ pub fn run_healing_pipeline_with_rollback(
 
         // Execute the operator
         let op_start = Instant::now();
-        let issues_before = check(&current).issues.len();
+        let issues_before = brep_check_analyze(&current).issues.len();
 
         let (next, healing_report) = run_healing_operator_chain(&current, options, std::slice::from_ref(op));
         current = next;
 
-        let issues_after = check(&current).issues.len();
+        let issues_after = brep_check_analyze(&current).issues.len();
         let op_elapsed = op_start.elapsed().as_secs_f64();
 
         // Build operator result
@@ -3881,7 +3883,7 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
     use std::time::Instant;
 
     let start_time = Instant::now();
-    let initial = check(brep);
+    let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
     let mut current = brep.clone();
@@ -3939,7 +3941,7 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
 
         // Execute the operator
         let op_start = Instant::now();
-        let issues_before = check(&current).issues.len();
+        let issues_before = brep_check_analyze(&current).issues.len();
 
         // Convert HealingOperatorWithCondition's operator to simple operator
         let simple_op = op_with_cond.operator.clone();
@@ -3952,7 +3954,7 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
         );
         current = next;
 
-        let issues_after = check(&current).issues.len();
+        let issues_after = brep_check_analyze(&current).issues.len();
         let op_elapsed = op_start.elapsed().as_secs_f64();
 
         let changed = issues_before != issues_after;
@@ -3975,12 +3977,12 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
         operators_executed += 1;
 
         // Check stop condition
-        if config.stop_on_clean && check(&current).is_valid() {
+        if config.stop_on_clean && brep_check_analyze(&current).is_valid() {
             break;
         }
     }
 
-    let final_result = check(&current);
+    let final_result = brep_check_analyze(&current);
     let final_stats = HealingIssueStats::from_check_result(&final_result);
     let total_elapsed = start_time.elapsed().as_secs_f64();
 
@@ -5685,7 +5687,7 @@ pub fn heal_comprehensive(brep: &BRep, options: &HealingOptions) -> (BRep, Compr
     report.tolerance_report = Some(tol_report.vertices);
 
     // Final check
-    report.final_check = check(&current);
+    report.final_check = brep_check_analyze(&current);
     report.is_clean = report.final_check.is_valid();
 
     (current, report)

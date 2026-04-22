@@ -2,13 +2,13 @@
 //!
 //! Demonstrates:
 //!   1. `surface_area`, `volume`, `centroid` from rcad-kernel
-//!   2. `check` (BRepCheck) from rcad-algorithms
+//!   2. `check_brep` (BRepCheck) from rcad-algorithms
 //!   3. `section_polylines` from rcad-algorithms
 //!
 //! Run: cargo run --example phase_c_demo
 
 use glam::DVec3;
-use rcad_algorithms::{check, section_polylines};
+use rcad_algorithms::{check_brep, section_polylines};
 use rcad_kernel::geom::Plane;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::WireEdge;
@@ -50,7 +50,7 @@ fn main() {
 
     // ── 4. BRepCheck on valid shape ────────────────────────────────────
     println!("\n=== 4. BRepCheck on Unit Box ===");
-    let result = check(&unit_box);
+    let result = check_brep(&unit_box);
     if result.is_valid() {
         println!("  ✓ Unit box passed all validity checks");
     } else {
@@ -62,7 +62,7 @@ fn main() {
 
     // ── 5. BRepCheck on extruded pillar ───────────────────────────────
     println!("\n=== 5. BRepCheck on Extruded Pillar ===");
-    let result2 = check(&pillar);
+    let result2 = check_brep(&pillar);
     if result2.is_valid() {
         println!("  ✓ Extruded pillar passed all validity checks");
     } else {
@@ -132,7 +132,7 @@ fn main() {
             .flat_map(|sh| &sh.faces)
             .count()
     );
-    let result3 = check(&sphere);
+    let result3 = check_brep(&sphere);
     // Sphere uses seam topology — degenerate by polygon checker standards
     println!("  BRepCheck issues: {}", result3.issues.len());
     for issue in &result3.issues {

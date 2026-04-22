@@ -13,7 +13,7 @@ use rcad_kernel::{
     geom::{BSplineSurface, Surface3},
     topo_query::{
         edge_adjacent_faces, edge_count, face_count, face_edges, vertex_adjacent_edges,
-        vertex_count, vertex_indices,
+        topological_vertex_count, vertex_indices,
     },
 };
 use rcad_modeling::{box_brep, cylinder_brep, sphere_brep, torus_brep};
@@ -29,7 +29,7 @@ fn demo_topo_queries() {
         "  faces={}, edges={}, vertices={}",
         face_count(&brep),
         edge_count(&brep),
-        vertex_count(&brep)
+        topological_vertex_count(&brep)
     );
 
     // Every edge of a closed convex solid must be adjacent to exactly 2 faces
@@ -60,7 +60,7 @@ fn demo_topo_queries() {
     if bad_verts.is_empty() {
         println!(
             "  ✓ All {} vertices have exactly 3 adjacent edges",
-            vertex_count(&brep)
+            topological_vertex_count(&brep)
         );
     } else {
         println!("  ✗ Vertices with wrong edge count: {:?}", bad_verts);
