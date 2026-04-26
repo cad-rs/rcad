@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
@@ -38,6 +38,19 @@ pub struct BSplineCurve3 {
     pub control_points: Vec<DVec3>,
     /// Homogeneous weights; 1.0 for non-rational.
     pub weights: Vec<f64>,
+}
+
+impl BSplineCurve3 {
+    /// Returns the unnormalized first derivative at parameter `t`.
+    pub fn derivative_at(&self, t: f64) -> DVec3 {
+        bspline_tangent_analytic(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
+    }
 }
 
 /// A rational or non-rational Bezier curve in 3D.
@@ -435,7 +448,6 @@ pub enum PrimitiveSolid {
     },
 }
 
-
 /// A line in 2D parameter space: point + direction.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Line2d {
@@ -533,6 +545,19 @@ pub struct BSplineCurve2 {
     pub weights: Vec<f64>,
 }
 
+impl BSplineCurve2 {
+    /// Returns the unnormalized first derivative at parameter `t`.
+    pub fn derivative_at(&self, t: f64) -> DVec2 {
+        bspline_tangent_analytic_2d(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
+    }
+}
+
 /// A rational or non-rational Bezier curve in 2D parameter space.
 ///
 /// Analogous to OCCT `Geom2d_BezierCurve`. Domain is `[0, 1]`.
@@ -559,7 +584,6 @@ pub enum Curve2d {
     BSpline(BSplineCurve2),
     Bezier(BezierCurve2),
 }
-
 
 /// Returns a vector perpendicular to `v`. Stable for any non-zero input.
 pub fn any_perpendicular(v: DVec3) -> DVec3 {
@@ -736,7 +760,9 @@ impl CurveEval for SineWave3 {
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
         let v = self.baseline_dir
-            + self.amplitude * self.frequency * (self.frequency * t + self.phase).cos()
+            + self.amplitude
+                * self.frequency
+                * (self.frequency * t + self.phase).cos()
                 * self.amplitude_dir;
         v.normalize_or_zero()
     }
@@ -1098,15 +1124,31 @@ impl SurfaceEval for PipeSurface {
 
 impl SurfaceEval for CoonsSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let south = self.south.point_at(remap_unit_to_curve_domain(&self.south, u));
-        let north = self.north.point_at(remap_unit_to_curve_domain(&self.north, u));
-        let west = self.west.point_at(remap_unit_to_curve_domain(&self.west, v));
-        let east = self.east.point_at(remap_unit_to_curve_domain(&self.east, v));
+        let south = self
+            .south
+            .point_at(remap_unit_to_curve_domain(&self.south, u));
+        let north = self
+            .north
+            .point_at(remap_unit_to_curve_domain(&self.north, u));
+        let west = self
+            .west
+            .point_at(remap_unit_to_curve_domain(&self.west, v));
+        let east = self
+            .east
+            .point_at(remap_unit_to_curve_domain(&self.east, v));
 
-        let p00 = self.south.point_at(remap_unit_to_curve_domain(&self.south, 0.0));
-        let p10 = self.south.point_at(remap_unit_to_curve_domain(&self.south, 1.0));
-        let p01 = self.north.point_at(remap_unit_to_curve_domain(&self.north, 0.0));
-        let p11 = self.north.point_at(remap_unit_to_curve_domain(&self.north, 1.0));
+        let p00 = self
+            .south
+            .point_at(remap_unit_to_curve_domain(&self.south, 0.0));
+        let p10 = self
+            .south
+            .point_at(remap_unit_to_curve_domain(&self.south, 1.0));
+        let p01 = self
+            .north
+            .point_at(remap_unit_to_curve_domain(&self.north, 0.0));
+        let p11 = self
+            .north
+            .point_at(remap_unit_to_curve_domain(&self.north, 1.0));
 
         let linear_u = south * (1.0 - v) + north * v;
         let linear_v = west * (1.0 - u) + east * u;
@@ -1130,7 +1172,6 @@ impl SurfaceEval for CoonsSurface {
         [0.0, 1.0, 0.0, 1.0]
     }
 }
-
 
 /// De Boor's algorithm in homogeneous 4D space.
 /// Returns `[wx, wy, wz, w]` (not divided by w yet).
@@ -1169,6 +1210,64 @@ fn de_boor_homo(
             let idx = (k - degree + j).min(n - 1);
             let w = weights[idx];
             [points[idx].x * w, points[idx].y * w, points[idx].z * w, w]
+        })
+        .collect();
+    for r in 1..=degree {
+        for j in (r..=degree).rev() {
+            let i = k - degree + j;
+            let denom = knots[i + degree - r + 1] - knots[i];
+            let alpha = if denom.abs() < 1e-15 {
+                0.0
+            } else {
+                (t - knots[i]) / denom
+            };
+            let prev = d[j - 1];
+            let cur = &mut d[j];
+            for (elem, p) in cur.iter_mut().zip(prev.iter()) {
+                *elem = (1.0 - alpha) * p + alpha * *elem;
+            }
+        }
+    }
+    d[degree]
+}
+
+/// De Boor's algorithm in homogeneous 3D space for 2D rational curves.
+/// Returns `[wx, wy, w]` (not divided by w yet).
+fn de_boor_homo_2d(
+    degree: usize,
+    knots: &[f64],
+    points: &[DVec2],
+    weights: &[f64],
+    t: f64,
+) -> [f64; 3] {
+    let n = points.len();
+    if n == 0 {
+        return [0.0; 3];
+    }
+    let k = {
+        let t_min = knots[degree];
+        let t_max = knots[knots.len() - degree - 1];
+        let t_clamped = t.clamp(t_min, t_max);
+        let mut span = degree;
+        for (i, &knot) in knots
+            .iter()
+            .enumerate()
+            .take(knots.len() - degree - 1)
+            .skip(degree)
+        {
+            if knot <= t_clamped {
+                span = i;
+            } else {
+                break;
+            }
+        }
+        span
+    };
+    let mut d: Vec<[f64; 3]> = (0..=degree)
+        .map(|j| {
+            let idx = (k - degree + j).min(n - 1);
+            let w = weights[idx];
+            [points[idx].x * w, points[idx].y * w, w]
         })
         .collect();
     for r in 1..=degree {
@@ -1316,7 +1415,6 @@ fn de_boor_2d(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64], t
     }
 }
 
-
 /// Analytic tangent for a rational B-Spline curve (NURBS) using the quotient rule.
 ///
 /// The derivative of C(t) = A(t)/W(t) is:
@@ -1375,6 +1473,50 @@ fn bspline_tangent_analytic(
     (a_prime_t - w_prime_t * c_t) / w_t
 }
 
+fn bspline_tangent_analytic_2d(
+    degree: usize,
+    knots: &[f64],
+    points: &[DVec2],
+    weights: &[f64],
+    t: f64,
+) -> DVec2 {
+    let n = points.len();
+    if n < 2 || degree == 0 {
+        return DVec2::ZERO;
+    }
+
+    let p = degree as f64;
+    let m = n - 1;
+
+    let mut a_prime = Vec::with_capacity(m);
+    let mut w_prime = Vec::with_capacity(m);
+    for i in 0..m {
+        let denom = knots[i + degree + 1] - knots[i + 1];
+        if denom.abs() < 1e-15 {
+            a_prime.push(DVec2::ZERO);
+            w_prime.push(DVec2::ZERO);
+        } else {
+            let s = p / denom;
+            a_prime.push(s * (weights[i + 1] * points[i + 1] - weights[i] * points[i]));
+            w_prime.push(DVec2::new(s * (weights[i + 1] - weights[i]), 0.0));
+        }
+    }
+
+    let deriv_knots = &knots[1..knots.len() - 1];
+    let unit = vec![1.0; m];
+    let a_prime_t = de_boor_2d(degree - 1, deriv_knots, &a_prime, &unit, t);
+    let w_prime_t = de_boor_2d(degree - 1, deriv_knots, &w_prime, &unit, t).x;
+
+    let h = de_boor_homo_2d(degree, knots, points, weights, t);
+    let w_t = h[2];
+    if w_t.abs() < 1e-15 {
+        return DVec2::ZERO;
+    }
+    let c_t = DVec2::new(h[0] / w_t, h[1] / w_t);
+
+    (a_prime_t - w_prime_t * c_t) / w_t
+}
+
 /// Analytic tangent for a rational Bezier curve using the quotient rule.
 ///
 /// The derivative of a degree-n Bezier is a degree-(n-1) Bezier with:
@@ -1423,8 +1565,14 @@ impl CurveEval for BSplineCurve3 {
         )
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        bspline_tangent_analytic(self.degree, &self.knots, &self.control_points, &self.weights, t)
-            .normalize_or_zero()
+        bspline_tangent_analytic(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
+        .normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
@@ -1627,7 +1775,10 @@ mod tests {
         };
         let p0 = s.point_at(0.0);
         let p1 = s.point_at(2.0);
-        assert!(p1.length() > p0.length(), "spiral radius should increase with t");
+        assert!(
+            p1.length() > p0.length(),
+            "spiral radius should increase with t"
+        );
     }
 
     #[test]
@@ -1640,7 +1791,10 @@ mod tests {
         };
         let p0 = s.point_at(0.0);
         let p1 = s.point_at(2.0);
-        assert!(p1.length() > p0.length() * 1.5, "log spiral should grow faster than linear at this sample");
+        assert!(
+            p1.length() > p0.length() * 1.5,
+            "log spiral should grow faster than linear at this sample"
+        );
     }
 
     #[test]
@@ -1655,6 +1809,34 @@ mod tests {
         assert!((p0.x - 0.0).abs() < 1e-12);
         assert!((p0.y - 0.0).abs() < 1e-12);
         assert!((p90.y - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn bspline_curve3_derivative_matches_linear_curve() {
+        let curve = BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec3::new(1.0, 2.0, 3.0), DVec3::new(4.0, 8.0, 15.0)],
+            weights: vec![1.0, 1.0],
+        };
+
+        let derivative = curve.derivative_at(0.4);
+
+        assert!((derivative - DVec3::new(3.0, 6.0, 12.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn bspline_curve2_derivative_matches_linear_curve() {
+        let curve = BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec2::new(1.0, 2.0), DVec2::new(4.0, 8.0)],
+            weights: vec![1.0, 1.0],
+        };
+
+        let derivative = curve.derivative_at(0.4);
+
+        assert!((derivative - DVec2::new(3.0, 6.0)).length() < 1e-12);
     }
 
     #[test]
@@ -1683,10 +1865,16 @@ mod tests {
         };
         // At t=0, sin(0)=0 → point should be at origin.
         let p = c.point_at(0.0);
-        assert!(p.length() < 1e-12, "phase-zero at t=0 should be at origin: {p:?}");
+        assert!(
+            p.length() < 1e-12,
+            "phase-zero at t=0 should be at origin: {p:?}"
+        );
         // At t=pi/2, sin(pi/2)=1 → y should equal amplitude.
         let p2 = c.point_at(std::f64::consts::FRAC_PI_2);
-        assert!((p2.y - 3.0).abs() < 1e-9, "y at t=pi/2 should be amplitude=3: {p2:?}");
+        assert!(
+            (p2.y - 3.0).abs() < 1e-9,
+            "y at t=pi/2 should be amplitude=3: {p2:?}"
+        );
     }
 
     #[test]
@@ -1705,10 +1893,12 @@ mod tests {
         assert!((p - expected).length() < 1e-12);
         // Tangent should be non-zero
         let tan = c.tangent_at(t);
-        assert!(tan.length() > 0.9, "tangent should be roughly unit-length: {tan:?}");
+        assert!(
+            tan.length() > 0.9,
+            "tangent should be roughly unit-length: {tan:?}"
+        );
     }
 }
-
 
 /// De Casteljau algorithm for rational Bezier curve evaluation in 3D.
 /// `t` is in `[0, 1]`.
@@ -1832,7 +2022,9 @@ impl SurfaceEval for TriBezierSurface {
         let w = 1.0 - u - v;
         let mut homo = [0.0; 4];
         for (i, row) in self.control_points.iter().enumerate() {
-            if row.len() != degree + 1 - i || self.weights.get(i).map(|r| r.len()) != Some(row.len()) {
+            if row.len() != degree + 1 - i
+                || self.weights.get(i).map(|r| r.len()) != Some(row.len())
+            {
                 return DVec3::ZERO;
             }
             for (j, point) in row.iter().enumerate() {
@@ -1893,7 +2085,6 @@ impl Curve2dEval for BezierCurve2 {
         de_casteljau_2d(&self.control_points, &self.weights, t)
     }
 }
-
 
 impl CurveEval for OffsetCurve3 {
     fn point_at(&self, t: f64) -> DVec3 {
@@ -2096,10 +2287,12 @@ mod eval_tests {
             radius_z: 1.5,
         };
         let p = s.point_at(0.7, 1.2) - s.center;
-        let value = (p.x / s.radius_x).powi(2)
-            + (p.y / s.radius_y).powi(2)
-            + (p.z / s.radius_z).powi(2);
-        assert!((value - 1.0).abs() < 1e-9, "implicit value should be 1, got {value}");
+        let value =
+            (p.x / s.radius_x).powi(2) + (p.y / s.radius_y).powi(2) + (p.z / s.radius_z).powi(2);
+        assert!(
+            (value - 1.0).abs() < 1e-9,
+            "implicit value should be 1, got {value}"
+        );
     }
 
     #[test]
@@ -2122,7 +2315,10 @@ mod eval_tests {
         )
         .normalize();
         let n = s.normal_at(u, v);
-        assert!((n - expected).length() < 1e-9, "n={n:?} expected={expected:?}");
+        assert!(
+            (n - expected).length() < 1e-9,
+            "n={n:?} expected={expected:?}"
+        );
     }
 
     #[test]
@@ -2136,7 +2332,10 @@ mod eval_tests {
         let p0 = s.point_at(0.0, 2.0);
         let p1 = s.point_at(2.0 * PI, 2.0);
         let delta = p1 - p0;
-        assert!((delta - DVec3::new(0.0, 0.0, 6.0)).length() < 1e-9, "delta={delta:?}");
+        assert!(
+            (delta - DVec3::new(0.0, 0.0, 6.0)).length() < 1e-9,
+            "delta={delta:?}"
+        );
     }
 
     #[test]
@@ -2153,8 +2352,16 @@ mod eval_tests {
         let eps = 1e-6;
         let du = (s.point_at(u + eps, v) - s.point_at(u - eps, v)) / (2.0 * eps);
         let dv = (s.point_at(u, v + eps) - s.point_at(u, v - eps)) / (2.0 * eps);
-        assert!(n.dot(du).abs() < 1e-6, "n·du={} should be near 0", n.dot(du));
-        assert!(n.dot(dv).abs() < 1e-6, "n·dv={} should be near 0", n.dot(dv));
+        assert!(
+            n.dot(du).abs() < 1e-6,
+            "n·du={} should be near 0",
+            n.dot(du)
+        );
+        assert!(
+            n.dot(dv).abs() < 1e-6,
+            "n·dv={} should be near 0",
+            n.dot(dv)
+        );
         assert!(n.length() > 0.99, "normal should be unit-length: {n:?}");
     }
 
@@ -2287,53 +2494,99 @@ mod eval_tests {
     /// Analytic tangent at t=0 should be (0.5,1,0).normalize() = (1,2,0)/√5.
     #[test]
     fn bezier_tangent_at_endpoint_analytic() {
-        let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(0.5, 1.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+        ];
         let wts = vec![1.0, 1.0, 1.0];
-        let c = BezierCurve3 { control_points: pts, weights: wts };
+        let c = BezierCurve3 {
+            control_points: pts,
+            weights: wts,
+        };
         let tan = c.tangent_at(0.0);
         let expected = DVec3::new(1.0, 2.0, 0.0).normalize();
-        assert!((tan - expected).length() < 1e-10, "tan={tan:?} expected={expected:?}");
+        assert!(
+            (tan - expected).length() < 1e-10,
+            "tan={tan:?} expected={expected:?}"
+        );
     }
 
     /// Quadratic Bezier tangent at t=1 should be (1,-2,0)/√5.
     #[test]
     fn bezier_tangent_at_end_analytic() {
-        let pts = vec![DVec3::ZERO, DVec3::new(0.5, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0)];
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(0.5, 1.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+        ];
         let wts = vec![1.0, 1.0, 1.0];
-        let c = BezierCurve3 { control_points: pts, weights: wts };
+        let c = BezierCurve3 {
+            control_points: pts,
+            weights: wts,
+        };
         let tan = c.tangent_at(1.0);
         let expected = DVec3::new(1.0, -2.0, 0.0).normalize();
-        assert!((tan - expected).length() < 1e-10, "tan={tan:?} expected={expected:?}");
+        assert!(
+            (tan - expected).length() < 1e-10,
+            "tan={tan:?} expected={expected:?}"
+        );
     }
 
     /// Degree-1 B-Spline (polyline): tangent should be constant along each segment.
     #[test]
     fn bspline_degree1_tangent_is_segment_direction() {
         // Two-segment polyline: (0,0,0) -> (1,0,0) -> (1,1,0)
-        let pts = vec![DVec3::ZERO, DVec3::new(1.0, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0)];
+        let pts = vec![
+            DVec3::ZERO,
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+        ];
         let wts = vec![1.0, 1.0, 1.0];
         let knots = vec![0.0, 0.0, 0.5, 1.0, 1.0];
-        let c = BSplineCurve3 { degree: 1, knots, control_points: pts, weights: wts };
+        let c = BSplineCurve3 {
+            degree: 1,
+            knots,
+            control_points: pts,
+            weights: wts,
+        };
         let tan0 = c.tangent_at(0.1);
-        assert!((tan0 - DVec3::X).length() < 1e-10, "first segment should be +X, got {tan0:?}");
+        assert!(
+            (tan0 - DVec3::X).length() < 1e-10,
+            "first segment should be +X, got {tan0:?}"
+        );
         let tan1 = c.tangent_at(0.9);
-        assert!((tan1 - DVec3::Y).length() < 1e-10, "second segment should be +Y, got {tan1:?}");
+        assert!(
+            (tan1 - DVec3::Y).length() < 1e-10,
+            "second segment should be +Y, got {tan1:?}"
+        );
     }
 
     /// Degree-2 B-Spline circle arc: tangent should be perpendicular to radius.
     #[test]
     fn bspline_circle_tangent_perpendicular_to_radius() {
         // Use circle_to_bspline to get an exact NURBS circle, then check tangents.
-        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+        let circle = Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: 1.0,
+        };
         let c = crate::nurbs_convert::circle_to_bspline(&circle);
         for &t in &[0.0, 0.5, 1.0, 1.5, 2.0] {
             let pt = c.point_at(t);
             let tan = c.tangent_at(t);
             // Tangent must be perpendicular to the radius vector
             let dot = pt.normalize_or_zero().dot(tan);
-            assert!(dot.abs() < 1e-8, "t={t}: radius*tangent={dot} (should be 0)");
+            assert!(
+                dot.abs() < 1e-8,
+                "t={t}: radius*tangent={dot} (should be 0)"
+            );
             // Tangent must be a unit vector
-            assert!((tan.length() - 1.0).abs() < 1e-10, "t={t}: |tan|={}", tan.length());
+            assert!(
+                (tan.length() - 1.0).abs() < 1e-10,
+                "t={t}: |tan|={}",
+                tan.length()
+            );
         }
     }
 }

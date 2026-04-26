@@ -1,8 +1,14 @@
 // OCCT-style port: many helpers and data paths are staged for parity; keep CI output clean.
 #![allow(dead_code, reason = "staged OCCT-parity helpers and tables")]
 #![allow(unused, reason = "large generated-style sources")]
-#![allow(private_interfaces, reason = "internal fillet/tcol types re-exported at crate root")]
-#![allow(unreachable_patterns, reason = "defensive matches over evolving geometry enums")]
+#![allow(
+    private_interfaces,
+    reason = "internal fillet/tcol types re-exported at crate root"
+)]
+#![allow(
+    unreachable_patterns,
+    reason = "defensive matches over evolving geometry enums"
+)]
 #![allow(clippy::all)]
 
 pub use brep_graph::{
@@ -10,628 +16,807 @@ pub use brep_graph::{
     TopoGraphValidationIssue, TopoNode,
 };
 pub mod bnd_lib;
-pub mod bopds;
 pub mod boolean;
+pub mod bopds;
 pub mod brep_algo;
+pub mod brep_algo_api;
 pub mod brep_bnd;
 pub mod brep_check;
 pub mod brep_check_parallel;
+pub mod brep_graph;
 pub mod brep_lib;
 pub mod brep_repair;
 pub mod brep_tools;
+pub mod brep_top_adaptor;
+pub mod bspline_edit;
 pub mod builder;
-pub mod brep_algo_api;
+pub mod bvh;
+pub mod classify;
 pub mod defeature;
+pub mod draft;
+pub mod features;
+pub mod geom_convert;
+pub mod geom_lib;
+pub mod geom_populate;
+pub mod gluer;
+pub mod healing;
+pub mod history;
+pub mod hlr;
+pub mod imprint;
+pub mod non_manifold;
+pub mod shape_algo;
 pub mod shape_analysis;
 pub mod shape_build;
 pub mod shape_construct;
 pub mod shape_custom;
 pub mod shape_extend;
-pub mod shape_algo;
-pub mod features;
-pub mod gluer;
-pub mod bvh;
-pub mod classify;
-pub mod draft;
-pub mod geom_convert;
-pub mod geom_lib;
-pub mod geom_populate;
-pub mod healing;
-pub mod history;
-pub mod hlr;
-pub mod imprint;
-pub mod brep_graph;
-pub mod brep_top_adaptor;
-pub mod non_manifold;
+pub use brep_feat::{
+    BRepFeatError, DraftFeatureParams, FeatureParams, FuseMode, GrooveParams, RibParams,
+    apply_draft_feature, make_drafted_prism, make_groove, make_linear_rib as make_linear_rib_feat,
+    make_loft_feature, make_pipe_feature, make_prism_feature, make_revol_feature, make_rib,
+    make_through_groove,
+};
 pub use defeature::{
-    CylindricalFeature, DefeaturingError, DefeaturingOptions, DefeaturingReport,
-    defeature_brep, detect_cylindrical_features, identify_small_faces,
-    ConicalFeature, SlotFeature, PocketFeature, BlendFeature, HolePattern, HolePatternType,
-    FeatureGroup, detect_connected_feature_groups, detect_hole_patterns,
-    detect_conical_features, detect_slot_features, detect_pocket_features, detect_blend_features,
-    DefeaturingOptionsEnhanced, DefeaturingReportEnhanced, defeature_brep_enhanced,
+    BlendFeature, ConicalFeature, CylindricalFeature, DefeaturingError, DefeaturingOptions,
+    DefeaturingOptionsEnhanced, DefeaturingReport, DefeaturingReportEnhanced, FeatureGroup,
+    HolePattern, HolePatternType, PocketFeature, SlotFeature, defeature_brep,
+    defeature_brep_enhanced, detect_blend_features, detect_conical_features,
+    detect_connected_feature_groups, detect_cylindrical_features, detect_hole_patterns,
+    detect_pocket_features, detect_slot_features, identify_small_faces,
 };
 pub use features::{
-    FeatureError, SplitShapeError,
-    make_cylindrical_hole, make_draft_prism, make_prism, make_revolution,
-    make_linear_rib, make_revolution_rib, split_face_by_wire,
+    FeatureError, SplitShapeError, make_cylindrical_hole, make_draft_prism, make_linear_rib,
+    make_prism, make_revolution, make_revolution_rib, split_face_by_wire,
 };
-pub use brep_feat::{
-    BRepFeatError, FuseMode, FeatureParams, RibParams, GrooveParams,
-    DraftFeatureParams,
-    make_rib,
-    make_linear_rib as make_linear_rib_feat,
-    make_groove, make_through_groove,
-    make_prism_feature, make_revol_feature, make_pipe_feature,
-    apply_draft_feature,
-    make_drafted_prism, make_loft_feature,
-};
+pub mod adaptor3d;
+pub mod approx_int;
+pub mod array;
+pub mod blend;
+mod bop_occt_union;
+pub mod brep_adaptor;
+pub mod brep_feat;
+pub mod brep_int_curve_surface;
+pub mod brep_mesh;
+pub mod brep_offset;
+pub mod cells_builder;
+pub mod chamfer;
+pub mod elc_lib;
+pub mod els_lib;
+pub mod extrema;
+pub mod fillet;
+pub mod gcpnts;
+pub mod geom2d_api;
 pub mod int_ana;
 pub mod inttools;
-pub mod orthogonal_face_fuse;
 pub mod law;
+pub mod maker_volume;
+pub mod math_utils;
+pub mod medial_axis;
+pub mod offset;
+pub mod orthogonal_face_fuse;
 pub mod pave_filler;
-mod bop_occt_union;
+pub mod point_cloud;
+pub mod projection;
 pub mod section;
+pub mod sweep;
+pub mod tcol_std;
 pub mod thicken;
 pub mod tolerance;
 pub mod top_loc;
-pub mod offset;
-pub mod brep_offset;
 pub mod triangulate;
-pub mod array;
-pub mod cells_builder;
-pub mod chamfer;
-pub mod fillet;
-pub mod maker_volume;
-pub mod point_cloud;
-pub mod medial_axis;
-pub mod blend;
-pub mod brep_feat;
-pub mod extrema;
-pub mod projection;
-pub mod brep_int_curve_surface;
-pub mod sweep;
-pub mod brep_mesh;
-pub mod geom2d_api;
-pub mod gcpnts;
-pub mod math_utils;
-pub mod tcol_std;
-pub mod elc_lib;
-pub mod els_lib;
-pub mod brep_adaptor;
-pub mod adaptor3d;
-pub mod approx_int;
 
 use serde::Serialize;
 
+pub use approx_int::{
+    ApproxOptions, ApproxResult, IntersectionApproximator, IntersectionSample,
+    adjust_same_parameter, approximate_2d_curve, approximate_2d_curve_with_ctrl,
+    approximate_intersection, approximate_polyline, compute_same_parameter,
+    compute_same_parameter_bspline, sample_curve_segment, sample_intersection_points,
+    sample_with_adaptive_density,
+};
+pub use brep_algo::{
+    BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue, check_orientation,
+    evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal, find_connected_components,
+    fix_orientation, is_valid_brep, max_edge_length, max_face_area, min_face_area,
+    propagate_edge_tolerances, propagate_face_tolerances, reverse_face, total_surface_area,
+    total_volume,
+};
+pub use brep_bnd::{
+    BoundingBox, add_brep_to_bbox, add_edge_to_bbox, add_face_to_bbox, add_vertex_to_bbox,
+    curve_bounds, curve_bounds_default, curve_bounds_with_range, surface_bounds,
+    surface_bounds_with_domain,
+};
+pub use brep_lib::{
+    BRepLibError, EdgeData, FaceData, FittedSurfaceType, FoundSurface, add_edge_with_curve,
+    add_face_with_surface, compute_edge_bounds, compute_face_bounds, faces_share_surface,
+    find_surface_through_edges, find_surface_through_points, make_edge_from_curve,
+    make_face_from_surface, make_wire_from_edges, sort_faces_by_area, sort_faces_by_bounding_box,
+    sort_faces_by_distance,
+};
+pub use brep_tools::{
+    BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
+    count_vertices, get_curve, get_edge_range, get_edge_tolerance, get_face_tolerance,
+    get_inner_wires, get_outer_wire, get_pcurve, get_shape_type, get_surface, get_vertex_tolerance,
+    is_closed, is_edge_degenerate, mirror_shape, read_brep_from_file, read_brep_from_string,
+    rotate_shape, scale_shape, transform_shape, write_brep_to_file, write_brep_to_string,
+};
+pub use brep_top_adaptor::{
+    EdgeAdaptor, EdgeExplorer, FaceAdaptor, FaceExplorer, OrientedEdge, ShapeIterator,
+    VertexAdaptor, VertexExplorer, WireExplorer, edges_of_face, edges_of_vertex, face_count,
+    faces_of_edge, faces_of_vertex, shell_count, vertices_of_edge, wire_count,
+};
+pub use bspline_edit::{
+    move_bspline2_point, move_bspline2_tangent, move_bspline3_point, move_bspline3_tangent,
+};
 pub use bvh::{Aabb, Bvh, BvhStats};
-pub use extrema::{
-    distance_point_point, distance_point_curve, distance_point_surface,
-    distance_curve_curve, distance_curve_surface, distance_surface_surface,
-    distance_brep_brep,
-    find_closest_points, find_furthest_points,
-    closest_point_on_curve, closest_point_on_surface,
-    find_supporting_face, find_supporting_edge,
-};
-pub use gcpnts::{
-    arc_length, total_arc_length,
-    point_at_arc_length, points_at_equal_arc_length,
-    uniform_abscissa, uniform_abscissa_points,
-    uniform_deflection, adaptive_sample_curve,
-    tangential_deflection,
-    quasi_uniform,
-    sample_surface_uniform, sample_surface_grid,
-    sample_surface_adaptive,
-    sample_u_isolines, sample_v_isolines,
-    sampled_points_bounds,
-};
-pub use geom2d_api::{
-    Curve2dIntersection,
-    intersect_curves2d,
-    points_to_bspline2d, points_to_bspline2d_interpolate,
-    project_point_on_curve2d,
-    distance_between_curves2d,
-    distance_point_to_curve2d,
-    curve2d_angle_at, curve2d_curvature_at,
+pub use elc_lib::{
+    bspline_derivative,
+    // BSpline utilities
+    bspline_point_at,
+    circle_binormal_at,
+    circle_derivative,
+    circle_normal_at,
+    circle_parameter,
+    // Circle utilities
+    circle_point_at,
+    circle_tangent_at,
+    ellipse_derivative,
+    ellipse_parameter,
+    // Ellipse utilities
+    ellipse_point_at,
+    hyperbola_derivative,
+    // Hyperbola utilities
+    hyperbola_point_at,
+    line_closest_point,
+    line_distance_to_point,
+    line_parameter,
+    // Line utilities
+    line_point_at,
+    parabola_derivative,
+    // Parabola utilities
+    parabola_point_at,
 };
 pub use els_lib::{
-    // Plane utilities
-    plane_point_at, plane_parameters, plane_normal, plane_tangent_u, plane_tangent_v,
-    // Cylinder utilities
-    cylinder_point_at, cylinder_parameters, cylinder_normal, cylinder_tangent_u, cylinder_tangent_v,
-    // Sphere utilities
-    sphere_point_at, sphere_parameters, sphere_normal, sphere_tangent_u, sphere_tangent_v,
-    // Cone utilities
-    cone_point_at, cone_parameters, cone_normal,
-    // Torus utilities
-    torus_point_at, torus_parameters, torus_normal, torus_tangent_u, torus_tangent_v,
+    bspline_surface_derivatives,
+    bspline_surface_normal,
     // BSplineSurface utilities
-    bspline_surface_point_at, bspline_surface_normal, bspline_surface_derivatives,
+    bspline_surface_point_at,
+    cone_normal,
+    cone_parameters,
+    // Cone utilities
+    cone_point_at,
+    cylinder_normal,
+    cylinder_parameters,
+    // Cylinder utilities
+    cylinder_point_at,
+    cylinder_tangent_u,
+    cylinder_tangent_v,
+    plane_normal,
+    plane_parameters,
+    // Plane utilities
+    plane_point_at,
+    plane_tangent_u,
+    plane_tangent_v,
+    sphere_normal,
+    sphere_parameters,
+    // Sphere utilities
+    sphere_point_at,
+    sphere_tangent_u,
+    sphere_tangent_v,
+    torus_normal,
+    torus_parameters,
+    // Torus utilities
+    torus_point_at,
+    torus_tangent_u,
+    torus_tangent_v,
 };
-pub use elc_lib::{
-    // Line utilities
-    line_point_at, line_parameter, line_distance_to_point, line_closest_point,
-    // Circle utilities
-    circle_point_at, circle_parameter, circle_tangent_at, circle_normal_at, circle_binormal_at,
-    circle_derivative,
-    // Ellipse utilities
-    ellipse_point_at, ellipse_parameter, ellipse_derivative,
-    // Hyperbola utilities
-    hyperbola_point_at, hyperbola_derivative,
-    // Parabola utilities
-    parabola_point_at, parabola_derivative,
-    // BSpline utilities
-    bspline_point_at, bspline_derivative,
+pub use extrema::{
+    closest_point_on_curve, closest_point_on_surface, distance_brep_brep, distance_curve_curve,
+    distance_curve_surface, distance_point_curve, distance_point_point, distance_point_surface,
+    distance_surface_surface, find_closest_points, find_furthest_points, find_supporting_edge,
+    find_supporting_face,
+};
+pub use gcpnts::{
+    adaptive_sample_curve, arc_length, point_at_arc_length, points_at_equal_arc_length,
+    quasi_uniform, sample_surface_adaptive, sample_surface_grid, sample_surface_uniform,
+    sample_u_isolines, sample_v_isolines, sampled_points_bounds, tangential_deflection,
+    total_arc_length, uniform_abscissa, uniform_abscissa_points, uniform_deflection,
 };
 pub use geom_convert::{
     ConvertParams,
-    // Curve conversions
-    line_to_bspline, circle_to_bspline, ellipse_to_bspline, curve_to_bspline,
     approx_curve_to_bspline,
-    // Surface conversions
-    plane_to_bspline, cylinder_to_bspline, cone_to_bspline, sphere_to_bspline,
-    torus_to_bspline, surface_to_bspline, approx_surface_to_bspline,
+    approx_surface_to_bspline,
+    bspline_surface_to_bezier,
     // BSpline operations
-    bspline_to_bezier, bspline_surface_to_bezier,
-};
-pub use approx_int::{
-    ApproxOptions, ApproxResult, IntersectionApproximator, IntersectionSample,
-    compute_same_parameter, compute_same_parameter_bspline, adjust_same_parameter,
-    approximate_2d_curve, approximate_2d_curve_with_ctrl,
-    sample_intersection_points, sample_with_adaptive_density, sample_curve_segment,
-    approximate_polyline, approximate_intersection,
+    bspline_to_bezier,
+    circle_to_bspline,
+    cone_to_bspline,
+    curve_to_bspline,
+    cylinder_to_bspline,
+    ellipse_to_bspline,
+    // Curve conversions
+    line_to_bspline,
+    // Surface conversions
+    plane_to_bspline,
+    sphere_to_bspline,
+    surface_to_bspline,
+    torus_to_bspline,
 };
 pub use geom_lib::{
+    // Continuity checking
+    check_curve_continuity,
+    check_surface_continuity,
+    // Normal estimation
+    estimate_normal,
+    estimate_normal_by_neighbors,
     // Closure checking
-    is_curve_closed, is_surface_u_closed, is_surface_v_closed,
+    is_curve_closed,
+    is_surface_u_closed,
+    is_surface_v_closed,
     // Degeneracy removal
     remove_degenerate_curve_sections,
-    // Normal estimation
-    estimate_normal, estimate_normal_by_neighbors,
     // Curve tools
-    reverse_curve, trim_curve, transform_curve,
+    reverse_curve,
     // Surface tools
-    reverse_surface_u, reverse_surface_v, trim_surface, transform_surface,
-    // Continuity checking
-    check_curve_continuity, check_surface_continuity,
+    reverse_surface_u,
+    reverse_surface_v,
+    transform_curve,
+    transform_surface,
+    trim_curve,
+    trim_surface,
 };
-pub use brep_tools::{
-    BRepToolsError, ShapeType,
-    write_brep_to_string, read_brep_from_string,
-    write_brep_to_file, read_brep_from_file,
-    transform_shape, mirror_shape, scale_shape, rotate_shape,
-    get_shape_type, get_outer_wire, get_inner_wires, is_closed,
-    get_surface, get_curve, get_pcurve,
-    get_edge_range, is_edge_degenerate,
-    get_vertex_tolerance, get_edge_tolerance, get_face_tolerance,
-    count_faces, count_edges, count_vertices, count_shells,
-    bounding_box,
-};
-pub use brep_algo::{
-    BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue,
-    evaluate_face_normal, evaluate_edge_tangent, evaluate_vertex_normal,
-    propagate_edge_tolerances, propagate_face_tolerances,
-    max_face_area, min_face_area, max_edge_length,
-    total_volume, total_surface_area,
-    is_valid_brep, check_orientation,
-    fix_orientation, reverse_face,
-    find_connected_components,
-};
-pub use brep_lib::{
-    BRepLibError, FoundSurface, FittedSurfaceType,
-    find_surface_through_edges, find_surface_through_points,
-    sort_faces_by_area, sort_faces_by_bounding_box, sort_faces_by_distance,
-    faces_share_surface,
-    add_edge_with_curve, add_face_with_surface,
-    make_edge_from_curve, make_face_from_surface, make_wire_from_edges,
-    EdgeData, FaceData,
-    compute_edge_bounds, compute_face_bounds,
-};
-pub use brep_bnd::{
-    BoundingBox,
-    add_brep_to_bbox, add_face_to_bbox, add_edge_to_bbox, add_vertex_to_bbox,
-    surface_bounds, surface_bounds_with_domain,
-    curve_bounds, curve_bounds_with_range, curve_bounds_default,
-};
-pub use brep_top_adaptor::{
-    FaceAdaptor, EdgeAdaptor, VertexAdaptor,
-    FaceExplorer, EdgeExplorer, VertexExplorer, WireExplorer,
-    ShapeIterator, OrientedEdge,
-    edges_of_face, faces_of_edge, vertices_of_edge, edges_of_vertex, faces_of_vertex,
-    face_count, shell_count, wire_count,
+pub use geom2d_api::{
+    Curve2dIntersection, curve2d_angle_at, curve2d_curvature_at, distance_between_curves2d,
+    distance_point_to_curve2d, intersect_curves2d, points_to_bspline2d,
+    points_to_bspline2d_interpolate, project_point_on_curve2d,
 };
 pub use top_loc::{
-    Location, Datum, LocationManager,
-    apply_location_to_shape, apply_location_to_shape_owned,
+    Datum, Location, LocationManager, apply_location_to_shape, apply_location_to_shape_owned,
 };
 
 use rcad_kernel::BRep;
 
-pub use brep_check::{CheckIssue, CheckResult, check_brep, brep_check_analyze,
-    SuspectEdge, SameParameterDiagnosis, diagnose_same_parameter,
-    SuspectSameRangeEdge, SameRangeDiagnosis, diagnose_same_range,
-    SuspectFaceSurfaceEdge, FaceSurfaceConsistencyDiagnosis, diagnose_face_surface_consistency,
-    ShellTopologyReport, analyze_shell_topology,
-    WireAnalysisReport, WireIssueReport, analyze_wire_issues,
-    EulerAnalysis, euler_analysis,
-    OrientationIssue, OrientationReport, check_orientation_consistency,
-    RicherValidityReport, richer_validity_analysis,
-    // Surface UV analysis (ShapeAnalysis_Surface equivalent)
-    SurfaceAnalysisReport as SurfaceUvAnalysisReport, UvBoundsViolation,
-    analyze_surface_uv_consistency,
-    // Wire quality metrics (ShapeAnalysis_Wire enhancement)
-    WireQualityMetrics, WireQualityReport, analyze_wire_quality,
-    // Geometry validation (OCCT BRepCheck_Analyzer equivalent)
-    GeometryValidationReport, check_curve_surface_consistency,
-    // Topology validation
-    TopologyValidationReport, validate_shell_orientation, validate_solid_closure,
-    validate_wire_orientation, validate_nested_wires,
-    // Tolerance checking
-    ToleranceValidationReport, check_tolerance_consistency, check_vertex_tolerance,
-    check_edge_tolerance,
-    // Quality metrics
-    QualityMetricsReport, QualityMetricsConfig, SmallFeatureType, analyze_quality_metrics,
-    // Comprehensive check
-    ComprehensiveCheckResult, check_comprehensive,
+pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor};
+pub use array::{
+    CircularPatternParams, LinearPatternParams, PatternError, circular_pattern, linear_pattern,
 };
-pub use brep_check_parallel::{
-    check_parallel, check_parallel_with_batch_size, check_many_parallel,
-    check_parallel_with_stats, ParallelCheckStats,
-    check_parallel_with_options, check_many_parallel_with_options,
-    ParallelCheckOptions, ParallelCheckResult, ParallelCheckIssue,
-};
-pub use brep_repair::{
-    MakeConnectedReport, RepairReport, ToleranceFlowDirection,
-    WireGapRepairReport, fix_wire_gaps,
-    UvBoundsRepairReport, fix_uv_bounds_violations,
-    ToleranceStats, ToleranceAnalysisReport, analyze_tolerances, limit_tolerances,
-    EdgeSewReport, sew_close_edges, make_connected_enhanced,
-    fix_face_orientation, fix_same_parameter, fix_same_parameter_with_scan, fix_wire_orientation,
-    merge_close_vertices, recompute_face_normals, remove_degenerate_faces, repair,
-    remove_small_edges, fix_same_range_with_scan, make_connected_baseline,
-    make_connected_iterative, make_connected_iterative_with_growth,
-    make_connected_iterative_with_growth_cap,
-    make_connected_iterative_scoped_with_growth_cap,
-    propagate_tolerances, propagate_tolerances_post_boolean,
-    // Enhanced edge sewing and adaptive tolerance
-    EdgeSewConfig, EnhancedEdgeSewReport, sew_edges_enhanced,
-    AdaptiveToleranceConfig, AdaptiveToleranceMergeReport, merge_vertices_adaptive,
-    // MakeConnectedStrategy for configurable connectivity repair
-    MakeConnectedStrategy, make_connected_with_strategy,
-    // Seed detection for scoped make-connected
-    SeedDetectionStrategy, SeedDetectionConfig, SeedDetectionResult, detect_seeds_for_scoped_cleanup,
-    make_connected_scoped_auto,
-    // UV Gap Repair
-    UvGapRepairConfig, UvGapRepairReport, UnrepairedGap, GapRepairFailureReason,
-    fix_uv_gaps, fix_all_uv_gaps, fix_edge_pcurve_uv_bounds,
-    // Enhanced Shell Repair (ShapeFix_Shell extensions)
-    ShellOrientationReport, ShellClosureResult, GapInfo,
-    ManifoldRepairResult, NonManifoldEdgeInfo,
-    ShellValidationReport, EdgeValenceInfo, VertexValenceInfo,
-    fix_shell_orientation_advanced, repair_shell_closure, repair_non_manifold_edges, validate_shell_topology,
-    // Comprehensive Tolerance Propagation (new)
-    BooleanOpTypeForTolerance, PostBooleanToleranceConfig, PostBooleanToleranceReport,
-    propagate_tolerances_post_boolean_op, propagate_tolerances_post_boolean_op_with_config,
-    PostSewToleranceConfig, PostSewToleranceReport, propagate_tolerances_post_sew,
-    propagate_tolerances_post_sew_with_config,
-    ToleranceRule, ConflictResolutionPolicy, TolerancePropagationConfig,
-    TolerancePropagationEngine, TolerancePropagationReport,
-    ToleranceViolation, ToleranceViolationType, ToleranceFix,
-    ToleranceConsistencyReport, analyze_tolerance_consistency, apply_tolerance_fixes,
-    // Enhanced Internal Face Detection and Removal
-    InternalFaceDetectionConfig, InternalFaceDetectionReport,
-    detect_internal_faces, detect_internal_faces_with_config,
-    PostBooleanRemovalConfig, PostBooleanRemovalReport,
-    remove_internal_faces_post_boolean, remove_internal_faces_post_boolean_with_config,
-    InternalFaceRemovalValidation, validate_internal_face_removal,
-    merge_adjacent_faces_after_removal,
-};
-pub use healing::{
-    ComprehensiveDiagnosis, HealingIssueStats, HealingMode, HealingOperator, HealingOptions, HealingReport,
-    HealingStage, HealingStageReport, MakeConnectedPrepassMode,
-    ParametricConsistencyReport, analyze_and_heal, diagnose_all, heal, run_healing_operator_chain,
-    OperatorParams, OperatorReport, StageReport, ShapeProcessStats, ShapeProcessReport, ShapeProcessConfig,
-    run_shape_process,
-    // ShapeFix_Solid and ShapeFix_Wire equivalents
-    fix_solid, fix_wire, heal_comprehensive,
-    SolidFixReport, WireFixReport, ComprehensiveHealingReport, WireIssueLocation,
-    // New ShapeProcess operators
-    DirectFacesOperator, SameParameterOperator, RemoveInternalFacesOperator, HealGeometryOperator,
-    HealGeometryStep,
-    // Operator result aggregation and rollback
-    OperatorResultAggregation, BRepSnapshot, RollbackConfig, PipelineExecutionReport,
-    run_healing_pipeline_with_rollback,
-    // Progress callbacks
-    ProgressCallback, SimpleProgressCallback,
-};
-pub use builder::{
-    BooleanError, BooleanOpType,
-    // Glue path enhancement types
-    GlueConfig, GlueFacePair, GlueFaceCache,
-    detect_glue_faces, apply_glue_optimization, compute_adaptive_glue_tolerance,
+pub use blend::{
+    BlendBoundary, BlendContinuity, BlendError, BlendMode, BlendParams, BlendQuality, BlendResult,
+    RadiusLaw, SurfaceCurvePair, apply_blend_to_edge, blend_edge_to_face, blend_two_surfaces,
+    blend_vertex, compute_blend_boundary_curves, compute_guide_curves, compute_pipe_blend,
+    compute_rolling_ball_blend, compute_ruled_blend, compute_spine_curve,
 };
 pub use boolean::{
-    BooleanFailureClass, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
-    BooleanAttemptDiagnostic, BooleanDiagnosticReport, FinalSuccessfulConfig,
-    FailureAnalyzer,
+    BooleanAttemptDiagnostic, BooleanDiagnosticReport, BooleanFailureClass, FailureAnalyzer,
+    FinalSuccessfulConfig, RecoveryStrategy, RetryPolicy, RetryPolicyBuilder,
 };
 pub use brep_algo_api::{
     // BRepAlgoAPI-style high-level boolean API
-    BRepAlgoAPI_Common, BRepAlgoAPI_Fuse, BRepAlgoAPI_Cut, BRepAlgoAPI_Section,
-    BooleanApiOptions, BRepHistory,
+    BRepAlgoAPI_Common,
+    BRepAlgoAPI_Cut,
+    BRepAlgoAPI_Fuse,
+    BRepAlgoAPI_Section,
+    BRepHistory,
+    BooleanApiOptions,
+};
+pub use brep_check::{
+    CheckIssue,
+    CheckResult,
+    // Comprehensive check
+    ComprehensiveCheckResult,
+    EulerAnalysis,
+    FaceSurfaceConsistencyDiagnosis,
+    // Geometry validation (OCCT BRepCheck_Analyzer equivalent)
+    GeometryValidationReport,
+    OrientationIssue,
+    OrientationReport,
+    QualityMetricsConfig,
+    // Quality metrics
+    QualityMetricsReport,
+    RicherValidityReport,
+    SameParameterDiagnosis,
+    SameRangeDiagnosis,
+    ShellTopologyReport,
+    SmallFeatureType,
+    // Surface UV analysis (ShapeAnalysis_Surface equivalent)
+    SurfaceAnalysisReport as SurfaceUvAnalysisReport,
+    SuspectEdge,
+    SuspectFaceSurfaceEdge,
+    SuspectSameRangeEdge,
+    // Tolerance checking
+    ToleranceValidationReport,
+    // Topology validation
+    TopologyValidationReport,
+    UvBoundsViolation,
+    WireAnalysisReport,
+    WireIssueReport,
+    // Wire quality metrics (ShapeAnalysis_Wire enhancement)
+    WireQualityMetrics,
+    WireQualityReport,
+    analyze_quality_metrics,
+    analyze_shell_topology,
+    analyze_surface_uv_consistency,
+    analyze_wire_issues,
+    analyze_wire_quality,
+    brep_check_analyze,
+    check_brep,
+    check_comprehensive,
+    check_curve_surface_consistency,
+    check_edge_tolerance,
+    check_orientation_consistency,
+    check_tolerance_consistency,
+    check_vertex_tolerance,
+    diagnose_face_surface_consistency,
+    diagnose_same_parameter,
+    diagnose_same_range,
+    euler_analysis,
+    richer_validity_analysis,
+    validate_nested_wires,
+    validate_shell_orientation,
+    validate_solid_closure,
+    validate_wire_orientation,
+};
+pub use brep_check_parallel::{
+    ParallelCheckIssue, ParallelCheckOptions, ParallelCheckResult, ParallelCheckStats,
+    check_many_parallel, check_many_parallel_with_options, check_parallel,
+    check_parallel_with_batch_size, check_parallel_with_options, check_parallel_with_stats,
+};
+pub use brep_int_curve_surface::{
+    CurveBRepIntersection, CurveFaceIntersection, RayHit, intersect_curve_with_brep,
+    intersect_curve_with_face, intersect_line_with_brep, intersect_line_with_face,
+    is_point_inside_by_ray, ray_cast, shoot_ray,
+};
+pub use brep_mesh::{
+    BRepMesh, Mesh, MeshParams, discretize_edge, discretize_edge_on_surface, mesh_aspect_ratio,
+    mesh_brep as brep_mesh_brep, mesh_face, mesh_max_edge_length, mesh_min_angle, refine_mesh,
+};
+pub use brep_offset::{
+    BRepOffsetOptions, EvolvedResult, MakeEvolved, MakeOffset, MakeOffsetShape, MakePipeShell,
+    MakeThickSolid, OffsetMode, PipeShellResult, ThickSolidResult, WireOffsetResult, make_evolved,
+    make_hollow_solid, make_pipe_shell, make_thick_solid, offset_shape_with_join,
+    offset_shape_with_options, offset_wire,
+};
+pub use brep_repair::{
+    AdaptiveToleranceConfig,
+    AdaptiveToleranceMergeReport,
+    // Comprehensive Tolerance Propagation (new)
+    BooleanOpTypeForTolerance,
+    ConflictResolutionPolicy,
+    // Enhanced edge sewing and adaptive tolerance
+    EdgeSewConfig,
+    EdgeSewReport,
+    EdgeValenceInfo,
+    EnhancedEdgeSewReport,
+    GapInfo,
+    GapRepairFailureReason,
+    // Enhanced Internal Face Detection and Removal
+    InternalFaceDetectionConfig,
+    InternalFaceDetectionReport,
+    InternalFaceRemovalValidation,
+    MakeConnectedReport,
+    // MakeConnectedStrategy for configurable connectivity repair
+    MakeConnectedStrategy,
+    ManifoldRepairResult,
+    NonManifoldEdgeInfo,
+    PostBooleanRemovalConfig,
+    PostBooleanRemovalReport,
+    PostBooleanToleranceConfig,
+    PostBooleanToleranceReport,
+    PostSewToleranceConfig,
+    PostSewToleranceReport,
+    RepairReport,
+    SeedDetectionConfig,
+    SeedDetectionResult,
+    // Seed detection for scoped make-connected
+    SeedDetectionStrategy,
+    ShellClosureResult,
+    // Enhanced Shell Repair (ShapeFix_Shell extensions)
+    ShellOrientationReport,
+    ShellValidationReport,
+    ToleranceAnalysisReport,
+    ToleranceConsistencyReport,
+    ToleranceFix,
+    ToleranceFlowDirection,
+    TolerancePropagationConfig,
+    TolerancePropagationEngine,
+    TolerancePropagationReport,
+    ToleranceRule,
+    ToleranceStats,
+    ToleranceViolation,
+    ToleranceViolationType,
+    UnrepairedGap,
+    UvBoundsRepairReport,
+    // UV Gap Repair
+    UvGapRepairConfig,
+    UvGapRepairReport,
+    VertexValenceInfo,
+    WireGapRepairReport,
+    analyze_tolerance_consistency,
+    analyze_tolerances,
+    apply_tolerance_fixes,
+    detect_internal_faces,
+    detect_internal_faces_with_config,
+    detect_seeds_for_scoped_cleanup,
+    fix_all_uv_gaps,
+    fix_edge_pcurve_uv_bounds,
+    fix_face_orientation,
+    fix_same_parameter,
+    fix_same_parameter_with_scan,
+    fix_same_range_with_scan,
+    fix_shell_orientation_advanced,
+    fix_uv_bounds_violations,
+    fix_uv_gaps,
+    fix_wire_gaps,
+    fix_wire_orientation,
+    limit_tolerances,
+    make_connected_baseline,
+    make_connected_enhanced,
+    make_connected_iterative,
+    make_connected_iterative_scoped_with_growth_cap,
+    make_connected_iterative_with_growth,
+    make_connected_iterative_with_growth_cap,
+    make_connected_scoped_auto,
+    make_connected_with_strategy,
+    merge_adjacent_faces_after_removal,
+    merge_close_vertices,
+    merge_vertices_adaptive,
+    propagate_tolerances,
+    propagate_tolerances_post_boolean,
+    propagate_tolerances_post_boolean_op,
+    propagate_tolerances_post_boolean_op_with_config,
+    propagate_tolerances_post_sew,
+    propagate_tolerances_post_sew_with_config,
+    recompute_face_normals,
+    remove_degenerate_faces,
+    remove_internal_faces_post_boolean,
+    remove_internal_faces_post_boolean_with_config,
+    remove_small_edges,
+    repair,
+    repair_non_manifold_edges,
+    repair_shell_closure,
+    sew_close_edges,
+    sew_edges_enhanced,
+    validate_internal_face_removal,
+    validate_shell_topology,
+};
+pub use builder::{
+    BooleanError,
+    BooleanOpType,
+    // Glue path enhancement types
+    GlueConfig,
+    GlueFaceCache,
+    GlueFacePair,
+    apply_glue_optimization,
+    compute_adaptive_glue_tolerance,
+    detect_glue_faces,
+};
+pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
+pub use chamfer::{
+    ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,
+    compute_chamfer_curves, compute_chamfer_surface, make_chamfer_all_edges, make_chamfer_angle,
+    make_chamfer_asymmetric, make_chamfer_edge, trim_adjacent_faces,
+};
+pub use fillet::{
+    FilletContinuity, FilletError, FilletMode, FilletParams, FilletResult, VariableRadiusPoint,
+    blend_adjacent_faces, compute_fillet_curves, compute_rollball_surface, make_fillet_all_edges,
+    make_fillet_edge, make_fillet_edge_with_params, make_variable_fillet,
+};
+pub use gluer::{
+    EdgeOrigin as GluerEdgeOrigin, FaceOrigin as GluerFaceOrigin, Gluer, GluerError, GluerHistory,
+    GluerMode, GluerOptions, GluerResult, InterfaceInfo, VertexOrigin as GluerVertexOrigin,
+    detect_interface, detect_interface_bvh, glue_at_interface, glue_shapes,
+};
+pub use healing::{
+    BRepSnapshot,
+    ComprehensiveDiagnosis,
+    ComprehensiveHealingReport,
+    // New ShapeProcess operators
+    DirectFacesOperator,
+    HealGeometryOperator,
+    HealGeometryStep,
+    HealingIssueStats,
+    HealingMode,
+    HealingOperator,
+    HealingOptions,
+    HealingReport,
+    HealingStage,
+    HealingStageReport,
+    MakeConnectedPrepassMode,
+    OperatorParams,
+    OperatorReport,
+    // Operator result aggregation and rollback
+    OperatorResultAggregation,
+    ParametricConsistencyReport,
+    PipelineExecutionReport,
+    // Progress callbacks
+    ProgressCallback,
+    RemoveInternalFacesOperator,
+    RollbackConfig,
+    SameParameterOperator,
+    ShapeProcessConfig,
+    ShapeProcessReport,
+    ShapeProcessStats,
+    SimpleProgressCallback,
+    SolidFixReport,
+    StageReport,
+    WireFixReport,
+    WireIssueLocation,
+    analyze_and_heal,
+    diagnose_all,
+    // ShapeFix_Solid and ShapeFix_Wire equivalents
+    fix_solid,
+    fix_wire,
+    heal,
+    heal_comprehensive,
+    run_healing_operator_chain,
+    run_healing_pipeline_with_rollback,
+    run_shape_process,
 };
 pub use history::{
-    BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, EdgeOrigin, FaceOrigin,
-    HistoryTracker, HistoryChain, HistoryStatistics, ChainStatistics,
-    DeletionReason, DeletionRecord, GenerationCause, GenerationRecord,
-    ModificationType, ModificationRecord, EntityType, InputSource,
-    ShellOrigin, SolidOrigin, VertexOrigin,
+    BooleanHistory, BooleanNamingPropagationReport, BooleanOperationType, ChainStatistics,
+    DeletionReason, DeletionRecord, EdgeOrigin, EntityType, FaceOrigin, GenerationCause,
+    GenerationRecord, HistoryChain, HistoryStatistics, HistoryTracker, InputSource,
+    ModificationRecord, ModificationType, ShellOrigin, SolidOrigin, VertexOrigin,
 };
 pub use hlr::{
-    AssemblyHlrResult, ComponentHlr, HlrCamera, HlrOptions, HlrResult, HlrSegment,
-    SegmentType, SilhouetteCurve3, CurveHint,
-    compute_hlr, hlr_assembly, hlr_to_svg, compute_hlr_with_options,
-    extract_silhouette_curves,
+    AssemblyHlrResult, ComponentHlr, CurveHint, HlrCamera, HlrOptions, HlrResult, HlrSegment,
+    SegmentType, SilhouetteCurve3, compute_hlr, compute_hlr_with_options,
+    extract_silhouette_curves, hlr_assembly, hlr_to_svg,
 };
 pub use imprint::{
     Gap, GapOverlapReport, ImprintResult, Overlap, detect_gaps_overlaps, imprint_shape,
     min_distance,
 };
-pub use projection::{
-    ProjectionDirection, ProjectionOptions,
-    PointCurveProjection, PointSurfaceProjection, PointBRepProjection,
-    project_point_on_curve, project_point_on_curve_with_options,
-    project_point_on_surface, project_point_on_surface_with_options,
-    project_point_on_brep,
-    project_wire_on_surface, project_wire_on_face,
-    project_curve_on_surface, project_surface_on_surface,
-    compute_silhouette_curves, compute_contour_edges, SilhouetteResult,
-    normal_project_curve_on_surface, directional_project_curve_on_surface,
-    compute_all_curve_surface_projections,
-};
-pub use brep_int_curve_surface::{
-    CurveBRepIntersection, CurveFaceIntersection, RayHit,
-    intersect_curve_with_brep, intersect_line_with_brep,
-    intersect_curve_with_face, intersect_line_with_face,
-    ray_cast, shoot_ray, is_point_inside_by_ray,
+pub use int_ana::{
+    // Cylinder-Cylinder intersection (IntAna_IntCylCyl)
+    CylCylResult,
+    // Line-Surface intersections (IntAna_IntLinPln, IntAna_IntLinCyl, etc.)
+    LinPlnIntersection,
+    PlnConResult,
+    PlnCylResult,
+    // Plane-Surface intersections (IntAna_IntPlnPln, IntAna_IntPlnCyl, etc.)
+    PlnPlnResult,
+    PlnSphResult,
+    intersect_cylinder_cylinder,
+    intersect_line_cone,
+    intersect_line_cylinder,
+    intersect_line_plane,
+    intersect_line_sphere,
+    intersect_line_torus,
+    intersect_plane_cone_intana,
+    intersect_plane_cylinder_intana,
+    intersect_plane_plane_intana,
+    intersect_plane_sphere_intana,
 };
 pub use inttools::{
-    SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
-    intersect_surfaces_with_density, intersect_surfaces_with_tolerance,
+    ASPECT_RATIO_THRESHOLD,
+    ASPECT_RATIO_VERY_HIGH,
     // Extreme geometry handling
-    AspectRatioAdaptiveTolerance, DegenerateGeometryHandler, DegenerateType,
-    HighAspectRatioEdge, HighAspectRatioFace, NearDegenerateGeometry,
-    NearTangentConfig, NearTangentHandler, NearTangentSeverity,
-    SizeDifferenceAnalysis, SizeDifferenceHandler,
-    ExtremeGeometryAnalysis, ExtremeGeometryAnalysisOptions,
-    analyze_extreme_geometry, analyze_size_difference,
-    detect_high_aspect_ratio_edges, detect_near_degenerate_geometry,
+    AspectRatioAdaptiveTolerance,
+    DegenerateGeometryHandler,
+    DegenerateType,
+    ExtremeGeometryAnalysis,
+    ExtremeGeometryAnalysisOptions,
+    HighAspectRatioEdge,
+    HighAspectRatioFace,
+    NearDegenerateGeometry,
+    NearTangentConfig,
+    NearTangentHandler,
+    NearTangentSeverity,
+    SIZE_RATIO_THRESHOLD,
+    SizeDifferenceAnalysis,
+    SizeDifferenceHandler,
+    SurfaceCurve,
+    SurfaceIntersectionResult,
+    SurfaceSurfaceIntersection,
+    analyze_extreme_geometry,
+    analyze_size_difference,
+    detect_high_aspect_ratio_edges,
+    detect_near_degenerate_geometry,
     detect_near_tangent_configurations,
-    ASPECT_RATIO_THRESHOLD, ASPECT_RATIO_VERY_HIGH, SIZE_RATIO_THRESHOLD,
-};
-pub use int_ana::{
-    // Line-Surface intersections (IntAna_IntLinPln, IntAna_IntLinCyl, etc.)
-    LinPlnIntersection, intersect_line_plane,
-    intersect_line_cylinder, intersect_line_sphere,
-    intersect_line_cone, intersect_line_torus,
-    // Plane-Surface intersections (IntAna_IntPlnPln, IntAna_IntPlnCyl, etc.)
-    PlnPlnResult, intersect_plane_plane_intana,
-    PlnCylResult, intersect_plane_cylinder_intana,
-    PlnSphResult, intersect_plane_sphere_intana,
-    PlnConResult, intersect_plane_cone_intana,
-    // Cylinder-Cylinder intersection (IntAna_IntCylCyl)
-    CylCylResult, intersect_cylinder_cylinder,
+    intersect_surfaces,
+    intersect_surfaces_with_density,
+    intersect_surfaces_with_tolerance,
 };
 pub use law::{
-    LawFunction,
-    ConstantLaw, LinearLaw, BSplineLaw, CompositeLaw, InterpolateLaw,
-    SineLaw, SmoothStepLaw,
-    sine_law, smooth_step_law,
+    BSplineLaw, CompositeLaw, ConstantLaw, InterpolateLaw, LawFunction, LinearLaw, SineLaw,
+    SmoothStepLaw, sine_law, smooth_step_law,
 };
-pub use section::{SectionCurve, section, section_curves, section_polylines};
-pub use thicken::{ThickeningResult, thicken_shell};
-pub use offset::{
-    OffsetError, OffsetOptions, OffsetResult,
-    offset_surface, offset_shell, offset_shell_with_options,
-    offset_solid, offset_solid_with_options,
-    hollow_solid, hollow_solid_with_options,
-    offset_shape, detect_self_intersection,
-    JoinType, VariableThickness, OffsetQuality,
-};
-pub use brep_offset::{
-    OffsetMode, BRepOffsetOptions,
-    WireOffsetResult, ThickSolidResult, PipeShellResult, EvolvedResult,
-    MakeOffset, MakeOffsetShape, MakeThickSolid, MakePipeShell, MakeEvolved,
-    offset_wire, offset_shape_with_options, offset_shape_with_join,
-    make_thick_solid, make_hollow_solid,
-    make_pipe_shell, make_evolved,
-};
-pub use chamfer::{
-    ChamferParams, ChamferMode, ChamferResult, ChamferError, ChamferWarning,
-    make_chamfer_edge, make_chamfer_asymmetric, make_chamfer_angle, make_chamfer_all_edges,
-    compute_chamfer_surface, compute_chamfer_curves, trim_adjacent_faces,
-};
-pub use fillet::{
-    FilletParams, FilletMode, FilletResult, FilletError, FilletContinuity,
-    VariableRadiusPoint,
-    make_fillet_edge, make_fillet_edge_with_params, make_fillet_all_edges,
-    make_variable_fillet,
-    compute_rollball_surface, compute_fillet_curves, blend_adjacent_faces,
-};
-pub use blend::{
-    BlendError, BlendParams, BlendMode, BlendResult, BlendContinuity,
-    BlendBoundary, BlendQuality, RadiusLaw, SurfaceCurvePair,
-    blend_two_surfaces, compute_rolling_ball_blend, compute_ruled_blend, compute_pipe_blend,
-    compute_blend_boundary_curves, compute_spine_curve, compute_guide_curves,
-    blend_edge_to_face, blend_vertex, apply_blend_to_edge,
-};
-pub use triangulate::{
-    SurfaceMesh, TessellationParams, mesh_brep, triangulate_surface,
-    MeshQualityMetrics, compute_mesh_quality,
-    AdaptiveSubdivider,
-    BoundarySensitiveTessellator, FeatureEdge,
-    IncrementalMesher, MeshDelta,
-    MeshSimplifier,
-};
-pub use brep_mesh::{
-    MeshParams, Mesh, BRepMesh,
-    mesh_face, mesh_brep as brep_mesh_brep,
-    discretize_edge, discretize_edge_on_surface,
-    mesh_aspect_ratio, mesh_min_angle, mesh_max_edge_length,
-    refine_mesh,
-};
-pub use array::{
-    LinearPatternParams, CircularPatternParams, PatternError,
-    linear_pattern, circular_pattern,
-};
-pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 pub use maker_volume::{
     MakerVolume, MakerVolumeError, MakerVolumeSelection, make_solid_from_cell_indices,
     make_solid_from_region, make_solid_from_region_with_history,
 };
-pub use point_cloud::{
-    PointCloud, PointCloudAnalysis, Dimensionality,
-    analyze_point_cloud, compute_pca, compute_inertia, estimate_dimensionality,
-    OutlierPoint, detect_outliers, remove_outliers,
-    SamplingStrategy, simplify_point_cloud, estimate_normals,
-    FittedPlane, fit_plane, FittedSphere, fit_sphere, FittedCylinder, fit_cylinder,
-    FittedPolygon, fit_polygon,
-    extract_points_from_brep_vertices, extract_points_from_brep_mesh, extract_points_from_mesh,
-    sample_points_from_brep_surfaces,
+pub use math_utils::{
+    bisection,
+    determinant_3x3,
+    // Eigenvalue/Matrix
+    eigenvalues_2x2,
+    eigenvalues_3x3,
+    gaussian_quadrature,
+    golden_section_max,
+    // Optimization
+    golden_section_min,
+    inverse_3x3,
+    // Multi-dimensional Newton
+    newton_2d,
+    newton_3d,
+    // Root finding
+    newton_raphson,
+    secant,
+    // Integration
+    simpson_integrate,
+    solve_cubic,
+    // Polynomial solvers
+    solve_linear,
+    solve_quadratic,
+    solve_quartic,
 };
 pub use medial_axis::{
-    MedialAxisOptions, MedialVertex, MedialEdge, MedialFace,
-    MedialAxis2d, MedialBranch2d, MedialPoint2d, MedialSurface,
-    VoronoiDiagram2d, VoronoiEdge2d, VoronoiVertex2d,
-    ThicknessMap, ThicknessSample, ThicknessStats, MidSurfaceResult,
-    ThinRegion, WallThicknessResult,
-    compute_medial_axis_2d, compute_medial_surface, compute_wall_thickness,
-    detect_thin_regions, generate_rib_paths, point_in_polygon_2d,
-    compute_mat_2d, find_max_inscribed_circle, cluster_medial_vertices,
-    compute_voronoi_2d, compute_thickness_map, compute_mid_surface,
+    MedialAxis2d, MedialAxisOptions, MedialBranch2d, MedialEdge, MedialFace, MedialPoint2d,
+    MedialSurface, MedialVertex, MidSurfaceResult, ThicknessMap, ThicknessSample, ThicknessStats,
+    ThinRegion, VoronoiDiagram2d, VoronoiEdge2d, VoronoiVertex2d, WallThicknessResult,
+    cluster_medial_vertices, compute_mat_2d, compute_medial_axis_2d, compute_medial_surface,
+    compute_mid_surface, compute_thickness_map, compute_voronoi_2d, compute_wall_thickness,
+    detect_thin_regions, find_max_inscribed_circle, generate_rib_paths, point_in_polygon_2d,
 };
 pub use non_manifold::{
-    NonManifoldReport, NonManifoldTraversal,
-    EdgeSplitReport, MakeManifoldOptions, MakeManifoldReport,
-    MergeShellsOptions, MergeShellsResult,
-    analyze_non_manifold, is_manifold, non_manifold_edges, non_manifold_vertices,
-    boundary_edges, multi_face_edges, orphan_edges,
-    split_non_manifold_edges, make_manifold, make_manifold_with_options,
-    merge_shells_at_interface,
+    EdgeSplitReport, MakeManifoldOptions, MakeManifoldReport, MergeShellsOptions,
+    MergeShellsResult, NonManifoldReport, NonManifoldTraversal, analyze_non_manifold,
+    boundary_edges, is_manifold, make_manifold, make_manifold_with_options,
+    merge_shells_at_interface, multi_face_edges, non_manifold_edges, non_manifold_vertices,
+    orphan_edges, split_non_manifold_edges,
 };
-pub use sweep::{
-    SweepError, SweepMode, SweepOptions, SweepHistory, CornerMode,
-    linear_sweep, linear_sweep_with_history, linear_sweep_with_options,
-    linear_sweep_face, linear_sweep_wire,
-    rotational_sweep, rotational_sweep_with_history, rotational_sweep_with_options,
-    rotational_sweep_face, rotational_sweep_wire,
-    pipe_sweep, pipe_sweep_with_history, pipe_sweep_with_options,
-    pipe_sweep_wire, pipe_with_rotation,
-    handle_pipe_corners,
-    linear_law_sweep, variable_section_sweep,
-    Law, PiecewiseLinearLaw,
+pub use offset::{
+    JoinType, OffsetError, OffsetOptions, OffsetQuality, OffsetResult, VariableThickness,
+    detect_self_intersection, hollow_solid, hollow_solid_with_options, offset_shape, offset_shell,
+    offset_shell_with_options, offset_solid, offset_solid_with_options, offset_surface,
 };
-pub use gluer::{
-    GluerError, GluerOptions, GluerResult, GluerHistory, GluerMode,
-    Gluer,
-    FaceOrigin as GluerFaceOrigin, EdgeOrigin as GluerEdgeOrigin, VertexOrigin as GluerVertexOrigin,
-    InterfaceInfo, detect_interface, detect_interface_bvh, glue_shapes, glue_at_interface,
+pub use point_cloud::{
+    Dimensionality, FittedCylinder, FittedPlane, FittedPolygon, FittedSphere, OutlierPoint,
+    PointCloud, PointCloudAnalysis, SamplingStrategy, analyze_point_cloud, compute_inertia,
+    compute_pca, detect_outliers, estimate_dimensionality, estimate_normals,
+    extract_points_from_brep_mesh, extract_points_from_brep_vertices, extract_points_from_mesh,
+    fit_cylinder, fit_plane, fit_polygon, fit_sphere, remove_outliers,
+    sample_points_from_brep_surfaces, simplify_point_cloud,
+};
+pub use projection::{
+    PointBRepProjection, PointCurveProjection, PointSurfaceProjection, ProjectionDirection,
+    ProjectionOptions, SilhouetteResult, compute_all_curve_surface_projections,
+    compute_contour_edges, compute_silhouette_curves, directional_project_curve_on_surface,
+    normal_project_curve_on_surface, project_curve_on_surface, project_point_on_brep,
+    project_point_on_curve, project_point_on_curve_with_options, project_point_on_surface,
+    project_point_on_surface_with_options, project_surface_on_surface, project_wire_on_face,
+    project_wire_on_surface,
+};
+pub use section::{SectionCurve, section, section_curves, section_polylines};
+pub use shape_algo::{
+    // Algorithm container
+    AlgoContainer,
+    // Geometry extraction structures
+    BoxGeometry,
+    ConeGeometry,
+    CylinderGeometry,
+    ShapeAlgorithm,
+    SphereGeometry,
+    TorusGeometry,
+    // Geometry extraction functions
+    get_box_geometry,
+    get_cone_geometry,
+    get_cylinder_geometry,
+    get_sphere_geometry,
+    get_torus_geometry,
+    // Primitive detection
+    is_box,
+    is_cone,
+    is_cylinder,
+    is_sphere,
+    is_torus,
 };
 pub use shape_analysis::{
-    // Surface analysis (ShapeAnalysis_Surface)
-    SurfaceAnalysisReport as ShapeAnalysisSurfaceReport, SingularPoint, SingularPointKind,
-    UvInconsistency, UvInconsistencyKind,
-    analyze_surface, check_uv_consistency,
-    // Curve analysis (ShapeAnalysis_Curve)
-    CurveAnalysisReport, CurveSelfIntersection, ContinuityLevel,
-    analyze_curve,
-    // Wire analysis (ShapeAnalysis_Wire)
-    WireAnalysisReport as ShapeAnalysisWireReport, WireSelfIntersection, WireGap,
-    analyze_wire, check_face_wires,
-    // Face analysis (ShapeAnalysis_Face)
-    FaceAnalysisReport, SurfaceWireIssue, SurfaceWireIssueKind,
-    analyze_face,
     // Full BRep analysis
-    BRepAnalysisReport, analyze_brep,
+    BRepAnalysisReport,
+    ContinuityLevel,
+    // Curve analysis (ShapeAnalysis_Curve)
+    CurveAnalysisReport,
+    CurveSelfIntersection,
+    // Face analysis (ShapeAnalysis_Face)
+    FaceAnalysisReport,
+    OverTrimmedRegion,
+    ParamRangeIssue,
+    SeamEdgeIssue,
+    SingularPoint,
+    SingularPointKind,
+    // Surface analysis (ShapeAnalysis_Surface)
+    SurfaceAnalysisReport as ShapeAnalysisSurfaceReport,
     // Enhanced ShapeAnalysis_Surface equivalent
-    SurfaceBoundsAnalysis, OverTrimmedRegion, UnderTrimmedRegion,
-    analyze_surface_bounds_for_face,
+    SurfaceBoundsAnalysis,
+    SurfaceDeviation,
+    SurfaceDeviationViolation,
+    SurfaceWireIssue,
+    SurfaceWireIssueKind,
+    UnderTrimmedRegion,
     UvConsistencyReport as FaceUvConsistencyReport,
-    ParamRangeIssue, UvFlipIssue, UvFlipType, SeamEdgeIssue,
+    UvFlipIssue,
+    UvFlipType,
+    UvInconsistency,
+    UvInconsistencyKind,
+    // Wire analysis (ShapeAnalysis_Wire)
+    WireAnalysisReport as ShapeAnalysisWireReport,
+    WireGap,
+    WireSelfIntersection,
+    analyze_brep,
+    analyze_curve,
+    analyze_face,
+    analyze_surface,
+    analyze_surface_bounds_for_face,
+    analyze_wire,
     check_face_uv_consistency_by_idx,
-    SurfaceDeviation, SurfaceDeviationViolation,
+    check_face_wires,
+    check_uv_consistency,
     compute_surface_deviation,
     detect_surface_self_intersection,
 };
 pub use shape_build::{
-    BuildError,
-    BuildVertex, BuildWire, BuildFace, BuildShell, BuildSolid,
-    validate_wire_closed, validate_shell_closed, validate_solid_valid,
-    Rebuild, BRepBuilder,
+    BRepBuilder, BuildError, BuildFace, BuildShell, BuildSolid, BuildVertex, BuildWire, Rebuild,
+    validate_shell_closed, validate_solid_valid, validate_wire_closed,
 };
 pub use shape_construct::{
-    // Curve construction
-    construct_line, construct_circle_from_3_points, construct_circle_center_normal,
-    construct_ellipse_from_points,
-    // Surface construction
-    construct_plane_from_3_points, construct_plane_from_point_normal,
-    construct_cylinder_from_axis, construct_cone_from_axis,
-    construct_sphere_from_center_radius, construct_torus_from_center_radii,
     // BSpline construction
-    construct_bspline_curve, construct_bspline_surface,
-    // Wire construction
-    construct_polygon_wire, construct_circle_wire,
+    construct_bspline_curve,
+    construct_bspline_surface,
+    construct_circle_center_normal,
+    construct_circle_from_3_points,
+    construct_circle_wire,
+    construct_cone_from_axis,
+    construct_cylinder_from_axis,
+    construct_ellipse_from_points,
+    construct_face_from_boundary,
+    // Curve construction
+    construct_line,
     // Face construction
-    construct_planar_face_from_wire, construct_face_from_boundary,
+    construct_planar_face_from_wire,
+    // Surface construction
+    construct_plane_from_3_points,
+    construct_plane_from_point_normal,
+    // Wire construction
+    construct_polygon_wire,
+    construct_sphere_from_center_radius,
+    construct_torus_from_center_radii,
 };
 pub use shape_custom::{
-    BSplineSimplifyOptions, SimplificationResult,
-    GeometryRestrictions, ConversionReport,
-    simplify_bspline_curve, simplify_bspline_surface,
-    convert_to_bspline, restrict_geometry,
-    is_bspline_curve, is_bspline_surface,
-    curve_degree, surface_degrees,
-    ensure_bspline_curve, ensure_bspline_surface,
+    BSplineSimplifyOptions, ConversionReport, GeometryRestrictions, SimplificationResult,
+    convert_to_bspline, curve_degree, ensure_bspline_curve, ensure_bspline_surface,
+    is_bspline_curve, is_bspline_surface, restrict_geometry, simplify_bspline_curve,
+    simplify_bspline_surface, surface_degrees,
 };
 pub use shape_extend::{
-    // ShapeExtend_WireData
-    WireData,
     // ShapeExtend_CompositeSurface
     CompositeSurface,
     // ShapeExtend_BasicMsgRegistrator
-    MessageRegistrator, MessageSeverity, ShapeMessage,
-    // ShapeExtend_MsgRegistrator
-    ShapeMessageRegistrator, ShapeContextMessage,
+    MessageRegistrator,
+    MessageSeverity,
+    ShapeContextMessage,
     // ShapeExtend_Explorer
     ShapeExplorer,
+    ShapeMessage,
+    // ShapeExtend_MsgRegistrator
+    ShapeMessageRegistrator,
+    // ShapeExtend_WireData
+    WireData,
 };
-pub use shape_algo::{
-    // Algorithm container
-    AlgoContainer, ShapeAlgorithm,
-    // Geometry extraction structures
-    BoxGeometry, CylinderGeometry, SphereGeometry, ConeGeometry, TorusGeometry,
-    // Geometry extraction functions
-    get_box_geometry, get_cylinder_geometry, get_sphere_geometry, get_cone_geometry, get_torus_geometry,
-    // Primitive detection
-    is_box, is_cylinder, is_sphere, is_cone, is_torus,
+pub use sweep::{
+    CornerMode, Law, PiecewiseLinearLaw, SweepError, SweepHistory, SweepMode, SweepOptions,
+    handle_pipe_corners, linear_law_sweep, linear_sweep, linear_sweep_face, linear_sweep_wire,
+    linear_sweep_with_history, linear_sweep_with_options, pipe_sweep, pipe_sweep_wire,
+    pipe_sweep_with_history, pipe_sweep_with_options, pipe_with_rotation, rotational_sweep,
+    rotational_sweep_face, rotational_sweep_wire, rotational_sweep_with_history,
+    rotational_sweep_with_options, variable_section_sweep,
 };
-pub use math_utils::{
-    // Root finding
-    newton_raphson, bisection, secant,
-    // Multi-dimensional Newton
-    newton_2d, newton_3d,
-    // Polynomial solvers
-    solve_linear, solve_quadratic, solve_cubic, solve_quartic,
-    // Eigenvalue/Matrix
-    eigenvalues_2x2, eigenvalues_3x3, inverse_3x3, determinant_3x3,
-    // Integration
-    simpson_integrate, gaussian_quadrature,
-    // Optimization
-    golden_section_min, golden_section_max,
-};
-pub use adaptor3d::{
-    Curve3dAdaptor, SurfaceAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor,
+pub use thicken::{ThickeningResult, thicken_shell};
+pub use triangulate::{
+    AdaptiveSubdivider, BoundarySensitiveTessellator, FeatureEdge, IncrementalMesher, MeshDelta,
+    MeshQualityMetrics, MeshSimplifier, SurfaceMesh, TessellationParams, compute_mesh_quality,
+    mesh_brep, triangulate_surface,
 };
 
 /// Options for post-operation topology simplification.
@@ -1032,7 +1217,10 @@ impl ExtremeGeometryRetryConfig {
         if self.check_near_tangent && !analysis.near_tangent_configs.is_empty() {
             for config in &analysis.near_tangent_configs {
                 let tol = config.suggested_fuzzy_adjustment;
-                if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                if !ladder
+                    .iter()
+                    .any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS)
+                {
                     ladder.push(tol);
                 }
             }
@@ -1043,7 +1231,10 @@ impl ExtremeGeometryRetryConfig {
             for edge in &analysis.high_aspect_ratio_edges {
                 if edge.is_problematic {
                     let tol = tolerance::TOLERANCE_ABS * edge.suggested_tolerance_multiplier;
-                    if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+                    if !ladder
+                        .iter()
+                        .any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS)
+                    {
                         ladder.push(tol);
                     }
                 }
@@ -1053,19 +1244,26 @@ impl ExtremeGeometryRetryConfig {
         // Add tolerance adjustments for size difference
         if self.check_size_difference
             && let Some(ref sd) = analysis.size_difference
-                && sd.is_extreme {
-                    let tol = tolerance::TOLERANCE_ABS * sd.suggested_tolerance_multiplier;
-                    if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
-                        ladder.push(tol);
-                    }
-                }
+            && sd.is_extreme
+        {
+            let tol = tolerance::TOLERANCE_ABS * sd.suggested_tolerance_multiplier;
+            if !ladder
+                .iter()
+                .any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS)
+            {
+                ladder.push(tol);
+            }
+        }
 
         // Add the recommended fuzzy tolerance from the analysis
         if analysis.recommended_fuzzy_tolerance > tolerance::TOLERANCE_ABS {
-            let tol = analysis.recommended_fuzzy_tolerance.min(
-                tolerance::TOLERANCE_ABS * self.max_fuzzy_multiplier
-            );
-            if !ladder.iter().any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS) {
+            let tol = analysis
+                .recommended_fuzzy_tolerance
+                .min(tolerance::TOLERANCE_ABS * self.max_fuzzy_multiplier);
+            if !ladder
+                .iter()
+                .any(|&t| (t - tol).abs() < tolerance::TOLERANCE_ABS)
+            {
                 ladder.push(tol);
             }
         }
@@ -1333,13 +1531,10 @@ fn boolean_retry_followup_attempts(
         1
     };
     let can_escalate_strategy = retry_round < max_retry_escalation_rounds;
-    let strategy_already_global_biased = origin_retry_class.is_some() && !attempted_scoped_cleanup_enabled;
-    let fuzzy_candidates = boolean_retry_ladder_for_error_with_policy(
-        attempted_fuzzy,
-        ladder,
-        err,
-        policy,
-    );
+    let strategy_already_global_biased =
+        origin_retry_class.is_some() && !attempted_scoped_cleanup_enabled;
+    let fuzzy_candidates =
+        boolean_retry_ladder_for_error_with_policy(attempted_fuzzy, ladder, err, policy);
 
     let mut out: Vec<(f64, Option<BooleanRetryClass>, usize)> = Vec::new();
     let mut push_unique = |candidate: (f64, Option<BooleanRetryClass>, usize)| {
@@ -1359,11 +1554,7 @@ fn boolean_retry_followup_attempts(
         && can_escalate_strategy
         && !strategy_already_global_biased
     {
-        push_unique((
-            attempted_fuzzy,
-            Some(retry_class),
-            strategy_candidate_round,
-        ));
+        push_unique((attempted_fuzzy, Some(retry_class), strategy_candidate_round));
     }
 
     for candidate in fuzzy_candidates {
@@ -1374,11 +1565,7 @@ fn boolean_retry_followup_attempts(
         && can_escalate_strategy
         && !strategy_already_global_biased
     {
-        push_unique((
-            attempted_fuzzy,
-            Some(retry_class),
-            strategy_candidate_round,
-        ));
+        push_unique((attempted_fuzzy, Some(retry_class), strategy_candidate_round));
     }
 
     out
@@ -1410,15 +1597,14 @@ fn tune_boolean_options_for_retry_class(
                 return;
             }
 
-            options.make_connected_max_passes = options
-                .make_connected_max_passes
-                .max(4 + retry_round);
-            options.make_connected_tolerance_growth =
-                options.make_connected_tolerance_growth.max(2.0 + retry_round as f64);
-            options.make_connected_tolerance_cap =
-                options
-                    .make_connected_tolerance_cap
-                    .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
+            options.make_connected_max_passes =
+                options.make_connected_max_passes.max(4 + retry_round);
+            options.make_connected_tolerance_growth = options
+                .make_connected_tolerance_growth
+                .max(2.0 + retry_round as f64);
+            options.make_connected_tolerance_cap = options
+                .make_connected_tolerance_cap
+                .max(base_tol * 1000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped && retry_round >= 2 {
                 options.make_connected_scoped = false;
@@ -1428,30 +1614,28 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_scope_seed_length = options
                     .make_connected_scope_seed_length
                     .max(base_tol * 10.0 * (retry_round as f64 + 1.0));
-                options.make_connected_scope_history_ring_depth =
-                    options
-                        .make_connected_scope_history_ring_depth
-                        .max(2 + retry_round);
+                options.make_connected_scope_history_ring_depth = options
+                    .make_connected_scope_history_ring_depth
+                    .max(2 + retry_round);
                 options.make_connected_scope_min_history_edges = options
                     .make_connected_scope_min_history_edges
                     .max(2 + retry_round);
-                options.make_connected_scope_seed_mode = match options.make_connected_scope_seed_mode
-                {
-                    MakeConnectedScopeSeedMode::ShortEdges
-                    | MakeConnectedScopeSeedMode::NearDuplicateVertices
-                    | MakeConnectedScopeSeedMode::ToleranceTaggedEdges => {
-                        MakeConnectedScopeSeedMode::TopologySeamCandidates
-                    }
-                    MakeConnectedScopeSeedMode::MultiPcurveEdges => {
-                        MakeConnectedScopeSeedMode::Hybrid
-                    }
-                    mode => mode,
-                };
+                options.make_connected_scope_seed_mode =
+                    match options.make_connected_scope_seed_mode {
+                        MakeConnectedScopeSeedMode::ShortEdges
+                        | MakeConnectedScopeSeedMode::NearDuplicateVertices
+                        | MakeConnectedScopeSeedMode::ToleranceTaggedEdges => {
+                            MakeConnectedScopeSeedMode::TopologySeamCandidates
+                        }
+                        MakeConnectedScopeSeedMode::MultiPcurveEdges => {
+                            MakeConnectedScopeSeedMode::Hybrid
+                        }
+                        mode => mode,
+                    };
                 options.make_connected_scope_fallback_to_global = true;
-                options.make_connected_scope_fallback_min_seed_vertices =
-                    options
-                        .make_connected_scope_fallback_min_seed_vertices
-                        .max(2 + retry_round);
+                options.make_connected_scope_fallback_min_seed_vertices = options
+                    .make_connected_scope_fallback_min_seed_vertices
+                    .max(2 + retry_round);
                 options.make_connected_scope_fallback_min_seed_edge_coverage = options
                     .make_connected_scope_fallback_min_seed_edge_coverage
                     .max((0.25 + 0.1 * retry_round as f64).min(1.0));
@@ -1461,10 +1645,9 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_scope_global_fallback_tolerance_multiplier = options
                     .make_connected_scope_global_fallback_tolerance_multiplier
                     .max(10.0 * (retry_round as f64 + 1.0));
-                options.make_connected_scope_global_fallback_max_passes =
-                    options
-                        .make_connected_scope_global_fallback_max_passes
-                        .max(4 + retry_round);
+                options.make_connected_scope_global_fallback_max_passes = options
+                    .make_connected_scope_global_fallback_max_passes
+                    .max(4 + retry_round);
                 options.make_connected_scope_global_fallback_tolerance_growth = options
                     .make_connected_scope_global_fallback_tolerance_growth
                     .max(2.0 + retry_round as f64);
@@ -1483,15 +1666,14 @@ fn tune_boolean_options_for_retry_class(
                 return;
             }
 
-            options.make_connected_max_passes = options
-                .make_connected_max_passes
-                .max(5 + retry_round);
-            options.make_connected_tolerance_growth =
-                options.make_connected_tolerance_growth.max(10.0 + 5.0 * retry_round as f64);
-            options.make_connected_tolerance_cap =
-                options
-                    .make_connected_tolerance_cap
-                    .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
+            options.make_connected_max_passes =
+                options.make_connected_max_passes.max(5 + retry_round);
+            options.make_connected_tolerance_growth = options
+                .make_connected_tolerance_growth
+                .max(10.0 + 5.0 * retry_round as f64);
+            options.make_connected_tolerance_cap = options
+                .make_connected_tolerance_cap
+                .max(base_tol * 10_000.0 * (retry_round as f64 + 1.0));
 
             if options.make_connected_scoped && retry_round >= 2 {
                 options.make_connected_scoped = false;
@@ -1501,19 +1683,17 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_scope_seed_length = options
                     .make_connected_scope_seed_length
                     .max(base_tol * 100.0 * (retry_round as f64 + 1.0));
-                options.make_connected_scope_history_ring_depth =
-                    options
-                        .make_connected_scope_history_ring_depth
-                        .max(3 + retry_round);
+                options.make_connected_scope_history_ring_depth = options
+                    .make_connected_scope_history_ring_depth
+                    .max(3 + retry_round);
                 options.make_connected_scope_min_history_edges = options
                     .make_connected_scope_min_history_edges
                     .max(3 + retry_round);
                 options.make_connected_scope_seed_mode = MakeConnectedScopeSeedMode::Hybrid;
                 options.make_connected_scope_fallback_to_global = true;
-                options.make_connected_scope_fallback_min_seed_vertices =
-                    options
-                        .make_connected_scope_fallback_min_seed_vertices
-                        .max(2 + retry_round);
+                options.make_connected_scope_fallback_min_seed_vertices = options
+                    .make_connected_scope_fallback_min_seed_vertices
+                    .max(2 + retry_round);
                 options.make_connected_scope_fallback_min_seed_edge_coverage = options
                     .make_connected_scope_fallback_min_seed_edge_coverage
                     .max((0.5 + 0.1 * retry_round as f64).min(1.0));
@@ -1523,10 +1703,9 @@ fn tune_boolean_options_for_retry_class(
                 options.make_connected_scope_global_fallback_tolerance_multiplier = options
                     .make_connected_scope_global_fallback_tolerance_multiplier
                     .max(100.0 * (retry_round as f64 + 1.0));
-                options.make_connected_scope_global_fallback_max_passes =
-                    options
-                        .make_connected_scope_global_fallback_max_passes
-                        .max(5 + retry_round);
+                options.make_connected_scope_global_fallback_max_passes = options
+                    .make_connected_scope_global_fallback_max_passes
+                    .max(5 + retry_round);
                 options.make_connected_scope_global_fallback_tolerance_growth = options
                     .make_connected_scope_global_fallback_tolerance_growth
                     .max(10.0 + 5.0 * retry_round as f64);
@@ -1556,9 +1735,8 @@ pub fn tune_boolean_options_for_failure_class(
         BooleanFailureClass::DegenerateTopology => {
             // Run MakeConnected cleanup with increased aggressiveness
             options.run_make_connected = true;
-            options.make_connected_max_passes = options
-                .make_connected_max_passes
-                .max(5 + retry_round * 2);
+            options.make_connected_max_passes =
+                options.make_connected_max_passes.max(5 + retry_round * 2);
             options.make_connected_tolerance = options
                 .make_connected_tolerance
                 .max(base_tol * (5.0 + retry_round as f64));
@@ -1584,9 +1762,8 @@ pub fn tune_boolean_options_for_failure_class(
                 .glue_tolerance
                 .max(base_tol * 20.0 * (1.0 + retry_round as f64));
             options.run_make_connected = true;
-            options.make_connected_max_passes = options
-                .make_connected_max_passes
-                .max(4 + retry_round);
+            options.make_connected_max_passes =
+                options.make_connected_max_passes.max(4 + retry_round);
 
             RecoveryStrategy::AlgorithmVariant
         }
@@ -1602,9 +1779,8 @@ pub fn tune_boolean_options_for_failure_class(
         BooleanFailureClass::SelfIntersection => {
             // Run MakeConnected cleanup with higher aggressiveness
             options.run_make_connected = true;
-            options.make_connected_max_passes = options
-                .make_connected_max_passes
-                .max(6 + retry_round * 2);
+            options.make_connected_max_passes =
+                options.make_connected_max_passes.max(6 + retry_round * 2);
             options.make_connected_tolerance = options
                 .make_connected_tolerance
                 .max(base_tol * (10.0 + retry_round as f64 * 5.0));
@@ -1640,11 +1816,14 @@ fn run_make_connected_for_boolean_output(
     options: &BooleanOptions,
     report: &mut BooleanExecutionReport,
 ) -> (BRep, MakeConnectedReport) {
-    let global_fallback_tolerance = options.make_connected_tolerance.max(tolerance::TOLERANCE_ABS)
+    let global_fallback_tolerance = options
+        .make_connected_tolerance
+        .max(tolerance::TOLERANCE_ABS)
         * options
             .make_connected_scope_global_fallback_tolerance_multiplier
             .max(1.0);
-    let global_fallback_max_passes = if options.make_connected_scope_global_fallback_max_passes > 0 {
+    let global_fallback_max_passes = if options.make_connected_scope_global_fallback_max_passes > 0
+    {
         options.make_connected_scope_global_fallback_max_passes
     } else {
         options.make_connected_max_passes
@@ -1909,7 +2088,8 @@ impl SplitterObjectsReport {
             .map(|o| o.object_index)
             .collect();
 
-        let mut step_map: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+        let mut step_map: std::collections::BTreeMap<usize, usize> =
+            std::collections::BTreeMap::new();
         let mut map: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for obj in &self.objects {
             if let Some(err) = &obj.error {
@@ -2127,7 +2307,8 @@ pub fn boolean_op_with_options(
             healing_options.run_make_connected_on_stall = true;
             healing_options.make_connected_tolerance = options.make_connected_tolerance;
             healing_options.make_connected_max_passes = options.make_connected_max_passes;
-            healing_options.make_connected_tolerance_growth = options.make_connected_tolerance_growth;
+            healing_options.make_connected_tolerance_growth =
+                options.make_connected_tolerance_growth;
             healing_options.make_connected_tolerance_cap = options.make_connected_tolerance_cap;
         }
         let (healed, heal_report) = analyze_and_heal(&out, healing_options);
@@ -2204,41 +2385,33 @@ pub fn boolean_op_robust(
 
         let mut attempt_options = options.base;
         attempt_options.fuzzy_tol = fuzzy;
-        tune_boolean_options_for_retry_class(
-            &mut attempt_options,
-            origin_retry_class,
-            retry_round,
-        );
+        tune_boolean_options_for_retry_class(&mut attempt_options, origin_retry_class, retry_round);
         let attempt_make_connected_scoped_enabled =
             attempt_options.run_make_connected && attempt_options.make_connected_scoped;
-        let attempt_scope_seed_mode = if attempt_options.run_make_connected
-            && attempt_options.make_connected_scoped
-        {
-            Some(attempt_options.make_connected_scope_seed_mode)
-        } else {
-            None
-        };
-        let attempt_scope_history_ring_depth = if attempt_options.run_make_connected
-            && attempt_options.make_connected_scoped
-        {
-            Some(attempt_options.make_connected_scope_history_ring_depth)
-        } else {
-            None
-        };
-        let attempt_scope_seed_length = if attempt_options.run_make_connected
-            && attempt_options.make_connected_scoped
-        {
-            Some(attempt_options.make_connected_scope_seed_length)
-        } else {
-            None
-        };
-        let attempt_scope_min_history_edges = if attempt_options.run_make_connected
-            && attempt_options.make_connected_scoped
-        {
-            Some(attempt_options.make_connected_scope_min_history_edges)
-        } else {
-            None
-        };
+        let attempt_scope_seed_mode =
+            if attempt_options.run_make_connected && attempt_options.make_connected_scoped {
+                Some(attempt_options.make_connected_scope_seed_mode)
+            } else {
+                None
+            };
+        let attempt_scope_history_ring_depth =
+            if attempt_options.run_make_connected && attempt_options.make_connected_scoped {
+                Some(attempt_options.make_connected_scope_history_ring_depth)
+            } else {
+                None
+            };
+        let attempt_scope_seed_length =
+            if attempt_options.run_make_connected && attempt_options.make_connected_scoped {
+                Some(attempt_options.make_connected_scope_seed_length)
+            } else {
+                None
+            };
+        let attempt_scope_min_history_edges =
+            if attempt_options.run_make_connected && attempt_options.make_connected_scoped {
+                Some(attempt_options.make_connected_scope_min_history_edges)
+            } else {
+                None
+            };
         match boolean_op_with_options(op, a, b, attempt_options) {
             Ok((brep, mut report)) => {
                 attempt_reports.push(BooleanRobustAttemptReport {
@@ -2410,8 +2583,10 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
     }
     if options.fuse_orthogonal_coplanar_faces {
         let cur_score = closure_score(&out);
-        let (next, n) =
-            crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&out, options.merge_tolerance);
+        let (next, n) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(
+            &out,
+            options.merge_tolerance,
+        );
         let next_score = closure_score(&next);
         if next_score <= cur_score {
             out = next;
@@ -2451,7 +2626,8 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
     // Final safety net: never return an open solid from simplification if it
     // can be repaired into a closed one with the standard solid fixer.
     if !crate::brep_check::validate_solid_closure(&out).is_clean() {
-        let (fixed, _fix_report) = fix_solid(&out, options.merge_tolerance.max(tolerance::TOLERANCE_ABS));
+        let (fixed, _fix_report) =
+            fix_solid(&out, options.merge_tolerance.max(tolerance::TOLERANCE_ABS));
         if crate::brep_check::validate_solid_closure(&fixed).is_clean() {
             out = fixed;
         } else {
@@ -2460,6 +2636,19 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
                 out = healed;
             }
         }
+    }
+
+    // Face merges (same-domain / orthogonal coplanar) leave `triangles` empty with
+    // `mesh_dirty=true`. Callers that use `Tessellator::tessellate(&brep)` without
+    // `mesh_brep` would draw only edges and show interior voids ("open box").
+    if out
+        .solids
+        .iter()
+        .flat_map(|s| s.shells.iter())
+        .flat_map(|sh| sh.faces.iter())
+        .any(|f| !f.mesh_is_clean())
+    {
+        crate::triangulate::mesh_brep(&mut out, &crate::triangulate::TessellationParams::default());
     }
 
     report.issues_after = brep_check_analyze(&out).issues.len();
@@ -2525,8 +2714,8 @@ fn split_brep_internal_with_partial_report(
     for (step_index, tool) in tools.iter().enumerate() {
         let input_faces = face_count_of(&acc);
         let fuzzy = options.fuzzy_tolerance.max(0.0);
-        let skipped_by_broad_phase = options.broad_phase_pruning
-            && breps_farther_than_tolerance(&acc, tool, fuzzy);
+        let skipped_by_broad_phase =
+            options.broad_phase_pruning && breps_farther_than_tolerance(&acc, tool, fuzzy);
 
         if skipped_by_broad_phase {
             report.steps.push(SplitterStepReport {
@@ -2555,7 +2744,8 @@ fn split_brep_internal_with_partial_report(
         let output_faces = face_count_of(&step.brep);
         if validate_each_step {
             let validity = brep_check_analyze(&step.brep);
-            let (issue_count, first_issue) = splitter_issues_by_level(&validity, options.validation_level);
+            let (issue_count, first_issue) =
+                splitter_issues_by_level(&validity, options.validation_level);
             validation_issue_count = Some(issue_count);
             validation_first_issue = first_issue.clone();
             if issue_count > 0 {
@@ -2610,7 +2800,12 @@ fn brep_bounds(brep: &BRep) -> Option<(glam::DVec3, glam::DVec3)> {
     Some((min, max))
 }
 
-fn aabb_distance(min_a: glam::DVec3, max_a: glam::DVec3, min_b: glam::DVec3, max_b: glam::DVec3) -> f64 {
+fn aabb_distance(
+    min_a: glam::DVec3,
+    max_a: glam::DVec3,
+    min_b: glam::DVec3,
+    max_b: glam::DVec3,
+) -> f64 {
     let dx = if max_a.x < min_b.x {
         min_b.x - max_a.x
     } else if max_b.x < min_a.x {
@@ -2746,7 +2941,8 @@ pub fn split_objects_with_tools_checked_collect_options(
     let mut objects_report = Vec::with_capacity(objects.len());
 
     for (object_index, object) in objects.iter().enumerate() {
-        let (result, report) = split_brep_internal_with_partial_report(object, tools, options, true);
+        let (result, report) =
+            split_brep_internal_with_partial_report(object, tools, options, true);
         match result {
             Ok(split) => {
                 outputs.push(Some(split));
@@ -2840,11 +3036,27 @@ pub fn boolean_op_par(
 
 /// Build BVHs for both BReps if they have faces; returns None for empty BReps.
 fn build_optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
-    let has_faces_a = a.solids.first().and_then(|s| s.shells.first()).is_some_and(|sh| !sh.faces.is_empty());
-    let has_faces_b = b.solids.first().and_then(|s| s.shells.first()).is_some_and(|sh| !sh.faces.is_empty());
+    let has_faces_a = a
+        .solids
+        .first()
+        .and_then(|s| s.shells.first())
+        .is_some_and(|sh| !sh.faces.is_empty());
+    let has_faces_b = b
+        .solids
+        .first()
+        .and_then(|s| s.shells.first())
+        .is_some_and(|sh| !sh.faces.is_empty());
     (
-        if has_faces_a { Some(bvh::Bvh::build(a)) } else { None },
-        if has_faces_b { Some(bvh::Bvh::build(b)) } else { None },
+        if has_faces_a {
+            Some(bvh::Bvh::build(a))
+        } else {
+            None
+        },
+        if has_faces_b {
+            Some(bvh::Bvh::build(b))
+        } else {
+            None
+        },
     )
 }
 
@@ -2872,10 +3084,7 @@ fn make_connected_seed_vertices_from_short_edges(brep: &BRep, seed_length: f64) 
     out.into_iter().collect()
 }
 
-fn make_connected_seed_vertices_from_near_duplicates(
-    brep: &BRep,
-    seed_length: f64,
-) -> Vec<usize> {
+fn make_connected_seed_vertices_from_near_duplicates(brep: &BRep, seed_length: f64) -> Vec<usize> {
     let mut out = std::collections::BTreeSet::new();
     let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
     let threshold2 = threshold * threshold;
@@ -3165,7 +3374,10 @@ fn make_connected_seed_edges_from_boolean_history(
         if ei >= brep.edges.len() {
             break;
         }
-        if matches!(origin, EdgeOrigin::Generated | EdgeOrigin::SplitFromA(_) | EdgeOrigin::SplitFromB(_)) {
+        if matches!(
+            origin,
+            EdgeOrigin::Generated | EdgeOrigin::SplitFromA(_) | EdgeOrigin::SplitFromB(_)
+        ) {
             seed_edges.insert(ei);
         }
     }
@@ -3431,7 +3643,10 @@ pub struct GeneralFuseSplitFirstReport {
 #[derive(Debug)]
 pub enum GeneralFuseError {
     EmptyInput,
-    StepFailed { step_index: usize, source: BooleanError },
+    StepFailed {
+        step_index: usize,
+        source: BooleanError,
+    },
 }
 
 impl std::fmt::Display for GeneralFuseError {
@@ -3506,6 +3721,162 @@ pub fn general_fuse_par(parts: &[BRep]) -> Result<(BRep, GeneralFuseHistory), Bo
 // Compound-aware Boolean Operations
 // ============================================================================
 
+/// Count faces in all solids strictly before `solid_idx`.
+fn face_count_before_solid(full: &BRep, solid_idx: usize) -> usize {
+    full.solids
+        .iter()
+        .take(solid_idx)
+        .flat_map(|s| &s.shells)
+        .map(|sh| sh.faces.len())
+        .sum()
+}
+
+/// Build a self-contained [`BRep`] holding only solid `solid_idx` of `full`, with
+/// vertices/edges/face geometry trimmed so boolean DS loading does not ingest
+/// orphan topology from sibling solids (e.g. after [`BRep::compound_from_shapes`]).
+fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
+    use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
+    use std::collections::BTreeSet;
+
+    let solid = full.solids.get(solid_idx)?;
+    let mut used_e: BTreeSet<usize> = BTreeSet::new();
+    for sh in &solid.shells {
+        for fa in &sh.faces {
+            for we in &fa.outer_wire.edges {
+                used_e.insert(we.idx);
+            }
+            for iw in &fa.inner_wires {
+                for we in &iw.edges {
+                    used_e.insert(we.idx);
+                }
+            }
+        }
+    }
+    let mut used_v: BTreeSet<usize> = BTreeSet::new();
+    for &ei in &used_e {
+        let e = full.edges.get(ei)?;
+        used_v.insert(e.start);
+        used_v.insert(e.end);
+    }
+    let v_list: Vec<usize> = used_v.into_iter().collect();
+    let mut v_map = vec![usize::MAX; full.vertices.len()];
+    for (ni, &oi) in v_list.iter().enumerate() {
+        v_map[oi] = ni;
+    }
+    let e_list: Vec<usize> = used_e.into_iter().collect();
+    let mut e_map = vec![usize::MAX; full.edges.len()];
+    for (ni, &oi) in e_list.iter().enumerate() {
+        e_map[oi] = ni;
+    }
+
+    let remap_wire = |w: &Wire| -> Wire {
+        Wire {
+            edges: w
+                .edges
+                .iter()
+                .map(|we| WireEdge {
+                    idx: e_map[we.idx],
+                    forward: we.forward,
+                })
+                .collect(),
+        }
+    };
+
+    let remap_face = |face: &Face| -> Face {
+        Face {
+            outer_wire: remap_wire(&face.outer_wire),
+            inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
+            normal: face.normal,
+            triangles: face
+                .triangles
+                .iter()
+                .map(|&[a, b, c]| [v_map[a], v_map[b], v_map[c]])
+                .collect(),
+            mesh_dirty: face.mesh_dirty,
+        }
+    };
+
+    let mut out = BRep::new();
+    for &vi in &v_list {
+        out.vertices.push(full.vertices[vi].clone());
+        out.geom
+            .vertex_tolerance
+            .push(*full.geom.vertex_tolerance.get(vi).unwrap_or(&0.0));
+    }
+
+    out.geom.curves = full.geom.curves.clone();
+    out.geom.surfaces = full.geom.surfaces.clone();
+    out.geom.curve2ds = full.geom.curve2ds.clone();
+    out.geom.curve2d_range = full.geom.curve2d_range.clone();
+
+    for &old_ei in &e_list {
+        let e = &full.edges[old_ei];
+        out.edges.push(rcad_kernel::topology::Edge {
+            start: v_map[e.start],
+            end: v_map[e.end],
+        });
+        out.geom
+            .edge_curve
+            .push(full.geom.edge_curve.get(old_ei).copied().flatten());
+        out.geom.edge_pcurves.push(
+            full.geom
+                .edge_pcurves
+                .get(old_ei)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        out.geom
+            .edge_curve_range
+            .push(full.geom.edge_curve_range.get(old_ei).copied().flatten());
+        out.geom
+            .edge_degenerated
+            .push(*full.geom.edge_degenerated.get(old_ei).unwrap_or(&false));
+        out.geom
+            .edge_tolerance
+            .push(*full.geom.edge_tolerance.get(old_ei).unwrap_or(&0.0));
+        out.geom
+            .edge_same_parameter
+            .push(*full.geom.edge_same_parameter.get(old_ei).unwrap_or(&true));
+        out.geom
+            .edge_same_range
+            .push(*full.geom.edge_same_range.get(old_ei).unwrap_or(&true));
+    }
+
+    let mut gfi = face_count_before_solid(full, solid_idx);
+    let mut new_shells: Vec<Shell> = Vec::new();
+    for sh in &solid.shells {
+        let mut new_faces = Vec::new();
+        for face in &sh.faces {
+            new_faces.push(remap_face(face));
+            out.geom
+                .face_surface
+                .push(full.geom.face_surface.get(gfi).copied().flatten());
+            out.geom
+                .face_surface_range
+                .push(full.geom.face_surface_range.get(gfi).copied().flatten());
+            out.geom
+                .face_tolerance
+                .push(*full.geom.face_tolerance.get(gfi).unwrap_or(&0.0));
+            gfi += 1;
+        }
+        new_shells.push(Shell { faces: new_faces });
+    }
+    out.solids.push(Solid { shells: new_shells });
+
+    rcad_kernel::tolerance::resize_tolerance_arrays(&mut out);
+    Some(out)
+}
+
+/// `solid` must be a reference into `full.solids` (same allocation).
+fn brep_operand_for_compound_solid(full: &BRep, solid: &rcad_kernel::Solid) -> BRep {
+    let idx = full
+        .solids
+        .iter()
+        .position(|s| std::ptr::eq(s, solid))
+        .expect("compound solid reference must point into parent BRep");
+    compact_brep_isolated_solid(full, idx).expect("solid exists in parent BRep")
+}
+
 /// Perform a boolean operation on a compound shape.
 ///
 /// When the input is a compound, the operation is applied to each constituent
@@ -3514,11 +3885,7 @@ pub fn general_fuse_par(parts: &[BRep]) -> Result<(BRep, GeneralFuseHistory), Bo
 /// For union operations on compounds, all solids are fused together.
 /// For difference operations, each solid from A is subtracted by all solids from B.
 /// For intersection operations, each solid from A is intersected with all solids from B.
-pub fn boolean_op_compound(
-    op: BooleanOpType,
-    a: &BRep,
-    b: &BRep,
-) -> Result<BRep, BooleanError> {
+pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     let a_solids = a.flatten_to_solids();
     let b_solids = b.flatten_to_solids();
 
@@ -3531,12 +3898,12 @@ pub fn boolean_op_compound(
             // Union all solids from both shapes
             let all_solids: Vec<BRep> = a_solids
                 .iter()
-                .chain(b_solids.iter())
-                .map(|solid| {
-                    let mut brep = BRep::new();
-                    brep.solids.push((*solid).clone());
-                    brep
-                })
+                .map(|s| brep_operand_for_compound_solid(a, s))
+                .chain(
+                    b_solids
+                        .iter()
+                        .map(|s| brep_operand_for_compound_solid(b, s)),
+                )
                 .collect();
             general_fuse(&all_solids)
         }
@@ -3544,13 +3911,9 @@ pub fn boolean_op_compound(
             // Each solid from A is subtracted by all solids from B
             let mut results = Vec::new();
             for solid_a in a_solids {
-                let mut brep_a = BRep::new();
-                brep_a.solids.push((*solid_a).clone());
-
-                let mut acc = brep_a;
+                let mut acc = brep_operand_for_compound_solid(a, solid_a);
                 for solid_b in &b_solids {
-                    let mut brep_b = BRep::new();
-                    brep_b.solids.push((*solid_b).clone());
+                    let brep_b = brep_operand_for_compound_solid(b, solid_b);
                     acc = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?;
                 }
                 results.push(acc);
@@ -3566,17 +3929,16 @@ pub fn boolean_op_compound(
             // Each solid from A is intersected with each solid from B
             let mut results = Vec::new();
             for solid_a in a_solids {
-                let mut brep_a = BRep::new();
-                brep_a.solids.push(solid_a.clone());
+                let brep_a = brep_operand_for_compound_solid(a, solid_a);
 
                 for solid_b in &b_solids {
-                    let mut brep_b = BRep::new();
-                    brep_b.solids.push((*solid_b).clone());
+                    let brep_b = brep_operand_for_compound_solid(b, solid_b);
 
                     if let Ok(result) = boolean_op(BooleanOpType::Intersection, &brep_a, &brep_b)
-                        && !result.solids.is_empty() {
-                            results.push(result);
-                        }
+                        && !result.solids.is_empty()
+                    {
+                        results.push(result);
+                    }
                 }
             }
 
@@ -3591,24 +3953,228 @@ pub fn boolean_op_compound(
     }
 }
 
+/// Merge per-binary-step [`BooleanExecutionReport`] values into one compound summary.
+///
+/// Face counts on `accum` are expected to be preset to total operand faces; callers
+/// set `output_faces` from the final shape. Scalar history counters are summed across
+/// steps; persistent label vectors take the last non-empty step (final fold is most
+/// representative for the returned BRep).
+fn merge_boolean_execution_reports_for_compound_step(
+    accum: &mut BooleanExecutionReport,
+    step: &BooleanExecutionReport,
+) {
+    accum.used_bvh |= step.used_bvh;
+    accum.healed |= step.healed;
+    accum.simplified |= step.simplified;
+    accum.made_connected |= step.made_connected;
+    accum.make_connected_scope_fallback_applied |= step.make_connected_scope_fallback_applied;
+
+    if step.healing_report.is_some() {
+        accum.healing_report = step.healing_report.clone();
+    }
+    if step.simplify_report.is_some() {
+        accum.simplify_report = step.simplify_report.clone();
+    }
+    if step.make_connected_report.is_some() {
+        accum.make_connected_report = step.make_connected_report.clone();
+    }
+    if step.make_connected_scope_seed_mode.is_some() {
+        accum.make_connected_scope_seed_mode = step.make_connected_scope_seed_mode;
+    }
+    if step.make_connected_scope_history_ring_depth.is_some() {
+        accum.make_connected_scope_history_ring_depth =
+            step.make_connected_scope_history_ring_depth;
+    }
+    if step.make_connected_scope_seed_source.is_some() {
+        accum.make_connected_scope_seed_source = step.make_connected_scope_seed_source;
+    }
+    if step.make_connected_scope_fallback_reason.is_some() {
+        accum.make_connected_scope_fallback_reason = step.make_connected_scope_fallback_reason;
+    }
+    if step.make_connected_scope_scoped_report.is_some() {
+        accum.make_connected_scope_scoped_report = step.make_connected_scope_scoped_report.clone();
+    }
+    if step.make_connected_scope_global_fallback_report.is_some() {
+        accum.make_connected_scope_global_fallback_report =
+            step.make_connected_scope_global_fallback_report.clone();
+    }
+    if step
+        .make_connected_scope_global_fallback_initial_tolerance
+        .is_some()
+    {
+        accum.make_connected_scope_global_fallback_initial_tolerance =
+            step.make_connected_scope_global_fallback_initial_tolerance;
+    }
+    if step
+        .make_connected_scope_global_fallback_max_passes
+        .is_some()
+    {
+        accum.make_connected_scope_global_fallback_max_passes =
+            step.make_connected_scope_global_fallback_max_passes;
+    }
+    if step.make_connected_scope_seed_edge_coverage.is_some() {
+        accum.make_connected_scope_seed_edge_coverage =
+            step.make_connected_scope_seed_edge_coverage;
+    }
+    if step.make_connected_scope_seed_face_coverage.is_some() {
+        accum.make_connected_scope_seed_face_coverage =
+            step.make_connected_scope_seed_face_coverage;
+    }
+    accum.make_connected_scope_history_seed_edge_count +=
+        step.make_connected_scope_history_seed_edge_count;
+    accum.make_connected_scope_heuristic_seed_edge_count +=
+        step.make_connected_scope_heuristic_seed_edge_count;
+    if !step.make_connected_scope_seed_vertices.is_empty() {
+        accum.make_connected_scope_seed_vertices = step.make_connected_scope_seed_vertices.clone();
+    }
+    if !step.make_connected_scope_seed_edges.is_empty() {
+        accum.make_connected_scope_seed_edges = step.make_connected_scope_seed_edges.clone();
+    }
+    if !step.make_connected_scope_seed_edge_labels.is_empty() {
+        accum.make_connected_scope_seed_edge_labels =
+            step.make_connected_scope_seed_edge_labels.clone();
+    }
+
+    accum.history_faces += step.history_faces;
+    accum.history_edges += step.history_edges;
+    accum.history_vertices += step.history_vertices;
+    accum.history_shells += step.history_shells;
+    accum.history_solids += step.history_solids;
+
+    if !step.persistent_face_labels.is_empty() {
+        accum.persistent_face_labels = step.persistent_face_labels.clone();
+    }
+    if !step.persistent_edge_labels.is_empty() {
+        accum.persistent_edge_labels = step.persistent_edge_labels.clone();
+    }
+    if !step.persistent_shell_labels.is_empty() {
+        accum.persistent_shell_labels = step.persistent_shell_labels.clone();
+    }
+    if !step.persistent_solid_labels.is_empty() {
+        accum.persistent_solid_labels = step.persistent_solid_labels.clone();
+    }
+
+    accum
+        .robust_attempts
+        .extend(step.robust_attempts.iter().cloned());
+    accum.retry_count += step.retry_count;
+    if step.effective_fuzzy_tol > accum.effective_fuzzy_tol {
+        accum.effective_fuzzy_tol = step.effective_fuzzy_tol;
+    }
+}
+
 /// Perform a compound-aware boolean operation with options.
+///
+/// When each operand is a single solid, this delegates to [`boolean_op_with_options`].
+/// Otherwise each internal binary boolean uses the same [`BooleanOptions`] as a
+/// full pipeline (fuzzy, glue, healing, simplify, make-connected, history), and the
+/// returned report aggregates step diagnostics.
 pub fn boolean_op_compound_with_options(
     op: BooleanOpType,
     a: &BRep,
     b: &BRep,
     options: BooleanOptions,
 ) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
-    // For now, delegate to regular boolean with options
-    // A full implementation would track per-solid reports
     let a_solids = a.flatten_to_solids();
     let b_solids = b.flatten_to_solids();
+
+    if a_solids.is_empty() || b_solids.is_empty() {
+        return Err(BooleanError::EmptyInput);
+    }
 
     if a_solids.len() <= 1 && b_solids.len() <= 1 {
         return boolean_op_with_options(op, a, b, options);
     }
 
-    let result = boolean_op_compound(op, a, b)?;
-    let report = BooleanExecutionReport::default();
+    let mut report = BooleanExecutionReport {
+        input_faces_a: face_count_of(a),
+        input_faces_b: face_count_of(b),
+        effective_fuzzy_tol: options.fuzzy_tol.max(0.0),
+        ..BooleanExecutionReport::default()
+    };
+
+    let result = match op {
+        BooleanOpType::Union => {
+            let all_solids: Vec<BRep> = a_solids
+                .iter()
+                .map(|s| brep_operand_for_compound_solid(a, s))
+                .chain(
+                    b_solids
+                        .iter()
+                        .map(|s| brep_operand_for_compound_solid(b, s)),
+                )
+                .collect();
+            if all_solids.is_empty() {
+                return Err(BooleanError::EmptyInput);
+            }
+            if all_solids.len() == 1 {
+                all_solids.into_iter().next().unwrap()
+            } else {
+                let mut acc = all_solids[0].clone();
+                for part in &all_solids[1..] {
+                    let (next, step_report) =
+                        boolean_op_with_options(BooleanOpType::Union, &acc, part, options)?;
+                    merge_boolean_execution_reports_for_compound_step(&mut report, &step_report);
+                    acc = next;
+                }
+                acc
+            }
+        }
+        BooleanOpType::Difference => {
+            let mut results = Vec::new();
+            for solid_a in a_solids {
+                let mut acc = brep_operand_for_compound_solid(a, solid_a);
+                for solid_b in &b_solids {
+                    let brep_b = brep_operand_for_compound_solid(b, solid_b);
+                    let (next, step_report) =
+                        boolean_op_with_options(BooleanOpType::Difference, &acc, &brep_b, options)?;
+                    merge_boolean_execution_reports_for_compound_step(&mut report, &step_report);
+                    acc = next;
+                }
+                results.push(acc);
+            }
+
+            if results.len() == 1 {
+                results.remove(0)
+            } else {
+                BRep::compound_from_shapes(&results)
+            }
+        }
+        BooleanOpType::Intersection => {
+            let mut results = Vec::new();
+            for solid_a in a_solids {
+                let brep_a = brep_operand_for_compound_solid(a, solid_a);
+
+                for solid_b in &b_solids {
+                    let brep_b = brep_operand_for_compound_solid(b, solid_b);
+
+                    if let Ok((result, step_report)) = boolean_op_with_options(
+                        BooleanOpType::Intersection,
+                        &brep_a,
+                        &brep_b,
+                        options,
+                    ) && !result.solids.is_empty()
+                    {
+                        merge_boolean_execution_reports_for_compound_step(
+                            &mut report,
+                            &step_report,
+                        );
+                        results.push(result);
+                    }
+                }
+            }
+
+            if results.is_empty() {
+                return Err(BooleanError::DegenerateResult);
+            } else if results.len() == 1 {
+                results.remove(0)
+            } else {
+                BRep::compound_from_shapes(&results)
+            }
+        }
+    };
+
+    report.output_faces = face_count_of(&result);
     Ok((result, report))
 }
 
@@ -3621,18 +4187,12 @@ pub fn fuse_compound(compound: &BRep) -> Result<BRep, BooleanError> {
         return Err(BooleanError::EmptyInput);
     }
     if solids.len() == 1 {
-        let mut result = BRep::new();
-        result.solids.push(solids[0].clone());
-        return Ok(result);
+        return Ok(brep_operand_for_compound_solid(compound, solids[0]));
     }
 
     let breps: Vec<BRep> = solids
         .iter()
-        .map(|solid| {
-            let mut brep = BRep::new();
-            brep.solids.push((*solid).clone());
-            brep
-        })
+        .map(|s| brep_operand_for_compound_solid(compound, s))
         .collect();
 
     general_fuse(&breps)
@@ -3828,7 +4388,7 @@ fn validate_shared_edge_continuity(
         .get(edge_idx)
         .copied()
         .unwrap_or(false);
-    
+
     if !same_param {
         // For non-SameParameter edges, we need extra care.
         // For now, we skip PCurve continuity checks on such edges to avoid
@@ -3923,7 +4483,7 @@ fn validate_uv_regions_compatible(
     // they likely represent compatible patches of the same surface.
     // (E.g., a plane split into two faces: one may have [0, 100, 0, 10]
     // and the other [50, 150, 0, 10] -- overlapping u-domain [50, 100].)
-    
+
     let u_min = uv1[0].min(uv2[0]);
     let u_max = uv1[1].max(uv2[1]);
     let v_min = uv1[2].min(uv2[2]);
@@ -3951,11 +4511,10 @@ fn validate_uv_regions_compatible(
     // - They overlap in both dimensions, OR
     // - They cover adjacent parts of the same surface (e.g., coplanar patches)
     //   Adjacent means they touch along an edge with zero gap.
-    
 
-    (u_overlap > UV_TOL && v_overlap > UV_TOL) || 
-                               ((u_overlap_max - u_overlap_min).abs() <= UV_TOL && v_overlap > 0.0) ||
-                               ((v_overlap_max - v_overlap_min).abs() <= UV_TOL && u_overlap > 0.0)
+    (u_overlap > UV_TOL && v_overlap > UV_TOL)
+        || ((u_overlap_max - u_overlap_min).abs() <= UV_TOL && v_overlap > 0.0)
+        || ((v_overlap_max - v_overlap_min).abs() <= UV_TOL && u_overlap > 0.0)
 }
 
 /// Absolute area of a simple 3D polygon via Newell projection (see `builder::ResultBuilder`).
@@ -3987,19 +4546,15 @@ fn newell_polygon_abs_area(poly: &[glam::DVec3], normal: glam::DVec3) -> f64 {
     0.5 * area2.abs()
 }
 
-fn face_outer_polygon_points(
-    brep: &BRep,
-    si: usize,
-    shi: usize,
-    fi: usize,
-) -> Vec<glam::DVec3> {
+fn face_outer_polygon_points(brep: &BRep, si: usize, shi: usize, fi: usize) -> Vec<glam::DVec3> {
     let face = &brep.solids[si].shells[shi].faces[fi];
     let mut pts = Vec::new();
     for we in &face.outer_wire.edges {
         if let Some((u, _)) = oriented_edge_vertices(brep, *we)
-            && let Some(v) = brep.vertices.get(u) {
-                pts.push(v.point);
-            }
+            && let Some(v) = brep.vertices.get(u)
+        {
+            pts.push(v.point);
+        }
     }
     pts
 }
@@ -4011,9 +4566,10 @@ fn wire_to_polygon_points(
     let mut pts = Vec::new();
     for we in wire {
         if let Some((u, _)) = oriented_edge_vertices(brep, *we)
-            && let Some(v) = brep.vertices.get(u) {
-                pts.push(v.point);
-            }
+            && let Some(v) = brep.vertices.get(u)
+        {
+            pts.push(v.point);
+        }
     }
     pts
 }
@@ -4268,7 +4824,10 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 let face2_normal = brep.solids[si].shells[shi].faces[fi2].normal;
 
                 let get_face_pt = |fi: usize| -> Option<glam::DVec3> {
-                    let we = brep.solids[si].shells[shi].faces[fi].outer_wire.edges.first()?;
+                    let we = brep.solids[si].shells[shi].faces[fi]
+                        .outer_wire
+                        .edges
+                        .first()?;
                     let edge = brep.edges.get(we.idx)?;
                     let v_idx = if we.forward { edge.start } else { edge.end };
                     brep.vertices.get(v_idx).map(|v| v.point)
@@ -4281,15 +4840,10 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         let v_idx = if we.forward { e.start } else { e.end };
                         out.push(brep.vertices.get(v_idx)?.point);
                     }
-                    if out.is_empty() {
-                        None
-                    } else {
-                        Some(out)
-                    }
+                    if out.is_empty() { None } else { Some(out) }
                 };
 
-                let (same_domain, is_planar) =
-                    surfaces_are_same_domain(brep, si, shi, fi1, fi2);
+                let (same_domain, is_planar) = surfaces_are_same_domain(brep, si, shi, fi1, fi2);
 
                 let mut should_merge = match same_domain {
                     Some(false) => false,
@@ -4297,9 +4851,11 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         // For planar faces add a vertex–plane distance sanity check.
                         if is_planar {
                             let n = face1_normal.normalize();
-                            if let (Some(pt1), Some(vs1), Some(vs2)) =
-                                (get_face_pt(fi1), face_outer_vertices(fi1), face_outer_vertices(fi2))
-                            {
+                            if let (Some(pt1), Some(vs1), Some(vs2)) = (
+                                get_face_pt(fi1),
+                                face_outer_vertices(fi1),
+                                face_outer_vertices(fi2),
+                            ) {
                                 const PLANAR_MERGE_TOL: f64 = 1e-6;
                                 let all_vs1_on_plane1 = vs1
                                     .iter()
@@ -4321,8 +4877,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         let cross = face1_normal.cross(face2_normal).length();
                         if cross > 1e-6 {
                             false
-                        } else if let (Some(pt1), Some(pt2)) =
-                            (get_face_pt(fi1), get_face_pt(fi2))
+                        } else if let (Some(pt1), Some(pt2)) = (get_face_pt(fi1), get_face_pt(fi2))
                         {
                             let n = face1_normal.normalize();
                             (pt2 - pt1).dot(n).abs() <= 1e-6
@@ -4336,9 +4891,8 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 // faces with incompatible topology or UV regions.
                 if should_merge {
                     // Check shared edge continuity (PCurve alignment).
-                    let edge_continuous = validate_shared_edge_continuity(
-                        brep, si, shi, fi1, fi2, *edge_idx
-                    );
+                    let edge_continuous =
+                        validate_shared_edge_continuity(brep, si, shi, fi1, fi2, *edge_idx);
                     if !edge_continuous {
                         should_merge = false;
                     }
@@ -4346,9 +4900,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
 
                 if should_merge {
                     // Check UV region compatibility.
-                    let uv_compatible = validate_uv_regions_compatible(
-                        brep, si, shi, fi1, fi2
-                    );
+                    let uv_compatible = validate_uv_regions_compatible(brep, si, shi, fi1, fi2);
                     if !uv_compatible {
                         should_merge = false;
                     }
@@ -4359,8 +4911,14 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 }
 
                 // Merge wire: splice Face2 edges into Face1 at the position of the shared edge.
-                let wire1 = brep.solids[si].shells[shi].faces[fi1].outer_wire.edges.clone();
-                let wire2 = brep.solids[si].shells[shi].faces[fi2].outer_wire.edges.clone();
+                let wire1 = brep.solids[si].shells[shi].faces[fi1]
+                    .outer_wire
+                    .edges
+                    .clone();
+                let wire2 = brep.solids[si].shells[shi].faces[fi2]
+                    .outer_wire
+                    .edges
+                    .clone();
 
                 if let Some(merged_wire_edges) = splice_wires(&wire1, &wire2, *edge_idx) {
                     let merged_wire_edges = cleanup_merged_wire_edges(brep, &merged_wire_edges);
@@ -4385,9 +4943,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
 
                     // Build merged face (mesh_dirty=true; normal reused from face1).
                     let merged_face = rcad_kernel::topology::Face {
-                        outer_wire: rcad_kernel::topology::Wire {
-                            edges: outer_edges,
-                        },
+                        outer_wire: rcad_kernel::topology::Wire { edges: outer_edges },
                         inner_wires: all_inner,
                         normal: face1_normal,
                         triangles: vec![],
@@ -4567,17 +5123,10 @@ fn collapse_collinear_segments_with_existing_bridge(
         }
     }
 
-    if out.len() >= 3 {
-        Some(out)
-    } else {
-        None
-    }
+    if out.len() >= 3 { Some(out) } else { None }
 }
 
-fn wire_is_closed_and_connected(
-    brep: &BRep,
-    wire: &[rcad_kernel::topology::WireEdge],
-) -> bool {
+fn wire_is_closed_and_connected(brep: &BRep, wire: &[rcad_kernel::topology::WireEdge]) -> bool {
     if wire.len() < 3 {
         return false;
     }
@@ -4677,11 +5226,7 @@ fn cancel_duplicate_segments_by_parity(
         .filter_map(|(i, &we)| if keep[i] { Some(we) } else { None })
         .collect();
 
-    if out.len() >= 3 {
-        Some(out)
-    } else {
-        None
-    }
+    if out.len() >= 3 { Some(out) } else { None }
 }
 
 /// Detect figure-8 self-intersecting wires and extract inner sub-loops.
@@ -4709,7 +5254,10 @@ fn cancel_duplicate_segments_by_parity(
 fn extract_inner_loops_from_wire(
     brep: &BRep,
     wire: &[rcad_kernel::topology::WireEdge],
-) -> (Vec<rcad_kernel::topology::WireEdge>, Vec<rcad_kernel::topology::Wire>) {
+) -> (
+    Vec<rcad_kernel::topology::WireEdge>,
+    Vec<rcad_kernel::topology::Wire>,
+) {
     use std::collections::HashMap;
 
     // Build vertex sequence: for each edge in the wire, record the start vertex.
@@ -4740,7 +5288,8 @@ fn extract_inner_loops_from_wire(
     // The sub-loop wire[start..end] is the inner loop.
     // The outer wire is wire[0..start] + wire[end..].
     let inner_edges: Vec<rcad_kernel::topology::WireEdge> = wire[start..end].to_vec();
-    let mut outer_edges: Vec<rcad_kernel::topology::WireEdge> = Vec::with_capacity(wire.len() - inner_edges.len());
+    let mut outer_edges: Vec<rcad_kernel::topology::WireEdge> =
+        Vec::with_capacity(wire.len() - inner_edges.len());
     outer_edges.extend_from_slice(&wire[..start]);
     outer_edges.extend_from_slice(&wire[end..]);
 
@@ -4815,10 +5364,10 @@ fn cleanup_merged_wire_edges(
 
     if let Some(collapsed) = collapse_collinear_segments_with_existing_bridge(brep, &out)
         && let Some(reordered) = reorder_wire_into_connected_loop(brep, &collapsed)
-            && wire_is_closed_and_connected(brep, &reordered)
-        {
-            out = reordered;
-        }
+        && wire_is_closed_and_connected(brep, &reordered)
+    {
+        out = reordered;
+    }
 
     out
 }
@@ -4907,7 +5456,8 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
             (Surface3::Torus(t1), Surface3::Torus(t2)) => {
                 (t1.major_radius - t2.major_radius).abs() <= LIN_TOL
                     && (t1.minor_radius - t2.minor_radius).abs() <= LIN_TOL
-                    && t1.axis
+                    && t1
+                        .axis
                         .normalize_or_zero()
                         .cross(t2.axis.normalize_or_zero())
                         .length()
@@ -4915,7 +5465,8 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                     && (t1.center - t2.center).length() <= LIN_TOL
             }
             (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
-                (s1.radius - s2.radius).abs() <= LIN_TOL && (s1.center - s2.center).length() <= LIN_TOL
+                (s1.radius - s2.radius).abs() <= LIN_TOL
+                    && (s1.center - s2.center).length() <= LIN_TOL
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
                 // BSpline same-domain detection.
@@ -4923,23 +5474,50 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
 
                 if b1.degree_u != b2.degree_u || b1.degree_v != b2.degree_v {
                     false
-                } else if b1.knots_u.len() != b2.knots_u.len() || b1.knots_v.len() != b2.knots_v.len() {
+                } else if b1.knots_u.len() != b2.knots_u.len()
+                    || b1.knots_v.len() != b2.knots_v.len()
+                {
                     false
-                } else if !b1.knots_u.iter().zip(b2.knots_u.iter()).all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL) {
+                } else if !b1
+                    .knots_u
+                    .iter()
+                    .zip(b2.knots_u.iter())
+                    .all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL)
+                {
                     false
-                } else if !b1.knots_v.iter().zip(b2.knots_v.iter()).all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL) {
+                } else if !b1
+                    .knots_v
+                    .iter()
+                    .zip(b2.knots_v.iter())
+                    .all(|(k1, k2)| (k1 - k2).abs() <= LIN_TOL)
+                {
                     false
                 } else if b1.control_points.len() != b2.control_points.len() {
                     false
-                } else if !b1.control_points.iter().zip(b2.control_points.iter()).all(|(row1, row2)| {
-                    row1.len() == row2.len() && row1.iter().zip(row2.iter()).all(|(cp1, cp2)| cp1.distance(*cp2) <= CP_TOL)
-                }) {
+                } else if !b1.control_points.iter().zip(b2.control_points.iter()).all(
+                    |(row1, row2)| {
+                        row1.len() == row2.len()
+                            && row1
+                                .iter()
+                                .zip(row2.iter())
+                                .all(|(cp1, cp2)| cp1.distance(*cp2) <= CP_TOL)
+                    },
+                ) {
                     false
                 } else if b1.weights.len() != b2.weights.len() {
                     false
-                } else { !!b1.weights.iter().zip(b2.weights.iter()).all(|(row1, row2)| {
-                    row1.len() == row2.len() && row1.iter().zip(row2.iter()).all(|(w1, w2)| (w1 - w2).abs() <= LIN_TOL)
-                }) }
+                } else {
+                    !!b1.weights
+                        .iter()
+                        .zip(b2.weights.iter())
+                        .all(|(row1, row2)| {
+                            row1.len() == row2.len()
+                                && row1
+                                    .iter()
+                                    .zip(row2.iter())
+                                    .all(|(w1, w2)| (w1 - w2).abs() <= LIN_TOL)
+                        })
+                }
             }
             _ => false,
         })
@@ -4957,7 +5535,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
         // Count faces with matching vs. opposite orientation to detect outliers.
         // A face with opposite orientation to most others might be pseudo-internal
         // and should be preserved rather than removed.
-        
+
         // For now, we accept all orientations as valid (conservative).
         // Future: could add full BRep solid vs. hollow validation.
         true
@@ -5083,13 +5661,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                         if overlap == min_edges || (strong_same_domain && overlap_ratio >= 0.75) {
                             // Validate this is a true internal duplicate, not pseudo-internal.
                             let is_true_duplicate = is_true_internal_duplicate(
-                                &out,
-                                si,
-                                shi,
-                                fi,
-                                fj,
-                                &edges_i,
-                                &edges_j,
+                                &out, si, shi, fi, fj, &edges_i, &edges_j,
                             );
 
                             if !is_true_duplicate {
@@ -5098,8 +5670,10 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                             }
 
                             // Validate orientation consistency before removal.
-                            let orientation_valid_i = validate_face_orientation_consistency(&out, si, shi, fi);
-                            let orientation_valid_j = validate_face_orientation_consistency(&out, si, shi, fj);
+                            let orientation_valid_i =
+                                validate_face_orientation_consistency(&out, si, shi, fi);
+                            let orientation_valid_j =
+                                validate_face_orientation_consistency(&out, si, shi, fj);
 
                             if !orientation_valid_i || !orientation_valid_j {
                                 // Orientation inconsistency detected: skip removal.
@@ -5127,8 +5701,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
 }
 
 fn face_count_of(brep: &BRep) -> usize {
-    brep
-        .solids
+    brep.solids
         .iter()
         .flat_map(|s| &s.shells)
         .flat_map(|sh| &sh.faces)
@@ -5140,7 +5713,9 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use rcad_kernel::PrimitiveSolid;
-    use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};
+    use rcad_modeling::{
+        make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
+    };
 
     fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
@@ -5195,15 +5770,42 @@ mod tests {
         let b = box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let c = box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let fused = general_fuse(&[a.clone(), b.clone(), c.clone()]).expect("general_fuse should succeed");
+        let fused =
+            general_fuse(&[a.clone(), b.clone(), c.clone()]).expect("general_fuse should succeed");
         let v = rcad_kernel::properties::volume(&fused);
         assert!((v - 3.0).abs() < 1e-6, "expected volume 3.0, got {v}");
     }
 
     #[test]
+    fn boolean_op_compound_with_options_union_merges_step_reports() {
+        let b1 = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b2 = box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let b3 = box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        let compound_ab = BRep::compound_from_shapes(&[b1, b2]);
+
+        let mut opts = BooleanOptions::default();
+        opts.include_history = true;
+
+        let (out, report) =
+            boolean_op_compound_with_options(BooleanOpType::Union, &compound_ab, &b3, opts)
+                .expect("compound union with options should succeed");
+
+        let v = rcad_kernel::properties::volume(&out);
+        assert!((v - 3.0).abs() < 1e-5, "expected volume 3.0, got {v}");
+        assert!(
+            report.history_faces > 0 || report.history_edges > 0,
+            "expected aggregated history counters from binary fold steps"
+        );
+        assert_eq!(report.input_faces_a, face_count(&compound_ab));
+        assert_eq!(report.input_faces_b, face_count(&b3));
+        assert_eq!(report.output_faces, face_count(&out));
+    }
+
+    #[test]
     fn general_fuse_with_history_single_input_has_no_steps() {
         let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
-        let (_fused, hist) = general_fuse_with_history(&[a]).expect("single-item general_fuse_with_history should succeed");
+        let (_fused, hist) = general_fuse_with_history(&[a])
+            .expect("single-item general_fuse_with_history should succeed");
         assert!(hist.steps.is_empty());
     }
 
@@ -5213,9 +5815,17 @@ mod tests {
         let b = box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let c = box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let (fused, hist) = general_fuse_with_history(&[a, b, c]).expect("general_fuse_with_history should succeed");
-        assert_eq!(hist.steps.len(), 2, "three inputs should produce two fold steps");
-        assert!(hist.steps.iter().all(|h| !h.is_empty()), "each step should carry face history");
+        let (fused, hist) = general_fuse_with_history(&[a, b, c])
+            .expect("general_fuse_with_history should succeed");
+        assert_eq!(
+            hist.steps.len(),
+            2,
+            "three inputs should produce two fold steps"
+        );
+        assert!(
+            hist.steps.iter().all(|h| !h.is_empty()),
+            "each step should carry face history"
+        );
 
         let v = rcad_kernel::properties::volume(&fused);
         assert!((v - 3.0).abs() < 1e-6, "expected volume 3.0, got {v}");
@@ -5240,8 +5850,10 @@ mod tests {
         let b = box_at(2.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let c = box_at(4.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let serial = general_fuse(&[a.clone(), b.clone(), c.clone()]).expect("serial general_fuse should succeed");
-        let (parallel, _) = general_fuse_par(&[a, b, c]).expect("parallel general_fuse should succeed");
+        let serial = general_fuse(&[a.clone(), b.clone(), c.clone()])
+            .expect("serial general_fuse should succeed");
+        let (parallel, _) =
+            general_fuse_par(&[a, b, c]).expect("parallel general_fuse should succeed");
 
         let v_serial = rcad_kernel::properties::volume(&serial);
         let v_parallel = rcad_kernel::properties::volume(&parallel);
@@ -5261,7 +5873,12 @@ mod tests {
         assert_eq!(report.steps.len(), 2);
         assert_eq!(report.steps[0].step_index, 0);
         assert_eq!(report.steps[1].step_index, 1);
-        assert!(report.steps.iter().all(|s| s.input_faces > 0 && s.output_faces > 0));
+        assert!(
+            report
+                .steps
+                .iter()
+                .all(|s| s.input_faces > 0 && s.output_faces > 0)
+        );
     }
 
     #[test]
@@ -5270,7 +5887,8 @@ mod tests {
         let b = box_at(0.6, 0.0, 0.0, 1.2, 1.0, 1.0);
         let c = box_at(1.2, 0.0, 0.0, 1.2, 1.0, 1.0);
 
-        let fused = general_fuse(&[a.clone(), b.clone(), c.clone()]).expect("general_fuse should succeed");
+        let fused =
+            general_fuse(&[a.clone(), b.clone(), c.clone()]).expect("general_fuse should succeed");
         let v = rcad_kernel::properties::volume(&fused);
         let sum = rcad_kernel::properties::volume(&a)
             + rcad_kernel::properties::volume(&b)
@@ -5279,7 +5897,10 @@ mod tests {
         // Overlapping chain: union volume must be positive and strictly less than
         // naive volume sum (because overlaps exist).
         assert!(v > 0.0, "volume should be positive");
-        assert!(v < sum - 1e-6, "union volume should be less than sum, got v={v}, sum={sum}");
+        assert!(
+            v < sum - 1e-6,
+            "union volume should be less than sum, got v={v}, sum={sum}"
+        );
     }
 
     #[test]
@@ -5293,8 +5914,9 @@ mod tests {
     fn general_fuse_split_first_single_input_returns_clone() {
         let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let (fused, report) = general_fuse_split_first_with_options(&[a.clone()], SplitterOptions::default())
-            .expect("single-item split-first general fuse should succeed");
+        let (fused, report) =
+            general_fuse_split_first_with_options(&[a.clone()], SplitterOptions::default())
+                .expect("single-item split-first general fuse should succeed");
 
         assert_eq!(face_count(&fused), face_count(&a));
         assert_eq!(report.split_report.objects.len(), 1);
@@ -5327,23 +5949,19 @@ mod tests {
         let b = box_at(0.6, 0.0, 0.0, 1.2, 1.0, 1.0);
         let c = box_at(1.2, 0.0, 0.0, 1.2, 1.0, 1.0);
 
-        let (_fused, report) = general_fuse_split_first_with_options(
-            &[a, b, c],
-            SplitterOptions::default(),
-        )
-        .expect("split-first general fuse should succeed on overlapping chain");
+        let (_fused, report) =
+            general_fuse_split_first_with_options(&[a, b, c], SplitterOptions::default())
+                .expect("split-first general fuse should succeed on overlapping chain");
 
         assert_eq!(report.split_report.objects.len(), 3);
-        assert!(report
-            .split_report
-            .objects
-            .iter()
-            .all(|obj| obj.completed));
-        assert!(report
-            .split_report
-            .objects
-            .iter()
-            .all(|obj| obj.steps.len() == 2));
+        assert!(report.split_report.objects.iter().all(|obj| obj.completed));
+        assert!(
+            report
+                .split_report
+                .objects
+                .iter()
+                .all(|obj| obj.steps.len() == 2)
+        );
         assert_eq!(report.fuse_report.steps.len(), 2);
     }
 
@@ -5521,11 +6139,8 @@ mod tests {
 
     #[test]
     fn boolean_retry_ladder_for_error_escalates_for_numerical_failure() {
-        let vals = boolean_retry_ladder_for_error(
-            1e-6,
-            &[1e-5],
-            &BooleanError::NumericalFailure("test"),
-        );
+        let vals =
+            boolean_retry_ladder_for_error(1e-6, &[1e-5], &BooleanError::NumericalFailure("test"));
         assert_eq!(vals.len(), 2);
         assert!((vals[0] - 1e-5).abs() <= 1e-15);
         assert!((vals[1] - 1e-4).abs() <= 1e-14);
@@ -5566,7 +6181,10 @@ mod tests {
             2,
             true,
         );
-        assert_eq!(vals.first().copied(), Some((1e-6, Some(BooleanRetryClass::DegenerateTopology), 1)));
+        assert_eq!(
+            vals.first().copied(),
+            Some((1e-6, Some(BooleanRetryClass::DegenerateTopology), 1))
+        );
         assert!(vals.contains(&(1e-5, Some(BooleanRetryClass::DegenerateTopology), 0)));
     }
 
@@ -5582,12 +6200,18 @@ mod tests {
             2,
             true,
         );
-        let first = vals.first().copied().expect("expected fuzzy-growth candidate");
+        let first = vals
+            .first()
+            .copied()
+            .expect("expected fuzzy-growth candidate");
         assert_eq!(first.1, Some(BooleanRetryClass::NumericalInstability));
         assert_eq!(first.2, 0);
         assert!(first.0 > 1e-6);
 
-        let last = vals.last().copied().expect("expected same-fuzzy strategy candidate");
+        let last = vals
+            .last()
+            .copied()
+            .expect("expected same-fuzzy strategy candidate");
         assert_eq!(last.1, Some(BooleanRetryClass::NumericalInstability));
         assert_eq!(last.2, 1);
         assert!((last.0 - 1e-6).abs() <= 1e-15);
@@ -5772,7 +6396,10 @@ mod tests {
 
         assert!(options.use_glue);
         assert!(options.glue_tolerance + 1e-15 >= expected_glue_tolerance);
-        assert_eq!(options.make_connected_max_passes, BooleanOptions::default().make_connected_max_passes);
+        assert_eq!(
+            options.make_connected_max_passes,
+            BooleanOptions::default().make_connected_max_passes
+        );
     }
 
     #[test]
@@ -5869,20 +6496,20 @@ mod tests {
                     make_connected_tolerance_cap: tolerance::TOLERANCE_ABS * 1000.0,
                     make_connected_scoped: false,
                     make_connected_scope_seed_length: tolerance::TOLERANCE_ABS * 10.0,
-                                        make_connected_scope_history_ring_depth: 1,
-                                        make_connected_scope_fallback_to_global: true,
+                    make_connected_scope_history_ring_depth: 1,
+                    make_connected_scope_fallback_to_global: true,
                     make_connected_scope_fallback_min_seed_vertices: 1,
-                                        make_connected_scope_fallback_min_seed_edge_coverage: 0.0,
-                                        make_connected_scope_fallback_min_seed_face_coverage: 0.0,
-                                        make_connected_scope_global_fallback_tolerance_multiplier: 1.0,
+                    make_connected_scope_fallback_min_seed_edge_coverage: 0.0,
+                    make_connected_scope_fallback_min_seed_face_coverage: 0.0,
+                    make_connected_scope_global_fallback_tolerance_multiplier: 1.0,
                     make_connected_scope_global_fallback_max_passes: 0,
                     make_connected_scope_global_fallback_tolerance_growth: 0.0,
                     make_connected_scope_global_fallback_tolerance_cap: 0.0,
                     make_connected_scope_seed_mode: MakeConnectedScopeSeedMode::Hybrid,
                     make_connected_scope_min_history_edges: 2,
                     fuzzy_tol: 0.0,
-                                        use_glue: false,
-                                        glue_tolerance: tolerance::TOLERANCE_ABS,
+                    use_glue: false,
+                    glue_tolerance: tolerance::TOLERANCE_ABS,
                 },
                 fuzzy_retry_ladder: vec![1e-6, 1e-5],
                 retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
@@ -5895,31 +6522,57 @@ mod tests {
         assert!(report.retry_count <= 2);
         assert!(report.effective_fuzzy_tol >= 0.0);
         assert_eq!(report.robust_attempts.len(), report.retry_count + 1);
-        assert!(report.robust_attempts.last().map(|a| a.success).unwrap_or(false));
+        assert!(
+            report
+                .robust_attempts
+                .last()
+                .map(|a| a.success)
+                .unwrap_or(false)
+        );
         assert!(report.robust_attempts.iter().all(|a| a.retry_round == 0));
-        assert!(report.robust_attempts.iter().all(|a| !a.make_connected_scoped_enabled));
-        assert!(report
-            .robust_attempts
-            .iter()
-            .all(|a| a.success || a.retry_class.is_some()));
-        assert!(report.robust_attempts.iter().all(|a| a.success || a.origin_retry_class.is_none() || a.retry_class.is_some()));
-        assert!(report
-            .robust_attempts
-            .iter()
-            .all(|a| !a.success || a.make_connected_scope_seed_mode.is_none()));
-        assert!(report
-            .robust_attempts
-            .iter()
-            .all(|a| !a.success || a.make_connected_scope_seed_length.is_none()));
-        assert!(report
-            .robust_attempts
-            .iter()
-            .all(|a| !a.success || a.make_connected_scope_seed_source.is_none()));
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| !a.make_connected_scoped_enabled)
+        );
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| a.success || a.retry_class.is_some())
+        );
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| a.success || a.origin_retry_class.is_none() || a.retry_class.is_some())
+        );
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| !a.success || a.make_connected_scope_seed_mode.is_none())
+        );
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| !a.success || a.make_connected_scope_seed_length.is_none())
+        );
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| !a.success || a.make_connected_scope_seed_source.is_none())
+        );
         assert!(report.robust_attempts.iter().all(|a| !a.used_glue));
-        assert!(report
-            .robust_attempts
-            .iter()
-            .all(|a| (a.glue_tolerance - tolerance::TOLERANCE_ABS).abs() <= 1e-15));
+        assert!(
+            report
+                .robust_attempts
+                .iter()
+                .all(|a| (a.glue_tolerance - tolerance::TOLERANCE_ABS).abs() <= 1e-15)
+        );
     }
 
     #[test]
@@ -5969,7 +6622,10 @@ mod tests {
         .expect("robust union with scoped make-connected should succeed");
 
         assert_eq!(report.robust_attempts.len(), 1);
-        let attempt = report.robust_attempts.last().expect("expected attempt report");
+        let attempt = report
+            .robust_attempts
+            .last()
+            .expect("expected attempt report");
         assert!(attempt.success);
         assert_eq!(attempt.retry_round, 0);
         assert!(attempt.make_connected_scoped_enabled);
@@ -6030,11 +6686,17 @@ mod tests {
         assert!(report.objects.iter().all(|r| r.completed));
         assert!(report.objects.iter().all(|r| r.error.is_none()));
         assert!(
-            report.objects.iter().any(|r| !r.steps[0].skipped_by_broad_phase),
+            report
+                .objects
+                .iter()
+                .any(|r| !r.steps[0].skipped_by_broad_phase),
             "at least one object should execute split step"
         );
         assert!(
-            report.objects.iter().any(|r| r.steps[0].skipped_by_broad_phase),
+            report
+                .objects
+                .iter()
+                .any(|r| r.steps[0].skipped_by_broad_phase),
             "at least one far object should be skipped by broad-phase"
         );
     }
@@ -6054,7 +6716,12 @@ mod tests {
 
         assert_eq!(out.len(), 2);
         assert_eq!(report.objects.len(), 2);
-        assert!(report.objects.iter().all(|r| r.steps[0].skipped_by_broad_phase));
+        assert!(
+            report
+                .objects
+                .iter()
+                .all(|r| r.steps[0].skipped_by_broad_phase)
+        );
         assert!(report.objects.iter().all(|r| r.completed));
         assert!(report.objects.iter().all(|r| r.error.is_none()));
         assert!(
@@ -6086,7 +6753,12 @@ mod tests {
         assert!(report.objects[0].error.is_some());
         assert_eq!(report.objects[0].steps.len(), 1);
         assert_eq!(report.objects[0].steps[0].step_index, 0);
-        assert!(report.objects[0].steps[0].validation_issue_count.unwrap_or(0) > 0);
+        assert!(
+            report.objects[0].steps[0]
+                .validation_issue_count
+                .unwrap_or(0)
+                > 0
+        );
 
         assert!(report.objects[1].completed);
         assert!(report.objects[1].error.is_none());
@@ -6168,7 +6840,10 @@ mod tests {
         )
         .expect_err("strict checked splitter should fail on current intermediate issues");
 
-        assert!(matches!(err, SplitterError::StepInvalid { step_index: 0, .. }));
+        assert!(matches!(
+            err,
+            SplitterError::StepInvalid { step_index: 0, .. }
+        ));
     }
 
     #[test]
@@ -6186,13 +6861,9 @@ mod tests {
         let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
 
-        let (out, report) = boolean_op_simplified(
-            BooleanOpType::Union,
-            &a,
-            &b,
-            SimplifyOptions::default(),
-        )
-        .expect("boolean_op_simplified union should succeed");
+        let (out, report) =
+            boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default())
+                .expect("boolean_op_simplified union should succeed");
 
         assert!(!out.solids.is_empty());
         assert!(report.issues_before >= report.issues_after);
@@ -6201,7 +6872,8 @@ mod tests {
     #[test]
     fn simplify_brep_post_ops_runs_same_domain_and_internal_cleanup() {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let raw = boolean_op(BooleanOpType::Union, &a, &b)
             .expect("coplanar flush union should succeed before simplify");
 
@@ -6235,10 +6907,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -6276,7 +6956,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f1, f2] }],
+            shells: vec![Shell {
+                faces: vec![f1, f2],
+            }],
         });
 
         let (out, removed) = remove_internal_faces(&brep);
@@ -6289,10 +6971,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Vertex, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(-1.0, 0.0, 0.0),
+        }); // 3
 
         // Backtrack segment 0<->1, then a valid triangle 0->2->3->0.
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
@@ -6309,7 +6999,8 @@ mod tests {
         ];
 
         let cleaned = cleanup_merged_wire_edges(&mut brep, &wire);
-        let cleaned_sig: Vec<(usize, bool)> = cleaned.iter().map(|we| (we.idx, we.forward)).collect();
+        let cleaned_sig: Vec<(usize, bool)> =
+            cleaned.iter().map(|we| (we.idx, we.forward)).collect();
         assert_eq!(cleaned_sig, vec![(1, true), (2, true), (3, true)]);
         assert!(wire_is_closed_and_connected(&brep, &cleaned));
     }
@@ -6319,10 +7010,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Vertex, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -6330,9 +7029,15 @@ mod tests {
         brep.edges.push(Edge { start: 3, end: 0 }); // e3
 
         // Removing the first two edges would produce an invalid open chain.
-        let wire = vec![WireEdge::fwd(0), WireEdge::rev(0), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let wire = vec![
+            WireEdge::fwd(0),
+            WireEdge::rev(0),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+        ];
         let cleaned = cleanup_merged_wire_edges(&mut brep, &wire);
-        let cleaned_sig: Vec<(usize, bool)> = cleaned.iter().map(|we| (we.idx, we.forward)).collect();
+        let cleaned_sig: Vec<(usize, bool)> =
+            cleaned.iter().map(|we| (we.idx, we.forward)).collect();
         let wire_sig: Vec<(usize, bool)> = wire.iter().map(|we| (we.idx, we.forward)).collect();
         assert_eq!(cleaned_sig, wire_sig);
     }
@@ -6371,7 +7076,12 @@ mod tests {
     fn splice_wires_result_has_correct_length() {
         use rcad_kernel::topology::WireEdge;
         // A has 4 edges, B has 3 edges, shared edge removed from both → result = 4-1 + 3-1 = 5
-        let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let wire_a = vec![
+            WireEdge::fwd(0),
+            WireEdge::fwd(1),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+        ];
         let wire_b = vec![WireEdge::fwd(4), WireEdge::fwd(5), WireEdge::rev(1)];
         let merged = splice_wires(&wire_a, &wire_b, 1).expect("splice should succeed");
         assert_eq!(merged.len(), 5);
@@ -6385,18 +7095,34 @@ mod tests {
 
         // Simple square: 0->1->2->3->0
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
         brep.edges.push(Edge { start: 2, end: 3 }); // e2
         brep.edges.push(Edge { start: 3, end: 0 }); // e3
 
-        let wire = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3)];
+        let wire = vec![
+            WireEdge::fwd(0),
+            WireEdge::fwd(1),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+        ];
         let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
-        assert!(inners.is_empty(), "no inner loops expected for simple square");
+        assert!(
+            inners.is_empty(),
+            "no inner loops expected for simple square"
+        );
         let sig: Vec<(usize, bool)> = outer.iter().map(|we| (we.idx, we.forward)).collect();
         let orig: Vec<(usize, bool)> = wire.iter().map(|we| (we.idx, we.forward)).collect();
         assert_eq!(sig, orig);
@@ -6412,8 +7138,19 @@ mod tests {
         // Figure-8 wire: e0,e1,e2,e3,e4,e5,e6,e7
         // Vertex 0 appears at positions 0 and 4 → inner = e0..e3, outer = e4..e7
         let mut brep = BRep::new();
-        for (x, y) in [(0.0,0.0),(1.0,0.0),(1.0,1.0),(0.0,1.0),(2.0,0.0),(3.0,0.0),(3.0,1.0),(2.0,1.0)] {
-            brep.vertices.push(Vertex { point: DVec3::new(x, y, 0.0) });
+        for (x, y) in [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.0, 1.0),
+            (2.0, 0.0),
+            (3.0, 0.0),
+            (3.0, 1.0),
+            (2.0, 1.0),
+        ] {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(x, y, 0.0),
+            });
         }
         // Outer square edges
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
@@ -6430,8 +7167,14 @@ mod tests {
         // second loop is e4,e5,e6,e7 (also starts at 0).
         // Wire vertex sequence: 0,1,2,3, 0,4,5,6 → vertex 0 revisited at index 4.
         let wire = vec![
-            WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2), WireEdge::fwd(3),
-            WireEdge::fwd(4), WireEdge::fwd(5), WireEdge::fwd(6), WireEdge::fwd(7),
+            WireEdge::fwd(0),
+            WireEdge::fwd(1),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+            WireEdge::fwd(4),
+            WireEdge::fwd(5),
+            WireEdge::fwd(6),
+            WireEdge::fwd(7),
         ];
 
         let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
@@ -6453,8 +7196,10 @@ mod tests {
         // But if inner has < 3 edges, it should not be extracted.
         // Build: 0->1->0->2->3->4->0 — revisit at index 2, inner = [0..2] = 2 edges → skip
         let mut brep = BRep::new();
-        for (x, y) in [(0.0,0.0),(1.0,0.0),(0.0,1.0),(1.0,1.0),(2.0,0.0)] {
-            brep.vertices.push(Vertex { point: DVec3::new(x, y, 0.0) });
+        for (x, y) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 0.0)] {
+            brep.vertices.push(Vertex {
+                point: DVec3::new(x, y, 0.0),
+            });
         }
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 0 }); // e1 — back to 0 (degenerate inner)
@@ -6465,11 +7210,18 @@ mod tests {
 
         // Vertex sequence: 0,1,0,2,3,4 → revisit at index 2, inner = wire[0..2] = 2 edges → degenerate
         let wire = vec![
-            WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2),
-            WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::fwd(5),
+            WireEdge::fwd(0),
+            WireEdge::fwd(1),
+            WireEdge::fwd(2),
+            WireEdge::fwd(3),
+            WireEdge::fwd(4),
+            WireEdge::fwd(5),
         ];
         let (outer, inners) = extract_inner_loops_from_wire(&brep, &wire);
-        assert!(inners.is_empty(), "degenerate 2-edge inner loop should not be extracted");
+        assert!(
+            inners.is_empty(),
+            "degenerate 2-edge inner loop should not be extracted"
+        );
         let sig: Vec<usize> = outer.iter().map(|we| we.idx).collect();
         let orig: Vec<usize> = wire.iter().map(|we| we.idx).collect();
         assert_eq!(sig, orig);
@@ -6489,11 +7241,7 @@ mod tests {
                 }
             }
         }
-        if n > 0 {
-            acc / n as f64
-        } else {
-            DVec3::ZERO
-        }
+        if n > 0 { acc / n as f64 } else { DVec3::ZERO }
     }
 
     #[test]
@@ -6541,9 +7289,7 @@ mod tests {
             "expected at least one +X end cap face after notch difference; got 0"
         );
 
-        let has_inner_wire = plus_x_near_end
-            .iter()
-            .any(|f| !f.inner_wires.is_empty());
+        let has_inner_wire = plus_x_near_end.iter().any(|f| !f.inner_wires.is_empty());
 
         if has_inner_wire {
             let faces_with_inner: Vec<_> = plus_x_near_end
@@ -6577,12 +7323,24 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 4
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 1.0, 0.0) }); // 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 4
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 1.0, 0.0),
+        }); // 5
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1 shared border with face2
@@ -6624,7 +7382,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f1, f2] }],
+            shells: vec![Shell {
+                faces: vec![f1, f2],
+            }],
         });
 
         let (out, removed) = remove_internal_faces(&brep);
@@ -6643,16 +7403,32 @@ mod tests {
 
         let mut brep = BRep::new();
         // First square: [0,1]x[0,1]
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         // Second square: [0.5,1.5]x[0,1] (overlaps with first horizontally)
-        brep.vertices.push(Vertex { point: DVec3::new(0.5, 0.0, 0.0) }); // 4
-        brep.vertices.push(Vertex { point: DVec3::new(1.5, 0.0, 0.0) }); // 5
-        brep.vertices.push(Vertex { point: DVec3::new(1.5, 1.0, 0.0) }); // 6
-        brep.vertices.push(Vertex { point: DVec3::new(0.5, 1.0, 0.0) }); // 7
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.5, 0.0, 0.0),
+        }); // 4
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.5, 0.0, 0.0),
+        }); // 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.5, 1.0, 0.0),
+        }); // 6
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.5, 1.0, 0.0),
+        }); // 7
 
         // Edges for square 1
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
@@ -6697,7 +7473,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f1, f2] }],
+            shells: vec![Shell {
+                faces: vec![f1, f2],
+            }],
         });
 
         let (out, removed) = remove_internal_faces(&brep);
@@ -6714,10 +7492,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -6757,7 +7543,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f1, f2] }],
+            shells: vec![Shell {
+                faces: vec![f1, f2],
+            }],
         });
 
         let (out, removed) = remove_internal_faces(&brep);
@@ -6765,7 +7553,10 @@ mod tests {
         // - normals are opposite (-dot < 0.999)
         // - all edges fully overlap (100%)
         // - is_true_internal_duplicate detects opposite orientation + full coverage
-        assert_eq!(removed, 1, "true duplicates with opposite normals should be removed");
+        assert_eq!(
+            removed, 1,
+            "true duplicates with opposite normals should be removed"
+        );
         assert_eq!(out.solids[0].shells[0].faces.len(), 1);
     }
 
@@ -6880,10 +7671,7 @@ mod tests {
             normal: DVec3::Z,
         }));
         brep.geom.face_surface = vec![Some(0), Some(0)];
-        brep.geom.face_surface_range = vec![
-            Some([0.0, 1.0, 0.0, 1.0]),
-            Some([0.0, 1.0, 0.0, 1.0]),
-        ];
+        brep.geom.face_surface_range = vec![Some([0.0, 1.0, 0.0, 1.0]), Some([0.0, 1.0, 0.0, 1.0])];
         brep.geom.face_tolerance = vec![1e-7, 1e-7];
 
         brep.solids.push(Solid {
@@ -6905,7 +7693,6 @@ mod tests {
         use rcad_kernel::geom::{CylindricalSurface, Surface3};
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
-
         // Cylinder: axis = Z, origin = (0,0,0), radius = 1.0.
         // Build two half-cylindrical faces that share a vertical seam edge along Z.
         //
@@ -6917,10 +7704,18 @@ mod tests {
 
         let mut brep = BRep::new();
         // Vertices: two columns at phi=0 and phi=pi
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 1.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 1.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 1.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(-1.0, 0.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(-1.0, 0.0, 1.0),
+        }); // 3
 
         // Curved edges (approximated as straight for topology purposes).
         brep.edges.push(Edge { start: 0, end: 2 }); // e0: bottom arc (v0→v2)
@@ -6929,7 +7724,11 @@ mod tests {
         brep.edges.push(Edge { start: 2, end: 3 }); // e3: seam right (v2→v3)
 
         let surf_id = 0usize;
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            radius: 1.0,
+        };
 
         // Face A: e0(fwd) + e3(fwd) + e1(rev) + e2(rev)
         let fa = Face {
@@ -6963,7 +7762,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![fa, fb] }],
+            shells: vec![Shell {
+                faces: vec![fa, fb],
+            }],
         });
 
         // Register cylinder surface in GeomStore.
@@ -6972,7 +7773,11 @@ mod tests {
 
         let (out, merges) = unify_same_domain_faces(&brep);
         assert_eq!(merges, 1, "expected one cylindrical merge pass");
-        assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two cyl halves should merge");
+        assert_eq!(
+            out.solids[0].shells[0].faces.len(),
+            1,
+            "two cyl halves should merge"
+        );
     }
 
     #[test]
@@ -6981,10 +7786,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 1.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(-2.0, 0.0, 1.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 1.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(-1.0, 0.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(-2.0, 0.0, 1.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 2 }); // e0
         brep.edges.push(Edge { start: 1, end: 3 }); // e1
@@ -7029,7 +7842,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![fa, fb] }],
+            shells: vec![Shell {
+                faces: vec![fa, fb],
+            }],
         });
 
         brep.geom.surfaces.push(Surface3::Cone(con));
@@ -7037,7 +7852,11 @@ mod tests {
 
         let (out, merges) = unify_same_domain_faces(&brep);
         assert_eq!(merges, 1, "expected one conical merge pass");
-        assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two cone halves should merge");
+        assert_eq!(
+            out.solids[0].shells[0].faces.len(),
+            1,
+            "two cone halves should merge"
+        );
     }
 
     // Same-domain merge + geometric validation tests
@@ -7107,14 +7926,15 @@ mod tests {
         brep.geom.surfaces.push(Surface3::Plane(plane));
         brep.geom.face_surface = vec![Some(0), Some(0)];
         // Adjacent patches in u on the same plane — `validate_uv_regions_compatible` must allow merge.
-        brep.geom.face_surface_range = vec![
-            Some([0.0, 1.0, 0.0, 1.0]),
-            Some([1.0, 2.0, 0.0, 1.0]),
-        ];
+        brep.geom.face_surface_range = vec![Some([0.0, 1.0, 0.0, 1.0]), Some([1.0, 2.0, 0.0, 1.0])];
 
         let (out, merges) = unify_same_domain_faces(&brep);
         assert_eq!(merges, 1, "UV-compatible coplanar faces should merge");
-        assert_eq!(out.solids[0].shells[0].faces.len(), 1, "two adjacent coplanar faces should merge");
+        assert_eq!(
+            out.solids[0].shells[0].faces.len(),
+            1,
+            "two adjacent coplanar faces should merge"
+        );
     }
 
     #[test]
@@ -7125,10 +7945,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 1.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 1.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 1.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 1.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 2 }); // e0: shared edge (different radius)
         brep.edges.push(Edge { start: 1, end: 3 }); // e1
@@ -7177,7 +8005,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![fa, fb] }],
+            shells: vec![Shell {
+                faces: vec![fa, fb],
+            }],
         });
 
         brep.geom.surfaces.push(Surface3::Cylinder(cyl1));
@@ -7186,7 +8016,11 @@ mod tests {
 
         let (out, merges) = unify_same_domain_faces(&brep);
         assert_eq!(merges, 0, "different cylinder domains should not merge");
-        assert_eq!(out.solids[0].shells[0].faces.len(), 2, "two different cylinders should remain separate");
+        assert_eq!(
+            out.solids[0].shells[0].faces.len(),
+            2,
+            "two different cylinders should remain separate"
+        );
     }
 
     #[test]
@@ -7201,7 +8035,10 @@ mod tests {
             brep_check_analyze(&res).is_valid(),
             "healed result should be valid"
         );
-        assert!(report.final_result.is_valid(), "healing report should end valid");
+        assert!(
+            report.final_result.is_valid(),
+            "healing report should end valid"
+        );
     }
 
     fn all_triangles_valid(brep: &BRep) -> bool {
@@ -7502,7 +8339,10 @@ mod tests {
         // Large sphere volume = 4π/3 * 8 ≈ 33.51; result should be positive and less.
         let v_large_analytical = 4.0 * std::f64::consts::PI / 3.0 * 8.0;
         assert!(v > 0.0, "result volume should be positive, got {v}");
-        assert!(v < v_large_analytical, "difference should be smaller than original large sphere");
+        assert!(
+            v < v_large_analytical,
+            "difference should be smaller than original large sphere"
+        );
     }
 
     #[test]
@@ -7597,12 +8437,27 @@ mod tests {
         );
         for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
             let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
-            let surf_name = inter_brep.geom.face_surface.get(i).and_then(|o| *o)
-                .map(|si| format!("{:?}", std::mem::discriminant(&inter_brep.geom.surfaces[si])));
+            let surf_name = inter_brep
+                .geom
+                .face_surface
+                .get(i)
+                .and_then(|o| *o)
+                .map(|si| {
+                    format!(
+                        "{:?}",
+                        std::mem::discriminant(&inter_brep.geom.surfaces[si])
+                    )
+                });
             // Compute per-face contribution to volume
             let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
-            let face_vol: f64 = face_tris.iter().map(|&[a,b,c]| a.dot(b.cross(c)) / 6.0).sum();
-            eprintln!("  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}", face.normal);
+            let face_vol: f64 = face_tris
+                .iter()
+                .map(|&[a, b, c]| a.dot(b.cross(c)) / 6.0)
+                .sum();
+            eprintln!(
+                "  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}",
+                face.normal
+            );
         }
 
         let expected = v_a + v_b - v_inter;
@@ -7645,7 +8500,9 @@ mod tests {
         let v_union = rcad_kernel::properties::volume(&union_brep);
         let v_inter = rcad_kernel::properties::volume(&inter_brep);
 
-        eprintln!("sphere-sphere: V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}");
+        eprintln!(
+            "sphere-sphere: V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}"
+        );
         eprintln!(
             "Union faces={}, inter faces={}",
             union_brep.solids[0].shells[0].faces.len(),
@@ -7653,11 +8510,26 @@ mod tests {
         );
         for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
             let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
-            let surf_name = inter_brep.geom.face_surface.get(i).and_then(|o| *o)
-                .map(|si| format!("{:?}", std::mem::discriminant(&inter_brep.geom.surfaces[si])));
+            let surf_name = inter_brep
+                .geom
+                .face_surface
+                .get(i)
+                .and_then(|o| *o)
+                .map(|si| {
+                    format!(
+                        "{:?}",
+                        std::mem::discriminant(&inter_brep.geom.surfaces[si])
+                    )
+                });
             let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
-            let face_vol: f64 = face_tris.iter().map(|&[a,b,c]| a.dot(b.cross(c)) / 6.0).sum();
-            eprintln!("  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}", face.normal);
+            let face_vol: f64 = face_tris
+                .iter()
+                .map(|&[a, b, c]| a.dot(b.cross(c)) / 6.0)
+                .sum();
+            eprintln!(
+                "  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}",
+                face.normal
+            );
         }
 
         let expected = v_a + v_b - v_inter;
@@ -7677,7 +8549,10 @@ mod tests {
                 union_faces <= 2,
                 "unexpected zero-volume union shape signature: faces={union_faces}, expected <= 2"
             );
-            assert!(v_inter > 0.0, "intersection volume should still be positive");
+            assert!(
+                v_inter > 0.0,
+                "intersection volume should still be positive"
+            );
         }
     }
 
@@ -7687,7 +8562,8 @@ mod tests {
         // edges on the cylinder surface should get PCurves via
         // populate_boolean_result_pcurves.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
-        let b = make_cylinder_brep(DVec3::new(2.0, 2.0, -0.5), DVec3::Z, DVec3::X, 0.5, 5.0).unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(2.0, 2.0, -0.5), DVec3::Z, DVec3::X, 0.5, 5.0).unwrap();
         let result = boolean_op(BooleanOpType::Difference, &a, &b);
         let Ok(mut brep) = result else {
             // If the boolean op itself fails, skip (it's tested elsewhere).
@@ -7718,8 +8594,8 @@ mod tests {
         // Sphere centred at origin, radius 5; cylinder along Z through origin, radius 3.
         // Intersection circles at z = ±4  (sqrt(25-9) = 4).
         let a = make_sphere_brep(DVec3::ZERO, 5.0).unwrap();
-        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0)
-            .unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0).unwrap();
         let result = boolean_op(BooleanOpType::Difference, &a, &b);
         assert!(
             result.is_ok(),
@@ -7736,7 +8612,10 @@ mod tests {
         let v = rcad_kernel::properties::volume(&brep);
         let v_sphere = 4.0 * std::f64::consts::PI / 3.0 * 5.0_f64.powi(3);
         assert!(v > 0.0, "result volume should be positive, got {v}");
-        assert!(v < v_sphere, "difference should be smaller than original sphere");
+        assert!(
+            v < v_sphere,
+            "difference should be smaller than original sphere"
+        );
     }
 
     // ─── Cone × Plane Boolean Tests ───────────────────────────────────────────
@@ -7749,8 +8628,7 @@ mod tests {
         // The cone pokes through the box; plane-cone intersections are circles
         // (planes ⊥ cone axis).
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
-        let b =
-            make_cone_brep(DVec3::new(2.0, 2.0, -0.5), DVec3::Z, DVec3::X, 0.8, 5.0).unwrap();
+        let b = make_cone_brep(DVec3::new(2.0, 2.0, -0.5), DVec3::Z, DVec3::X, 0.8, 5.0).unwrap();
         let result = boolean_op(BooleanOpType::Difference, &a, &b);
         assert!(
             result.is_ok(),
@@ -7775,9 +8653,15 @@ mod tests {
         // slab top (z=4, a plane ⊥ cone axis) intersects the cone's lateral surface
         // near the apex region.  This exercises the plane-cone circle intersection.
         let a = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 4.0).unwrap();
-        let b =
-            make_box_brep(DVec3::new(-3.0, -3.0, 0.0), DVec3::X, DVec3::Y, 6.0, 6.0, 3.0)
-                .unwrap();
+        let b = make_box_brep(
+            DVec3::new(-3.0, -3.0, 0.0),
+            DVec3::X,
+            DVec3::Y,
+            6.0,
+            6.0,
+            3.0,
+        )
+        .unwrap();
         // The box (z=0..3) clips the cone (z=0..4), leaving the lower frustum.
         // The intersection may succeed or return DegenerateResult depending on
         // classifier robustness; we only require it does not panic.
@@ -7805,8 +8689,8 @@ mod tests {
         // The intersection of their volumes is a "barrel" shape bounded by two
         // spherical caps (z > 4 and z < -4) and the cylinder lateral surface.
         let a = make_sphere_brep(DVec3::ZERO, 5.0).unwrap();
-        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0)
-            .unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(0.0, 0.0, -6.0), DVec3::Z, DVec3::X, 3.0, 12.0).unwrap();
         let result = boolean_op(BooleanOpType::Intersection, &a, &b);
         assert!(
             result.is_ok(),
@@ -7898,7 +8782,8 @@ mod tests {
     fn boolean_cylinder_torus_difference() {
         // Cylinder passing through a torus hole.
         let a = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.8).unwrap();
-        let b = make_cylinder_brep(DVec3::new(0.0, 0.0, -3.0), DVec3::Z, DVec3::X, 0.3, 6.0).unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(0.0, 0.0, -3.0), DVec3::Z, DVec3::X, 0.3, 6.0).unwrap();
         let result = boolean_op(BooleanOpType::Difference, &a, &b);
         assert!(
             result.is_ok(),
@@ -7919,7 +8804,8 @@ mod tests {
         // Two boxes sharing a coplanar face (flush side-by-side).
         // The union should merge the coplanar faces.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let result = boolean_op(BooleanOpType::Union, &a, &b);
         assert!(
             result.is_ok(),
@@ -7936,7 +8822,8 @@ mod tests {
         // A: [0,2]x[0,2]x[0,2], B: [1,3]x[0,2]x[0,2]
         // The shared face at x=1 (A) / x=1 (B) partially overlaps.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let result = boolean_op(BooleanOpType::Union, &a, &b);
         assert!(
             result.is_ok(),
@@ -7987,7 +8874,15 @@ mod tests {
     fn boolean_tangent_sphere_plane() {
         // Sphere touching a box face tangentially.
         // Sphere at (0,0,1) with r=1 touches the XY plane at origin.
-        let a = make_box_brep(DVec3::new(-2.0, -2.0, -1.0), DVec3::X, DVec3::Y, 4.0, 4.0, 2.0).unwrap();
+        let a = make_box_brep(
+            DVec3::new(-2.0, -2.0, -1.0),
+            DVec3::X,
+            DVec3::Y,
+            4.0,
+            4.0,
+            2.0,
+        )
+        .unwrap();
         let b = make_sphere_brep(DVec3::new(0.0, 0.0, 1.0), 1.0).unwrap();
         let result = boolean_op(BooleanOpType::Union, &a, &b);
         assert!(
@@ -8003,7 +8898,8 @@ mod tests {
         // Sphere at origin, r=2. Cylinder along Z axis, offset by 2 in X, r=0.
         // Actually: cylinder at x=2, r=1, sphere at origin r=3 → tangent at (3,0,0).
         let a = make_sphere_brep(DVec3::ZERO, 3.0).unwrap();
-        let b = make_cylinder_brep(DVec3::new(2.0, 0.0, -2.0), DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
+        let b =
+            make_cylinder_brep(DVec3::new(2.0, 0.0, -2.0), DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
         let result = boolean_op(BooleanOpType::Difference, &a, &b);
         assert!(
             result.is_ok() || matches!(result, Err(BooleanError::DegenerateResult)),
@@ -8015,7 +8911,8 @@ mod tests {
     #[test]
     fn boolean_options_structure_accessible() {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         let options = BooleanOptions {
             use_bvh: true,
@@ -8055,21 +8952,28 @@ mod tests {
         assert!(report.made_connected);
         assert!(report.healing_report.is_some());
         assert!(report.make_connected_report.is_some());
-        assert!(report
-            .make_connected_report
-            .as_ref()
-            .map(|r| r.passes_run >= 1)
-            .unwrap_or(false));
-        assert!(report
-            .make_connected_report
-            .as_ref()
-            .map(|r| r.final_tolerance >= tolerance::TOLERANCE_ABS)
-            .unwrap_or(false));
-        assert!(report
-            .make_connected_report
-            .as_ref()
-            .map(|r| !r.tolerance_cap_applied || r.final_tolerance <= options.make_connected_tolerance_cap)
-            .unwrap_or(false));
+        assert!(
+            report
+                .make_connected_report
+                .as_ref()
+                .map(|r| r.passes_run >= 1)
+                .unwrap_or(false)
+        );
+        assert!(
+            report
+                .make_connected_report
+                .as_ref()
+                .map(|r| r.final_tolerance >= tolerance::TOLERANCE_ABS)
+                .unwrap_or(false)
+        );
+        assert!(
+            report
+                .make_connected_report
+                .as_ref()
+                .map(|r| !r.tolerance_cap_applied
+                    || r.final_tolerance <= options.make_connected_tolerance_cap)
+                .unwrap_or(false)
+        );
         assert!(report.simplify_report.is_some());
         assert_eq!(report.output_faces, face_count(&result));
         assert_eq!(report.history_faces, report.persistent_face_labels.len());
@@ -8106,7 +9010,8 @@ mod tests {
     #[test]
     fn boolean_options_make_connected_scoped_mode_runs() {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         let options = BooleanOptions {
             use_bvh: true,
@@ -8143,11 +9048,13 @@ mod tests {
 
         assert!(report.made_connected);
         assert!(report.make_connected_report.is_some());
-        assert!(report
-            .make_connected_report
-            .as_ref()
-            .map(|r| r.passes_run >= 1)
-            .unwrap_or(false));
+        assert!(
+            report
+                .make_connected_report
+                .as_ref()
+                .map(|r| r.passes_run >= 1)
+                .unwrap_or(false)
+        );
         assert_eq!(
             report.make_connected_scope_seed_mode,
             Some(MakeConnectedScopeSeedMode::Hybrid)
@@ -8160,8 +9067,16 @@ mod tests {
         if report.make_connected_scope_fallback_applied {
             assert!(report.make_connected_scope_fallback_reason.is_some());
             assert!(report.make_connected_scope_global_fallback_report.is_some());
-            assert!(report.make_connected_scope_global_fallback_initial_tolerance.is_some());
-            assert!(report.make_connected_scope_global_fallback_max_passes.is_some());
+            assert!(
+                report
+                    .make_connected_scope_global_fallback_initial_tolerance
+                    .is_some()
+            );
+            assert!(
+                report
+                    .make_connected_scope_global_fallback_max_passes
+                    .is_some()
+            );
         }
         assert_eq!(report.make_connected_scope_history_seed_edge_count, 0);
         assert_eq!(
@@ -8181,7 +9096,8 @@ mod tests {
         // Two boxes touching on one face: conservative glue path should run
         // without breaking the boolean pipeline.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         let options = BooleanOptions {
             use_bvh: true,
@@ -8225,15 +9141,27 @@ mod tests {
         use rcad_kernel::topology::Edge;
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 0 }); // e1 reversed
 
         let labels = make_connected_seed_edge_labels(&brep, &[0, 1]);
         assert_eq!(labels.len(), 2);
-        assert!(labels[0].contains("0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"));
-        assert!(labels[1].contains("0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"));
+        assert!(
+            labels[0].contains(
+                "0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"
+            )
+        );
+        assert!(
+            labels[1].contains(
+                "0.000000000,0.000000000,0.000000000->1.000000000,0.000000000,0.000000000"
+            )
+        );
     }
 
     #[test]
@@ -8241,27 +9169,28 @@ mod tests {
         use rcad_kernel::topology::Edge;
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1e-8, 0.0, 0.0) }); // 1 near-dup of 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 2
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(11.0, 0.0, 0.0) }); // 3
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1e-8, 0.0, 0.0),
+        }); // 1 near-dup of 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 2
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(11.0, 0.0, 0.0),
+        }); // 3
         brep.edges.push(Edge { start: 2, end: 3 }); // no short edge around 0/1
 
-        let short_only = make_connected_seed_vertices(
-            &brep,
-            1e-6,
-            MakeConnectedScopeSeedMode::ShortEdges,
-        );
+        let short_only =
+            make_connected_seed_vertices(&brep, 1e-6, MakeConnectedScopeSeedMode::ShortEdges);
         let near_dup = make_connected_seed_vertices(
             &brep,
             1e-6,
             MakeConnectedScopeSeedMode::NearDuplicateVertices,
         );
-        let hybrid = make_connected_seed_vertices(
-            &brep,
-            1e-6,
-            MakeConnectedScopeSeedMode::Hybrid,
-        );
+        let hybrid = make_connected_seed_vertices(&brep, 1e-6, MakeConnectedScopeSeedMode::Hybrid);
 
         assert!(short_only.is_empty());
         assert!(near_dup.contains(&0) && near_dup.contains(&1));
@@ -8273,9 +9202,15 @@ mod tests {
         use rcad_kernel::topology::Edge;
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 2
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
 
@@ -8297,9 +9232,15 @@ mod tests {
         use rcad_kernel::{PCurve, topology::Edge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 2
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
 
@@ -8336,9 +9277,15 @@ mod tests {
         use rcad_kernel::topology::Edge;
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 1 same point
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 2
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 1 same point
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 2
         brep.edges.push(Edge { start: 0, end: 1 }); // seam candidate (same point)
         brep.edges.push(Edge { start: 1, end: 2 }); // normal edge
         brep.geom.edge_degenerated = vec![false, false];
@@ -8359,9 +9306,15 @@ mod tests {
         use rcad_kernel::{PCurve, topology::Edge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(rcad_kernel::topology::Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(rcad_kernel::topology::Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        });
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
 
@@ -8395,10 +9348,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0 shared by f0 and f1
         brep.edges.push(Edge { start: 1, end: 2 }); // e1 f0 only
@@ -8426,7 +9387,9 @@ mod tests {
         };
 
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f0, f1] }],
+            shells: vec![Shell {
+                faces: vec![f0, f1],
+            }],
         });
 
         let history = BooleanHistory {
@@ -8450,10 +9413,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1e-9, 0.0, 0.0) }); // 1 near-dup of 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1e-9, 0.0, 0.0),
+        }); // 1 near-dup of 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 2 }); // e0 history interface edge
         brep.edges.push(Edge { start: 0, end: 1 }); // e1 heuristic short edge
@@ -8478,7 +9449,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f0, f1] }],
+            shells: vec![Shell {
+                faces: vec![f0, f1],
+            }],
         });
 
         let history = BooleanHistory {
@@ -8502,7 +9475,10 @@ mod tests {
             2,
         );
 
-        assert_eq!(source, MakeConnectedScopeSeedSource::HistoryAugmentedHeuristic);
+        assert_eq!(
+            source,
+            MakeConnectedScopeSeedSource::HistoryAugmentedHeuristic
+        );
         assert_eq!(history_count, 1);
         assert!(heuristic_count >= 1);
         assert!(seed_edges.contains(&0));
@@ -8514,10 +9490,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 3
 
         // e0 is the interface edge shared by both faces.
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
@@ -8545,7 +9529,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f0, f1] }],
+            shells: vec![Shell {
+                faces: vec![f0, f1],
+            }],
         });
 
         let history = BooleanHistory {
@@ -8582,10 +9568,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 1.0, 0.0),
+        }); // 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0 interface edge
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -8612,7 +9606,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![f0, f1] }],
+            shells: vec![Shell {
+                faces: vec![f0, f1],
+            }],
         });
 
         let history = BooleanHistory {
@@ -8646,10 +9642,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -8707,8 +9711,14 @@ mod tests {
         assert_eq!(report.make_connected_scope_seed_face_coverage, Some(0.0));
         assert!(report.make_connected_scope_scoped_report.is_none());
         assert!(report.make_connected_scope_global_fallback_report.is_some());
-        assert_eq!(report.make_connected_scope_global_fallback_initial_tolerance, Some(1e-6));
-        assert_eq!(report.make_connected_scope_global_fallback_max_passes, Some(3));
+        assert_eq!(
+            report.make_connected_scope_global_fallback_initial_tolerance,
+            Some(1e-6)
+        );
+        assert_eq!(
+            report.make_connected_scope_global_fallback_max_passes,
+            Some(3)
+        );
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
     }
@@ -8718,10 +9728,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -8779,13 +9797,27 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 2.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 3
-        brep.vertices.push(Vertex { point: DVec3::new(11.0, 0.0, 0.0) }); // 4
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 1.0, 0.0) }); // 5
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 6 dup of 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 2.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(11.0, 0.0, 0.0),
+        }); // 4
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 1.0, 0.0),
+        }); // 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 6 dup of 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0 tagged for scoped seed
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -8816,7 +9848,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![face_a, face_b] }],
+            shells: vec![Shell {
+                faces: vec![face_a, face_b],
+            }],
         });
 
         let options = BooleanOptions {
@@ -8858,10 +9892,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(5e-6, 0.0, 0.0),
+        });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -8912,10 +9954,12 @@ mod tests {
             report.make_connected_scope_fallback_reason,
             Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage)
         );
-        assert!(report
-            .make_connected_scope_global_fallback_initial_tolerance
-            .map(|v| (v - 1e-5).abs() <= 1e-15)
-            .unwrap_or(false));
+        assert!(
+            report
+                .make_connected_scope_global_fallback_initial_tolerance
+                .map(|v| (v - 1e-5).abs() <= 1e-15)
+                .unwrap_or(false)
+        );
         assert!(report.make_connected_scope_global_fallback_report.is_some());
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
@@ -8926,10 +9970,18 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.0, 0.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        });
+        brep.vertices.push(Vertex {
+            point: DVec3::new(5e-6, 0.0, 0.0),
+        });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -8980,12 +10032,17 @@ mod tests {
             report.make_connected_scope_fallback_reason,
             Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage)
         );
-        assert_eq!(report.make_connected_scope_global_fallback_max_passes, Some(2));
-        assert!(report
-            .make_connected_scope_global_fallback_report
-            .as_ref()
-            .map(|r| r.passes_run == 2)
-            .unwrap_or(false));
+        assert_eq!(
+            report.make_connected_scope_global_fallback_max_passes,
+            Some(2)
+        );
+        assert!(
+            report
+                .make_connected_scope_global_fallback_report
+                .as_ref()
+                .map(|r| r.passes_run == 2)
+                .unwrap_or(false)
+        );
         assert!((mc_report.final_tolerance - 1e-5).abs() <= 1e-15);
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
@@ -8996,13 +10053,27 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 2.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 3
-        brep.vertices.push(Vertex { point: DVec3::new(11.0, 0.0, 0.0) }); // 4
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 1.0, 0.0) }); // 5
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 6 dup of 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 2.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(11.0, 0.0, 0.0),
+        }); // 4
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 1.0, 0.0),
+        }); // 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 6 dup of 3
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0 tagged seed
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
@@ -9033,7 +10104,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![face_a, face_b] }],
+            shells: vec![Shell {
+                faces: vec![face_a, face_b],
+            }],
         });
 
         let options = BooleanOptions {
@@ -9067,10 +10140,12 @@ mod tests {
             report.make_connected_scope_fallback_reason,
             Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage)
         );
-        assert!(report
-            .make_connected_scope_seed_edge_coverage
-            .map(|v| (v - (1.0 / 7.0)).abs() <= 1e-15)
-            .unwrap_or(false));
+        assert!(
+            report
+                .make_connected_scope_seed_edge_coverage
+                .map(|v| (v - (1.0 / 7.0)).abs() <= 1e-15)
+                .unwrap_or(false)
+        );
         assert!(report.make_connected_scope_scoped_report.is_none());
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
@@ -9082,16 +10157,34 @@ mod tests {
 
         let mut brep = BRep::new();
         // Face A: pentagon with all edges tagged as scoped seeds.
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
-        brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(3.0, 1.0, 0.0) }); // 2
-        brep.vertices.push(Vertex { point: DVec3::new(1.5, 2.0, 0.0) }); // 3
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 4
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 0.0, 0.0),
+        }); // 0
+        brep.vertices.push(Vertex {
+            point: DVec3::new(2.0, 0.0, 0.0),
+        }); // 1
+        brep.vertices.push(Vertex {
+            point: DVec3::new(3.0, 1.0, 0.0),
+        }); // 2
+        brep.vertices.push(Vertex {
+            point: DVec3::new(1.5, 2.0, 0.0),
+        }); // 3
+        brep.vertices.push(Vertex {
+            point: DVec3::new(0.0, 1.0, 0.0),
+        }); // 4
         // Face B: triangle + tiny edge that only global fallback can fix.
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 5
-        brep.vertices.push(Vertex { point: DVec3::new(12.0, 0.0, 0.0) }); // 6
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 2.0, 0.0) }); // 7
-        brep.vertices.push(Vertex { point: DVec3::new(10.0, 0.0, 0.0) }); // 8 dup of 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 5
+        brep.vertices.push(Vertex {
+            point: DVec3::new(12.0, 0.0, 0.0),
+        }); // 6
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 2.0, 0.0),
+        }); // 7
+        brep.vertices.push(Vertex {
+            point: DVec3::new(10.0, 0.0, 0.0),
+        }); // 8 dup of 5
 
         brep.edges.push(Edge { start: 0, end: 1 }); // e0 tagged
         brep.edges.push(Edge { start: 1, end: 2 }); // e1 tagged
@@ -9130,7 +10223,9 @@ mod tests {
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
-            shells: vec![Shell { faces: vec![face_a, face_b] }],
+            shells: vec![Shell {
+                faces: vec![face_a, face_b],
+            }],
         });
 
         let options = BooleanOptions {
@@ -9164,14 +10259,18 @@ mod tests {
             report.make_connected_scope_fallback_reason,
             Some(MakeConnectedScopeFallbackReason::InsufficientSeedCoverage)
         );
-        assert!(report
-            .make_connected_scope_seed_edge_coverage
-            .map(|v| v > 0.5)
-            .unwrap_or(false));
-        assert!(report
-            .make_connected_scope_seed_face_coverage
-            .map(|v| (v - 0.5).abs() <= 1e-15)
-            .unwrap_or(false));
+        assert!(
+            report
+                .make_connected_scope_seed_edge_coverage
+                .map(|v| v > 0.5)
+                .unwrap_or(false)
+        );
+        assert!(
+            report
+                .make_connected_scope_seed_face_coverage
+                .map(|v| (v - 0.5).abs() <= 1e-15)
+                .unwrap_or(false)
+        );
         assert!(report.make_connected_scope_scoped_report.is_none());
         assert!(mc_report.vertices_merged >= 1);
         assert!(connected.vertices.len() < brep.vertices.len());
@@ -9181,9 +10280,9 @@ mod tests {
     fn boolean_history_vertex_origins_populated_after_box_box_union() {
         // Two boxes overlapping in X: A=[0..2], B=[1..3]. Shared region x∈[1,2].
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let (brep, history) =
-            boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (brep, history) = boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
         // vertex_origins vec must be in sync with the result BRep
         assert_eq!(
             history.vertex_origins.len(),
@@ -9198,17 +10297,23 @@ mod tests {
             .vertex_origins
             .iter()
             .any(|o| matches!(o, VertexOrigin::FromB(_)));
-        assert!(has_from_a, "expected at least one VertexOrigin::FromA after box-box union");
-        assert!(has_from_b, "expected at least one VertexOrigin::FromB after box-box union");
+        assert!(
+            has_from_a,
+            "expected at least one VertexOrigin::FromA after box-box union"
+        );
+        assert!(
+            has_from_b,
+            "expected at least one VertexOrigin::FromB after box-box union"
+        );
     }
 
     #[test]
     fn boolean_history_edge_origins_populated_after_box_box_union() {
         // Same geometry as the vertex test above.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let (brep, history) =
-            boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (brep, history) = boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
         // edge_origins vec must be in sync with the result BRep
         assert_eq!(
             history.edge_origins.len(),
@@ -9223,19 +10328,34 @@ mod tests {
             .edge_origins
             .iter()
             .any(|o| matches!(o, EdgeOrigin::FromB(_)));
-        assert!(has_from_a, "expected at least one EdgeOrigin::FromA after box-box union");
-        assert!(has_from_b, "expected at least one EdgeOrigin::FromB after box-box union");
+        assert!(
+            has_from_a,
+            "expected at least one EdgeOrigin::FromA after box-box union"
+        );
+        assert!(
+            has_from_b,
+            "expected at least one EdgeOrigin::FromB after box-box union"
+        );
     }
 
     #[test]
     fn boolean_history_shell_and_solid_origins_populated_after_box_box_union() {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b =
+            make_box_brep(DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let (brep, history) = boolean_op_with_history(BooleanOpType::Union, &a, &b).unwrap();
 
         let shell_count: usize = brep.solids.iter().map(|solid| solid.shells.len()).sum();
-        assert_eq!(history.shell_origins.len(), shell_count, "shell_origins length mismatch");
-        assert_eq!(history.solid_origins.len(), brep.solids.len(), "solid_origins length mismatch");
+        assert_eq!(
+            history.shell_origins.len(),
+            shell_count,
+            "shell_origins length mismatch"
+        );
+        assert_eq!(
+            history.solid_origins.len(),
+            brep.solids.len(),
+            "solid_origins length mismatch"
+        );
         assert!(
             history
                 .shell_origins
@@ -9251,5 +10371,4 @@ mod tests {
             "expected a mixed solid origin for overlapping box union"
         );
     }
-
 }
