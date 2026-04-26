@@ -71,7 +71,8 @@ pub use features::{
 pub use geom2d_api::{
     circle_through_three_points, circles_tangent_to_circle_and_line_through_point,
     circles_tangent_to_circle_and_two_lines, circles_tangent_to_circle_through_points,
-    circles_tangent_to_line_through_points, circles_tangent_to_three_lines,
+    circles_tangent_to_line_through_points, circles_tangent_to_three_circles,
+    circles_tangent_to_three_lines, circles_tangent_to_two_circles_and_line,
     circles_tangent_to_two_circles_through_point, circles_tangent_to_two_lines_through_point,
 };
 pub mod adaptor3d;

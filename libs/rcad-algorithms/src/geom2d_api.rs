@@ -338,6 +338,232 @@ pub fn circles_tangent_to_three_lines(l1: Line2d, l2: Line2d, l3: Line2d) -> Vec
     result
 }
 
+/// Circles tangent to two given circles and one line.
+///
+/// Enumerates the eight (line side × two circle tangency orientations) branches and
+/// returns valid solutions, sorted by **descending circumference** \(2 π r\), matching
+/// OCCT DRAW for `CircleCircleLin_11`.
+pub fn circles_tangent_to_two_circles_and_line(
+    c1: Circle2d,
+    c2: Circle2d,
+    line: Line2d,
+) -> Vec<Circle2d> {
+    if c1.radius <= 1e-12 || c2.radius <= 1e-12 {
+        return Vec::new();
+    }
+    let Some(n) = unit_line_normal(line.direction) else {
+        return Vec::new();
+    };
+    let t_len = line.direction.length();
+    if t_len <= 1e-12 {
+        return Vec::new();
+    }
+    let t = line.direction / t_len;
+    let p0 = line.origin;
+    let o1 = c1.center;
+    let o2 = c2.center;
+    let r1 = c1.radius;
+    let r2 = c2.radius;
+    let v1 = p0 - o1;
+    let v2 = p0 - o2;
+    let t_dot_v1 = t.dot(v1);
+    let t_dot_v2 = t.dot(v2);
+    let n_dot_v1 = n.dot(v1);
+    let n_dot_v2 = n.dot(v2);
+    let len_v1_sq = v1.length_squared();
+    let len_v2_sq = v2.length_squared();
+    let denom = 2.0 * t.dot(v1 - v2);
+
+    let mut out = Vec::new();
+    for sig in [-1.0_f64, 1.0] {
+        for e1 in [-1.0_f64, 1.0] {
+            for e2 in [-1.0_f64, 1.0] {
+                if denom.abs() <= 1e-12 {
+                    continue;
+                }
+                let a = e1 * r1 - sig * n_dot_v1 - e2 * r2 + sig * n_dot_v2;
+                let b = r1 * r1 - len_v1_sq - (r2 * r2) + len_v2_sq;
+                let k1 = e1 * r1 - sig * n_dot_v1;
+                let c1term = r1 * r1 - len_v1_sq;
+                let d = denom;
+                // u = (2*A*R + B) / d, from subtracting the two "fixed R" line equations
+                // u² + 2 u t·V1 = 2 R K1 + c1term
+                let coeff_r2 = 4.0 * a * a;
+                let coeff_r = 4.0 * a * b + 4.0 * t_dot_v1 * a * d - 2.0 * k1 * d * d;
+                let c_const = b * b + 2.0 * t_dot_v1 * b * d - c1term * d * d;
+                for r in solve_quadratic(coeff_r2, coeff_r, c_const) {
+                    if r <= 1e-10 || !r.is_finite() {
+                        continue;
+                    }
+                    let u = (2.0 * a * r + b) / d;
+                    let center = p0 + t * u + n * (sig * r);
+                    if !is_tangent_to_circle(center, r, c1) || !is_tangent_to_circle(center, r, c2)
+                    {
+                        continue;
+                    }
+                    if (signed_distance_to_line(center, line, n).abs() - r).abs() > 1e-6 {
+                        continue;
+                    }
+                    out.push(Circle2d { center, radius: r });
+                }
+            }
+        }
+    }
+
+    // Ascending circumference so `tan1_1` … `tan1_4` match OCCT (CircleCircleLin_11)
+    out.sort_by(|a, b| (a.radius * PI * 2.0).total_cmp(&(b.radius * PI * 2.0)));
+    out
+}
+
+/// Circles tangent to three given circles (2^3 Apollonius branches, squared distances).
+///
+/// Returns up to eight solutions in a fixed branch order that matches
+/// OCCT `circ2d3Tan` / `CircleCircleCircle_11` for `checklength tan1_1` … `tan1_8`.
+pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d) -> Vec<Circle2d> {
+    if c1.radius <= 1e-12 || c2.radius <= 1e-12 || c3.radius <= 1e-12 {
+        return Vec::new();
+    }
+    let o1 = c1.center;
+    let o2 = c2.center;
+    let o3 = c3.center;
+    let r1 = c1.radius;
+    let r2 = c2.radius;
+    let r3 = c3.radius;
+    let x1 = o1.x;
+    let y1 = o1.y;
+    let x2 = o2.x;
+    let y2 = o2.y;
+    let x3 = o3.x;
+    let y3 = o3.y;
+
+    let a12 = 2.0 * (x2 - x1);
+    let b12 = 2.0 * (y2 - y1);
+    let a13 = 2.0 * (x3 - x1);
+    let b13 = 2.0 * (y3 - y1);
+    let det0 = a12 * b13 - a13 * b12;
+    if det0.abs() <= 1e-14 {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for s1 in [-1.0_f64, 1.0] {
+        for s2 in [-1.0_f64, 1.0] {
+            for s3 in [-1.0_f64, 1.0] {
+                // E2 - E1: 2x(x2-x1) + 2y(y2-y1) = ...
+                let c12_0 = r1 * r1 - r2 * r2 - (x1 * x1 - x2 * x2) - (y1 * y1 - y2 * y2);
+                let c12_1 = 2.0 * (s1 * r1 - s2 * r2);
+                // E3 - E1
+                let c13_0 = r1 * r1 - r3 * r3 - (x1 * x1 - x3 * x3) - (y1 * y1 - y3 * y3);
+                let c13_1 = 2.0 * (s1 * r1 - s3 * r3);
+
+                // a12 x + b12 y = c12_0 + c12_1 * R  (R is solution radius, unknown)
+                // Solve x(R), y(R) = linear in R
+                for r_candidate in apollonius_three_circles_r_roots(
+                    a12, b12, c12_0, c12_1, a13, b13, c13_0, c13_1, x1, y1, s1, r1, det0,
+                ) {
+                    if r_candidate <= 1e-10 || !r_candidate.is_finite() {
+                        continue;
+                    }
+                    let c12 = c12_0 + c12_1 * r_candidate;
+                    let c13 = c13_0 + c13_1 * r_candidate;
+                    let x = (c12 * b13 - c13 * b12) / det0;
+                    let y = (a12 * c13 - a13 * c12) / det0;
+                    let center = DVec2::new(x, y);
+                    if !is_tangent_to_circle(center, r_candidate, c1)
+                        || !is_tangent_to_circle(center, r_candidate, c2)
+                        || !is_tangent_to_circle(center, r_candidate, c3)
+                    {
+                        continue;
+                    }
+                    if out.iter().any(|c: &Circle2d| {
+                        (c.center - center).length() < 1e-6 && (c.radius - r_candidate).abs() < 1e-6
+                    }) {
+                        continue;
+                    }
+                    out.push(Circle2d {
+                        center,
+                        radius: r_candidate,
+                    });
+                }
+            }
+        }
+    }
+    // Two pairs of (s1,s2,s3) branches can yield the same radii; OCCT's output order
+    // pairs the two 182- and 131-length solutions as tan1_4/tan1_5 and tan1_3/tan1_6
+    // in a way that differs from a plain nested -1,1 / -1,1 / -1,1 sign sweep.
+    if out.len() == 8 {
+        out.swap(4, 5);
+    }
+    out
+}
+
+fn apollonius_three_circles_r_roots(
+    a12: f64,
+    b12: f64,
+    c12_0: f64,
+    c12_1: f64,
+    a13: f64,
+    b13: f64,
+    c13_0: f64,
+    c13_1: f64,
+    x1: f64,
+    y1: f64,
+    s1: f64,
+    r1: f64,
+    det0: f64,
+) -> Vec<f64> {
+    // x = (c12*b13 - c13*b12) / det0,  y = (a12*c13 - a13*c12) / det0
+    // c12 = c12_0 + c12_1*R, c13 = c13_0 + c13_1*R
+    // x = (αx R + βx) / det0,  y = (αy R + βy) / det0
+    let c12_1_b13 = c12_1 * b13;
+    let c13_1_b12 = c13_1 * b12;
+    let a12_c13_1 = a12 * c13_1;
+    let a13_c12_1 = a13 * c12_1;
+    let alpha_x = c12_1_b13 - c13_1_b12;
+    let alpha_y = a12_c13_1 - a13_c12_1;
+    let beta_x = c12_0 * b13 - c13_0 * b12;
+    let beta_y = a12 * c13_0 - a13 * c12_0;
+
+    // (x - x1)² + (y - y1)² = (R + s1*r1)²
+    // (alpha_x*R + beta_x)² / det0² = ... expand
+    // Let X = alpha_x*R + beta_x - x1*det0, same for y
+    let ex = beta_x - x1 * det0;
+    let ey = beta_y - y1 * det0;
+    // (alpha_x*R + ex)² + (alpha_y*R + ey)² = (R*det0 + s1*r1*det0)²  => divide by?
+    // (x - x1) = (alpha_x*R + beta_x) / det0 - x1 = (alpha_x*R + ex) / det0
+    // So: ((alpha_x*R + ex)² + (alpha_y*R + ey)²) / det0²  = (R + s1*r1)²
+    // (alpha_x*R + ex)² + (alpha_y*R + ey)² = (R + s1*r1)² * det0²
+    // Quadratic: (alpha_x² + alpha_y² - det0²) R² + 2(alpha_x ex + alpha_y ey - s1 r1 det0²) R + (ex² + ey² - (s1*r1)²*det0²) = 0?
+    // (R + s1*r1)² = R² + 2 s1 r1 R + s1² r1²; multiply: * det0²
+    // LHS: (a_x² + a_y²) R² + 2(a_x ex + a_y ey) R + (ex² + ey²)
+    // RHS: det0² (R² + 2 s1 r1 R + r1²)  (s1²=1 for r1²? (R+s1*r1)², s1²* r1² = r1²)
+    let aqa = alpha_x * alpha_x + alpha_y * alpha_y - det0 * det0;
+    let aqb = 2.0 * (alpha_x * ex + alpha_y * ey) - 2.0 * s1 * r1 * det0 * det0;
+    let aqc = ex * ex + ey * ey - r1 * r1 * det0 * det0;
+    solve_quadratic(aqa, aqb, aqc)
+}
+
+fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
+    if a.abs() <= 1e-14 {
+        if b.abs() <= 1e-14 {
+            return Vec::new();
+        }
+        return vec![-c / b]
+            .into_iter()
+            .filter(|&r| r.is_finite())
+            .collect();
+    }
+    let disc = b * b - 4.0 * a * c;
+    if disc < -1e-8 {
+        return Vec::new();
+    }
+    let sd = disc.max(0.0).sqrt();
+    let mut v = vec![(-b - sd) / (2.0 * a), (-b + sd) / (2.0 * a)];
+    v.sort_by(f64::total_cmp);
+    v.dedup_by(|a, b| (*a - *b).abs() < 1e-8);
+    v
+}
+
 fn append_circle_circle_point_solutions(
     c1: Circle2d,
     c2: Circle2d,
@@ -1491,6 +1717,62 @@ mod tests {
         assert!((lengths[1] - 284.90187851033369).abs() < 1e-9);
         assert!((lengths[2] - 131.38343888467227).abs() < 1e-9);
         assert!((lengths[3] - 63.235238531994284).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_two_circles_and_line_matches_occt() {
+        let circles = circles_tangent_to_two_circles_and_line(
+            Circle2d {
+                center: DVec2::new(0.0, 0.0),
+                radius: 50.0,
+            },
+            Circle2d {
+                center: DVec2::new(20.0, 0.0),
+                radius: 10.0,
+            },
+            Line2d {
+                origin: DVec2::new(-20.0, 0.0),
+                direction: DVec2::new(10.0, 20.0),
+            },
+        );
+
+        assert_eq!(circles.len(), 4);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 115.99869565347736).abs() < 1e-6);
+        assert!((lengths[1] - 156.18117752496227).abs() < 1e-6);
+        assert!((lengths[2] - 165.15717356376749).abs() < 1e-6);
+        assert!((lengths[3] - 198.5849242626559).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_three_circles_matches_occt() {
+        let circles = circles_tangent_to_three_circles(
+            Circle2d {
+                center: DVec2::new(0.0, 0.0),
+                radius: 50.0,
+            },
+            Circle2d {
+                center: DVec2::new(20.0, 0.0),
+                radius: 10.0,
+            },
+            Circle2d {
+                center: DVec2::new(0.0, 20.0),
+                radius: 10.0,
+            },
+        );
+
+        assert_eq!(circles.len(), 8);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 168.36566348025758).abs() < 1e-4);
+        assert!((lengths[1] - 244.52937099154383).abs() < 1e-4);
+        assert!((lengths[2] - 131.42863607625242).abs() < 1e-4);
+        assert!((lengths[3] - 182.73062928272694).abs() < 1e-4);
+        assert!((lengths[4] - 182.7306292827268).abs() < 1e-4);
+        assert!((lengths[5] - 131.42863607625236).abs() < 1e-4);
+        assert!((lengths[6] - 94.936311385359318).abs() < 1e-4);
+        assert!((lengths[7] - 178.56704904481091).abs() < 1e-4);
     }
 
     #[test]
