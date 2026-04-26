@@ -247,6 +247,68 @@ pub fn circles_tangent_to_two_lines_through_point(
     result
 }
 
+/// Construct circles through two points and tangent to a line.
+///
+/// Results are sorted by descending radius to match OCCT DRAW's observed
+/// ordering for `LinPointPoint_11`.
+pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2) -> Vec<Circle2d> {
+    let chord = p2 - p1;
+    let chord_len = chord.length();
+    if chord_len <= 1e-12 {
+        return Vec::new();
+    }
+    let Some(line_normal) = unit_line_normal(line.direction) else {
+        return Vec::new();
+    };
+
+    let midpoint = (p1 + p2) * 0.5;
+    let half_chord = chord_len * 0.5;
+    let chord_normal = DVec2::new(-chord.y, chord.x) / chord_len;
+    let line_offset = line_normal.dot(midpoint - line.origin);
+    let slope = line_normal.dot(chord_normal);
+
+    let mut result = Vec::new();
+    for line_sign in [-1.0, 1.0] {
+        let qa = slope * slope - 1.0;
+        let qb = 2.0 * line_offset * slope;
+        let qc = line_offset * line_offset - half_chord * half_chord;
+        let mut roots = Vec::new();
+        if qa.abs() <= 1e-14 {
+            if qb.abs() > 1e-14 {
+                roots.push(-qc / qb);
+            }
+        } else {
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc >= -1e-8 {
+                let sqrt_disc = disc.max(0.0).sqrt();
+                roots.push((-qb - sqrt_disc) / (2.0 * qa));
+                roots.push((-qb + sqrt_disc) / (2.0 * qa));
+            }
+        }
+
+        for root in roots {
+            let center = midpoint + chord_normal * root;
+            let radius = (center - p1).length();
+            if radius <= 1e-10 || !radius.is_finite() {
+                continue;
+            }
+            let signed_distance = signed_distance_to_line(center, line, line_normal);
+            if (signed_distance - line_sign * radius).abs() > 1e-7 {
+                continue;
+            }
+            if result.iter().any(|c: &Circle2d| {
+                (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+            }) {
+                continue;
+            }
+            result.push(Circle2d { center, radius });
+        }
+    }
+
+    result.sort_by(|a, b| b.radius.partial_cmp(&a.radius).unwrap());
+    result
+}
+
 /// Construct circles tangent to three lines.
 ///
 /// The valid signed-distance branches are returned in OCCT DRAW's observed
@@ -1385,6 +1447,24 @@ mod tests {
 
         assert!((lengths[0] - 269.03484941268533).abs() < 1e-9);
         assert!((lengths[1] - 130.52381207643296).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_line_through_points_matches_occt() {
+        let circles = circles_tangent_to_line_through_points(
+            Line2d {
+                origin: DVec2::ZERO,
+                direction: DVec2::new(10.0, 20.0),
+            },
+            DVec2::new(10.0, 10.0),
+            DVec2::new(100.0, 10.0),
+        );
+
+        assert_eq!(circles.len(), 2);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 419.71016104587477).abs() < 1e-9);
+        assert!((lengths[1] - 282.77131205819785).abs() < 1e-9);
     }
 
     #[test]
