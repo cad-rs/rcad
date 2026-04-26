@@ -120,6 +120,97 @@ pub fn circles_tangent_to_circle_through_points(
     circles
 }
 
+/// Construct circles through a point and tangent to two circles.
+///
+/// Results are sorted by ascending radius to match OCCT DRAW's observed
+/// `circ2d3Tan` ordering for circle-circle-point cases.
+pub fn circles_tangent_to_two_circles_through_point(
+    c1: Circle2d,
+    c2: Circle2d,
+    point: DVec2,
+) -> Vec<Circle2d> {
+    if c1.radius <= 1e-12 || c2.radius <= 1e-12 {
+        return Vec::new();
+    }
+
+    let mut result = Vec::new();
+    for s1 in [-1.0, 1.0] {
+        for s2 in [-1.0, 1.0] {
+            append_circle_circle_point_solutions(c1, c2, point, s1, s2, &mut result);
+        }
+    }
+
+    result.sort_by(|a, b| a.radius.partial_cmp(&b.radius).unwrap());
+    result
+}
+
+fn append_circle_circle_point_solutions(
+    c1: Circle2d,
+    c2: Circle2d,
+    point: DVec2,
+    s1: f64,
+    s2: f64,
+    result: &mut Vec<Circle2d>,
+) {
+    let a1 = 2.0 * (point.x - c1.center.x);
+    let b1 = 2.0 * (point.y - c1.center.y);
+    let cst1 = c1.center.length_squared() - point.length_squared() - c1.radius * c1.radius;
+    let d1 = 2.0 * s1 * c1.radius;
+
+    let a2 = 2.0 * (point.x - c2.center.x);
+    let b2 = 2.0 * (point.y - c2.center.y);
+    let cst2 = c2.center.length_squared() - point.length_squared() - c2.radius * c2.radius;
+    let d2 = 2.0 * s2 * c2.radius;
+
+    let det = a1 * b2 - a2 * b1;
+    if det.abs() <= 1e-12 {
+        return;
+    }
+
+    // x = x0 + xr * R, y = y0 + yr * R.
+    let x0 = (-cst1 * b2 + cst2 * b1) / det;
+    let y0 = (-a1 * cst2 + a2 * cst1) / det;
+    let xr = (d1 * b2 - d2 * b1) / det;
+    let yr = (a1 * d2 - a2 * d1) / det;
+
+    let qx = x0 - point.x;
+    let qy = y0 - point.y;
+    let qa = xr * xr + yr * yr - 1.0;
+    let qb = 2.0 * (qx * xr + qy * yr);
+    let qc = qx * qx + qy * qy;
+
+    let mut roots = Vec::new();
+    if qa.abs() <= 1e-14 {
+        if qb.abs() > 1e-14 {
+            roots.push(-qc / qb);
+        }
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc >= -1e-8 {
+            let sqrt_disc = disc.max(0.0).sqrt();
+            roots.push((-qb - sqrt_disc) / (2.0 * qa));
+            roots.push((-qb + sqrt_disc) / (2.0 * qa));
+        }
+    }
+
+    for radius in roots {
+        if radius <= 1e-10 || !radius.is_finite() {
+            continue;
+        }
+        let center = DVec2::new(x0 + xr * radius, y0 + yr * radius);
+        if !is_tangent_to_circle(center, radius, c1) || !is_tangent_to_circle(center, radius, c2) {
+            continue;
+        }
+        result.push(Circle2d { center, radius });
+    }
+}
+
+fn is_tangent_to_circle(center: DVec2, radius: f64, base: Circle2d) -> bool {
+    let d = (center - base.center).length();
+    (d - (radius + base.radius)).abs() < 1e-7
+        || (d - (radius - base.radius).abs()).abs() < 1e-7
+}
+
 // =============================================================================
 // InterCurveCurve - 2D curve-curve intersection
 // =============================================================================
@@ -838,6 +929,27 @@ mod tests {
         let circumference = 2.0 * PI * circles[0].radius;
 
         assert!((circumference - 39.269908169872416).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_two_circles_through_point_matches_occt() {
+        let circles = circles_tangent_to_two_circles_through_point(
+            Circle2d {
+                center: DVec2::ZERO,
+                radius: 10.0,
+            },
+            Circle2d {
+                center: DVec2::new(30.0, 0.0),
+                radius: 20.0,
+            },
+            DVec2::new(10.0, 10.0),
+        );
+
+        assert_eq!(circles.len(), 2);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 13.802267767659149).abs() < 1e-9);
+        assert!((lengths[1] - 80.445511840034683).abs() < 1e-9);
     }
 
     #[test]

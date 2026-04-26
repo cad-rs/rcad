@@ -68,7 +68,10 @@ pub use features::{
     FeatureError, SplitShapeError, make_cylindrical_hole, make_draft_prism, make_linear_rib,
     make_prism, make_revolution, make_revolution_rib, split_face_by_wire,
 };
-pub use geom2d_api::{circle_through_three_points, circles_tangent_to_circle_through_points};
+pub use geom2d_api::{
+    circle_through_three_points, circles_tangent_to_circle_through_points,
+    circles_tangent_to_two_circles_through_point,
+};
 pub mod adaptor3d;
 pub mod approx_int;
 pub mod array;
