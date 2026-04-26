@@ -9,7 +9,7 @@
 //! - Angle and curvature analysis
 
 use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval, BSplineCurve2};
+use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval};
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -29,6 +29,97 @@ pub struct Curve2dIntersection {
     pub param2: f64,
 }
 
+/// Construct the unique circle through three non-collinear points.
+///
+/// Returns `None` when the points are collinear or too close to define a
+/// numerically stable circle.
+pub fn circle_through_three_points(p1: DVec2, p2: DVec2, p3: DVec2) -> Option<Circle2d> {
+    let a = p2 - p1;
+    let b = p3 - p1;
+    let det = 2.0 * (a.x * b.y - a.y * b.x);
+    if det.abs() <= 1e-12 {
+        return None;
+    }
+
+    let a_len2 = a.length_squared();
+    let b_len2 = b.length_squared();
+    let center_offset = DVec2::new(
+        (a_len2 * b.y - b_len2 * a.y) / det,
+        (b_len2 * a.x - a_len2 * b.x) / det,
+    );
+    let center = p1 + center_offset;
+    let radius = (center - p1).length();
+    if radius <= 1e-12 || !radius.is_finite() {
+        return None;
+    }
+
+    Some(Circle2d { center, radius })
+}
+
+/// Construct circles through two points and tangent to `base`.
+///
+/// Results are sorted by descending radius to match OCCT DRAW's observed
+/// `circ2d3Tan` ordering for circle-point-point cases.
+pub fn circles_tangent_to_circle_through_points(
+    base: Circle2d,
+    p1: DVec2,
+    p2: DVec2,
+) -> Vec<Circle2d> {
+    let chord = p2 - p1;
+    let chord_len = chord.length();
+    if chord_len <= 1e-12 || base.radius <= 1e-12 {
+        return Vec::new();
+    }
+
+    let midpoint = (p1 + p2) * 0.5;
+    let half_chord = chord_len * 0.5;
+    let normal = DVec2::new(-chord.y, chord.x) / chord_len;
+    let to_mid = midpoint - base.center;
+    let a = to_mid.length_squared() - half_chord * half_chord - base.radius * base.radius;
+    let b = 2.0 * to_mid.dot(normal);
+    let c = 4.0 * base.radius * base.radius;
+
+    let qa = b * b - c;
+    let qb = 2.0 * a * b;
+    let qc = a * a - c * half_chord * half_chord;
+    let mut roots = Vec::new();
+    if qa.abs() <= 1e-14 {
+        if qb.abs() > 1e-14 {
+            roots.push(-qc / qb);
+        }
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc >= -1e-8 {
+            let sqrt_disc = disc.max(0.0).sqrt();
+            roots.push((-qb - sqrt_disc) / (2.0 * qa));
+            roots.push((-qb + sqrt_disc) / (2.0 * qa));
+        }
+    }
+
+    let mut circles = Vec::new();
+    for root in roots {
+        let center = midpoint + normal * root;
+        let radius = (center - p1).length();
+        if radius <= 1e-12 || !radius.is_finite() {
+            continue;
+        }
+        let center_distance = (center - base.center).length();
+        let is_tangent = (center_distance - (radius + base.radius)).abs() < 1e-7
+            || (center_distance - (radius - base.radius).abs()).abs() < 1e-7;
+        if !is_tangent {
+            continue;
+        }
+        if circles.iter().any(|c: &Circle2d| {
+            (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+        }) {
+            continue;
+        }
+        circles.push(Circle2d { center, radius });
+    }
+    circles.sort_by(|a, b| b.radius.partial_cmp(&a.radius).unwrap());
+    circles
+}
+
 // =============================================================================
 // InterCurveCurve - 2D curve-curve intersection
 // =============================================================================
@@ -45,7 +136,11 @@ pub struct Curve2dIntersection {
 ///
 /// # Returns
 /// Vector of intersection points with parameters on each curve.
-pub fn intersect_curves2d(curve1: &Curve2d, curve2: &Curve2d, tol: f64) -> Vec<Curve2dIntersection> {
+pub fn intersect_curves2d(
+    curve1: &Curve2d,
+    curve2: &Curve2d,
+    tol: f64,
+) -> Vec<Curve2dIntersection> {
     let domain1 = curve2d_domain(curve1);
     let domain2 = curve2d_domain(curve2);
 
@@ -75,7 +170,8 @@ pub fn intersect_curves2d(curve1: &Curve2d, curve2: &Curve2d, tol: f64) -> Vec<C
 
     for (_, t1, t2) in candidates {
         // Newton refinement
-        let (refined_t1, refined_t2) = refine_curve2d_intersection(curve1, curve2, domain1, domain2, t1, t2);
+        let (refined_t1, refined_t2) =
+            refine_curve2d_intersection(curve1, curve2, domain1, domain2, t1, t2);
 
         let p1 = curve1.point_at(refined_t1);
         let p2 = curve2.point_at(refined_t2);
@@ -84,7 +180,8 @@ pub fn intersect_curves2d(curve1: &Curve2d, curve2: &Curve2d, tol: f64) -> Vec<C
         if dist < tol {
             // Check if this intersection is already found
             let is_duplicate = intersections.iter().any(|int| {
-                (int.param1 - refined_t1).abs() < tol * 10.0 && (int.param2 - refined_t2).abs() < tol * 10.0
+                (int.param1 - refined_t1).abs() < tol * 10.0
+                    && (int.param2 - refined_t2).abs() < tol * 10.0
             });
 
             if !is_duplicate {
@@ -241,7 +338,8 @@ pub fn distance_between_curves2d(curve1: &Curve2d, curve2: &Curve2d) -> (f64, f6
     }
 
     // Newton refinement
-    let (refined_t1, refined_t2) = refine_curve2d_distance(curve1, curve2, domain1, domain2, best_t1, best_t2);
+    let (refined_t1, refined_t2) =
+        refine_curve2d_distance(curve1, curve2, domain1, domain2, best_t1, best_t2);
     let p1 = curve1.point_at(refined_t1);
     let p2 = curve2.point_at(refined_t2);
     let final_dist = (p2 - p1).length();
@@ -336,7 +434,10 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
             if n < 2 {
                 return [0.0, 1.0];
             }
-            [bspline.knots[bspline.degree], bspline.knots[n - bspline.degree - 1]]
+            [
+                bspline.knots[bspline.degree],
+                bspline.knots[n - bspline.degree - 1],
+            ]
         }
         Curve2d::Bezier(_) => [0.0, 1.0],
     }
@@ -360,11 +461,7 @@ fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
 fn curve2d_tangent(curve: &Curve2d, t: f64) -> DVec2 {
     let d = curve2d_derivative(curve, t);
     let len = d.length();
-    if len < 1e-15 {
-        DVec2::X
-    } else {
-        d / len
-    }
+    if len < 1e-15 { DVec2::X } else { d / len }
 }
 
 /// Newton refinement for curve-curve intersection.
@@ -426,7 +523,12 @@ fn refine_curve2d_intersection(
 }
 
 /// Newton refinement for point-to-curve distance.
-fn refine_point_curve2d_distance(curve: &Curve2d, domain: [f64; 2], point: DVec2, initial_t: f64) -> f64 {
+fn refine_point_curve2d_distance(
+    curve: &Curve2d,
+    domain: [f64; 2],
+    point: DVec2,
+    initial_t: f64,
+) -> f64 {
     let mut t = initial_t;
 
     const MAX_ITER: usize = 20;
@@ -523,7 +625,12 @@ fn clamped_knots_from_params(params: &[f64], degree: usize) -> Vec<f64> {
 }
 
 /// Solve the interpolation system for 2D points.
-fn solve_interpolation_2d(params: &[f64], knots: &[f64], degree: usize, pts: &[DVec2]) -> Vec<DVec2> {
+fn solve_interpolation_2d(
+    params: &[f64],
+    knots: &[f64],
+    degree: usize,
+    pts: &[DVec2],
+) -> Vec<DVec2> {
     let n = pts.len();
     let a = collocation_matrix_2d(params, knots, degree, n, n);
 
@@ -537,7 +644,13 @@ fn solve_interpolation_2d(params: &[f64], knots: &[f64], degree: usize, pts: &[D
 }
 
 /// Build collocation matrix for B-spline interpolation.
-fn collocation_matrix_2d(params: &[f64], knots: &[f64], degree: usize, n_data: usize, n_ctrl: usize) -> Vec<Vec<f64>> {
+fn collocation_matrix_2d(
+    params: &[f64],
+    knots: &[f64],
+    degree: usize,
+    n_data: usize,
+    n_ctrl: usize,
+) -> Vec<Vec<f64>> {
     params[..n_data]
         .iter()
         .map(|&t| all_basis_fns_2d(t, knots, degree, n_ctrl))
@@ -635,7 +748,9 @@ fn gauss_solve_2d(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
             let (lower, upper) = mat.split_at_mut(row);
             let pivot_row = &lower[col];
             let elim_row = &mut upper[0];
-            for (elim_val, &pivot_val) in elim_row[col..=n].iter_mut().zip(pivot_row[col..=n].iter()) {
+            for (elim_val, &pivot_val) in
+                elim_row[col..=n].iter_mut().zip(pivot_row[col..=n].iter())
+            {
                 *elim_val -= pivot_val * factor;
             }
         }
@@ -664,6 +779,66 @@ mod tests {
     use std::f64::consts::FRAC_PI_2;
 
     // ── Curve-Curve Intersection Tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_circle_through_three_points_matches_occt_point_point_point() {
+        let circle = circle_through_three_points(
+            DVec2::new(0.0, 50.0),
+            DVec2::new(30.0, 20.0),
+            DVec2::new(150.0, 150.0),
+        )
+        .expect("three non-collinear points should define a circle");
+
+        let circumference = 2.0 * PI * circle.radius;
+
+        assert!((circumference - 566.81157580298293).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circle_through_three_points_rejects_collinear_points() {
+        let circle = circle_through_three_points(
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(2.0, 2.0),
+        );
+
+        assert!(circle.is_none());
+    }
+
+    #[test]
+    fn test_circles_tangent_to_circle_through_points_matches_occt_circle_point_point() {
+        let circles = circles_tangent_to_circle_through_points(
+            Circle2d {
+                center: DVec2::ZERO,
+                radius: 10.0,
+            },
+            DVec2::new(20.0, 0.0),
+            DVec2::new(15.0, 5.0),
+        );
+
+        assert_eq!(circles.len(), 2);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 157.07963267948966).abs() < 1e-9);
+        assert!((lengths[1] - 31.415926535897931).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_circle_through_points_handles_internal_tangent_case() {
+        let circles = circles_tangent_to_circle_through_points(
+            Circle2d {
+                center: DVec2::ZERO,
+                radius: 10.0,
+            },
+            DVec2::new(5.0, 0.0),
+            DVec2::new(0.0, 10.0),
+        );
+
+        assert_eq!(circles.len(), 1);
+        let circumference = 2.0 * PI * circles[0].radius;
+
+        assert!((circumference - 39.269908169872416).abs() < 1e-9);
+    }
 
     #[test]
     fn test_intersect_lines_crossing() {
@@ -701,7 +876,11 @@ mod tests {
 
         for int in &intersections {
             let p = int.point;
-            assert!((p.length() - 1.0).abs() < 1e-3, "Point {} should be on circle", p);
+            assert!(
+                (p.length() - 1.0).abs() < 1e-3,
+                "Point {} should be on circle",
+                p
+            );
             assert!(p.y.abs() < 1e-3, "Point {} should have y=0", p);
         }
     }
