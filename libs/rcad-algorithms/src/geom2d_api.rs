@@ -9,7 +9,7 @@
 //! - Angle and curvature analysis
 
 use glam::DVec2;
-use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval};
+use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval, Line2d};
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -144,6 +144,33 @@ pub fn circles_tangent_to_two_circles_through_point(
     result
 }
 
+/// Construct circles through a point and tangent to two lines.
+///
+/// Results are sorted by descending radius to match OCCT DRAW's observed
+/// ordering for the `LinLinPoint_11` case.
+pub fn circles_tangent_to_two_lines_through_point(
+    l1: Line2d,
+    l2: Line2d,
+    point: DVec2,
+) -> Vec<Circle2d> {
+    let Some(n1) = unit_line_normal(l1.direction) else {
+        return Vec::new();
+    };
+    let Some(n2) = unit_line_normal(l2.direction) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for s1 in [-1.0, 1.0] {
+        for s2 in [-1.0, 1.0] {
+            append_line_line_point_solutions(l1, n1, l2, n2, point, s1, s2, &mut result);
+        }
+    }
+
+    result.sort_by(|a, b| b.radius.partial_cmp(&a.radius).unwrap());
+    result
+}
+
 fn append_circle_circle_point_solutions(
     c1: Circle2d,
     c2: Circle2d,
@@ -207,8 +234,78 @@ fn append_circle_circle_point_solutions(
 
 fn is_tangent_to_circle(center: DVec2, radius: f64, base: Circle2d) -> bool {
     let d = (center - base.center).length();
-    (d - (radius + base.radius)).abs() < 1e-7
-        || (d - (radius - base.radius).abs()).abs() < 1e-7
+    (d - (radius + base.radius)).abs() < 1e-7 || (d - (radius - base.radius).abs()).abs() < 1e-7
+}
+
+fn append_line_line_point_solutions(
+    l1: Line2d,
+    n1: DVec2,
+    l2: Line2d,
+    n2: DVec2,
+    point: DVec2,
+    s1: f64,
+    s2: f64,
+    result: &mut Vec<Circle2d>,
+) {
+    let det = n1.x * n2.y - n2.x * n1.y;
+    if det.abs() <= 1e-12 {
+        return;
+    }
+
+    // n_i . center = n_i . origin_i + sign_i * R
+    let b1 = n1.dot(l1.origin);
+    let b2 = n2.dot(l2.origin);
+    let x0 = (b1 * n2.y - b2 * n1.y) / det;
+    let y0 = (n1.x * b2 - n2.x * b1) / det;
+    let xr = (s1 * n2.y - s2 * n1.y) / det;
+    let yr = (n1.x * s2 - n2.x * s1) / det;
+
+    let qx = x0 - point.x;
+    let qy = y0 - point.y;
+    let qa = xr * xr + yr * yr - 1.0;
+    let qb = 2.0 * (qx * xr + qy * yr);
+    let qc = qx * qx + qy * qy;
+
+    let mut roots = Vec::new();
+    if qa.abs() <= 1e-14 {
+        if qb.abs() > 1e-14 {
+            roots.push(-qc / qb);
+        }
+    } else {
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc >= -1e-8 {
+            let sqrt_disc = disc.max(0.0).sqrt();
+            roots.push((-qb - sqrt_disc) / (2.0 * qa));
+            roots.push((-qb + sqrt_disc) / (2.0 * qa));
+        }
+    }
+
+    for radius in roots {
+        if radius <= 1e-10 || !radius.is_finite() {
+            continue;
+        }
+        let center = DVec2::new(x0 + xr * radius, y0 + yr * radius);
+        if (signed_distance_to_line(center, l1, n1).abs() - radius).abs() > 1e-7
+            || (signed_distance_to_line(center, l2, n2).abs() - radius).abs() > 1e-7
+        {
+            continue;
+        }
+        if result.iter().any(|c: &Circle2d| {
+            (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+        }) {
+            continue;
+        }
+        result.push(Circle2d { center, radius });
+    }
+}
+
+fn unit_line_normal(direction: DVec2) -> Option<DVec2> {
+    let len = direction.length();
+    (len > 1e-12).then(|| DVec2::new(-direction.y, direction.x) / len)
+}
+
+fn signed_distance_to_line(point: DVec2, line: Line2d, normal: DVec2) -> f64 {
+    normal.dot(point - line.origin)
 }
 
 // =============================================================================
@@ -950,6 +1047,27 @@ mod tests {
 
         assert!((lengths[0] - 13.802267767659149).abs() < 1e-9);
         assert!((lengths[1] - 80.445511840034683).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_circles_tangent_to_two_lines_through_point_matches_occt() {
+        let circles = circles_tangent_to_two_lines_through_point(
+            Line2d {
+                origin: DVec2::ZERO,
+                direction: DVec2::new(10.0, 20.0),
+            },
+            Line2d {
+                origin: DVec2::ZERO,
+                direction: DVec2::new(10.0, -40.0),
+            },
+            DVec2::new(10.0, 80.0),
+        );
+
+        assert_eq!(circles.len(), 2);
+        let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
+
+        assert!((lengths[0] - 269.03484941268533).abs() < 1e-9);
+        assert!((lengths[1] - 130.52381207643296).abs() < 1e-9);
     }
 
     #[test]
