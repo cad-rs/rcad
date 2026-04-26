@@ -69,8 +69,10 @@ pub use features::{
     make_prism, make_revolution, make_revolution_rib, split_face_by_wire,
 };
 pub use geom2d_api::{
-    circle_through_three_points, circles_tangent_to_circle_through_points,
-    circles_tangent_to_two_circles_through_point, circles_tangent_to_two_lines_through_point,
+    circle_through_three_points, circles_tangent_to_circle_and_line_through_point,
+    circles_tangent_to_circle_and_two_lines, circles_tangent_to_circle_through_points,
+    circles_tangent_to_three_lines, circles_tangent_to_two_circles_through_point,
+    circles_tangent_to_two_lines_through_point,
 };
 pub mod adaptor3d;
 pub mod approx_int;
