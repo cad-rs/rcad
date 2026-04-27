@@ -1154,8 +1154,41 @@ pub fn compute_all_curve_surface_projections(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{Circle3, Plane, SphericalSurface, CylindricalSurface, Line3, Line2d};
+    use std::f64::consts::PI;
+    use rcad_kernel::geom::{
+        Circle3, Curve2d, CylindricalSurface, Line2d, Line3, Plane, SphericalSurface,
+    };
     use rcad_kernel::PrimitiveSolid;
+
+    fn approx_curve2d_chord_length(c: &Curve2d, t0: f64, t1: f64, n: usize) -> f64 {
+        use rcad_kernel::geom::Curve2dEval;
+        if n < 2 {
+            return 0.0;
+        }
+        let mut s = 0.0;
+        let mut p_prev = c.point_at(t0);
+        for i in 1..=n {
+            let t = t0 + (t1 - t0) * i as f64 / n as f64;
+            let p = c.point_at(t);
+            s += (p - p_prev).length();
+            p_prev = p;
+        }
+        s
+    }
+
+    fn curve2d_t_bounds(c: &Curve2d) -> (f64, f64) {
+        match c {
+            Curve2d::Circle(_) => (0.0, 2.0 * PI),
+            Curve2d::Ellipse(_) => (0.0, 2.0 * PI),
+            Curve2d::Line(_) => (0.0, 1.0),
+            Curve2d::BSpline(bs) if bs.knots.len() > bs.degree + 1 => {
+                let a = bs.knots[bs.degree];
+                let bnd = bs.knots[bs.knots.len() - 1 - bs.degree];
+                (a, bnd)
+            }
+            _ => (0.0, 1.0),
+        }
+    }
 
     #[test]
     fn project_point_on_curve_line() {
@@ -1255,6 +1288,39 @@ mod tests {
                 // B-spline approximation is also acceptable
             }
             _ => {}
+        }
+    }
+
+    /// UV length of a horizontal 3D circle orthogonally projected onto z=0 (anchor for OCCT `project`).
+    #[test]
+    fn project_circle_on_plane_matches_uv_circumference() {
+        let r = 2.0_f64;
+        let circle3 = Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, 3.0),
+            normal: DVec3::Z,
+            radius: r,
+        });
+        let plane = Surface3::Plane(Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        });
+        let options = ProjectionOptions {
+            samples: 64,
+            tolerance: 1e-7,
+            ..Default::default()
+        };
+        let curve2d = project_curve_on_surface(&circle3, &plane, &options);
+        if let Curve2d::Circle(c) = &curve2d {
+            let len = 2.0 * PI * c.radius;
+            assert!((len - 2.0 * PI * r).abs() < 1e-4);
+        } else {
+            let (t0, t1) = curve2d_t_bounds(&curve2d);
+            let chord_len = approx_curve2d_chord_length(&curve2d, t0, t1, 4096);
+            let expect = 2.0 * PI * r;
+            assert!(
+                (chord_len - expect).abs() < 0.05 * expect + 1e-3,
+                "chord-approx length {chord_len} should be near {expect}"
+            );
         }
     }
 
