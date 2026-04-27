@@ -332,15 +332,208 @@ impl BRep {
 
     /// Create a compound from multiple BReps.
     ///
-    /// Each input BRep's solids are extracted and added to the compound.
+    /// Each input BRep is merged with **disjoint** renumbering so `vertices` /
+    /// `edges` / [`GeomStore`] in the result cover every constituent solid.
+    /// This is required for algorithms that need a self-contained B-rep (e.g. compound
+    /// booleans) and cannot operate on a compound that only held cloned solids in an
+    /// empty top-level buffer (unlike a bare [`Self::from_compound`] assembly with
+    /// no merged geometry on the parent [`BRep`]).
     pub fn compound_from_shapes(shapes: &[BRep]) -> BRep {
+        if shapes.is_empty() {
+            return BRep::new();
+        }
+        if shapes.len() == 1 {
+            return shapes[0].clone();
+        }
+        let mut merged = BRep::new();
         let mut compound = topology::Compound::new();
-        for shape in shapes {
-            for solid in &shape.solids {
-                compound.add_solid(None, solid.clone());
+        for sh in shapes {
+            let before = merged.solids.len();
+            merged.append_disjoint_brep(sh);
+            for s in &merged.solids[before..] {
+                compound.add_solid(None, s.clone());
             }
         }
-        Self::from_compound(compound)
+        merged.compound = Some(compound);
+        merged
+    }
+
+    /// Append `other` to `self`, renumbering all vertex / edge / geometry pool
+    /// references. `other` must not be a [`Self::compound`] or [`Self::compsolid`].
+    pub fn append_disjoint_brep(&mut self, other: &BRep) {
+        assert!(
+            other.compound.is_none() && other.compsolid.is_none(),
+            "append_disjoint_brep: nested compound BRep not supported"
+        );
+        if other.solids.is_empty() {
+            return;
+        }
+
+        use crate::topology::{Face, Shell, Solid, Wire, WireEdge};
+
+        let v0 = self.vertices.len();
+        let e0 = self.edges.len();
+        let c0 = self.geom.curves.len();
+        let s0 = self.geom.surfaces.len();
+        let k0 = self.geom.curve2ds.len();
+
+        self.vertices.extend_from_slice(&other.vertices);
+        for i in 0..other.vertices.len() {
+            self.geom.vertex_tolerance.push(
+                *other
+                    .geom
+                    .vertex_tolerance
+                    .get(i)
+                    .unwrap_or(&tolerance::CONFUSION),
+            );
+        }
+
+        for e in &other.edges {
+            self.edges.push(Edge {
+                start: e.start + v0,
+                end: e.end + v0,
+            });
+        }
+        for i in 0..other.edges.len() {
+            self.geom.edge_curve.push(
+                other
+                    .geom
+                    .edge_curve
+                    .get(i)
+                    .and_then(|o| o.map(|c| c + c0)),
+            );
+            let pcurves: Vec<PCurve> = other
+                .geom
+                .edge_pcurves
+                .get(i)
+                .map(|v| {
+                    v.iter()
+                        .map(|p| PCurve {
+                            surface_idx: p.surface_idx + s0,
+                            curve2d_idx: p.curve2d_idx + k0,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.geom.edge_pcurves.push(pcurves);
+            self.geom
+                .edge_curve_range
+                .push(other.geom.edge_curve_range.get(i).copied().flatten());
+            self.geom
+                .edge_degenerated
+                .push(*other
+                    .geom
+                    .edge_degenerated
+                    .get(i)
+                    .unwrap_or(&false));
+            self.geom
+                .edge_same_parameter
+                .push(*other
+                    .geom
+                    .edge_same_parameter
+                    .get(i)
+                    .unwrap_or(&true));
+            self.geom
+                .edge_same_range
+                .push(*other.geom.edge_same_range.get(i).unwrap_or(&true));
+            self.geom.edge_tolerance.push(
+                *other
+                    .geom
+                    .edge_tolerance
+                    .get(i)
+                    .unwrap_or(&tolerance::CONFUSION),
+            );
+        }
+
+        self.geom
+            .curves
+            .extend(other.geom.curves.iter().cloned());
+        self.geom
+            .surfaces
+            .extend(other.geom.surfaces.iter().cloned());
+        self.geom
+            .curve2ds
+            .extend(other.geom.curve2ds.iter().cloned());
+        for i in 0..other.geom.curve2ds.len() {
+            self.geom.curve2d_range.push(
+                other
+                    .geom
+                    .curve2d_range
+                    .get(i)
+                    .copied()
+                    .flatten(),
+            );
+        }
+
+        for i in 0..other.geom.face_surface.len() {
+            self.geom
+                .face_surface
+                .push(
+                    other
+                        .geom
+                        .face_surface
+                        .get(i)
+                        .and_then(|o| o.map(|si| si + s0)),
+                );
+            self.geom
+                .face_surface_range
+                .push(
+                    other
+                        .geom
+                        .face_surface_range
+                        .get(i)
+                        .copied()
+                        .flatten(),
+                );
+            self.geom
+                .face_tolerance
+                .push(
+                    *other
+                        .geom
+                        .face_tolerance
+                        .get(i)
+                        .unwrap_or(&tolerance::CONFUSION),
+                );
+        }
+
+        let remap_wire = |w: &Wire| -> Wire {
+            Wire {
+                edges: w
+                    .edges
+                    .iter()
+                    .map(|we| WireEdge {
+                        idx: we.idx + e0,
+                        forward: we.forward,
+                    })
+                    .collect(),
+            }
+        };
+        let remap_face = |face: &Face| -> Face {
+            Face {
+                outer_wire: remap_wire(&face.outer_wire),
+                inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
+                normal: face.normal,
+                triangles: face
+                    .triangles
+                    .iter()
+                    .map(|[a, b, c]| [a + v0, b + v0, c + v0])
+                    .collect(),
+                mesh_dirty: face.mesh_dirty,
+            }
+        };
+
+        for s in &other.solids {
+            let new_shells: Vec<Shell> = s
+                .shells
+                .iter()
+                .map(|sh| Shell {
+                    faces: sh.faces.iter().map(remap_face).collect(),
+                })
+                .collect();
+            self.solids.push(Solid { shells: new_shells });
+        }
+
+        crate::tolerance::resize_tolerance_arrays(self);
     }
 
     /// Explode this BRep into constituent shapes.
