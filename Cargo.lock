@@ -1109,6 +1109,7 @@ name = "rcad-kernel"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "earcutr",
  "glam",
  "serde",
  "serde_json",

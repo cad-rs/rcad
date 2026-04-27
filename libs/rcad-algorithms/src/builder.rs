@@ -2042,7 +2042,6 @@ mod tests {
         ));
     }
 
-    #[test]
     /// Regression: unit sphere and unit box must register plane–sphere F–F curves and split
     /// the sphere in parameter space; otherwise a single A sub-face and one sample can mis-classify the whole face.
     #[test]
