@@ -201,6 +201,19 @@ impl BRepHistory {
                 }
             }
         }
+        for (result_idx, origin) in &history.co_face_origins {
+            match origin {
+                FaceOrigin::FromA(src_idx) => {
+                    modified_a.entry(*src_idx).or_default().push(*result_idx);
+                }
+                FaceOrigin::FromB(src_idx) => {
+                    modified_b.entry(*src_idx).or_default().push(*result_idx);
+                }
+                FaceOrigin::Generated => {
+                    generated_faces.push(*result_idx);
+                }
+            }
+        }
 
         // Extract generated edges
         let generated_edges: Vec<usize> = history.edge_origins

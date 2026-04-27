@@ -837,6 +837,10 @@ impl HistoryStatistics {
 #[derive(Debug, Clone)]
 pub struct BooleanHistory {
     pub face_origins: Vec<FaceOrigin>,
+    /// When two input faces glue to the same result face, the first emission wins in
+    /// [`face_origins[result_i]`](face_origins); any additional A/B source is recorded
+    /// here as `(result_face_index, origin)`.
+    pub co_face_origins: Vec<(usize, FaceOrigin)>,
     /// Per-edge origin map. `edge_origins[i]` gives the origin of `result_brep.edges[i]`.
     ///
     /// Empty when edge history was not requested (standard `boolean_op_with_history` path
@@ -878,6 +882,7 @@ impl BooleanHistory {
     pub fn new() -> Self {
         Self {
             face_origins: Vec::new(),
+            co_face_origins: Vec::new(),
             edge_origins: Vec::new(),
             vertex_origins: Vec::new(),
             shell_origins: Vec::new(),
@@ -1016,13 +1021,25 @@ impl BooleanHistory {
                 _ => {}
             }
         }
+        for (idx, origin) in &self.co_face_origins {
+            match origin {
+                FaceOrigin::FromA(src_idx) if *src_idx == source_face_idx && from_a => {
+                    return self.tracker.is_face_modified(*idx) || !self.tracker.modified_faces(*src_idx).is_empty();
+                }
+                FaceOrigin::FromB(src_idx) if *src_idx == source_face_idx && !from_a => {
+                    return self.tracker.is_face_modified(*idx) || !self.tracker.modified_faces(*src_idx).is_empty();
+                }
+                _ => {}
+            }
+        }
         false
     }
 
     /// Get the result faces that came from a source face.
     /// Analogous to OCCT `BRepAlgoAPI_BuilderShape::Modified()`.
     pub fn modified_faces(&self, source_idx: usize, from_a: bool) -> Vec<usize> {
-        self.face_origins
+        let mut out: Vec<usize> = self
+            .face_origins
             .iter()
             .enumerate()
             .filter_map(|(result_idx, origin)| match (origin, from_a) {
@@ -1030,7 +1047,20 @@ impl BooleanHistory {
                 (FaceOrigin::FromB(src), false) if *src == source_idx => Some(result_idx),
                 _ => None,
             })
-            .collect()
+            .collect();
+        for &(result_idx, origin) in &self.co_face_origins {
+            let matches = match (origin, from_a) {
+                (FaceOrigin::FromA(src), true) if src == source_idx => true,
+                (FaceOrigin::FromB(src), false) if src == source_idx => true,
+                _ => false,
+            };
+            if matches {
+                out.push(result_idx);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// Get the result edges that came from a source edge (including splits).
@@ -1132,6 +1162,19 @@ impl BooleanHistory {
                 FaceOrigin::Generated => {
                     self.tracker.record_face_generated(result_idx, GenerationCause::Intersection);
                 }
+            }
+        }
+        for (result_idx, origin) in &self.co_face_origins {
+            match origin {
+                FaceOrigin::FromA(src_idx) => {
+                    self.tracker
+                        .record_face_modified_multi(*src_idx, vec![*result_idx], InputSource::A);
+                }
+                FaceOrigin::FromB(src_idx) => {
+                    self.tracker
+                        .record_face_modified_multi(*src_idx, vec![*result_idx], InputSource::B);
+                }
+                FaceOrigin::Generated => {}
             }
         }
 
@@ -1973,6 +2016,7 @@ mod tests {
         let result_brep = unit_box();
         let mut history = BooleanHistory {
             face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(1)],
+            co_face_origins: vec![],
             edge_origins: vec![EdgeOrigin::FromA(0), EdgeOrigin::SplitFromA(0), EdgeOrigin::FromB(1)],
             vertex_origins: vec![VertexOrigin::FromA(0), VertexOrigin::Intersection, VertexOrigin::FromB(1)],
             shell_origins: vec![],
@@ -2018,6 +2062,7 @@ mod tests {
         let result_brep = unit_box();
         let mut history = BooleanHistory {
             face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+            co_face_origins: vec![],
             edge_origins: vec![],
             vertex_origins: vec![],
             shell_origins: vec![],

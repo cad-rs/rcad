@@ -250,6 +250,7 @@ fn name_collision_resolution() {
 
     let history = rcad_algorithms::BooleanHistory {
         face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromB(0)],
+        co_face_origins: vec![],
         edge_origins: vec![],
         vertex_origins: vec![],
         shell_origins: vec![],
@@ -301,6 +302,7 @@ fn dropped_names_reported() {
     // History that doesn't include face 5 (from A)
     let history = rcad_algorithms::BooleanHistory {
         face_origins: vec![FaceOrigin::FromA(0), FaceOrigin::FromA(1)],
+        co_face_origins: vec![],
         edge_origins: vec![],
         vertex_origins: vec![],
         shell_origins: vec![],
@@ -346,6 +348,7 @@ fn multiple_collisions_deterministic() {
             FaceOrigin::FromA(2),
             FaceOrigin::FromB(0),
         ],
+        co_face_origins: vec![],
         edge_origins: vec![],
         vertex_origins: vec![],
         shell_origins: vec![],

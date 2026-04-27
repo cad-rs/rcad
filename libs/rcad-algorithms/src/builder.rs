@@ -210,6 +210,9 @@ struct ResultBuilder {
     edges: Vec<(usize, usize)>,
     faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
+    /// Extra A/B source when a later emission is deduplicated against an existing result face
+    /// (see [`crate::history::BooleanHistory::co_face_origins`]).
+    co_face_origins: Vec<(usize, FaceOrigin)>,
 }
 
 impl ResultBuilder {
@@ -267,6 +270,7 @@ impl ResultBuilder {
             edges: Vec::new(),
             faces: Vec::new(),
             face_origins: Vec::new(),
+            co_face_origins: Vec::new(),
         }
     }
 
@@ -367,16 +371,8 @@ impl ResultBuilder {
         outer_sig.sort_unstable();
         let nlen = normal.length();
         let nunit = if nlen > 1e-12 { normal / nlen } else { normal };
-        for (
-            existing_outer,
-            _existing_inner,
-            _existing_tris,
-            existing_normal,
-            _surf,
-            _uv,
-            existing_centroid,
-            existing_area,
-        ) in &self.faces
+        for (existing_idx, (existing_outer, _existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
+            self.faces.iter().enumerate()
         {
             let mut ex_sig = existing_outer.clone();
             ex_sig.sort_unstable();
@@ -393,6 +389,7 @@ impl ResultBuilder {
                 && (existing_area - area).abs() <= 1e-8 * existing_area.max(area).max(1.0);
 
             if sig_match || geo_match {
+                self.co_face_origins.push((existing_idx, origin));
                 return;
             }
         }
@@ -594,6 +591,7 @@ impl ResultBuilder {
 
         let history = BooleanHistory {
             face_origins: self.face_origins,
+            co_face_origins: self.co_face_origins,
             edge_origins: Vec::new(),
             vertex_origins: Vec::new(),
             shell_origins: Vec::new(),
@@ -778,6 +776,34 @@ fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
     history.solid_origins = solid_origins;
 }
 
+/// Deterministic order for merging parallel `boolean_op` face emissions into [`ResultBuilder`].
+/// Rayon `collect` order is undefined; sorting stabilizes co-face dedup and `total_surface_area`.
+fn cmp_boolean_emit_order(
+    a: &(SubFace, bool, FaceOrigin),
+    b: &(SubFace, bool, FaceOrigin),
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let rank = |o: &FaceOrigin| -> (u8, usize) {
+        match o {
+            FaceOrigin::FromA(i) => (0, *i),
+            FaceOrigin::FromB(i) => (1, *i),
+            FaceOrigin::Generated => (2, 0),
+        }
+    };
+    let (sa, ra) = rank(&a.2);
+    let (sb, rb) = rank(&b.2);
+    sa.cmp(&sb)
+        .then(ra.cmp(&rb))
+        .then_with(|| {
+            let pa = a.0.sample_point();
+            let pb = b.0.sample_point();
+            pa.x
+                .total_cmp(&pb.x)
+                .then_with(|| pa.y.total_cmp(&pb.y))
+                .then_with(|| pa.z.total_cmp(&pb.z))
+        })
+}
+
 /// Boolean result builder (OCCT: BOPAlgo_BOP).
 /// Tracks face splice origins and participates in `BooleanHistory`.
 pub struct BooleanBuilder<'a> {
@@ -915,7 +941,8 @@ impl<'a> BooleanBuilder<'a> {
                 let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
                 if keep {
-                    result.emit_face_with_origin(sub, false, FaceOrigin::FromA(fi));
+                    let src = self.ds.faces[fi].source_face_idx;
+                    result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
                 }
             }
         }
@@ -931,7 +958,8 @@ impl<'a> BooleanBuilder<'a> {
 
                 if keep {
                     let flip = self.op == BooleanOpType::Difference;
-                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(fi));
+                    let src = self.ds.faces[fi].source_face_idx;
+                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
                 }
             }
         }
@@ -986,7 +1014,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // Process A faces in parallel
-        let a_results: Vec<_> = a_faces
+        let mut a_results: Vec<_> = a_faces
             .par_iter()
             .flat_map(|&fi| {
                 let sub_faces = self.split_face(fi);
@@ -999,7 +1027,8 @@ impl<'a> BooleanBuilder<'a> {
                         let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
                         if keep {
-                            Some((sub, false, FaceOrigin::FromA(fi)))
+                            let src = self.ds.faces[fi].source_face_idx;
+                            Some((sub, false, FaceOrigin::FromA(src)))
                         } else {
                             None
                         }
@@ -1009,7 +1038,7 @@ impl<'a> BooleanBuilder<'a> {
             .collect();
 
         // Process B faces in parallel
-        let b_results: Vec<_> = b_faces
+        let mut b_results: Vec<_> = b_faces
             .par_iter()
             .flat_map(|&fi| {
                 let sub_faces = self.split_face(fi);
@@ -1023,7 +1052,8 @@ impl<'a> BooleanBuilder<'a> {
 
                         if keep {
                             let flip = self.op == BooleanOpType::Difference;
-                            Some((sub, flip, FaceOrigin::FromB(fi)))
+                            let src = self.ds.faces[fi].source_face_idx;
+                            Some((sub, flip, FaceOrigin::FromB(src)))
                         } else {
                             None
                         }
@@ -1031,6 +1061,9 @@ impl<'a> BooleanBuilder<'a> {
                     .collect::<Vec<_>>()
             })
             .collect();
+
+        a_results.sort_by(cmp_boolean_emit_order);
+        b_results.sort_by(cmp_boolean_emit_order);
 
         // Merge results into ResultBuilder
         let mut result = ResultBuilder::new();
@@ -1318,13 +1351,18 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
-        self.ds
+        let mut v: Vec<usize> = self
+            .ds
             .faces
             .iter()
             .enumerate()
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
-            .collect()
+            .collect();
+        // Global face index order is deterministic for a given DS; sort keeps
+        // `classify_point` and boolean emission order independent of `faces` vec layout.
+        v.sort_unstable();
+        v
     }
 
     fn is_glued_face(&self, fi: usize, others: &[usize]) -> bool {
@@ -2002,6 +2040,32 @@ mod tests {
             SourceSide::B,
             Classification::In,
         ));
+    }
+
+    #[test]
+    /// Regression: unit sphere and unit box must register plane–sphere F–F curves and split
+    /// the sphere in parameter space; otherwise a single A sub-face and one sample can mis-classify the whole face.
+    #[test]
+    fn sphere_box_difference_split_face_sphere_has_many_subfaces() {
+        use crate::bopds::ds::DS;
+        use crate::pave_filler::PaveFiller;
+        use rcad_modeling::{make_box_brep, make_sphere_brep};
+
+        let s = make_sphere_brep(glam::DVec3::ZERO, 1.0).expect("sph");
+        let b = make_box_brep(glam::DVec3::ZERO, glam::DVec3::X, glam::DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("box");
+        let mut ds = DS::new(&s, &b);
+        PaveFiller::new(&mut ds).perform();
+        let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
+        let a0 = 0_usize;
+        assert!(!ds.faces[a0].face_info.curves_in.is_empty());
+        let subs = builder.split_face(a0);
+        assert!(
+            subs.len() > 1,
+            "unit sphere – unit box should split the sphere face (got {} subfaces, {} intersection curves in DS)",
+            subs.len(),
+            ds.faces[a0].face_info.curves_in.len()
+        );
     }
 }
 

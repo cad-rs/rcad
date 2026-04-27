@@ -143,16 +143,19 @@ impl ClassifyContext {
 
     /// Get or create cache for a solid.
     fn get_or_create_cache(&mut self, solid_face_indices: &[usize]) -> &SolidClassifyCache {
-        // Simple hash from face indices
-        let hash = solid_face_indices.iter().fold(0u64, |h, &fi| {
+        // Canonical order so cache keys and `check_point_on_face` iteration are deterministic
+        // (same set of face indices, independent of slice order in the input).
+        let mut sorted = solid_face_indices.to_vec();
+        sorted.sort_unstable();
+        let hash = sorted.iter().fold(0u64, |h, &fi| {
             h.wrapping_mul(31).wrapping_add(fi as u64)
         });
 
         if !self.cache.contains_key(&hash) {
-            let aabb = self.compute_solid_aabb(solid_face_indices);
-            let face_aabbs = self.compute_face_aabbs(solid_face_indices);
-            let bvh = if solid_face_indices.len() > 8 {
-                Some(self.build_solid_bvh(solid_face_indices, &face_aabbs))
+            let aabb = self.compute_solid_aabb(&sorted);
+            let face_aabbs = self.compute_face_aabbs(&sorted);
+            let bvh = if sorted.len() > 8 {
+                Some(self.build_solid_bvh(&sorted, &face_aabbs))
             } else {
                 None
             };
@@ -160,7 +163,7 @@ impl ClassifyContext {
             self.cache.insert(
                 hash,
                 SolidClassifyCache {
-                    face_indices: solid_face_indices.to_vec(),
+                    face_indices: sorted,
                     aabb,
                     bvh,
                     face_aabbs,
@@ -213,21 +216,25 @@ impl ClassifyContext {
         let coarse_tol = self.tolerance.tolerance(ToleranceLevel::Coarse);
         let tolerance = self.tolerance;
 
-        let cache = self.get_or_create_cache(solid_face_indices);
+        // Clone sorted face list so the cache borrow does not block `&self.ds` for classification.
+        let face_indices_owned = {
+            let cache = self.get_or_create_cache(solid_face_indices);
 
-        // Quick AABB rejection test
-        if !cache.aabb.contains_point(point) {
-            let expanded_aabb = Aabb {
-                min: cache.aabb.min - DVec3::splat(coarse_tol),
-                max: cache.aabb.max + DVec3::splat(coarse_tol),
-            };
-            if !expanded_aabb.contains_point(point) {
-                return Classification::Out;
+            // Quick AABB rejection test
+            if !cache.aabb.contains_point(point) {
+                let expanded_aabb = Aabb {
+                    min: cache.aabb.min - DVec3::splat(coarse_tol),
+                    max: cache.aabb.max + DVec3::splat(coarse_tol),
+                };
+                if !expanded_aabb.contains_point(point) {
+                    return Classification::Out;
+                }
             }
-        }
 
-        // Use the main classification algorithm
-        classify_point_internal(point, solid_face_indices, &self.ds, tolerance)
+            cache.face_indices.clone()
+        };
+
+        classify_point_internal(point, &face_indices_owned, &self.ds, tolerance)
     }
 
     /// Classify multiple points in parallel.
@@ -260,7 +267,8 @@ impl ClassifyContext {
 
         let ds = Arc::clone(&self.ds);
         let tolerance = self.tolerance;
-        let face_indices = solid_face_indices.to_vec();
+        let mut face_indices = solid_face_indices.to_vec();
+        face_indices.sort_unstable();
 
         let handles: Vec<_> = (0..n_threads)
             .map(|i| {
@@ -311,8 +319,13 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         return Classification::Out;
     }
 
+    // Stable iteration order: `check_point_on_face` returns on first hit, and ray / winding
+    // paths must not depend on the order faces were listed in the DS.
+    let mut sorted = solid_face_indices.to_vec();
+    sorted.sort_unstable();
+
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
-    classify_point_internal(point, solid_face_indices, ds, tol)
+    classify_point_internal(point, &sorted, ds, tol)
 }
 
 fn classify_point_internal(

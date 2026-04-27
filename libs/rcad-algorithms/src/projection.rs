@@ -1158,6 +1158,7 @@ mod tests {
     use rcad_kernel::geom::{
         Circle3, Curve2d, CylindricalSurface, Line2d, Line3, Plane, SphericalSurface,
     };
+    use rcad_kernel::nurbs_convert::plane_to_bspline_domain;
     use rcad_kernel::PrimitiveSolid;
 
     fn approx_curve2d_chord_length(c: &Curve2d, t0: f64, t1: f64, n: usize) -> f64 {
@@ -1170,6 +1171,31 @@ mod tests {
         for i in 1..=n {
             let t = t0 + (t1 - t0) * i as f64 / n as f64;
             let p = c.point_at(t);
+            s += (p - p_prev).length();
+            p_prev = p;
+        }
+        s
+    }
+
+    /// Chord length in 3D of `t ↦ surface.point_at(c.point_at(t))` (not UV Euclidean length).
+    fn approx_curve2d_pullback_3d_length(
+        c: &Curve2d,
+        surface: &Surface3,
+        t0: f64,
+        t1: f64,
+        n: usize,
+    ) -> f64 {
+        use rcad_kernel::geom::{Curve2dEval, SurfaceEval};
+        if n < 2 {
+            return 0.0;
+        }
+        let mut s = 0.0;
+        let uv0 = c.point_at(t0);
+        let mut p_prev = surface.point_at(uv0.x, uv0.y);
+        for i in 1..=n {
+            let t = t0 + (t1 - t0) * i as f64 / n as f64;
+            let uv = c.point_at(t);
+            let p = surface.point_at(uv.x, uv.y);
             s += (p - p_prev).length();
             p_prev = p;
         }
@@ -1322,6 +1348,50 @@ mod tests {
                 "chord-approx length {chord_len} should be near {expect}"
             );
         }
+    }
+
+    /// `project_curve_on_surface` fits a polyline in UV; 2D chord length is not comparable across
+    /// chart choices, but the pullback to 3D along the surface should match the circle length for
+    /// both an analytic plane and the degree-(1,1) plane NURBS over the same geometric patch.
+    #[test]
+    fn project_circle_onto_bilinear_plane_matches_3d_pullback_of_analytic_plane() {
+        let r = 2.0_f64;
+        let circle3 = Curve3::Circle(Circle3 {
+            center: DVec3::ZERO,
+            normal: DVec3::Z,
+            radius: r,
+        });
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let plane_surf = Surface3::Plane(plane.clone());
+        let bs = plane_to_bspline_domain(&plane, -2.0, 2.0, -2.0, 2.0);
+        let bs_surf = Surface3::BSpline(bs);
+        let options = ProjectionOptions {
+            samples: 128,
+            tolerance: 1e-7,
+            ..Default::default()
+        };
+        let c2d_plane = project_curve_on_surface(&circle3, &plane_surf, &options);
+        let c2d_bs = project_curve_on_surface(&circle3, &bs_surf, &options);
+        let (t0_p, t1_p) = curve2d_t_bounds(&c2d_plane);
+        let (t0_b, t1_b) = curve2d_t_bounds(&c2d_bs);
+        let len3d_p = approx_curve2d_pullback_3d_length(&c2d_plane, &plane_surf, t0_p, t1_p, 4096);
+        let len3d_b = approx_curve2d_pullback_3d_length(&c2d_bs, &bs_surf, t0_b, t1_b, 4096);
+        let expect = 2.0 * PI * r;
+        assert!(
+            (len3d_p - expect).abs() < 0.05 * expect + 1e-2,
+            "analytic plane 3D pullback {len3d_p} should be near circumference {expect}"
+        );
+        assert!(
+            (len3d_b - expect).abs() < 0.05 * expect + 1e-2,
+            "bilinear NURBS 3D pullback {len3d_b} should be near circumference {expect}"
+        );
+        assert!(
+            (len3d_p - len3d_b).abs() < 0.08 * expect + 1e-2,
+            "3D pullbacks should agree: plane {len3d_p}, bilinear {len3d_b}"
+        );
     }
 
     #[test]
