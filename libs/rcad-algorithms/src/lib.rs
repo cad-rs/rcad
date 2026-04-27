@@ -8961,9 +8961,8 @@ mod tests {
         assert_eq!(r.geom.surfaces.len(), nf, "one surface entry per face");
     }
 
-    /// OCCT `bcut_simple/A1` — `checkprops -s` reference ≈ 13.3518. We triangulate holed sphere
-    /// patches with a UV mask (after folding longitude to a short lift on S¹); mesh area can
-    /// still differ from OCCT `GProp` on exact geometry.
+    /// OCCT `bcut_simple/A1` — `checkprops -s` reference ≈ 13.3518. Chordal mesh + UV mask is
+    /// still a few units high vs `GProp` (order ~16.7 here); keep overlap with OCCT bounded.
     #[test]
     fn bcut_unit_sphere_box_occt_checkprops_surface_area() {
         let s = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
@@ -8971,8 +8970,8 @@ mod tests {
         let r = boolean_op(BooleanOpType::Difference, &s, &b).expect("bcut s b");
         let area = total_surface_area(&r);
         assert!(
-            (area - 13.3518).abs() < 4.0,
-            "expected surface area within ~4 of OCCT checkprops -s 13.3518, got {area}"
+            (area - 13.3518).abs() < 3.5,
+            "expected surface area within ~3.5 of OCCT checkprops -s 13.3518, got {area}"
         );
     }
 

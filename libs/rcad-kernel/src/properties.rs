@@ -369,7 +369,7 @@ fn try_face_with_holes(
 const UV_TESS_N: usize = 64;
 
 /// Finer grid for masked sphere patches (trimmed / holed) when ear-cut fails.
-const SPHERE_UV_MASK_N: usize = 128;
+const SPHERE_UV_MASK_N: usize = 160;
 
 fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
     let n = poly.len();
@@ -561,30 +561,57 @@ fn try_spherical_uv_masked_raster(
         let mut tris: Vec<[DVec3; 3]> = Vec::new();
         for i in 0..nu {
             for j in 0..nv {
-                let uc = umin + (i as f64 + 0.5) * du;
-                let vc = vmin + (j as f64 + 0.5) * dv;
-                let c2 = DVec2::new(uc, vc);
-                if !point_in_polygon_2d(outer_poly, c2) {
-                    continue;
-                }
-                if use_inner_mask
-                    && inner_polys
-                        .iter()
-                        .any(|h| point_in_polygon_2d(h, c2))
-                {
-                    continue;
-                }
                 let u0 = umin + i as f64 * du;
                 let u1 = u0 + du;
                 let v0 = vmin + j as f64 * dv;
                 let v1 = v0 + dv;
+                let corners = [
+                    DVec2::new(u0, v0),
+                    DVec2::new(u1, v0),
+                    DVec2::new(u1, v1),
+                    DVec2::new(u0, v1),
+                ];
+                // All corners in the outer UV loop; any corner in a hole excludes the cell
+                // (tighter than centre-only, reduces PIP over-count at the trim).
+                if !corners
+                    .iter()
+                    .all(|q| point_in_polygon_2d(outer_poly, *q))
+                {
+                    continue;
+                }
+                if use_inner_mask
+                    && inner_polys.iter().any(|h| {
+                        corners
+                            .iter()
+                            .any(|q| point_in_polygon_2d(h, *q))
+                    })
+                {
+                    continue;
+                }
+                let uc = umin + (i as f64 + 0.5) * du;
+                let vc = vmin + (j as f64 + 0.5) * dv;
                 let p00 = s.point_at(u0, v0);
                 let p10 = s.point_at(u1, v0);
                 let p11 = s.point_at(u1, v1);
                 let p01 = s.point_at(u0, v1);
+                let pc = s.point_at(uc, vc);
                 let nref = s.normal_at(uc, vc);
-                tris.push(orient_by_ref([p00, p10, p11], nref));
-                tris.push(orient_by_ref([p00, p11, p01], nref));
+                // Exact area in (u, v) for a sphere: R² · du · (cos v0 − cos v1); isotropic
+                // scale of the chordal bilinear patch toward the cell centre to match dA.
+                let r2 = s.radius * s.radius;
+                let d_target = r2 * du * (v0.cos() - v1.cos());
+                let a0 = tri_area(p00, p10, p11);
+                let a1 = tri_area(p00, p11, p01);
+                let chord = a0 + a1;
+                if chord > 1e-20 && d_target > 0.0 {
+                    let k = (d_target / chord).sqrt().clamp(0.1, 10.0);
+                    let t = |p: DVec3| pc + (p - pc) * k;
+                    tris.push(orient_by_ref([t(p00), t(p10), t(p11)], nref));
+                    tris.push(orient_by_ref([t(p00), t(p11), t(p01)], nref));
+                } else {
+                    tris.push(orient_by_ref([p00, p10, p11], nref));
+                    tris.push(orient_by_ref([p00, p11, p01], nref));
+                }
             }
         }
         tris
