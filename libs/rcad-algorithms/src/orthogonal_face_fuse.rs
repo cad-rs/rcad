@@ -998,6 +998,8 @@ fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> u
 
 #[cfg(test)]
 mod orth_union_tests {
+    use super::ring_corner_count_after_collinear_removal;
+    use super::rects_2d_bbox_positive_area_overlap;
     use super::union_rects_to_rings_grid;
 
     #[test]
@@ -1011,6 +1013,37 @@ mod orth_union_tests {
         assert!(rings.is_some(), "expected grid union to succeed for three strips");
         let rings = rings.unwrap();
         assert!(!rings.is_empty(), "expected at least one ring");
+    }
+
+    /// Same bucket key as disjoint islands on one plane: no 2D area overlap in UV.
+    #[test]
+    fn bbox_positive_area_overlap_distinguishes_disjoint_corner_edge() {
+        let gap = 1e-4;
+        let a = (0.0, 1.0, 0.0, 1.0);
+        let b_corner = (2.0, 3.0, 2.0, 3.0);
+        assert!(!rects_2d_bbox_positive_area_overlap(a, b_corner, gap));
+        let b_edge = (1.0, 2.0, 0.0, 1.0);
+        assert!(!rects_2d_bbox_positive_area_overlap(a, b_edge, gap));
+        let c_overlap = (0.5, 1.5, 0.0, 1.0);
+        assert!(rects_2d_bbox_positive_area_overlap(a, c_overlap, gap));
+    }
+
+    /// L-shaped outline keeps >4 corners; a 3×1 rectangle of samples collapses to 4 corners.
+    #[test]
+    fn ring_collinear_simplify_rect_vs_l() {
+        let tol = 1e-6;
+        let l_ring: Vec<(f64, f64)> = vec![
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (2.0, 1.0),
+            (2.0, 2.0),
+            (0.0, 2.0),
+        ];
+        assert!(ring_corner_count_after_collinear_removal(&l_ring, tol) >= 5);
+
+        let rect_dense: Vec<(f64, f64)> = vec![(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)];
+        assert_eq!(ring_corner_count_after_collinear_removal(&rect_dense, tol), 4);
     }
 }
 
