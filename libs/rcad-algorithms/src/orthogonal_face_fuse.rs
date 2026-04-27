@@ -63,15 +63,22 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
             groups.entry(key).or_default().push(fi);
         }
 
-        let mut group_list: Vec<Vec<usize>> = groups
-            .into_values()
-            .filter(|fis| fis.len() >= 2)
-            .map(|mut fis| {
-                fis.sort_unstable();
-                fis
-            })
-            .collect();
-        // Deterministic: smaller minimum face index first (often outer shells).
+        // Same infinite plane key can include disjoint UV islands. Only merge 2D bbox
+        // components that overlap with *positive* area. A second “edge only” pass was tried and
+        // breaks `boolean_op_healed` on partial 0.5-overlap unions; `unify_same_domain_faces` can
+        // still coalesce some edge-coincident fragments afterward.
+        let mut group_list: Vec<Vec<usize>> = Vec::new();
+        for mut fis in groups.into_values() {
+            if fis.len() < 2 {
+                continue;
+            }
+            fis.sort_unstable();
+            for sub in split_fis_by_plane_uv_connectivity(brep, si, shi, &fis, tol) {
+                if sub.len() >= 2 {
+                    group_list.push(sub);
+                }
+            }
+        }
         group_list.sort_by_key(|fis| (fis[0], fis.len()));
 
         let mut merged = false;
@@ -86,6 +93,94 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
             return;
         }
     }
+}
+
+fn rects_2d_bbox_positive_area_overlap(
+    a: (f64, f64, f64, f64),
+    b: (f64, f64, f64, f64),
+    gap: f64,
+) -> bool {
+    let (au0, au1, av0, av1) = a;
+    let (bu0, bu1, bv0, bv1) = b;
+    let wu = au1.min(bu1) - au0.max(bu0);
+    let wv = av1.min(bv1) - av0.max(bv0);
+    wu > gap && wv > gap
+}
+
+fn uf_find(p: &mut [usize], mut i: usize) -> usize {
+    while p[i] != i {
+        p[i] = p[p[i]];
+        i = p[i];
+    }
+    i
+}
+
+fn uf_unite(p: &mut [usize], i: usize, j: usize) {
+    let a = uf_find(p, i);
+    let b = uf_find(p, j);
+    if a != b {
+        p[a] = b;
+    }
+}
+
+fn face_axis_world_bbox(brep: &BRep, face: &Face, n: DVec3) -> Option<(f64, f64, f64, f64)> {
+    let [i, j] = axis_aligned_world_plane_uv_axes(n)?;
+    let poly = face_outer_points(brep, face);
+    if poly.is_empty() {
+        return None;
+    }
+    let uv: Vec<(f64, f64)> = poly.iter().map(|p| (p[i], p[j])).collect();
+    Some(bbox2d(&uv))
+}
+
+/// Split coplanar face indices into groups that are each connected in 2D world UV.
+/// Non–axis-aligned planes keep a single bucket (previous behavior).
+fn split_fis_by_plane_uv_connectivity(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    fis: &[usize],
+    tol: f64,
+) -> Vec<Vec<usize>> {
+    if fis.len() < 2 {
+        return Vec::new();
+    }
+    let shell = &brep.solids[si].shells[shi];
+    let f0 = &shell.faces[fis[0]];
+    let n = snap_almost_axis(f0.normal.normalize_or_zero());
+    if axis_aligned_world_plane_uv_axes(n).is_none() {
+        return vec![fis.to_vec()];
+    }
+    let bboxes: Vec<Option<_>> = fis
+        .iter()
+        .map(|&fi| face_axis_world_bbox(brep, &shell.faces[fi], n))
+        .collect();
+    if bboxes.iter().any(|b| b.is_none()) {
+        return vec![fis.to_vec()];
+    }
+    let bboxes: Vec<_> = bboxes.into_iter().map(|b| b.unwrap()).collect();
+    let gap = (tol * 1e2).max(1e-6);
+    let mut parent: Vec<usize> = (0..fis.len()).collect();
+    for i in 0..fis.len() {
+        for j in (i + 1)..fis.len() {
+            if rects_2d_bbox_positive_area_overlap(bboxes[i], bboxes[j], gap) {
+                uf_unite(&mut parent, i, j);
+            }
+        }
+    }
+    let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..fis.len() {
+        let r = uf_find(&mut parent, i);
+        buckets.entry(r).or_default().push(fis[i]);
+    }
+    let mut out: Vec<Vec<usize>> = buckets
+        .into_values()
+        .filter(|g| g.len() >= 2)
+        .collect();
+    for g in &mut out {
+        g.sort_unstable();
+    }
+    out
 }
 
 fn plane_key(n: DVec3, d: f64, tol: f64) -> (i64, i64, i64, i64) {
@@ -225,6 +320,22 @@ fn try_fuse_orthogonal_group(
     };
     if geo_rings.is_empty() {
         return false;
+    }
+    if geo_rings.len() > 1 {
+        return false;
+    }
+    // Grid `union_rects` rings have many collinear points along each edge. Collapse those first;
+    // a merged axis-aligned rectangle then has 4 corners, while an L-union has 6+.
+    // See `touching_edge_union` vs `overlapping_box_union_orthogonal_fuse_matches_occt_surface_area`.
+    let t = tol.max(TOLERANCE_ABS);
+    if ring_corner_count_after_collinear_removal(&geo_rings[0], t) != 4 {
+        return false;
+    }
+    if fis.len() == 2 {
+        let g = (t * 1e2).max(1e-6);
+        if !rects_2d_bbox_positive_area_overlap(rects[0], rects[1], g) {
+            return false;
+        }
     }
 
     let normal = brep.solids[si].shells[shi].faces[fis[0]].normal;
@@ -837,6 +948,52 @@ fn bbox2d(uv: &[(f64, f64)]) -> (f64, f64, f64, f64) {
         vmax = vmax.max(v);
     }
     (umin, umax, vmin, vmax)
+}
+
+/// Vertices of a closed ring from [`union_rects_to_rings_grid`] include many collinear samples.
+/// This removes 180° vertices until only corners remain. A true merged rectangle has 4; an L
+/// (two edge-adjacent quads) keeps 6+.
+fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> usize {
+    if ring.len() < 3 {
+        return ring.len();
+    }
+    let collinear_abs = (tol * 1e2).max(1e-9);
+    let mut pts: Vec<(f64, f64)> = ring.to_vec();
+    if pts.len() > 1 {
+        let a = pts[0];
+        let b = *pts.last().unwrap();
+        if (a.0 - b.0).abs() + (a.1 - b.1).abs() < (tol * 10.0).max(1e-9) {
+            pts.pop();
+        }
+    }
+    if pts.len() < 3 {
+        return pts.len();
+    }
+    let max_rounds = pts.len() * 8 + 8;
+    for _ in 0..max_rounds {
+        let n = pts.len();
+        if n < 3 {
+            return n;
+        }
+        let mut remove: Option<usize> = None;
+        for i in 0..n {
+            let p0 = pts[(i + n - 1) % n];
+            let p1 = pts[i];
+            let p2 = pts[(i + 1) % n];
+            let c = (p1.0 - p0.0) * (p2.1 - p0.1) - (p1.1 - p0.1) * (p2.0 - p0.0);
+            if c.abs() <= collinear_abs {
+                remove = Some(i);
+                break;
+            }
+        }
+        match remove {
+            Some(i) => {
+                pts.remove(i);
+            }
+            None => break,
+        }
+    }
+    pts.len()
 }
 
 #[cfg(test)]
