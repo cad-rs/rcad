@@ -141,6 +141,22 @@ fn unwrap_sphere_u_in_chain(uvs: &mut [DVec2]) {
     }
 }
 
+/// Mapbox earcut: triangulate `flat` as pairs `(x, y)`; `hole_indices` are first-vertex
+/// indices of each hole in that vertex list (empty = single polygon).
+fn earcut_indices_from_flat(flat: &[f64], hole_indices: &[usize]) -> Vec<usize> {
+    let coords: Vec<[f64; 2]> = flat
+        .chunks_exact(2)
+        .map(|c| [c[0], c[1]])
+        .collect();
+    if coords.len() < 3 {
+        return Vec::new();
+    }
+    let mut out: Vec<usize> = Vec::new();
+    let mut ear = earcut::Earcut::new();
+    ear.earcut(coords, hole_indices, &mut out);
+    out
+}
+
 fn earcut_flat_to_tris(
     flat: &[f64],
     hole_starts: &[usize],
@@ -150,7 +166,7 @@ fn earcut_flat_to_tris(
     if flat.len() < 9 || hole_starts.is_empty() {
         return None;
     }
-    let indices = earcutr::earcut(flat, hole_starts, 2).unwrap_or_default();
+    let indices = earcut_indices_from_flat(flat, hole_starts);
     if indices.is_empty() {
         return None;
     }
@@ -218,7 +234,7 @@ fn try_spherical_earcut_simple(
         flat.push(uv.y);
     }
     let all_3d: Vec<DVec3> = outer.to_vec();
-    let indices = earcutr::earcut(&flat, &[], 2).unwrap_or_default();
+    let indices = earcut_indices_from_flat(&flat, &[]);
     if indices.is_empty() {
         return None;
     }
@@ -283,7 +299,7 @@ fn try_planar_earcut_simple_outer(outer: &[DVec3], face_normal: DVec3) -> Option
         flat.push(q.dot(uy));
     }
     let all_3d: Vec<DVec3> = outer.to_vec();
-    let indices = earcutr::earcut(&flat, &[], 2).unwrap_or_default();
+    let indices = earcut_indices_from_flat(&flat, &[]);
     if indices.is_empty() {
         return None;
     }

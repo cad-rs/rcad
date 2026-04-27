@@ -560,7 +560,15 @@ fn triangulate_polygon_with_holes(
         }
     }
 
-    let indices = earcutr::earcut(&flat, &hole_starts, 2).unwrap_or_default();
+    let coords: Vec<[f64; 2]> = flat
+        .chunks_exact(2)
+        .map(|c| [c[0], c[1]])
+        .collect();
+    let mut indices: Vec<usize> = Vec::new();
+    {
+        let mut ear = earcut::Earcut::new();
+        ear.earcut(coords, &hole_starts, &mut indices);
+    }
     let mut tris = Vec::new();
     for tri in indices.chunks_exact(3) {
         tris.push([tri[0], tri[1], tri[2]]);
