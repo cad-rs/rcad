@@ -10,10 +10,11 @@
 //! 3. **Build fuse result** — [`crate::builder::BooleanBuilder`] with
 //!    [`crate::BooleanOpType::Union`], analogous to building the fused solid from classified
 //!    pieces.
-//! 4. **Post-process** (serial result without history only) —
-//!    [`crate::geom_populate::recompute_plane_surfaces`], analogous to later shape fixes /
-//!    surface updates on the result (OCCT may run additional builders; we recompute analytic
-//!    planes from tessellation where needed).
+//! 4. **Post-process** (serial `fuse` only) — [`crate::geom_populate::recompute_plane_surfaces`]
+//!    then an iterated [`crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces`] /
+//!    [`crate::unify_same_domain_faces`] pass to merge coplanar box fragments (OCCT
+//!    `UnifySameDomain` + same-domain analog; wire order can still leave analytic area ~5–10% low
+//!    on some merged planes until the kernel’s planar integrator is tightened).
 //!
 //! History and parallel-history APIs intentionally skip step 4 to match the existing behavior
 //! of [`crate::boolean_op_with_history`] and [`crate::boolean_op_par`].
@@ -34,6 +35,7 @@ use crate::bvh;
 use crate::geom_populate;
 use crate::history::BooleanHistory;
 use crate::pave_filler;
+use crate::unify_same_domain_faces;
 use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::BRep;
@@ -416,7 +418,27 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     validate_union_brep_output("union: result failed checks after build", &result)?;
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after plane recompute", &result)?;
+    merge_coplanar_orthogonal_unify(&mut result);
+    validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
+}
+
+/// Merge coplanar orthogonal panels left by boolean split (re-run groups after each success).
+fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
+    for _ in 0..8 {
+        let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(
+            brep,
+            crate::tolerance::TOLERANCE_ABS,
+        );
+        *brep = next;
+        geom_populate::recompute_plane_surfaces(brep);
+        let (u, n_unify) = unify_same_domain_faces(brep);
+        *brep = u;
+        geom_populate::recompute_plane_surfaces(brep);
+        if m == 0 && n_unify == 0 {
+            break;
+        }
+    }
 }
 
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute

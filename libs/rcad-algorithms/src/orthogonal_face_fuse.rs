@@ -34,37 +34,56 @@ pub fn fuse_orthogonal_coplanar_faces(brep: &BRep, tol: f64) -> (BRep, usize) {
 }
 
 fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, total: &mut usize) {
-    let n = brep.solids[si].shells[shi].faces.len();
-    if n < 2 {
-        return;
-    }
+    // After one merge, face indices and shell length change. Rebuild coplanar groups each pass
+    // instead of iterating stale `fis` from the previous snapshot.
+    loop {
+        let n = brep.solids[si].shells[shi].faces.len();
+        if n < 2 {
+            return;
+        }
 
-    let mut groups: std::collections::HashMap<(i64, i64, i64, i64), Vec<usize>> =
-        std::collections::HashMap::new();
-    for fi in 0..n {
-        let face = &brep.solids[si].shells[shi].faces[fi];
-        if !face.inner_wires.is_empty() {
-            continue;
+        let mut groups: std::collections::HashMap<(i64, i64, i64, i64), Vec<usize>> =
+            std::collections::HashMap::new();
+        for fi in 0..n {
+            let face = &brep.solids[si].shells[shi].faces[fi];
+            if !face.inner_wires.is_empty() {
+                continue;
+            }
+            let Some(p0) = face_first_point(brep, face) else {
+                continue;
+            };
+            let nrm = face.normal.normalize_or_zero();
+            if nrm.length_squared() < 1e-24 {
+                continue;
+            }
+            let nrm = snap_almost_axis(nrm);
+            let d = nrm.dot(p0);
+            let (n_key, d_key) = canonicalize_plane_n_d(nrm, d);
+            let key = plane_key(n_key, d_key, tol);
+            groups.entry(key).or_default().push(fi);
         }
-        let Some(p0) = face_first_point(brep, face) else {
-            continue;
-        };
-        let nrm = face.normal.normalize_or_zero();
-        if nrm.length_squared() < 1e-24 {
-            continue;
-        }
-        let d = nrm.dot(p0);
-        let key = plane_key(nrm, d, tol);
-        groups.entry(key).or_default().push(fi);
-    }
 
-    for (_, mut fis) in groups {
-        if fis.len() < 2 {
-            continue;
+        let mut group_list: Vec<Vec<usize>> = groups
+            .into_values()
+            .filter(|fis| fis.len() >= 2)
+            .map(|mut fis| {
+                fis.sort_unstable();
+                fis
+            })
+            .collect();
+        // Deterministic: smaller minimum face index first (often outer shells).
+        group_list.sort_by_key(|fis| (fis[0], fis.len()));
+
+        let mut merged = false;
+        for fis in group_list {
+            if try_fuse_orthogonal_group(brep, si, shi, &fis, tol) {
+                *total += 1;
+                merged = true;
+                break;
+            }
         }
-        fis.sort_unstable();
-        if try_fuse_orthogonal_group(brep, si, shi, &fis, tol) {
-            *total += 1;
+        if !merged {
+            return;
         }
     }
 }
@@ -77,6 +96,61 @@ fn plane_key(n: DVec3, d: f64, tol: f64) -> (i64, i64, i64, i64) {
         (n.z * s).round() as i64,
         (d * s).round() as i64,
     )
+}
+
+/// If `n` is within `tol_dir` of an axis, snap to exact ±X/±Y/±Z.
+/// When `n` is ±X/±Y/±Z, return the two world axis indices that span the plane (e.g. Ẑ → (x,y)).
+fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
+    let a = n.abs();
+    if a.x > 1.0 - 2e-3 {
+        Some([1, 2])
+    } else if a.y > 1.0 - 2e-3 {
+        Some([0, 2])
+    } else if a.z > 1.0 - 2e-3 {
+        Some([0, 1])
+    } else {
+        None
+    }
+}
+
+/// Inverse of [`axis_aligned_world_plane_uv_axes`]: build 3D from two free world coordinates.
+fn point_from_axis_plane_world_uv(n: DVec3, o: DVec3, u: f64, v2: f64) -> DVec3 {
+    let a = n.abs();
+    if a.x > 1.0 - 2e-3 {
+        DVec3::new(o.x, u, v2)
+    } else if a.y > 1.0 - 2e-3 {
+        DVec3::new(u, o.y, v2)
+    } else {
+        DVec3::new(u, v2, o.z)
+    }
+}
+
+fn snap_almost_axis(n: DVec3) -> DVec3 {
+    let t = 2e-3_f64;
+    for i in 0..3 {
+        if n[i].abs() > 1.0 - t {
+            let mut o = DVec3::ZERO;
+            o[i] = n[i].signum();
+            return o;
+        }
+    }
+    n
+}
+
+/// Map `n·x = d` to a canonical `n` so that `(n, d)` and `(-n, -d)` (same
+/// infinite plane) share the same key when bucketing.
+fn canonicalize_plane_n_d(n: DVec3, d: f64) -> (DVec3, f64) {
+    const E: f64 = 1e-12;
+    let mut n = n;
+    let mut d = d;
+    if n.x < -E
+        || (n.x.abs() <= E && n.y < -E)
+        || (n.x.abs() <= E && n.y.abs() <= E && n.z < -E)
+    {
+        n = -n;
+        d = -d;
+    }
+    (n, d)
 }
 
 fn face_first_point(brep: &BRep, face: &Face) -> Option<DVec3> {
@@ -108,10 +182,16 @@ fn try_fuse_orthogonal_group(
             normal: n,
         }
     };
+    let n_unit = snap_almost_axis(plane.normal.normalize_or_zero());
     let (u_axis, v_axis) = plane_local_basis(&plane);
-    let to_uv = |p: DVec3| -> (f64, f64) {
-        let d = p - plane.origin;
-        (d.dot(u_axis), d.dot(v_axis))
+    let world_axes = axis_aligned_world_plane_uv_axes(n_unit);
+    let project_uv = |p: DVec3| -> (f64, f64) {
+        if let Some([i, j]) = world_axes {
+            (p[i], p[j])
+        } else {
+            let d = p - plane.origin;
+            (d.dot(u_axis), d.dot(v_axis))
+        }
     };
 
     let mut rects: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(fis.len());
@@ -127,10 +207,15 @@ fn try_fuse_orthogonal_group(
         if poly.len() < 3 || poly.len() > 64 {
             return false;
         }
-        if !polygon_is_orthogonal(&poly, &to_uv, tol) {
+        let uv: Vec<(f64, f64)> = poly.iter().map(|&p| project_uv(p)).collect();
+        let t = tol.max(TOLERANCE_ABS);
+        let orth = polygon_is_orthogonal(&poly, &project_uv, tol);
+        let ok_rect = orth
+            || (poly.len() == 4 && four_uv_points_on_rectangle_corners(&uv, t))
+            || (world_axes.is_some() && poly.len() == 4);
+        if !ok_rect {
             return false;
         }
-        let uv: Vec<(f64, f64)> = poly.iter().map(|&p| to_uv(p)).collect();
         let (umin, umax, vmin, vmax) = bbox2d(&uv);
         rects.push((umin, umax, vmin, vmax));
     }
@@ -144,7 +229,13 @@ fn try_fuse_orthogonal_group(
 
     let normal = brep.solids[si].shells[shi].faces[fis[0]].normal;
 
-    let ring_vertices = add_vertices_for_rings(brep, &geo_rings, &plane, u_axis, v_axis, tol);
+    let ring_vertices = if world_axes.is_some() {
+        add_vertices_for_rings_with_eval(brep, &geo_rings, |u, v| {
+            point_from_axis_plane_world_uv(n_unit, plane.origin, u, v)
+        }, tol)
+    } else {
+        add_vertices_for_rings(brep, &geo_rings, &plane, u_axis, v_axis, tol)
+    };
     if ring_vertices.is_empty() || ring_vertices[0].len() < 3 {
         return false;
     }
@@ -578,6 +669,37 @@ fn push_new_edges(brep: &mut BRep, edges: Vec<(usize, usize)>) {
     }
 }
 
+fn add_vertices_for_rings_with_eval(
+    brep: &mut BRep,
+    rings: &[Vec<(f64, f64)>],
+    eval: impl Fn(f64, f64) -> DVec3,
+    tol: f64,
+) -> Vec<Vec<usize>> {
+    let match_tol = tol.max(TOLERANCE_ABS) * 50.0;
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for ring in rings {
+        let mut vi: Vec<usize> = Vec::new();
+        for &(u, v) in ring {
+            let p = eval(u, v);
+            let mut found = None;
+            for (i, vtx) in brep.vertices.iter().enumerate() {
+                if (vtx.point - p).length() <= match_tol {
+                    found = Some(i);
+                    break;
+                }
+            }
+            let idx = found.unwrap_or_else(|| {
+                let i = brep.vertices.len();
+                brep.vertices.push(Vertex { point: p });
+                i
+            });
+            vi.push(idx);
+        }
+        out.push(vi);
+    }
+    out
+}
+
 fn add_vertices_for_rings(
     brep: &mut BRep,
     rings: &[Vec<(f64, f64)>],
@@ -626,20 +748,77 @@ fn face_outer_points(brep: &BRep, face: &Face) -> Vec<DVec3> {
     pts
 }
 
+/// Four UV samples are the four corners of their axis-aligned bounding box (rect), allowing
+/// unordered / diagonal wire traversal on plane projections.
+fn four_uv_points_on_rectangle_corners(uv: &[(f64, f64)], t: f64) -> bool {
+    if uv.len() != 4 {
+        return false;
+    }
+    let (umin, umax, vmin, vmax) = bbox2d(uv);
+    if (umax - umin) <= t * 10.0 || (vmax - vmin) <= t * 10.0 {
+        return false;
+    }
+    let corners = [
+        (umin, vmin),
+        (umax, vmin),
+        (umax, vmax),
+        (umin, vmax),
+    ];
+    let mut used = [false; 4];
+    for p in uv {
+        let mut matched = false;
+        for i in 0..4 {
+            if used[i] {
+                continue;
+            }
+            let c = corners[i];
+            if (p.0 - c.0).abs() <= t * 100.0 && (p.1 - c.1).abs() <= t * 100.0 {
+                used[i] = true;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return false;
+        }
+    }
+    used.iter().all(|&b| b)
+}
+
 fn polygon_is_orthogonal(poly: &[DVec3], to_uv: &dyn Fn(DVec3) -> (f64, f64), tol: f64) -> bool {
-    let n = poly.len();
+    let t = tol.max(TOLERANCE_ABS);
+    let uv: Vec<(f64, f64)> = poly.iter().map(|p| to_uv(*p)).collect();
+    // Consecutive duplicate vertices in UV (split collinear edges) would make both
+    // `du` and `dv` ~0 and incorrectly fail; collapse them first.
+    let mut compact: Vec<(f64, f64)> = Vec::with_capacity(uv.len());
+    for q in uv {
+        if let Some(&last) = compact.last() {
+            if (q.0 - last.0).abs() <= t * 10.0 && (q.1 - last.1).abs() <= t * 10.0 {
+                continue;
+            }
+        }
+        compact.push(q);
+    }
+    if compact.len() >= 2 {
+        let f = compact[0];
+        let l = *compact.last().unwrap();
+        if (f.0 - l.0).abs() <= t * 10.0 && (f.1 - l.1).abs() <= t * 10.0 {
+            compact.pop();
+        }
+    }
+    let n = compact.len();
     if n < 3 {
         return false;
     }
     for i in 0..n {
-        let (u0, v0) = to_uv(poly[i]);
-        let (u1, v1) = to_uv(poly[(i + 1) % n]);
+        let (u0, v0) = compact[i];
+        let (u1, v1) = compact[(i + 1) % n];
         let du = (u1 - u0).abs();
         let dv = (v1 - v0).abs();
-        if du > tol && dv > tol {
+        if du > t && dv > t {
             return false;
         }
-        if du <= tol && dv <= tol {
+        if du <= t && dv <= t {
             return false;
         }
     }
@@ -658,5 +837,23 @@ fn bbox2d(uv: &[(f64, f64)]) -> (f64, f64, f64, f64) {
         vmax = vmax.max(v);
     }
     (umin, umax, vmin, vmax)
+}
+
+#[cfg(test)]
+mod orth_union_tests {
+    use super::union_rects_to_rings_grid;
+
+    #[test]
+    fn union_rects_three_adjacent_strips_forms_outer_ring() {
+        let rects = [
+            (0.0, 5.0, 0.0, 10.0),
+            (5.0, 10.0, 0.0, 10.0),
+            (10.0, 15.0, 0.0, 10.0),
+        ];
+        let rings = union_rects_to_rings_grid(&rects, 1e-7);
+        assert!(rings.is_some(), "expected grid union to succeed for three strips");
+        let rings = rings.unwrap();
+        assert!(!rings.is_empty(), "expected at least one ring");
+    }
 }
 

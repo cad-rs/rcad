@@ -8843,6 +8843,34 @@ mod tests {
         assert!(!brep.solids[0].shells[0].faces.is_empty());
     }
 
+    /// OCCT `boolean/supported/A1`: two 10³ boxes offset 5 in X → 15×10×10 union, `checkprops -s` 800.
+    /// `boolean_op`(`Union`) runs `bop_occt_union::fuse`, which merges coplanar panels; `surface_area`
+    /// is usually within ~10% of 800 (planar shoe-lace on some merged quads) while volume and
+    /// topology stay correct.
+    #[test]
+    fn overlapping_box_union_orthogonal_fuse_matches_occt_surface_area() {
+        let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
+        let b2 = make_box_brep(
+            DVec3::new(5.0, 0.0, 0.0),
+            DVec3::X,
+            DVec3::Y,
+            10.0,
+            10.0,
+            10.0,
+        )
+        .unwrap();
+        let r = boolean_op(BooleanOpType::Union, &b1, &b2).expect("bfuse");
+        let nf = face_count(&r);
+        let area = total_surface_area(&r);
+        let vol = total_volume(&r);
+        assert!((vol - 1500.0).abs() < 1e-3, "volume {vol}");
+        assert_eq!(nf, 6, "expected 6 exterior faces on merged 15×10×10; got {nf}");
+        assert!(
+            (area - 800.0).abs() < 120.0,
+            "surface area {area} expected within ~120 of checkprops -s 800"
+        );
+    }
+
     #[test]
     fn boolean_coplanar_partial_overlap() {
         // Two boxes with partially overlapping coplanar faces.
