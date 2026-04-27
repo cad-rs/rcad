@@ -110,7 +110,8 @@ pub mod extend;
 pub use distance::{ShapeDistance, min_distance, point_to_shape_distance};
 pub use extend::{
     CurveEnd, SurfaceBoundary, extend_bspline_surface, extend_curve_by_length,
-    extend_curve_to_point, insert_knot_to_multiplicity, trim_curve, trim_surface,
+    extend_curve_to_point, insert_knot_to_multiplicity, insert_knot_u_once, insert_knot_v_once,
+    refine_bspline_surface_isoparametric_spans, trim_curve, trim_surface,
 };
 pub use extrema::{CurveCurveExtrema, ExtremaPair, extrema_curve_curve};
 pub use fit::{FitError, approximate_points, interpolate_points, interpolate_points_2d};

@@ -21,7 +21,7 @@
 
 use glam::DVec3;
 
-use crate::geom::{BSplineCurve3, BSplineSurface, CurveEval, Surface3, TrimmedSurface};
+use crate::geom::{BSplineCurve3, BSplineSurface, CurveEval, Surface3, SurfaceEval, TrimmedSurface};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Curve trimming
@@ -312,6 +312,119 @@ pub fn trim_surface(basis: Surface3, u0: f64, u1: f64, v0: f64, v1: f64) -> Surf
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B-spline surface knot insertion (tensor product)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Insert a single knot at parameter `t` in the **u** direction of a NURBS surface
+/// (Boehm on each v-column, shared new `knots_u`).
+pub fn insert_knot_u_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
+    let n_u = surface.control_points.len();
+    let n_v = surface.control_points[0].len();
+    let p = surface.degree_u;
+    let mut knots_u_out: Option<Vec<f64>> = None;
+    let n_u_new = n_u + 1;
+    let mut ctrl = vec![vec![DVec3::ZERO; n_v]; n_u_new];
+    let mut wts = vec![vec![0.0; n_v]; n_u_new];
+    for j in 0..n_v {
+        let curve = BSplineCurve3 {
+            degree: p,
+            knots: surface.knots_u.clone(),
+            control_points: (0..n_u).map(|i| surface.control_points[i][j]).collect(),
+            weights: (0..n_u).map(|i| surface.weights[i][j]).collect(),
+        };
+        let new_c = insert_knot_once(&curve, t);
+        if j == 0 {
+            knots_u_out = Some(new_c.knots);
+        }
+        for i in 0..new_c.control_points.len() {
+            ctrl[i][j] = new_c.control_points[i];
+            wts[i][j] = new_c.weights[i];
+        }
+    }
+    BSplineSurface {
+        degree_u: p,
+        degree_v: surface.degree_v,
+        knots_u: knots_u_out.expect("knots_u"),
+        knots_v: surface.knots_v.clone(),
+        control_points: ctrl,
+        weights: wts,
+    }
+}
+
+/// Insert a single knot at parameter `t` in the **v** direction (each u-row is a v-curve).
+pub fn insert_knot_v_once(surface: &BSplineSurface, t: f64) -> BSplineSurface {
+    let n_u = surface.control_points.len();
+    let n_v = surface.control_points[0].len();
+    let p = surface.degree_v;
+    let mut knots_v_out: Option<Vec<f64>> = None;
+    let n_v_new = n_v + 1;
+    let mut ctrl = vec![vec![DVec3::ZERO; n_v_new]; n_u];
+    let mut wts = vec![vec![0.0; n_v_new]; n_u];
+    for i in 0..n_u {
+        let curve = BSplineCurve3 {
+            degree: p,
+            knots: surface.knots_v.clone(),
+            control_points: (0..n_v).map(|j| surface.control_points[i][j]).collect(),
+            weights: (0..n_v).map(|j| surface.weights[i][j]).collect(),
+        };
+        let new_c = insert_knot_once(&curve, t);
+        if i == 0 {
+            knots_v_out = Some(new_c.knots);
+        }
+        for j in 0..new_c.control_points.len() {
+            ctrl[i][j] = new_c.control_points[j];
+            wts[i][j] = new_c.weights[j];
+        }
+    }
+    BSplineSurface {
+        degree_u: surface.degree_u,
+        degree_v: p,
+        knots_u: surface.knots_u.clone(),
+        knots_v: knots_v_out.expect("knots_v"),
+        control_points: ctrl,
+        weights: wts,
+    }
+}
+
+/// Refine a NURBS by inserting `nu` and `nv` (≥ 1) **roughly** uniform isoparametric
+/// interior knots in u and in v: the `[u0,u1]` and `[v0,v1]` domains are each split
+/// into that many sub-intervals (interior knots at `k/s` for `k = 1..s-1` in
+/// the surface’s current parametric domain before each u-pass / v-pass).
+///
+/// This is a **geometric** refinement (more control points) analogous to
+/// “more isoparameter lines” in analysis; OCCT’s DRAW `nbiso` is primarily a
+/// **display** count for isoparametric curves, so match exact OCCT behavior only
+/// at the “more knots / finer internal structure” level.
+pub fn refine_bspline_surface_isoparametric_spans(
+    surface: &BSplineSurface,
+    nu: usize,
+    nv: usize,
+) -> BSplineSurface {
+    let nu = nu.max(1);
+    let nv = nv.max(1);
+    let [u0, u1, _v0a, _v1a] = surface.default_domain();
+    let mut s = surface.clone();
+    if nu > 1 {
+        for k in 1..nu {
+            let t = u0 + (u1 - u0) * (k as f64) / (nu as f64);
+            if t > u0 + 1e-10 && t < u1 - 1e-10 {
+                s = insert_knot_u_once(&s, t);
+            }
+        }
+    }
+    let [_u0b, _u1b, v0, v1] = s.default_domain();
+    if nv > 1 {
+        for k in 1..nv {
+            let t = v0 + (v1 - v0) * (k as f64) / (nv as f64);
+            if t > v0 + 1e-10 && t < v1 - 1e-10 {
+                s = insert_knot_v_once(&s, t);
+            }
+        }
+    }
+    s
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Surface extension
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -535,5 +648,28 @@ mod tests {
             3,
             "should have 3 rows after extension"
         );
+    }
+
+    #[test]
+    fn refine_isoparametric_spans_preserves_bilinear_geometry() {
+        use crate::geom::{Plane, SurfaceEval};
+        use crate::nurbs_convert::plane_to_bspline_domain;
+        let pl = Plane {
+            origin: DVec3::new(1.0, 2.0, 3.0),
+            normal: DVec3::Z,
+        };
+        let s0 = plane_to_bspline_domain(&pl, 0.0, 1.0, 0.0, 1.0);
+        let s1 = refine_bspline_surface_isoparametric_spans(&s0, 5, 5);
+        for (u, v) in [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (0.31, 0.77),
+        ] {
+            let a = s0.point_at(u, v);
+            let b = s1.point_at(u, v);
+            assert!((a - b).length() < 1e-8, "u={u} v={v} a={a:?} b={b:?}");
+        }
     }
 }
