@@ -2,21 +2,17 @@
 //!
 //! Analogous to OCCT `GProp_GProps` with `BRepGProp`.
 //!
-//! All computations use triangulated faces where available; for faces without
-//! pre-triangulated data we fall back (in order) to:
-//!   1. UV-grid tessellation when the face has an associated curved surface
-//!      (Sphere, Cylinder, Cone, Torus, etc.) — accurate for closed surfaces.
-//!   2. For faces with `inner_wires` (trimmed / holed) on a **plane** or
-//!      **sphere**, 2D ear-clipping in projection or in spherical (u, v) space
-//!      so the hole area is excluded from `total_surface_area`.
-//!   3. Fan-triangulation from the outer wire vertices — used for planar or
-//!      simple faces whose surface is not stored or is infinite.
+//! `surface_area` first uses analytic or parametric integrals (plane: shoe-lace; sphere: UV
+//! mask and `R² dΩ`; other finite UV patches without `inner_wires`: cylinder `r·Δu·Δv` or a
+//! midpoint `‖∂P/∂u×∂P/∂v‖` sum on the same domain as `tessellate_curved_face`), then
+//! triangulated faces. Where triangles are used: UV-grid tessellation, holed
+//! ear-cut, or fan-triangulation from wire vertices.
 
 use glam::{DVec2, DVec3};
 
 use crate::BRep;
 use crate::geom::{any_perpendicular, SphericalSurface, Surface3, SurfaceEval};
-use crate::topology::Wire;
+use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -371,6 +367,9 @@ const UV_TESS_N: usize = 64;
 /// Finer grid for masked sphere patches (trimmed / holed) when ear-cut fails.
 const SPHERE_UV_MASK_N: usize = 160;
 
+/// Grid for ‖∂P/∂u×∂P/∂v‖ midpoint integration on a UV rectangle (per-axis).
+const PARAM_RECT_AREA_N: usize = 64;
+
 fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
     let n = poly.len();
     if n < 3 {
@@ -459,16 +458,22 @@ fn align_inner_u_chain_to_outer(outer_umin: f64, outer_umax: f64, o_inner: &mut 
     }
 }
 
-/// When ear-clipping fails in (u,v), approximate the trimmed patch by a regular
-/// grid in parameter space, keeping only cells whose centres lie inside the
-/// outer UV loop and outside any inner loop; map quads to chordal 3D triangles.
-fn try_spherical_uv_masked_raster(
+/// Shared (u,v) chart and grid bounds for sphere UV raster / parametric **dA** sum (with or
+/// without inner loops).
+struct SphereHoledMaskCtx {
+    outer_uv: Vec<DVec2>,
+    inner_polys: Vec<Vec<DVec2>>,
+    umin: f64,
+    umax: f64,
+    vmin: f64,
+    vmax: f64,
+}
+
+fn spherical_holed_uv_mask_setup(
     s: &SphericalSurface,
     brep: &BRep,
-    face: &crate::topology::Face,
-    _face_flat_idx: usize,
-    face_normal: DVec3,
-) -> Option<Vec<[DVec3; 3]>> {
+    face: &Face,
+) -> Option<SphereHoledMaskCtx> {
     let tol = 1e-5_f64;
     let mut outer3 = sample_wire_polyline_3d(brep, &face.outer_wire);
     trim_almost_closed_polyline(&mut outer3, tol);
@@ -536,12 +541,8 @@ fn try_spherical_uv_masked_raster(
     vmin -= margin_v;
     vmax += margin_v;
     let pi = std::f64::consts::PI;
-    // `sphere_point_to_uv` uses atan2 → u can lie in [−π, π]; do **not** clamp to [0, 2π]
-    // (that can drop a negative‑u sliver of the annulus in UV and badly skews area).
-    // Colatitude v must stay in [0, π] for `SphericalSurface::point_at` / earcut; keep a
-    // small margin for numeric noise only.
-    vmin = vmin.clamp(0.0, pi);
-    vmax = vmax.clamp(0.0, pi);
+    let vmin = vmin.clamp(0.0, pi);
+    let vmax = vmax.clamp(0.0, pi);
     if !umin.is_finite()
         || !umax.is_finite()
         || !vmin.is_finite()
@@ -551,6 +552,176 @@ fn try_spherical_uv_masked_raster(
     {
         return None;
     }
+    Some(SphereHoledMaskCtx {
+        outer_uv,
+        inner_polys,
+        umin,
+        umax,
+        vmin,
+        vmax,
+    })
+}
+
+/// Sum `∫ R² sin v dudv` over the same masked grid (no triangulation), for GProp-style area.
+fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
+    let nu = SPHERE_UV_MASK_N;
+    let nv = SPHERE_UV_MASK_N;
+    let umin = ctx.umin;
+    let umax = ctx.umax;
+    let vmin = ctx.vmin;
+    let vmax = ctx.vmax;
+    let du = (umax - umin) / nu as f64;
+    let dv = (vmax - vmin) / nv as f64;
+    let r2 = s.radius * s.radius;
+    let inner = &ctx.inner_polys;
+    let emit = |outer_poly: &[DVec2], use_inner: bool| -> f64 {
+        let mut a = 0.0f64;
+        for i in 0..nu {
+            for j in 0..nv {
+                let u0 = umin + i as f64 * du;
+                let u1 = u0 + du;
+                let v0 = vmin + j as f64 * dv;
+                let v1 = v0 + dv;
+                let corners = [
+                    DVec2::new(u0, v0),
+                    DVec2::new(u1, v0),
+                    DVec2::new(u1, v1),
+                    DVec2::new(u0, v1),
+                ];
+                if !corners
+                    .iter()
+                    .all(|q| point_in_polygon_2d(outer_poly, *q))
+                {
+                    continue;
+                }
+                if use_inner
+                    && inner.iter().any(|h| {
+                        corners
+                            .iter()
+                            .any(|q| point_in_polygon_2d(h, *q))
+                    })
+                {
+                    continue;
+                }
+                a += r2 * du * (v0.cos() - v1.cos());
+            }
+        }
+        a
+    };
+    let mut t = emit(&ctx.outer_uv, true);
+    if t <= 0.0 && !inner.is_empty() {
+        t = emit(&ctx.outer_uv, false);
+    }
+    if t > 0.0 {
+        return t;
+    }
+    let mut rev = ctx.outer_uv.clone();
+    rev.reverse();
+    t = emit(&rev, true);
+    if t <= 0.0 && !inner.is_empty() {
+        t = emit(&rev, false);
+    }
+    t
+}
+
+/// Shoelace area of outer wire minus |hole areas| in the face plane (pivot = first outer point).
+fn try_planar_face_area_shoelace(
+    brep: &BRep,
+    face: &Face,
+    face_normal: DVec3,
+) -> Option<f64> {
+    let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
+    trim_almost_closed_polyline(&mut outer, 1e-5);
+    if outer.len() < 3 {
+        return None;
+    }
+    let (ux, uy) = local_basis_from_normal(face_normal);
+    let pivot = outer.first().copied()?;
+    let mut a = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
+    for w in &face.inner_wires {
+        let mut h = sample_wire_polyline_3d(brep, w);
+        trim_almost_closed_polyline(&mut h, 1e-5);
+        if h.len() < 3 {
+            continue;
+        }
+        a -= polygon_area_2d_projected(&h, pivot, ux, uy).abs();
+    }
+    Some(a.max(0.0))
+}
+
+fn polygon_area_2d_projected(pts: &[DVec3], pivot: DVec3, ux: DVec3, uy: DVec3) -> f64 {
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let n = pts.len();
+    let mut s = 0.0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let a = (pts[i] - pivot).dot(ux);
+        let b = (pts[i] - pivot).dot(uy);
+        let c = (pts[j] - pivot).dot(ux);
+        let d = (pts[j] - pivot).dot(uy);
+        s += a * d - c * b;
+    }
+    0.5 * s
+}
+
+/// Prefer analytic / parametric area for `surface_area`: plane (shoelace); all sphere faces
+/// (UV polygon mask + `R² dΩ`); finite-UV rectangular patches on other surfaces without inner
+/// wires (cylinder exact; otherwise `‖Pu×Pv‖` midpoint rule on the same domain as tessellation).
+fn try_analytic_face_surface_area(
+    brep: &BRep,
+    face: &Face,
+    face_flat_idx: usize,
+) -> Option<f64> {
+    let surf_idx = brep.geom.face_surface.get(face_flat_idx).copied().flatten()?;
+    let surf = brep.geom.surfaces.get(surf_idx)?;
+    match surf {
+        Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal),
+        Surface3::Sphere(s) => {
+            let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
+            let v = sphere_holed_mask_param_area_sum(s, &ctx);
+            if v > 0.0 { Some(v) } else { None }
+        }
+        _ if !face.inner_wires.is_empty() => None,
+        _ => {
+            let [u0, u1, v0, v1] = curved_face_uv_domain(brep, face, face_flat_idx, surf)?;
+            if !u0.is_finite()
+                || !u1.is_finite()
+                || !v0.is_finite()
+                || !v1.is_finite()
+                || (u1 - u0).abs() < 1e-14
+                || (v1 - v0).abs() < 1e-14
+            {
+                return None;
+            }
+            match surf {
+                Surface3::Cylinder(c) => Some(
+                    c.radius * (u1 - u0).abs() * (v1 - v0).abs(),
+                ),
+                _ => param_rect_area_cross(surf, u0, u1, v0, v1),
+            }
+        }
+    }
+}
+
+/// When ear-clipping fails in (u,v), approximate the trimmed patch by a regular
+/// grid in parameter space, keeping only cells whose centres lie inside the
+/// outer UV loop and outside any inner loop; map quads to chordal 3D triangles.
+fn try_spherical_uv_masked_raster(
+    s: &SphericalSurface,
+    brep: &BRep,
+    face: &Face,
+    _face_flat_idx: usize,
+    face_normal: DVec3,
+) -> Option<Vec<[DVec3; 3]>> {
+    let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
+    let umin = ctx.umin;
+    let umax = ctx.umax;
+    let vmin = ctx.vmin;
+    let vmax = ctx.vmax;
+    let outer_uv = &ctx.outer_uv;
+    let inner_polys = &ctx.inner_polys;
 
     let nu = SPHERE_UV_MASK_N;
     let nv = SPHERE_UV_MASK_N;
@@ -617,9 +788,9 @@ fn try_spherical_uv_masked_raster(
         tris
     };
 
-    let mut tris = emit_grid(&outer_uv, true);
+    let mut tris = emit_grid(outer_uv, true);
     if tris.is_empty() && !inner_polys.is_empty() {
-        tris = emit_grid(&outer_uv, false);
+        tris = emit_grid(outer_uv, false);
     }
     if tris.is_empty() {
         let mut ou = outer_uv.clone();
@@ -645,6 +816,53 @@ fn try_spherical_uv_masked_raster(
 /// UV domain on a regular `UV_TESS_N × UV_TESS_N` grid.
 ///
 /// Returns triangles oriented outward (consistent with the surface normal).
+/// UV rectangle used by [`tessellate_curved_face`] and parametric `surface_area` fallbacks
+/// (same resolution priority as triangulation: range → finite `default_domain` → wire estimate).
+fn curved_face_uv_domain(
+    brep: &BRep,
+    face: &Face,
+    face_flat_idx: usize,
+    surf: &Surface3,
+) -> Option<[f64; 4]> {
+    if let Some(Some(r)) = brep.geom.face_surface_range.get(face_flat_idx) {
+        Some(*r)
+    } else {
+        let d = surf.default_domain();
+        if d.iter().all(|x| x.is_finite()) {
+            Some(d)
+        } else {
+            estimate_uv_domain_from_wire(brep, face, surf)
+        }
+    }
+}
+
+/// `∫∫ ‖∂P/∂u×∂P/∂v‖ dudv` on `[u0,u1]×[v0,v1]` (midpoint rule, central differences for partials).
+/// Matches the same UV box as `tessellate_curved_face` without chordal tri area bias.
+fn param_rect_area_cross(surf: &Surface3, u0: f64, u1: f64, v0: f64, v1: f64) -> Option<f64> {
+    if !u0.is_finite() || !u1.is_finite() || !v0.is_finite() || !v1.is_finite() {
+        return None;
+    }
+    if (u1 - u0).abs() < 1e-15 || (v1 - v0).abs() < 1e-15 {
+        return None;
+    }
+    let nu = PARAM_RECT_AREA_N;
+    let nv = PARAM_RECT_AREA_N;
+    let du = (u1 - u0) / nu as f64;
+    let dv = (v1 - v0) / nv as f64;
+    let h = (du * du + dv * dv).sqrt().max(1e-12) * 1e-3;
+    let mut a = 0.0f64;
+    for i in 0..nu {
+        for j in 0..nv {
+            let uc = u0 + (i as f64 + 0.5) * du;
+            let vc = v0 + (j as f64 + 0.5) * dv;
+            let pu = (surf.point_at(uc + h, vc) - surf.point_at(uc - h, vc)) / (2.0 * h);
+            let pv = (surf.point_at(uc, vc + h) - surf.point_at(uc, vc - h)) / (2.0 * h);
+            a += pu.cross(pv).length() * du * dv;
+        }
+    }
+    if a > 0.0 && a.is_finite() { Some(a) } else { None }
+}
+
 /// Returns `None` if the face has no associated surface or the domain cannot
 /// be determined (e.g. a truly unbounded Plane with no face_surface_range).
 fn tessellate_curved_face(
@@ -656,22 +874,7 @@ fn tessellate_curved_face(
     let surf_idx = brep.geom.face_surface.get(face_flat_idx)?.as_ref().copied()?;
     let surf = brep.geom.surfaces.get(surf_idx)?;
 
-    // Determine the UV domain.  Priority order:
-    //   1. face_surface_range override (STEP imports, TrimmedSurface)
-    //   2. SurfaceEval::default_domain() if fully finite
-    //   3. Estimate from wire vertex projections onto the surface for
-    //      surfaces with semi-infinite domains (Cylinder, Cone)
-    let domain = if let Some(Some(r)) = brep.geom.face_surface_range.get(face_flat_idx) {
-        *r
-    } else {
-        let d = surf.default_domain();
-        if d.iter().all(|x| x.is_finite()) {
-            d
-        } else {
-            // Try to estimate the finite extent from the face's wire vertices.
-            estimate_uv_domain_from_wire(brep, face, surf)?
-        }
-    };
+    let domain = curved_face_uv_domain(brep, face, face_flat_idx, surf)?;
 
     let [u0, u1, v0, v1] = domain;
 
@@ -901,14 +1104,29 @@ pub fn face_triangles_pub(
 
 /// Compute the total surface area of all faces in the BRep.
 ///
-/// For each face, sums the areas of its triangles (pre-triangulated, UV-sampled
-/// for curved surfaces, or fan-triangulated from wire vertices).
+/// For each face, uses analytic area when available (planar shoe lace; holed
+/// sphere: parametric `R² dΩ` on the same UV mask as the raster), otherwise
+/// sums triangle areas (pre-triangulated, UV-sampled, or fan-triangulated).
 /// Returns 0.0 if the BRep has no faces.
 pub fn surface_area(brep: &BRep) -> f64 {
-    face_flat_iter(brep)
-        .flat_map(|(fi, f)| face_triangles(brep, f, fi))
-        .map(|[a, b, c]| tri_area(a, b, c))
-        .sum()
+    let mut total = 0.0f64;
+    for (fi, f) in face_flat_iter(brep) {
+        total += face_surface_area(brep, f, fi);
+    }
+    total
+}
+
+/// Area of one face, using the same rules as [`surface_area`].
+#[doc(hidden)]
+pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 {
+    if let Some(a) = try_analytic_face_surface_area(brep, face, face_flat_idx) {
+        a
+    } else {
+        face_triangles(brep, face, face_flat_idx)
+            .iter()
+            .map(|&[a, b, c]| tri_area(a, b, c))
+            .sum()
+    }
 }
 
 /// Compute the signed volume of the closed BRep solid.

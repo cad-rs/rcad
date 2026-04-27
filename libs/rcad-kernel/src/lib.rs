@@ -151,7 +151,7 @@ pub use geom::{Curve2dEval, CurveEval, SurfaceEval, any_perpendicular};
 pub use geom::{EllipsoidalSurface, HelicoidSurface, PipeSurface};
 pub use geom::{CircularHelix3, Hyperbola3, Parabola3, SineWave3};
 pub use geom::{OffsetCurve3, OffsetSurface};
-pub use properties::{InertiaTensor, centroid, inertia_tensor, surface_area, volume};
+pub use properties::{InertiaTensor, centroid, inertia_tensor, face_surface_area, surface_area, volume};
 pub use tolerance::{
     ANGULAR, APPROXIMATION, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
     face_domain, face_tolerance, model_tolerance, vertex_tolerance,
