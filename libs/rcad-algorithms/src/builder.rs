@@ -1090,33 +1090,130 @@ impl<'a> BooleanBuilder<'a> {
         Ok((brep, history))
     }
 
+    /// When PaveFiller does not link a plane–sphere circle to every affected box face, merge in
+    /// any coplanar `Curve3::Circle` from `intersection_curves` that overlaps the face 2D AABB.
+    fn extra_coplanar_circle_curves_for_plane_face(
+        &self,
+        face_idx: usize,
+        plane: &Plane,
+    ) -> Vec<usize> {
+        let n = plane.normal.normalize_or_zero();
+        if n.length_squared() < 1e-20 {
+            return vec![];
+        }
+        let face = &self.ds.faces[face_idx];
+        let (u_axis, v_axis) = plane_local_basis(plane);
+        let project_to_2d = |p: DVec3| -> DVec2 {
+            let d = p - plane.origin;
+            DVec2::new(d.dot(u_axis), d.dot(v_axis))
+        };
+        if face.boundary_verts.is_empty() {
+            return vec![];
+        }
+        let mut umin = f64::INFINITY;
+        let mut umax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut vmax = f64::NEG_INFINITY;
+        for &vi in &face.boundary_verts {
+            let q = project_to_2d(self.ds.vertices[vi].point);
+            umin = umin.min(q.x);
+            umax = umax.max(q.x);
+            vmin = vmin.min(q.y);
+            vmax = vmax.max(q.y);
+        }
+        const MARGIN: f64 = 1e-3;
+        umin -= MARGIN;
+        umax += MARGIN;
+        vmin -= MARGIN;
+        vmax += MARGIN;
+        // Circle lies in a plane with normal parallel to this plane, and (center on plane)
+        const PL_D: f64 = 1e-3;
+        const N_ALIGN: f64 = 0.04;
+        let mut out = Vec::new();
+        for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
+            if face.face_info.curves_in.contains(&ci) {
+                continue;
+            }
+            let Curve3::Circle(c) = &ic.curve else {
+                continue;
+            };
+            let nc = c.normal.normalize_or_zero();
+            if nc.length_squared() < 1e-20 {
+                continue;
+            }
+            if (nc.dot(n).abs() - 1.0).abs() > N_ALIGN {
+                continue;
+            }
+            if ((DVec3::from(c.center) - plane.origin).dot(n)).abs() > PL_D {
+                continue;
+            }
+            let c2d = project_to_2d(DVec3::from(c.center));
+            let r = c.radius;
+            if c2d.x + r < umin
+                || c2d.x - r > umax
+                || c2d.y + r < vmin
+                || c2d.y - r > vmax
+            {
+                continue;
+            }
+            out.push(ci);
+        }
+        out
+    }
+
+    fn merged_split_curve_ids_for_planar_face(&self, face_idx: usize, plane: &Plane) -> Vec<usize> {
+        let mut c: Vec<usize> = self.ds.faces[face_idx]
+            .face_info
+            .curves_in
+            .iter()
+            .copied()
+            .collect();
+        for e in self.extra_coplanar_circle_curves_for_plane_face(face_idx, plane) {
+            if !c.contains(&e) {
+                c.push(e);
+            }
+        }
+        c.sort_unstable();
+        c
+    }
+
+    fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let boundary = face
+            .boundary_verts
+            .iter()
+            .map(|&vi| self.ds.vertices[vi].point)
+            .collect();
+        vec![SubFace {
+            boundary,
+            surface: face.surface.clone(),
+            normal: face.normal,
+            uv_centroid: None,
+            sample_override: None,
+            uv_domain: None,
+            inner_wires: vec![],
+        }]
+    }
+
     /// Split a face by intersection curves. If no intersection curves cross this
     /// face, returns the whole face as a single SubFace.
     fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        if fi.curves_in.is_empty() {
-            // No intersections — return whole face
-            let boundary = face
-                .boundary_verts
-                .iter()
-                .map(|&vi| self.ds.vertices[vi].point)
-                .collect();
-            return vec![SubFace {
-                boundary,
-                surface: face.surface.clone(),
-                normal: face.normal,
-                uv_centroid: None,
-                sample_override: None,
-                uv_domain: None,
-                inner_wires: vec![],
-            }];
+        if let Surface3::Plane(plane) = &face.surface {
+            let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            if cids.is_empty() {
+                return self.single_subface_from_whole_face(face_idx);
+            }
+            return self.split_planar_face(face_idx, plane, &cids);
         }
 
-        // For planar faces: project to 2D, split by intersection segments
-        match &face.surface.clone() {
-            Surface3::Plane(plane) => self.split_planar_face(face_idx, plane),
+        if fi.curves_in.is_empty() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+
+        match &face.surface {
             Surface3::Cylinder(_)
             | Surface3::Sphere(_)
             | Surface3::Cone(_)
@@ -1125,20 +1222,7 @@ impl<'a> BooleanBuilder<'a> {
             | Surface3::Bezier(_) => self.split_curved_face_parametric(face_idx),
             _ => {
                 // Other curved surfaces — return whole face for now
-                let boundary = face
-                    .boundary_verts
-                    .iter()
-                    .map(|&vi| self.ds.vertices[vi].point)
-                    .collect();
-                vec![SubFace {
-                    boundary,
-                    surface: face.surface.clone(),
-                    normal: face.normal,
-                    uv_centroid: None,
-                    sample_override: None,
-                    uv_domain: None,
-                    inner_wires: vec![],
-                }]
+                self.single_subface_from_whole_face(face_idx)
             }
         }
     }
@@ -1150,7 +1234,14 @@ impl<'a> BooleanBuilder<'a> {
     /// 2. Find where intersection segment endpoints lie on boundary edges
     /// 3. Insert intersection points into boundary at correct positions
     /// 4. Walk augmented boundary to extract sub-polygons on each side
-    fn split_planar_face(&self, face_idx: usize, plane: &Plane) -> Vec<SubFace> {
+    /// `split_curve_ids` is `face_info.curves_in` plus any merged coplanar circles (see
+    /// [`Self::merged_split_curve_ids_for_planar_face`]).
+    fn split_planar_face(
+        &self,
+        face_idx: usize,
+        plane: &Plane,
+        split_curve_ids: &[usize],
+    ) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
 
         // Collect 3D boundary points
@@ -1181,7 +1272,7 @@ impl<'a> BooleanBuilder<'a> {
         // may fall inside the circle — we must use a vertex-based sample instead.
         let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
 
-        for &ci in &face.face_info.curves_in {
+        for &ci in split_curve_ids {
             let ic = &self.ds.intersection_curves[ci];
 
             let curve_halfspace_split: Option<Vec<Vec<DVec2>>> = match &ic.curve {
@@ -1258,9 +1349,7 @@ impl<'a> BooleanBuilder<'a> {
         let n_plane = plane.normal.normalize_or_zero();
         let dist_plane = |p: DVec3| -> f64 { (p - plane.origin).dot(n_plane).abs() };
 
-        let mut imprint_uv: Vec<DVec2> = face
-            .face_info
-            .curves_in
+        let mut imprint_uv: Vec<DVec2> = split_curve_ids
             .iter()
             .flat_map(|&ci| {
                 let ic = &self.ds.intersection_curves[ci];
@@ -2040,6 +2129,65 @@ mod tests {
             SourceSide::B,
             Classification::In,
         ));
+    }
+
+    /// `ShapeB` (box) face indices run immediately after the sphere: one sphere face, then 6
+    /// box faces. At least one box **plane** must split into multiple `SubFace` when the
+    /// sphere cut is merged from `intersection_curves` (see `merged_split_curve_ids_for_planar_face`).
+    #[test]
+    fn sphere_box_difference_splits_some_box_plane() {
+        use crate::bopds::ds::DS;
+        use crate::pave_filler::PaveFiller;
+        use rcad_modeling::{make_box_brep, make_sphere_brep};
+
+        let s = make_sphere_brep(glam::DVec3::ZERO, 1.0).expect("sph");
+        let b = make_box_brep(glam::DVec3::ZERO, glam::DVec3::X, glam::DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("box");
+        let mut ds = DS::new(&s, &b);
+        PaveFiller::new(&mut ds).perform();
+        let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
+        let a0 = 0_usize;
+        let n_box_face = 6;
+        let mut max_sub = 1usize;
+        for fi in 1..(1 + n_box_face) {
+            let subs = builder.split_face(fi);
+            max_sub = max_sub.max(subs.len());
+        }
+        assert!(
+            max_sub > 1,
+            "expected a split box plane in sphere cut (max subs {max_sub}, sphere subs {})",
+            builder.split_face(a0).len()
+        );
+    }
+
+    /// `split_polygon_by_circle_2d` must produce two regions for a full square when the
+    /// disk center is inside the square (annulus + cap path).
+    #[test]
+    fn split_unit_square_by_circle_center_inside() {
+        use glam::DVec2;
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 0.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(0.0, 1.0),
+        ];
+        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3);
+        assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
+    }
+
+    /// Corner-centered disk (e.g. plane x=0: circle in (y,z) with center at box corner) must
+    /// split the square, not return the whole quad unchanged.
+    #[test]
+    fn split_unit_square_by_circle_at_corner() {
+        use glam::DVec2;
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1.0, 0.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(0.0, 1.0),
+        ];
+        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.0, 0.0), 1.0);
+        assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
     }
 
     /// Regression: unit sphere and unit box must register plane–sphere F–F curves and split
@@ -3205,6 +3353,20 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     }
 
     let tol = TOLERANCE_ABS;
+    // If the circle center coincides with a polygon vertex, distance-to-circle and arc angles
+    // degenerate; nudge the center slightly toward the polygon centroid (inside the face for
+    // typical box/sphere trims) so segment–circle intersections and arc sampling stay stable.
+    let mut center = center;
+    for &p in poly {
+        if (p - center).length() < tol * 50.0 {
+            let c0 = poly.iter().copied().fold(DVec2::ZERO, |a, q| a + q) / (n as f64);
+            let dir = (c0 - center).normalize_or_zero();
+            if dir.length_squared() > 1e-18 {
+                center = center + dir * (tol * 200.0).max(1e-6);
+                break;
+            }
+        }
+    }
 
     // Signed distance: negative = inside circle, positive = outside
     let signed_dist = |p: DVec2| -> f64 { (p - center).length() - radius };
@@ -3221,25 +3383,19 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     }
 
     if all_outside {
-        // Circle is fully inside the polygon OR polygon is fully outside circle.
-        // Check if circle center is inside the polygon:
-        let center_inside = point_in_polygon_2d(poly, center);
-        if !center_inside {
-            // Circle doesn't overlap with this polygon — keep as-is
-            return vec![poly.to_vec()];
+        // Every vertex is on or outside the circle (in signed-distance sense). The disk may
+        // still intersect the polygon interior (e.g. center outside the square but arc cutting
+        // across) — do not drop to a single polygon in that case; fall through to crossings.
+        if point_in_polygon_2d(poly, center) {
+            // Center inside polygon: annulus + disk cap
+            let circle_poly: Vec<DVec2> = (0..N_CIRCLE_SAMPLES)
+                .map(|i| {
+                    let theta = std::f64::consts::TAU * i as f64 / N_CIRCLE_SAMPLES as f64;
+                    center + DVec2::new(theta.cos(), theta.sin()) * radius
+                })
+                .collect();
+            return vec![circle_poly, poly.to_vec()];
         }
-        // Circle is fully inside the polygon — produce circular cap + annular region
-        // Sample the circle at N points
-        let circle_poly: Vec<DVec2> = (0..N_CIRCLE_SAMPLES)
-            .map(|i| {
-                let theta = std::f64::consts::TAU * i as f64 / N_CIRCLE_SAMPLES as f64;
-                center + DVec2::new(theta.cos(), theta.sin()) * radius
-            })
-            .collect();
-        // Return: inside = circle polygon, outside = original polygon (with circle as hole)
-        // For simplicity, return just the circle as the "inside" part
-        // and the original polygon as the "outside" part (approximate)
-        return vec![circle_poly, poly.to_vec()];
     }
 
     // Find crossings: edges where signed distance changes sign
