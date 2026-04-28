@@ -624,12 +624,88 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
     t
 }
 
+/// When the face normal is world-axis-aligned and the outer loop is exactly the boundary of its
+/// own axis-aligned bounding box in world (e.g. each side of a merged `box` union), dense edge
+/// sampling can make simple shoe-lace on 3D samples lose area. If every sample lies on one of the
+/// four sides of that box, use `width * height` in world UV. Fails for L-shapes (re-entrant
+/// points inside the bbox), circles, etc. — then we fall back to shoe-lace below.
+fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
+    let a = n.abs();
+    if a.x > 1.0 - 2e-3 {
+        Some([1, 2])
+    } else if a.y > 1.0 - 2e-3 {
+        Some([0, 2])
+    } else if a.z > 1.0 - 2e-3 {
+        Some([0, 1])
+    } else {
+        None
+    }
+}
+
+fn bbox2d_components(uv: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
+    if uv.is_empty() {
+        return None;
+    }
+    let mut u0 = f64::INFINITY;
+    let mut u1 = f64::NEG_INFINITY;
+    let mut v0 = f64::INFINITY;
+    let mut v1 = f64::NEG_INFINITY;
+    for &(u, v) in uv {
+        u0 = u0.min(u);
+        u1 = u1.max(u);
+        v0 = v0.min(v);
+        v1 = v1.max(v);
+    }
+    Some((u0, u1, v0, v1))
+}
+
+fn try_axis_aligned_world_rect_plane_area(
+    brep: &BRep,
+    face: &Face,
+    face_normal: DVec3,
+) -> Option<f64> {
+    let n = face_normal.normalize_or_zero();
+    if n.length_squared() < 1e-24 {
+        return None;
+    }
+    let [i, j] = axis_aligned_world_plane_uv_axes(n)?;
+    let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
+    trim_almost_closed_polyline(&mut outer, 1e-5);
+    if outer.len() < 3 {
+        return None;
+    }
+    let uv: Vec<(f64, f64)> = outer.iter().map(|p| (p[i], p[j])).collect();
+    let (u0, u1, v0, v1) = bbox2d_components(&uv)?;
+    let w = u1 - u0;
+    let h = v1 - v0;
+    if !(w > 1e-18 && h > 1e-18) {
+        return None;
+    }
+    let scale = w.max(h).max(1.0);
+    let eps = (1e-5 * scale).max(1e-9);
+    for &(u, v) in &uv {
+        let on_edge = (u - u0).abs() <= eps
+            || (u1 - u).abs() <= eps
+            || (v - v0).abs() <= eps
+            || (v1 - v).abs() <= eps;
+        if !on_edge {
+            return None;
+        }
+    }
+    Some((w * h).max(0.0))
+}
+
 /// Shoelace area of outer wire minus |hole areas| in the face plane (pivot = first outer point).
 fn try_planar_face_area_shoelace(
     brep: &BRep,
     face: &Face,
     face_normal: DVec3,
 ) -> Option<f64> {
+    if face.inner_wires.is_empty() {
+        if let Some(a) = try_axis_aligned_world_rect_plane_area(brep, face, face_normal) {
+            return Some(a);
+        }
+    }
     let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
     trim_almost_closed_polyline(&mut outer, 1e-5);
     if outer.len() < 3 {
@@ -1343,6 +1419,52 @@ mod tests {
             (area - 52.0).abs() < EPS,
             "2×3×4 box SA should be 52, got {area}"
         );
+    }
+
+    /// Each face is a rectangle: two 2×3, two 3×4, two 2×4 — exercises per-face analytic plane area.
+    #[test]
+    fn box_non_cuboid_per_face_rect_areas() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+        let mut areas = Vec::new();
+        let mut i = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    areas.push(face_surface_area(&brep, face, i));
+                    i += 1;
+                }
+            }
+        }
+        assert_eq!(areas.len(), 6, "box should have 6 faces");
+        areas.sort_by(|a, b| a.total_cmp(b));
+        for (a, e) in areas.iter().zip([6.0_f64, 6.0, 8.0, 8.0, 12.0, 12.0].iter()) {
+            assert!((a - e).abs() < 1e-3, "face area {a} expected {e}");
+        }
+    }
+
+    #[test]
+    fn box_per_face_area_sum_matches_surface_area() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 2.0,
+            height: 3.0,
+            depth: 4.0,
+        });
+        let mut sum = 0.0;
+        let mut i = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    sum += face_surface_area(&brep, face, i);
+                    i += 1;
+                }
+            }
+        }
+        let tot = surface_area(&brep);
+        assert!((sum - tot).abs() < 1e-4, "sum of face areas {sum} vs surface_area {tot}");
     }
 
     #[test]

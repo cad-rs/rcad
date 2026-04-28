@@ -53,7 +53,7 @@ pub mod shape_custom;
 pub mod shape_extend;
 pub use brep_feat::{
     BRepFeatError, DraftFeatureParams, FeatureParams, FuseMode, GrooveParams, RibParams,
-    apply_draft_feature, make_drafted_prism, make_groove, make_linear_rib as make_linear_rib_feat,
+    apply_depouille, apply_draft_feature, make_drafted_prism, make_groove, make_linear_rib as make_linear_rib_feat,
     make_loft_feature, make_pipe_feature, make_prism_feature, make_revol_feature, make_rib,
     make_through_groove,
 };
@@ -86,6 +86,7 @@ pub mod brep_feat;
 pub mod brep_int_curve_surface;
 pub mod brep_mesh;
 pub mod brep_offset;
+pub mod brep_proj;
 pub mod cells_builder;
 pub mod chamfer;
 pub mod elc_lib;
@@ -125,7 +126,7 @@ pub use approx_int::{
 pub use brep_algo::{
     BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue, check_orientation,
     evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal, find_connected_components,
-    fix_orientation, is_valid_brep, max_edge_length, max_face_area, min_face_area,
+    fix_orientation, is_valid_brep, max_edge_length, max_face_area, min_face_area, total_edge_length,
     propagate_edge_tolerances, propagate_face_tolerances, reverse_face, total_surface_area,
     total_volume,
 };
@@ -384,6 +385,7 @@ pub use brep_offset::{
     make_hollow_solid, make_pipe_shell, make_thick_solid, offset_shape_with_join,
     offset_shape_with_options, offset_wire,
 };
+pub use brep_proj::{BrepProjOptions, brep_proj_cylindrical};
 pub use brep_repair::{
     AdaptiveToleranceConfig,
     AdaptiveToleranceMergeReport,
@@ -696,7 +698,10 @@ pub use projection::{
     project_point_on_surface_with_options, project_surface_on_surface, project_wire_on_face,
     project_wire_on_surface,
 };
-pub use section::{SectionCurve, section, section_curves, section_polylines};
+pub use section::{
+    SectionCurve, brep_triangle_soup, intersect_triangle_soups, section, section_curves,
+    section_polylines,
+};
 pub use shape_algo::{
     // Algorithm container
     AlgoContainer,
@@ -8450,38 +8455,6 @@ mod tests {
         let v_union = rcad_kernel::properties::volume(&union_brep);
         let v_inter = rcad_kernel::properties::volume(&inter_brep);
 
-        // Debug values — show face count and uv_domains
-        eprintln!("V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}");
-        eprintln!(
-            "Union faces={}, inter faces={}",
-            union_brep.solids[0].shells[0].faces.len(),
-            inter_brep.solids[0].shells[0].faces.len()
-        );
-        for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
-            let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
-            let surf_name = inter_brep
-                .geom
-                .face_surface
-                .get(i)
-                .and_then(|o| *o)
-                .map(|si| {
-                    format!(
-                        "{:?}",
-                        std::mem::discriminant(&inter_brep.geom.surfaces[si])
-                    )
-                });
-            // Compute per-face contribution to volume
-            let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
-            let face_vol: f64 = face_tris
-                .iter()
-                .map(|&[a, b, c]| a.dot(b.cross(c)) / 6.0)
-                .sum();
-            eprintln!(
-                "  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}",
-                face.normal
-            );
-        }
-
         let expected = v_a + v_b - v_inter;
         let error = (v_union - expected).abs() / expected;
         let error_pct = error * 100.0;
@@ -8521,38 +8494,6 @@ mod tests {
         let v_b = rcad_kernel::properties::volume(&b);
         let v_union = rcad_kernel::properties::volume(&union_brep);
         let v_inter = rcad_kernel::properties::volume(&inter_brep);
-
-        eprintln!(
-            "sphere-sphere: V_A={v_a:.4} V_B={v_b:.4} V_union={v_union:.4} V_inter={v_inter:.4}"
-        );
-        eprintln!(
-            "Union faces={}, inter faces={}",
-            union_brep.solids[0].shells[0].faces.len(),
-            inter_brep.solids[0].shells[0].faces.len()
-        );
-        for (i, face) in inter_brep.solids[0].shells[0].faces.iter().enumerate() {
-            let range = inter_brep.geom.face_surface_range.get(i).and_then(|o| *o);
-            let surf_name = inter_brep
-                .geom
-                .face_surface
-                .get(i)
-                .and_then(|o| *o)
-                .map(|si| {
-                    format!(
-                        "{:?}",
-                        std::mem::discriminant(&inter_brep.geom.surfaces[si])
-                    )
-                });
-            let face_tris = rcad_kernel::properties::face_triangles_pub(&inter_brep, face, i);
-            let face_vol: f64 = face_tris
-                .iter()
-                .map(|&[a, b, c]| a.dot(b.cross(c)) / 6.0)
-                .sum();
-            eprintln!(
-                "  inter face {i}: normal={:.3?} uv_domain={range:?} surf={surf_name:?} vol_contrib={face_vol:.4}",
-                face.normal
-            );
-        }
 
         let expected = v_a + v_b - v_inter;
         let error = (v_union - expected).abs() / expected.max(1e-12);
@@ -8848,6 +8789,9 @@ mod tests {
     /// 2D bbox *area* overlap to avoid splitting disjoint solids at shared planes, so a few
     /// edge-coincident fragments may remain until `unify_same_domain_faces`; the invariant here is
     /// volume/area, not a strict face count of 6.
+    /// **Surface area:** axis-aligned **rectangular** face boundaries use the world-UV
+    /// rectangle rule in `rcad_kernel::properties` (not dense shoe-lace) so the total tracks OCCT
+    /// `checkprops -s` 800.
     #[test]
     fn overlapping_box_union_orthogonal_fuse_matches_occt_surface_area() {
         let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).unwrap();
@@ -8870,8 +8814,8 @@ mod tests {
             "expected roughly six logical sides; got {nf} faces (merger may leave extra facets)"
         );
         assert!(
-            (area - 800.0).abs() < 220.0,
-            "surface area {area} expected within ~220 of checkprops -s 800 (extra facets change triangulation)"
+            (area - 800.0).abs() < 50.0,
+            "surface area {area} expected within 50 of OCCT checkprops -s 800"
         );
     }
 
@@ -8973,7 +8917,8 @@ mod tests {
         let s = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
         let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let mut first: Option<f64> = None;
-        for k in 0..32 {
+        // 16 runs: enough to catch parallel merge-order drift without paying 32× full union cost in CI.
+        for k in 0..16 {
             let u = boolean_op(BooleanOpType::Union, &s, &b).expect("bfuse s b");
             let a = total_surface_area(&u);
             match first {

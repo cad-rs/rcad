@@ -425,7 +425,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
 /// Merge coplanar orthogonal panels left by boolean split (re-run groups after each success).
 fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
-    for _ in 0..8 {
+    // Extra rounds help large coplanar stacks (e.g. OCCT `boolean/supported` overlapping boxes)
+    // settle before `total_surface_area` vs `checkprops -s` stabilizes.
+    for _ in 0..12 {
         let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(
             brep,
             crate::tolerance::TOLERANCE_ABS,

@@ -470,6 +470,18 @@ pub fn max_edge_length(brep: &BRep) -> f64 {
     max_length
 }
 
+/// Sum of 3D lengths of all edges in the BRep (each edge in [`BRep::edges`](rcad_kernel::BRep) once).
+///
+/// Uses the same length rules as [`max_edge_length`]: curve range when geometry is available,
+/// otherwise straight-line distance between edge vertices.
+pub fn total_edge_length(brep: &BRep) -> f64 {
+    let mut total = 0.0;
+    for (edge_idx, edge) in brep.edges.iter().enumerate() {
+        total += compute_edge_length(brep, edge_idx, edge);
+    }
+    total
+}
+
 /// Compute the total volume of all solids in the BRep.
 ///
 /// Uses the divergence theorem for closed shells. Returns 0.0 for open shells.
@@ -1265,6 +1277,14 @@ mod tests {
         // Box 1x2x3 has edge lengths: 1, 2, 3
         let max_len = max_edge_length(&brep);
         assert!((max_len - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_total_edge_length() {
+        let brep = make_box();
+        // Four edges of each length: 1, 2, 3
+        let t = total_edge_length(&brep);
+        assert!((t - 4.0 * (1.0 + 2.0 + 3.0)).abs() < 1e-5);
     }
 
     #[test]

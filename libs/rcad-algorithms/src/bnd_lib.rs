@@ -1107,6 +1107,29 @@ mod tests {
         assert!((bounds.size().z - 4.0).abs() < 1e-6);
     }
 
+    /// `make_box_brep` (rotated / translated) — AABB from [`optimized_bounds`] / [`precise_bounds`]
+    /// should match the axis-aligned min / max of all vertices.
+    #[test]
+    fn test_optimized_and_precise_bounds_modeling_box_match_vertices() {
+        use rcad_modeling::make_box_brep;
+        let brep = make_box_brep(DVec3::new(0.5, 1.0, -0.5), DVec3::X, DVec3::Y, 2.0, 1.0, 3.0)
+            .expect("box");
+        let ob = optimized_bounds(&brep, 0.0);
+        let pb = precise_bounds(&brep, 4);
+        assert!(ob.is_valid() && pb.is_valid());
+        let mut v_min = DVec3::splat(f64::INFINITY);
+        let mut v_max = DVec3::splat(f64::NEG_INFINITY);
+        for v in &brep.vertices {
+            v_min = v_min.min(v.point);
+            v_max = v_max.max(v.point);
+        }
+        let eps = 1e-2;
+        assert!((ob.min - v_min).length() < eps, "opt min={:?} v_min={:?}", ob.min, v_min);
+        assert!((ob.max - v_max).length() < eps, "opt max={:?} v_max={:?}", ob.max, v_max);
+        assert!((pb.min - v_min).length() < eps);
+        assert!((pb.max - v_max).length() < eps);
+    }
+
     #[test]
     fn test_optimized_bounds_sphere() {
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });

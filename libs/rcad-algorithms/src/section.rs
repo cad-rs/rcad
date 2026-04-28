@@ -103,6 +103,34 @@ fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
         .collect()
 }
 
+/// Collect all face triangles from a BRep (pre-triangulated or fan-triangulated).
+///
+/// Used for mesh–mesh intersection approximations (e.g. OCCT-style section).
+pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
+    let mut out = Vec::new();
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                out.extend(face_triangles(brep, face));
+            }
+        }
+    }
+    out
+}
+
+/// Intersect two triangle soups and chain intersection segments into polylines.
+pub fn intersect_triangle_soups(tris_a: &[[DVec3; 3]], tris_b: &[[DVec3; 3]]) -> Vec<Vec<DVec3>> {
+    let mut segments: Vec<[DVec3; 2]> = Vec::new();
+    for ta in tris_a {
+        for tb in tris_b {
+            if let Some(seg) = triangle_triangle_intersect(ta, tb) {
+                segments.push(seg);
+            }
+        }
+    }
+    chain_segments(segments)
+}
+
 /// Intersect a single triangle with the plane. Returns a segment [p0, p1] if
 /// the triangle straddles the plane, or `None` otherwise.
 fn triangle_section(plane: &Plane, tri: [DVec3; 3]) -> Option<[DVec3; 2]> {

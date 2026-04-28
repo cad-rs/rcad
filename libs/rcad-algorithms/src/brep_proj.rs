@@ -1,0 +1,392 @@
+//! Cylindrical BRep projection (OCCT `BRepProj_Projection` with `gp_Dir`).
+//!
+//! Strategy (matches OCCT): translate the wire by `-mdis·D`, build a prism by extruding
+//! the polyline along `2·mdis·D`, then intersect that prism with the target shape’s
+//! triangle soup to obtain projected polylines as wires.
+
+use std::collections::HashSet;
+
+use glam::DVec3;
+use rcad_kernel::geom::{Curve3, CurveEval, Line3};
+use rcad_kernel::topology::{Edge, Vertex};
+use rcad_kernel::BRep;
+
+use crate::brep_tools;
+use crate::section::{brep_triangle_soup, intersect_triangle_soups};
+
+/// Options for [`brep_proj_cylindrical`].
+#[derive(Debug, Clone)]
+pub struct BrepProjOptions {
+    /// Geometric tolerance (segment chaining, degenerate skips).
+    pub tolerance: f64,
+    /// Uniform samples per edge when discretizing edge curves (≥ 2).
+    pub samples_per_edge: usize,
+}
+
+impl Default for BrepProjOptions {
+    fn default() -> Self {
+        Self {
+            tolerance: 1e-6,
+            samples_per_edge: 24,
+        }
+    }
+}
+
+/// OCCT-style `DistanceIn`-like scale: diagonal(A)+diagonal(B)+bbox separation.
+fn proj_distance_scale(wire_brep: &BRep, target: &BRep) -> f64 {
+    let Some(ba) = brep_tools::bounding_box(wire_brep) else {
+        return 1.0;
+    };
+    let Some(bb) = brep_tools::bounding_box(target) else {
+        return 1.0;
+    };
+    let da = ba[1] - ba[0];
+    let db = bb[1] - bb[0];
+    let la = da.length();
+    let lb = db.length();
+    let sep = aabb_distance(ba, bb);
+    (la + lb + sep.max(0.0)).max(1e-6)
+}
+
+fn aabb_distance(a: [DVec3; 2], b: [DVec3; 2]) -> f64 {
+    let mut d2 = 0.0_f64;
+    for i in 0..3 {
+        let amin = a[0][i].min(a[1][i]);
+        let amax = a[0][i].max(a[1][i]);
+        let bmin = b[0][i].min(b[1][i]);
+        let bmax = b[0][i].max(b[1][i]);
+        let gap = if amax < bmin {
+            bmin - amax
+        } else if bmax < amin {
+            amin - bmax
+        } else {
+            0.0
+        };
+        d2 += gap * gap;
+    }
+    d2.sqrt()
+}
+
+fn first_outer_wire_edge_chain(brep: &BRep) -> Option<Vec<usize>> {
+    let face = brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .next()?;
+    if face.outer_wire.edges.is_empty() {
+        return None;
+    }
+    Some(
+        face.outer_wire
+            .edges
+            .iter()
+            .map(|e| e.idx)
+            .collect(),
+    )
+}
+
+fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
+    let n = brep.edges.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let adj = build_vertex_edge_adj(brep);
+    let mut remaining: HashSet<usize> = (0..n).collect();
+    let mut chains: Vec<Vec<usize>> = Vec::new();
+
+    while let Some(&start_e) = remaining.iter().next() {
+        let e0 = &brep.edges[start_e];
+        let mut v = e0.start;
+        let mut next_e = start_e;
+        let mut chain: Vec<usize> = Vec::new();
+
+        loop {
+            if !remaining.remove(&next_e) {
+                break;
+            }
+            chain.push(next_e);
+            let e = &brep.edges[next_e];
+            v = if e.start == v { e.end } else { e.start };
+            let mut cont: Option<usize> = None;
+            for &cand in &adj[v] {
+                if remaining.contains(&cand) {
+                    cont = Some(cand);
+                    break;
+                }
+            }
+            match cont {
+                Some(ei) => next_e = ei,
+                None => break,
+            }
+        }
+        if !chain.is_empty() {
+            chains.push(chain);
+        }
+    }
+    chains
+}
+
+fn build_vertex_edge_adj(brep: &BRep) -> Vec<Vec<usize>> {
+    let mut adj = vec![Vec::new(); brep.vertices.len()];
+    for (ei, e) in brep.edges.iter().enumerate() {
+        if e.start < adj.len() {
+            adj[e.start].push(ei);
+        }
+        if e.end < adj.len() {
+            adj[e.end].push(ei);
+        }
+    }
+    adj
+}
+
+fn wire_edge_chains(brep: &BRep) -> Vec<Vec<usize>> {
+    if let Some(chain) = first_outer_wire_edge_chain(brep) {
+        if !chain.is_empty() {
+            return vec![chain];
+        }
+    }
+    edge_chains_greedy(brep)
+}
+
+fn push_pt(pts: &mut Vec<DVec3>, p: DVec3, tol: f64) {
+    if pts.last().map_or(true, |q| (*q - p).length() > tol) {
+        pts.push(p);
+    }
+}
+
+fn sample_edge(
+    brep: &BRep,
+    ei: usize,
+    from_v: usize,
+    to_v: usize,
+    n_seg: usize,
+    tol: f64,
+    pts: &mut Vec<DVec3>,
+) {
+    let edge = match brep.edges.get(ei) {
+        Some(e) => e,
+        None => return,
+    };
+    let n_seg = n_seg.max(2);
+    if let Some(ci) = brep.geom.edge_curve.get(ei).copied().flatten() {
+        if let Some(curve) = brep.geom.curves.get(ci) {
+            let range = brep
+                .geom
+                .edge_curve_range
+                .get(ei)
+                .copied()
+                .flatten()
+                .unwrap_or_else(|| curve.default_domain());
+            let forward = from_v == edge.start;
+            let (t0, t1) = if forward {
+                (range[0], range[1])
+            } else {
+                (range[1], range[0])
+            };
+            for i in 0..n_seg {
+                let t = t0 + (t1 - t0) * i as f64 / (n_seg - 1) as f64;
+                let p = curve.point_at(t);
+                push_pt(pts, p, tol);
+            }
+            return;
+        }
+    }
+    let p0 = brep.vertices[from_v].point;
+    let p1 = brep.vertices[to_v].point;
+    push_pt(pts, p0, tol);
+    push_pt(pts, p1, tol);
+}
+
+fn dense_polyline_from_chain(brep: &BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
+    if chain.is_empty() {
+        return Vec::new();
+    }
+    let mut pts: Vec<DVec3> = Vec::new();
+    let mut v = brep.edges[chain[0]].start;
+    for &ei in chain {
+        let e = &brep.edges[ei];
+        let (from_v, to_v) = if e.start == v {
+            (e.start, e.end)
+        } else if e.end == v {
+            (e.end, e.start)
+        } else {
+            (e.start, e.end)
+        };
+        sample_edge(
+            brep,
+            ei,
+            from_v,
+            to_v,
+            options.samples_per_edge,
+            options.tolerance,
+            &mut pts,
+        );
+        v = to_v;
+    }
+    pts
+}
+
+fn extrusion_prism_tris(polyline: &[DVec3], extrusion: DVec3) -> Vec<[DVec3; 3]> {
+    let mut tris = Vec::new();
+    for i in 0..polyline.len().saturating_sub(1) {
+        let a = polyline[i];
+        let b = polyline[i + 1];
+        let c = b + extrusion;
+        let d = a + extrusion;
+        tris.push([a, b, c]);
+        tris.push([a, c, d]);
+    }
+    tris
+}
+
+/// Build a BRep containing only vertices and line edges (no solids), one edge per segment.
+fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> BRep {
+    let mut brep = BRep::new();
+    if poly.len() < 2 {
+        return brep;
+    }
+    for p in poly {
+        brep.vertices.push(Vertex { point: *p });
+    }
+    for i in 0..poly.len().saturating_sub(1) {
+        let vi_a = i;
+        let vi_b = i + 1;
+        let a = brep.vertices[vi_a].point;
+        let b = brep.vertices[vi_b].point;
+        let d = b - a;
+        let len = d.length();
+        let ei = brep.edges.len();
+        brep.edges.push(Edge {
+            start: vi_a,
+            end: vi_b,
+        });
+        let dir = if len > tol {
+            d / len
+        } else {
+            DVec3::X
+        };
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(Curve3::Line(Line3 {
+            origin: a,
+            direction: dir,
+        }));
+        while brep.geom.edge_curve.len() <= ei {
+            brep.geom.edge_curve.push(None);
+        }
+        while brep.geom.edge_curve_range.len() <= ei {
+            brep.geom.edge_curve_range.push(None);
+        }
+        while brep.geom.edge_degenerated.len() <= ei {
+            brep.geom.edge_degenerated.push(false);
+        }
+        brep.geom.edge_curve[ei] = Some(ci);
+        brep.geom.edge_curve_range[ei] = Some([0.0, len.max(tol)]);
+    }
+    brep
+}
+
+/// Cylindrical projection of wire-like `shape` onto `target` along `direction`.
+///
+/// Returns one BRep per connected intersection chain (OCCT `BRepProj_Projection::More` /
+/// `Current`), each holding line edges approximating the image on `target`.
+pub fn brep_proj_cylindrical(
+    shape: &BRep,
+    target: &BRep,
+    direction: DVec3,
+    options: &BrepProjOptions,
+) -> Vec<BRep> {
+    let dir = direction.normalize_or_zero();
+    if dir.length_squared() < 1e-30 {
+        return Vec::new();
+    }
+    let target_tris = brep_triangle_soup(target);
+    if target_tris.is_empty() {
+        return Vec::new();
+    }
+    let mdis = proj_distance_scale(shape, target);
+    let v_sup = dir * (2.0 * mdis);
+    let v_inf = dir * (-mdis);
+
+    let chains = wire_edge_chains(shape);
+    if chains.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out: Vec<BRep> = Vec::new();
+    for chain in chains {
+        let pts = dense_polyline_from_chain(shape, &chain, options);
+        if pts.len() < 2 {
+            continue;
+        }
+        let shifted: Vec<DVec3> = pts.iter().map(|p| *p + v_inf).collect();
+        let prism_tris = extrusion_prism_tris(&shifted, v_sup);
+        if prism_tris.is_empty() {
+            continue;
+        }
+        let loops = intersect_triangle_soups(&prism_tris, &target_tris);
+        for lp in loops {
+            if lp.len() < 2 {
+                continue;
+            }
+            let wb = wire_brep_from_polyline(&lp, options.tolerance);
+            if wb.edges.is_empty() {
+                continue;
+            }
+            out.push(wb);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brep_algo::total_edge_length;
+    use rcad_kernel::PrimitiveSolid;
+
+    #[test]
+    fn horizontal_segment_projects_onto_box_top_along_neg_z() {
+        let plate = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        let mut marker = BRep::new();
+        marker.vertices.push(Vertex {
+            point: DVec3::new(0.2, 0.5, 2.0),
+        });
+        marker.vertices.push(Vertex {
+            point: DVec3::new(0.8, 0.5, 2.0),
+        });
+        marker.edges.push(Edge { start: 0, end: 1 });
+        let ci = marker.geom.curves.len();
+        marker.geom.curves.push(Curve3::Line(Line3 {
+            origin: DVec3::new(0.2, 0.5, 2.0),
+            direction: DVec3::X,
+        }));
+        marker.geom.edge_curve.push(Some(ci));
+        marker
+            .geom
+            .edge_curve_range
+            .push(Some([0.0, 0.6]));
+        marker.geom.edge_degenerated.push(false);
+
+        let opts = BrepProjOptions::default();
+        let parts = brep_proj_cylindrical(&marker, &plate, DVec3::new(0.0, 0.0, -1.0), &opts);
+        assert!(
+            !parts.is_empty(),
+            "expected at least one projected wire"
+        );
+        let max_part = parts
+            .iter()
+            .map(total_edge_length)
+            .fold(0.0_f64, f64::max);
+        // Prism can meet both top and bottom of a box for a vertical cut, yielding two
+        // preimage segments of similar length; require at least one ~full span.
+        assert!(
+            (max_part - 0.6).abs() < 0.08,
+            "expected a projected segment length ~0.6, max part was {max_part}"
+        );
+    }
+}

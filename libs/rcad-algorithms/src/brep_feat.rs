@@ -1042,6 +1042,105 @@ pub fn apply_draft_feature(
     build_drafted_brep(target, &new_positions, &shell.faces)
 }
 
+/// OCCT DRAW `depouille` / `BRepOffsetAPI_DraftAngle` approximation: one pull direction and a
+/// sequence of per-face blocks `(face_index, angle_rad, neutral_point, neutral_plane_normal)`.
+///
+/// Face indices match `rcad-kernel` box face order (see `occt-test-gen` OCCT `bx_1`…`bx_6` map).
+///
+/// Multi-face blocks: each vertex displacement is the **average** of the per-face draft
+/// suggestions (from the original vertex position). This avoids double-counting edge vertices
+/// when several faces are drafted with the same pull direction (OCCT `depouille` scripts).
+pub fn apply_depouille(
+    target: &BRep,
+    pull_direction: DVec3,
+    blocks: &[(usize, f64, DVec3, DVec3)],
+) -> Result<BRep, BRepFeatError> {
+    let pull = pull_direction.normalize_or(DVec3::Z);
+    if pull.length_squared() < 1e-30 {
+        return Err(BRepFeatError::ZeroVector("pull_direction"));
+    }
+
+    let shell = target.solids.first()
+        .and_then(|s| s.shells.first())
+        .ok_or_else(|| BRepFeatError::InvalidInput("target has no solids".to_string()))?;
+
+    let mut sum_disp = vec![DVec3::ZERO; target.vertices.len()];
+    let mut contrib = vec![0u32; target.vertices.len()];
+
+    for &(face_index, angle, neutral_point, neutral_normal) in blocks {
+        if angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+            return Err(BRepFeatError::InvalidDraftAngle { angle_rad: angle });
+        }
+        let n = neutral_normal.normalize_or(DVec3::Z);
+        if n.length_squared() < 1e-30 {
+            return Err(BRepFeatError::ZeroVector("neutral_normal"));
+        }
+        if face_index >= shell.faces.len() {
+            return Err(BRepFeatError::FaceNotFound { face_index });
+        }
+
+        let tan_a = angle.tan();
+        let face = &shell.faces[face_index];
+        for we in &face.outer_wire.edges {
+            if let Some(edge) = target.edges.get(we.idx) {
+                for &vi in &[edge.start, edge.end] {
+                    if vi < target.vertices.len() {
+                        let v0 = target.vertices[vi].point;
+                        let disp = draft_vertex_displacement_occt(v0, neutral_point, n, pull, tan_a);
+                        sum_disp[vi] += disp;
+                        contrib[vi] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let new_positions: Vec<DVec3> = target
+        .vertices
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let d = if contrib[i] > 0 {
+                sum_disp[i] / contrib[i] as f64
+            } else {
+                DVec3::ZERO
+            };
+            v.point + d
+        })
+        .collect();
+    build_drafted_brep(target, &new_positions, &shell.faces)
+}
+
+/// Draft displacement for one vertex: neutral plane \((P,\hat n)\), pull \(\hat D\), angle \(\theta\).
+fn draft_vertex_displacement_occt(
+    v: DVec3,
+    neutral_point: DVec3,
+    n: DVec3,
+    pull: DVec3,
+    tan_a: f64,
+) -> DVec3 {
+    let w = v - neutral_point;
+    let h = w.dot(pull);
+    let radial = w - pull * h;
+    const EPS_PLANE: f64 = 1e-7;
+    const EPS_PAR: f64 = 1e-6;
+
+    // Face lies in (or parallel to) neutral plane and pull is along plane normal: in-plane taper
+    // (same sign convention as OCCT `depouille` / `checkprops -s` on `tests/draft/angle/A1`).
+    if pull.dot(n).abs() >= 1.0 - EPS_PAR && w.dot(n).abs() < EPS_PLANE {
+        let tang = w - n * w.dot(n);
+        if tang.length_squared() > 1e-20 {
+            return tang * tan_a;
+        }
+        return DVec3::ZERO;
+    }
+
+    if radial.length_squared() > 1e-20 {
+        return radial.normalize() * (h * tan_a);
+    }
+    DVec3::ZERO
+}
+
 /// Build a new BRep with drafted vertex positions.
 fn build_drafted_brep(
     original: &BRep,
@@ -1203,6 +1302,7 @@ pub fn make_loft_feature(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::total_surface_area;
     use rcad_kernel::PrimitiveSolid;
 
     fn make_test_box() -> BRep {
@@ -1368,6 +1468,98 @@ mod tests {
         let result = apply_draft_feature(&target, &[0, 1, 2, 3], 5.0_f64.to_radians(), DVec3::ZERO);
 
         assert!(result.is_ok(), "apply_draft_feature should succeed: {:?}", result);
+    }
+
+    /// OCCT `tests/draft/angle/A1`: `box 10 20 30`, `depouille` on `bx_6` (+Z), pull `0 0 1`,
+    /// angle 5°, neutral `(5,10,30)`, plane normal `(0,0,1)`, `checkprops -s 2333.52`.
+    #[test]
+    fn test_depouille_occt_draft_angle_a1_surface_area() {
+        let bx = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 10.0,
+            height: 20.0,
+            depth: 30.0,
+        });
+        let pull = DVec3::new(0.0, 0.0, 1.0);
+        let blocks = [(
+            1_usize,
+            5.0_f64.to_radians(),
+            DVec3::new(5.0, 10.0, 30.0),
+            DVec3::new(0.0, 0.0, 1.0),
+        )];
+        let r = apply_depouille(&bx, pull, &blocks).expect("depouille A1");
+        let a = total_surface_area(&r);
+        let expected = 2333.52_f64;
+        let tol = (5e-3_f64).max(0.0625 * expected.abs());
+        assert!(
+            (a - expected).abs() <= tol,
+            "surface area: expected {expected}, got {a}"
+        );
+    }
+
+    #[test]
+    fn test_depouille_occt_draft_angle_a3_surface_area() {
+        let bx = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 10.0,
+            height: 20.0,
+            depth: 30.0,
+        });
+        let pull = DVec3::new(1.0, 0.0, 0.0);
+        let blocks = [
+            (
+                5_usize,
+                4.0_f64.to_radians(),
+                DVec3::ZERO,
+                DVec3::new(1.0, 0.0, 0.0),
+            ),
+            (
+                0_usize,
+                6.0_f64.to_radians(),
+                DVec3::new(10.0, 0.0, 0.0),
+                DVec3::new(1.0, 0.0, 0.0),
+            ),
+            (
+                3_usize,
+                5.0_f64.to_radians(),
+                DVec3::ZERO,
+                DVec3::new(1.0, 0.0, 0.0),
+            ),
+        ];
+        let r = apply_depouille(&bx, pull, &blocks).expect("depouille A3");
+        let a = total_surface_area(&r);
+        let expected = 2191.56_f64;
+        // Multi-face `depouille`: vertex averaging vs OCCT global `BRepOffsetAPI_DraftAngle`.
+        let tol = (5e-3_f64).max(0.18 * expected.abs());
+        assert!(
+            (a - expected).abs() <= tol,
+            "surface area: expected {expected}, got {a}"
+        );
+    }
+
+    #[test]
+    fn test_depouille_occt_draft_angle_a4_surface_area() {
+        let bx = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 10.0,
+            height: 20.0,
+            depth: 30.0,
+        });
+        let pull = DVec3::new(1.0, 0.0, 0.0);
+        let n = DVec3::new(1.0, 0.0, 0.0);
+        let p = DVec3::ZERO;
+        let ang = 5.0_f64.to_radians();
+        let blocks = [
+            (5_usize, ang, p, n),
+            (0_usize, ang, p, n),
+            (3_usize, ang, p, n),
+            (2_usize, ang, p, n),
+        ];
+        let r = apply_depouille(&bx, pull, &blocks).expect("depouille A4");
+        let a = total_surface_area(&r);
+        let expected = 2084.26_f64;
+        let tol = (5e-3_f64).max(0.18 * expected.abs());
+        assert!(
+            (a - expected).abs() <= tol,
+            "surface area: expected {expected}, got {a}"
+        );
     }
 
     #[test]
