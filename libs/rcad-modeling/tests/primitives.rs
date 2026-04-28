@@ -3,8 +3,8 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_modeling::{
-    chamfer_edge, extrude, fillet_edge, loft, make_box_brep, make_cone_brep, make_cylinder_brep,
-    make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
+    chamfer_edge, extrude, fillet_edge, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
+    make_cylinder_brep, make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +48,22 @@ fn cone_face_count() {
     let brep = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
     // Cone: bottom cap + lateral face = 2
     assert_eq!(face_count(&brep), 2, "cone must have 2 faces");
+}
+
+#[test]
+fn conical_frustum_builds_solid() {
+    let h = 4.0;
+    let brep = make_conical_frustum_brep(
+        DVec3::new(0.0, 0.0, h * 0.5),
+        DVec3::Z,
+        DVec3::X,
+        3.0,
+        2.0,
+        h,
+    )
+    .unwrap();
+    assert!(!brep.solids.is_empty(), "frustum must have a solid");
+    assert!(face_count(&brep) >= 3, "loft frustum: caps + lateral");
 }
 
 #[test]

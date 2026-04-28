@@ -145,6 +145,41 @@ pub fn make_cone_brep(
     cone_brep(center, axis, ref_dir, base_radius, height)
 }
 
+/// Right conical frustum (truncated cone), matching OCCT `pcone` when both bottom and top radii are positive.
+///
+/// `center` is the **midpoint** between the circular face centers; `axis` points from the bottom face
+/// toward the top face; `r_bottom` / `r_top` are radii in those end planes; `height` is the distance
+/// between the planes. Built with [`super::ops::loft`] between two regular polygon approximations.
+pub fn make_conical_frustum_brep(
+    center: DVec3,
+    axis: DVec3,
+    ref_dir: DVec3,
+    r_bottom: f64,
+    r_top: f64,
+    height: f64,
+) -> Result<BRep, BuildError> {
+    let center = validate_point("center", center)?;
+    let height = validate_positive("height", height)?;
+    let rb = validate_positive("r_bottom", r_bottom)?;
+    let rt = validate_positive("r_top", r_top)?;
+    let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
+    let half_h = height * 0.5;
+    let bottom_c = center - y_axis * half_h;
+    let top_c = center + y_axis * half_h;
+    const N: usize = 32;
+    let mut lo = Vec::with_capacity(N);
+    let mut hi = Vec::with_capacity(N);
+    use std::f64::consts::TAU;
+    for i in 0..N {
+        let ang = TAU * (i as f64) / (N as f64);
+        let c = ang.cos();
+        let s = ang.sin();
+        lo.push(bottom_c + x_axis * (c * rb) + z_axis * (s * rb));
+        hi.push(top_c + x_axis * (c * rt) + z_axis * (s * rt));
+    }
+    super::ops::loft(&[lo, hi])
+}
+
 pub fn torus_primitive(major_radius: f64, minor_radius: f64) -> Result<PrimitiveSolid, BuildError> {
     let major_radius = validate_positive("major_radius", major_radius)?;
     let minor_radius = validate_positive("minor_radius", minor_radius)?;
