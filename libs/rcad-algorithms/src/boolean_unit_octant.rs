@@ -7,6 +7,15 @@
 //!
 //! This is *not* a full analytic CSG solution — only a recognition + mesh for
 //! this configuration used in OCCT DRAW port tests.
+//!
+//! When the **box** is rigidly transformed (e.g. OCCT `trotate` about a pivot
+//! not at the origin), the axis-aligned `[0,1]³` predicate fails and the
+//! generic boolean path must handle sphere–oblique-plane trimming. Pave now
+//! uses exact spherical UV in projection fallbacks (`SphericalSurface::world_to_uv`),
+//! and plane–sphere tangents are inflated to a micro-circle so every box face gets
+//! a `FaceFace` curve. OCCT `bcommon_simple/A4` is still `#[ignore]` — `BooleanBuilder`
+//! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
+//! multi-trim / classification, not missing FF pairs.
 
 use glam::DVec3;
 use rcad_kernel::geom::Surface3;

@@ -2187,6 +2187,32 @@ impl std::fmt::Display for SplitterError {
 
 impl std::error::Error for SplitterError {}
 
+fn brep_shell_face_count(brep: &BRep) -> usize {
+    brep.solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count()
+}
+
+/// OCCT `BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
+/// `box` definitions in `bopcut`). Match that without forcing every `DegenerateResult` from the
+/// builder to mean “empty”.
+fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
+    if brep_shell_face_count(a) != brep_shell_face_count(b) {
+        return false;
+    }
+    let Some([amin, amax]) = a.bounding_box() else {
+        return false;
+    };
+    let Some([bmin, bmax]) = b.bounding_box() else {
+        return false;
+    };
+    let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
+    let tol = tolerance::TOLERANCE_ABS.max(1e-12 * scale);
+    (amin - bmin).length() <= tol && (amax - bmax).length() <= tol
+}
+
 /// Perform a boolean operation on two BReps.
 ///
 /// Both BReps must have populated GeomStore (call
@@ -2200,6 +2226,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
             return Ok(r);
         }
+    }
+
+    if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
+        return Ok(BRep::default());
     }
 
     // 1. Build the DS from both shapes

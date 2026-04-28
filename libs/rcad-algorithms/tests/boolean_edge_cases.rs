@@ -533,3 +533,58 @@ fn self_difference_empty() {
         Err(e) => panic!("unexpected error for self-difference: {:?}", e),
     }
 }
+
+/// Local probe for OCCT `bcommon_simple/A4` (unit sphere ∩ `trotate` unit box).
+///
+/// Run: `cargo test -p rcad-algorithms occt_bcommon_a4_pave_boolean_probe -- --ignored --nocapture`
+#[test]
+#[ignore = "debug probe: prints Pave DS + boolean metrics for A4-style geometry"]
+fn occt_bcommon_a4_pave_boolean_probe() {
+    use glam::DAffine3;
+    use rcad_algorithms::{
+        bopds::ds::{DS, Interference},
+        brep_algo::total_surface_area,
+        bvh::Bvh,
+        pave_filler::PaveFiller,
+    };
+
+    let s = make_sphere_brep(DVec3::ZERO, 1.0).expect("sphere");
+    let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
+    let pivot = DVec3::new(0.0, 0.0, 1.0);
+    let axis = DVec3::new(0.0, 1.0, 0.0).normalize_or(DVec3::Z);
+    let rot = DAffine3::from_axis_angle(axis, (90.0_f64).to_radians());
+    let xf = DAffine3::from_translation(pivot) * rot * DAffine3::from_translation(-pivot);
+    b.apply_transform(xf);
+
+    let mut ds = DS::new(&s, &b);
+    let bvh_a = Bvh::build(&s);
+    let bvh_b = Bvh::build(&b);
+    let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
+    filler.perform();
+
+    let n_ic = ds.intersection_curves.len();
+    let n_ff = ds
+        .interferences
+        .iter()
+        .filter(|i| matches!(i, Interference::FaceFace { .. }))
+        .count();
+    eprintln!("A4 probe: intersection_curves={n_ic} FaceFace interferences={n_ff}");
+    for (i, f) in ds.faces.iter().enumerate() {
+        eprintln!(
+            "  ds face[{i}] origin={:?} source_face_idx={} curves_in={} boundary_verts={}",
+            f.origin,
+            f.source_face_idx,
+            f.face_info.curves_in.len(),
+            f.boundary_verts.len(),
+        );
+    }
+
+    let r = boolean_op(BooleanOpType::Intersection, &s, &b).expect("boolean");
+    eprintln!(
+        "  result: faces={} volume={:.8} area={:.8}",
+        face_count(&r),
+        volume(&r),
+        total_surface_area(&r)
+    );
+}
+

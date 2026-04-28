@@ -1875,13 +1875,25 @@ impl<'a> BooleanBuilder<'a> {
                 let [t0, t1] = ic.t_range;
                 const N: usize = 64;
                 let raw_pts: Vec<DVec2> = match &pcurve {
-                    // BSpline PCurves from polyline_pcurve_by_projection use
-                    // chord-length parameterization normalized to [0,1].
-                    // The 3D arc-length t_range is unrelated to the BSpline domain.
+                    // BSpline PCurves from `fallback_pcurve_by_projection` are defined on [0,1]
+                    // but that domain does **not** match the 3D curve's `t_range` (e.g. plane–sphere
+                    // circles use [0, 2π]). Re-sample the 3D intersection curve and project to UV so
+                    // sphere trimming matches geometry (fixes sphere ∩ trotated box / OCCT bcommon A4).
                     rcad_kernel::geom::Curve2d::BSpline(_) => (0..=N)
                         .map(|i| {
-                            let t = i as f64 / N as f64;
-                            pcurve.point_at(t)
+                            let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                            let p3 = ic.curve.point_at(t);
+                            // Plane–sphere circles lie exactly on the sphere; inverse param is stable.
+                            // `closest_point_on_surface` can pick a wrong local minimum for oblique trims.
+                            match &surface {
+                                rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
+                                _ => {
+                                    let proj = rcad_kernel::projection::closest_point_on_surface(
+                                        &surface, p3, 16,
+                                    );
+                                    DVec2::new(proj.params.0, proj.params.1)
+                                }
+                            }
                         })
                         .collect(),
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same

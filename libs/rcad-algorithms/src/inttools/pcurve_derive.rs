@@ -304,8 +304,13 @@ pub fn fallback_pcurve_by_projection(
         .map(|i| {
             let t = t_range[0] + (t_range[1] - t_range[0]) * i as f64 / (n - 1) as f64;
             let p3 = curve.point_at(t);
-            let proj = closest_point_on_surface(surface, p3, 16);
-            DVec2::new(proj.params.0, proj.params.1)
+            match surface {
+                Surface3::Sphere(sph) => sph.world_to_uv(p3),
+                _ => {
+                    let proj = closest_point_on_surface(surface, p3, 16);
+                    DVec2::new(proj.params.0, proj.params.1)
+                }
+            }
         })
         .collect();
 
@@ -354,9 +359,12 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 
     let mut pts: Vec<DVec2> = polyline
         .iter()
-        .map(|&p3| {
-            let proj = closest_point_on_surface(surface, p3, 16);
-            DVec2::new(proj.params.0, proj.params.1)
+        .map(|&p3| match surface {
+            Surface3::Sphere(sph) => sph.world_to_uv(p3),
+            _ => {
+                let proj = closest_point_on_surface(surface, p3, 16);
+                DVec2::new(proj.params.0, proj.params.1)
+            }
         })
         .collect();
 

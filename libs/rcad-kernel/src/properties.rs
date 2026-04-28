@@ -11,7 +11,7 @@
 use glam::{DVec2, DVec3};
 
 use crate::BRep;
-use crate::geom::{any_perpendicular, SphericalSurface, Surface3, SurfaceEval};
+use crate::geom::{SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -90,27 +90,7 @@ fn local_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
 /// Spherical (u, v) with u ∈ [−π, π] (longitude) and v ∈ [0, π] (colatitude),
 /// matching [`SphericalSurface`](crate::geom::SphericalSurface) / `SurfaceEval`.
 fn sphere_point_to_uv(s: &SphericalSurface, p: DVec3) -> DVec2 {
-    use std::f64::consts::PI;
-    let ax = s.axis.normalize_or_zero();
-    let r = s.radius;
-    if r < 1e-15 {
-        return DVec2::ZERO;
-    }
-    let w = (p - s.center) / r;
-    if w.length_squared() < 1e-20 {
-        return DVec2::ZERO;
-    }
-    let w = w.normalize();
-    let v = w.dot(ax).acos().clamp(0.0, PI);
-    let x_ax = any_perpendicular(ax);
-    let y_ax = ax.cross(x_ax).normalize();
-    let w_t = w - ax * w.dot(ax);
-    if w_t.length_squared() < 1e-12 {
-        return DVec2::new(0.0, v);
-    }
-    let w_t = w_t.normalize();
-    let u = w_t.dot(y_ax).atan2(w_t.dot(x_ax));
-    DVec2::new(u, v)
+    (*s).world_to_uv(p)
 }
 
 /// Remove 2π jumps in u so consecutive samples stay in one branch (for earcut).

@@ -3443,11 +3443,26 @@ fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Ve
 /// Check whether a point lies within the boundary of a sphere-face, defined by
 /// the sphere face boundary vertices (used for tangent-point containment check).
 fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
-    // Simple bounding-box check: the point should be within the convex hull
-    // of the boundary vertices on the sphere surface (rough approximation).
     if boundary_verts.is_empty() {
-        return true;
+        return false;
     }
+    // OCCT-style single-seam sphere: only two pole vertices. An axis-aligned hull of those
+    // poles rejects almost every real point on the sphere (e.g. equator vs poles on ±Y),
+    // so plane–sphere tangent handling never records `FaceFace` points and downstream
+    // trimming misses imprint geometry (see OCCT `bcommon_simple/A4`).
+    if boundary_verts.len() == 2 {
+        let a = boundary_verts[0];
+        let b = boundary_verts[1];
+        let diam = (a - b).length();
+        let r = diam * 0.5;
+        if r < 1e-12 {
+            return false;
+        }
+        let c = (a + b) * 0.5;
+        let radial_err = ((pt - c).length() - r).abs();
+        return radial_err < (TOLERANCE_ABS * 500.0).max(1e-9 * r);
+    }
+    // Convex hull approximation for faces with a full boundary polygon.
     let cx = boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::min)
         ..(boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::max) + 1e-9);
     let cy = boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::min)
@@ -5179,6 +5194,19 @@ mod tests {
     use super::*;
     use rcad_kernel::{BRep, PrimitiveSolid};
     use crate::bopds::ds::DS;
+
+    #[test]
+    fn sphere_face_two_poles_point_containment_includes_equator() {
+        let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+        let ds = DS::new(&brep, &brep);
+        let v0 = brep.vertices[0].point;
+        let v1 = brep.vertices[1].point;
+        let equator = DVec3::new(1.0, 0.0, 0.0);
+        assert!(
+            point_in_sphere_face(equator, &[v0, v1], &ds),
+            "two-pole seam must not use pole-only AABB (rejects most of the sphere)"
+        );
+    }
 
     #[test]
     fn glue_detects_partial_face_overlap() {

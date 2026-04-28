@@ -854,6 +854,34 @@ impl SurfaceEval for CylindricalSurface {
     }
 }
 
+impl SphericalSurface {
+    /// Spherical coordinates of world point `p`: longitude `u` ∈ (−π, π], colatitude `v` ∈ [0, π],
+    /// matching [`SurfaceEval::point_at`] / `properties` sphere helpers (radial projection when `p`
+    /// is off the surface).
+    pub fn world_to_uv(self, p: DVec3) -> DVec2 {
+        let ax = self.axis.normalize_or_zero();
+        let r = self.radius;
+        if r < 1e-15 {
+            return DVec2::ZERO;
+        }
+        let w = (p - self.center) / r;
+        if w.length_squared() < 1e-20 {
+            return DVec2::ZERO;
+        }
+        let w = w.normalize();
+        let v = w.dot(ax).acos().clamp(0.0, PI);
+        let x_ax = any_perpendicular(ax);
+        let y_ax = ax.cross(x_ax).normalize();
+        let w_t = w - ax * w.dot(ax);
+        if w_t.length_squared() < 1e-12 {
+            return DVec2::new(0.0, v);
+        }
+        let w_t = w_t.normalize();
+        let u = w_t.dot(y_ax).atan2(w_t.dot(x_ax));
+        DVec2::new(u, v)
+    }
+}
+
 impl SurfaceEval for SphericalSurface {
     /// u = longitude [0, 2π], v = colatitude [0, π] (0 = north pole).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
