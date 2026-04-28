@@ -8,12 +8,13 @@
 //!
 //! All functions return a new BRep rather than modifying in place.
 
+use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
-use rcad_kernel::topology::{Face, Vertex, WireEdge};
+use rcad_kernel::topology::{Edge, Face, Vertex, WireEdge};
 
 use crate::builder::BuildError;
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
@@ -139,6 +140,49 @@ fn find_adjacent_faces(brep: &BRep, edge_idx: usize) -> Option<(usize, usize)> {
         Some((found[0], found[1]))
     } else {
         None
+    }
+}
+
+#[inline]
+fn undirected_edge_key(e: &Edge) -> (usize, usize) {
+    let (a, b) = (e.start, e.end);
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+/// Rewire faces so all line edges with the same undirected vertex pair share one edge index.
+///
+/// `copy_face_remapped` + triangle caps otherwise duplicate seam edges; [`find_adjacent_faces`]
+/// then sees 1 face (or >2) per index and chained [`fillet_edge`] fails. This pass restores a
+/// minimal manifold wiring for straight edges.
+fn unify_line_edges_by_endpoint_pair(brep: &mut BRep) {
+    let mut key_to_min: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    for (i, e) in brep.edges.iter().enumerate() {
+        let k = undirected_edge_key(e);
+        key_to_min
+            .entry(k)
+            .and_modify(|m| *m = (*m).min(i))
+            .or_insert(i);
+    }
+    let remap: Vec<usize> = (0..brep.edges.len())
+        .map(|i| {
+            let k = undirected_edge_key(&brep.edges[i]);
+            key_to_min[&k]
+        })
+        .collect();
+
+    for solid in &mut brep.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                for we in &mut face.outer_wire.edges {
+                    we.idx = remap[we.idx];
+                }
+                for inner in &mut face.inner_wires {
+                    for we in &mut inner.edges {
+                        we.idx = remap[we.idx];
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1104,6 +1148,7 @@ fn rebuild_with_variable_fillet_verts_history(
         closing_faces: vec![closing0, closing1],
     };
 
+    unify_line_edges_by_endpoint_pair(&mut dst);
     Ok((dst, history))
 }
 
@@ -1234,6 +1279,7 @@ fn rebuild_with_chamfer_verts_history(
         closing_faces: vec![closing0, closing1],
     };
 
+    unify_line_edges_by_endpoint_pair(&mut dst);
     Ok((dst, history))
 }
 
@@ -1359,6 +1405,7 @@ fn rebuild_with_fillet_verts_history(
         closing_faces: vec![closing0, closing1],
     };
 
+    unify_line_edges_by_endpoint_pair(&mut dst);
     Ok((dst, history))
 }
 
