@@ -819,6 +819,53 @@ enum SourceSide {
     B,
 }
 
+/// Classify a sub-face against the solid described by `solid_face_indices`.
+///
+/// For [`BooleanOpType::Intersection`], [`SubFace::sample_point`] can land outside the
+/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere ∩
+/// finite cylinder: the inward offset toward the sphere center exits the cylinder
+/// slab). When the primary sample is `Out`, we probe a coarse UV grid on
+/// [`SubFace::uv_domain`] before concluding `Out`.
+fn classify_against_solid_for_boolean(
+    op: BooleanOpType,
+    sub: &SubFace,
+    solid_face_indices: &[usize],
+    ds: &DS,
+) -> Classification {
+    let primary = sub.sample_point();
+    let c0 = classify_point(primary, solid_face_indices, ds);
+    if op != BooleanOpType::Intersection {
+        return c0;
+    }
+    if matches!(
+        c0,
+        Classification::In | Classification::On
+    ) {
+        return c0;
+    }
+    if let Some([u0, u1, v0, v1]) = sub.uv_domain {
+        if (u1 - u0).abs() > 1e-14 && (v1 - v0).abs() > 1e-14 {
+            const NU: usize = 7;
+            const NV: usize = 7;
+            for iu in 0..NU {
+                for iv in 0..NV {
+                    let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / NU as f64;
+                    let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / NV as f64;
+                    let p = sub.surface.point_at(u, v);
+                    let c = classify_point(p, solid_face_indices, ds);
+                    if matches!(
+                        c,
+                        Classification::In | Classification::On
+                    ) {
+                        return c;
+                    }
+                }
+            }
+        }
+    }
+    Classification::Out
+}
+
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         Self {
@@ -935,8 +982,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
             for sub in sub_faces.iter() {
-                let sample = sub.sample_point();
-                let class = classify_point(sample, &b_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
 
                 let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
@@ -951,8 +997,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
             for sub in sub_faces.iter() {
-                let sample = sub.sample_point();
-                let class = classify_point(sample, &a_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, sub, &a_faces, self.ds);
 
                 let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
@@ -1026,8 +1071,7 @@ impl<'a> BooleanBuilder<'a> {
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let sample = sub.sample_point();
-                        let class = classify_point(sample, &b_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, &sub, &b_faces, self.ds);
 
                         let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
 
@@ -1050,8 +1094,7 @@ impl<'a> BooleanBuilder<'a> {
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let sample = sub.sample_point();
-                        let class = classify_point(sample, &a_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, &sub, &a_faces, self.ds);
 
                         let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
@@ -2232,6 +2275,50 @@ mod tests {
             "unit sphere – unit box should split the sphere face (got {} subfaces, {} intersection curves in DS)",
             subs.len(),
             ds.faces[a0].face_info.curves_in.len()
+        );
+    }
+
+    /// Regression: sphere ∩ offset cylinder — intersection classification must not rely
+    /// on a single offset sample (`boolean_integration::sphere_cylinder_complex_intersection`).
+    #[test]
+    fn sphere_cylinder_intersection_classifies_overlap_patch() {
+        use crate::bopds::ds::DS;
+        use crate::pave_filler::PaveFiller;
+        use glam::DVec3;
+        use rcad_modeling::{make_cylinder_brep, make_sphere_brep};
+
+        let s = make_sphere_brep(DVec3::ZERO, 2.0).expect("sphere");
+        let c = make_cylinder_brep(DVec3::new(1.0, 0.0, -3.0), DVec3::Z, DVec3::X, 0.8, 6.0)
+            .expect("cylinder");
+        let mut ds = DS::new(&s, &c);
+        PaveFiller::new(&mut ds).perform();
+
+        let sphere_fi = 0usize;
+        assert!(!ds.faces[sphere_fi].face_info.curves_in.is_empty());
+
+        let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
+        let subs = builder.split_face(sphere_fi);
+        assert!(subs.len() > 1, "sphere should split into multiple subfaces");
+
+        let b_face_indices: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
+        let mut kept = 0usize;
+        for sub in &subs {
+            let class = super::classify_against_solid_for_boolean(
+                BooleanOpType::Intersection,
+                sub,
+                &b_face_indices,
+                &ds,
+            );
+            if matches!(
+                class,
+                Classification::In | Classification::On
+            ) {
+                kept += 1;
+            }
+        }
+        assert!(
+            kept > 0,
+            "expected at least one sphere sub-face classified In/On vs cylinder; kept={kept}"
         );
     }
 }
