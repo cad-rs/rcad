@@ -966,6 +966,11 @@ impl<'a> BooleanBuilder<'a> {
 
         let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
+            // OCCT-style empty compound: disjoint or edge/vertex-only touch yields zero faces.
+            // Callers (e.g. OCCT `checkprops -s empty`) expect `Ok` + zero surface area, not an error.
+            if self.op == BooleanOpType::Intersection {
+                return Ok((BRep::default(), BooleanHistory::default()));
+            }
             return Err(BooleanError::DegenerateResult);
         }
 
@@ -1073,6 +1078,9 @@ impl<'a> BooleanBuilder<'a> {
 
         let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
+            if self.op == BooleanOpType::Intersection {
+                return Ok((BRep::default(), BooleanHistory::default()));
+            }
             return Err(BooleanError::DegenerateResult);
         }
 

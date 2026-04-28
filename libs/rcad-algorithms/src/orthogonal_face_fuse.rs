@@ -7,7 +7,7 @@ use glam::DVec3;
 use std::collections::{HashMap, HashSet};
 use rcad_kernel::geom::{Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Vertex, Wire, WireEdge};
-use rcad_kernel::BRep;
+use rcad_kernel::{surface_area, volume, BRep};
 
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::TOLERANCE_ABS;
@@ -16,6 +16,194 @@ type Pt = (i64, i64);
 
 fn qpt(x: f64, y: f64, scale: f64) -> Pt {
     ((x * scale).round() as i64, (y * scale).round() as i64)
+}
+
+/// Remove redundant axis-aligned faces on the same infinite plane when one face's **world-UV
+/// axis-aligned bounding box** is strictly contained in another's (OCCT `bcommon_simple/C8`:
+/// an untrimmed `1×1` top patch is kept alongside the true trimmed cap; they do not pass
+/// [`rects_2d_bbox_positive_area_overlap`] for orthogonal fuse, but the smaller bbox lies inside
+/// the larger).
+///
+/// Only considers faces with **no inner wires** and normals snapped to ±X/±Y/±Z. Returns the
+/// cleaned BRep and how many faces were removed.
+pub fn remove_axis_coplanar_redundant_child_faces(brep: &BRep, tol: f64) -> (BRep, usize) {
+    let mut out = brep.clone();
+    let mut total_removed = 0usize;
+    let t = tol.max(TOLERANCE_ABS);
+
+    for si in 0..out.solids.len() {
+        for shi in 0..out.solids[si].shells.len() {
+            loop {
+                let n = out.solids[si].shells[shi].faces.len();
+                if n < 2 {
+                    break;
+                }
+                let mut remove_flat: Option<usize> = None;
+                'outer: for fi in 0..n {
+                    for fj in (fi + 1)..n {
+                        if let Some(rm_flat) =
+                            try_pick_redundant_axis_coplanar_face(&out, si, shi, fi, fj, t)
+                        {
+                            remove_flat = Some(rm_flat);
+                            break 'outer;
+                        }
+                    }
+                }
+                let Some(flat_rm) = remove_flat else {
+                    break;
+                };
+                let Some((rsi, rshi, local_rm)) = flat_index_to_local_shell_face(&out, flat_rm) else {
+                    break;
+                };
+                debug_assert_eq!((rsi, rshi), (si, shi));
+                out.solids[rsi].shells[rshi].faces.remove(local_rm);
+                crate::remove_flat_face_geom_slots(&mut out.geom, flat_rm);
+                total_removed += 1;
+            }
+        }
+    }
+
+    (out, total_removed)
+}
+
+fn flat_index_to_local_shell_face(brep: &BRep, flat: usize) -> Option<(usize, usize, usize)> {
+    let mut k = 0usize;
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            for fi in 0..brep.solids[si].shells[shi].faces.len() {
+                if k == flat {
+                    return Some((si, shi, fi));
+                }
+                k += 1;
+            }
+        }
+    }
+    None
+}
+
+fn try_pick_redundant_axis_coplanar_face(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+    fj: usize,
+    tol: f64,
+) -> Option<usize> {
+    let fi_flat = flat_face_index(brep, si, shi, fi);
+    let fj_flat = flat_face_index(brep, si, shi, fj);
+    let shell = &brep.solids[si].shells[shi];
+    let face_i = &shell.faces[fi];
+    let face_j = &shell.faces[fj];
+    if !face_i.inner_wires.is_empty() || !face_j.inner_wires.is_empty() {
+        return None;
+    }
+    let n_i = snap_almost_axis(face_i.normal.normalize_or_zero());
+    let n_j = snap_almost_axis(face_j.normal.normalize_or_zero());
+    if axis_aligned_world_plane_uv_axes(n_i).is_none()
+        || axis_aligned_world_plane_uv_axes(n_j).is_none()
+    {
+        return None;
+    }
+    let p_i = face_first_point(brep, face_i)?;
+    let p_j = face_first_point(brep, face_j)?;
+    let d_i = n_i.dot(p_i);
+    let d_j = n_j.dot(p_j);
+    let (n_i_c, d_i_c) = canonicalize_plane_n_d(n_i, d_i);
+    let (n_j_c, d_j_c) = canonicalize_plane_n_d(n_j, d_j);
+    let key_i = plane_key(n_i_c, d_i_c, tol);
+    let key_j = plane_key(n_j_c, d_j_c, tol);
+    if key_i != key_j {
+        return None;
+    }
+
+    let bi = face_axis_world_bbox(brep, face_i, n_i)?;
+    let bj = face_axis_world_bbox(brep, face_j, n_j)?;
+    let scale = (bi.1 - bi.0)
+        .abs()
+        .max(bi.3 - bi.2)
+        .abs()
+        .max(bj.1 - bj.0)
+        .abs()
+        .max(bj.3 - bj.2)
+        .abs()
+        .max(1.0);
+    let eps = (1e-9_f64 * scale).max(tol * 1e-6);
+
+    let subset = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| -> bool {
+        let (au0, au1, av0, av1) = a;
+        let (bu0, bu1, bv0, bv1) = b;
+        au0 >= bu0 - eps && au1 <= bu1 + eps && av0 >= bv0 - eps && av1 <= bv1 + eps
+    };
+
+    let bbox_area = |b: (f64, f64, f64, f64)| -> f64 {
+        let (u0, u1, v0, v1) = b;
+        (u1 - u0).abs().max(0.0) * (v1 - v0).abs().max(0.0)
+    };
+
+    let ni = face_i.outer_wire.edges.len();
+    let nj = face_j.outer_wire.edges.len();
+
+    // Strictly smaller bbox inside larger: drop the inner (untrimmed cap vs trimmed cap).
+    if subset(bi, bj) && !subset(bj, bi) {
+        return Some(fi_flat);
+    }
+    if subset(bj, bi) && !subset(bi, bj) {
+        return Some(fj_flat);
+    }
+    // Equal bboxes (duplicate patches): keep richer topology.
+    if subset(bi, bj) && subset(bj, bi) {
+        if ni < nj {
+            return Some(fi_flat);
+        }
+        if nj < ni {
+            return Some(fj_flat);
+        }
+        if bbox_area(bi) + eps < bbox_area(bj) {
+            return Some(fi_flat);
+        }
+        if bbox_area(bj) + eps < bbox_area(bi) {
+            return Some(fj_flat);
+        }
+        // Identical patches: drop the higher shell-local index.
+        return Some(fj_flat);
+    }
+    None
+}
+
+/// If removing a single face leaves [`volume`] unchanged (within `vol_abs_tol`) but lowers
+/// [`surface_area`] by a noticeable amount, treat that face as a duplicate boundary sheet and drop
+/// it (OCCT `bcommon_simple/C8`: one axis patch is redundant while the diagonal patch carries the
+/// same material boundary).
+///
+/// Scans faces in **flat index order** and returns on the **first** match so behaviour stays
+/// deterministic. Intended only for post-processing **plane–plane intersections** (callers gate).
+pub fn remove_spurious_intersection_face_preserving_volume(
+    brep: &BRep,
+    vol_abs_tol: f64,
+) -> (BRep, usize) {
+    let v0 = volume(brep);
+    let a0 = surface_area(brep);
+    let n = brep
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .map(|sh| sh.faces.len())
+        .sum::<usize>();
+    let vtol = vol_abs_tol.max(1e-15 * v0.abs().max(1.0));
+    for flat_rm in 0..n {
+        let mut br = brep.clone();
+        let Some((si, shi, local_rm)) = flat_index_to_local_shell_face(&br, flat_rm) else {
+            continue;
+        };
+        br.solids[si].shells[shi].faces.remove(local_rm);
+        crate::remove_flat_face_geom_slots(&mut br.geom, flat_rm);
+        let v1 = volume(&br);
+        let a1 = surface_area(&br);
+        if (v1 - v0).abs() <= vtol && a1 < a0 - 0.25 {
+            return (br, 1);
+        }
+    }
+    (brep.clone(), 0)
 }
 
 /// Merge groups of coplanar orthogonal faces in each shell into single faces (with holes).

@@ -604,11 +604,14 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
     t
 }
 
-/// When the face normal is world-axis-aligned and the outer loop is exactly the boundary of its
-/// own axis-aligned bounding box in world (e.g. each side of a merged `box` union), dense edge
-/// sampling can make simple shoe-lace on 3D samples lose area. If every sample lies on one of the
-/// four sides of that box, use `width * height` in world UV. Fails for L-shapes (re-entrant
-/// points inside the bbox), circles, etc. — then we fall back to shoe-lace below.
+/// When the face normal is world-axis-aligned and every outer sample lies on the **AABB** of the
+/// projected loop in world UV, return that box's `width * height`.
+///
+/// This recovers full rectangle area when shoe-lace on coarse edge samples under-counts (merged
+/// `box` unions). It is **not** sufficient to prove the polygon fills that box: e.g. a parallelogram
+/// or other convex quad inscribed in its AABB still has all vertices on the box boundary in 2D,
+/// but area `< w*h`. Callers must compare against shoe-lace and take the smaller when they
+/// disagree ([`try_planar_face_area_shoelace`]).
 fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
     let a = n.abs();
     if a.x > 1.0 - 2e-3 {
@@ -682,8 +685,28 @@ fn try_planar_face_area_shoelace(
     face_normal: DVec3,
 ) -> Option<f64> {
     if face.inner_wires.is_empty() {
-        if let Some(a) = try_axis_aligned_world_rect_plane_area(brep, face, face_normal) {
-            return Some(a);
+        if let Some(a_rect) = try_axis_aligned_world_rect_plane_area(brep, face, face_normal) {
+            let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
+            trim_almost_closed_polyline(&mut outer, 1e-5);
+            if outer.len() >= 3 {
+                let (ux, uy) = local_basis_from_normal(face_normal);
+                if let Some(pivot) = outer.first().copied() {
+                    let a_shoe = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
+                    const REL: f64 = 1e-5;
+                    let scale = a_rect.max(a_shoe).max(1.0);
+                    let abs_eps = 1e-9 * scale;
+                    // OCCT `bcommon_simple/C8`: axis-aligned plane ∩ tilted box gives a parallelogram
+                    // whose vertices all sit on the loop's axis-aligned bbox; `w*h` over-counts.
+                    if a_rect > a_shoe * (1.0 + REL) + abs_eps {
+                        return Some(a_shoe.max(0.0));
+                    }
+                    if a_shoe > a_rect * (1.0 + REL) + abs_eps {
+                        return Some(a_rect);
+                    }
+                    return Some(a_rect);
+                }
+            }
+            return Some(a_rect);
         }
     }
     let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
