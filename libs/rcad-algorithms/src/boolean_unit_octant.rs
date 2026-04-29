@@ -3,6 +3,7 @@
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
 //! (5) concentric analytic spheres (`make_sphere_brep`): compound outer sphere + mirrored inner → analytic shell SA/volume (differs from OCCT `mkvolume` on trimmed patches).
+//! (6) intersection of two nested analytic spheres sharing a center → smaller ball (`∩` is the inner sphere).
 //!
 //! Unit ball ∩ box `[0,1]³` (first-octant "spherical sector"):
 //!
@@ -116,6 +117,26 @@ pub fn try_difference_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     let mut inner_cavity = make_sphere_brep(center, ri).ok()?;
     crate::reverse_face(&mut inner_cavity, 0);
     Some(BRep::compound_from_shapes(&[outer, inner_cavity]))
+}
+
+/// [`BooleanOpType::Intersection`] for two analytic sphere primitives sharing a center.
+///
+/// The intersection of nested balls is the smaller-radius ball (same center).
+///
+/// Returns [`None`] when centers differ or radii are degenerate — callers fall back to Pave/Builder.
+pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (ca, ra) = try_sphere_primitive_center_radius(a)?;
+    let (cb, rb) = try_sphere_primitive_center_radius(b)?;
+    let scale = ra.max(rb).max(1.0);
+    if (ca - cb).length() > TOL.max(1e-9 * scale) {
+        return None;
+    }
+    let r = ra.min(rb);
+    let r_eps = 1e-12 * scale.max(1.0);
+    if r <= r_eps {
+        return None;
+    }
+    make_sphere_brep(ca, r).ok()
 }
 
 // --- Coaxial cone ∩ cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------

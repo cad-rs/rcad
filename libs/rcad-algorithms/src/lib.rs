@@ -2361,6 +2361,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_intersection_concentric_spheres(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b) {
             return Ok(r);
         }
