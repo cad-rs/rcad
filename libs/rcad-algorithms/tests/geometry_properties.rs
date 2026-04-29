@@ -3,9 +3,9 @@
 //! Complements in-crate `PrimitiveSolid` tests by going through `rcad_modeling::make_box_brep`.
 
 use glam::DVec3;
-use rcad_algorithms::{total_surface_area, total_volume};
+use rcad_algorithms::{boolean_op, total_surface_area, total_volume, BooleanOpType};
 use rcad_kernel::face_surface_area;
-use rcad_modeling::make_box_brep;
+use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep};
 
 #[test]
 fn modeling_box_2x3x4_total_surface_area_and_volume() {
@@ -29,6 +29,194 @@ fn modeling_box_face_surface_areas_sum_to_total() {
         }
     }
     assert!((sum - total).abs() < 1e-3, "per-face sum {sum} vs total {total}");
+}
+
+/// OCCT `bcommon_simple/B1`: 1³ ∩ 0.5×1×0.5 corner box → six faces, `checkprops -s 2.5`.
+#[test]
+fn occt_style_boolean_bcommon_simple_b1_surface_area() {
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let b1 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b1");
+    let b2 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 0.5, 1.0, 0.5).expect("b2");
+    let r = boolean_op(BooleanOpType::Intersection, &b1, &b2).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 2.5_f64);
+    assert!(
+        (a - 2.5).abs() <= tol,
+        "surface area: expected 2.5, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/B3`: 1³ ∩ 0.5×1.5×1 (b2 at y −0.5); `checkprops -s 4`.
+#[test]
+fn occt_style_boolean_bcommon_simple_b3_surface_area() {
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let b1 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b1");
+    let b2 = make_box_brep(DVec3::new(0.0, -0.5, 0.0), DVec3::X, DVec3::Y, 0.5, 1.5, 1.0).expect("b2");
+    let r = boolean_op(BooleanOpType::Intersection, &b1, &b2).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 4.0_f64);
+    assert!(
+        (a - 4.0).abs() <= tol,
+        "surface area: expected 4.0, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/C1`: 1³ ∩ 1.5×0.5×0.5; `checkprops -s 2.5`.
+#[test]
+fn occt_style_boolean_bcommon_simple_c1_surface_area() {
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let b1 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b1");
+    let b2 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.5, 0.5, 0.5).expect("b2");
+    let r = boolean_op(BooleanOpType::Intersection, &b1, &b2).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 2.5_f64);
+    assert!(
+        (a - 2.5).abs() <= tol,
+        "surface area: expected 2.5, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/C3`: 1³ ∩ (0.5×0.5×1 at x=0.25); `checkprops -s 2.5`.
+#[test]
+fn occt_style_boolean_bcommon_simple_c3_surface_area() {
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let b1 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b1");
+    let b2 = make_box_brep(DVec3::new(0.25, 0.0, 0.0), DVec3::X, DVec3::Y, 0.5, 0.5, 1.0).expect("b2");
+    let r = boolean_op(BooleanOpType::Intersection, &b1, &b2).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 2.5_f64);
+    assert!(
+        (a - 2.5).abs() <= tol,
+        "surface area: expected 2.5, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/A6`: two identical unit boxes, `bcommon` → full cube; `checkprops -s 6`.
+#[test]
+fn occt_style_boolean_bcommon_identical_unit_boxes_surface_area() {
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let b1 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b1");
+    let b2 = make_box_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("b2");
+    let r = boolean_op(BooleanOpType::Intersection, &b1, &b2).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 6.0_f64);
+    assert!(
+        (a - 6.0).abs() <= tol,
+        "surface area: expected 6.0, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/E1`: two upright prisms from z=0, half-width second box; `checkprops -s 4`.
+#[test]
+fn occt_style_boolean_bcommon_simple_e1_surface_area() {
+    use glam::DVec3;
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let ba = make_box_brep(
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(1.0, 0.0, 0.0).normalize(),
+        DVec3::new(0.0, 1.0, 0.0).normalize(),
+        1.0,
+        1.0,
+        1.0,
+    )
+    .expect("ba");
+    let bb = make_box_brep(
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(1.0, 0.0, 0.0).normalize(),
+        DVec3::new(0.0, 1.0, 0.0).normalize(),
+        1.0,
+        0.5,
+        1.0,
+    )
+    .expect("bb");
+    let r = boolean_op(BooleanOpType::Intersection, &ba, &bb).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 4.0_f64);
+    assert!(
+        (a - 4.0).abs() <= tol,
+        "surface area: expected 4.0, got {a} ({nf} faces)"
+    );
+}
+
+/// OCCT `bcommon_simple/E3`: 2×2×2 box ∩ unit cube (common); `checkprops -s 6`.
+#[test]
+fn occt_style_boolean_bcommon_simple_e3_surface_area() {
+    use glam::DVec3;
+    use rcad_algorithms::{boolean_op, BooleanOpType};
+    let ba = make_box_brep(
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(1.0, 0.0, 0.0).normalize(),
+        DVec3::new(0.0, 1.0, 0.0).normalize(),
+        2.0,
+        2.0,
+        2.0,
+    )
+    .expect("ba");
+    let bb = make_box_brep(
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::new(1.0, 0.0, 0.0).normalize(),
+        DVec3::new(0.0, 1.0, 0.0).normalize(),
+        1.0,
+        1.0,
+        1.0,
+    )
+    .expect("bb");
+    let r = boolean_op(BooleanOpType::Intersection, &ba, &bb).expect("bcommon");
+    let nf = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    assert_eq!(nf, 6, "expected six faces, got {nf}, area={a}");
+    let tol = (5e-3_f64).max(0.0625 * 6.0_f64);
+    assert!(
+        (a - 6.0).abs() <= tol,
+        "surface area: expected 6.0, got {a} ({nf} faces)"
+    );
 }
 
 /// OCCT `bcommon_simple/C8`: two boxes, one rotated; `checkprops -s 4.41421`.
@@ -57,5 +245,77 @@ fn occt_style_boolean_bcommon_simple_c8_surface_area() {
     assert!(
         (area - 4.41421).abs() <= tol,
         "surface area: expected ~4.41421, got {area}"
+    );
+}
+
+/// OCCT `bopcommon_simple/ZP7`: `pcone` ∩ prism cylinder on exploded base face (`checkprops -s 919.56`).
+#[test]
+fn occt_style_bopcommon_simple_zp7_cone_cylinder_intersection_surface_area() {
+    let pc = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 20.0).expect("cone");
+    let pcy = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, -5.0),
+        DVec3::Z,
+        DVec3::X,
+        10.0,
+        10.0,
+    )
+    .expect("cylinder");
+    let r = boolean_op(BooleanOpType::Intersection, &pc, &pcy).expect("intersection");
+    let nf: usize = r
+        .solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count();
+    let a = total_surface_area(&r);
+    let tol = (5e-3_f64).max(0.0625 * 919.56_f64);
+    assert!(
+        (a - 919.56).abs() <= tol,
+        "surface area: expected ~919.56, got {a} ({nf} faces, {} solids)",
+        r.solids.len()
+    );
+}
+
+/// OCCT `boptuc_simple/ZP3`: `boptuc` is `Cut(G2,G1)` → cylinder − cone (`checkprops -s 1390.8`).
+///
+/// Expected to hit the coaxial `cylinder \\ cone` loft-shell shortcut inside `boolean_op`.
+#[test]
+fn occt_style_boptuc_simple_zp3_cylinder_minus_cone_surface_area() {
+    let pc = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 20.0).expect("cone");
+    let pcy = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, -5.0),
+        DVec3::Z,
+        DVec3::X,
+        10.0,
+        10.0,
+    )
+    .expect("cylinder");
+    let r = boolean_op(BooleanOpType::Difference, &pcy, &pc).expect("cylinder minus cone");
+    let a = total_surface_area(&r);
+    let tol = (5e-3_f64).max(0.0625 * 1390.8_f64);
+    assert!(
+        (a - 1390.8).abs() <= tol,
+        "surface area: expected ~1390.8, got {a}"
+    );
+}
+
+/// OCCT `bopcut_simple/ZP8`: sharp cone − prism cylinder on exploded base (`checkprops -s 254.16`).
+#[test]
+fn occt_style_bopcut_simple_zp8_cone_minus_cylinder_surface_area() {
+    let pc = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 20.0).expect("cone");
+    let pcy = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, -5.0),
+        DVec3::Z,
+        DVec3::X,
+        10.0,
+        10.0,
+    )
+    .expect("cylinder");
+    let r = boolean_op(BooleanOpType::Difference, &pc, &pcy).expect("difference");
+    let a = total_surface_area(&r);
+    let tol = (5e-3_f64).max(0.0625 * 254.16_f64);
+    assert!(
+        (a - 254.16).abs() <= tol,
+        "surface area: expected ~254.16, got {a}"
     );
 }

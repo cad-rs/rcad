@@ -642,6 +642,78 @@ fn bbox2d_components(uv: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
     Some((u0, u1, v0, v1))
 }
 
+/// Unique vertices referenced by `wire` edges, projected to world coordinates `(i, j)`.
+fn outer_wire_unique_vertex_uvs(
+    brep: &BRep,
+    wire: &Wire,
+    i: usize,
+    j: usize,
+    pos_tol: f64,
+) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for we in &wire.edges {
+        let Some(edge) = brep.edges.get(we.idx) else {
+            continue;
+        };
+        for vi in [edge.start, edge.end] {
+            let Some(v) = brep.vertices.get(vi) else {
+                continue;
+            };
+            let p = v.point;
+            let uv = (p[i], p[j]);
+            if !out
+                .iter()
+                .any(|&(u2, v2)| (uv.0 - u2).abs() <= pos_tol && (uv.1 - v2).abs() <= pos_tol)
+            {
+                out.push(uv);
+            }
+        }
+    }
+    out
+}
+
+/// Andrew monotone chain; returns CCW hull vertices (no duplicate closing point).
+fn convex_hull_2d_monotone(mut pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    if pts.len() <= 1 {
+        return pts;
+    }
+    pts.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+    let cross = |o: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+    };
+    let mut lower: Vec<(f64, f64)> = Vec::new();
+    for &p in &pts {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 1e-18 {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+    let mut upper: Vec<(f64, f64)> = Vec::new();
+    for &p in pts.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 1e-18 {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
+fn polygon_area_2d_xy(pts: &[(f64, f64)]) -> f64 {
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let mut a = 0.0_f64;
+    for k in 0..pts.len() {
+        let p = pts[k];
+        let q = pts[(k + 1) % pts.len()];
+        a += p.0 * q.1 - p.1 * q.0;
+    }
+    0.5 * a.abs()
+}
+
 fn try_axis_aligned_world_rect_plane_area(
     brep: &BRep,
     face: &Face,
@@ -652,6 +724,25 @@ fn try_axis_aligned_world_rect_plane_area(
         return None;
     }
     let [i, j] = axis_aligned_world_plane_uv_axes(n)?;
+    // Boolean T-junction repair can permute `outer_wire` edge order so dense sampling walks a
+    // self-intersecting polyline while the face is still a convex patch (OCCT `bcommon_simple/B1`).
+    // Unique-vertex convex hull in the plane normal to ±X/±Y/±Z recovers the true area; the
+    // bbox×shoelace branch below still handles large sampled loops.
+    let pos_tol = (1e-7_f64 * brep
+        .bounding_box()
+        .map(|[mn, mx]| (mx - mn).length())
+        .unwrap_or(1.0))
+    .max(1e-9);
+    let vu = outer_wire_unique_vertex_uvs(brep, &face.outer_wire, i, j, pos_tol);
+    if (3..=48).contains(&vu.len()) {
+        let hull = convex_hull_2d_monotone(vu.clone());
+        if hull.len() >= 3 {
+            let a_hull = polygon_area_2d_xy(&hull);
+            if a_hull > 1e-18 {
+                return Some(a_hull);
+            }
+        }
+    }
     let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
     trim_almost_closed_polyline(&mut outer, 1e-5);
     if outer.len() < 3 {
@@ -697,8 +788,15 @@ fn try_planar_face_area_shoelace(
                     let abs_eps = 1e-9 * scale;
                     // OCCT `bcommon_simple/C8`: axis-aligned plane ∩ tilted box gives a parallelogram
                     // whose vertices all sit on the loop's axis-aligned bbox; `w*h` over-counts.
+                    // Boolean T-junctions can permute wire edge order so shoe-lace on dense samples
+                    // under-counts while hull/bbox from [`try_axis_aligned_world_rect_plane_area`] is
+                    // correct (`bcommon_simple/B1`): only trust the smaller shoe when it is a
+                    // substantial fraction of the rect metric (true parallelogram vs AABB).
                     if a_rect > a_shoe * (1.0 + REL) + abs_eps {
-                        return Some(a_shoe.max(0.0));
+                        if a_shoe + abs_eps >= a_rect * 0.52 {
+                            return Some(a_shoe.max(0.0));
+                        }
+                        return Some(a_rect.max(0.0));
                     }
                     if a_shoe > a_rect * (1.0 + REL) + abs_eps {
                         return Some(a_rect);
@@ -1208,17 +1306,20 @@ pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 
     }
 }
 
-/// Compute the signed volume of the closed BRep solid.
+/// Divergence-theorem signed volume: `(1/6) Σ a·(b×c)` over surface triangles (no absolute value).
 ///
-/// Uses the divergence theorem: V = (1/6) Σ_triangles a·(b×c).
-/// Works correctly for a closed, consistently-oriented mesh.
-/// Returns 0.0 for open shells or empty BReps.
-pub fn volume(brep: &BRep) -> f64 {
+/// For a closed solid with **outward** face normals this is positive; **inward** shells
+/// (e.g. OCCT `treverse` before `prism`) yield a negative sum when the mesh is consistent.
+pub fn signed_volume(brep: &BRep) -> f64 {
     face_flat_iter(brep)
         .flat_map(|(fi, f)| face_triangles(brep, f, fi))
         .map(|[a, b, c]| tet_signed_volume(a, b, c))
-        .sum::<f64>()
-        .abs()
+        .sum()
+}
+
+/// Absolute volume (see [`signed_volume`]).
+pub fn volume(brep: &BRep) -> f64 {
+    signed_volume(brep).abs()
 }
 
 /// Compute the centroid (center of mass) of the solid by volumetric integration.

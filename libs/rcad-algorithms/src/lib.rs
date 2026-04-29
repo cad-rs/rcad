@@ -2223,6 +2223,40 @@ fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
     true
 }
 
+/// True when every face normal is (approximately) ±X, ±Y, or ±Z in world space.
+///
+/// Gates post-intersection [`orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces`]:
+/// for **two world-axis-aligned planar solids** (e.g. `make_box` operands), that pass removes the
+/// **smaller** 2D bbox on a shared plane, but in nested **box∩box** the smaller patch is often the
+/// true external face and the larger one is the untrimmed remainder — yielding too-low
+/// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)
+/// still need the cleanup, so we only skip when **both** sides satisfy this predicate.
+fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
+    const AXIS_EPS: f64 = 1e-6;
+    let is_axis_unit = |n: glam::DVec3| -> bool {
+        let n = n.normalize_or_zero();
+        if n.length_squared() < 1e-24 {
+            return false;
+        }
+        (n.x.abs() - 1.0).abs() < AXIS_EPS && n.y.abs() < AXIS_EPS && n.z.abs() < AXIS_EPS
+            || (n.y.abs() - 1.0).abs() < AXIS_EPS && n.x.abs() < AXIS_EPS && n.z.abs() < AXIS_EPS
+            || (n.z.abs() - 1.0).abs() < AXIS_EPS && n.x.abs() < AXIS_EPS && n.y.abs() < AXIS_EPS
+    };
+    if !brep_is_pure_plane_solid(brep) {
+        return false;
+    }
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                if !is_axis_unit(face.normal) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
     if brep_shell_face_count(a) != brep_shell_face_count(b) {
         return false;
@@ -2273,29 +2307,13 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
     true
 }
 
-/// Perform a boolean operation on two BReps.
+/// DS → [`pave_filler::PaveFiller`] → [`builder::BooleanBuilder`] → plane surface recompute.
 ///
-/// Both BReps must have populated GeomStore (call
-/// `geom_populate::populate_box_geom` first for box primitives).
-pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    if matches!(op, BooleanOpType::Union) {
-        return bop_occt_union::fuse(a, b);
-    }
-
-    if matches!(op, BooleanOpType::Intersection) {
-        if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
-            return Ok(r);
-        }
-    }
-
-    if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
-        return Ok(BRep::default());
-    }
-
-    // 1. Build the DS from both shapes
+/// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
+/// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
+pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
 
-    // 2. Run PaveFiller — compute all interferences
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
     let mut filler = match (&bvh_a, &bvh_b) {
         (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
@@ -2303,15 +2321,13 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     };
     filler.perform();
 
-    // 3. Run Builder — classify and assemble result
     let builder = builder::BooleanBuilder::new(&ds, op);
     let mut result = builder.build()?;
     geom_populate::recompute_plane_surfaces(&mut result);
-    // Plane–plane intersection can emit an untrimmed axis patch alongside the trimmed cap on the
-    // same infinite plane (same plane key, smaller 2D world bbox); OCCT `bcommon_simple/C8`.
     if matches!(op, BooleanOpType::Intersection)
         && brep_is_pure_plane_solid(a)
         && brep_is_pure_plane_solid(b)
+        && !(brep_is_world_axis_aligned_plane_solid(a) && brep_is_world_axis_aligned_plane_solid(b))
     {
         let (next, _rm) =
             orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces(&result, tolerance::TOLERANCE_ABS);
@@ -2330,6 +2346,40 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         return Ok(BRep::default());
     }
     Ok(result)
+}
+
+/// Perform a boolean operation on two BReps.
+///
+/// Both BReps must have populated GeomStore (call
+/// `geom_populate::populate_box_geom` first for box primitives).
+pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    if matches!(op, BooleanOpType::Union) {
+        return bop_occt_union::fuse(a, b);
+    }
+
+    if matches!(op, BooleanOpType::Intersection) {
+        if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b) {
+            return Ok(r);
+        }
+    }
+
+    if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
+        return Ok(BRep::default());
+    }
+
+    if matches!(op, BooleanOpType::Difference) {
+        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b) {
+            return Ok(r);
+        }
+    }
+
+    boolean_op_pave_fill_build(op, a, b)
 }
 
 /// Perform a boolean operation with advanced execution options and report.

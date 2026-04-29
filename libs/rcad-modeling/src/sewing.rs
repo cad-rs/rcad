@@ -7,17 +7,20 @@
 //! 1. Concatenate all vertices, edges, and faces from every input BRep into
 //!    a single pool, reindexing everything.
 //! 2. **Vertex merging** (union-find): vertices within `tolerance` of each
-//!    other are merged into one representative vertex.
+//!    other are merged **only when they originate from different input BReps**.
+//!    Same-shell vertices are never merged even if duplicated numerically — this
+//!    avoids collapsing quad corners when stitching independent shells (`RCAD ZP3`).
 //! 3. **Edge matching**: after vertex merging, edges that share both endpoint
 //!    vertices (in either orientation) and originated from different input
 //!    BReps are considered "stitched" — they represent the same boundary edge.
-//!    Duplicate edges are removed and wire references updated.
+//!    Duplicate edges are removed and wire references updated; when the merged
+//!    duplicate uses the opposite `(start,end)` order from the canonical edge,
+//!    [`WireEdge.forward`] is toggled so loops remain consistently oriented.
 //! 4. **Shell assembly**: all faces are collected into a single shell.
 //!    Free edges (with only one incident face) are reported.
 //!
 //! # Limitations
-//! - GeomStore data (curves, surfaces, PCurves) is concatenated but not
-//!   de-duplicated.
+//! - GeomStore data (surfaces + face_surface), concatenated per input shell; PCurves / edge_pcurves are not merged.
 //! - Only the outer wire of each face is considered during edge matching
 //!   (inner wires are preserved as-is, with reindexed edge refs).
 
@@ -82,8 +85,10 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     // Track the vertex/edge offset for each input BRep
     let mut vertex_offsets: Vec<usize> = Vec::with_capacity(breps.len());
     let mut edge_offsets: Vec<usize> = Vec::with_capacity(breps.len());
+    // Which input shell (`breps` index) each concatenated vertex came from.
+    let mut vertex_src_brep: Vec<usize> = Vec::new();
 
-    for brep in breps {
+    for (bi, brep) in breps.iter().enumerate() {
         let v_off = all_vertices.len();
         let e_off = all_edges.len();
         vertex_offsets.push(v_off);
@@ -91,6 +96,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
 
         // Vertices
         all_vertices.extend(brep.vertices.iter().cloned());
+        vertex_src_brep.extend(std::iter::repeat(bi).take(brep.vertices.len()));
 
         // Edges (reindexed)
         for e in &brep.edges {
@@ -157,6 +163,9 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     let tol2 = tolerance * tolerance;
     for i in 0..n_verts {
         for j in (i + 1)..n_verts {
+            if vertex_src_brep[i] == vertex_src_brep[j] {
+                continue;
+            }
             let d2 = (all_vertices[i].point - all_vertices[j].point).length_squared();
             if d2 <= tol2 {
                 union(&mut parent, i, j);
@@ -195,11 +204,30 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
+    // When a duplicate edge is merged onto the canonical edge, orientations may differ:
+    // `all_edges[i]` and `all_edges[edge_canon[i]]` share endpoints but might be reversed.
+    // Wires must flip `WireEdge.forward` when remapping idx so face boundaries stay closed.
+    let mut dup_edge_flip: Vec<bool> = vec![false; n_edges];
+    for i in 0..n_edges {
+        let c = edge_canon[i];
+        if c == i {
+            continue;
+        }
+        let ei = &all_edges[i];
+        let ee = &all_edges[c];
+        dup_edge_flip[i] = ei.start != ee.start;
+    }
+
     // Remap wire edge indices in all faces
     for face in &mut all_faces {
         let remap = |w: &mut Wire| {
             for we in &mut w.edges {
-                we.idx = edge_canon[we.idx];
+                let old_idx = we.idx;
+                let c = edge_canon[old_idx];
+                we.idx = c;
+                if old_idx != c && dup_edge_flip[old_idx] {
+                    we.forward = !we.forward;
+                }
             }
         };
         remap(&mut face.outer_wire);
@@ -281,6 +309,13 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         for we in &face.outer_wire.edges {
             if we.idx < n_compact_edges {
                 edge_face_count[we.idx] += 1;
+            }
+        }
+        for iw in &face.inner_wires {
+            for we in &iw.edges {
+                if we.idx < n_compact_edges {
+                    edge_face_count[we.idx] += 1;
+                }
             }
         }
     }
