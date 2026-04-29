@@ -7,12 +7,23 @@ use glam::DVec3;
 use std::collections::{HashMap, HashSet};
 use rcad_kernel::geom::{Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Vertex, Wire, WireEdge};
-use rcad_kernel::{surface_area, volume, BRep};
+use rcad_kernel::{face_surface_area, surface_area, volume, BRep};
 
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::TOLERANCE_ABS;
 
 type Pt = (i64, i64);
+
+/// Minimum [`face_surface_area`] / axis-aligned UV bbox area before treating strict bbox containment
+/// as “inner duplicate rectangle vs outer trimmed cap” (`bcommon_simple/C8`). Trimmed intersection
+/// patches (`bcommon_simple/G5`) often occupy much less than their axis UV bbox when the boundary is
+/// skewed.
+const MIN_REDUNDANT_AXIS_UV_FILL: f64 = 0.97;
+
+/// When one axis-aligned bbox is strictly inside another on the same plane, require the inner bbox
+/// **area** to be at most this fraction of the outer (`area(inner)/area(outer)`). Otherwise the pair
+/// is not treated as an untrimmed duplicate inside a trimmed patch (`bcommon_simple/G5`).
+const MAX_STRICT_INNER_BBOX_AREA_FRAC: f64 = 0.55;
 
 fn qpt(x: f64, y: f64, scale: f64) -> Pt {
     ((x * scale).round() as i64, (y * scale).round() as i64)
@@ -145,13 +156,36 @@ fn try_pick_redundant_axis_coplanar_face(
 
     // Strictly smaller bbox inside larger: drop the inner (untrimmed cap vs trimmed cap).
     if subset(bi, bj) && !subset(bj, bi) {
+        let aj = bbox_area(bj).max(eps * eps);
+        let ar = bbox_area(bi) / aj;
+        if ar > MAX_STRICT_INNER_BBOX_AREA_FRAC {
+            return None;
+        }
+        let r = redundant_axis_uv_bbox_fill_ratio(brep, face_i, n_i, fi_flat, scale).unwrap_or(0.0);
+        if r < MIN_REDUNDANT_AXIS_UV_FILL {
+            return None;
+        }
         return Some(fi_flat);
     }
     if subset(bj, bi) && !subset(bi, bj) {
+        let ai = bbox_area(bi).max(eps * eps);
+        let ar = bbox_area(bj) / ai;
+        if ar > MAX_STRICT_INNER_BBOX_AREA_FRAC {
+            return None;
+        }
+        let r = redundant_axis_uv_bbox_fill_ratio(brep, face_j, n_j, fj_flat, scale).unwrap_or(0.0);
+        if r < MIN_REDUNDANT_AXIS_UV_FILL {
+            return None;
+        }
         return Some(fj_flat);
     }
     // Equal bboxes (duplicate patches): keep richer topology.
     if subset(bi, bj) && subset(bj, bi) {
+        let ri = redundant_axis_uv_bbox_fill_ratio(brep, face_i, n_i, fi_flat, scale).unwrap_or(0.0);
+        let rj = redundant_axis_uv_bbox_fill_ratio(brep, face_j, n_j, fj_flat, scale).unwrap_or(0.0);
+        if ri < MIN_REDUNDANT_AXIS_UV_FILL || rj < MIN_REDUNDANT_AXIS_UV_FILL {
+            return None;
+        }
         if ni < nj {
             return Some(fi_flat);
         }
@@ -175,6 +209,10 @@ fn try_pick_redundant_axis_coplanar_face(
 /// it (OCCT `bcommon_simple/C8`: one axis patch is redundant while the diagonal patch carries the
 /// same material boundary).
 ///
+/// Only considers faces whose normals snap to ±X/±Y/±Z and whose [`face_surface_area`] fills their
+/// axis-aligned UV bbox enough ([`MIN_REDUNDANT_AXIS_UV_FILL`]); other faces are skipped so trimmed
+/// intersections (`bcommon_simple/G5`) are not peeled incorrectly.
+///
 /// Scans faces in **flat index order** and returns on the **first** match so behaviour stays
 /// deterministic. Intended only for post-processing **plane–plane intersections** (callers gate).
 pub fn remove_spurious_intersection_face_preserving_volume(
@@ -191,6 +229,24 @@ pub fn remove_spurious_intersection_face_preserving_volume(
         .sum::<usize>();
     let vtol = vol_abs_tol.max(1e-15 * v0.abs().max(1.0));
     for flat_rm in 0..n {
+        let Some((si, shi, local_rm)) = flat_index_to_local_shell_face(brep, flat_rm) else {
+            continue;
+        };
+        let face = &brep.solids[si].shells[shi].faces[local_rm];
+        let n_axis = snap_almost_axis(face.normal.normalize_or_zero());
+        if axis_aligned_world_plane_uv_axes(n_axis).is_none() {
+            continue;
+        }
+        let Some(bb) = face_axis_world_bbox(brep, face, n_axis) else {
+            continue;
+        };
+        let scale = (bb.1 - bb.0).abs().max((bb.3 - bb.2).abs()).max(1.0);
+        let r =
+            redundant_axis_uv_bbox_fill_ratio(brep, face, n_axis, flat_rm, scale).unwrap_or(0.0);
+        if r < MIN_REDUNDANT_AXIS_UV_FILL {
+            continue;
+        }
+
         let mut br = brep.clone();
         let Some((si, shi, local_rm)) = flat_index_to_local_shell_face(&br, flat_rm) else {
             continue;
@@ -319,6 +375,31 @@ fn face_axis_world_bbox(brep: &BRep, face: &Face, n: DVec3) -> Option<(f64, f64,
     }
     let uv: Vec<(f64, f64)> = poly.iter().map(|p| (p[i], p[j])).collect();
     Some(bbox2d(&uv))
+}
+
+fn axis_uv_bbox_rect_area(b: (f64, f64, f64, f64)) -> f64 {
+    let (u0, u1, v0, v1) = b;
+    (u1 - u0).abs() * (v1 - v0).abs()
+}
+
+/// Physical face area divided by axis-aligned UV bbox area for ±axis planes (same projection as
+/// [`face_axis_world_bbox`]). Near 1 ⇒ patch fills its bbox rectangle (typical redundant caps).
+fn redundant_axis_uv_bbox_fill_ratio(
+    brep: &BRep,
+    face: &Face,
+    n: DVec3,
+    flat_idx: usize,
+    scale: f64,
+) -> Option<f64> {
+    let b = face_axis_world_bbox(brep, face, n)?;
+    let ab = axis_uv_bbox_rect_area(b);
+    let s = scale.max(1.0);
+    let eps_area = (1e-15_f64 * s * s).max(1e-18);
+    if !ab.is_finite() || ab <= eps_area {
+        return None;
+    }
+    let a = face_surface_area(brep, face, flat_idx);
+    Some(a / ab)
 }
 
 /// Split coplanar face indices into groups that are each connected in 2D world UV.
