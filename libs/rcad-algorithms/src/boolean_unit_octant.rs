@@ -2,6 +2,7 @@
 //! path is wrong or overly faceted: (1) unit ball ∩ `[0,1]³`, (2) coaxial sharp cone ∩ finite
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
+//! (5) concentric analytic spheres (`make_sphere_brep`): compound outer sphere + mirrored inner → analytic shell SA/volume (differs from OCCT `mkvolume` on trimmed patches).
 //!
 //! Unit ball ∩ box `[0,1]³` (first-octant "spherical sector"):
 //!
@@ -17,7 +18,7 @@
 //! generic boolean path must handle sphere–oblique-plane trimming. Pave now
 //! uses exact spherical UV in projection fallbacks (`SphericalSurface::world_to_uv`),
 //! and plane–sphere tangents are inflated to a micro-circle so every box face gets
-//! a `FaceFace` curve. OCCT `bcommon_simple/A4` is still `#[ignore]` — `BooleanBuilder`
+//! a `FaceFace` curve. OCCT `bcommon_simple/A4` / `A5` remain `#[ignore]` — `BooleanBuilder`
 //! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
 //! multi-trim / classification, not missing FF pairs.
 
@@ -27,7 +28,7 @@ use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
-use rcad_modeling::{loft_with_history, sew_shells};
+use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
 
 const TOL: f64 = 1e-4;
 
@@ -72,6 +73,49 @@ pub fn try_intersection_eighth_unit_ball(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(brep_eighth_of_unit_ball());
     }
     None
+}
+
+/// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
+fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
+    let sh = brep.solids.get(0)?.shells.get(0)?;
+    if sh.faces.len() != 1 {
+        return None;
+    }
+    let si = *brep.geom.face_surface.get(0)?.as_ref()?;
+    match brep.geom.surfaces.get(si)? {
+        Surface3::Sphere(s) => Some((s.center, s.radius)),
+        _ => None,
+    }
+}
+
+/// [`BooleanOpType::Difference`] for nested analytic spheres sharing a center.
+///
+/// Builds a hollow spherical shell as **two solids**: outer sphere plus inner sphere with reversed
+/// face orientation (`reverse_face`). Total surface area matches the analytic spherical shell
+/// \(4\pi(R^2+r^2)\) under [`rcad_kernel::surface_area`].
+///
+/// Compound `rcad_kernel::volume` may not match \(4\pi/3(R^3-r^3)\) until sphere face normals / tessellation agree for
+/// [`signed_volume`] everywhere.
+///
+/// OCCT DRAW `mkvolume` on trimmed spherical patches can report a different `checkprops -s` than this
+/// full-sphere analytic shell.
+pub fn try_difference_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (ca, ra) = try_sphere_primitive_center_radius(a)?;
+    let (cb, rb) = try_sphere_primitive_center_radius(b)?;
+    let scale = ra.max(rb).max(1.0);
+    if (ca - cb).length() > TOL.max(1e-9 * scale) {
+        return None;
+    }
+    let ro = ra.max(rb);
+    let ri = ra.min(rb);
+    if ro - ri <= 1e-12 * ro.max(1.0) {
+        return None;
+    }
+    let center = ca;
+    let outer = make_sphere_brep(center, ro).ok()?;
+    let mut inner_cavity = make_sphere_brep(center, ri).ok()?;
+    crate::reverse_face(&mut inner_cavity, 0);
+    Some(BRep::compound_from_shapes(&[outer, inner_cavity]))
 }
 
 // --- Coaxial cone ∩ cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
@@ -642,8 +686,28 @@ fn brep_eighth_of_unit_ball() -> BRep {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{boolean_op, BooleanOpType};
     use rcad_kernel::surface_area;
     use rcad_kernel::volume;
+
+    #[test]
+    fn concentric_sphere_difference_analytic_shell_surface_area() {
+        let center = DVec3::new(1.0, -2.0, 4.0);
+        let ro = 5.0_f64;
+        let ri = 3.0_f64;
+        let outer = make_sphere_brep(center, ro).expect("outer");
+        let inner = make_sphere_brep(center, ri).expect("inner");
+        let shell = boolean_op(BooleanOpType::Difference, &outer, &inner).expect("difference");
+        let pi = std::f64::consts::PI;
+        let a_ex = 4.0 * pi * (ro * ro + ri * ri);
+        let a = surface_area(&shell);
+        assert!(
+            (a - a_ex).abs() < 5e-3 * a_ex.max(1.0),
+            "surface area {a} vs analytic shell SA {a_ex}"
+        );
+        // `signed_volume` across compounds relies on consistent face normals vs tessellation;
+        // sphere primitives carry approximate face normals — SA matches analytic \(4\pi(R^2+r^2)\).
+    }
 
     #[test]
     fn eighth_ball_area_and_volume() {

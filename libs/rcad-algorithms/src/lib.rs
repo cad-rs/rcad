@@ -2377,6 +2377,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_difference_concentric_spheres(a, b) {
+            return Ok(r);
+        }
     }
 
     boolean_op_pave_fill_build(op, a, b)
