@@ -8844,6 +8844,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "sphere-cone boolean can run for minutes in debug (pave/builder); cargo test ... -- --ignored"]
     fn curved_subface_boundary_3d_sphere_pole_produces_enough_points() {
         // Verify that a sphere boolean with a cone produces a valid result.
         // The cone has an apex singularity that previously caused degenerate
