@@ -176,7 +176,7 @@ impl BuildVertex {
     /// });
     /// let v = BuildVertex::build_vertex_on_surface(&plane, 1.0, 2.0);
     /// // Point on the plane at UV (1, 2)
-    /// assert!(v.point.z.abs() < 1e-6);
+    /// assert!(v.point.z.abs() < TOLERANCE_MESH_LEGACY);
     /// ```
     pub fn build_vertex_on_surface(surface: &Surface3, u: f64, v: f64) -> Vertex {
         let point = surface.point_at(u, v);
@@ -1043,7 +1043,7 @@ impl BRepBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tolerance::TOLERANCE_ABS;
+    use crate::tolerance::*;
     use rcad_kernel::geom::{Line3, Plane};
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1075,7 +1075,7 @@ mod tests {
         });
         let v = BuildVertex::build_vertex_on_surface(&plane, 2.0, 3.0);
         // Point should be on the plane (z=0 for a Z-normal plane at origin)
-        assert!(v.point.z.abs() < 1e-6);
+        assert!(v.point.z.abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]

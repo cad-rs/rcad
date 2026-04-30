@@ -28,10 +28,11 @@
 //! approx.add_point(DVec3::new(0.0, 0.0, 0.0), DVec2::new(0.0, 0.0), DVec2::new(0.0, 0.0));
 //! approx.add_point(DVec3::new(1.0, 0.0, 0.0), DVec2::new(1.0, 0.0), DVec2::new(1.0, 0.0));
 //!
-//! let result = approx.compute(1e-6);
+//! let result = approx.compute(TOLERANCE_MESH_LEGACY);
 //! assert!(result.curve3d.is_some());
 //! ```
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2d, Curve2dEval, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::fit::{interpolate_points, interpolate_points_2d};
@@ -45,7 +46,7 @@ use rcad_kernel::fit::{interpolate_points, interpolate_points_2d};
 /// Controls tolerance, degree, and continuity of the resulting curves.
 #[derive(Debug, Clone)]
 pub struct ApproxOptions {
-    /// Tolerance for approximation (default: 1e-6).
+    /// Tolerance for approximation (default: TOLERANCE_MESH_LEGACY).
     pub tolerance: f64,
     /// Maximum degree for the resulting BSpline (default: 8).
     pub max_degree: usize,
@@ -62,7 +63,7 @@ pub struct ApproxOptions {
 impl Default for ApproxOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             max_degree: 8,
             min_degree: 3,
             continuity: 2,
@@ -296,7 +297,7 @@ impl IntersectionApproximator {
 
         // Normalize parameters to [0, 1]
         let total_length = self.samples.last().map(|s| s.param).unwrap_or(1.0);
-        if total_length < 1e-14 {
+        if total_length < TOLERANCE_FLOAT_LOOSE {
             return ApproxResult {
                 curve3d: None,
                 curve2d1: None,
@@ -548,7 +549,7 @@ fn project_point_to_surface_uv(
         }
 
         // Compute numerical gradient
-        let h = 1e-6;
+        let h = TOLERANCE_MESH_LEGACY;
         let surf_pt_du = surface.point_at(uv.x + h, uv.y);
         let surf_pt_dv = surface.point_at(uv.x, uv.y + h);
 
@@ -733,7 +734,7 @@ pub fn sample_with_adaptive_density(curve: &Curve3, tol: f64, max_points: usize)
             let chord = pt_curr - pt_prev;
             let chord_len = chord.length();
 
-            if chord_len > 1e-10 {
+            if chord_len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 let chord_dir = chord / chord_len;
                 let to_mid = pt_mid - pt_prev;
                 let along_chord = to_mid.dot(chord_dir);
@@ -884,11 +885,11 @@ mod tests {
     #[test]
     fn test_approx_options() {
         let opts = ApproxOptions::default()
-            .with_tolerance(1e-4)
+            .with_tolerance(TOLERANCE_RETRY_LADDER_COARSE)
             .with_max_degree(5)
             .with_continuity(1);
 
-        assert!((opts.tolerance - 1e-4).abs() < 1e-10);
+        assert!((opts.tolerance - TOLERANCE_RETRY_LADDER_COARSE).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(opts.max_degree, 5);
         assert_eq!(opts.continuity, 1);
     }
@@ -899,7 +900,7 @@ mod tests {
         assert!(approx.is_empty());
         assert_eq!(approx.len(), 0);
 
-        let result = approx.clone().compute(1e-6);
+        let result = approx.clone().compute(TOLERANCE_MESH_LEGACY);
         assert!(!result.success);
         assert!(result.error.is_some());
     }
@@ -913,7 +914,7 @@ mod tests {
         approx.add_point(DVec3::new(1.0, 0.0, 0.0), DVec2::new(1.0, 0.0), DVec2::new(1.0, 0.0));
         approx.add_point(DVec3::new(2.0, 0.0, 0.0), DVec2::new(2.0, 0.0), DVec2::new(2.0, 0.0));
 
-        let result = approx.compute(1e-6);
+        let result = approx.compute(TOLERANCE_MESH_LEGACY);
         assert!(result.success);
         assert!(result.curve3d.is_some());
         assert!(result.curve2d1.is_some());
@@ -937,7 +938,7 @@ mod tests {
             );
         }
 
-        let result = approx.compute(1e-4);
+        let result = approx.compute(TOLERANCE_RETRY_LADDER_COARSE);
         assert!(result.success, "Approximation should succeed");
 
         let curve = result.curve3d.as_ref().unwrap();
@@ -946,8 +947,8 @@ mod tests {
         let p0 = curve.point_at(0.0);
         let p1 = curve.point_at(1.0);
 
-        assert!((p0 - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-4);
-        assert!((p1 - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-4);
+        assert!((p0 - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((p1 - DVec3::new(0.0, 1.0, 0.0)).length() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -964,7 +965,7 @@ mod tests {
             );
         }
 
-        let result = approx.compute(1e-4);
+        let result = approx.compute(TOLERANCE_RETRY_LADDER_COARSE);
         assert!(result.achieved_tolerance < 1e-2);
     }
 
@@ -976,14 +977,14 @@ mod tests {
             (DVec2::new(1.0, 1.0), 1.0),
         ];
 
-        let curve = approximate_2d_curve(&points, 1e-6);
+        let curve = approximate_2d_curve(&points, TOLERANCE_MESH_LEGACY);
 
         // Check endpoints
         let p0 = curve.point_at(0.0);
         let p1 = curve.point_at(1.0);
 
-        assert!((p0 - DVec2::new(0.0, 0.0)).length() < 1e-6);
-        assert!((p1 - DVec2::new(1.0, 1.0)).length() < 1e-6);
+        assert!((p0 - DVec2::new(0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
+        assert!((p1 - DVec2::new(1.0, 1.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1000,7 +1001,7 @@ mod tests {
         // All points should be on the circle
         for pt in &points {
             let r = pt.length();
-            assert!((r - 1.0).abs() < 1e-6);
+            assert!((r - 1.0).abs() < TOLERANCE_MESH_LEGACY);
         }
     }
 
@@ -1019,7 +1020,7 @@ mod tests {
         // All points should be on the circle
         for pt in &points {
             let r = pt.length();
-            assert!((r - 1.0).abs() < 1e-4, "Point {} should be on circle, got r={}", pt, r);
+            assert!((r - 1.0).abs() < TOLERANCE_RETRY_LADDER_COARSE, "Point {} should be on circle, got r={}", pt, r);
         }
     }
 
@@ -1044,8 +1045,8 @@ mod tests {
         });
 
         // A line on a plane should have zero deviation
-        let dev = compute_same_parameter(&line3d, &line2d, &plane, 1e-6);
-        assert!(dev < 1e-6, "Same parameter deviation should be near zero, got {}", dev);
+        let dev = compute_same_parameter(&line3d, &line2d, &plane, TOLERANCE_MESH_LEGACY);
+        assert!(dev < TOLERANCE_MESH_LEGACY, "Same parameter deviation should be near zero, got {}", dev);
     }
 
     #[test]
@@ -1055,7 +1056,7 @@ mod tests {
         approx.add_point(DVec3::ZERO, DVec2::ZERO, DVec2::ZERO);
         approx.add_point(DVec3::X, DVec2::X, DVec2::X);
 
-        let result = approx.compute(1e-6);
+        let result = approx.compute(TOLERANCE_MESH_LEGACY);
         assert!(result.success);
 
         // Test accessors
@@ -1084,7 +1085,7 @@ mod tests {
             DVec2::new(0.5, 0.0),
         ];
 
-        let result = approximate_intersection(&points3d, &uvs1, &uvs2, 1e-6);
+        let result = approximate_intersection(&points3d, &uvs1, &uvs2, TOLERANCE_MESH_LEGACY);
         assert!(result.success);
         assert!(result.curve3d.is_some());
         assert!(result.curve2d1.is_some());
@@ -1099,15 +1100,15 @@ mod tests {
             DVec3::X,
         ];
 
-        let curve = approximate_polyline(&polyline, 1e-6);
+        let curve = approximate_polyline(&polyline, TOLERANCE_MESH_LEGACY);
         assert!(curve.is_some());
 
         let c = curve.unwrap();
         let p0 = c.point_at(0.0);
         let p1 = c.point_at(1.0);
 
-        assert!((p0 - DVec3::ZERO).length() < 1e-6);
-        assert!((p1 - DVec3::X).length() < 1e-6);
+        assert!((p0 - DVec3::ZERO).length() < TOLERANCE_MESH_LEGACY);
+        assert!((p1 - DVec3::X).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1155,7 +1156,7 @@ mod tests {
         // Check points are equally spaced
         for (i, pt) in points.iter().enumerate() {
             let expected = i as f64;
-            assert!((pt.x - expected).abs() < 1e-10);
+            assert!((pt.x - expected).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         }
     }
 }

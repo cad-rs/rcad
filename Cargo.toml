@@ -5,6 +5,7 @@ members = [
     "libs/rcad-modeling",
     "libs/rcad-algorithms",
     "libs/rcad-step",
+    "libs/rcad-py",
     "libs/rcad-gds",
     "libs/rcad-oas",
     "libs/rcad-iges",

@@ -37,6 +37,7 @@
 //! println!("Found {} medial points", axis.all_points.len());
 //! ```
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::{BRep, Curve3, Surface3, Face, Shell, Solid, SurfaceEval, CurveEval, Wire, WireEdge};
 use rcad_kernel::geom::{Line3, Plane};
@@ -72,7 +73,7 @@ pub struct MedialAxisOptions {
 impl Default for MedialAxisOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             min_thickness: 0.001,
             simplify: true,
             sample_density: 100,
@@ -960,7 +961,7 @@ fn circumcenter(p0: DVec2, p1: DVec2, p2: DVec2) -> Option<(DVec2, f64)> {
     let d1 = p2 - p0;
 
     let cross = d0.x * d1.y - d0.y * d1.x;
-    if cross.abs() < 1e-15 {
+    if cross.abs() < TOLERANCE_FLOAT_DEDUP {
         return None; // Degenerate triangle
     }
 
@@ -1218,7 +1219,7 @@ fn compute_distance_to_boundary(point: DVec2, polygon: &[DVec2]) -> f64 {
 fn distance_point_to_segment_2d(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     let ab = b - a;
     let len_sq = ab.length_squared();
-    if len_sq < 1e-15 {
+    if len_sq < TOLERANCE_FLOAT_DEDUP {
         return (p - a).length();
     }
 
@@ -2559,7 +2560,7 @@ fn build_thickness_histogram(medial: &MedialSurface, num_bins: usize) -> Vec<Thi
     let max_t = thicknesses.iter().cloned().fold(0.0, f64::max);
 
     let bin_width = (max_t - min_t) / num_bins as f64;
-    if bin_width < 1e-10 {
+    if bin_width < TOLERANCE_LINEAR_ULTRA_STRICT {
         return vec![ThicknessHistogramBin {
             lower: min_t,
             upper: max_t,
@@ -3066,7 +3067,7 @@ pub fn generate_rib_paths(axis: &MedialSurface) -> Vec<Curve3> {
             axis.vertices.get(edge.end_vertex),
         ) {
             let direction = end_v.point - start_v.point;
-            if direction.length() > 1e-10 {
+            if direction.length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                 paths.push(Curve3::Line(Line3 {
                     origin: start_v.point,
                     direction: direction.normalize(),
@@ -3185,8 +3186,8 @@ mod tests {
     #[test]
     fn test_medial_axis_options_default() {
         let opts = MedialAxisOptions::default();
-        assert!((opts.tolerance - 1e-6).abs() < 1e-10);
-        assert!((opts.min_thickness - 0.001).abs() < 1e-10);
+        assert!((opts.tolerance - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((opts.min_thickness - 0.001).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(opts.simplify);
         assert_eq!(opts.sample_density, 100);
     }
@@ -3261,9 +3262,9 @@ mod tests {
     fn test_wall_thickness_empty() {
         let brep = BRep::default();
         let result = compute_wall_thickness(&brep);
-        assert!((result.min_thickness - 0.0).abs() < 1e-10);
-        assert!((result.max_thickness - 0.0).abs() < 1e-10);
-        assert!((result.avg_thickness - 0.0).abs() < 1e-10);
+        assert!((result.min_thickness - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.max_thickness - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.avg_thickness - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(result.thin_regions.is_empty());
     }
 
@@ -3316,11 +3317,11 @@ mod tests {
 
         let (center, radius) = result.unwrap();
         // Center should be at (0.5, 0.288...)
-        assert!((center.x - 0.5).abs() < 1e-6);
+        assert!((center.x - 0.5).abs() < TOLERANCE_MESH_LEGACY);
         // Radius should be equal distance to all vertices
-        assert!((center - p0).length() - radius < 1e-6);
-        assert!((center - p1).length() - radius < 1e-6);
-        assert!((center - p2).length() - radius < 1e-6);
+        assert!((center - p0).length() - radius < TOLERANCE_MESH_LEGACY);
+        assert!((center - p1).length() - radius < TOLERANCE_MESH_LEGACY);
+        assert!((center - p2).length() - radius < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -3345,11 +3346,11 @@ mod tests {
 
         // Center should have distance 0.5
         let d = compute_distance_to_boundary(dvec2(0.5, 0.5), &polygon);
-        assert!((d - 0.5).abs() < 1e-6);
+        assert!((d - 0.5).abs() < TOLERANCE_MESH_LEGACY);
 
         // Corner should have distance 0
         let d = compute_distance_to_boundary(dvec2(0.0, 0.0), &polygon);
-        assert!(d < 1e-6);
+        assert!(d < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -3448,8 +3449,8 @@ mod tests {
             is_branch: true,
             is_end: false,
         };
-        assert!((pt.point.x - 1.0).abs() < 1e-10);
-        assert!((pt.radius - 0.5).abs() < 1e-10);
+        assert!((pt.point.x - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((pt.radius - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(pt.is_branch);
         assert!(!pt.is_end);
     }
@@ -3483,8 +3484,8 @@ mod tests {
     #[test]
     fn test_thickness_stats_default() {
         let stats = ThicknessStats::default();
-        assert!((stats.min - 0.0).abs() < 1e-10);
-        assert!((stats.max - 0.0).abs() < 1e-10);
+        assert!((stats.min - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((stats.max - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3527,7 +3528,7 @@ mod tests {
         let grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
 
         assert_eq!(grid.dimensions, [10, 10, 10]);
-        assert!((grid.voxel_size - 0.1).abs() < 1e-10);
+        assert!((grid.voxel_size - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(grid.distances.len(), 1000);
     }
 
@@ -3547,14 +3548,14 @@ mod tests {
         let grid = VoxelGrid::new(DVec3::ZERO, 0.1, [10, 10, 10]);
 
         let center = grid.voxel_center(0, 0, 0);
-        assert!((center.x - 0.05).abs() < 1e-10);
-        assert!((center.y - 0.05).abs() < 1e-10);
-        assert!((center.z - 0.05).abs() < 1e-10);
+        assert!((center.x - 0.05).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((center.y - 0.05).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((center.z - 0.05).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let center5 = grid.voxel_center(5, 5, 5);
-        assert!((center5.x - 0.55).abs() < 1e-10);
-        assert!((center5.y - 0.55).abs() < 1e-10);
-        assert!((center5.z - 0.55).abs() < 1e-10);
+        assert!((center5.x - 0.55).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((center5.y - 0.55).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((center5.z - 0.55).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3563,7 +3564,7 @@ mod tests {
 
         grid.set_distance(5, 5, 5, 0.5);
         let d = grid.get_distance(5, 5, 5);
-        assert!((d - 0.5).abs() < 1e-10);
+        assert!((d - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3598,8 +3599,8 @@ mod tests {
     fn test_mid_surface_options_default() {
         let opts = MidSurfaceOptions::default();
 
-        assert!((opts.max_thickness_ratio - 0.1).abs() < 1e-10);
-        assert!((opts.min_aspect_ratio - 10.0).abs() < 1e-10);
+        assert!((opts.max_thickness_ratio - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((opts.min_aspect_ratio - 10.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(opts.continuity, ContinuityLevel::C0);
         assert!(opts.preserve_features);
     }
@@ -3608,10 +3609,10 @@ mod tests {
     fn test_rib_generation_options_default() {
         let opts = RibGenerationOptions::default();
 
-        assert!((opts.min_height - 2.0).abs() < 1e-10);
-        assert!((opts.max_height - 20.0).abs() < 1e-10);
+        assert!((opts.min_height - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((opts.max_height - 20.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(opts.optimize_stiffness);
-        assert!((opts.thickness_weight - 0.5).abs() < 1e-10);
+        assert!((opts.thickness_weight - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3663,8 +3664,8 @@ mod tests {
         let result = generate_ribs(&brep, &opts);
 
         assert!(result.ribs.is_empty());
-        assert!((result.total_volume - 0.0).abs() < 1e-10);
-        assert!((result.stiffness_improvement - 0.0).abs() < 1e-10);
+        assert!((result.total_volume - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.stiffness_improvement - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3695,8 +3696,8 @@ mod tests {
             face_pairs: vec![(0, 1)],
         };
 
-        assert!((vertex.point.x - 1.0).abs() < 1e-10);
-        assert!((vertex.thickness - 0.5).abs() < 1e-10);
+        assert!((vertex.point.x - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((vertex.thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(vertex.direction, DVec3::X);
         assert_eq!(vertex.normal, DVec3::Z);
     }
@@ -3713,7 +3714,7 @@ mod tests {
 
         assert_eq!(edge.start, 0);
         assert_eq!(edge.end, 1);
-        assert!((edge.avg_thickness - 0.5).abs() < 1e-10);
+        assert!((edge.avg_thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3752,7 +3753,7 @@ mod tests {
         assert_eq!(sheet.spine_edge, 0);
         assert_eq!(sheet.side_a_faces.len(), 2);
         assert_eq!(sheet.side_b_faces.len(), 2);
-        assert!((sheet.avg_thickness - 0.5).abs() < 1e-10);
+        assert!((sheet.avg_thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3785,7 +3786,7 @@ mod tests {
 
         assert!(analysis.regions.is_empty());
         assert_eq!(analysis.classification, ThicknessClass::Normal);
-        assert!((analysis.recommended_min - 1.0).abs() < 1e-10);
+        assert!((analysis.recommended_min - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3796,8 +3797,8 @@ mod tests {
             count: 10,
         };
 
-        assert!((bin.lower - 0.0).abs() < 1e-10);
-        assert!((bin.upper - 0.5).abs() < 1e-10);
+        assert!((bin.lower - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((bin.upper - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(bin.count, 10);
     }
 
@@ -3818,9 +3819,9 @@ mod tests {
             attached_face: 0,
         };
 
-        assert!((placement.height - 5.0).abs() < 1e-10);
-        assert!((placement.width - 3.0).abs() < 1e-10);
-        assert!((placement.efficiency - 0.8).abs() < 1e-10);
+        assert!((placement.height - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((placement.width - 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((placement.efficiency - 0.8).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3845,7 +3846,7 @@ mod tests {
             point_count: 10,
         };
 
-        assert!((zone.avg_thickness - 1.0).abs() < 1e-10);
+        assert!((zone.avg_thickness - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(zone.thickness_class, ThicknessClass::Normal);
         assert_eq!(zone.point_count, 10);
     }
@@ -3861,8 +3862,8 @@ mod tests {
             overall_score: 0.92,
         };
 
-        assert!((quality.coverage - 0.9).abs() < 1e-10);
-        assert!((quality.avg_deviation - 0.01).abs() < 1e-10);
+        assert!((quality.coverage - 0.9).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((quality.avg_deviation - 0.01).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(quality.discontinuities, 2);
     }
 
@@ -3907,8 +3908,8 @@ mod tests {
         };
 
         assert_eq!(face.vertices.len(), 3);
-        assert!((face.min_radius - 0.5).abs() < 1e-10);
-        assert!((face.max_radius - 1.0).abs() < 1e-10);
+        assert!((face.min_radius - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((face.max_radius - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3920,7 +3921,7 @@ mod tests {
     #[test]
     fn test_medial_axis_options_enhanced() {
         let opts = MedialAxisOptions {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             min_thickness: 0.001,
             simplify: true,
             sample_density: 50,
@@ -4015,8 +4016,8 @@ mod tests {
             severity: 0.8,
         };
 
-        assert!((region.thickness - 0.5).abs() < 1e-10);
-        assert!((region.area - 10.0).abs() < 1e-10);
+        assert!((region.thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((region.area - 10.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(region.face_indices.len(), 3);
     }
 
@@ -4029,7 +4030,7 @@ mod tests {
             nearest_face: 0,
         };
 
-        assert!((sample.thickness - 0.5).abs() < 1e-10);
+        assert!((sample.thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(sample.nearest_face, 0);
     }
 
@@ -4042,9 +4043,9 @@ mod tests {
             thin_regions: vec![],
         };
 
-        assert!((result.min_thickness - 0.5).abs() < 1e-10);
-        assert!((result.max_thickness - 2.0).abs() < 1e-10);
-        assert!((result.avg_thickness - 1.0).abs() < 1e-10);
+        assert!((result.min_thickness - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.max_thickness - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.avg_thickness - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4068,6 +4069,6 @@ mod tests {
         };
 
         assert_eq!(map.samples.len(), 1);
-        assert!((map.stats.mean - 0.5).abs() < 1e-10);
+        assert!((map.stats.mean - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 }

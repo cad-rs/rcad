@@ -45,7 +45,7 @@ use rcad_kernel::{
     geom::{Curve3, Surface3, Line3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
     topology::{Edge, Face, Shell, Solid, Vertex, Wire},
 };
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
@@ -282,7 +282,7 @@ impl Default for BlendParams {
             tension: 0.5,
             twist: 0.0,
             tolerance: TOLERANCE_ABS,
-            angular_tolerance: 1e-6,
+            angular_tolerance: TOLERANCE_MESH_LEGACY,
             mode: BlendMode::default(),
             variable_radius: false,
             param_range: [0.0, 1.0],
@@ -394,7 +394,7 @@ impl RadiusLaw {
                 let t_clamped = t.clamp(params[0], params[params.len() - 1]);
                 for i in 0..params.len() - 1 {
                     if t_clamped >= params[i] && t_clamped <= params[i + 1] {
-                        let alpha = (t_clamped - params[i]) / (params[i + 1] - params[i]).max(1e-10);
+                        let alpha = (t_clamped - params[i]) / (params[i + 1] - params[i]).max(TOLERANCE_LINEAR_ULTRA_STRICT);
                         return radii[i] + alpha * (radii[i + 1] - radii[i]);
                     }
                 }
@@ -1146,12 +1146,12 @@ fn compute_bspline_derivative(spline: &BSplineCurve3, t: f64) -> Option<DVec3> {
     }
 
     // Numerical derivative for simplicity
-    let h = 1e-6;
+    let h = TOLERANCE_MESH_LEGACY;
     let p1 = eval_bspline(spline, t - h);
     let p2 = eval_bspline(spline, t + h);
     let tangent = (p2 - p1) / (2.0 * h);
 
-    if tangent.length() > 1e-12 {
+    if tangent.length() > TOLERANCE_LEN_MIN {
         Some(tangent.normalize())
     } else {
         None
@@ -1176,7 +1176,7 @@ fn eval_bspline(spline: &BSplineCurve3, t: f64) -> DVec3 {
     }
 
     // Simple linear interpolation for now
-    let alpha = (t - spline.knots[0]) / (spline.knots[spline.knots.len() - 1] - spline.knots[0]).max(1e-10);
+    let alpha = (t - spline.knots[0]) / (spline.knots[spline.knots.len() - 1] - spline.knots[0]).max(TOLERANCE_LINEAR_ULTRA_STRICT);
     let i = ((n - 1) as f64 * alpha.clamp(0.0, 1.0)) as usize;
     let i_next = (i + 1).min(n - 1);
     let local_alpha = (n - 1) as f64 * alpha - i as f64;
@@ -1714,7 +1714,7 @@ mod tests {
     #[test]
     fn test_interpolate_curve_two_points() {
         let points = vec![DVec3::ZERO, DVec3::X];
-        let result = interpolate_curve_through_points(&points, 1e-6);
+        let result = interpolate_curve_through_points(&points, TOLERANCE_MESH_LEGACY);
 
         assert!(result.is_ok());
         let curve = result.unwrap();
@@ -1728,7 +1728,7 @@ mod tests {
             DVec3::new(1.0, 0.5, 0.0),
             DVec3::new(2.0, 0.0, 0.0),
         ];
-        let result = interpolate_curve_through_points(&points, 1e-6);
+        let result = interpolate_curve_through_points(&points, TOLERANCE_MESH_LEGACY);
 
         assert!(result.is_ok());
         let curve = result.unwrap();
@@ -1788,15 +1788,15 @@ mod tests {
             .with_tension(0.8)
             .with_twist(0.1)
             .with_mode(BlendMode::Ruled)
-            .with_tolerance(1e-5)
+            .with_tolerance(TOLERANCE_RETRY_LADDER_MID)
             .with_variable_radius(true);
 
         assert_eq!(params.radius, 2.0);
         assert_eq!(params.continuity, BlendContinuity::G2);
-        assert!((params.tension - 0.8).abs() < 1e-10);
-        assert!((params.twist - 0.1).abs() < 1e-10);
+        assert!((params.tension - 0.8).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((params.twist - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(params.mode, BlendMode::Ruled);
-        assert!((params.tolerance - 1e-5).abs() < 1e-10);
+        assert!((params.tolerance - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(params.variable_radius);
     }
 

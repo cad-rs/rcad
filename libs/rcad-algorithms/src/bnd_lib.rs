@@ -31,6 +31,7 @@
 //! assert!(spheres_intersect(&sphere, &sphere));
 //! ```
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
@@ -967,8 +968,8 @@ mod tests {
         assert!(bbox.min.x <= 0.0);
         assert!(bbox.max.x >= 10.0);
         // Should have tolerance padding
-        assert!((bbox.min.x - (-0.1)).abs() < 1e-9);
-        assert!((bbox.max.x - 10.1).abs() < 1e-9);
+        assert!((bbox.min.x - (-0.1)).abs() < TOLERANCE_COORD_SUB);
+        assert!((bbox.max.x - 10.1).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1002,8 +1003,8 @@ mod tests {
 
         assert!(bbox.is_valid());
         // Plane is at z=0
-        assert!((bbox.min.z).abs() < 1e-6);
-        assert!((bbox.max.z).abs() < 1e-6);
+        assert!((bbox.min.z).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bbox.max.z).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1102,9 +1103,9 @@ mod tests {
         let bounds = optimized_bounds(&brep, 0.0);
 
         assert!(bounds.is_valid());
-        assert!((bounds.size().x - 2.0).abs() < 1e-6);
-        assert!((bounds.size().y - 3.0).abs() < 1e-6);
-        assert!((bounds.size().z - 4.0).abs() < 1e-6);
+        assert!((bounds.size().x - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bounds.size().y - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bounds.size().z - 4.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     /// `make_box_brep` (rotated / translated) — AABB from [`optimized_bounds`] / [`precise_bounds`]
@@ -1266,7 +1267,7 @@ mod tests {
         assert_eq!(sphere.center(), DVec3::new(1.0, 1.0, 1.0));
         // Diagonal is sqrt(12), radius is half
         let expected_radius = (12.0_f64).sqrt() * 0.5;
-        assert!((sphere.radius() - expected_radius).abs() < 1e-9);
+        assert!((sphere.radius() - expected_radius).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1304,13 +1305,13 @@ mod tests {
         let sphere = BoundingSphere::from_center_radius(DVec3::ZERO, 1.0);
 
         // Inside
-        assert!((sphere.distance_to(DVec3::ZERO) - 0.0).abs() < 1e-9);
+        assert!((sphere.distance_to(DVec3::ZERO) - 0.0).abs() < TOLERANCE_COORD_SUB);
 
         // On surface
-        assert!((sphere.distance_to(DVec3::new(1.0, 0.0, 0.0)) - 0.0).abs() < 1e-9);
+        assert!((sphere.distance_to(DVec3::new(1.0, 0.0, 0.0)) - 0.0).abs() < TOLERANCE_COORD_SUB);
 
         // Outside
-        assert!((sphere.distance_to(DVec3::new(3.0, 0.0, 0.0)) - 2.0).abs() < 1e-9);
+        assert!((sphere.distance_to(DVec3::new(3.0, 0.0, 0.0)) - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1328,11 +1329,11 @@ mod tests {
 
         // Volume = 4/3 * pi * r^3
         let expected_volume = (4.0 / 3.0) * std::f64::consts::PI;
-        assert!((sphere.volume() - expected_volume).abs() < 1e-9);
+        assert!((sphere.volume() - expected_volume).abs() < TOLERANCE_COORD_SUB);
 
         // Surface area = 4 * pi * r^2
         let expected_area = 4.0 * std::f64::consts::PI;
-        assert!((sphere.surface_area() - expected_area).abs() < 1e-9);
+        assert!((sphere.surface_area() - expected_area).abs() < TOLERANCE_COORD_SUB);
     }
 
     // ── Intersection Tests ──────────────────────────────────────────────────────────
@@ -1439,7 +1440,7 @@ mod tests {
         let volume = box_intersection_volume(&box1, &box2);
 
         // Intersection is [1,2] x [1,2] x [1,2] = volume 1
-        assert!((volume - 1.0).abs() < 1e-9);
+        assert!((volume - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1447,7 +1448,7 @@ mod tests {
         let box1 = BoundingBox::from_corners(DVec3::ZERO, DVec3::new(2.0, 2.0, 2.0));
         let box2 = BoundingBox::from_corners(DVec3::new(1.0, 1.0, 1.0), DVec3::new(3.0, 3.0, 3.0));
 
-        assert!((box_distance(&box1, &box2) - 0.0).abs() < 1e-9);
+        assert!((box_distance(&box1, &box2) - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1456,7 +1457,7 @@ mod tests {
         let box2 = BoundingBox::from_corners(DVec3::new(3.0, 0.0, 0.0), DVec3::new(4.0, 1.0, 1.0));
 
         // Distance between x=1 and x=3 is 2
-        assert!((box_distance(&box1, &box2) - 2.0).abs() < 1e-9);
+        assert!((box_distance(&box1, &box2) - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1464,7 +1465,7 @@ mod tests {
         let s1 = BoundingSphere::from_center_radius(DVec3::ZERO, 1.0);
         let s2 = BoundingSphere::from_center_radius(DVec3::new(1.0, 0.0, 0.0), 1.0);
 
-        assert!((sphere_distance(&s1, &s2) - 0.0).abs() < 1e-9);
+        assert!((sphere_distance(&s1, &s2) - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1473,7 +1474,7 @@ mod tests {
         let s2 = BoundingSphere::from_center_radius(DVec3::new(5.0, 0.0, 0.0), 1.0);
 
         // Distance is 5 - 1 - 1 = 3
-        assert!((sphere_distance(&s1, &s2) - 3.0).abs() < 1e-9);
+        assert!((sphere_distance(&s1, &s2) - 3.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1483,7 +1484,7 @@ mod tests {
 
         // Distance from sphere center (3, 0.5, 0.5) to box is 2
         // With radius 1, distance is 2 - 1 = 1
-        assert!((sphere_box_distance(&sphere, &bbox) - 1.0).abs() < 1e-9);
+        assert!((sphere_box_distance(&sphere, &bbox) - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     // ── Integration Tests ───────────────────────────────────────────────────────────

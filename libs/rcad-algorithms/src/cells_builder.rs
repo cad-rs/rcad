@@ -168,8 +168,22 @@ mod tests {
 
     #[test]
     fn cells_builder_xor_expression_succeeds() {
-        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
-        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
+        // Match `make_box_brep`-based OCCT-aligned orientation (same as asymmetric union probe).
+        use crate::geom_populate::populate_box_geom;
+        let mut a =
+            rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+                .expect("box a");
+        let mut b = rcad_modeling::make_box_brep(
+            DVec3::new(0.5, 0.0, 0.0),
+            DVec3::X,
+            DVec3::Y,
+            1.0,
+            1.0,
+            1.0,
+        )
+        .expect("box b");
+        populate_box_geom(&mut a);
+        populate_box_geom(&mut b);
 
         let builder = CellsBuilder::from_cells(vec![a, b]);
 

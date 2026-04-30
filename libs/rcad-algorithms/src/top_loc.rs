@@ -26,6 +26,7 @@
 //! let world_point = datum.to_world(local_point);
 //! ```
 
+use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DMat4, DVec3, DQuat};
 use rcad_kernel::BRep;
 use std::collections::HashMap;
@@ -131,7 +132,7 @@ impl Location {
     /// assert!(!loc.is_identity());
     /// ```
     pub fn from_rotation(axis: DVec3, angle: f64) -> Self {
-        if angle.abs() < 1e-12 {
+        if angle.abs() < TOLERANCE_LEN_MIN {
             return Self::identity();
         }
         let normalized_axis = axis.normalize_or(DVec3::Z);
@@ -156,7 +157,7 @@ impl Location {
     /// assert!(!loc.is_identity());
     /// ```
     pub fn from_scale(scale: f64) -> Self {
-        if (scale - 1.0).abs() < 1e-12 {
+        if (scale - 1.0).abs() < TOLERANCE_LEN_MIN {
             return Self::identity();
         }
         Location {
@@ -187,7 +188,7 @@ impl Location {
     pub fn from_trs(translation: DVec3, rotation: DQuat, scale: f64) -> Self {
         let is_identity = translation == DVec3::ZERO
             && rotation == DQuat::IDENTITY
-            && (scale - 1.0).abs() < 1e-12;
+            && (scale - 1.0).abs() < TOLERANCE_LEN_MIN;
 
         let scale_vec = DVec3::splat(scale);
         Location {
@@ -251,7 +252,7 @@ impl Location {
             .to_cols_array()
             .iter()
             .zip(DAffine3::IDENTITY.to_cols_array().iter())
-            .all(|(a, b)| (a - b).abs() < 1e-12);
+            .all(|(a, b)| (a - b).abs() < TOLERANCE_LEN_MIN);
         Location {
             transform,
             is_identity_cache: is_identity,
@@ -378,7 +379,7 @@ impl Location {
         let sz = self.transform.matrix3.z_axis.length();
         // Return average scale if approximately uniform, otherwise 1.0
         let avg = (sx + sy + sz) / 3.0;
-        if (sx - avg).abs() < 1e-9 && (sy - avg).abs() < 1e-9 && (sz - avg).abs() < 1e-9 {
+        if (sx - avg).abs() < TOLERANCE_COORD_SUB && (sy - avg).abs() < TOLERANCE_COORD_SUB && (sz - avg).abs() < TOLERANCE_COORD_SUB {
             avg
         } else {
             1.0
@@ -548,7 +549,7 @@ impl Datum {
     ///     DVec3::Z,
     /// );
     /// // Z axis points along world Z
-    /// assert!((datum.z_direction().dot(DVec3::Z) - 1.0).abs() < 1e-9);
+    /// assert!((datum.z_direction().dot(DVec3::Z) - 1.0).abs() < TOLERANCE_COORD_SUB);
     /// ```
     pub fn from_origin_and_normal(origin: DVec3, normal: DVec3) -> Self {
         let z_dir = normal.normalize_or(DVec3::Z);
@@ -675,7 +676,7 @@ impl Datum {
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
     /// let local = DVec3::new(0.5, 0.0, 0.0);
     /// let world = datum.to_world(local);
-    /// assert!((world.x - 1.5).abs() < 1e-9); // 1.0 (origin) + 0.5 (local x)
+    /// assert!((world.x - 1.5).abs() < TOLERANCE_COORD_SUB); // 1.0 (origin) + 0.5 (local x)
     /// ```
     pub fn to_world(&self, local: DVec3) -> DVec3 {
         self.origin + self.x_dir * local.x + self.y_dir * local.y + self.z_dir * local.z
@@ -696,7 +697,7 @@ impl Datum {
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
     /// let world = DVec3::new(1.5, 0.0, 0.0);
     /// let local = datum.to_local(world);
-    /// assert!((local.x - 0.5).abs() < 1e-9); // world x - origin x
+    /// assert!((local.x - 0.5).abs() < TOLERANCE_COORD_SUB); // world x - origin x
     /// ```
     pub fn to_local(&self, world: DVec3) -> DVec3 {
         let diff = world - self.origin;
@@ -761,9 +762,9 @@ impl Datum {
     /// Check if the datum represents the world coordinate system.
     pub fn is_world(&self) -> bool {
         self.origin == DVec3::ZERO
-            && (self.x_dir - DVec3::X).length() < 1e-9
-            && (self.y_dir - DVec3::Y).length() < 1e-9
-            && (self.z_dir - DVec3::Z).length() < 1e-9
+            && (self.x_dir - DVec3::X).length() < TOLERANCE_COORD_SUB
+            && (self.y_dir - DVec3::Y).length() < TOLERANCE_COORD_SUB
+            && (self.z_dir - DVec3::Z).length() < TOLERANCE_COORD_SUB
     }
 
     /// Create a new datum with a different origin.
@@ -916,8 +917,8 @@ impl LocationManager {
     ///
     /// let composed = manager.compose_locations(&[t1, t2]);
     /// let result = composed.transform_point(DVec3::ZERO);
-    /// assert!((result.x - 1.0).abs() < 1e-9);
-    /// assert!((result.y - 2.0).abs() < 1e-9);
+    /// assert!((result.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+    /// assert!((result.y - 2.0).abs() < TOLERANCE_COORD_SUB);
     /// ```
     pub fn compose_locations(&self, indices: &[usize]) -> Location {
         if indices.is_empty() {
@@ -1075,7 +1076,7 @@ impl LocationManager {
 /// apply_location_to_shape(&mut brep, &loc);
 ///
 /// // The box is now centered at (5.5, 0.5, 0.5)
-/// assert!((brep.vertices[0].point.x - 5.0).abs() < 1e-9);
+/// assert!((brep.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
 /// ```
 pub fn apply_location_to_shape(brep: &mut BRep, loc: &Location) {
     if loc.is_identity() {
@@ -1147,15 +1148,15 @@ mod tests {
         let transformed = loc.transform_point(point);
 
         // After 90 degree rotation around Z: (1, 0, 0) -> (0, 1, 0)
-        assert!((transformed.x - 0.0).abs() < 1e-9);
-        assert!((transformed.y - 1.0).abs() < 1e-9);
-        assert!((transformed.z - 0.0).abs() < 1e-9);
+        assert!((transformed.x - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((transformed.y - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((transformed.z - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
     fn test_location_from_rotation_small_angle() {
         // Very small rotation should be close to identity
-        let loc = Location::from_rotation(DVec3::Z, 1e-15);
+        let loc = Location::from_rotation(DVec3::Z, TOLERANCE_FLOAT_DEDUP);
         assert!(loc.is_identity());
     }
 
@@ -1167,7 +1168,7 @@ mod tests {
         let point = DVec3::new(1.0, 2.0, 3.0);
         let expected = point * scale;
         assert_eq!(loc.transform_point(point), expected);
-        assert!((loc.scale() - scale).abs() < 1e-9);
+        assert!((loc.scale() - scale).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1183,7 +1184,7 @@ mod tests {
 
         // Translate: (1, 0, 0) -> (6, 0, 0)
         // Scale: (6, 0, 0) -> (12, 0, 0)
-        assert!((transformed.x - 12.0).abs() < 1e-9);
+        assert!((transformed.x - 12.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1197,7 +1198,7 @@ mod tests {
         let point = DVec3::new(1.0, 2.0, 3.0);
         let transformed = loc.transform_point(point);
         let restored = inv.transform_point(transformed);
-        assert!((restored - point).length() < 1e-9);
+        assert!((restored - point).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1209,7 +1210,7 @@ mod tests {
         // Not exactly identity due to floating point, but should be close
         let point = DVec3::new(1.0, 2.0, 3.0);
         let restored = combined.transform_point(point);
-        assert!((restored - point).length() < 1e-9);
+        assert!((restored - point).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1233,8 +1234,8 @@ mod tests {
         let transformed = loc.transform_point(point);
 
         // After 90 degree rotation around Z: (1, 0, 0) -> (0, 1, 0)
-        assert!((transformed.x - 0.0).abs() < 1e-9);
-        assert!((transformed.y - 1.0).abs() < 1e-9);
+        assert!((transformed.x - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((transformed.y - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1259,8 +1260,8 @@ mod tests {
         let point = DVec3::ZERO;
         let result = combined.transform_point(point);
 
-        assert!((result.x - 1.0).abs() < 1e-9);
-        assert!((result.y - 2.0).abs() < 1e-9);
+        assert!((result.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((result.y - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     // -------------------------------------------------------------------------
@@ -1288,11 +1289,11 @@ mod tests {
 
         // Z direction should match normal
         let z_dot = datum.z_direction().dot(normal);
-        assert!((z_dot - 1.0).abs() < 1e-9);
+        assert!((z_dot - 1.0).abs() < TOLERANCE_COORD_SUB);
 
         // X and Y should be perpendicular to Z
-        assert!(datum.x_direction().dot(datum.z_direction()).abs() < 1e-9);
-        assert!(datum.y_direction().dot(datum.z_direction()).abs() < 1e-9);
+        assert!(datum.x_direction().dot(datum.z_direction()).abs() < TOLERANCE_COORD_SUB);
+        assert!(datum.y_direction().dot(datum.z_direction()).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1303,9 +1304,9 @@ mod tests {
         let world = datum.to_world(local);
 
         // Origin at (1, 0, 0), local X is world X
-        assert!((world.x - 1.5).abs() < 1e-9);
-        assert!((world.y - 0.0).abs() < 1e-9);
-        assert!((world.z - 0.0).abs() < 1e-9);
+        assert!((world.x - 1.5).abs() < TOLERANCE_COORD_SUB);
+        assert!((world.y - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((world.z - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1315,9 +1316,9 @@ mod tests {
         let world = DVec3::new(1.5, 0.0, 0.0);
         let local = datum.to_local(world);
 
-        assert!((local.x - 0.5).abs() < 1e-9);
-        assert!((local.y - 0.0).abs() < 1e-9);
-        assert!((local.z - 0.0).abs() < 1e-9);
+        assert!((local.x - 0.5).abs() < TOLERANCE_COORD_SUB);
+        assert!((local.y - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((local.z - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1328,7 +1329,7 @@ mod tests {
         let world = datum.to_world(original);
         let back = datum.to_local(world);
 
-        assert!((back - original).length() < 1e-9);
+        assert!((back - original).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1343,10 +1344,10 @@ mod tests {
 
         // X direction should point toward x_point
         let expected_x = DVec3::X;
-        assert!((datum.x_direction() - expected_x).length() < 1e-9);
+        assert!((datum.x_direction() - expected_x).length() < TOLERANCE_COORD_SUB);
 
         // Y should be in the XY plane
-        assert!((datum.y_direction().z).abs() < 1e-9);
+        assert!((datum.y_direction().z).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1359,7 +1360,7 @@ mod tests {
         let via_datum = datum.to_world(point);
         let via_loc = loc.transform_point(point);
 
-        assert!((via_datum - via_loc).length() < 1e-9);
+        assert!((via_datum - via_loc).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1418,9 +1419,9 @@ mod tests {
         let composed = manager.compose_locations(&[t1, t2, t3]);
         let result = composed.transform_point(DVec3::ZERO);
 
-        assert!((result.x - 1.0).abs() < 1e-9);
-        assert!((result.y - 2.0).abs() < 1e-9);
-        assert!((result.z - 3.0).abs() < 1e-9);
+        assert!((result.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((result.y - 2.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((result.z - 3.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1497,7 +1498,7 @@ mod tests {
         apply_location_to_shape(&mut brep, &loc);
 
         let expected_x = original_x + 5.0;
-        assert!((brep.vertices[0].point.x - expected_x).abs() < 1e-9);
+        assert!((brep.vertices[0].point.x - expected_x).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1532,7 +1533,7 @@ mod tests {
         apply_location_to_shape(&mut brep, &loc);
 
         for (i, original) in original_points.iter().enumerate() {
-            assert!((brep.vertices[i].point - *original).length() < 1e-9);
+            assert!((brep.vertices[i].point - *original).length() < TOLERANCE_COORD_SUB);
         }
     }
 
@@ -1548,9 +1549,9 @@ mod tests {
         let transformed = apply_location_to_shape_owned(&brep, &loc);
 
         // Original should be unchanged
-        assert!((brep.vertices[0].point.x - 0.0).abs() < 1e-9);
+        assert!((brep.vertices[0].point.x - 0.0).abs() < TOLERANCE_COORD_SUB);
         // Transformed should be shifted
-        assert!((transformed.vertices[0].point.x - 5.0).abs() < 1e-9);
+        assert!((transformed.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1570,9 +1571,9 @@ mod tests {
         // Translate: (0, 2, 0) -> (1, 4, 3)
         let result = combined.transform_point(point);
 
-        assert!((result.x - 1.0).abs() < 1e-9);
-        assert!((result.y - 4.0).abs() < 1e-9);
-        assert!((result.z - 3.0).abs() < 1e-9);
+        assert!((result.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((result.y - 4.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((result.z - 3.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]

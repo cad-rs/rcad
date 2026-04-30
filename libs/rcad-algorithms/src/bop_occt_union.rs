@@ -28,6 +28,7 @@
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
 //! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `union:`.
 
+use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
 use crate::bopds::ds::{DS, Interference};
 use crate::builder;
@@ -36,6 +37,7 @@ use crate::geom_populate;
 use crate::history::BooleanHistory;
 use crate::pave_filler;
 use crate::unify_same_domain_faces;
+use crate::tolerance::*;
 use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::BRep;
@@ -400,6 +402,30 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
     }
 }
 
+/// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].
+/// Larger means a **less** closed manifold shell.
+fn solid_closure_boundary_penalty(brep: &BRep) -> usize {
+    let r = crate::brep_check::validate_solid_closure(brep);
+    r.issues
+        .iter()
+        .filter_map(|i| match i {
+            crate::brep_check::CheckIssue::SolidNotClosed {
+                boundary_edge_count,
+                ..
+            } => Some(*boundary_edge_count),
+            _ => None,
+        })
+        .sum()
+}
+
+fn shell_face_total(brep: &BRep) -> usize {
+    brep.solids
+        .iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .count()
+}
+
 /// Union: DS → PaveFiller → BooleanBuilder(Union) → recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
@@ -416,9 +442,27 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
     let mut result = builder.build()?;
     validate_union_brep_output("union: result failed checks after build", &result)?;
+    // Sew boolean seam vertices so coplanar edge-adjacent patches share endpoints; orthogonal
+    // fuse / `unify_same_domain_faces` need coincident topology to merge remaining fragments.
+    let (sewn, _) = merge_close_vertices(&result, crate::tolerance::TOLERANCE_ABS * 64.0);
+    result = sewn;
     geom_populate::recompute_plane_surfaces(&mut result);
-    validate_union_brep_output("union: result failed checks after plane recompute", &result)?;
+    validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
+    let checkpoint = result.clone();
     merge_coplanar_orthogonal_unify(&mut result);
+    geom_populate::recompute_plane_surfaces(&mut result);
+
+    let pen_before = solid_closure_boundary_penalty(&checkpoint);
+    let pen_after = solid_closure_boundary_penalty(&result);
+    let n_before = shell_face_total(&checkpoint);
+    let n_after = shell_face_total(&result);
+    let suspicious_planar_snarl = pen_after > pen_before
+        && (n_after <= 10 || n_after.saturating_add(12) < n_before);
+    if suspicious_planar_snarl {
+        result = checkpoint;
+        geom_populate::recompute_plane_surfaces(&mut result);
+    }
+
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
 }
@@ -427,11 +471,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
     // Extra rounds help large coplanar stacks (e.g. OCCT `boolean/supported` overlapping boxes)
     // settle before `total_surface_area` vs `checkprops -s` stabilizes.
+    let tol = TOLERANCE_ABS;
     for _ in 0..12 {
-        let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(
-            brep,
-            crate::tolerance::TOLERANCE_ABS,
-        );
+        let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(brep, tol);
         *brep = next;
         geom_populate::recompute_plane_surfaces(brep);
         let (u, n_unify) = unify_same_domain_faces(brep);

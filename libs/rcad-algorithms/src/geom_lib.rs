@@ -29,6 +29,7 @@
 //! - [`check_curve_continuity`] - Check the continuity order of a curve
 //! - [`check_surface_continuity`] - Check the continuity orders of a surface
 
+use crate::tolerance::*;
 use glam::{DAffine3, DVec3};
 
 use rcad_kernel::geom::{
@@ -64,7 +65,7 @@ use rcad_kernel::geom::{
 ///     normal: DVec3::Z,
 ///     radius: 1.0,
 /// };
-/// assert!(is_curve_closed(&Curve3::Circle(circle), 1e-6));
+/// assert!(is_curve_closed(&Curve3::Circle(circle), TOLERANCE_MESH_LEGACY));
 /// ```
 pub fn is_curve_closed(curve: &Curve3, tol: f64) -> bool {
     let [t0, t1] = curve.default_domain();
@@ -103,7 +104,7 @@ pub fn is_curve_closed(curve: &Curve3, tol: f64) -> bool {
 ///     axis: DVec3::Z,
 ///     radius: 1.0,
 /// };
-/// assert!(is_surface_u_closed(&Surface3::Cylinder(cylinder), 1e-6));
+/// assert!(is_surface_u_closed(&Surface3::Cylinder(cylinder), TOLERANCE_MESH_LEGACY));
 /// ```
 pub fn is_surface_u_closed(surface: &Surface3, tol: f64) -> bool {
     let [u0, u1, v0, v1] = surface.default_domain();
@@ -154,7 +155,7 @@ pub fn is_surface_u_closed(surface: &Surface3, tol: f64) -> bool {
 ///     radius: 1.0,
 /// };
 /// // Sphere is closed in U but not in V (has poles)
-/// assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), 1e-6));
+/// assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), TOLERANCE_MESH_LEGACY));
 /// ```
 pub fn is_surface_v_closed(surface: &Surface3, tol: f64) -> bool {
     let [u0, u1, v0, v1] = surface.default_domain();
@@ -330,7 +331,7 @@ fn remove_degenerate_bezier_sections(
 pub fn estimate_normal(surface: &Surface3, u: f64, v: f64) -> DVec3 {
     // First try to use the surface's built-in normal computation
     let normal = surface.normal_at(u, v);
-    if normal.length_squared() > 1e-12 {
+    if normal.length_squared() > TOLERANCE_LEN_MIN {
         return normal;
     }
 
@@ -342,8 +343,8 @@ fn estimate_normal_numerical(surface: &Surface3, u: f64, v: f64) -> DVec3 {
     let [u0, u1, v0, v1] = surface.default_domain();
 
     // Use a small step for numerical differentiation
-    let h_u = ((u1 - u0) * 1e-6_f64).max(1e-8_f64);
-    let h_v = ((v1 - v0) * 1e-6_f64).max(1e-8_f64);
+    let h_u = ((u1 - u0) * TOLERANCE_MESH_LEGACY).max(TOLERANCE_LINEAR_RELAX_8);
+    let h_v = ((v1 - v0) * TOLERANCE_MESH_LEGACY).max(TOLERANCE_LINEAR_RELAX_8);
 
     // Compute partial derivatives numerically
     let p = surface.point_at(u, v);
@@ -354,7 +355,7 @@ fn estimate_normal_numerical(surface: &Surface3, u: f64, v: f64) -> DVec3 {
     let dv = (pv - p) / h_v;
 
     let normal = du.cross(dv);
-    if normal.length_squared() > 1e-12 {
+    if normal.length_squared() > TOLERANCE_LEN_MIN {
         normal.normalize()
     } else {
         // Attempt to find any valid normal using cross products with coordinate axes
@@ -379,8 +380,8 @@ pub fn estimate_normal_by_neighbors(surface: &Surface3, u: f64, v: f64, step: f6
     let [u0, u1, v0, v1] = surface.default_domain();
 
     // Clamp step to valid range
-    let step_u = step.min((u1 - u0) * 0.1_f64).max(1e-8_f64);
-    let step_v = step.min((v1 - v0) * 0.1_f64).max(1e-8_f64);
+    let step_u = step.min((u1 - u0) * 0.1_f64).max(TOLERANCE_LINEAR_RELAX_8);
+    let step_v = step.min((v1 - v0) * 0.1_f64).max(TOLERANCE_LINEAR_RELAX_8);
 
     // Sample a 3x3 grid around the point
     let mut normals: Vec<DVec3> = Vec::new();
@@ -391,7 +392,7 @@ pub fn estimate_normal_by_neighbors(surface: &Surface3, u: f64, v: f64, step: f6
             let v_s = (v + dv).clamp(v0, v1);
 
             let n = estimate_normal(surface, u_s, v_s);
-            if n.length_squared() > 1e-12 {
+            if n.length_squared() > TOLERANCE_LEN_MIN {
                 normals.push(n);
             }
         }
@@ -403,7 +404,7 @@ pub fn estimate_normal_by_neighbors(surface: &Surface3, u: f64, v: f64, step: f6
 
     // Average the normals
     let sum: DVec3 = normals.iter().sum();
-    if sum.length_squared() > 1e-12 {
+    if sum.length_squared() > TOLERANCE_LEN_MIN {
         sum.normalize()
     } else {
         normals[0]
@@ -590,7 +591,7 @@ fn subdivide_bezier_at(curve: &BezierCurve3, t: f64) -> (BezierCurve3, BezierCur
 
             // Weighted interpolation for rational Bezier
             let w = one_minus_t * w0 + t * w1;
-            let p = if w.abs() > 1e-14 {
+            let p = if w.abs() > TOLERANCE_FLOAT_LOOSE {
                 (one_minus_t * w0 * p0 + t * w1 * p1) / w
             } else {
                 p0
@@ -1271,7 +1272,7 @@ mod tests {
             normal: DVec3::Z,
             radius: 1.0,
         };
-        assert!(is_curve_closed(&Curve3::Circle(circle), 1e-6));
+        assert!(is_curve_closed(&Curve3::Circle(circle), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1280,13 +1281,13 @@ mod tests {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        assert!(!is_curve_closed(&Curve3::Line(line), 1e-6));
+        assert!(!is_curve_closed(&Curve3::Line(line), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
     fn test_is_curve_closed_bspline_open() {
         let bspline = line_bspline(DVec3::ZERO, DVec3::X);
-        assert!(!is_curve_closed(&Curve3::BSpline(bspline), 1e-6));
+        assert!(!is_curve_closed(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1303,7 +1304,7 @@ mod tests {
             ],
             weights: vec![1.0, 1.0, 1.0, 1.0],
         };
-        assert!(is_curve_closed(&Curve3::BSpline(bspline), 1e-6));
+        assert!(is_curve_closed(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1313,7 +1314,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
         };
-        assert!(is_surface_u_closed(&Surface3::Cylinder(cylinder), 1e-6));
+        assert!(is_surface_u_closed(&Surface3::Cylinder(cylinder), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1322,7 +1323,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         };
-        assert!(!is_surface_u_closed(&Surface3::Plane(plane), 1e-6));
+        assert!(!is_surface_u_closed(&Surface3::Plane(plane), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1333,7 +1334,7 @@ mod tests {
             radius: 1.0,
         };
         // Sphere has poles, so not closed in V
-        assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), 1e-6));
+        assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1344,14 +1345,14 @@ mod tests {
             major_radius: 2.0,
             minor_radius: 0.5,
         };
-        assert!(is_surface_u_closed(&Surface3::Torus(torus), 1e-6));
-        assert!(is_surface_v_closed(&Surface3::Torus(torus), 1e-6));
+        assert!(is_surface_u_closed(&Surface3::Torus(torus), TOLERANCE_MESH_LEGACY));
+        assert!(is_surface_v_closed(&Surface3::Torus(torus), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
     fn test_remove_degenerate_bspline_no_change() {
         let bspline = line_bspline(DVec3::ZERO, DVec3::X);
-        let result = remove_degenerate_curve_sections(&Curve3::BSpline(bspline), 1e-6);
+        let result = remove_degenerate_curve_sections(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY);
         assert!(result.is_none());
     }
 
@@ -1362,12 +1363,12 @@ mod tests {
             knots: vec![0.0, 0.0, 1.0, 2.0, 3.0, 3.0],
             control_points: vec![
                 DVec3::ZERO,
-                DVec3::new(1e-9, 0.0, 0.0), // Degenerate
+                DVec3::new(TOLERANCE_COORD_SUB, 0.0, 0.0), // Degenerate
                 DVec3::new(2.0, 0.0, 0.0),
             ],
             weights: vec![1.0, 1.0, 1.0],
         };
-        let result = remove_degenerate_curve_sections(&Curve3::BSpline(bspline), 1e-6);
+        let result = remove_degenerate_curve_sections(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY);
         // Should remove the degenerate point
         assert!(result.is_some());
     }
@@ -1379,7 +1380,7 @@ mod tests {
             normal: DVec3::Z,
         };
         let normal = estimate_normal(&Surface3::Plane(plane), 0.5, 0.5);
-        assert!((normal - DVec3::Z).length() < 1e-6 || (normal + DVec3::Z).length() < 1e-6);
+        assert!((normal - DVec3::Z).length() < TOLERANCE_MESH_LEGACY || (normal + DVec3::Z).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1401,7 +1402,7 @@ mod tests {
             normal: DVec3::Z,
         };
         let normal = estimate_normal_by_neighbors(&Surface3::Plane(plane), 0.5, 0.5, 0.1);
-        assert!((normal - DVec3::Z).length() < 1e-6 || (normal + DVec3::Z).length() < 1e-6);
+        assert!((normal - DVec3::Z).length() < TOLERANCE_MESH_LEGACY || (normal + DVec3::Z).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1413,7 +1414,7 @@ mod tests {
             assert_eq!(rev.control_points.len(), original.control_points.len());
             // First control point should now be the last
             assert!(
-                (rev.control_points[0] - original.control_points[1]).length() < 1e-9
+                (rev.control_points[0] - original.control_points[1]).length() < TOLERANCE_COORD_SUB
             );
         } else {
             panic!("Expected BSpline curve");
@@ -1428,7 +1429,7 @@ mod tests {
         };
         let reversed = reverse_curve(Curve3::Line(line));
         if let Curve3::Line(rev) = reversed {
-            assert!((rev.direction - (-DVec3::X)).length() < 1e-9);
+            assert!((rev.direction - (-DVec3::X)).length() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected Line curve");
         }
@@ -1442,8 +1443,8 @@ mod tests {
         if let Curve3::BSpline(trim) = trimmed {
             let p0 = trim.point_at(0.0);
             let p1 = trim.point_at(1.0);
-            assert!((p0.x - 2.0).abs() < 1e-6, "Expected x=2, got {}", p0.x);
-            assert!((p1.x - 7.0).abs() < 1e-6, "Expected x=7, got {}", p1.x);
+            assert!((p0.x - 2.0).abs() < TOLERANCE_MESH_LEGACY, "Expected x=2, got {}", p0.x);
+            assert!((p1.x - 7.0).abs() < TOLERANCE_MESH_LEGACY, "Expected x=7, got {}", p1.x);
         } else {
             panic!("Expected BSpline curve");
         }
@@ -1456,8 +1457,8 @@ mod tests {
         let transformed = transform_curve(&Curve3::BSpline(original), translation);
 
         if let Curve3::BSpline(trans) = transformed {
-            assert!((trans.control_points[0] - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-9);
-            assert!((trans.control_points[1] - DVec3::new(2.0, 2.0, 3.0)).length() < 1e-9);
+            assert!((trans.control_points[0] - DVec3::new(1.0, 2.0, 3.0)).length() < TOLERANCE_COORD_SUB);
+            assert!((trans.control_points[1] - DVec3::new(2.0, 2.0, 3.0)).length() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected BSpline curve");
         }
@@ -1474,8 +1475,8 @@ mod tests {
         let transformed = transform_curve(&Curve3::Circle(circle), translation);
 
         if let Curve3::Circle(trans) = transformed {
-            assert!((trans.center - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-9);
-            assert!((trans.radius - 1.0).abs() < 1e-9);
+            assert!((trans.center - DVec3::new(1.0, 2.0, 3.0)).length() < TOLERANCE_COORD_SUB);
+            assert!((trans.radius - 1.0).abs() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected Circle curve");
         }
@@ -1489,7 +1490,7 @@ mod tests {
         if let Surface3::BSpline(rev) = reversed {
             // First row should now be the last
             assert!(
-                (rev.control_points[0][0] - original.control_points[1][0]).length() < 1e-9
+                (rev.control_points[0][0] - original.control_points[1][0]).length() < TOLERANCE_COORD_SUB
             );
         } else {
             panic!("Expected BSpline surface");
@@ -1504,7 +1505,7 @@ mod tests {
         if let Surface3::BSpline(rev) = reversed {
             // First column should now be the last
             assert!(
-                (rev.control_points[0][0] - original.control_points[0][1]).length() < 1e-9
+                (rev.control_points[0][0] - original.control_points[0][1]).length() < TOLERANCE_COORD_SUB
             );
         } else {
             panic!("Expected BSpline surface");
@@ -1520,10 +1521,10 @@ mod tests {
         let trimmed = trim_surface(&Surface3::Plane(plane), 0.0, 1.0, 0.0, 1.0);
 
         if let Surface3::Trimmed(t) = trimmed {
-            assert!((t.trim[0] - 0.0).abs() < 1e-9);
-            assert!((t.trim[1] - 1.0).abs() < 1e-9);
-            assert!((t.trim[2] - 0.0).abs() < 1e-9);
-            assert!((t.trim[3] - 1.0).abs() < 1e-9);
+            assert!((t.trim[0] - 0.0).abs() < TOLERANCE_COORD_SUB);
+            assert!((t.trim[1] - 1.0).abs() < TOLERANCE_COORD_SUB);
+            assert!((t.trim[2] - 0.0).abs() < TOLERANCE_COORD_SUB);
+            assert!((t.trim[3] - 1.0).abs() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected Trimmed surface");
         }
@@ -1539,7 +1540,7 @@ mod tests {
         let transformed = transform_surface(&Surface3::Plane(plane), translation);
 
         if let Surface3::Plane(trans) = transformed {
-            assert!((trans.origin - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-9);
+            assert!((trans.origin - DVec3::new(1.0, 2.0, 3.0)).length() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected Plane surface");
         }
@@ -1556,7 +1557,7 @@ mod tests {
         let transformed = transform_surface(&Surface3::Cylinder(cylinder), scale);
 
         if let Surface3::Cylinder(trans) = transformed {
-            assert!((trans.radius - 2.0).abs() < 1e-9);
+            assert!((trans.radius - 2.0).abs() < TOLERANCE_COORD_SUB);
         } else {
             panic!("Expected Cylinder surface");
         }
@@ -1568,7 +1569,7 @@ mod tests {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        assert_eq!(check_curve_continuity(&Curve3::Line(line), 1e-6), usize::MAX);
+        assert_eq!(check_curve_continuity(&Curve3::Line(line), TOLERANCE_MESH_LEGACY), usize::MAX);
     }
 
     #[test]
@@ -1587,7 +1588,7 @@ mod tests {
             weights: vec![1.0; 5],
         };
         // At knot 0.5 with multiplicity 1, continuity = 3 - 1 = 2
-        assert_eq!(check_curve_continuity(&Curve3::BSpline(bspline), 1e-6), 2);
+        assert_eq!(check_curve_continuity(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY), 2);
     }
 
     #[test]
@@ -1607,7 +1608,7 @@ mod tests {
             weights: vec![1.0; 6],
         };
         // At knot 0.5 with multiplicity 2, continuity = 3 - 2 = 1
-        assert_eq!(check_curve_continuity(&Curve3::BSpline(bspline), 1e-6), 1);
+        assert_eq!(check_curve_continuity(&Curve3::BSpline(bspline), TOLERANCE_MESH_LEGACY), 1);
     }
 
     #[test]
@@ -1616,7 +1617,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         };
-        let (u_cont, v_cont) = check_surface_continuity(&Surface3::Plane(plane), 1e-6);
+        let (u_cont, v_cont) = check_surface_continuity(&Surface3::Plane(plane), TOLERANCE_MESH_LEGACY);
         assert_eq!(u_cont, usize::MAX);
         assert_eq!(v_cont, usize::MAX);
     }
@@ -1641,7 +1642,7 @@ mod tests {
                 vec![1.0, 1.0, 1.0],
             ],
         };
-        let (u_cont, v_cont) = check_surface_continuity(&Surface3::BSpline(surface), 1e-6);
+        let (u_cont, v_cont) = check_surface_continuity(&Surface3::BSpline(surface), TOLERANCE_MESH_LEGACY);
         // No internal knots in U, so C3; no internal knots in V, so C2
         assert_eq!(u_cont, 3);
         assert_eq!(v_cont, 2);

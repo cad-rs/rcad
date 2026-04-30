@@ -40,6 +40,9 @@ pub struct DSVertex {
     pub point: DVec3,
     /// None for vertices created at intersections.
     pub origin: Option<ShapeOrigin>,
+    /// Model tolerance at this vertex (`vertex_tolerance` from source BRep when loaded;
+    /// [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) for vertices added by the DS).
+    pub geom_tol: f64,
 }
 
 /// An edge in the DS pool with curve reference.
@@ -52,6 +55,8 @@ pub struct DSEdge {
     /// Parametric range `[t_start, t_end]` on the curve.
     pub t_range: [f64; 2],
     pub origin: ShapeOrigin,
+    /// Model tolerance on the source edge (`edge_tolerance` from BRep when loaded).
+    pub geom_tol: f64,
     /// Paves inserted on this edge by intersection passes (unsorted until build_split_edges).
     pub paves: Vec<Pave>,
     /// After `build_split_edges`, the edge is represented by these sub-segments.
@@ -71,6 +76,8 @@ pub struct DSFace {
     pub face_info: FaceInfo,
     /// Original face index within the source BRep's flattened face list.
     pub source_face_idx: usize,
+    /// Model tolerance on the source face (`face_tolerance` from BRep when loaded).
+    pub geom_tol: f64,
     /// UV-space boundary polygon on this face's surface (populated in Task 3+).
     pub uv_boundary: Option<Vec<DVec2>>,
 }
@@ -276,7 +283,7 @@ impl DS {
         }
 
         let diagonal = (max_pt - min_pt).length();
-        diagonal.max(1e-10)
+        diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
     }
 
     /// Compute UV boundary for all curved faces by projecting 3D boundary
@@ -336,7 +343,7 @@ impl DS {
                         h_max = 1.0;
                     }
                     // Add small margin
-                    let margin = (h_max - h_min) * 0.01 + 1e-9;
+                    let margin = (h_max - h_min) * 0.01 + TOLERANCE_COORD_SUB;
                     // Use [0, 2π] to match CylindricalSurface::point_at parameterisation.
                     // circle_pcurve_on_cylinder also uses u ∈ [0, 2π], so the trim polyline
                     // will lie entirely inside this UV boundary.
@@ -376,11 +383,11 @@ impl DS {
                         v_min = 0.0;
                         v_max = 1.0;
                     }
-                    if (v_max - v_min).abs() < 1e-9 {
+                    if (v_max - v_min).abs() < TOLERANCE_COORD_SUB {
                         v_min -= 0.5;
                         v_max += 0.5;
                     }
-                    let margin = (v_max - v_min) * 0.01 + 1e-9;
+                    let margin = (v_max - v_min) * 0.01 + TOLERANCE_COORD_SUB;
                     let uv = vec![
                         DVec2::new(0.0, v_min - margin),
                         DVec2::new(2.0 * PI, v_min - margin),
@@ -442,10 +449,11 @@ impl DS {
         let edge_offset = self.edges.len();
 
         // Vertices
-        for v in &brep.vertices {
+        for (local_i, v) in brep.vertices.iter().enumerate() {
             self.vertices.push(DSVertex {
                 point: v.point,
                 origin: Some(origin),
+                geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
             });
         }
 
@@ -494,6 +502,7 @@ impl DS {
                 curve,
                 t_range,
                 origin,
+                geom_tol: rcad_kernel::edge_tolerance(brep, i),
                 paves: Vec::new(),
                 pave_blocks: Vec::new(),
             });
@@ -578,6 +587,7 @@ impl DS {
                         origin,
                         face_info: FaceInfo::default(),
                         source_face_idx: face_idx,
+                        geom_tol: rcad_kernel::face_tolerance(brep, face_idx),
                         uv_boundary: None,
                     });
 
@@ -588,9 +598,14 @@ impl DS {
     }
 
     /// Add a vertex, deduplicating against existing vertices.
+    ///
+    /// Coincidence uses `max(fuzzy_tol, TOLERANCE_ABS, each vertex's geom_tol)` so
+    /// imported vertex tolerances and pave fuzzy both widen merging.
     pub fn add_vertex(&mut self, point: DVec3) -> usize {
+        let new_base = self.fuzzy_tol.max(TOLERANCE_ABS);
         for (i, v) in self.vertices.iter().enumerate() {
-            if points_coincide(v.point, point) {
+            let merge_tol = new_base.max(v.geom_tol);
+            if (v.point - point).length() <= merge_tol {
                 return i;
             }
         }
@@ -598,6 +613,7 @@ impl DS {
         self.vertices.push(DSVertex {
             point,
             origin: None,
+            geom_tol: new_base,
         });
         idx
     }
@@ -618,13 +634,13 @@ impl DS {
     /// the DS is fully constructed but before interference detection.
     ///
     /// # Arguments
-    /// * `tolerance` - Maximum distance for considering geometry coincident.
+    /// * `tolerance` - Base distance for glue-style coincidence; combined per pair with
+    ///   relevant `geom_tol` on vertices, edges, or faces (`max` of all).
     ///
     /// # Returns
     /// A reference to the populated `SharedTopologyInfo`.
     pub fn detect_shared_topology(&mut self, tolerance: f64) -> &SharedTopologyInfo {
         let tol = tolerance.max(TOLERANCE_ABS);
-        let tol_sq = tol * tol;
 
         // Clear any previous data
         self.shared_topology = SharedTopologyInfo::default();
@@ -634,7 +650,11 @@ impl DS {
             for vi_b in self.a_vertex_count..self.vertices.len() {
                 let p_a = self.vertices[vi_a].point;
                 let p_b = self.vertices[vi_b].point;
-                if (p_a - p_b).length_squared() <= tol_sq {
+                let pair_tol = tol
+                    .max(self.vertices[vi_a].geom_tol)
+                    .max(self.vertices[vi_b].geom_tol);
+                let pair_tol_sq = pair_tol * pair_tol;
+                if (p_a - p_b).length_squared() <= pair_tol_sq {
                     self.shared_topology.shared_vertices.push((vi_a, vi_b));
                 }
             }
@@ -643,7 +663,10 @@ impl DS {
         // Detect shared edges
         for ei_a in 0..self.a_edge_count {
             for ei_b in self.a_edge_count..self.edges.len() {
-                if self.edges_geometry_compatible(ei_a, ei_b, tol) {
+                let edge_tol = tol
+                    .max(self.edges[ei_a].geom_tol)
+                    .max(self.edges[ei_b].geom_tol);
+                if self.edges_geometry_compatible(ei_a, ei_b, edge_tol) {
                     self.shared_topology.shared_edges.push((ei_a, ei_b));
                 }
             }
@@ -656,8 +679,12 @@ impl DS {
                     continue; // Same shape, skip
                 }
 
-                let full_overlap = self.faces_boundary_fully_overlap(fi_a, fi_b, tol);
-                let partial_overlap = !full_overlap && self.faces_share_edges(fi_a, fi_b, tol);
+                let face_tol = tol
+                    .max(self.faces[fi_a].geom_tol)
+                    .max(self.faces[fi_b].geom_tol);
+                let full_overlap = self.faces_boundary_fully_overlap(fi_a, fi_b, face_tol);
+                let partial_overlap =
+                    !full_overlap && self.faces_share_edges(fi_a, fi_b, face_tol);
 
                 if full_overlap {
                     self.shared_topology.fully_glued_faces.push((fi_a, fi_b));
@@ -818,7 +845,38 @@ impl DS {
 mod tests {
     use super::*;
     use crate::geom_populate::populate_box_geom;
+    use rcad_kernel::tolerance::{set_edge_tolerance, set_face_tolerance, set_vertex_tolerance};
     use rcad_kernel::PrimitiveSolid;
+
+    #[test]
+    fn ds_load_brep_copies_geom_tolerances_into_pool() {
+        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        });
+        populate_box_geom(&mut a);
+        set_vertex_tolerance(&mut a, 0, 2.0 * TOLERANCE_ADAPTIVE_MAX);
+        set_edge_tolerance(&mut a, 0, 3e-3);
+        set_face_tolerance(&mut a, 0, 4e-3);
+
+        let b = BRep::default();
+        let ds = DS::new(&a, &b);
+
+        assert!((ds.vertices[0].geom_tol - 2.0 * TOLERANCE_ADAPTIVE_MAX).abs() < TOLERANCE_LEN_MIN);
+        assert!((ds.edges[0].geom_tol - 3e-3).abs() < TOLERANCE_LEN_MIN);
+        assert!((ds.faces[0].geom_tol - 4e-3).abs() < TOLERANCE_LEN_MIN);
+    }
+
+    #[test]
+    fn ds_add_vertex_dedup_respects_fuzzy_tol() {
+        let empty = BRep::default();
+        let mut ds = DS::new_with_fuzzy(&empty, &empty, TOLERANCE_RETRY_LADDER_COARSE);
+        let a = ds.add_vertex(DVec3::ZERO);
+        let b = ds.add_vertex(DVec3::new(5e-5, 0.0, 0.0));
+        assert_eq!(a, b);
+        assert!((ds.vertices[a].geom_tol - TOLERANCE_RETRY_LADDER_COARSE).abs() < TOLERANCE_FLOAT_ULTRA);
+    }
 
     #[test]
     fn ds_from_two_boxes() {

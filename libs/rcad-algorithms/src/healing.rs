@@ -14,7 +14,11 @@ use crate::brep_repair::{
     MakeConnectedReport, RepairReport, fix_same_parameter_with_scan,
     fix_same_range_with_scan, make_connected_iterative_with_growth_cap, repair,
 };
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::{
+    TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
+    TOLERANCE_LINEAR_ULTRA_STRICT, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE,
+    TOLERANCE_RETRY_LADDER_MID, TOLERANCE_VOL_CUBE_FACTOR,
+};
 
 /// Healing execution mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +406,7 @@ impl Default for SplitContinuityOperator {
     fn default() -> Self {
         Self {
             min_continuity: ContinuityLevel::C1,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             check_curves: true,
             check_surfaces: true,
             max_splits_per_edge: 100,
@@ -540,8 +544,8 @@ impl ScaleShapeOperator {
 
     /// Returns true if the scaling is uniform (same factor in all directions).
     pub fn is_uniform(&self) -> bool {
-        (self.scale_x - self.scale_y).abs() < 1e-12
-            && (self.scale_y - self.scale_z).abs() < 1e-12
+        (self.scale_x - self.scale_y).abs() < TOLERANCE_LEN_MIN
+            && (self.scale_y - self.scale_z).abs() < TOLERANCE_LEN_MIN
     }
 }
 
@@ -667,7 +671,7 @@ impl Default for RemoveInternalFacesOperator {
     fn default() -> Self {
         Self {
             tolerance: TOLERANCE_ABS,
-            min_face_area: 1e-10,
+            min_face_area: TOLERANCE_LINEAR_ULTRA_STRICT,
             check_manifold: true,
             merge_vertices: true,
             preserve_material_boundaries: true,
@@ -767,7 +771,7 @@ impl Default for HealGeometryOperator {
             recompute_normals: true,
             fix_uv_bounds: true,
             remove_small_edges: false,
-            min_edge_length: 1e-6,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
             custom_sequence: Vec::new(),
         }
     }
@@ -796,7 +800,7 @@ impl HealGeometryOperator {
             recompute_normals: true,
             fix_uv_bounds: false,
             remove_small_edges: false,
-            min_edge_length: 1e-6,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
             custom_sequence: Vec::new(),
         }
     }
@@ -893,7 +897,7 @@ impl Default for OperatorParams {
     fn default() -> Self {
         Self {
             tolerance: TOLERANCE_ABS,
-            min_face_area: 1e-10,
+            min_face_area: TOLERANCE_LINEAR_ULTRA_STRICT,
             max_sliver_aspect_ratio: 100.0,
             allow_internal_face_removal: true,
             split_angle: SplitAngleOperator::default(),
@@ -1473,7 +1477,7 @@ impl Default for OperatorChainConfig {
             max_iterations: 1,
             base_tolerance: TOLERANCE_ABS,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-3,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             healing_options: HealingOptions::default(),
             operator_params: OperatorParams::default(),
             collect_timing: true,
@@ -1502,7 +1506,7 @@ impl OperatorChainConfig {
             max_iterations: 2,
             base_tolerance: TOLERANCE_ABS,
             tolerance_growth: 1.5,
-            tolerance_cap: 1e-3,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             healing_options: HealingOptions::default(),
             operator_params: OperatorParams::default(),
             collect_timing: true,
@@ -1522,7 +1526,7 @@ impl OperatorChainConfig {
             max_iterations: 1,
             base_tolerance: TOLERANCE_ABS,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-3,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             healing_options: HealingOptions::default(),
             operator_params: OperatorParams::default(),
             collect_timing: true,
@@ -1541,7 +1545,7 @@ impl OperatorChainConfig {
             max_iterations: 1,
             base_tolerance: TOLERANCE_ABS * scale,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-3 * scale,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX * scale,
             healing_options: HealingOptions::default(),
             operator_params: OperatorParams::default(),
             collect_timing: true,
@@ -1718,7 +1722,7 @@ impl Default for ShapeProcessConfig {
             stop_on_clean: true,
             max_iterations: 1,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-3,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             base_tolerance: TOLERANCE_ABS,
             operator_params: OperatorParams::default(),
             healing_options: HealingOptions::default(),
@@ -1745,11 +1749,11 @@ impl ShapeProcessConfig {
             stop_on_clean: true,
             max_iterations: 3,
             tolerance_growth: 1.5,
-            tolerance_cap: 1e-3,
+            tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             base_tolerance: TOLERANCE_ABS,
             operator_params: OperatorParams {
                 tolerance: TOLERANCE_ABS,
-                min_face_area: 1e-8,
+                min_face_area: TOLERANCE_COORD_SUB * 10.0,
                 max_sliver_aspect_ratio: 50.0,
                 allow_internal_face_removal: false,
                 ..Default::default()
@@ -1783,11 +1787,11 @@ impl ShapeProcessConfig {
             stop_on_clean: true,
             max_iterations: 2,
             tolerance_growth: 2.0,
-            tolerance_cap: 1e-4,
+            tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE,
             base_tolerance: TOLERANCE_ABS * 10.0,
             operator_params: OperatorParams {
                 tolerance: TOLERANCE_ABS * 10.0,
-                min_face_area: 1e-10,
+                min_face_area: TOLERANCE_LINEAR_ULTRA_STRICT,
                 max_sliver_aspect_ratio: 100.0,
                 allow_internal_face_removal: true,
                 ..Default::default()
@@ -1819,11 +1823,11 @@ impl ShapeProcessConfig {
             stop_on_clean: true,
             max_iterations: 1,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-5,
+            tolerance_cap: TOLERANCE_RETRY_LADDER_MID,
             base_tolerance: TOLERANCE_ABS,
             operator_params: OperatorParams {
                 tolerance: TOLERANCE_ABS,
-                min_face_area: 1e-12,
+                min_face_area: TOLERANCE_VOL_CUBE_FACTOR * TOLERANCE_ADAPTIVE_MAX,
                 max_sliver_aspect_ratio: 1000.0,
                 allow_internal_face_removal: false,
                 ..Default::default()
@@ -1862,11 +1866,11 @@ impl ShapeProcessConfig {
             stop_on_clean: true,
             max_iterations: 5,
             tolerance_growth: 1.5,
-            tolerance_cap: 1e-2,
+            tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE * 100.0,
             base_tolerance: TOLERANCE_ABS,
             operator_params: OperatorParams {
                 tolerance: TOLERANCE_ABS,
-                min_face_area: 1e-8,
+                min_face_area: TOLERANCE_COORD_SUB * 10.0,
                 max_sliver_aspect_ratio: 50.0,
                 allow_internal_face_removal: true,
                 ..Default::default()
@@ -2789,7 +2793,7 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
 fn fix_small_area_faces(brep: &BRep, min_area: f64) -> (BRep, usize) {
     let mut result = brep.clone();
     let mut removed_count = 0usize;
-    let min_area = if min_area > 0.0 { min_area } else { 1e-10 };
+    let min_area = if min_area > 0.0 { min_area } else { TOLERANCE_LINEAR_ULTRA_STRICT };
 
     for solid in &mut result.solids {
         for shell in &mut solid.shells {
@@ -3079,7 +3083,7 @@ fn check_curve_continuity_at(curve: &rcad_kernel::geom::Curve3, t: f64, dt: f64)
     // A discontinuity would show as a jump larger than expected from linear interpolation
     let expected_pos_gap = (p_hi - p_lo).length();
     let actual_gap = (p_mid - p_lo).length() + (p_hi - p_mid).length();
-    let gap_ratio = (actual_gap - expected_pos_gap).abs() / expected_pos_gap.max(1e-10);
+    let gap_ratio = (actual_gap - expected_pos_gap).abs() / expected_pos_gap.max(TOLERANCE_LINEAR_ULTRA_STRICT);
 
     if gap_ratio > 0.1 {
         // Significant deviation from expected - likely a discontinuity
@@ -3109,7 +3113,7 @@ fn check_curve_continuity_at(curve: &rcad_kernel::geom::Curve3, t: f64, dt: f64)
         .max((curvature_hi - avg_curvature).abs());
 
     // Use relative tolerance for curvature
-    let tol = avg_curvature.abs().max(1e-6) * 0.1 + 0.01;
+    let tol = avg_curvature.abs().max(TOLERANCE_MESH_LEGACY) * 0.1 + 0.01;
     if max_deviation > tol {
         return ContinuityLevel::C1;
     }
@@ -3121,7 +3125,7 @@ fn check_curve_continuity_at(curve: &rcad_kernel::geom::Curve3, t: f64, dt: f64)
 fn compute_curvature_at(curve: &rcad_kernel::geom::Curve3, t: f64) -> f64 {
     use rcad_kernel::geom::CurveEval;
 
-    let eps = 1e-6;
+    let eps = TOLERANCE_MESH_LEGACY;
     let p = curve.point_at(t);
     let p_lo = curve.point_at(t - eps);
     let p_hi = curve.point_at(t + eps);
@@ -3134,7 +3138,7 @@ fn compute_curvature_at(curve: &rcad_kernel::geom::Curve3, t: f64) -> f64 {
     let cross = d1.cross(d2);
     let d1_len = d1.length();
 
-    if d1_len < 1e-12 {
+    if d1_len < TOLERANCE_LEN_MIN {
         return 0.0;
     }
 
@@ -3277,9 +3281,9 @@ fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usiz
     use glam::DAffine3;
 
     // Check for identity scaling
-    if (params.scale_x - 1.0).abs() < 1e-12
-        && (params.scale_y - 1.0).abs() < 1e-12
-        && (params.scale_z - 1.0).abs() < 1e-12
+    if (params.scale_x - 1.0).abs() < TOLERANCE_LEN_MIN
+        && (params.scale_y - 1.0).abs() < TOLERANCE_LEN_MIN
+        && (params.scale_z - 1.0).abs() < TOLERANCE_LEN_MIN
     {
         return (brep.clone(), 0);
     }
@@ -4096,18 +4100,18 @@ mod tests {
         b.solids[0].shells[0].faces[0].outer_wire.edges[0].idx = usize::MAX;
         // Add near-duplicate vertices that can be merged only by the fallback
         // tolerance (repair tolerance intentionally set much tighter).
-        b.vertices[1].point = b.vertices[0].point + DVec3::new(1.0e-6, 0.0, 0.0);
+        b.vertices[1].point = b.vertices[0].point + DVec3::new(TOLERANCE_MESH_LEGACY, 0.0, 0.0);
 
         let (_out, report) = analyze_and_heal(
             &b,
             HealingOptions {
-                tolerance: 1.0e-12,
+                tolerance: TOLERANCE_LEN_MIN,
                 max_passes: 1,
                 run_make_connected_on_stall: true,
-                make_connected_tolerance: 1.0e-4,
+                make_connected_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
                 make_connected_max_passes: 2,
                 make_connected_tolerance_growth: 1.0,
-                make_connected_tolerance_cap: 1.0e-4,
+                make_connected_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE,
                 ..HealingOptions::default()
             },
         );
@@ -4176,10 +4180,10 @@ mod tests {
             HealingOptions {
                 max_passes: 1,
                 make_connected_prepass_mode: MakeConnectedPrepassMode::Always,
-                make_connected_tolerance: 1.0e-4,
+                make_connected_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
                 make_connected_max_passes: 1,
                 make_connected_tolerance_growth: 1.0,
-                make_connected_tolerance_cap: 1.0e-4,
+                make_connected_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE,
                 ..HealingOptions::default()
             },
         );
@@ -4336,7 +4340,7 @@ mod tests {
         let b = unit_box();
 
         // Unit box faces are not tiny, so nothing should be removed
-        let (result, removed) = fix_small_area_faces(&b, 1e-12);
+        let (result, removed) = fix_small_area_faces(&b, TOLERANCE_VOL_CUBE_FACTOR * TOLERANCE_ADAPTIVE_MAX);
         assert_eq!(removed, 0);
 
         // The result should have the same number of faces
@@ -4390,12 +4394,12 @@ mod tests {
     #[test]
     fn split_angle_operator_default_params() {
         let params = SplitAngleOperator::default();
-        assert!((params.max_angle - std::f64::consts::PI / 2.0).abs() < 1e-12);
+        assert!((params.max_angle - std::f64::consts::PI / 2.0).abs() < TOLERANCE_LEN_MIN);
         assert!(params.split_cylinders);
         assert!(params.split_tori);
         assert!(params.split_cones);
         assert!(params.split_spheres);
-        assert!((params.start_angle).abs() < 1e-12);
+        assert!((params.start_angle).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4441,7 +4445,7 @@ mod tests {
     fn split_continuity_default_params() {
         let params = SplitContinuityOperator::default();
         assert_eq!(params.min_continuity, ContinuityLevel::C1);
-        assert!((params.tolerance - 1e-6).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
         assert!(params.check_curves);
         assert!(params.check_surfaces);
         assert_eq!(params.max_splits_per_edge, 100);
@@ -4530,25 +4534,25 @@ mod tests {
     fn scale_shape_uniform() {
         let scale = ScaleShapeOperator::uniform(2.0);
         assert!(scale.is_uniform());
-        assert!((scale.scale_x - 2.0).abs() < 1e-12);
-        assert!((scale.scale_y - 2.0).abs() < 1e-12);
-        assert!((scale.scale_z - 2.0).abs() < 1e-12);
+        assert!((scale.scale_x - 2.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((scale.scale_y - 2.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((scale.scale_z - 2.0).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
     fn scale_shape_non_uniform() {
         let scale = ScaleShapeOperator::non_uniform(2.0, 1.0, 0.5);
         assert!(!scale.is_uniform());
-        assert!((scale.scale_x - 2.0).abs() < 1e-12);
-        assert!((scale.scale_y - 1.0).abs() < 1e-12);
-        assert!((scale.scale_z - 0.5).abs() < 1e-12);
+        assert!((scale.scale_x - 2.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((scale.scale_y - 1.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((scale.scale_z - 0.5).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
     fn scale_shape_default_is_identity() {
         let scale = ScaleShapeOperator::default();
         assert!(scale.is_uniform());
-        assert!((scale.scale_x - 1.0).abs() < 1e-12);
+        assert!((scale.scale_x - 1.0).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4566,9 +4570,9 @@ mod tests {
         let original_size = original_bounds[1] - original_bounds[0];
         let scaled_size = scaled_bounds[1] - scaled_bounds[0];
 
-        assert!((scaled_size.x - 2.0 * original_size.x).abs() < 1e-10);
-        assert!((scaled_size.y - 2.0 * original_size.y).abs() < 1e-10);
-        assert!((scaled_size.z - 2.0 * original_size.z).abs() < 1e-10);
+        assert!((scaled_size.x - 2.0 * original_size.x).abs() < super::TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((scaled_size.y - 2.0 * original_size.y).abs() < super::TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((scaled_size.z - 2.0 * original_size.z).abs() < super::TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4818,7 +4822,7 @@ mod tests {
     #[test]
     fn direct_faces_operator_default() {
         let params = DirectFacesOperator::default();
-        assert!((params.tolerance - TOLERANCE_ABS).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_ABS).abs() < TOLERANCE_LEN_MIN);
         assert!(params.update_surface_references);
         assert!(params.recompute_normals);
         assert!(params.fix_wire_orientation);
@@ -4851,7 +4855,7 @@ mod tests {
     #[test]
     fn same_parameter_operator_default() {
         let params = SameParameterOperator::default();
-        assert!((params.tolerance - TOLERANCE_ABS).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_ABS).abs() < TOLERANCE_LEN_MIN);
         assert_eq!(params.max_samples, 23);
         assert!(!params.enforce);
         assert!(params.update_pcurve_ranges);
@@ -4859,9 +4863,9 @@ mod tests {
 
     #[test]
     fn same_parameter_operator_enforced() {
-        let params = SameParameterOperator::enforced(1e-6);
+        let params = SameParameterOperator::enforced(super::TOLERANCE_MESH_LEGACY);
         assert!(params.enforce);
-        assert!((params.tolerance - 1e-6).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4877,8 +4881,8 @@ mod tests {
     #[test]
     fn remove_internal_faces_operator_default() {
         let params = RemoveInternalFacesOperator::default();
-        assert!((params.tolerance - TOLERANCE_ABS).abs() < 1e-12);
-        assert!((params.min_face_area - 1e-10).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_ABS).abs() < TOLERANCE_LEN_MIN);
+        assert!((params.min_face_area - TOLERANCE_LINEAR_ULTRA_STRICT).abs() < TOLERANCE_LEN_MIN);
         assert!(params.check_manifold);
         assert!(params.merge_vertices);
         assert!(params.preserve_material_boundaries);
@@ -4897,7 +4901,7 @@ mod tests {
     #[test]
     fn heal_geometry_operator_default() {
         let params = HealGeometryOperator::default();
-        assert!((params.tolerance - TOLERANCE_ABS).abs() < 1e-12);
+        assert!((params.tolerance - TOLERANCE_ABS).abs() < TOLERANCE_LEN_MIN);
         assert_eq!(params.max_passes, 3);
         assert!(params.fix_face_orientation);
         assert!(params.fix_same_parameter);
@@ -4912,7 +4916,7 @@ mod tests {
 
     #[test]
     fn heal_geometry_operator_minimal() {
-        let params = HealGeometryOperator::minimal(1e-6);
+        let params = HealGeometryOperator::minimal(TOLERANCE_MESH_LEGACY);
         assert_eq!(params.max_passes, 1);
         assert!(params.fix_face_orientation);
         assert!(params.fix_same_parameter);
@@ -4922,7 +4926,7 @@ mod tests {
 
     #[test]
     fn heal_geometry_operator_aggressive() {
-        let params = HealGeometryOperator::aggressive(1e-6);
+        let params = HealGeometryOperator::aggressive(TOLERANCE_MESH_LEGACY);
         assert_eq!(params.max_passes, 5);
         assert!(params.remove_small_edges);
     }
@@ -5046,7 +5050,7 @@ mod tests {
             ..OperatorResult::default()
         });
 
-        assert!((agg.change_rate() - 0.5).abs() < 1e-12);
+        assert!((agg.change_rate() - 0.5).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -5091,7 +5095,7 @@ mod tests {
         let snapshot = BRepSnapshot::new(&b, 0, "test", 0.5);
         assert_eq!(snapshot.operator_index, 0);
         assert_eq!(snapshot.label, "test");
-        assert!((snapshot.timestamp_seconds - 0.5).abs() < 1e-12);
+        assert!((snapshot.timestamp_seconds - 0.5).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -5160,7 +5164,7 @@ mod tests {
             total_operators: 4,
             ..Default::default()
         };
-        assert!((cb.progress() - 0.5).abs() < 1e-12);
+        assert!((cb.progress() - 0.5).abs() < TOLERANCE_LEN_MIN);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

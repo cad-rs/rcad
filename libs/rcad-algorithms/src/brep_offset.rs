@@ -37,7 +37,7 @@
 //!
 //! let opts = OffsetOptions::new(0.5)
 //!     .with_join_type(JoinType::Arc)
-//!     .with_tolerance(1e-4);
+//!     .with_tolerance(TOLERANCE_RETRY_LADDER_COARSE);
 //!
 //! let offset_result = MakeOffsetShape::new(&brep, opts).build()?;
 //! ```
@@ -50,7 +50,7 @@ use rcad_kernel::{
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 use crate::offset::{self, JoinType, OffsetError, OffsetOptions, OffsetResult};
 use crate::triangulate::{TessellationParams, mesh_brep};
 
@@ -129,7 +129,7 @@ impl Default for BRepOffsetOptions {
             interpolation_steps: 10,
             cap_open_edges: true,
             tolerance: TOLERANCE_ABS,
-            angular_tolerance: 1e-6,
+            angular_tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -326,7 +326,7 @@ impl<'a> MakeOffset<'a> {
 
     /// Build the offset wire.
     pub fn build(&self) -> Result<WireOffsetResult, OffsetError> {
-        if self.distance.abs() < 1e-12 {
+        if self.distance.abs() < TOLERANCE_LEN_MIN {
             return Err(OffsetError::ZeroDistance);
         }
 
@@ -492,7 +492,7 @@ impl<'a> MakeOffset<'a> {
             normal.z += (p0.x - p1.x) * (p0.y + p1.y);
         }
 
-        if normal.length_squared() < 1e-20 {
+        if normal.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             Ok(DVec3::Z)
         } else {
             Ok(normal.normalize())
@@ -1036,7 +1036,7 @@ impl<'a> MakePipeShell<'a> {
             total_length += len;
         }
 
-        if total_length < 1e-10 {
+        if total_length < TOLERANCE_LINEAR_ULTRA_STRICT {
             return Err(OffsetError::InvalidInput("spine has zero length"));
         }
 
@@ -1050,14 +1050,14 @@ impl<'a> MakePipeShell<'a> {
             let target_length = i as f64 * step;
 
             // Find the segment containing this point
-            while current_length + seg_remaining < target_length - 1e-10 && seg_idx < segments.len() - 1 {
+            while current_length + seg_remaining < target_length - TOLERANCE_LINEAR_ULTRA_STRICT && seg_idx < segments.len() - 1 {
                 current_length += seg_remaining;
                 seg_idx += 1;
                 seg_remaining = (segments[seg_idx].4 - segments[seg_idx].3).length();
             }
 
             let seg = &segments[seg_idx];
-            let seg_progress = (target_length - current_length) / seg_remaining.max(1e-10);
+            let seg_progress = (target_length - current_length) / seg_remaining.max(TOLERANCE_LINEAR_ULTRA_STRICT);
             let t = seg.0 + seg_progress * (seg.1 - seg.0);
 
             let point = seg.2.point_at(t);
@@ -1080,7 +1080,7 @@ impl<'a> MakePipeShell<'a> {
     ) -> Vec<usize> {
         // Compute transformation
         let z_axis = tangent;
-        let x_axis = if z_axis.cross(DVec3::X).length() > 1e-6 {
+        let x_axis = if z_axis.cross(DVec3::X).length() > TOLERANCE_MESH_LEGACY {
             z_axis.cross(DVec3::X).normalize()
         } else {
             z_axis.cross(DVec3::Y).normalize()
@@ -1525,7 +1525,7 @@ mod tests {
         let opts = BRepOffsetOptions::new(0.5)
             .with_mode(OffsetMode::Shell)
             .with_join_type(JoinType::Arc)
-            .with_tolerance(1e-6)
+            .with_tolerance(TOLERANCE_MESH_LEGACY)
             .with_interpolation(10);
 
         assert_eq!(opts.base.distance, 0.5);

@@ -144,7 +144,7 @@ impl SubFace {
                 let local = surface_pt - t.center;
                 let axial = local.dot(axis);
                 let radial = local - axial * axis;
-                let inward = if radial.length_squared() > 1e-18 {
+                let inward = if radial.length_squared() > TOLERANCE_FLOAT_ULTRA {
                     let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
                     (tube_center - surface_pt).normalize_or_zero()
                 } else {
@@ -231,7 +231,7 @@ impl ResultBuilder {
             n.z += (p.x - q.x) * (p.y + q.y);
         }
         let len = n.length();
-        if len > 1e-12 { n / len } else { DVec3::ZERO }
+        if len > TOLERANCE_LEN_MIN { n / len } else { DVec3::ZERO }
     }
 
     fn polygon_signed_area_on_normal(poly: &[DVec3], normal: DVec3) -> f64 {
@@ -312,10 +312,10 @@ impl ResultBuilder {
         }
 
         let mut normal = if flip { -sub.normal } else { sub.normal };
-        if normal.length_squared() <= 1e-20 {
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
             normal = Self::estimate_boundary_normal(&sub.boundary);
         }
-        if normal.length_squared() <= 1e-20 {
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
             return;
         }
 
@@ -370,7 +370,7 @@ impl ResultBuilder {
         let mut outer_sig = edge_indices.clone();
         outer_sig.sort_unstable();
         let nlen = normal.length();
-        let nunit = if nlen > 1e-12 { normal / nlen } else { normal };
+        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
         for (existing_idx, (existing_outer, _existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
             self.faces.iter().enumerate()
         {
@@ -378,15 +378,15 @@ impl ResultBuilder {
             ex_sig.sort_unstable();
 
             let elen = existing_normal.length();
-            if elen <= 1e-12 {
+            if elen <= TOLERANCE_LEN_MIN {
                 continue;
             }
             let eunit = *existing_normal / elen;
 
             let sig_match = ex_sig == outer_sig;
             let geo_match = nunit.dot(eunit).abs() >= 0.99
-                && (*existing_centroid - centroid).length() <= 1e-8
-                && (existing_area - area).abs() <= 1e-8 * existing_area.max(area).max(1.0);
+                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
+                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
 
             if sig_match || geo_match {
                 self.co_face_origins.push((existing_idx, origin));
@@ -477,7 +477,7 @@ impl ResultBuilder {
         let pb = vertices[vb];
         let ab = pb - pa;
         let l2 = ab.length_squared();
-        if l2 < 1e-30 {
+        if l2 < TOLERANCE_LEN_SQ_DIV_SAFE {
             return None;
         }
         // Avoid splitting very short edges (curved intersections, near-degenerate trims);
@@ -491,7 +491,7 @@ impl ResultBuilder {
                 continue;
             }
             let t = (pk - pa).dot(ab) / l2;
-            if t <= 1e-10 || t >= 1.0 - 1e-10 {
+            if t <= TOLERANCE_LINEAR_ULTRA_STRICT || t >= 1.0 - TOLERANCE_LINEAR_ULTRA_STRICT {
                 continue;
             }
             let proj = pa + ab * t;
@@ -844,7 +844,7 @@ fn classify_against_solid_for_boolean(
         return c0;
     }
     if let Some([u0, u1, v0, v1]) = sub.uv_domain {
-        if (u1 - u0).abs() > 1e-14 && (v1 - v0).abs() > 1e-14 {
+        if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE {
             const NU: usize = 7;
             const NV: usize = 7;
             for iu in 0..NU {
@@ -960,7 +960,7 @@ impl<'a> BooleanBuilder<'a> {
             max_err = max_err.max((lifted - *sample).length());
         }
 
-        max_err.is_finite() && max_err <= 1e-3
+        max_err.is_finite() && max_err <= TOLERANCE_ADAPTIVE_MAX
     }
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
@@ -1149,7 +1149,7 @@ impl<'a> BooleanBuilder<'a> {
         plane: &Plane,
     ) -> Vec<usize> {
         let n = plane.normal.normalize_or_zero();
-        if n.length_squared() < 1e-20 {
+        if n.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             return vec![];
         }
         let face = &self.ds.faces[face_idx];
@@ -1172,13 +1172,13 @@ impl<'a> BooleanBuilder<'a> {
             vmin = vmin.min(q.y);
             vmax = vmax.max(q.y);
         }
-        const MARGIN: f64 = 1e-3;
+        const MARGIN: f64 = TOLERANCE_ADAPTIVE_MAX;
         umin -= MARGIN;
         umax += MARGIN;
         vmin -= MARGIN;
         vmax += MARGIN;
         // Circle lies in a plane with normal parallel to this plane, and (center on plane)
-        const PL_D: f64 = 1e-3;
+        const PL_D: f64 = TOLERANCE_ADAPTIVE_MAX;
         const N_ALIGN: f64 = 0.04;
         let mut out = Vec::new();
         for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
@@ -1189,7 +1189,7 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             };
             let nc = c.normal.normalize_or_zero();
-            if nc.length_squared() < 1e-20 {
+            if nc.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
                 continue;
             }
             if (nc.dot(n).abs() - 1.0).abs() > N_ALIGN {
@@ -1395,8 +1395,8 @@ impl<'a> BooleanBuilder<'a> {
         // Include endpoints from **all** DS intersection curves that lie on this plane, not only
         // `curves_in` for this face — otherwise partner faces (e.g. B lateral vs A +X) miss
         // imprint points and T-junctions remain.
-        let edge_tol = (TOLERANCE_ABS * 1e4).max(1e-9);
-        let plane_tol = (TOLERANCE_ABS * 1e5).max(1e-7);
+        let edge_tol = (TOLERANCE_ABS * 1e4).max(TOLERANCE_COORD_SUB);
+        let plane_tol = (TOLERANCE_ABS * 1e5).max(TOLERANCE_ABS);
         let n_plane = plane.normal.normalize_or_zero();
         let dist_plane = |p: DVec3| -> f64 { (p - plane.origin).dot(n_plane).abs() };
 
@@ -2050,7 +2050,7 @@ impl<'a> BooleanBuilder<'a> {
                 let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                 let uv_domain = if u_min.is_finite() && u_max.is_finite()
                     && v_min.is_finite() && v_max.is_finite()
-                    && (u_max - u_min) > 1e-14 && (v_max - v_min) > 1e-14
+                    && (u_max - u_min) > TOLERANCE_FLOAT_LOOSE && (v_max - v_min) > TOLERANCE_FLOAT_LOOSE
                 {
                     Some([u_min, u_max, v_min, v_max])
                 } else {
@@ -2087,7 +2087,7 @@ impl<'a> BooleanBuilder<'a> {
                         // Check if closed (first and last point coincide)
                         let first = trim[0];
                         let last = trim[trim.len() - 1];
-                        if (first - last).length_squared() > 1e-10 {
+                        if (first - last).length_squared() > TOLERANCE_LINEAR_ULTRA_STRICT {
                             return false;
                         }
                         // Check if centroid is inside this UV polygon
@@ -2408,7 +2408,7 @@ fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
         let b = poly[j];
         let ab = b - a;
         let len_sq = ab.length_squared();
-        let t = if len_sq < 1e-14 { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
+        let t = if len_sq < TOLERANCE_FLOAT_LOOSE { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
         let closest = a + t * ab;
         if (pt - closest).length() < margin {
             return true;
@@ -3025,7 +3025,7 @@ fn is_valid_uv_polygon(poly: &[DVec2]) -> bool {
     area = area.abs() * 0.5;
 
     // Area should be significant
-    area > 1e-10
+    area > TOLERANCE_LINEAR_ULTRA_STRICT
 }
 
 fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) -> Option<Vec<DVec2>> {
@@ -3035,7 +3035,8 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
 
     let trim_start = trim[0];
     let trim_end = trim[trim.len() - 1];
-    let is_closed = (trim_start - trim_end).length_squared() < 1e-6;
+    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
+    let is_closed = (trim_start - trim_end).length_squared() < close_sq;
     if !is_closed {
         return None;
     }
@@ -3056,12 +3057,12 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
     if u_span < 0.9 * u_period {
         return None;
     }
-    if poly_v_span <= 1e-12 || v_span > 0.1 * poly_v_span {
+    if poly_v_span <= TOLERANCE_LEN_MIN || v_span > 0.1 * poly_v_span {
         return None;
     }
 
     let v_level = trim.iter().map(|p| p.y).sum::<f64>() / trim.len() as f64;
-    if v_level <= poly_v_min + 1e-9 || v_level >= poly_v_max - 1e-9 {
+    if v_level <= poly_v_min + TOLERANCE_COORD_SUB || v_level >= poly_v_max - TOLERANCE_COORD_SUB {
         return None;
     }
 
@@ -3249,7 +3250,8 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     // representing a full-circle cut around a cylinder or sphere) are intentionally
     // NOT treated as closed loops here — they are open trims whose endpoints lie on
     // opposite sides of the UV boundary seam and should split the face into two bands.
-    let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
+    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
+    let is_closed_trim = (trim_start - trim_end).length_squared() < close_sq;
     if is_closed_trim {
         // The trim is a truly closed loop entirely inside the polygon.
         // Use the trim as an interior boundary and return [trim_polygon, outer_polygon].
@@ -3258,7 +3260,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         if is_inside {
             let mut trim_dedup: Vec<DVec2> = trim.to_vec();
             if trim_dedup.len() > 1
-                && (trim_dedup[0] - trim_dedup[trim_dedup.len() - 1]).length_squared() < 1e-12
+                && (trim_dedup[0] - trim_dedup[trim_dedup.len() - 1]).length_squared() < TOLERANCE_LEN_MIN
             {
                 trim_dedup.pop();
             }
@@ -3282,7 +3284,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             let b = poly[j];
             let ab = b - a;
             let len_sq = ab.dot(ab);
-            let t = if len_sq < 1e-14 {
+            let t = if len_sq < TOLERANCE_FLOAT_LOOSE {
                 0.0
             } else {
                 ((q - a).dot(ab) / len_sq).clamp(0.0, 1.0)
@@ -3304,7 +3306,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     // Returns None if no intersection is found within a reasonable range.
     let ray_to_boundary = |origin: DVec2, dir: DVec2| -> Option<(usize, DVec2)> {
         let dir_len = dir.length();
-        if dir_len < 1e-12 {
+        if dir_len < TOLERANCE_LEN_MIN {
             return None;
         }
         let dir = dir / dir_len;
@@ -3319,13 +3321,13 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             // Solve: origin + t*dir = a + s*ab
             // => t*(dir×ab) = (a-origin)×ab  (2D cross: x.x*y.y - x.y*y.x)
             let denom = dir.x * ab.y - dir.y * ab.x;
-            if denom.abs() < 1e-14 {
+            if denom.abs() < TOLERANCE_FLOAT_LOOSE {
                 continue; // parallel
             }
             let oa = a - origin;
             let t_ray = (oa.x * ab.y - oa.y * ab.x) / denom;
             let s_seg = (oa.x * dir.y - oa.y * dir.x) / denom;
-            if t_ray > -1e-9 && (-1e-9..=1.0 + 1e-9).contains(&s_seg) && t_ray < best_t {
+            if t_ray > -TOLERANCE_COORD_SUB && (-TOLERANCE_COORD_SUB..=1.0 + TOLERANCE_COORD_SUB).contains(&s_seg) && t_ray < best_t {
                 best_t = t_ray;
                 best_edge = i;
                 best_pt = a + s_seg.clamp(0.0, 1.0) * ab;
@@ -3415,11 +3417,11 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
             result.pop();
         }
         result
@@ -3468,8 +3470,8 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
         if (p - center).length() < tol * 50.0 {
             let c0 = poly.iter().copied().fold(DVec2::ZERO, |a, q| a + q) / (n as f64);
             let dir = (c0 - center).normalize_or_zero();
-            if dir.length_squared() > 1e-18 {
-                center = center + dir * (tol * 200.0).max(1e-6);
+            if dir.length_squared() > TOLERANCE_FLOAT_ULTRA {
+                center = center + dir * (tol * 200.0).max(TOLERANCE_MESH_LEGACY);
                 break;
             }
         }
@@ -3649,11 +3651,11 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
             result.pop();
         }
         result
@@ -3825,11 +3827,11 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
     let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
             result.pop();
         }
         result
@@ -3858,7 +3860,7 @@ fn split_polygon_2d_by_segment(
     seg_end: DVec2,
 ) -> Vec<Vec<DVec2>> {
     let dir = seg_end - seg_start;
-    if dir.length_squared() < 1e-18 {
+    if dir.length_squared() < TOLERANCE_FLOAT_ULTRA {
         return vec![poly.to_vec()];
     }
     split_polygon_2d_by_line(poly, seg_start, dir.normalize())
@@ -3881,21 +3883,21 @@ fn split_polygon_2d_by_segment(
 /// use rcad_algorithms::builder::GlueConfig;
 ///
 /// let config = GlueConfig {
-///     face_tolerance: 1e-5,
-///     edge_tolerance: 1e-5,
+///     face_tolerance: TOLERANCE_RETRY_LADDER_MID,
+///     edge_tolerance: TOLERANCE_RETRY_LADDER_MID,
 ///     use_geometric_hash: true,
 ///     early_normal_filter: true,
 /// };
 /// ```
 #[derive(Debug, Clone)]
 pub struct GlueConfig {
-    /// Tolerance for face matching (default: 1e-6).
+    /// Tolerance for face matching (default: TOLERANCE_MESH_LEGACY).
     ///
     /// Two faces are considered coincident if their surface geometry
     /// matches within this tolerance.
     pub face_tolerance: f64,
 
-    /// Tolerance for edge matching (default: 1e-6).
+    /// Tolerance for edge matching (default: TOLERANCE_MESH_LEGACY).
     ///
     /// Two edges are considered coincident if their curve geometry
     /// matches within this tolerance.
@@ -4199,7 +4201,7 @@ pub fn detect_glue_faces(
             if config.early_normal_filter {
                 let na_len2 = normal_a.length_squared();
                 let nb_len2 = normal_b.length_squared();
-                if na_len2 > 1e-12 && nb_len2 > 1e-12 {
+                if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
                     let na = *normal_a / na_len2.sqrt();
                     let nb = *normal_b / nb_len2.sqrt();
                     if na.dot(nb) > normal_threshold {
@@ -4218,7 +4220,7 @@ pub fn detect_glue_faces(
             let normal_match = {
                 let na_len2 = normal_a.length_squared();
                 let nb_len2 = normal_b.length_squared();
-                if na_len2 > 1e-12 && nb_len2 > 1e-12 {
+                if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
                     let na = *normal_a / na_len2.sqrt();
                     let nb = *normal_b / nb_len2.sqrt();
                     // For glue, normals should be anti-parallel
@@ -4353,7 +4355,7 @@ pub fn compute_adaptive_glue_tolerance(
             let p1 = brep_a.vertices[edge.start].point;
             let p2 = brep_a.vertices[edge.end].point;
             let length = (p2 - p1).length();
-            if length > 1e-10 {
+            if length > TOLERANCE_LINEAR_ULTRA_STRICT {
                 min_feature_size = min_feature_size.min(length);
             }
         }
@@ -4363,7 +4365,7 @@ pub fn compute_adaptive_glue_tolerance(
             let p1 = brep_b.vertices[edge.start].point;
             let p2 = brep_b.vertices[edge.end].point;
             let length = (p2 - p1).length();
-            if length > 1e-10 {
+            if length > TOLERANCE_LINEAR_ULTRA_STRICT {
                 min_feature_size = min_feature_size.min(length);
             }
         }
@@ -4392,7 +4394,7 @@ pub fn compute_adaptive_glue_tolerance(
                 }
                 let diag = max_pt - min_pt;
                 let size = diag.x.min(diag.y).min(diag.z);
-                if size > 1e-10 {
+                if size > TOLERANCE_LINEAR_ULTRA_STRICT {
                     min_feature_size = min_feature_size.min(size);
                 }
             }
@@ -4420,7 +4422,7 @@ pub fn compute_adaptive_glue_tolerance(
                 }
                 let diag = max_pt - min_pt;
                 let size = diag.x.min(diag.y).min(diag.z);
-                if size > 1e-10 {
+                if size > TOLERANCE_LINEAR_ULTRA_STRICT {
                     min_feature_size = min_feature_size.min(size);
                 }
             }
@@ -4501,10 +4503,10 @@ mod glue_tests {
         let box1 = unit_box();
         let mut box2 = unit_box();
         // Slight offset - faces are near but not exactly coincident
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0 + 1e-7, 0.0)));
+        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0 + TOLERANCE_MESH_LEGACY * 0.1, 0.0)));
 
         let config = GlueConfig {
-            face_tolerance: 1e-5,
+            face_tolerance: TOLERANCE_RETRY_LADDER_MID,
             ..Default::default()
         };
         let pairs = detect_glue_faces(&box1, &box2, &config);
@@ -4524,8 +4526,8 @@ mod glue_tests {
 
         assert_eq!(pair.face_a, 0);
         assert_eq!(pair.face_b, 1);
-        assert!((pair.match_quality - 0.95).abs() < 1e-10);
-        assert!((pair.shared_area - 1.0).abs() < 1e-10);
+        assert!((pair.match_quality - 0.95).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((pair.shared_area - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4561,7 +4563,7 @@ mod glue_tests {
         let box1 = unit_box();
         let box2 = unit_box();
 
-        let tolerance = compute_adaptive_glue_tolerance(&box1, &box2, 1e-6);
+        let tolerance = compute_adaptive_glue_tolerance(&box1, &box2, TOLERANCE_MESH_LEGACY);
 
         // Tolerance should be reasonable
         assert!(tolerance >= TOLERANCE_ABS);
@@ -4676,14 +4678,14 @@ mod glue_tests {
     #[test]
     fn test_glue_config_custom_values() {
         let config = GlueConfig {
-            face_tolerance: 1e-5,
-            edge_tolerance: 2e-5,
+            face_tolerance: TOLERANCE_RETRY_LADDER_MID,
+            edge_tolerance: TOLERANCE_RETRY_LADDER_MID * 2.0,
             use_geometric_hash: false,
             early_normal_filter: false,
         };
 
-        assert!((config.face_tolerance - 1e-5).abs() < 1e-12);
-        assert!((config.edge_tolerance - 2e-5).abs() < 1e-12);
+        assert!((config.face_tolerance - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_LEN_MIN);
+        assert!((config.edge_tolerance - TOLERANCE_RETRY_LADDER_MID * 2.0).abs() < TOLERANCE_LEN_MIN);
         assert!(!config.use_geometric_hash);
         assert!(!config.early_normal_filter);
     }

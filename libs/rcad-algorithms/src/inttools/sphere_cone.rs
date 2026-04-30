@@ -22,7 +22,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, ConicalSurface, SphericalSurface};
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -300,7 +300,7 @@ mod tests {
         // Expect at least one circle (might be tangent)
         match result {
             SphereConeResult::SingleCircle(c) => {
-                assert!((c.center.z - 5.0).abs() < 1e-3 || (c.radius - 5.0).abs() < 1e-3);
+                assert!((c.center.z - 5.0).abs() < TOLERANCE_ADAPTIVE_MAX || (c.radius - 5.0).abs() < TOLERANCE_ADAPTIVE_MAX);
             }
             SphereConeResult::TwoCircles(_, _) => {}
             SphereConeResult::TangentPoint(_) => {}

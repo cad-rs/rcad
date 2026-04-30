@@ -57,6 +57,7 @@ use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, GeomStore, PCurve};
 use crate::bvh::Aabb;
+use crate::tolerance::{TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_MID};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
@@ -129,7 +130,7 @@ pub enum GluerMode {
 /// Options for gluing operations.
 #[derive(Debug, Clone)]
 pub struct GluerOptions {
-    /// Tolerance for geometric matching (default: 1e-6).
+    /// Tolerance for geometric matching (default: TOLERANCE_MESH_LEGACY).
     pub tolerance: f64,
     /// Gluing mode (default: GlueOnly).
     pub mode: GluerMode,
@@ -163,7 +164,7 @@ pub struct GluerOptions {
 impl Default for GluerOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             mode: GluerMode::GlueOnly,
             merge_shared_faces: true,
             merge_shared_edges: true,
@@ -1534,7 +1535,7 @@ mod tests {
             depth: 1.0,
         }).transformed(DAffine3::from_translation(DVec3::new(10.0, 0.0, 0.0)));
 
-        let interface = detect_interface(&box1, &box2, 1e-6);
+        let interface = detect_interface(&box1, &box2, TOLERANCE_MESH_LEGACY);
         assert!(interface.face_pairs.is_empty());
         assert!(interface.edge_pairs.is_empty());
     }
@@ -1546,7 +1547,7 @@ mod tests {
         // Translate box2 to touch box1 at y=1 face
         box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
 
-        let interface = detect_interface(&box1, &box2, 1e-6);
+        let interface = detect_interface(&box1, &box2, TOLERANCE_MESH_LEGACY);
         // Should detect at least one coincident face pair
         assert!(!interface.face_pairs.is_empty() || !interface.edge_pairs.is_empty());
     }
@@ -1658,7 +1659,7 @@ mod tests {
     #[test]
     fn test_gluer_options_default() {
         let opts = GluerOptions::default();
-        assert_eq!(opts.tolerance, 1e-6);
+        assert_eq!(opts.tolerance, TOLERANCE_MESH_LEGACY);
         assert!(opts.merge_shared_faces);
         assert!(opts.merge_shared_edges);
         assert!(opts.merge_shared_vertices);
@@ -1758,7 +1759,7 @@ mod tests {
         box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
 
         let result = Gluer::new()
-            .with_options(GluerOptions::glue_only().with_tolerance(1e-5))
+            .with_options(GluerOptions::glue_only().with_tolerance(TOLERANCE_RETRY_LADDER_MID))
             .add(box1)
             .add(box2)
             .perform()
@@ -1861,7 +1862,7 @@ mod tests {
         let mut box2 = unit_box();
         box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
 
-        let interface = detect_interface_bvh(&box1, &box2, 1e-6);
+        let interface = detect_interface_bvh(&box1, &box2, TOLERANCE_MESH_LEGACY);
         assert!(!interface.face_pairs.is_empty() || !interface.edge_pairs.is_empty());
     }
 
@@ -1874,7 +1875,7 @@ mod tests {
             depth: 1.0,
         }).transformed(DAffine3::from_translation(DVec3::new(100.0, 0.0, 0.0)));
 
-        let interface = detect_interface_bvh(&box1, &box2, 1e-6);
+        let interface = detect_interface_bvh(&box1, &box2, TOLERANCE_MESH_LEGACY);
         assert!(interface.face_pairs.is_empty());
     }
 
@@ -1885,8 +1886,8 @@ mod tests {
         let mut box2 = unit_box();
         box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
 
-        let interface_basic = detect_interface(&box1, &box2, 1e-6);
-        let interface_bvh = detect_interface_bvh(&box1, &box2, 1e-6);
+        let interface_basic = detect_interface(&box1, &box2, TOLERANCE_MESH_LEGACY);
+        let interface_bvh = detect_interface_bvh(&box1, &box2, TOLERANCE_MESH_LEGACY);
 
         // Both should detect the same interface faces
         assert_eq!(interface_basic.face_pairs.len(), interface_bvh.face_pairs.len());
@@ -1941,11 +1942,11 @@ mod tests {
     #[test]
     fn test_glue_options_fluent() {
         let opts = GluerOptions::glue_only()
-            .with_tolerance(1e-5)
+            .with_tolerance(TOLERANCE_RETRY_LADDER_MID)
             .without_history()
             .with_bvh();
 
-        assert_eq!(opts.tolerance, 1e-5);
+        assert_eq!(opts.tolerance, TOLERANCE_RETRY_LADDER_MID);
         assert!(!opts.preserve_history);
         assert!(opts.use_bvh_acceleration);
     }

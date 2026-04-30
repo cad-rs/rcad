@@ -16,7 +16,7 @@
 //! let box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 3.0 });
 //!
 //! let mut fuse = BRepAlgoAPI_Fuse::new(&box1, &box2);
-//! fuse.set_options(BooleanApiOptions::default().with_fuzzy_value(1e-6));
+//! fuse.set_options(BooleanApiOptions::default().with_fuzzy_value(TOLERANCE_MESH_LEGACY));
 //!
 //! if fuse.build() {
 //!     let result = fuse.shape();
@@ -38,7 +38,7 @@ use crate::history::{
 };
 use crate::pave_filler::PaveFiller;
 use crate::section::section;
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 use crate::geom_populate;
 use crate::bvh;
 use crate::{HealingOptions, SimplifyOptions};
@@ -1315,7 +1315,7 @@ impl<'a> BRepAlgoAPI_Section<'a> {
 
                     // Store curve geometry
                     let len = (b - a).length();
-                    let dir = if len > 1e-10 {
+                    let dir = if len > TOLERANCE_LINEAR_ULTRA_STRICT {
                         (b - a) / len
                     } else {
                         glam::DVec3::X
@@ -1455,11 +1455,11 @@ mod tests {
     #[test]
     fn options_builder() {
         let opts = BooleanApiOptions::new()
-            .with_fuzzy_value(1e-5)
+            .with_fuzzy_value(TOLERANCE_RETRY_LADDER_MID)
             .with_parallel(true)
             .with_history(true);
 
-        assert!((opts.fuzzy_value - 1e-5).abs() < 1e-10);
+        assert!((opts.fuzzy_value - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(opts.parallel);
         assert!(opts.history);
     }

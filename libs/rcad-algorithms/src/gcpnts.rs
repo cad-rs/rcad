@@ -14,10 +14,10 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 /// Finite difference step size for derivative computation.
-const H: f64 = 1e-6;
+const H: f64 = TOLERANCE_MESH_LEGACY;
 
 // =============================================================================
 // Derivative Computation (Finite Differences)
@@ -59,7 +59,7 @@ pub fn arc_length(curve: &Curve3, t0: f64, t1: f64) -> f64 {
     }
 
     // Adaptive Simpson's rule integration
-    adaptive_simpson_arc_length(curve, t0_clamped, t1_clamped, 1e-8)
+    adaptive_simpson_arc_length(curve, t0_clamped, t1_clamped, TOLERANCE_LINEAR_RELAX_8)
 }
 
 /// Compute the total arc length of a curve.

@@ -17,11 +17,12 @@
 //! use rcad_algorithms::law::{LinearLaw, LawFunction};
 //!
 //! let law = LinearLaw::new(0.0, 1.0, 1.0, 3.0);
-//! assert!((law.value(0.0) - 1.0).abs() < 1e-10);
-//! assert!((law.value(0.5) - 2.0).abs() < 1e-10);
-//! assert!((law.value(1.0) - 3.0).abs() < 1e-10);
+//! assert!((law.value(0.0) - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+//! assert!((law.value(0.5) - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+//! assert!((law.value(1.0) - 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 //! ```
 
+use crate::tolerance::*;
 use std::f64::consts::PI;
 
 // ============================================================================
@@ -46,7 +47,7 @@ pub trait LawFunction: std::fmt::Debug + Send + Sync {
     ///
     /// Default implementation uses finite differences.
     fn derivative(&self, t: f64) -> f64 {
-        let h = 1e-7;
+        let h = TOLERANCE_ABS;
         let domain = self.domain();
         let t_min = domain[0];
         let t_max = domain[1];
@@ -55,7 +56,7 @@ pub trait LawFunction: std::fmt::Debug + Send + Sync {
         let t_plus = (t + h).min(t_max);
         let t_minus = (t - h).max(t_min);
 
-        if (t_plus - t_minus).abs() < 1e-14 {
+        if (t_plus - t_minus).abs() < TOLERANCE_FLOAT_LOOSE {
             0.0
         } else {
             (self.value(t_plus) - self.value(t_minus)) / (t_plus - t_minus)
@@ -153,7 +154,7 @@ impl LinearLaw {
     /// # Panics
     /// Panics if `t1 == t2` (zero-length domain).
     pub fn new(t1: f64, v1: f64, t2: f64, v2: f64) -> Self {
-        if (t2 - t1).abs() < 1e-14 {
+        if (t2 - t1).abs() < TOLERANCE_FLOAT_LOOSE {
             panic!("LinearLaw: t1 and t2 must be different");
         }
         let slope = (v2 - v1) / (t2 - t1);
@@ -370,7 +371,7 @@ impl BSplineLaw {
             let mut saved = 0.0;
             for r in 0..j {
                 let denom = right[r + 1] + left[j - r];
-                let temp = if denom.abs() > 1e-14 {
+                let temp = if denom.abs() > TOLERANCE_FLOAT_LOOSE {
                     n[r] / denom
                 } else {
                     0.0
@@ -410,7 +411,7 @@ impl BSplineLaw {
             mat.swap(col, max_row);
 
             let pivot = mat[col][col];
-            if pivot.abs() < 1e-14 {
+            if pivot.abs() < TOLERANCE_FLOAT_LOOSE {
                 continue;
             }
 
@@ -434,7 +435,7 @@ impl BSplineLaw {
                 sum -= mat[i][j] * x[j];
             }
             let diag = mat[i][i];
-            x[i] = if diag.abs() > 1e-14 { sum / diag } else { 0.0 };
+            x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE { sum / diag } else { 0.0 };
         }
         x
     }
@@ -479,7 +480,7 @@ impl BSplineLaw {
             for j in (r..=self.degree).rev() {
                 let i = span - self.degree + j;
                 let denom = self.knots[i + self.degree - r + 1] - self.knots[i];
-                let alpha = if denom.abs() < 1e-14 {
+                let alpha = if denom.abs() < TOLERANCE_FLOAT_LOOSE {
                     0.0
                 } else {
                     (t_clamped - self.knots[i]) / denom
@@ -508,7 +509,7 @@ impl BSplineLaw {
 
         for i in 0..n - 1 {
             let denom = self.knots[i + deg + 1] - self.knots[i + 1];
-            if denom.abs() > 1e-14 {
+            if denom.abs() > TOLERANCE_FLOAT_LOOSE {
                 deriv_ctrl.push(
                     deg as f64 * (self.control_values[i + 1] - self.control_values[i]) / denom,
                 );
@@ -552,7 +553,7 @@ impl BSplineLaw {
             for j in (r..=deriv_degree).rev() {
                 let i = span - deriv_degree + j;
                 let denom = self.knots[i + deriv_degree - r + 2] - self.knots[i + 1];
-                let alpha = if denom.abs() < 1e-14 {
+                let alpha = if denom.abs() < TOLERANCE_FLOAT_LOOSE {
                     0.0
                 } else {
                     (t_clamped - self.knots[i + 1]) / denom
@@ -657,7 +658,7 @@ impl LawFunction for CompositeLaw {
             let seg = &self.segments[i];
             // Remap t from [t1, t2] to law's domain
             let law_domain = seg.law.domain();
-            let law_t = if (seg.t2 - seg.t1).abs() < 1e-14 {
+            let law_t = if (seg.t2 - seg.t1).abs() < TOLERANCE_FLOAT_LOOSE {
                 law_domain[0]
             } else {
                 let ratio = (t_seg - seg.t1) / (seg.t2 - seg.t1);
@@ -673,7 +674,7 @@ impl LawFunction for CompositeLaw {
         if let Some((i, t_seg)) = self.find_segment(t) {
             let seg = &self.segments[i];
             let law_domain = seg.law.domain();
-            let law_t = if (seg.t2 - seg.t1).abs() < 1e-14 {
+            let law_t = if (seg.t2 - seg.t1).abs() < TOLERANCE_FLOAT_LOOSE {
                 law_domain[0]
             } else {
                 let ratio = (t_seg - seg.t1) / (seg.t2 - seg.t1);
@@ -759,7 +760,7 @@ impl InterpolateLaw {
                     let dt_next = sorted_points[next].0 - sorted_points[i].0;
                     let dv_prev = sorted_points[i].1 - sorted_points[prev].1;
                     let dv_next = sorted_points[next].1 - sorted_points[i].1;
-                    if dt_prev.abs() > 1e-14 && dt_next.abs() > 1e-14 {
+                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE && dt_next.abs() > TOLERANCE_FLOAT_LOOSE {
                         0.5 * (dv_prev / dt_prev + dv_next / dt_next)
                     } else {
                         0.0
@@ -767,7 +768,7 @@ impl InterpolateLaw {
                 } else if i == 0 {
                     // Forward difference
                     let dt = sorted_points[1].0 - sorted_points[0].0;
-                    if dt.abs() > 1e-14 {
+                    if dt.abs() > TOLERANCE_FLOAT_LOOSE {
                         (sorted_points[1].1 - sorted_points[0].1) / dt
                     } else {
                         0.0
@@ -775,7 +776,7 @@ impl InterpolateLaw {
                 } else if i == n - 1 {
                     // Backward difference
                     let dt = sorted_points[n - 1].0 - sorted_points[n - 2].0;
-                    if dt.abs() > 1e-14 {
+                    if dt.abs() > TOLERANCE_FLOAT_LOOSE {
                         (sorted_points[n - 1].1 - sorted_points[n - 2].1) / dt
                     } else {
                         0.0
@@ -786,7 +787,7 @@ impl InterpolateLaw {
                     let dt_next = sorted_points[i + 1].0 - sorted_points[i].0;
                     let dv_prev = sorted_points[i].1 - sorted_points[i - 1].1;
                     let dv_next = sorted_points[i + 1].1 - sorted_points[i].1;
-                    if dt_prev.abs() > 1e-14 && dt_next.abs() > 1e-14 {
+                    if dt_prev.abs() > TOLERANCE_FLOAT_LOOSE && dt_next.abs() > TOLERANCE_FLOAT_LOOSE {
                         0.5 * (dv_prev / dt_prev + dv_next / dt_next)
                     } else {
                         0.0
@@ -803,7 +804,7 @@ impl InterpolateLaw {
             let m1 = tangents[i + 1];
 
             let h = t1 - t0;
-            if h.abs() < 1e-14 {
+            if h.abs() < TOLERANCE_FLOAT_LOOSE {
                 coefficients.push(CubicCoefficients::default());
                 continue;
             }
@@ -869,7 +870,7 @@ impl LawFunction for InterpolateLaw {
         let (t1, _) = self.points[i + 1];
         let h = t1 - t0;
 
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return self.points[i].1;
         }
 
@@ -892,7 +893,7 @@ impl LawFunction for InterpolateLaw {
         let (t1, _) = self.points[i + 1];
         let h = t1 - t0;
 
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return 0.0;
         }
 
@@ -939,7 +940,7 @@ impl SineLaw {
 impl LawFunction for SineLaw {
     fn value(&self, t: f64) -> f64 {
         let h = self.t2 - self.t1;
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return self.v1;
         }
         let s = ((t - self.t1) / h).clamp(0.0, 1.0);
@@ -950,7 +951,7 @@ impl LawFunction for SineLaw {
 
     fn derivative(&self, t: f64) -> f64 {
         let h = self.t2 - self.t1;
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return 0.0;
         }
         let s = ((t - self.t1) / h).clamp(0.0, 1.0);
@@ -994,7 +995,7 @@ impl SmoothStepLaw {
 impl LawFunction for SmoothStepLaw {
     fn value(&self, t: f64) -> f64 {
         let h = self.t2 - self.t1;
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return 0.0;
         }
         let s = ((t - self.t1) / h).clamp(0.0, 1.0);
@@ -1004,7 +1005,7 @@ impl LawFunction for SmoothStepLaw {
 
     fn derivative(&self, t: f64) -> f64 {
         let h = self.t2 - self.t1;
-        if h.abs() < 1e-14 {
+        if h.abs() < TOLERANCE_FLOAT_LOOSE {
             return 0.0;
         }
         let s = ((t - self.t1) / h).clamp(0.0, 1.0);
@@ -1035,7 +1036,7 @@ pub fn smooth_step_law(t1: f64, t2: f64) -> SmoothStepLaw {
 mod tests {
     use super::*;
 
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
@@ -1107,9 +1108,9 @@ mod tests {
         let values = vec![1.0, 3.0];
         let law = BSplineLaw::from_points(&params, &values, 1);
 
-        assert!(approx_eq(law.value(0.0), 1.0, 1e-6));
-        assert!(approx_eq(law.value(1.0), 3.0, 1e-6));
-        assert!(approx_eq(law.value(0.5), 2.0, 1e-6));
+        assert!(approx_eq(law.value(0.0), 1.0, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(law.value(1.0), 3.0, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(law.value(0.5), 2.0, TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1120,13 +1121,13 @@ mod tests {
         let law = BSplineLaw::from_points(&params, &values, 2);
 
         // Check endpoints (clamped BSpline passes through endpoints)
-        assert!(approx_eq(law.value(0.0), 0.0, 1e-6));
-        assert!(approx_eq(law.value(1.0), 0.0, 1e-6));
+        assert!(approx_eq(law.value(0.0), 0.0, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(law.value(1.0), 0.0, TOLERANCE_MESH_LEGACY));
 
         // For quadratic Bezier with control values [0, 1, 0], the max is at t=0.5
         // value = B0(0.5)*0 + B1(0.5)*1 + B2(0.5)*0 = 0.5
         let mid = law.value(0.5);
-        assert!(approx_eq(mid, 0.5, 1e-6), "mid value should be 0.5, got {}", mid);
+        assert!(approx_eq(mid, 0.5, TOLERANCE_MESH_LEGACY), "mid value should be 0.5, got {}", mid);
     }
 
     #[test]
@@ -1137,7 +1138,7 @@ mod tests {
 
         // Derivative of linear is constant
         let deriv = law.derivative(0.5);
-        assert!(approx_eq(deriv, 2.0, 1e-6));
+        assert!(approx_eq(deriv, 2.0, TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -1259,8 +1260,8 @@ mod tests {
         let law = sine_law(0.0, 0.0, 1.0, 1.0);
 
         // Derivative should be zero at endpoints
-        assert!(approx_eq(law.derivative(0.0), 0.0, 1e-6));
-        assert!(approx_eq(law.derivative(1.0), 0.0, 1e-6));
+        assert!(approx_eq(law.derivative(0.0), 0.0, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(law.derivative(1.0), 0.0, TOLERANCE_MESH_LEGACY));
 
         // Maximum derivative at midpoint
         let d_mid = law.derivative(0.5);
@@ -1287,8 +1288,8 @@ mod tests {
         let law = smooth_step_law(0.0, 1.0);
 
         // Derivative should be zero at endpoints
-        assert!(approx_eq(law.derivative(0.0), 0.0, 1e-6));
-        assert!(approx_eq(law.derivative(1.0), 0.0, 1e-6));
+        assert!(approx_eq(law.derivative(0.0), 0.0, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(law.derivative(1.0), 0.0, TOLERANCE_MESH_LEGACY));
 
         // Maximum derivative at midpoint
         let d_mid = law.derivative(0.5);

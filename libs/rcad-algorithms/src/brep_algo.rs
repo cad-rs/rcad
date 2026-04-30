@@ -25,14 +25,15 @@
 //! // Compute properties
 //! let volume = total_volume(&brep);
 //! let area = total_surface_area(&brep);
-//! assert!((volume - 1.0).abs() < 1e-6);
-//! assert!((area - 6.0).abs() < 1e-6);
+//! assert!((volume - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+//! assert!((area - 6.0).abs() < TOLERANCE_MESH_LEGACY);
 //!
 //! // Evaluate normals
 //! let normal = evaluate_face_normal(&brep, 0, 0.5, 0.5);
 //! assert!(normal.length() > 0.9);
 //! ```
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Shell, Wire};
@@ -262,7 +263,7 @@ pub fn evaluate_vertex_normal(brep: &BRep, vertex_idx: usize) -> DVec3 {
 /// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
-/// propagate_edge_tolerances(&mut brep, 1e-7);
+/// propagate_edge_tolerances(&mut brep, TOLERANCE_ABS);
 /// ```
 pub fn propagate_edge_tolerances(brep: &mut BRep, tol: f64) {
     // Ensure tolerance arrays are sized correctly
@@ -315,7 +316,7 @@ pub fn propagate_edge_tolerances(brep: &mut BRep, tol: f64) {
 /// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
-/// propagate_face_tolerances(&mut brep, 1e-7);
+/// propagate_face_tolerances(&mut brep, TOLERANCE_ABS);
 /// ```
 pub fn propagate_face_tolerances(brep: &mut BRep, tol: f64) {
     // Ensure tolerance arrays are sized correctly
@@ -387,7 +388,7 @@ pub fn propagate_face_tolerances(brep: &mut BRep, tol: f64) {
 /// });
 /// // Max face area is 2*3 = 6
 /// let max_area = max_face_area(&brep);
-/// assert!((max_area - 6.0).abs() < 1e-6);
+/// assert!((max_area - 6.0).abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn max_face_area(brep: &BRep) -> f64 {
     let mut max_area: f64 = 0.0;
@@ -421,7 +422,7 @@ pub fn max_face_area(brep: &BRep) -> f64 {
 /// });
 /// // Min face area is 1*2 = 2
 /// let min_area = min_face_area(&brep);
-/// assert!((min_area - 2.0).abs() < 1e-6);
+/// assert!((min_area - 2.0).abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn min_face_area(brep: &BRep) -> f64 {
     let mut min_area = f64::INFINITY;
@@ -457,7 +458,7 @@ pub fn min_face_area(brep: &BRep) -> f64 {
 /// });
 /// // Max edge length is 3.0
 /// let max_len = max_edge_length(&brep);
-/// assert!((max_len - 3.0).abs() < 1e-6);
+/// assert!((max_len - 3.0).abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn max_edge_length(brep: &BRep) -> f64 {
     let mut max_length: f64 = 0.0;
@@ -496,7 +497,7 @@ pub fn total_edge_length(brep: &BRep) -> f64 {
 ///     width: 2.0, height: 3.0, depth: 4.0
 /// });
 /// let vol = total_volume(&brep);
-/// assert!((vol - 24.0).abs() < 1e-6);
+/// assert!((vol - 24.0).abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn total_volume(brep: &BRep) -> f64 {
     rcad_kernel::volume(brep)
@@ -515,7 +516,7 @@ pub fn total_volume(brep: &BRep) -> f64 {
 /// });
 /// // SA = 2*(2*3 + 3*4 + 2*4) = 2*(6+12+8) = 52
 /// let area = total_surface_area(&brep);
-/// assert!((area - 52.0).abs() < 1e-6);
+/// assert!((area - 52.0).abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn total_surface_area(brep: &BRep) -> f64 {
     rcad_kernel::surface_area(brep)
@@ -763,7 +764,7 @@ pub fn fix_orientation(brep: &mut BRep) -> bool {
 /// let original_normal = brep.solids[0].shells[0].faces[0].normal;
 /// reverse_face(&mut brep, 0);
 /// let new_normal = brep.solids[0].shells[0].faces[0].normal;
-/// assert!((original_normal + new_normal).length() < 1e-9);
+/// assert!((original_normal + new_normal).length() < TOLERANCE_COORD_SUB);
 /// ```
 pub fn reverse_face(brep: &mut BRep, face_idx: usize) {
     if let Some(face) = get_face_by_flat_index_mut(brep, face_idx) {
@@ -1184,7 +1185,7 @@ mod tests {
         let brep = make_box();
         // Box has planar faces, normal should be constant
         let normal = evaluate_face_normal(&brep, 0, 0.0, 0.0);
-        assert!((normal.length() - 1.0).abs() < 1e-9);
+        assert!((normal.length() - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1192,14 +1193,14 @@ mod tests {
         let brep = make_sphere();
         // Sphere normal should point outward
         let normal = evaluate_face_normal(&brep, 0, 0.0, 0.0);
-        assert!((normal.length() - 1.0).abs() < 1e-9);
+        assert!((normal.length() - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
     fn test_evaluate_edge_tangent_box() {
         let brep = make_box();
         let tangent = evaluate_edge_tangent(&brep, 0, 0.5);
-        assert!((tangent.length() - 1.0).abs() < 1e-9);
+        assert!((tangent.length() - 1.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1228,7 +1229,7 @@ mod tests {
     #[test]
     fn test_propagate_edge_tolerances() {
         let mut brep = make_box();
-        propagate_edge_tolerances(&mut brep, 1e-7);
+        propagate_edge_tolerances(&mut brep, TOLERANCE_ABS);
 
         // Check that tolerances are set
         for &tol in &brep.geom.vertex_tolerance {
@@ -1242,7 +1243,7 @@ mod tests {
     #[test]
     fn test_propagate_face_tolerances() {
         let mut brep = make_box();
-        propagate_face_tolerances(&mut brep, 1e-7);
+        propagate_face_tolerances(&mut brep, TOLERANCE_ABS);
 
         // Check that tolerances are set
         for &tol in &brep.geom.vertex_tolerance {
@@ -1260,7 +1261,7 @@ mod tests {
         let brep = make_box();
         // Box 1x2x3 has face areas: 2, 3, 6 (each appears twice)
         let max_area = max_face_area(&brep);
-        assert!((max_area - 6.0).abs() < 1e-6);
+        assert!((max_area - 6.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1268,7 +1269,7 @@ mod tests {
         let brep = make_box();
         // Box 1x2x3 has face areas: 2, 3, 6 (each appears twice)
         let min_area = min_face_area(&brep);
-        assert!((min_area - 2.0).abs() < 1e-6);
+        assert!((min_area - 2.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1276,7 +1277,7 @@ mod tests {
         let brep = make_box();
         // Box 1x2x3 has edge lengths: 1, 2, 3
         let max_len = max_edge_length(&brep);
-        assert!((max_len - 3.0).abs() < 1e-6);
+        assert!((max_len - 3.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1284,14 +1285,14 @@ mod tests {
         let brep = make_box();
         // Four edges of each length: 1, 2, 3
         let t = total_edge_length(&brep);
-        assert!((t - 4.0 * (1.0 + 2.0 + 3.0)).abs() < 1e-5);
+        assert!((t - 4.0 * (1.0 + 2.0 + 3.0)).abs() < TOLERANCE_RETRY_LADDER_MID);
     }
 
     #[test]
     fn test_total_volume() {
         let brep = make_box();
         let vol = total_volume(&brep);
-        assert!((vol - 6.0).abs() < 1e-6); // 1 * 2 * 3
+        assert!((vol - 6.0).abs() < TOLERANCE_MESH_LEGACY); // 1 * 2 * 3
     }
 
     #[test]
@@ -1299,7 +1300,7 @@ mod tests {
         let brep = make_box();
         // SA = 2*(1*2 + 2*3 + 1*3) = 2*(2+6+3) = 22
         let area = total_surface_area(&brep);
-        assert!((area - 22.0).abs() < 1e-6);
+        assert!((area - 22.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1381,7 +1382,7 @@ mod tests {
         let new_normal = brep.solids[0].shells[0].faces[0].normal;
 
         // Normal should be negated
-        assert!((original_normal + new_normal).length() < 1e-9);
+        assert!((original_normal + new_normal).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1393,7 +1394,7 @@ mod tests {
         let new_normal = brep.solids[0].shells[0].faces[0].normal;
 
         // Normal should be back to original
-        assert!((original_normal - new_normal).length() < 1e-9);
+        assert!((original_normal - new_normal).length() < TOLERANCE_COORD_SUB);
     }
 
     // ── Connected Components Tests ────────────────────────────────────────────

@@ -21,6 +21,7 @@
 //! let result = linear_sweep(&profile_pts, DVec3::Z, 2.0);
 //! ```
 
+use crate::tolerance::*;
 use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
@@ -147,7 +148,7 @@ impl Default for SweepOptions {
             corner_radius: 0.0,
             continuous_normal: false,
             closed: false,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -247,7 +248,7 @@ impl SweepHistory {
 // Internal Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const EPS: f64 = 1e-12;
+const EPS: f64 = TOLERANCE_LEN_MIN;
 
 fn validate_finite(name: &'static str, v: f64) -> Result<f64, SweepError> {
     if v.is_finite() {
@@ -661,7 +662,7 @@ pub fn rotational_sweep_with_options(
     }
 
     let n = profile_pts.len();
-    let full_revolution = (angle - std::f64::consts::TAU).abs() < 1e-6;
+    let full_revolution = (angle - std::f64::consts::TAU).abs() < TOLERANCE_MESH_LEGACY;
 
     // Compute rotated positions
     let rot_pts: Vec<DVec3> = profile_pts.iter()
@@ -1291,7 +1292,7 @@ fn compute_corner_arc(
     let dot = dir_in.dot(dir_out);
     let angle = dot.acos();
 
-    if !(1e-6..=std::f64::consts::PI - 1e-6).contains(&angle) {
+    if !(TOLERANCE_MESH_LEGACY..=std::f64::consts::PI - TOLERANCE_MESH_LEGACY).contains(&angle) {
         return vec![p_corner];
     }
 
@@ -1720,17 +1721,17 @@ mod tests {
     #[test]
     fn linear_law_evaluates_correctly() {
         let law = LinearLaw { start_value: 1.0, end_value: 2.0 };
-        assert!((law.evaluate(0.0) - 1.0).abs() < 1e-10);
-        assert!((law.evaluate(0.5) - 1.5).abs() < 1e-10);
-        assert!((law.evaluate(1.0) - 2.0).abs() < 1e-10);
+        assert!((law.evaluate(0.0) - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((law.evaluate(0.5) - 1.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((law.evaluate(1.0) - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn constant_law_evaluates_correctly() {
         let law = ConstantLaw { value: 5.0 };
-        assert!((law.evaluate(0.0) - 5.0).abs() < 1e-10);
-        assert!((law.evaluate(0.5) - 5.0).abs() < 1e-10);
-        assert!((law.evaluate(1.0) - 5.0).abs() < 1e-10);
+        assert!((law.evaluate(0.0) - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((law.evaluate(0.5) - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((law.evaluate(1.0) - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1741,8 +1742,8 @@ mod tests {
             phase: 0.0,
             offset: 0.0,
         };
-        assert!((law.evaluate(0.0) - 0.0).abs() < 1e-10);
-        assert!((law.evaluate(0.25) - 1.0).abs() < 1e-10);
+        assert!((law.evaluate(0.0) - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((law.evaluate(0.25) - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1813,7 +1814,7 @@ mod tests {
             .with_closed(true);
 
         assert_eq!(opts.corner_mode, CornerMode::Rounded);
-        assert!((opts.corner_radius - 0.5).abs() < 1e-10);
+        assert!((opts.corner_radius - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(opts.continuous_normal);
         assert!(opts.closed);
     }

@@ -28,12 +28,13 @@
 //! let adaptor = Curve3dAdaptor::from_curve(&curve);
 //!
 //! let p = adaptor.point_at(0.0);
-//! assert!((p.length() - 1.0).abs() < 1e-10); // point is on the circle
+//! assert!((p.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT); // point is on the circle
 //!
 //! let domain = adaptor.domain();
-//! assert!((domain[1] - domain[0] - std::f64::consts::TAU).abs() < 1e-10);
+//! assert!((domain[1] - domain[0] - std::f64::consts::TAU).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 //! ```
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::{Curve2d, Curve3, Curve2dEval, CurveEval, Surface3, SurfaceEval};
 use std::rc::Rc;
@@ -143,7 +144,7 @@ impl Curve3dAdaptor {
         }
         let p_first = self.point_at(self.first);
         let p_last = self.point_at(self.last);
-        (p_first - p_last).length() < 1e-10
+        (p_first - p_last).length() < TOLERANCE_LINEAR_ULTRA_STRICT
     }
 
     /// Returns true if the curve is periodic.
@@ -168,7 +169,7 @@ impl Curve3dAdaptor {
             return false;
         }
         let span = (self.last - self.first).abs();
-        span >= period - 1e-10
+        span >= period - TOLERANCE_LINEAR_ULTRA_STRICT
     }
 
     /// Returns the period of the curve if periodic, or `None`.
@@ -199,15 +200,15 @@ impl Curve3dAdaptor {
 
         // Estimate average curvature at the midpoint
         let p0 = self.point_at(mid);
-        let p1 = self.point_at(mid + 1e-6);
+        let p1 = self.point_at(mid + TOLERANCE_MESH_LEGACY);
         let chord_len = (p1 - p0).length();
 
-        if chord_len < 1e-15 {
+        if chord_len < TOLERANCE_FLOAT_DEDUP {
             return tol;
         }
 
         // Resolution is approximately tol / chord_per_unit_param
-        tol / chord_len * 1e-6
+        tol / chord_len * TOLERANCE_MESH_LEGACY
     }
 
     /// Returns the first derivative (tangent vector) at parameter `t`.
@@ -228,7 +229,7 @@ impl Curve3dAdaptor {
 
     /// Returns the second derivative at parameter `t`.
     fn second_derivative(&self, t: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let d1_plus = self.first_derivative(t + eps);
         let d1_minus = self.first_derivative(t - eps);
         (d1_plus - d1_minus) / (2.0 * eps)
@@ -240,7 +241,7 @@ impl Curve3dAdaptor {
             return self.point_at(t);
         }
 
-        let eps = 1e-4;
+        let eps = TOLERANCE_RETRY_LADDER_COARSE;
         let mut result = DVec3::ZERO;
 
         // Central difference formula for nth derivative
@@ -389,7 +390,7 @@ impl SurfaceAdaptor {
 
     /// Returns the partial derivative with respect to U at `(u, v)`.
     pub fn derivative_u(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let p_plus = self.point_at(u + eps, v);
         let p_minus = self.point_at(u - eps, v);
         (p_plus - p_minus) / (2.0 * eps)
@@ -397,7 +398,7 @@ impl SurfaceAdaptor {
 
     /// Returns the partial derivative with respect to V at `(u, v)`.
     pub fn derivative_v(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let p_plus = self.point_at(u, v + eps);
         let p_minus = self.point_at(u, v - eps);
         (p_plus - p_minus) / (2.0 * eps)
@@ -405,7 +406,7 @@ impl SurfaceAdaptor {
 
     /// Returns the second partial derivative ∂²S/∂u² at `(u, v)`.
     pub fn derivative_uu(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let d_plus = self.derivative_u(u + eps, v);
         let d_minus = self.derivative_u(u - eps, v);
         (d_plus - d_minus) / (2.0 * eps)
@@ -413,7 +414,7 @@ impl SurfaceAdaptor {
 
     /// Returns the second partial derivative ∂²S/∂v² at `(u, v)`.
     pub fn derivative_vv(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let d_plus = self.derivative_v(u, v + eps);
         let d_minus = self.derivative_v(u, v - eps);
         (d_plus - d_minus) / (2.0 * eps)
@@ -421,7 +422,7 @@ impl SurfaceAdaptor {
 
     /// Returns the mixed partial derivative ∂²S/∂u∂v at `(u, v)`.
     pub fn derivative_uv(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let d_plus = self.derivative_u(u, v + eps);
         let d_minus = self.derivative_u(u, v - eps);
         (d_plus - d_minus) / (2.0 * eps)
@@ -486,7 +487,7 @@ impl SurfaceAdaptor {
         for v in v_samples {
             let p_first = self.point_at(self.u_first, v);
             let p_last = self.point_at(self.u_last, v);
-            if (p_first - p_last).length() > 1e-10 {
+            if (p_first - p_last).length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                 return false;
             }
         }
@@ -518,7 +519,7 @@ impl SurfaceAdaptor {
         for u in u_samples {
             let p_first = self.point_at(u, self.v_first);
             let p_last = self.point_at(u, self.v_last);
-            if (p_first - p_last).length() > 1e-10 {
+            if (p_first - p_last).length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                 return false;
             }
         }
@@ -558,7 +559,7 @@ impl SurfaceAdaptor {
             return None;
         }
         let span = (self.u_last - self.u_first).abs();
-        if span >= period - 1e-10 {
+        if span >= period - TOLERANCE_LINEAR_ULTRA_STRICT {
             Some(period)
         } else {
             None
@@ -590,7 +591,7 @@ impl SurfaceAdaptor {
             return None;
         }
         let span = (self.v_last - self.v_first).abs();
-        if span >= period - 1e-10 {
+        if span >= period - TOLERANCE_LINEAR_ULTRA_STRICT {
             Some(period)
         } else {
             None
@@ -742,7 +743,7 @@ impl CurveOnSurfaceAdaptor {
     ///
     /// Uses the chain rule: `dS/dt = ∂S/∂u * du/dt + ∂S/∂v * dv/dt`
     fn first_derivative(&self, t: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let uv = self.curve2d.point_at(t);
         let uv_plus = self.curve2d.point_at(t + eps);
         let uv_minus = self.curve2d.point_at(t - eps);
@@ -760,7 +761,7 @@ impl CurveOnSurfaceAdaptor {
 
     /// Numerical nth derivative.
     fn nth_derivative_numerical(&self, t: f64, order: usize) -> DVec3 {
-        let eps = 1e-4;
+        let eps = TOLERANCE_RETRY_LADDER_COARSE;
         let mut result = DVec3::ZERO;
 
         for i in 0..=order {
@@ -774,7 +775,7 @@ impl CurveOnSurfaceAdaptor {
 
     /// Partial derivative ∂S/∂u using finite differences.
     fn surface_derivative_u(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let p_plus = self.surface.point_at(u + eps, v);
         let p_minus = self.surface.point_at(u - eps, v);
         (p_plus - p_minus) / (2.0 * eps)
@@ -782,7 +783,7 @@ impl CurveOnSurfaceAdaptor {
 
     /// Partial derivative ∂S/∂v using finite differences.
     fn surface_derivative_v(&self, u: f64, v: f64) -> DVec3 {
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let p_plus = self.surface.point_at(u, v + eps);
         let p_minus = self.surface.point_at(u, v - eps);
         (p_plus - p_minus) / (2.0 * eps)
@@ -952,17 +953,17 @@ mod tests {
 
         // Domain should be [0, 2π]
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - 2.0 * PI).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Circle should be closed and periodic
         assert!(adaptor.is_closed());
         assert!(adaptor.is_periodic());
-        assert!((adaptor.period().unwrap() - 2.0 * PI).abs() < 1e-10);
+        assert!((adaptor.period().unwrap() - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Point at t=0 should be on the circle (distance from center = radius)
         let p = adaptor.point_at(0.0);
-        assert!((p.length() - 2.0).abs() < 1e-10);
+        assert!((p.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -976,11 +977,11 @@ mod tests {
 
         // First derivative should be the direction
         let d1 = adaptor.derivative(5.0, 1);
-        assert!((d1 - dvec3(1.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((d1 - dvec3(1.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative should be zero for a line
         let d2 = adaptor.derivative(5.0, 2);
-        assert!(d2.length() < 1e-10);
+        assert!(d2.length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1020,7 +1021,7 @@ mod tests {
 
         // Point at (0, 0) should be origin
         let p = adaptor.point_at(0.0, 0.0);
-        assert!(p.length() < 1e-10);
+        assert!(p.length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1035,21 +1036,21 @@ mod tests {
 
         // U domain should be [0, 2π], V should be infinite
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - 2.0 * PI).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(domain[2].is_infinite() && domain[2] < 0.0);
         assert!(domain[3].is_infinite());
 
         // Cylinder should be U-closed and U-periodic
         assert!(adaptor.is_u_closed());
         assert!(!adaptor.is_v_closed());
-        assert!((adaptor.u_period().unwrap() - 2.0 * PI).abs() < 1e-10);
+        assert!((adaptor.u_period().unwrap() - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(adaptor.v_period().is_none());
 
         // Normal should point outward (perpendicular to axis, length 1)
         let n = adaptor.normal_at(0.0, 0.0);
-        assert!(n.z.abs() < 1e-10); // normal is horizontal
-        assert!((n.length() - 1.0).abs() < 1e-10);
+        assert!(n.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT); // normal is horizontal
+        assert!((n.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1065,16 +1066,16 @@ mod tests {
 
         // Both U and V domains should be [0, 2π]
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - 2.0 * PI).abs() < 1e-10);
-        assert!((domain[2] - 0.0).abs() < 1e-10);
-        assert!((domain[3] - 2.0 * PI).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[2] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[3] - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Torus should be both U and V closed and periodic
         assert!(adaptor.is_u_closed());
         assert!(adaptor.is_v_closed());
-        assert!((adaptor.u_period().unwrap() - 2.0 * PI).abs() < 1e-10);
-        assert!((adaptor.v_period().unwrap() - 2.0 * PI).abs() < 1e-10);
+        assert!((adaptor.u_period().unwrap() - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((adaptor.v_period().unwrap() - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1090,8 +1091,8 @@ mod tests {
         let du = adaptor.derivative_u(0.5, 0.5);
         let dv = adaptor.derivative_v(0.5, 0.5);
 
-        assert!(du.dot(dvec3(0.0, 0.0, 1.0)).abs() < 1e-10);
-        assert!(dv.dot(dvec3(0.0, 0.0, 1.0)).abs() < 1e-10);
+        assert!(du.dot(dvec3(0.0, 0.0, 1.0)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!(dv.dot(dvec3(0.0, 0.0, 1.0)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // For a plane, second derivatives should be near zero (within numerical precision)
         let duu = adaptor.derivative_uu(0.5, 0.5);
@@ -1099,9 +1100,9 @@ mod tests {
         let duv = adaptor.derivative_uv(0.5, 0.5);
 
         // Numerical second derivatives have O(eps) error for linear functions
-        assert!(duu.length() < 1e-4);
-        assert!(dvv.length() < 1e-4);
-        assert!(duv.length() < 1e-4);
+        assert!(duu.length() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!(dvv.length() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!(duv.length() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -1122,20 +1123,20 @@ mod tests {
 
         // At t=0, should be at origin
         let p0 = adaptor.point_at(0.0);
-        assert!(p0.length() < 1e-10);
+        assert!(p0.length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At t=1, should be on the plane (z=0)
         let p1 = adaptor.point_at(1.0);
-        assert!(p1.z.abs() < 1e-10);
+        assert!(p1.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // First derivative should be horizontal (z component = 0)
         let d1 = adaptor.derivative(0.5, 1);
-        assert!(d1.z.abs() < 1e-8);
-        assert!((d1.length() - (2.0_f64).sqrt()).abs() < 1e-8); // magnitude sqrt(2)
+        assert!(d1.z.abs() < TOLERANCE_LINEAR_RELAX_8);
+        assert!((d1.length() - (2.0_f64).sqrt()).abs() < TOLERANCE_LINEAR_RELAX_8); // magnitude sqrt(2)
 
         // Normal should be consistent with plane
         let n = adaptor.normal_at(0.5);
-        assert!((n - dvec3(0.0, 0.0, 1.0)).length() < 1e-10);
+        assert!((n - dvec3(0.0, 0.0, 1.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1177,7 +1178,7 @@ mod tests {
 
         // Should delegate to inner adaptor (point on plane should have z=0)
         let p = handle.point_at(1.0, 2.0);
-        assert!(p.z.abs() < 1e-10);
+        assert!(p.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Should provide domain access
         let domain = handle.domain();
@@ -1202,7 +1203,7 @@ mod tests {
         let handle = HSurfaceAdaptor::from(adaptor);
 
         let p = handle.point_at(0.0, 0.0);
-        assert!((p - dvec3(1.0, 2.0, 3.0)).length() < 1e-10);
+        assert!((p - dvec3(1.0, 2.0, 3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1218,8 +1219,8 @@ mod tests {
         let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, 0.0, PI / 2.0);
 
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - PI / 2.0).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - PI / 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // The trimmed arc should not be closed
         assert!(!adaptor.is_closed());
@@ -1240,8 +1241,8 @@ mod tests {
         let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, PI / 2.0, 0.0);
 
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - PI / 2.0).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - PI / 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(!adaptor.is_periodic());
     }
 
@@ -1256,10 +1257,10 @@ mod tests {
         let adaptor = SurfaceAdaptor::from_surface_with_range(&surface, PI, 0.0, 5.0, 0.0);
 
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - PI).abs() < 1e-10);
-        assert!((domain[2] - 0.0).abs() < 1e-10);
-        assert!((domain[3] - 5.0).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[2] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[3] - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1275,10 +1276,10 @@ mod tests {
         let adaptor = SurfaceAdaptor::from_surface_with_range(&surface, 0.0, PI, 0.0, 5.0);
 
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - PI).abs() < 1e-10);
-        assert!((domain[2] - 0.0).abs() < 1e-10);
-        assert!((domain[3] - 5.0).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[2] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[3] - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Partial cylinder should not be U-closed
         assert!(!adaptor.is_u_closed());
@@ -1333,8 +1334,8 @@ mod tests {
         let curve = Curve3::Circle(circle);
         let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, 0.0, PI / 3.0);
 
-        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < 1e-12);
-        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < 1e-12);
+        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -1349,10 +1350,10 @@ mod tests {
         let adaptor = SurfaceAdaptor::from_surface(&surface);
 
         let d = adaptor.domain();
-        assert!((adaptor.first_u_parameter() - d[0]).abs() < 1e-12);
-        assert!((adaptor.last_u_parameter() - d[1]).abs() < 1e-12);
-        assert!((adaptor.first_v_parameter() - d[2]).abs() < 1e-12);
-        assert!((adaptor.last_v_parameter() - d[3]).abs() < 1e-12);
+        assert!((adaptor.first_u_parameter() - d[0]).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_u_parameter() - d[1]).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.first_v_parameter() - d[2]).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_v_parameter() - d[3]).abs() < TOLERANCE_LEN_MIN);
 
         assert_eq!(adaptor.is_u_periodic(), adaptor.u_period().is_some());
         assert_eq!(adaptor.is_v_periodic(), adaptor.v_period().is_some());
@@ -1372,7 +1373,7 @@ mod tests {
         let curve2d = Curve2d::Line(line2d);
         let adaptor = CurveOnSurfaceAdaptor::new_with_range(&curve2d, &surface, -2.0, 3.0);
 
-        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < 1e-12);
-        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < 1e-12);
+        assert!((adaptor.first_parameter() - adaptor.domain()[0]).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_parameter() - adaptor.domain()[1]).abs() < TOLERANCE_LEN_MIN);
     }
 }

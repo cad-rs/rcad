@@ -25,9 +25,9 @@ pub fn intersect_plane_sphere(plane: &Plane, sphere: &SphericalSurface) -> Plane
     // Former `TangentPoint` branch: only inflate when the plane is numerically tangent
     // (|d|≈R), not for every legitimately small intersection circle — inflating all small radii
     // can destabilize other booleans (e.g. sphere–cylinder in `occt_alignment`).
-    let tangent_band = TOLERANCE_ABS.max(1e-9 * sphere.radius.abs());
+    let tangent_band = TOLERANCE_ABS.max(TOLERANCE_COORD_SUB * sphere.radius.abs());
     let tangent_like = (abs_dist - sphere.radius).abs() < tangent_band;
-    const MIN_R_TANGENT: f64 = 1e-6;
+    const MIN_R_TANGENT: f64 = TOLERANCE_MESH_LEGACY;
     if tangent_like && circle_radius < MIN_R_TANGENT {
         circle_radius = MIN_R_TANGENT;
     }
@@ -98,7 +98,7 @@ mod tests {
         };
         match intersect_plane_sphere(&plane, &sphere) {
             PlaneSphereResult::Circle(c) => {
-                assert!((c.radius - 1e-6).abs() < 1e-12);
+                assert!((c.radius - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
                 assert!(points_coincide(c.center, DVec3::new(0.0, 3.0, 0.0)));
             }
             other => panic!("Expected Circle (degenerate tangency inflated), got {other:?}"),

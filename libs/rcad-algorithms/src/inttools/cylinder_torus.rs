@@ -8,7 +8,7 @@
 
 use rcad_kernel::geom::{Circle3, CylindricalSurface, ToroidalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 /// Result of cylinder x torus intersection.
 #[derive(Debug, Clone)]
@@ -131,11 +131,11 @@ mod tests {
         // Should produce two circles at z = +/-minor_radius
         match result {
             CylinderTorusResult::TwoCircles(c1, c2) => {
-                assert!((c1.radius - 5.0).abs() < 1e-6, "c1 radius expected 5.0, got {}", c1.radius);
-                assert!((c2.radius - 5.0).abs() < 1e-6, "c2 radius expected 5.0, got {}", c2.radius);
+                assert!((c1.radius - 5.0).abs() < TOLERANCE_MESH_LEGACY, "c1 radius expected 5.0, got {}", c1.radius);
+                assert!((c2.radius - 5.0).abs() < TOLERANCE_MESH_LEGACY, "c2 radius expected 5.0, got {}", c2.radius);
                 // Circle centers should be at +/-minor_radius along the axis
-                assert!((c1.center - DVec3::new(0.0, 1.0, 0.0)).length() < 1e-6, "c1 center expected (0,1,0)");
-                assert!((c2.center - DVec3::new(0.0, -1.0, 0.0)).length() < 1e-6, "c2 center expected (0,-1,0)");
+                assert!((c1.center - DVec3::new(0.0, 1.0, 0.0)).length() < TOLERANCE_MESH_LEGACY, "c1 center expected (0,1,0)");
+                assert!((c2.center - DVec3::new(0.0, -1.0, 0.0)).length() < TOLERANCE_MESH_LEGACY, "c2 center expected (0,-1,0)");
             }
             other => panic!("Expected TwoCircles for coaxial case, got {:?}", other),
         }
@@ -181,9 +181,9 @@ mod tests {
 
         match result {
             CylinderTorusResult::TangentCircle(c) => {
-                assert!((c.radius - 6.0).abs() < 1e-6);
+                assert!((c.radius - 6.0).abs() < TOLERANCE_MESH_LEGACY);
                 // Center should be at torus center (z=0)
-                assert!((c.center - DVec3::ZERO).length() < 1e-6);
+                assert!((c.center - DVec3::ZERO).length() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TangentCircle, got {:?}", other),
         }
@@ -209,8 +209,8 @@ mod tests {
 
         match result {
             CylinderTorusResult::TangentCircle(c) => {
-                assert!((c.radius - 4.0).abs() < 1e-6);
-                assert!((c.center - DVec3::ZERO).length() < 1e-6);
+                assert!((c.radius - 4.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c.center - DVec3::ZERO).length() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TangentCircle, got {:?}", other),
         }

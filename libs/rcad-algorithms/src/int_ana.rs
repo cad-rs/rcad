@@ -44,7 +44,7 @@ pub struct LinPlnIntersection {
 /// let result = intersect_line_plane(&line, &plane);
 /// assert!(result.is_some());
 /// let intersection = result.unwrap();
-/// assert!((intersection.param - 5.0).abs() < 1e-10);
+/// assert!((intersection.param - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
 pub fn intersect_line_plane(line: &Line3, plane: &Plane) -> Option<LinPlnIntersection> {
     let denom = line.direction.dot(plane.normal);
@@ -252,7 +252,7 @@ pub fn intersect_line_cone(line: &Line3, cone: &ConicalSurface) -> Vec<(DVec3, f
         // Check if it intersects
         if c.abs() < TOLERANCE_ABS {
             // Line passes through apex
-            return vec![(apex, -o.z / d.z.max(1e-12))];
+            return vec![(apex, -o.z / d.z.max(TOLERANCE_LEN_MIN))];
         }
         // Check if the line hits the cone surface
         // At height z from apex, cone radius is |z| * tan_half
@@ -699,7 +699,7 @@ pub fn intersect_plane_cone_intana(plane: &Plane, cone: &ConicalSurface) -> PlnC
             }
             let perp_in_plane = cross.normalize();
             let projected_axis = (axis_n - plane_n * axis_n.dot(plane_n)).normalize_or_zero();
-            if projected_axis.length_squared() < 1e-12 {
+            if projected_axis.length_squared() < TOLERANCE_LEN_MIN {
                 return PlnConResult::Point(apex);
             }
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
@@ -739,7 +739,7 @@ fn build_ellipse_result(
 ) -> PlnConResult {
     let tan_beta = cone.half_angle_rad.tan();
     let denom = axis_n.dot(plane.normal);
-    if denom.abs() < 1e-14 {
+    if denom.abs() < TOLERANCE_FLOAT_LOOSE {
         return PlnConResult::NoIntersection;
     }
     let t = apex_to_plane / denom;
@@ -756,7 +756,7 @@ fn build_ellipse_result(
     let major_radius = base_radius / cos_angle;
 
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let major_dir = if major_dir.length_squared() < 1e-12 {
+    let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         major_dir
@@ -778,7 +778,7 @@ fn build_parabola_result(
     axis_n: DVec3,
 ) -> PlnConResult {
     let steepest = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let steepest = if steepest.length_squared() < 1e-12 {
+    let steepest = if steepest.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         steepest
@@ -788,16 +788,16 @@ fn build_parabola_result(
     let gen_dir = (axis_n + tan_beta * steepest).normalize();
 
     let denom = gen_dir.dot(plane.normal);
-    let vertex = if denom.abs() > 1e-12 {
+    let vertex = if denom.abs() > TOLERANCE_LEN_MIN {
         let t = apex_to_plane / denom;
         cone.apex_point() + gen_dir * t
     } else {
-        let t = apex_to_plane / axis_n.dot(plane.normal).max(1e-12);
+        let t = apex_to_plane / axis_n.dot(plane.normal).max(TOLERANCE_LEN_MIN);
         cone.apex_point() + axis_n * t
     };
 
     let axis_2d = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let axis_dir = if axis_2d.length_squared() < 1e-12 {
+    let axis_dir = if axis_2d.length_squared() < TOLERANCE_LEN_MIN {
         steepest
     } else {
         axis_2d
@@ -825,7 +825,7 @@ fn build_hyperbola_result(
     let center = cone.apex_point() + plane.normal * apex_to_plane;
 
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let major_dir = if major_dir.length_squared() < 1e-12 {
+    let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         major_dir
@@ -1075,7 +1075,7 @@ fn intersect_general_cylinders(
 /// Returns real roots.
 fn solve_quartic(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     // Normalize to monic polynomial
-    if a4.abs() < 1e-15 {
+    if a4.abs() < TOLERANCE_FLOAT_DEDUP {
         return solve_cubic(a3, a2, a1, a0);
     }
 
@@ -1092,7 +1092,7 @@ fn solve_quartic(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
     let r = d - 3.0 * a * a * a * a / 256.0 + a * a * b / 16.0 - a * c / 4.0;
 
     // If q = 0, we have a quadratic in y^2
-    if q.abs() < 1e-12 {
+    if q.abs() < TOLERANCE_LEN_MIN {
         let disc = p * p - 4.0 * r;
         if disc < -TOLERANCE_ABS {
             return vec![];
@@ -1190,7 +1190,7 @@ fn solve_quartic(a4: f64, a3: f64, a2: f64, a1: f64, a0: f64) -> Vec<f64> {
 /// Solve a cubic equation a*x^3 + b*x^2 + c*x + d = 0
 /// Returns real roots.
 fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
-    if a.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
         return solve_quadratic(b, c, d);
     }
 
@@ -1239,8 +1239,8 @@ fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
 /// Solve a quadratic equation a*x^2 + b*x + c = 0
 /// Returns real roots.
 fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
-    if a.abs() < 1e-15 {
-        if b.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
+        if b.abs() < TOLERANCE_FLOAT_DEDUP {
             return vec![];
         }
         return vec![-c / b];
@@ -1756,10 +1756,10 @@ mod tests {
         // (x-1)(x-2)(x-3)(x-4) = x^4 - 10x^3 + 35x^2 - 50x + 24
         let roots = solve_quartic(1.0, -10.0, 35.0, -50.0, 24.0);
         assert_eq!(roots.len(), 4);
-        assert!((roots[0] - 1.0).abs() < 1e-6);
-        assert!((roots[1] - 2.0).abs() < 1e-6);
-        assert!((roots[2] - 3.0).abs() < 1e-6);
-        assert!((roots[3] - 4.0).abs() < 1e-6);
+        assert!((roots[0] - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[1] - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[2] - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[3] - 4.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1767,7 +1767,7 @@ mod tests {
         // (x^2 - 1)(x^2 + 1) = x^4 - 1
         let roots = solve_quartic(1.0, 0.0, 0.0, 0.0, -1.0);
         assert_eq!(roots.len(), 2);
-        assert!((roots[0] + 1.0).abs() < 1e-6);
-        assert!((roots[1] - 1.0).abs() < 1e-6);
+        assert!((roots[0] + 1.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[1] - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 }

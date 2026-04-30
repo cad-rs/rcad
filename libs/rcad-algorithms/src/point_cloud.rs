@@ -13,6 +13,7 @@
 //! - Advanced sampling (curvature-aware, Poisson disk)
 //! - BRep integration
 
+use crate::tolerance::*;
 use glam::DVec3;
 use std::cmp::Ordering;
 
@@ -213,7 +214,7 @@ fn compute_eigendecomposition_3x3(m: &[[f64; 3]; 3]) -> ([f64; 3], [DVec3; 3]) {
     ];
 
     const MAX_ITERATIONS: usize = 100;
-    const TOLERANCE: f64 = 1e-12;
+    const TOLERANCE: f64 = TOLERANCE_LEN_MIN;
 
     for _ in 0..MAX_ITERATIONS {
         // Find the largest off-diagonal element
@@ -348,12 +349,12 @@ pub fn estimate_dimensionality(pca_values: [f64; 3], threshold: f64) -> Dimensio
 
     let total: f64 = sorted.iter().sum();
     // If total variance is negligible, it's a point
-    if total < 1e-10 {
+    if total < TOLERANCE_LINEAR_ULTRA_STRICT {
         return Dimensionality::Point;
     }
 
     // Normalize by largest eigenvalue
-    let max_val = sorted[0].max(1e-20);
+    let max_val = sorted[0].max(TOLERANCE_METRIC_SQ_NEAR_ZERO);
     let rel1 = sorted[1] / max_val;
     let rel2 = sorted[2] / max_val;
 
@@ -534,7 +535,7 @@ fn voxel_sample(points: &[DVec3], target_count: usize) -> Vec<DVec3> {
 
     // Estimate voxel size
     let volume = (max.x - min.x) * (max.y - min.y) * (max.z - min.z);
-    let voxel_size = (volume / target_count as f64).cbrt().max(1e-10);
+    let voxel_size = (volume / target_count as f64).cbrt().max(TOLERANCE_LINEAR_ULTRA_STRICT);
 
     // Group points by voxel
     let mut voxels: std::collections::HashMap<[i64; 3], Vec<DVec3>> = std::collections::HashMap::new();
@@ -653,7 +654,7 @@ pub fn estimate_normals(points: &[DVec3], k: usize) -> Vec<DVec3> {
 
         // Normal is direction of minimum variance
         // Check if the smallest eigenvalue is small enough for a planar fit
-        let max_val = values[0].max(1e-20);
+        let max_val = values[0].max(TOLERANCE_METRIC_SQ_NEAR_ZERO);
         if values[2] / max_val < 0.1 {
             normals.push(axes[2]);
         } else {
@@ -821,7 +822,7 @@ fn solve_linear_4x4(a: &[[f64; 4]; 4], b: &[f64; 4]) -> Option<[f64; 4]> {
             }
         }
 
-        if max_val < 1e-14 {
+        if max_val < TOLERANCE_FLOAT_LOOSE {
             return None; // Singular matrix
         }
 
@@ -881,7 +882,7 @@ pub fn fit_cylinder(points: &[DVec3]) -> Option<FittedCylinder> {
 
     // For a cylinder, we expect two large eigenvalues and one small
     // The cylinder axis is the direction of minimum variance
-    let max_val = values[0].max(1e-20);
+    let max_val = values[0].max(TOLERANCE_METRIC_SQ_NEAR_ZERO);
     if values[2] / max_val > 0.3 {
         // Not cylindrical enough
         // Try alternative: axis might be along maximum variance direction
@@ -1045,7 +1046,7 @@ fn solve_linear_3x3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
             }
         }
 
-        if max_val < 1e-14 {
+        if max_val < TOLERANCE_FLOAT_LOOSE {
             return None;
         }
 
@@ -1157,7 +1158,7 @@ fn convex_hull_2d(points: &[DVec2]) -> Vec<DVec2> {
     sorted.sort_by(|&a, &b| {
         let pa = points[a];
         let pb = points[b];
-        if (pa.x - pb.x).abs() > 1e-14 {
+        if (pa.x - pb.x).abs() > TOLERANCE_FLOAT_LOOSE {
             pa.x.partial_cmp(&pb.x).unwrap_or(Ordering::Equal)
         } else {
             pa.y.partial_cmp(&pb.y).unwrap_or(Ordering::Equal)
@@ -1283,7 +1284,7 @@ impl Default for IcpConfig {
     fn default() -> Self {
         Self {
             max_iterations: 100,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             max_correspondence_distance: f64::INFINITY,
             use_reciprocal: false,
         }
@@ -1727,7 +1728,7 @@ fn svd_3x3(a: &[[f64; 3]; 3]) -> Option<([[f64; 3]; 3], [f64; 3], [[f64; 3]; 3])
     let mut u = [[0.0; 3]; 3];
     for i in 0..3 {
         for j in 0..3 {
-            if sigma[j] > 1e-10 {
+            if sigma[j] > TOLERANCE_LINEAR_ULTRA_STRICT {
                 for k in 0..3 {
                     u[i][j] += a[i][k] * v[k][j];
                 }
@@ -1743,7 +1744,7 @@ fn svd_3x3(a: &[[f64; 3]; 3]) -> Option<([[f64; 3]; 3], [f64; 3], [[f64; 3]; 3])
             norm += u[i][j] * u[i][j];
         }
         norm = norm.sqrt();
-        if norm > 1e-10 {
+        if norm > TOLERANCE_LINEAR_ULTRA_STRICT {
             for i in 0..3 {
                 u[i][j] /= norm;
             }
@@ -1758,7 +1759,7 @@ fn jacobi_eigen(a: &[[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
     let mut v = [[1.0_f64, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
     const MAX_ITER: usize = 100;
-    const TOL: f64 = 1e-12;
+    const TOL: f64 = TOLERANCE_LEN_MIN;
 
     for _ in 0..MAX_ITER {
         // Find largest off-diagonal element
@@ -1850,7 +1851,7 @@ fn solve_linear_6x6(a: &[[f64; 6]; 6], b: &[f64; 6]) -> Option<[f64; 6]> {
             }
         }
 
-        if max_val < 1e-14 {
+        if max_val < TOLERANCE_FLOAT_LOOSE {
             return None;
         }
 
@@ -2100,7 +2101,7 @@ fn ransac_plane_segmentation(
         // Compute plane normal
         let normal = (p1 - p0).cross(p2 - p0);
         let len = normal.length();
-        if len < 1e-10 {
+        if len < TOLERANCE_LINEAR_ULTRA_STRICT {
             continue;
         }
         let normal = normal / len;
@@ -2180,7 +2181,7 @@ fn ransac_sphere_segmentation(
             None => continue,
         };
 
-        if !(1e-10..=1e10).contains(&radius) {
+        if !(TOLERANCE_LINEAR_ULTRA_STRICT..=1e10).contains(&radius) {
             continue;
         }
 
@@ -2326,7 +2327,7 @@ fn ransac_cylinder_segmentation(
         sorted_proj.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let radius = sorted_proj[sorted_proj.len() / 2];
 
-        if !(1e-10..=1e10).contains(&radius) {
+        if !(TOLERANCE_LINEAR_ULTRA_STRICT..=1e10).contains(&radius) {
             continue;
         }
 
@@ -2412,7 +2413,7 @@ fn compute_curvatures(points: &[DVec3], neighbors: &[Vec<usize>]) -> Vec<f64> {
         let neighbor_pts: Vec<DVec3> = neighbors[i].iter().map(|&j| points[j]).collect();
         let (_, values) = compute_pca(&neighbor_pts);
         let sum: f64 = values.iter().sum();
-        if sum > 1e-10 {
+        if sum > TOLERANCE_LINEAR_ULTRA_STRICT {
             values[2] / sum
         } else {
             0.0
@@ -2498,7 +2499,7 @@ impl TriangleMesh {
             let c = self.nodes[k];
             let normal = (b - a).cross(c - a);
             let len = normal.length();
-            if len > 1e-10 {
+            if len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 normal / len
             } else {
                 DVec3::Z
@@ -2519,7 +2520,7 @@ impl TriangleMesh {
 
         for normal in &mut node_normals {
             let len = normal.length();
-            if len > 1e-10 {
+            if len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 *normal /= len;
             }
         }
@@ -2590,7 +2591,7 @@ pub fn poisson_reconstruction(
                 for (&pt, &n) in points.iter().zip(normals.iter()) {
                     let d = p - pt;
                     let dist = d.length();
-                    if dist > 1e-10 {
+                    if dist > TOLERANCE_LINEAR_ULTRA_STRICT {
                         // Signed distance from oriented point
                         value += d.dot(n) / (dist * dist + 1.0);
                     }
@@ -2749,7 +2750,7 @@ pub fn ball_pivoting_reconstruction(
                 let ball_dist = (r_sq - circumradius * circumradius).sqrt();
                 let normal = (p1 - p0).cross(p2 - p0);
                 let len = normal.length();
-                if len < 1e-10 {
+                if len < TOLERANCE_LINEAR_ULTRA_STRICT {
                     continue;
                 }
                 let normal = normal / len;
@@ -2758,7 +2759,7 @@ pub fn ball_pivoting_reconstruction(
                 let ball_center = circumcenter + normal * ball_dist;
                 let mut valid = true;
                 for &p in points.iter().take(10) {
-                    if (p - ball_center).length_squared() < r_sq - 1e-10 {
+                    if (p - ball_center).length_squared() < r_sq - TOLERANCE_LINEAR_ULTRA_STRICT {
                         valid = false;
                         break;
                     }
@@ -2859,7 +2860,7 @@ fn compute_circumcenter(a: DVec3, b: DVec3, c: DVec3) -> Option<DVec3> {
     let cross = ab.cross(ac);
     let denom = 2.0 * cross.length_squared();
 
-    if denom < 1e-20 {
+    if denom < TOLERANCE_METRIC_SQ_NEAR_ZERO {
         return None;
     }
 
@@ -3012,7 +3013,7 @@ fn delaunay_triangulation_2d(points: &[DVec2]) -> Vec<[usize; 3]> {
 
 fn circumcenter_2d(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
     let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if d.abs() < 1e-14 {
+    if d.abs() < TOLERANCE_FLOAT_LOOSE {
         return None;
     }
 
@@ -3045,7 +3046,7 @@ pub fn generate_consistent_mesh(
 
         let face_normal = (b - a).cross(c - a);
         let len = face_normal.length();
-        if len < 1e-10 {
+        if len < TOLERANCE_LINEAR_ULTRA_STRICT {
             continue;
         }
         let face_normal = face_normal / len;
@@ -3192,7 +3193,7 @@ fn curvature_aware_sample(points: &[DVec3], config: &AdvancedSamplingConfig) -> 
     let curvatures = compute_curvatures(points, &neighbors);
 
     // Compute sampling probabilities (higher curvature = higher probability)
-    let max_curv = curvatures.iter().cloned().fold(0.0_f64, f64::max).max(1e-10);
+    let max_curv = curvatures.iter().cloned().fold(0.0_f64, f64::max).max(TOLERANCE_LINEAR_ULTRA_STRICT);
     let weights: Vec<f64> = curvatures.iter().map(|&c| 0.1 + 0.9 * c / max_curv).collect();
 
     let total_weight: f64 = weights.iter().sum();
@@ -3440,7 +3441,7 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
-    const EPS: f64 = 1e-6;
+    const EPS: f64 = TOLERANCE_MESH_LEGACY;
 
     fn approx_eq(a: DVec3, b: DVec3, tol: f64) -> bool {
         (a - b).length() < tol
@@ -3467,11 +3468,11 @@ mod tests {
         assert_eq!(pc.len(), 3);
 
         let centroid = pc.centroid().unwrap();
-        assert!(approx_eq(centroid, DVec3::new(1.0/3.0, 1.0/3.0, 0.0), 1e-10));
+        assert!(approx_eq(centroid, DVec3::new(1.0/3.0, 1.0/3.0, 0.0), TOLERANCE_LINEAR_ULTRA_STRICT));
 
         let (min, max) = pc.bounding_box().unwrap();
-        assert!(approx_eq(min, DVec3::ZERO, 1e-10));
-        assert!(approx_eq(max, DVec3::new(1.0, 1.0, 0.0), 1e-10));
+        assert!(approx_eq(min, DVec3::ZERO, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq(max, DVec3::new(1.0, 1.0, 0.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -3493,11 +3494,11 @@ mod tests {
         assert!(values[0] > 0.0, "Largest eigenvalue should be positive, got {}", values[0]);
         assert!(values[2] >= 0.0, "Smallest eigenvalue should be non-negative, got {}", values[2]);
         // All eigenvalues should be similar (within factor of 2) for this symmetric case
-        assert!(values[0] / values[2].max(1e-10) < 3.0, "Eigenvalue ratio {} too large", values[0] / values[2].max(1e-10));
+        assert!(values[0] / values[2].max(TOLERANCE_LINEAR_ULTRA_STRICT) < 3.0, "Eigenvalue ratio {} too large", values[0] / values[2].max(TOLERANCE_LINEAR_ULTRA_STRICT));
 
         // Axes should be orthonormal
         for axis in &axes {
-            assert!((axis.length() - 1.0).abs() < 1e-6);
+            assert!((axis.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
         }
     }
 
@@ -3510,11 +3511,11 @@ mod tests {
 
         // Largest eigenvalue should be along X
         assert!(values[0] > values[1]);
-        assert!(values[1] < 1e-6);
-        assert!(values[2] < 1e-6);
+        assert!(values[1] < TOLERANCE_MESH_LEGACY);
+        assert!(values[2] < TOLERANCE_MESH_LEGACY);
 
         // First principal axis should be approximately X
-        assert!((axes[0].x.abs() - 1.0).abs() < 1e-6);
+        assert!((axes[0].x.abs() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -3535,13 +3536,13 @@ mod tests {
         assert!(values[2] < 0.01);
 
         // Third principal axis should be Z (normal)
-        assert!((axes[2].z.abs() - 1.0).abs() < 1e-6);
+        assert!((axes[2].z.abs() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
     fn test_dimensionality() {
         // Point-like
-        let d = estimate_dimensionality([1e-20, 1e-20, 1e-20], 0.01);
+        let d = estimate_dimensionality([TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_METRIC_SQ_NEAR_ZERO], 0.01);
         assert_eq!(d, Dimensionality::Point);
 
         // Linear
@@ -3572,9 +3573,9 @@ mod tests {
         assert!(inertia[2][2] >= 0.0);
 
         // Check symmetry
-        assert!((inertia[0][1] - inertia[1][0]).abs() < 1e-10);
-        assert!((inertia[0][2] - inertia[2][0]).abs() < 1e-10);
-        assert!((inertia[1][2] - inertia[2][1]).abs() < 1e-10);
+        assert!((inertia[0][1] - inertia[1][0]).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((inertia[0][2] - inertia[2][0]).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((inertia[1][2] - inertia[2][1]).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -3586,8 +3587,8 @@ mod tests {
 
         let plane = fit_plane(&points).unwrap();
 
-        assert!(approx_eq(plane.normal, DVec3::Z, 1e-6) || approx_eq(plane.normal, -DVec3::Z, 1e-6));
-        assert!(plane.rms_error < 1e-6);
+        assert!(approx_eq(plane.normal, DVec3::Z, TOLERANCE_MESH_LEGACY) || approx_eq(plane.normal, -DVec3::Z, TOLERANCE_MESH_LEGACY));
+        assert!(plane.rms_error < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -3708,7 +3709,7 @@ mod tests {
         let polygon = fit_polygon(&points).expect("fit_polygon should succeed for a square");
 
         assert!(polygon.vertices.len() >= 3, "Should have at least 3 vertices, got {}", polygon.vertices.len());
-        assert!((polygon.area - 1.0).abs() < 1e-4, "Area should be 1.0, got {}", polygon.area);
+        assert!((polygon.area - 1.0).abs() < TOLERANCE_RETRY_LADDER_COARSE, "Area should be 1.0, got {}", polygon.area);
     }
 
     #[test]
@@ -3751,14 +3752,14 @@ mod tests {
         let analysis = analyze_point_cloud(&points).unwrap();
 
         // Centroid should be at (0.5, 0.5, 0.5)
-        assert!(approx_eq(analysis.centroid, DVec3::splat(0.5), 1e-6));
+        assert!(approx_eq(analysis.centroid, DVec3::splat(0.5), TOLERANCE_MESH_LEGACY));
 
         // Should be volumetric
         assert_eq!(analysis.dimensionality, Dimensionality::Volumetric);
 
         // Bounding box
-        assert!(approx_eq(analysis.bounding_box.0, DVec3::ZERO, 1e-6));
-        assert!(approx_eq(analysis.bounding_box.1, DVec3::splat(1.0), 1e-6));
+        assert!(approx_eq(analysis.bounding_box.0, DVec3::ZERO, TOLERANCE_MESH_LEGACY));
+        assert!(approx_eq(analysis.bounding_box.1, DVec3::splat(1.0), TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -3778,7 +3779,7 @@ mod tests {
 
         // Analyze
         let analysis = analyze_point_cloud(&vertex_pc.points).unwrap();
-        assert!(approx_eq(analysis.centroid, DVec3::splat(0.5), 1e-6));
+        assert!(approx_eq(analysis.centroid, DVec3::splat(0.5), TOLERANCE_MESH_LEGACY));
     }
 
     // =========================================================================
@@ -3798,7 +3799,7 @@ mod tests {
 
         assert!(result.is_some());
         let icp = result.unwrap();
-        assert!(icp.rms_error < 1e-6, "RMS error should be near zero for identical clouds");
+        assert!(icp.rms_error < TOLERANCE_MESH_LEGACY, "RMS error should be near zero for identical clouds");
         assert!(icp.converged);
     }
 
@@ -3867,7 +3868,7 @@ mod tests {
         let p = DVec3::new(0.0, 0.0, 0.0);
         let transformed = result.transform_point(p);
 
-        assert!(approx_eq(transformed, DVec3::new(1.0, 2.0, 3.0), 1e-10));
+        assert!(approx_eq(transformed, DVec3::new(1.0, 2.0, 3.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -3881,9 +3882,9 @@ mod tests {
         };
 
         let matrix = result.to_matrix();
-        assert!((matrix[0][0] - 0.0).abs() < 1e-10);
-        assert!((matrix[0][1] - (-1.0)).abs() < 1e-10);
-        assert!((matrix[1][0] - 1.0).abs() < 1e-10);
+        assert!((matrix[0][0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((matrix[0][1] - (-1.0)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((matrix[1][0] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // =========================================================================
@@ -4291,9 +4292,9 @@ mod tests {
         // Identity rotation (zero angles)
         let r = angles_to_rotation_matrix(0.0, 0.0, 0.0);
 
-        assert!((r[0][0] - 1.0).abs() < 1e-10);
-        assert!((r[1][1] - 1.0).abs() < 1e-10);
-        assert!((r[2][2] - 1.0).abs() < 1e-10);
+        assert!((r[0][0] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((r[1][1] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((r[2][2] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4312,8 +4313,8 @@ mod tests {
         let rb = (b - cc).length();
         let rc = (c - cc).length();
 
-        assert!((ra - rb).abs() < 1e-10);
-        assert!((rb - rc).abs() < 1e-10);
+        assert!((ra - rb).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((rb - rc).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]

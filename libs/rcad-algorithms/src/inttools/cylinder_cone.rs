@@ -31,7 +31,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, ConicalSurface, CylindricalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -109,7 +109,7 @@ fn intersect_parallel_cylinder_cone(
         // At height h (measured from cyl.origin), cone radius = (h - h_apex)*tan_beta
         // (only positive when h > h_apex, i.e. above the apex in axis direction).
         // Set equal to r_cyl:  h = h_apex + r_cyl / tan_beta
-        if tan_beta.abs() < 1e-14 {
+        if tan_beta.abs() < TOLERANCE_FLOAT_LOOSE {
             // Degenerate cone (half_angle = 0), no lateral surface.
             return CylinderConeResult::NoIntersection;
         }
@@ -185,11 +185,11 @@ mod tests {
         match intersect_cylinder_cone(&c, &k) {
             CylinderConeResult::CoaxialCircle(circ) => {
                 assert!(
-                    (circ.center.z - 2.0).abs() < 1e-9,
+                    (circ.center.z - 2.0).abs() < TOLERANCE_COORD_SUB,
                     "circle z={}, expected 2.0",
                     circ.center.z
                 );
-                assert!((circ.radius - 2.0).abs() < 1e-9);
+                assert!((circ.radius - 2.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected CoaxialCircle, got {other:?}"),
         }
@@ -207,7 +207,7 @@ mod tests {
             CylinderConeResult::CoaxialCircle(circ) => {
                 let expected_h = 5.0 + 1.0 / (30.0_f64.to_radians().tan());
                 assert!(
-                    (circ.center.z - expected_h).abs() < 1e-9,
+                    (circ.center.z - expected_h).abs() < TOLERANCE_COORD_SUB,
                     "circle z={}, expected {}",
                     circ.center.z,
                     expected_h

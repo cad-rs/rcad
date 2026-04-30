@@ -11,6 +11,8 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::SurfaceEval;
 
+use crate::tolerance::*;
+
 /// Axis-aligned bounding box (AABB).
 #[derive(Debug, Clone, Copy)]
 pub struct Aabb {
@@ -150,6 +152,16 @@ const MAX_LEAF_SIZE: usize = 4;
 const SAH_BUCKETS: usize = 8;
 
 impl Bvh {
+    /// Face count (same order as [`Bvh::build`] source iteration).
+    pub fn face_count(&self) -> usize {
+        self.face_aabbs.len()
+    }
+
+    /// Conservative bounds for `face_index` as used in [`Bvh::candidate_pairs`].
+    pub fn face_aabb(&self, face_index: usize) -> Option<&Aabb> {
+        self.face_aabbs.get(face_index)
+    }
+
     /// Build a BVH over all faces of `brep`.
     ///
     /// Sampling: each face uses boundary vertices plus a small grid of interior samples
@@ -193,9 +205,18 @@ impl Bvh {
 
             // Degenerate faces: nudge AABB to non-zero extent
             let size = aabb.max - aabb.min;
-            if size.x < 1e-10 { aabb.min.x -= 1e-10; aabb.max.x += 1e-10; }
-            if size.y < 1e-10 { aabb.min.y -= 1e-10; aabb.max.y += 1e-10; }
-            if size.z < 1e-10 { aabb.min.z -= 1e-10; aabb.max.z += 1e-10; }
+            if size.x < TOLERANCE_LINEAR_ULTRA_STRICT {
+                aabb.min.x -= TOLERANCE_LINEAR_ULTRA_STRICT;
+                aabb.max.x += TOLERANCE_LINEAR_ULTRA_STRICT;
+            }
+            if size.y < TOLERANCE_LINEAR_ULTRA_STRICT {
+                aabb.min.y -= TOLERANCE_LINEAR_ULTRA_STRICT;
+                aabb.max.y += TOLERANCE_LINEAR_ULTRA_STRICT;
+            }
+            if size.z < TOLERANCE_LINEAR_ULTRA_STRICT {
+                aabb.min.z -= TOLERANCE_LINEAR_ULTRA_STRICT;
+                aabb.max.z += TOLERANCE_LINEAR_ULTRA_STRICT;
+            }
 
             let center = aabb.center();
             face_aabbs.push(aabb);
@@ -262,7 +283,7 @@ impl Bvh {
 
     /// SAH split: returns `(axis 0/1/2, split coordinate)`.
     fn sah_split(&self, start: usize, end: usize, parent_aabb: &Aabb) -> (usize, f64) {
-        let parent_sa = parent_aabb.surface_area().max(1e-30);
+        let parent_sa = parent_aabb.surface_area().max(TOLERANCE_LEN_SQ_DIV_SAFE);
         let mut best_cost = f64::INFINITY;
         let mut best_axis = 0usize;
         let mut best_pos = 0.0f64;
@@ -279,7 +300,7 @@ impl Bvh {
                 _ => parent_aabb.max.z,
             };
             let span = axis_max - axis_min;
-            if span < 1e-14 {
+            if span < TOLERANCE_FLOAT_LOOSE {
                 continue;
             }
 
@@ -670,7 +691,7 @@ mod tests {
             max: DVec3::ONE,
         };
         // Unit cube surface area is 6
-        assert!((aabb.surface_area() - 6.0).abs() < 1e-10);
+        assert!((aabb.surface_area() - 6.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]

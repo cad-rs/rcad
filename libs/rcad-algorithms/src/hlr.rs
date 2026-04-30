@@ -42,6 +42,7 @@
 //! - **Seam edge detection**: Proper handling of seam edges on closed surfaces
 //! - **Parallel processing**: Multi-threaded processing for large models
 
+use crate::tolerance::*;
 use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
@@ -66,7 +67,7 @@ pub struct HlrOptions {
     pub curvature_adaptive: bool,
     /// Tolerance for tangent alignment when computing silhouettes.
     /// Points where |normal · view_dir| < tangent_tolerance are considered silhouette candidates.
-    /// Default: 1e-6.
+    /// Default: TOLERANCE_MESH_LEGACY.
     pub tangent_tolerance: f64,
     /// Maximum angle deviation (in radians) for adaptive sampling subdivision.
     /// Smaller values produce smoother curves at higher cost.
@@ -129,7 +130,7 @@ impl Default for HlrOptions {
             edge_samples: 8,
             silhouette_samples: 32,
             curvature_adaptive: true,
-            tangent_tolerance: 1e-6,
+            tangent_tolerance: TOLERANCE_MESH_LEGACY,
             angular_tolerance: 0.05,
             min_subdivisions: 2,
             max_subdivisions: 8,
@@ -172,7 +173,7 @@ impl HlrOptions {
 
     /// Set the tangent tolerance for silhouette detection.
     pub fn with_tangent_tolerance(mut self, tol: f64) -> Self {
-        self.tangent_tolerance = tol.abs().max(1e-12);
+        self.tangent_tolerance = tol.abs().max(TOLERANCE_LEN_MIN);
         self
     }
 
@@ -500,7 +501,7 @@ impl Default for AdaptiveSamplingConfig {
             max_samples: 256,
             curvature_threshold: 10.0,
             proximity_threshold: 0.05,
-            min_chord_length: 1e-4,
+            min_chord_length: TOLERANCE_RETRY_LADDER_COARSE,
             max_angle_deviation: 0.1,
         }
     }
@@ -894,7 +895,7 @@ fn collect_triangles(brep: &BRep) -> Vec<[DVec3; 3]> {
 /// Ray-triangle intersection (Möller–Trumbore). Returns `Some(t)` if the ray
 /// `origin + t*dir` hits the triangle (t > epsilon, front-face only).
 fn ray_triangle_intersect(origin: DVec3, dir: DVec3, tri: &[DVec3; 3]) -> Option<f64> {
-    const EPS: f64 = 1e-8;
+    const EPS: f64 = TOLERANCE_LINEAR_RELAX_8;
     let edge1 = tri[1] - tri[0];
     let edge2 = tri[2] - tri[0];
     let h = dir.cross(edge2);
@@ -920,10 +921,10 @@ fn ray_triangle_intersect(origin: DVec3, dir: DVec3, tri: &[DVec3; 3]) -> Option
 /// Test if a world-space point is occluded by any triangle when viewed from `eye`.
 fn is_occluded(point: DVec3, eye: DVec3, triangles: &[[DVec3; 3]], dist_to_eye: f64) -> bool {
     let dir = (eye - point).normalize_or_zero();
-    let origin = point + dir * 1e-5; // push off surface
+    let origin = point + dir * TOLERANCE_RETRY_LADDER_MID; // push off surface
     for tri in triangles {
         if let Some(t) = ray_triangle_intersect(origin, dir, tri)
-            && t < dist_to_eye - 1e-4
+            && t < dist_to_eye - TOLERANCE_RETRY_LADDER_COARSE
         {
             return true;
         }
@@ -1123,7 +1124,7 @@ impl TriBvh {
     }
 
     fn sah_split(&self, tri_indices: &[usize], parent_aabb: &TriAabb) -> (usize, f64) {
-        let parent_sa = parent_aabb.surface_area().max(1e-30);
+        let parent_sa = parent_aabb.surface_area().max(TOLERANCE_LEN_SQ_DIV_SAFE);
         let mut best_cost = f64::INFINITY;
         let mut best_axis = 0usize;
         let mut best_pos = 0.0f64;
@@ -1140,7 +1141,7 @@ impl TriBvh {
                 _ => parent_aabb.max.z,
             };
             let span = axis_max - axis_min;
-            if span < 1e-14 {
+            if span < TOLERANCE_FLOAT_LOOSE {
                 continue;
             }
 
@@ -1199,7 +1200,7 @@ impl TriBvh {
         }
 
         let dir = (eye - point).normalize_or_zero();
-        let origin = point + dir * 1e-5;
+        let origin = point + dir * TOLERANCE_RETRY_LADDER_MID;
         let inv_dir = DVec3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
 
         self.is_occluded_node(0, origin, dir, inv_dir, triangles, dist_to_eye)
@@ -1231,7 +1232,7 @@ impl TriBvh {
             TriBvhNode::Leaf { tris, .. } => {
                 for &ti in tris {
                     if let Some(t) = ray_triangle_intersect(origin, dir, &triangles[ti])
-                        && t < dist_to_eye - 1e-4 {
+                        && t < dist_to_eye - TOLERANCE_RETRY_LADDER_COARSE {
                             return true;
                         }
                 }
@@ -1410,7 +1411,7 @@ fn extract_cylinder_silhouettes(
 
     // Project view direction onto the plane perpendicular to the axis.
     let d_perp = view_dir - view_dir.dot(cyl.axis) * cyl.axis;
-    if d_perp.length_squared() < 1e-10 {
+    if d_perp.length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT {
         // Viewing along the axis — no silhouette lines.
         return curves;
     }
@@ -1480,7 +1481,7 @@ fn extract_cone_silhouettes(
     let mut curves: Vec<Vec<DVec3>> = Vec::new();
 
     let d_perp = view_dir - view_dir.dot(con.axis) * con.axis;
-    if d_perp.length_squared() < 1e-10 {
+    if d_perp.length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT {
         return curves;
     }
 
@@ -1516,7 +1517,7 @@ fn extract_cone_silhouettes(
         if world_pts
             .first()
             .zip(world_pts.last())
-            .map(|(a, b)| (*b - *a).length_squared() > 1e-12)
+            .map(|(a, b)| (*b - *a).length_squared() > TOLERANCE_LEN_MIN)
             .unwrap_or(false)
         {
             curves.push(world_pts);
@@ -1584,7 +1585,7 @@ fn extract_ellipsoid_silhouettes(
     let view_local = DVec3::new(vx, vy, vz);
 
     // Handle degenerate case: view direction is zero
-    if view_local.length_squared() < 1e-20 {
+    if view_local.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
         return Vec::new();
     }
 
@@ -1603,7 +1604,7 @@ fn extract_ellipsoid_silhouettes(
     // Handle the degenerate case where the plane normal is zero
     // This happens when all components are zero, which shouldn't occur for valid view direction
     let plane_normal_len = plane_normal_local.length();
-    if plane_normal_len < 1e-20 {
+    if plane_normal_len < TOLERANCE_METRIC_SQ_NEAR_ZERO {
         // View direction is exactly perpendicular to all scaled axes
         // This is a degenerate case - return empty
         return Vec::new();
@@ -1612,9 +1613,9 @@ fn extract_ellipsoid_silhouettes(
 
     // Check if view is along a principal axis (plane normal is near a coordinate axis)
     // In this case, the silhouette is an ellipse in the perpendicular plane
-    let is_view_along_axis = plane_normal_local.z.abs() > 1.0 - 1e-6;
-    let is_view_along_x = plane_normal_local.x.abs() > 1.0 - 1e-6;
-    let is_view_along_y = plane_normal_local.y.abs() > 1.0 - 1e-6;
+    let is_view_along_axis = plane_normal_local.z.abs() > 1.0 - TOLERANCE_MESH_LEGACY;
+    let is_view_along_x = plane_normal_local.x.abs() > 1.0 - TOLERANCE_MESH_LEGACY;
+    let is_view_along_y = plane_normal_local.y.abs() > 1.0 - TOLERANCE_MESH_LEGACY;
 
     // Find two orthogonal directions in the silhouette plane
     // These will be used to parameterize the ellipse
@@ -1854,7 +1855,7 @@ fn is_approximately_helical_on_cylinder(
         let radial_vec = radial - axial * cyl.axis;
         let radial_dist = radial_vec.length();
 
-        if (radial_dist - cyl.radius).abs() < 1e-4 {
+        if (radial_dist - cyl.radius).abs() < TOLERANCE_RETRY_LADDER_COARSE {
             on_surface_count += 1;
         }
 
@@ -1867,10 +1868,10 @@ fn is_approximately_helical_on_cylinder(
             let axial_delta = delta.dot(cyl.axis).abs();
             let radial_delta = (delta - delta.dot(cyl.axis) * cyl.axis).length();
 
-            if axial_delta > 1e-6 {
+            if axial_delta > TOLERANCE_MESH_LEGACY {
                 has_axial_component = true;
             }
-            if radial_delta > 1e-6 {
+            if radial_delta > TOLERANCE_MESH_LEGACY {
                 has_angular_component = true;
             }
         }
@@ -1915,7 +1916,7 @@ fn is_approximately_helical_on_cone(
         // Expected radius at this axial distance
         let expected_radius = axial_dist.abs() * cone.half_angle_rad.tan();
 
-        if (radial_dist - expected_radius).abs() < 1e-4 {
+        if (radial_dist - expected_radius).abs() < TOLERANCE_RETRY_LADDER_COARSE {
             on_surface_count += 1;
         }
 
@@ -1928,10 +1929,10 @@ fn is_approximately_helical_on_cone(
             let axial_delta = delta.dot(axis).abs();
             let radial_delta = (delta - delta.dot(axis) * axis).length();
 
-            if axial_delta > 1e-6 {
+            if axial_delta > TOLERANCE_MESH_LEGACY {
                 has_axial_component = true;
             }
-            if radial_delta > 1e-6 {
+            if radial_delta > TOLERANCE_MESH_LEGACY {
                 has_angular_component = true;
             }
         }
@@ -2147,7 +2148,7 @@ fn find_silhouette_crossing(
         if let Some(uv_mid) = project_point_to_surface(&pt_mid, surface) {
             let dot_mid = surface.normal_at(uv_mid.0, uv_mid.1).dot(view_dir);
 
-            if dot_mid.abs() < 1e-8 {
+            if dot_mid.abs() < TOLERANCE_LINEAR_RELAX_8 {
                 return Some((t_mid, pt_mid));
             }
 
@@ -2562,7 +2563,7 @@ fn bisection_search(
         let vm = (va + vb) / 2.0;
         let dm = surface.normal_at(um, vm).dot(view_dir);
 
-        if dm.abs() < 1e-10 {
+        if dm.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             return Some((um, vm));
         }
 
@@ -2682,7 +2683,7 @@ fn compute_silhouette_tangent(
     u: f64,
     v: f64,
 ) -> DVec2 {
-    const EPS: f64 = 1e-6;
+    const EPS: f64 = TOLERANCE_MESH_LEGACY;
 
     // Compute gradients of the implicit function f(u,v) = N(u,v) · V
     let n = surface.normal_at(u, v);
@@ -2718,7 +2719,7 @@ fn project_to_silhouette(
         }
 
         // Compute gradient numerically
-        const EPS: f64 = 1e-7;
+        const EPS: f64 = TOLERANCE_ABS;
         let n_u = surface.normal_at(u_curr + EPS, v_curr);
         let n_v = surface.normal_at(u_curr, v_curr + EPS);
 
@@ -2726,7 +2727,7 @@ fn project_to_silhouette(
         let df_dv = (n_v - n).dot(view_dir) / EPS;
 
         let grad_len_sq = df_du * df_du + df_dv * df_dv;
-        if grad_len_sq < 1e-20 {
+        if grad_len_sq < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             break;
         }
 
@@ -2811,7 +2812,7 @@ fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
         chords[i] = chords[i - 1] + (points[i] - points[i - 1]).length();
     }
     let total_len = chords[n - 1];
-    if total_len < 1e-12 {
+    if total_len < TOLERANCE_LEN_MIN {
         return points.to_vec();
     }
 
@@ -2833,7 +2834,7 @@ fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
         let seg_end = chords[seg_idx + 1];
         let seg_len = seg_end - seg_start;
 
-        let local_t = if seg_len > 1e-12 {
+        let local_t = if seg_len > TOLERANCE_LEN_MIN {
             (target_len - seg_start) / seg_len
         } else {
             0.5
@@ -2940,7 +2941,7 @@ fn classify_visibility(
             // Verify with additional samples to reduce numerical errors
             let mut occluded_count = 1;
             const NUM_SAMPLES: usize = 4;
-            let offset = 1e-4;
+            let offset = TOLERANCE_RETRY_LADDER_COARSE;
 
             for i in 0..NUM_SAMPLES {
                 let angle = i as f64 * std::f64::consts::TAU / NUM_SAMPLES as f64;
@@ -3335,7 +3336,7 @@ fn process_single_edge(
             })
             .collect()
     } else {
-        if (p1 - p0).length_squared() < 1e-12 {
+        if (p1 - p0).length_squared() < TOLERANCE_LEN_MIN {
             return segments;
         }
         (0..this_edge_samples)
@@ -3542,7 +3543,7 @@ pub fn hlr_assembly(
                     })
                     .collect()
             } else {
-                if (p1 - p0).length_squared() < 1e-12 {
+                if (p1 - p0).length_squared() < TOLERANCE_LEN_MIN {
                     continue;
                 }
                 (0..edge_samples)
@@ -4023,12 +4024,12 @@ mod tests {
             .with_edge_samples(16)
             .with_silhouette_samples(64)
             .with_curvature_adaptive(false)
-            .with_tangent_tolerance(1e-4);
+            .with_tangent_tolerance(TOLERANCE_RETRY_LADDER_COARSE);
 
         assert_eq!(opts.edge_samples, 16);
         assert_eq!(opts.silhouette_samples, 64);
         assert!(!opts.curvature_adaptive);
-        assert!((opts.tangent_tolerance - 1e-4).abs() < 1e-10);
+        assert!((opts.tangent_tolerance - TOLERANCE_RETRY_LADDER_COARSE).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4203,7 +4204,7 @@ mod tests {
 
         // Very tight tolerance
         let opts_tight = HlrOptions {
-            tangent_tolerance: 1e-12,
+            tangent_tolerance: TOLERANCE_LEN_MIN,
             ..HlrOptions::default()
         };
 
@@ -4248,7 +4249,7 @@ mod tests {
         assert!(!opts.cache_surface_properties);
         assert!(!opts.detect_thread_edges);
         assert!(!opts.detect_seam_edges);
-        assert!((opts.silhouette_proximity_factor - 0.05).abs() < 1e-10);
+        assert!((opts.silhouette_proximity_factor - 0.05).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -4268,11 +4269,11 @@ mod tests {
 
         // Second access should return cached value
         let props2 = cache.get_or_compute(&surface, 0.5, 0.5);
-        assert!((props1.point - props2.point).length() < 1e-10);
+        assert!((props1.point - props2.point).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Verify surface properties
-        assert!((props1.point.length() - 1.0).abs() < 1e-10, "sphere point should be on surface");
-        assert!((props1.curvatures.0 - 1.0).abs() < 1e-10, "sphere curvature should be 1/r");
+        assert!((props1.point.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "sphere point should be on surface");
+        assert!((props1.curvatures.0 - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "sphere curvature should be 1/r");
     }
 
     #[test]
@@ -4429,8 +4430,8 @@ mod tests {
         let s = sample.unwrap();
 
         // Check that the sample is on the equator
-        assert!((s.point.y - 0.0).abs() < 1e-10, "equator y should be 0");
-        assert!((s.curvature - 0.5).abs() < 1e-10, "sphere radius 2 curvature should be 0.5");
+        assert!((s.point.y - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "equator y should be 0");
+        assert!((s.curvature - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "sphere radius 2 curvature should be 0.5");
     }
 
     #[test]
@@ -4669,7 +4670,7 @@ mod tests {
                 + (pt.y / ell.radius_y).powi(2)
                 + (pt.z / ell.radius_z).powi(2);
             assert!(
-                (value - 1.0).abs() < 1e-6,
+                (value - 1.0).abs() < TOLERANCE_MESH_LEGACY,
                 "point should be on ellipsoid surface, got implicit value {value}"
             );
         }
@@ -4791,7 +4792,7 @@ mod tests {
                 + (local.y / ell.radius_y).powi(2)
                 + (local.z / ell.radius_z).powi(2);
             assert!(
-                (value - 1.0).abs() < 1e-6,
+                (value - 1.0).abs() < TOLERANCE_MESH_LEGACY,
                 "point should be on translated ellipsoid surface"
             );
         }

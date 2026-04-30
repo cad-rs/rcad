@@ -17,6 +17,18 @@ pub fn intersect_line_cylinder(
     t_range: [f64; 2],
     cyl: &CylindricalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_line_cylinder_with_tol(line, t_range, cyl, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_line_cylinder`]; `geom_tol` widens the accepted edge parameter interval
+/// (minimum [`TOLERANCE_ABS`]). Quadratic degeneracy and discriminant tests stay strict.
+pub fn intersect_line_cylinder_with_tol(
+    line: &Line3,
+    t_range: [f64; 2],
+    cyl: &CylindricalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let param_eps = geom_tol.max(TOLERANCE_ABS);
     // Project to 2D perpendicular to cylinder axis
     let oc = line.origin - cyl.origin;
 
@@ -28,7 +40,7 @@ pub fn intersect_line_cylinder(
     let b = 2.0 * oc_perp.dot(d_perp);
     let c = oc_perp.dot(oc_perp) - cyl.radius * cyl.radius;
 
-    solve_quadratic_hits(a, b, c, line, t_range)
+    solve_quadratic_hits(a, b, c, line, t_range, param_eps)
 }
 
 /// Intersect a line with a sphere.
@@ -37,12 +49,23 @@ pub fn intersect_line_sphere(
     t_range: [f64; 2],
     sphere: &SphericalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_line_sphere_with_tol(line, t_range, sphere, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_line_sphere`] with parametric margin `geom_tol` (minimum [`TOLERANCE_ABS`]).
+pub fn intersect_line_sphere_with_tol(
+    line: &Line3,
+    t_range: [f64; 2],
+    sphere: &SphericalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let param_eps = geom_tol.max(TOLERANCE_ABS);
     let oc = line.origin - sphere.center;
     let a = line.direction.dot(line.direction);
     let b = 2.0 * oc.dot(line.direction);
     let c = oc.length_squared() - sphere.radius * sphere.radius;
 
-    solve_quadratic_hits(a, b, c, line, t_range)
+    solve_quadratic_hits(a, b, c, line, t_range, param_eps)
 }
 
 /// Intersect a line with a conical surface (infinite cone).
@@ -51,6 +74,17 @@ pub fn intersect_line_cone(
     t_range: [f64; 2],
     cone: &ConicalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_line_cone_with_tol(line, t_range, cone, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_line_cone`] with nappe / parameter margins from `geom_tol`.
+pub fn intersect_line_cone_with_tol(
+    line: &Line3,
+    t_range: [f64; 2],
+    cone: &ConicalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let param_eps = geom_tol.max(TOLERANCE_ABS);
     let apex = cone.apex_point();
     let axis = cone.axis_dir();
     let co = line.origin - apex;
@@ -72,10 +106,10 @@ pub fn intersect_line_cone(
 
     // Filter hits: only keep those where the point is on the correct nappe
     // (same side as cone.axis from apex), and the cone has positive height direction.
-    let mut hits = solve_quadratic_hits(a, b, c, line, t_range);
+    let mut hits = solve_quadratic_hits(a, b, c, line, t_range, param_eps);
     hits.retain(|hit| {
         let v = hit.point - apex;
-        v.dot(axis) > -TOLERANCE_ABS // on the positive nappe
+        v.dot(axis) > -param_eps // on the positive nappe
     });
     hits
 }
@@ -86,6 +120,17 @@ pub fn intersect_circle_plane(
     t_range: [f64; 2], // angular range in radians
     plane: &Plane,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_circle_plane_with_tol(circle, t_range, plane, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_circle_plane`] with angular / amplitude margins from `geom_tol`.
+pub fn intersect_circle_plane_with_tol(
+    circle: &Circle3,
+    t_range: [f64; 2],
+    plane: &Plane,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let eps = geom_tol.max(TOLERANCE_ABS);
     // Circle parametric: P(θ) = center + radius*(u*cos(θ) + v*sin(θ))
     // where u,v are orthonormal vectors in the circle plane
     let u = if circle.normal.x.abs() < 0.9 {
@@ -110,7 +155,7 @@ pub fn intersect_circle_plane(
     }
 
     let ratio = -d / r_amp;
-    if ratio.abs() > 1.0 + TOLERANCE_ABS {
+    if ratio.abs() > 1.0 + eps {
         return vec![];
     }
     let ratio = ratio.clamp(-1.0, 1.0);
@@ -124,7 +169,7 @@ pub fn intersect_circle_plane(
         let theta = ((theta % (2.0 * std::f64::consts::PI)) + 2.0 * std::f64::consts::PI)
             % (2.0 * std::f64::consts::PI);
 
-        if theta >= t_range[0] - TOLERANCE_ABS && theta <= t_range[1] + TOLERANCE_ABS {
+        if theta >= t_range[0] - eps && theta <= t_range[1] + eps {
             let point = circle.center
                 + u * (circle.radius * theta.cos())
                 + v * (circle.radius * theta.sin());
@@ -148,6 +193,17 @@ pub fn intersect_circle_cylinder(
     t_range: [f64; 2],
     cyl: &CylindricalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_circle_cylinder_with_tol(circle, t_range, cyl, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_circle_cylinder`] with Newton / range margins from `geom_tol`.
+pub fn intersect_circle_cylinder_with_tol(
+    circle: &Circle3,
+    t_range: [f64; 2],
+    cyl: &CylindricalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let eps = geom_tol.max(TOLERANCE_ABS);
     circle_vs_implicit_surface(
         circle,
         t_range,
@@ -157,6 +213,7 @@ pub fn intersect_circle_cylinder(
             let perp = v - cyl.axis * along;
             perp.length_squared() - cyl.radius * cyl.radius
         },
+        eps,
     )
 }
 
@@ -168,10 +225,22 @@ pub fn intersect_circle_sphere(
     t_range: [f64; 2],
     sph: &SphericalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_circle_sphere_with_tol(circle, t_range, sph, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_circle_sphere`] with Newton / range margins from `geom_tol`.
+pub fn intersect_circle_sphere_with_tol(
+    circle: &Circle3,
+    t_range: [f64; 2],
+    sph: &SphericalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
+    let eps = geom_tol.max(TOLERANCE_ABS);
     circle_vs_implicit_surface(
         circle,
         t_range,
         |p: DVec3| -> f64 { (p - sph.center).length_squared() - sph.radius * sph.radius },
+        eps,
     )
 }
 
@@ -181,9 +250,20 @@ pub fn intersect_circle_cone(
     t_range: [f64; 2],
     cone: &ConicalSurface,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_circle_cone_with_tol(circle, t_range, cone, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_circle_cone`] with Newton / range margins from `geom_tol`.
+pub fn intersect_circle_cone_with_tol(
+    circle: &Circle3,
+    t_range: [f64; 2],
+    cone: &ConicalSurface,
+    geom_tol: f64,
+) -> Vec<CurveSurfaceHit> {
     let cos2 = cone.half_angle_rad.cos().powi(2);
     let apex = cone.apex_point();
     let axis = cone.axis_dir();
+    let eps = geom_tol.max(TOLERANCE_ABS);
     circle_vs_implicit_surface(
         circle,
         t_range,
@@ -195,19 +275,22 @@ pub fn intersect_circle_cone(
             // Cone implicit: (v·axis)² = cos²(half) * |v|²
             along2 - cos2 * len2
         },
+        eps,
     )
 }
 
 /// Generic circle-vs-implicit-surface intersection via Newton refinement.
 ///
 /// Evaluates `f(P(θ)) = 0` on a circle arc.  Seeds are found by coarse sampling;
-/// each seed is refined with Newton's method.  Duplicate roots within TOLERANCE_ABS
-/// are deduplicated.
+/// each seed is refined with Newton's method.  Duplicate roots are deduplicated within
+/// a multiple of `geom_tol` (minimum [`TOLERANCE_ABS`]).
 fn circle_vs_implicit_surface(
     circle: &Circle3,
     t_range: [f64; 2],
     f: impl Fn(DVec3) -> f64,
+    geom_tol: f64,
 ) -> Vec<CurveSurfaceHit> {
+    let eps = geom_tol.max(TOLERANCE_ABS);
     use std::f64::consts::TAU;
 
     // Build a local orthonormal frame for the circle
@@ -243,34 +326,34 @@ fn circle_vs_implicit_surface(
     // Newton refinement
     let mut hits: Vec<CurveSurfaceHit> = Vec::new();
     const MAX_ITER: usize = 20;
-    const H: f64 = 1e-7;
+    const H: f64 = TOLERANCE_ABS;
     for seed in seeds {
         let mut theta = seed;
         for _ in 0..MAX_ITER {
             let fv = f(pt(theta));
             let dfdtheta = (f(pt(theta + H)) - f(pt(theta - H))) / (2.0 * H);
-            if dfdtheta.abs() < 1e-30 {
+            if dfdtheta.abs() < TOLERANCE_LEN_SQ_DIV_SAFE {
                 break;
             }
             let delta = -fv / dfdtheta;
             theta += delta;
-            if delta.abs() < TOLERANCE_ABS * 0.01 {
+            if delta.abs() < eps * 0.01 {
                 break;
             }
         }
 
         // Validate within t_range and on the surface
-        if theta < t0 - TOLERANCE_ABS || theta > t1 + TOLERANCE_ABS {
+        if theta < t0 - eps || theta > t1 + eps {
             continue;
         }
         let point = pt(theta);
-        if f(point).abs() > TOLERANCE_ABS * 10.0 {
+        if f(point).abs() > eps * 10.0 {
             continue;
         }
 
         // Deduplicate
         let duplicate = hits.iter().any(|h: &CurveSurfaceHit| {
-            (h.curve_param - theta).abs() < TOLERANCE_ABS * 5.0
+            (h.curve_param - theta).abs() < eps * 5.0
         });
         if !duplicate {
             hits.push(CurveSurfaceHit {
@@ -288,7 +371,9 @@ fn solve_quadratic_hits(
     c: f64,
     line: &Line3,
     t_range: [f64; 2],
+    param_eps: f64,
 ) -> Vec<CurveSurfaceHit> {
+    let pe = param_eps.max(TOLERANCE_ABS);
     let mut hits = Vec::new();
 
     if a.abs() < TOLERANCE_ABS * TOLERANCE_ABS {
@@ -297,7 +382,7 @@ fn solve_quadratic_hits(
             return hits;
         }
         let t = -c / b;
-        if t >= t_range[0] - TOLERANCE_ABS && t <= t_range[1] + TOLERANCE_ABS {
+        if t >= t_range[0] - pe && t <= t_range[1] + pe {
             hits.push(CurveSurfaceHit {
                 point: line.origin + line.direction * t,
                 curve_param: t,
@@ -313,7 +398,7 @@ fn solve_quadratic_hits(
 
     if discriminant.abs() < TOLERANCE_ABS {
         let t = -b / (2.0 * a);
-        if t >= t_range[0] - TOLERANCE_ABS && t <= t_range[1] + TOLERANCE_ABS {
+        if t >= t_range[0] - pe && t <= t_range[1] + pe {
             hits.push(CurveSurfaceHit {
                 point: line.origin + line.direction * t,
                 curve_param: t,
@@ -322,7 +407,7 @@ fn solve_quadratic_hits(
     } else {
         let sqrt_d = discriminant.sqrt();
         for t in [(-b - sqrt_d) / (2.0 * a), (-b + sqrt_d) / (2.0 * a)] {
-            if t >= t_range[0] - TOLERANCE_ABS && t <= t_range[1] + TOLERANCE_ABS {
+            if t >= t_range[0] - pe && t <= t_range[1] + pe {
                 hits.push(CurveSurfaceHit {
                     point: line.origin + line.direction * t,
                     curve_param: t,

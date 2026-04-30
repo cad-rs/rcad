@@ -11,6 +11,7 @@
 //! - **Parabola**: Unbounded parabolic curve, parameter t (real line)
 //! - **BSpline**: NURBS curve, parameter within knot domain
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{
     any_perpendicular, BSplineCurve3, Circle3, CurveEval, Ellipse3, Hyperbola3, Line3, Parabola3,
@@ -30,7 +31,7 @@ use std::f64::consts::TAU;
 /// ```ignore
 /// let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
 /// let p = line_point_at(&line, 5.0);
-/// assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
+/// assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
 pub fn line_point_at(line: &Line3, t: f64) -> DVec3 {
     line.origin + t * line.direction
@@ -79,7 +80,7 @@ pub fn line_closest_point(line: &Line3, point: DVec3) -> DVec3 {
 /// ```ignore
 /// let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
 /// let p = circle_point_at(&circle, 0.0); // Point at angle 0
-/// assert!((p.length() - 2.0).abs() < 1e-10);
+/// assert!((p.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
 pub fn circle_point_at(circle: &Circle3, angle: f64) -> DVec3 {
     circle.point_at(angle)
@@ -217,7 +218,7 @@ pub fn ellipse_parameter(ellipse: &Ellipse3, point: DVec3) -> f64 {
     let a = ellipse.major_radius;
     let b = ellipse.minor_radius;
 
-    if a.abs() < 1e-15 || b.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP || b.abs() < TOLERANCE_FLOAT_DEDUP {
         return 0.0;
     }
 
@@ -350,7 +351,7 @@ pub fn parabola_derivative(parab: &Parabola3, t: f64, order: usize) -> DVec3 {
     let dir_perp = parab.axis_dir.cross(parab.normal).normalize();
     let p = parab.focal_param;
 
-    if p.abs() < 1e-15 {
+    if p.abs() < TOLERANCE_FLOAT_DEDUP {
         return DVec3::ZERO;
     }
 
@@ -418,7 +419,7 @@ pub fn bspline_derivative(spline: &BSplineCurve3, t: f64, order: usize) -> DVec3
 
     // Compute derivative using finite differences for simplicity and robustness
     // For production code, this should use the analytical derivative chain
-    let h = 1e-7;
+    let h = TOLERANCE_ABS;
 
     let domain = spline.default_domain();
     let t_min = domain[0];
@@ -429,7 +430,7 @@ pub fn bspline_derivative(spline: &BSplineCurve3, t: f64, order: usize) -> DVec3
     let t_hi = (t + h).min(t_max);
     let actual_h = t_hi - t_lo;
 
-    if actual_h < 1e-15 {
+    if actual_h < TOLERANCE_FLOAT_DEDUP {
         return DVec3::ZERO;
     }
 
@@ -487,11 +488,11 @@ mod tests {
             direction: DVec3::X,
         };
         let p = line_point_at(&line, 5.0);
-        assert!((p - DVec3::new(6.0, 2.0, 3.0)).length() < 1e-10);
+        assert!((p - DVec3::new(6.0, 2.0, 3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Negative parameter
         let p_neg = line_point_at(&line, -3.0);
-        assert!((p_neg - DVec3::new(-2.0, 2.0, 3.0)).length() < 1e-10);
+        assert!((p_neg - DVec3::new(-2.0, 2.0, 3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -500,12 +501,12 @@ mod tests {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        assert!((line_parameter(&line, DVec3::new(5.0, 0.0, 0.0)) - 5.0).abs() < 1e-10);
-        assert!((line_parameter(&line, DVec3::new(-3.0, 0.0, 0.0)) - (-3.0)).abs() < 1e-10);
+        assert!((line_parameter(&line, DVec3::new(5.0, 0.0, 0.0)) - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((line_parameter(&line, DVec3::new(-3.0, 0.0, 0.0)) - (-3.0)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Point off the line
         let t = line_parameter(&line, DVec3::new(5.0, 10.0, 0.0));
-        assert!((t - 5.0).abs() < 1e-10); // Should project to t=5
+        assert!((t - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT); // Should project to t=5
     }
 
     #[test]
@@ -515,7 +516,7 @@ mod tests {
             direction: DVec3::X,
         };
         let dist = line_distance_to_point(&line, DVec3::new(5.0, 3.0, 4.0));
-        assert!((dist - 5.0).abs() < 1e-10); // Distance is sqrt(3^2 + 4^2) = 5
+        assert!((dist - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT); // Distance is sqrt(3^2 + 4^2) = 5
     }
 
     #[test]
@@ -525,7 +526,7 @@ mod tests {
             direction: DVec3::X,
         };
         let closest = line_closest_point(&line, DVec3::new(5.0, 10.0, 20.0));
-        assert!((closest - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((closest - DVec3::new(5.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -541,14 +542,14 @@ mod tests {
         };
 
         let p0 = circle_point_at(&circle, 0.0);
-        assert!((p0.length() - 2.0).abs() < 1e-10);
+        assert!((p0.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let p90 = circle_point_at(&circle, FRAC_PI_2);
-        assert!((p90.length() - 2.0).abs() < 1e-10);
+        assert!((p90.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Full revolution returns to start
         let p2pi = circle_point_at(&circle, TAU);
-        assert!((p0 - p2pi).length() < 1e-10);
+        assert!((p0 - p2pi).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -564,13 +565,13 @@ mod tests {
         // Point at angle 0
         let p0 = circle.center + circle.radius * x_axis;
         let t0 = circle_parameter(&circle, p0);
-        assert!(t0.abs() < 1e-10 || (t0 - TAU).abs() < 1e-10);
+        assert!(t0.abs() < TOLERANCE_LINEAR_ULTRA_STRICT || (t0 - TAU).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Point at angle pi/2
         let y_axis = circle.normal.cross(x_axis);
         let p90 = circle.center + circle.radius * y_axis;
         let t90 = circle_parameter(&circle, p90);
-        assert!((t90 - FRAC_PI_2).abs() < 1e-10);
+        assert!((t90 - FRAC_PI_2).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -586,10 +587,10 @@ mod tests {
         let y_axis = circle.normal.cross(x_axis);
 
         // At angle 0, tangent should point in +y direction
-        assert!((tangent - y_axis).length() < 1e-10);
+        assert!((tangent - y_axis).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Tangent should be unit length
-        assert!((tangent.length() - 1.0).abs() < 1e-10);
+        assert!((tangent.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -604,10 +605,10 @@ mod tests {
         let x_axis = any_perpendicular(circle.normal);
 
         // At angle 0, normal should point in +x direction
-        assert!((normal - x_axis).length() < 1e-10);
+        assert!((normal - x_axis).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Normal should be unit length
-        assert!((normal.length() - 1.0).abs() < 1e-10);
+        assert!((normal.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -619,7 +620,7 @@ mod tests {
         };
 
         let binormal = circle_binormal_at(&circle, 0.0);
-        assert!((binormal - DVec3::Z).length() < 1e-10);
+        assert!((binormal - DVec3::Z).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -633,21 +634,21 @@ mod tests {
         // Order 0 should match point_at
         let p = circle_derivative(&circle, 1.0, 0);
         let expected_p = circle_point_at(&circle, 1.0);
-        assert!((p - expected_p).length() < 1e-10);
+        assert!((p - expected_p).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // First derivative magnitude should be radius
         let d1 = circle_derivative(&circle, 1.0, 1);
-        assert!((d1.length() - 2.0).abs() < 1e-10);
+        assert!((d1.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative magnitude should be radius
         let d2 = circle_derivative(&circle, 1.0, 2);
-        assert!((d2.length() - 2.0).abs() < 1e-10);
+        assert!((d2.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative should point toward center
         let point = circle_point_at(&circle, 1.0);
         let radial = (point - circle.center).normalize();
         let d2_normalized = d2.normalize();
-        assert!((d2_normalized + radial).length() < 1e-10);
+        assert!((d2_normalized + radial).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -666,11 +667,11 @@ mod tests {
 
         // At angle 0, should be at major radius
         let p0 = ellipse_point_at(&ellipse, 0.0);
-        assert!((p0 - DVec3::new(4.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((p0 - DVec3::new(4.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At angle pi/2, should be at minor radius
         let p90 = ellipse_point_at(&ellipse, FRAC_PI_2);
-        assert!((p90 - DVec3::new(0.0, 2.0, 0.0)).length() < 1e-10);
+        assert!((p90 - DVec3::new(0.0, 2.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -686,12 +687,12 @@ mod tests {
         // At angle 0
         let p0 = DVec3::new(4.0, 0.0, 0.0);
         let t0 = ellipse_parameter(&ellipse, p0);
-        assert!(t0.abs() < 1e-10 || (t0 - TAU).abs() < 1e-10);
+        assert!(t0.abs() < TOLERANCE_LINEAR_ULTRA_STRICT || (t0 - TAU).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At angle pi/2
         let p90 = DVec3::new(0.0, 2.0, 0.0);
         let t90 = ellipse_parameter(&ellipse, p90);
-        assert!((t90 - FRAC_PI_2).abs() < 1e-10);
+        assert!((t90 - FRAC_PI_2).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -706,11 +707,11 @@ mod tests {
 
         // First derivative at angle 0
         let d1 = ellipse_derivative(&ellipse, 0.0, 1);
-        assert!((d1 - DVec3::new(0.0, 2.0, 0.0)).length() < 1e-10);
+        assert!((d1 - DVec3::new(0.0, 2.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative at angle 0 (points toward center along major axis)
         let d2 = ellipse_derivative(&ellipse, 0.0, 2);
-        assert!((d2 - DVec3::new(-4.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((d2 - DVec3::new(-4.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -729,7 +730,7 @@ mod tests {
 
         // At t=0, should be on vertex (major axis)
         let p0 = hyperbola_point_at(&hyp, 0.0);
-        assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -745,11 +746,11 @@ mod tests {
         // First derivative at t=0
         let d1 = hyperbola_derivative(&hyp, 0.0, 1);
         let y_axis = hyp.normal.cross(hyp.major_dir).normalize();
-        assert!((d1 - 2.0 * y_axis).length() < 1e-10);
+        assert!((d1 - 2.0 * y_axis).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative at t=0 (same as position minus center)
         let d2 = hyperbola_derivative(&hyp, 0.0, 2);
-        assert!((d2 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((d2 - DVec3::new(3.0, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -767,11 +768,11 @@ mod tests {
 
         // At t=0, should be at vertex
         let p0 = parabola_point_at(&parab, 0.0);
-        assert!((p0 - DVec3::ZERO).length() < 1e-10);
+        assert!((p0 - DVec3::ZERO).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At t=1: x = 1, y = 1^2/(2*2) = 0.25
         let p1 = parabola_point_at(&parab, 1.0);
-        assert!((p1 - DVec3::new(1.0, 0.25, 0.0)).length() < 1e-10);
+        assert!((p1 - DVec3::new(1.0, 0.25, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -788,15 +789,15 @@ mod tests {
 
         // First derivative at t=0: (0, 0) + dir_perp = (1, 0, 0)
         let d1 = parabola_derivative(&parab, 0.0, 1);
-        assert!((d1 - dir_perp).length() < 1e-10);
+        assert!((d1 - dir_perp).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Second derivative at t=0: 1/p * axis_dir
         let d2 = parabola_derivative(&parab, 0.0, 2);
-        assert!((d2 - DVec3::new(0.0, 0.5, 0.0)).length() < 1e-10);
+        assert!((d2 - DVec3::new(0.0, 0.5, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Third and higher derivatives are zero
         let d3 = parabola_derivative(&parab, 0.0, 3);
-        assert!(d3.length() < 1e-10);
+        assert!(d3.length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -814,13 +815,13 @@ mod tests {
         };
 
         let p0 = bspline_point_at(&spline, 0.0);
-        assert!((p0 - DVec3::ZERO).length() < 1e-10);
+        assert!((p0 - DVec3::ZERO).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let p1 = bspline_point_at(&spline, 1.0);
-        assert!((p1 - DVec3::X).length() < 1e-10);
+        assert!((p1 - DVec3::X).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let pmid = bspline_point_at(&spline, 0.5);
-        assert!((pmid - DVec3::new(0.5, 0.0, 0.0)).length() < 1e-10);
+        assert!((pmid - DVec3::new(0.5, 0.0, 0.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -834,11 +835,11 @@ mod tests {
 
         // First derivative should be constant (direction from p0 to p1)
         let d1 = bspline_derivative(&spline, 0.5, 1);
-        assert!((d1 - DVec3::X).length() < 1e-6);
+        assert!((d1 - DVec3::X).length() < TOLERANCE_MESH_LEGACY);
 
         // Second derivative should be zero for a line
         let d2 = bspline_derivative(&spline, 0.5, 2);
-        assert!(d2.length() < 1e-6);
+        assert!(d2.length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -856,10 +857,10 @@ mod tests {
         };
 
         let p0 = bspline_point_at(&spline, 0.0);
-        assert!((p0 - DVec3::ZERO).length() < 1e-10);
+        assert!((p0 - DVec3::ZERO).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let p1 = bspline_point_at(&spline, 1.0);
-        assert!((p1 - DVec3::X).length() < 1e-10);
+        assert!((p1 - DVec3::X).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -873,7 +874,7 @@ mod tests {
 
         // Order greater than degree should return zero
         let d3 = bspline_derivative(&spline, 0.5, 3);
-        assert!(d3.length() < 1e-10);
+        assert!(d3.length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -892,7 +893,7 @@ mod tests {
         let d8 = circle_derivative(&circle, angle, 8);
 
         // Orders 0, 4, 8 should all give the point (minus center for 4, 8)
-        assert!((d0 - d4).length() < 1e-10);
-        assert!((d0 - d8).length() < 1e-10);
+        assert!((d0 - d4).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((d0 - d8).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 }

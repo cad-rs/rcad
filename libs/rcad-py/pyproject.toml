@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rcad"
+version = "0.1.0"
+description = "Python bindings for the RCAD open-source solid modeling kernel"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.urls]
+Repository = "https://github.com/cad-rs/rcad"
+
+[dependency-groups]
+dev = ["maturin>=1.0,<2.0"]
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "python"
+module-name = "rcad._rcad"

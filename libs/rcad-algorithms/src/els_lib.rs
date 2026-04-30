@@ -21,6 +21,7 @@
 //! - Cone: u = azimuth [0, 2*pi], v = slant distance from reference circle
 //! - Torus: u = major angle [0, 2*pi], v = minor angle [0, 2*pi]
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
     any_perpendicular, Plane, CylindricalSurface, SphericalSurface,
@@ -174,7 +175,7 @@ pub fn sphere_parameters(sph: &SphericalSurface, point: DVec3) -> DVec2 {
 
     // Longitude: angle in the equatorial plane
     let sin_v = v.sin();
-    let u = if sin_v.abs() > 1e-10 {
+    let u = if sin_v.abs() > TOLERANCE_LINEAR_ULTRA_STRICT {
         let radial = d - cos_v * axis;
         let u_raw = radial.dot(y_ax).atan2(radial.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
@@ -252,7 +253,7 @@ pub fn cone_parameters(cone: &ConicalSurface, point: DVec3) -> DVec2 {
     let radial_dist = radial_vec.length();
 
     // Azimuth angle
-    let u = if radial_dist > 1e-10 {
+    let u = if radial_dist > TOLERANCE_LINEAR_ULTRA_STRICT {
         let u_raw = radial_vec.dot(y_ax).atan2(radial_vec.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
     } else {
@@ -263,7 +264,7 @@ pub fn cone_parameters(cone: &ConicalSurface, point: DVec3) -> DVec2 {
     // At the reference circle (v=0), axial = 0 and radial = cone.radius
     // v is the distance along the cone surface from this reference
     let slant_from_apex = (axial * axial + radial_dist * radial_dist).sqrt();
-    let ref_slant = if cone.half_angle_rad.tan().abs() > 1e-10 {
+    let ref_slant = if cone.half_angle_rad.tan().abs() > TOLERANCE_LINEAR_ULTRA_STRICT {
         cone.radius / cone.half_angle_rad.sin()
     } else {
         0.0
@@ -331,7 +332,7 @@ pub fn torus_parameters(torus: &ToroidalSurface, point: DVec3) -> DVec2 {
     let r_2d = radial_2d.length();
 
     // Major angle u
-    let u = if r_2d > 1e-10 {
+    let u = if r_2d > TOLERANCE_LINEAR_ULTRA_STRICT {
         let u_raw = radial_2d.dot(y_ax).atan2(radial_2d.dot(x_ax));
         if u_raw < 0.0 { u_raw + 2.0 * PI } else { u_raw }
     } else {
@@ -343,7 +344,7 @@ pub fn torus_parameters(torus: &ToroidalSurface, point: DVec3) -> DVec2 {
     // dv is the distance from the tube center in the radial direction
     let dv = r_2d - torus.major_radius;
 
-    let v = if dv.abs() > 1e-10 || z.abs() > 1e-10 {
+    let v = if dv.abs() > TOLERANCE_LINEAR_ULTRA_STRICT || z.abs() > TOLERANCE_LINEAR_ULTRA_STRICT {
         let v_raw = z.atan2(dv);
         if v_raw < 0.0 { v_raw + 2.0 * PI } else { v_raw }
     } else {
@@ -416,7 +417,7 @@ pub fn bspline_surface_normal(surf: &BSplineSurface, u: f64, v: f64) -> DVec3 {
 ///
 /// Uses central finite differences for numerical stability.
 pub fn bspline_surface_derivatives(surf: &BSplineSurface, u: f64, v: f64) -> [DVec3; 3] {
-    let eps = 1e-5;
+    let eps = TOLERANCE_RETRY_LADDER_MID;
     let [u0, u1, v0, v1] = surf.default_domain();
 
     // Clamp to domain bounds
@@ -489,7 +490,7 @@ mod tests {
             normal: DVec3::Z,
         };
         let p = plane_point_at(&plane, 0.0, 0.0);
-        assert!(approx_eq(p, DVec3::new(1.0, 2.0, 3.0), 1e-10));
+        assert!(approx_eq(p, DVec3::new(1.0, 2.0, 3.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -500,7 +501,7 @@ mod tests {
         };
         let p = plane_point_at(&plane, 3.0, 4.0);
         // x and y depend on the choice of perpendicular
-        assert!((p.z - 0.0).abs() < 1e-10);
+        assert!((p.z - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -513,7 +514,7 @@ mod tests {
         let v = -2.0;
         let p = plane_point_at(&plane, u, v);
         let uv = plane_parameters(&plane, p);
-        assert!(approx_eq_2(uv, DVec2::new(u, v), 1e-10));
+        assert!(approx_eq_2(uv, DVec2::new(u, v), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -523,7 +524,7 @@ mod tests {
             normal: DVec3::new(1.0, 1.0, 1.0).normalize(),
         };
         let n = plane_normal(&plane);
-        assert!(approx_eq(n, plane.normal, 1e-10));
+        assert!(approx_eq(n, plane.normal, TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -534,9 +535,9 @@ mod tests {
         };
         let tu = plane_tangent_u(&plane);
         let tv = plane_tangent_v(&plane);
-        assert!(tu.dot(plane.normal).abs() < 1e-10);
-        assert!(tv.dot(plane.normal).abs() < 1e-10);
-        assert!(tu.dot(tv).abs() < 1e-10);
+        assert!(tu.dot(plane.normal).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!(tv.dot(plane.normal).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!(tu.dot(tv).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------
@@ -553,7 +554,7 @@ mod tests {
         for u in [0.0, PI / 2.0, PI, 3.0 * PI / 2.0] {
             let p = cylinder_point_at(&cyl, u, 0.0);
             let r = DVec3::new(p.x, p.y, 0.0).length();
-            assert!((r - 2.0).abs() < 1e-10, "u={}, r={}", u, r);
+            assert!((r - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u={}, r={}", u, r);
         }
     }
 
@@ -571,8 +572,8 @@ mod tests {
         // u may wrap around 2*pi, so compare modulo 2*pi
         let du = (uv.x - u).abs();
         let du = du.min((2.0 * PI - du).abs());
-        assert!(du < 1e-8, "u mismatch: {} vs {}", uv.x, u);
-        assert!((uv.y - v).abs() < 1e-8, "v mismatch: {} vs {}", uv.y, v);
+        assert!(du < TOLERANCE_LINEAR_RELAX_8, "u mismatch: {} vs {}", uv.x, u);
+        assert!((uv.y - v).abs() < TOLERANCE_LINEAR_RELAX_8, "v mismatch: {} vs {}", uv.y, v);
     }
 
     #[test]
@@ -583,8 +584,8 @@ mod tests {
             radius: 1.0,
         };
         let n = cylinder_normal(&cyl, 0.0, 0.0);
-        assert!(n.z.abs() < 1e-10, "normal should be radial");
-        assert!((n.length() - 1.0).abs() < 1e-10);
+        assert!(n.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "normal should be radial");
+        assert!((n.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -598,9 +599,9 @@ mod tests {
         let tv = cylinder_tangent_v(&cyl, 1.0, 0.0);
         let n = cylinder_normal(&cyl, 1.0, 0.0);
 
-        assert!(tu.dot(tv).abs() < 1e-10, "tangents should be perpendicular");
-        assert!(tu.dot(n).abs() < 1e-10, "u-tangent perpendicular to normal");
-        assert!(tv.dot(n).abs() < 1e-10, "v-tangent perpendicular to normal");
+        assert!(tu.dot(tv).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "tangents should be perpendicular");
+        assert!(tu.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u-tangent perpendicular to normal");
+        assert!(tv.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v-tangent perpendicular to normal");
     }
 
     // -------------------------------------------------------------------------
@@ -618,7 +619,7 @@ mod tests {
             for v in [0.1, PI / 2.0, PI - 0.1] {
                 let p = sphere_point_at(&sph, u, v);
                 let d = (p - sph.center).length();
-                assert!((d - 3.0).abs() < 1e-9, "u={}, v={}, d={}", u, v, d);
+                assert!((d - 3.0).abs() < TOLERANCE_COORD_SUB, "u={}, v={}, d={}", u, v, d);
             }
         }
     }
@@ -631,7 +632,7 @@ mod tests {
             radius: 2.0,
         };
         let p = sphere_point_at(&sph, 0.0, 0.0);
-        assert!(approx_eq(p, DVec3::new(0.0, 0.0, 2.0), 1e-10));
+        assert!(approx_eq(p, DVec3::new(0.0, 0.0, 2.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -642,7 +643,7 @@ mod tests {
             radius: 2.0,
         };
         let p = sphere_point_at(&sph, 0.0, PI);
-        assert!(approx_eq(p, DVec3::new(0.0, 0.0, -2.0), 1e-10));
+        assert!(approx_eq(p, DVec3::new(0.0, 0.0, -2.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -659,8 +660,8 @@ mod tests {
         // Allow for u wrapping
         let du = (uv.x - u).abs();
         let du = du.min((2.0 * PI - du).abs());
-        assert!(du < 1e-8, "u mismatch");
-        assert!((uv.y - v).abs() < 1e-8, "v mismatch");
+        assert!(du < TOLERANCE_LINEAR_RELAX_8, "u mismatch");
+        assert!((uv.y - v).abs() < TOLERANCE_LINEAR_RELAX_8, "v mismatch");
     }
 
     #[test]
@@ -673,7 +674,7 @@ mod tests {
         let p = sphere_point_at(&sph, 0.5, 0.7);
         let n = sphere_normal(&sph, 0.5, 0.7);
         let expected = (p - sph.center).normalize();
-        assert!(approx_eq(n, expected, 1e-10));
+        assert!(approx_eq(n, expected, TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -689,8 +690,8 @@ mod tests {
         let tu = sphere_tangent_u(&sph, u, v);
         let tv = sphere_tangent_v(&sph, u, v);
 
-        assert!(tu.dot(n).abs() < 1e-10, "u-tangent should be perpendicular to normal");
-        assert!(tv.dot(n).abs() < 1e-10, "v-tangent should be perpendicular to normal");
+        assert!(tu.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u-tangent should be perpendicular to normal");
+        assert!(tv.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v-tangent should be perpendicular to normal");
     }
 
     // -------------------------------------------------------------------------
@@ -709,7 +710,7 @@ mod tests {
         // At v=0, radius should be 2.0
         let p0 = cone_point_at(&cone, 0.0, 0.0);
         let r0 = DVec3::new(p0.x, p0.y, 0.0).length();
-        assert!((r0 - 2.0).abs() < 1e-10);
+        assert!((r0 - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At v > 0, radius increases
         let p1 = cone_point_at(&cone, 0.0, 1.0);
@@ -728,7 +729,7 @@ mod tests {
 
         let n0 = cone_normal(&cone, 0.5, 0.0);
         let n1 = cone_normal(&cone, 0.5, 5.0);
-        assert!(approx_eq(n0, n1, 1e-10), "normal should be constant along generator");
+        assert!(approx_eq(n0, n1, TOLERANCE_LINEAR_ULTRA_STRICT), "normal should be constant along generator");
     }
 
     #[test]
@@ -749,7 +750,7 @@ mod tests {
 
         let du = (uv.x - u).abs();
         let du = du.min((2.0 * PI - du).abs());
-        assert!(du < 1e-6, "u mismatch: {} vs {}", uv.x, u);
+        assert!(du < TOLERANCE_MESH_LEGACY, "u mismatch: {} vs {}", uv.x, u);
         // At v=0, the point should be on the reference circle
         let dist_from_apex = (p - cone.apex).length();
         let expected_dist = (cone.radius * cone.radius).sqrt(); // reference circle radius
@@ -772,19 +773,19 @@ mod tests {
         // At v=0, points should be at major_radius + minor_radius distance from center
         let p = torus_point_at(&torus, 0.0, 0.0);
         let dist = (p - torus.center).length();
-        assert!((dist - (torus.major_radius + torus.minor_radius)).abs() < 1e-10,
+        assert!((dist - (torus.major_radius + torus.minor_radius)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT,
                 "dist = {}, expected {}", dist, torus.major_radius + torus.minor_radius);
 
         // At v=pi, points should be at major_radius - minor_radius from center
         let p = torus_point_at(&torus, 0.0, PI);
         let dist = (p - torus.center).length();
-        assert!((dist - (torus.major_radius - torus.minor_radius)).abs() < 1e-10);
+        assert!((dist - (torus.major_radius - torus.minor_radius)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // At v=pi/2, points should be at major_radius from axis, with z = minor_radius
         let p = torus_point_at(&torus, 0.0, FRAC_PI_2);
         let r_from_axis = (p.x * p.x + p.y * p.y).sqrt();
-        assert!((r_from_axis - 5.0).abs() < 1e-10);
-        assert!((p.z.abs() - 1.0).abs() < 1e-10);
+        assert!((r_from_axis - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((p.z.abs() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -806,8 +807,8 @@ mod tests {
         let dv = (uv.y - v).abs();
         let dv = dv.min((2.0 * PI - dv).abs());
 
-        assert!(du < 1e-8, "u mismatch: {} vs {}", uv.x, u);
-        assert!(dv < 1e-8, "v mismatch: {} vs {}", uv.y, v);
+        assert!(du < TOLERANCE_LINEAR_RELAX_8, "u mismatch: {} vs {}", uv.x, u);
+        assert!(dv < TOLERANCE_LINEAR_RELAX_8, "v mismatch: {} vs {}", uv.y, v);
     }
 
     #[test]
@@ -821,13 +822,13 @@ mod tests {
 
         // At v=0, normal should be perpendicular to axis (horizontal)
         let n = torus_normal(&torus, 0.0, 0.0);
-        assert!(n.z.abs() < 1e-10, "Normal should be horizontal");
-        assert!((n.length() - 1.0).abs() < 1e-10, "Normal should be unit length");
+        assert!(n.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Normal should be horizontal");
+        assert!((n.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Normal should be unit length");
 
         // At v=pi, normal should still be horizontal but pointing inward
         let n = torus_normal(&torus, 0.0, PI);
-        assert!(n.z.abs() < 1e-10, "Normal should be horizontal");
-        assert!((n.length() - 1.0).abs() < 1e-10, "Normal should be unit length");
+        assert!(n.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Normal should be horizontal");
+        assert!((n.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Normal should be unit length");
     }
 
     #[test]
@@ -845,8 +846,8 @@ mod tests {
         let tu = torus_tangent_u(&torus, u, v);
         let tv = torus_tangent_v(&torus, u, v);
 
-        assert!(tu.dot(n).abs() < 1e-10, "u-tangent perpendicular to normal");
-        assert!(tv.dot(n).abs() < 1e-10, "v-tangent perpendicular to normal");
+        assert!(tu.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u-tangent perpendicular to normal");
+        assert!(tv.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v-tangent perpendicular to normal");
     }
 
     // -------------------------------------------------------------------------
@@ -872,13 +873,13 @@ mod tests {
         };
 
         // Corners should match control points
-        assert!(approx_eq(bspline_surface_point_at(&surf, 0.0, 0.0), DVec3::ZERO, 1e-10));
-        assert!(approx_eq(bspline_surface_point_at(&surf, 1.0, 0.0), DVec3::X, 1e-10));
-        assert!(approx_eq(bspline_surface_point_at(&surf, 0.0, 1.0), DVec3::Y, 1e-10));
-        assert!(approx_eq(bspline_surface_point_at(&surf, 1.0, 1.0), DVec3::new(1.0, 1.0, 0.0), 1e-10));
+        assert!(approx_eq(bspline_surface_point_at(&surf, 0.0, 0.0), DVec3::ZERO, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq(bspline_surface_point_at(&surf, 1.0, 0.0), DVec3::X, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq(bspline_surface_point_at(&surf, 0.0, 1.0), DVec3::Y, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq(bspline_surface_point_at(&surf, 1.0, 1.0), DVec3::new(1.0, 1.0, 0.0), TOLERANCE_LINEAR_ULTRA_STRICT));
 
         // Midpoint
-        assert!(approx_eq(bspline_surface_point_at(&surf, 0.5, 0.5), DVec3::new(0.5, 0.5, 0.0), 1e-10));
+        assert!(approx_eq(bspline_surface_point_at(&surf, 0.5, 0.5), DVec3::new(0.5, 0.5, 0.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -900,7 +901,7 @@ mod tests {
         };
 
         let n = bspline_surface_normal(&surf, 0.5, 0.5);
-        assert!(approx_eq(n, DVec3::Z, 1e-10) || approx_eq(n, DVec3::NEG_Z, 1e-10));
+        assert!(approx_eq(n, DVec3::Z, TOLERANCE_LINEAR_ULTRA_STRICT) || approx_eq(n, DVec3::NEG_Z, TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -927,9 +928,9 @@ mod tests {
         let n = surf.normal_at(0.5, 0.5);
 
         // Midpoint should be at (0.5, 0.5, 0)
-        assert!(approx_eq(p, DVec3::new(0.5, 0.5, 0.0), 1e-6));
+        assert!(approx_eq(p, DVec3::new(0.5, 0.5, 0.0), TOLERANCE_MESH_LEGACY));
 
         // Normal should be +/- Z for a flat surface
-        assert!(approx_eq(n.normalize_or_zero(), DVec3::Z, 1e-6) || approx_eq(n.normalize_or_zero(), DVec3::NEG_Z, 1e-6));
+        assert!(approx_eq(n.normalize_or_zero(), DVec3::Z, TOLERANCE_MESH_LEGACY) || approx_eq(n.normalize_or_zero(), DVec3::NEG_Z, TOLERANCE_MESH_LEGACY));
     }
 }

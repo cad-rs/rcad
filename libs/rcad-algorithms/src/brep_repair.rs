@@ -23,7 +23,12 @@ use rcad_kernel::SurfaceEval;
 use rcad_kernel::Surface3;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::brep_check::{check_orientation_consistency, diagnose_same_parameter, diagnose_same_range};
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::{
+    TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_FLOAT_DEDUP,
+    TOLERANCE_FLOAT_LOOSE, TOLERANCE_LEN_MIN, TOLERANCE_LINEAR_ULTRA_STRICT, TOLERANCE_MESH_LEGACY,
+    TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_MODEL_SCALE_MIN, TOLERANCE_RETRY_LADDER_COARSE,
+    TOLERANCE_RETRY_LADDER_MID,
+};
 
 fn make_connected_has_future_tolerance_increase(
     pass_idx: usize,
@@ -41,7 +46,7 @@ fn make_connected_has_future_tolerance_increase(
     }
     let next_grown_tolerance = base_tolerance * tolerance_growth.powi((pass_idx + 1) as i32);
     let next_tolerance = next_grown_tolerance.min(tolerance_cap);
-    next_tolerance > current_tolerance + 1e-15
+    next_tolerance > current_tolerance + TOLERANCE_FLOAT_DEDUP
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,16 +172,16 @@ impl Default for MakeConnectedStrategy {
     fn default() -> Self {
         Self {
             merge_vertices: true,
-            merge_tolerance: 1e-6,
+            merge_tolerance: TOLERANCE_MESH_LEGACY,
             remove_small_edges: true,
-            min_edge_length: 1e-6,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
             max_passes: 3,
             tolerance_growth: 1.0,
             tolerance_cap: f64::INFINITY,
             sew_edges: false,
-            edge_sew_tolerance: 1e-6,
+            edge_sew_tolerance: TOLERANCE_MESH_LEGACY,
             merge_faces: false,
-            face_merge_tolerance: 1e-6,
+            face_merge_tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -202,16 +207,16 @@ impl MakeConnectedStrategy {
     pub fn aggressive() -> Self {
         Self {
             merge_vertices: true,
-            merge_tolerance: 1e-5,
+            merge_tolerance: TOLERANCE_RETRY_LADDER_MID,
             remove_small_edges: true,
-            min_edge_length: 1e-5,
+            min_edge_length: TOLERANCE_RETRY_LADDER_MID,
             max_passes: 5,
             tolerance_growth: 1.5,
             tolerance_cap: 0.01,
             sew_edges: true,
-            edge_sew_tolerance: 1e-5,
+            edge_sew_tolerance: TOLERANCE_RETRY_LADDER_MID,
             merge_faces: true,
-            face_merge_tolerance: 1e-5,
+            face_merge_tolerance: TOLERANCE_RETRY_LADDER_MID,
         }
     }
 
@@ -219,16 +224,16 @@ impl MakeConnectedStrategy {
     pub fn for_injection_molding() -> Self {
         Self {
             merge_vertices: true,
-            merge_tolerance: 1e-4,
+            merge_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
             remove_small_edges: true,
-            min_edge_length: 1e-4,
+            min_edge_length: TOLERANCE_RETRY_LADDER_COARSE,
             max_passes: 10,
             tolerance_growth: 2.0,
             tolerance_cap: 0.1,
             sew_edges: true,
-            edge_sew_tolerance: 1e-4,
+            edge_sew_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
             merge_faces: false, // Don't merge faces for molding
-            face_merge_tolerance: 1e-4,
+            face_merge_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
         }
     }
 
@@ -236,16 +241,16 @@ impl MakeConnectedStrategy {
     pub fn for_3d_printing() -> Self {
         Self {
             merge_vertices: true,
-            merge_tolerance: 1e-3, // 0.001mm tolerance for printing
+            merge_tolerance: TOLERANCE_ADAPTIVE_MAX, // 0.001mm tolerance for printing
             remove_small_edges: true,
-            min_edge_length: 1e-3,
+            min_edge_length: TOLERANCE_ADAPTIVE_MAX,
             max_passes: 3,
             tolerance_growth: 1.0,
             tolerance_cap: 0.1,
             sew_edges: false,
-            edge_sew_tolerance: 1e-3,
+            edge_sew_tolerance: TOLERANCE_ADAPTIVE_MAX,
             merge_faces: false,
-            face_merge_tolerance: 1e-3,
+            face_merge_tolerance: TOLERANCE_ADAPTIVE_MAX,
         }
     }
 
@@ -253,16 +258,16 @@ impl MakeConnectedStrategy {
     pub fn for_cnc_machining() -> Self {
         Self {
             merge_vertices: true,
-            merge_tolerance: 1e-6, // Very precise
+            merge_tolerance: TOLERANCE_MESH_LEGACY, // Very precise
             remove_small_edges: true,
-            min_edge_length: 1e-6,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
             max_passes: 1,
             tolerance_growth: 1.0,
-            tolerance_cap: 1e-5,
+            tolerance_cap: TOLERANCE_RETRY_LADDER_MID,
             sew_edges: false,
-            edge_sew_tolerance: 1e-6,
+            edge_sew_tolerance: TOLERANCE_MESH_LEGACY,
             merge_faces: false,
-            face_merge_tolerance: 1e-6,
+            face_merge_tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 
@@ -382,9 +387,9 @@ impl Default for SeedDetectionConfig {
     fn default() -> Self {
         Self {
             strategy: SeedDetectionStrategy::default(),
-            short_edge_threshold: 1e-4,
-            high_tolerance_threshold: 1e-3,
-            near_duplicate_distance: 1e-4,
+            short_edge_threshold: TOLERANCE_RETRY_LADDER_COARSE,
+            high_tolerance_threshold: TOLERANCE_ADAPTIVE_MAX,
+            near_duplicate_distance: TOLERANCE_RETRY_LADDER_COARSE,
             max_seeds: 0,
             neighborhood_depth: 1,
         }
@@ -1986,7 +1991,7 @@ fn check_edge_curvature_continuity(
 fn curve_curvature_at(curve: &rcad_kernel::Curve3, t: f64) -> Option<f64> {
     use rcad_kernel::CurveEval;
 
-    let h = 1e-6;
+    let h = TOLERANCE_MESH_LEGACY;
     let p0 = curve.point_at((t - h).max(0.0));
     let p1 = curve.point_at(t);
     let p2 = curve.point_at((t + h).min(1.0));
@@ -1997,7 +2002,7 @@ fn curve_curvature_at(curve: &rcad_kernel::Curve3, t: f64) -> Option<f64> {
     let dd = (d2 - d1) / h;
 
     let d1_len = d1.length();
-    if d1_len < 1e-10 {
+    if d1_len < TOLERANCE_LINEAR_ULTRA_STRICT {
         return None;
     }
 
@@ -2655,7 +2660,7 @@ impl Default for MergeConfig {
     fn default() -> Self {
         Self {
             strategy: MergeStrategy::ByProximity,
-            proximity_tolerance: 1e-4,
+            proximity_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
             create_bridges: true,
             min_bridge_quality: 0.5,
             preserve_orientations: true,
@@ -3278,8 +3283,8 @@ pub struct EnhancedMakeConnectedConfig {
 impl Default for EnhancedMakeConnectedConfig {
     fn default() -> Self {
         Self {
-            base_tolerance: 1e-6,
-            max_gap_tolerance: 1e-3,
+            base_tolerance: TOLERANCE_MESH_LEGACY,
+            max_gap_tolerance: TOLERANCE_ADAPTIVE_MAX,
             max_passes: 5,
             tolerance_growth: 1.5,
             merge_components: true,
@@ -3500,18 +3505,27 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 
     let tol2 = tolerance * tolerance;
 
+    fn spatial_cell_coord(value: f64, tolerance: f64) -> i64 {
+        let t = tolerance.max(f64::MIN_POSITIVE);
+        let q = (value / t).floor();
+        if !q.is_finite() {
+            return 0;
+        }
+        q.clamp(i64::MIN as f64, i64::MAX as f64) as i64
+    }
+
     // Use spatial hashing for large models, brute-force for small ones.
     // Spatial hashing: bucket size = tolerance, check 27 neighbor cells.
     const SPATIAL_HASH_THRESHOLD: usize = 500;
     if n >= SPATIAL_HASH_THRESHOLD {
-        let mut grid: std::collections::HashMap<(i32, i32, i32), Vec<usize>> =
+        let mut grid: std::collections::HashMap<(i64, i64, i64), Vec<usize>> =
             std::collections::HashMap::with_capacity(n);
         for i in 0..n {
             let p = brep.vertices[i].point;
             let cell = (
-                (p.x / tolerance).floor() as i32,
-                (p.y / tolerance).floor() as i32,
-                (p.z / tolerance).floor() as i32,
+                spatial_cell_coord(p.x, tolerance),
+                spatial_cell_coord(p.y, tolerance),
+                spatial_cell_coord(p.z, tolerance),
             );
             // Check 27 neighbor cells (including self)
             for dx in -1..=1 {
@@ -3666,7 +3680,7 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
 
                             // Check for zero area using Newell's method
                             let area2 = newell_area(&pts);
-                            if area2 < 1e-20 {
+                            if area2 < TOLERANCE_METRIC_SQ_NEAR_ZERO {
                                 removed += 1;
                                 return false;
                             }
@@ -3721,7 +3735,7 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
 
                             let new_normal = if pts.len() >= 3 {
                                 let n = newell_normal(&pts);
-                                if n.length() > 1e-14 {
+                                if n.length() > TOLERANCE_FLOAT_LOOSE {
                                     n.normalize()
                                 } else {
                                     face.normal
@@ -4237,14 +4251,13 @@ pub enum ToleranceFlowDirection {
 ///
 /// - `brep`: input shape.
 /// - `tolerance_floor`: minimum tolerance assigned to entities without an entry
-///   (typically `CONFUSION` = 1e-7).
+///   (typically `CONFUSION` = TOLERANCE_ABS).
 /// - `direction`: propagation direction.
 pub fn propagate_tolerances(
     brep: &BRep,
     tolerance_floor: f64,
     direction: ToleranceFlowDirection,
 ) -> BRep {
-    use crate::tolerance::TOLERANCE_ABS;
     let floor = tolerance_floor.max(TOLERANCE_ABS);
     let mut out = brep.clone();
 
@@ -5409,7 +5422,7 @@ fn detect_curve2d_seam_crossing(
                 let t1 = (i - 1) as f64 / num_samples as f64;
                 let t2 = i as f64 / num_samples as f64;
                 // Linear interpolation factor
-                let factor = if du.abs() > 1e-10 {
+                let factor = if du.abs() > TOLERANCE_LINEAR_ULTRA_STRICT {
                     (seam_u - u1) / du
                 } else {
                     0.5
@@ -5944,7 +5957,7 @@ fn compute_curvature_adjusted_tolerance(brep: &BRep, base_tolerance: f64, min_fe
                 // Use face normal variation as a proxy for curvature
                 // For now, use a simple heuristic based on face area
                 let area = compute_face_area(brep, face);
-                if area > 1e-10 {
+                if area > TOLERANCE_LINEAR_ULTRA_STRICT {
                     // Approximate curvature radius from area
                     let equiv_radius = (area / std::f64::consts::PI).sqrt();
                     min_curvature_radius = min_curvature_radius.min(equiv_radius);
@@ -6059,8 +6072,8 @@ pub fn bspline_same_domain(
     surf2: &rcad_kernel::geom::BSplineSurface,
     tolerance: f64,
 ) -> Option<SameDomainMatch> {
-    const KNOT_TOL: f64 = 1e-6;
-    const CP_TOL_DEFAULT: f64 = 1e-6;
+    const KNOT_TOL: f64 = TOLERANCE_MESH_LEGACY;
+    const CP_TOL_DEFAULT: f64 = TOLERANCE_MESH_LEGACY;
 
     let cp_tol = if tolerance > 0.0 { tolerance } else { CP_TOL_DEFAULT };
     let knot_tol = KNOT_TOL.max(tolerance * 0.1);
@@ -6202,7 +6215,7 @@ fn check_bspline_continuity_from_match(
     // For surfaces with identical data, the minimum continuity is:
     let min_degree = surf.degree_u.min(surf.degree_v);
 
-    if tolerance > 1e-6 {
+    if tolerance > TOLERANCE_MESH_LEGACY {
         // If tolerance is relatively large, report C0 as a conservative estimate
         return BsplineContinuity::C0;
     }
@@ -6242,7 +6255,7 @@ fn max_internal_knot_multiplicity(knots: &[f64]) -> usize {
         return 0;
     }
 
-    let tol = 1e-9;
+    let tol = TOLERANCE_COORD_SUB;
     let first = knots[0];
     let last = knots[knots.len() - 1];
 
@@ -6293,7 +6306,7 @@ fn max_knot_multiplicity(knots: &[f64]) -> usize {
         return 0;
     }
 
-    let tol = 1e-9;
+    let tol = TOLERANCE_COORD_SUB;
     let mut max_mult = 1;
     let mut current_mult = 1;
 
@@ -6327,7 +6340,7 @@ pub fn check_bspline_continuity(
 
     // Check for adjacent surfaces (sharing a boundary)
     // This requires checking if the control points at boundaries match
-    let cp_tol = tolerance.max(1e-6);
+    let cp_tol = tolerance.max(TOLERANCE_MESH_LEGACY);
 
     // Check if the last row of control points in surf1 matches the first row of surf2
     // (or vice versa) - this indicates adjacency along the v-direction
@@ -6897,7 +6910,7 @@ fn check_shell_orientability(shell: &Shell, brep: &BRep) -> bool {
         let outward = face_centroid - shell_centroid;
 
         // If outward vector is very small, skip this face
-        if outward.length() < 1e-10 {
+        if outward.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
             continue;
         }
 
@@ -7498,7 +7511,7 @@ fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> O
         normal.z += (nodes[i].x - nodes[j].x) * (nodes[i].y + nodes[j].y);
     }
     let len = normal.length();
-    if len > 1e-10 { normal /= len; } else { normal = DVec3::Z; }
+    if len > TOLERANCE_LINEAR_ULTRA_STRICT { normal /= len; } else { normal = DVec3::Z; }
     Some(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![], normal, triangles: vec![], mesh_dirty: true })
 }
 
@@ -8250,9 +8263,9 @@ pub fn verify_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureVerificat
             }
         }
         report.total_volume = total_volume;
-        report.volume_sign = if total_volume > 1e-10 {
+        report.volume_sign = if total_volume > TOLERANCE_LINEAR_ULTRA_STRICT {
             VolumeSign::Positive
-        } else if total_volume < -1e-10 {
+        } else if total_volume < -TOLERANCE_LINEAR_ULTRA_STRICT {
             VolumeSign::Negative
         } else {
             VolumeSign::Zero
@@ -8291,7 +8304,7 @@ pub fn verify_solid_closure(solid: &Solid, brep: &BRep) -> SolidClosureVerificat
 
 /// Determine the volume sign for a shell based on volume and normal orientation.
 fn determine_volume_sign(volume: f64, shell: &Shell, brep: &BRep) -> VolumeSign {
-    const VOLUME_TOLERANCE: f64 = 1e-10;
+    const VOLUME_TOLERANCE: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     if volume.abs() < VOLUME_TOLERANCE {
         // Check if it's truly degenerate or just a very thin shell
@@ -8308,7 +8321,7 @@ fn determine_volume_sign(volume: f64, shell: &Shell, brep: &BRep) -> VolumeSign 
         for face in &shell.faces {
             let face_centroid = compute_face_centroid(&face.outer_wire, brep);
             let outward = face_centroid - shell_centroid;
-            if outward.length() < 1e-10 {
+            if outward.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 continue;
             }
             if face.normal.dot(outward) > 0.0 {
@@ -8772,7 +8785,7 @@ pub fn validate_solid_topology(solid: &Solid, brep: &BRep) -> SolidValidationRep
 
     // Add warnings for small volumes
     for (sh_idx, volume) in report.closure_report.shell_volumes.iter().enumerate() {
-        if *volume > 0.0 && *volume < 1e-6 {
+        if *volume > 0.0 && *volume < TOLERANCE_MESH_LEGACY {
             report.warnings.push(SolidValidationWarning {
                 code: SolidValidationWarningCode::SmallVolume,
                 shell_idx: Some(sh_idx),
@@ -8857,7 +8870,7 @@ fn verify_material_side_consistency(
         for face in &shell.faces {
             let face_centroid = compute_face_centroid(&face.outer_wire, brep);
             let outward = face_centroid - shell_centroid;
-            if outward.length() < 1e-10 {
+            if outward.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 continue;
             }
             if face.normal.dot(outward) > 0.0 {
@@ -8960,7 +8973,7 @@ impl SolidRepairResult {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let solid = &brep.solids[0];
-/// let result = repair_solid(solid, &brep, 1e-6);
+/// let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
 /// assert!(result.success);
 /// ```
 pub fn repair_solid(solid: &Solid, brep: &BRep, tolerance: f64) -> SolidRepairResult {
@@ -9121,7 +9134,7 @@ impl Default for UvGapRepairConfig {
     fn default() -> Self {
         Self {
             max_repairable_gap: 0.1,
-            closure_tolerance: 1e-6,
+            closure_tolerance: TOLERANCE_MESH_LEGACY,
             allow_bounds_extension: true,
             handle_periodic_seams: true,
             max_extension_factor: 0.25,
@@ -9461,7 +9474,7 @@ fn extend_pcurve_to_boundary(
             let radius = circle.radius;
             let dist_to_target = (glam::DVec2::new(target_uv.0, target_uv.1) - center).length();
 
-            if (dist_to_target - radius).abs() < 1e-6 {
+            if (dist_to_target - radius).abs() < TOLERANCE_MESH_LEGACY {
                 // Target is on the circle - we can extend
                 Some(Curve2d::Circle(*circle))
             } else {
@@ -9743,7 +9756,7 @@ pub struct DuplicateFaceReport {
 ///     depth: 1.0,
 /// });
 ///
-/// let report = detect_duplicate_faces(&brep, 1e-6);
+/// let report = detect_duplicate_faces(&brep, TOLERANCE_MESH_LEGACY);
 /// println!("Found {} duplicate pairs", report.duplicate_pairs.len());
 /// ```
 pub fn detect_duplicate_faces(brep: &BRep, tolerance: f64) -> DuplicateFaceReport {
@@ -10109,7 +10122,7 @@ pub fn identify_internal_faces(brep: &BRep) -> Vec<usize> {
     }
 
     // Method 2: Check for duplicate faces with opposite orientation
-    let duplicate_report = detect_duplicate_faces(brep, 1e-6);
+    let duplicate_report = detect_duplicate_faces(brep, TOLERANCE_MESH_LEGACY);
     for pair in &duplicate_report.duplicate_pairs {
         if pair.opposite_orientation && pair.is_internal {
             // Add the second face (the one that should be removed)
@@ -10160,7 +10173,7 @@ fn identify_internal_faces_by_raycast(brep: &BRep) -> Vec<usize> {
         }
 
         // Cast ray along the face normal
-        let ray_origin = centroid + face.normal * 1e-4; // Offset slightly
+        let ray_origin = centroid + face.normal * TOLERANCE_RETRY_LADDER_COARSE; // Offset slightly
         let ray_dir = face.normal;
 
         // Count intersections with other faces
@@ -10251,7 +10264,7 @@ fn ray_triangle_intersection(
     v1: DVec3,
     v2: DVec3,
 ) -> bool {
-    const EPSILON: f64 = 1e-10;
+    const EPSILON: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     let edge1 = v1 - v0;
     let edge2 = v2 - v0;
@@ -10665,7 +10678,7 @@ pub struct BooleanCleanupReport {
 ///
 /// // After a boolean operation, clean up the result
 /// fn process_boolean_result(result: &BRep) -> BRep {
-///     let (cleaned, report) = cleanup_boolean_result(result, 1e-6);
+///     let (cleaned, report) = cleanup_boolean_result(result, TOLERANCE_MESH_LEGACY);
 ///     println!("Cleaned: {} internal faces removed", report.internal_faces_removed);
 ///     cleaned
 /// }
@@ -10777,7 +10790,7 @@ impl PostBooleanToleranceConfig {
     /// Create a config for high-precision boolean operations.
     pub fn high_precision() -> Self {
         Self {
-            tolerance_floor: 1e-9,
+            tolerance_floor: TOLERANCE_COORD_SUB,
             intersection_edge_factor: 1.0,
             max_edge_tolerance: 0.01,
             max_face_tolerance: 0.01,
@@ -10793,7 +10806,7 @@ impl PostBooleanToleranceConfig {
     /// Create a config for relaxed tolerance (e.g., visualization, 3D printing).
     pub fn relaxed() -> Self {
         Self {
-            tolerance_floor: 1e-5,
+            tolerance_floor: TOLERANCE_RETRY_LADDER_MID,
             intersection_edge_factor: 2.0,
             max_edge_tolerance: 1.0,
             max_face_tolerance: 1.0,
@@ -11020,7 +11033,7 @@ fn detect_and_resolve_tolerance_conflicts(brep: &mut BRep, floor: f64) -> (usize
         let vtol_end = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
         let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
 
-        if vtol_start > etol + 1e-15 || vtol_end > etol + 1e-15 {
+        if vtol_start > etol + TOLERANCE_FLOAT_DEDUP || vtol_end > etol + TOLERANCE_FLOAT_DEDUP {
             conflicts += 1;
             // Resolve: increase edge tolerance
             if ei < brep.geom.edge_tolerance.len() {
@@ -11044,7 +11057,7 @@ fn detect_and_resolve_tolerance_conflicts(brep: &mut BRep, floor: f64) -> (usize
                     if we.idx < brep.geom.edge_tolerance.len() {
                         let etol = brep.geom.edge_tolerance[we.idx];
                         max_etol = max_etol.max(etol);
-                        if etol > ftol + 1e-15 {
+                        if etol > ftol + TOLERANCE_FLOAT_DEDUP {
                             has_conflict = true;
                         }
                     }
@@ -11054,7 +11067,7 @@ fn detect_and_resolve_tolerance_conflicts(brep: &mut BRep, floor: f64) -> (usize
                         if we.idx < brep.geom.edge_tolerance.len() {
                             let etol = brep.geom.edge_tolerance[we.idx];
                             max_etol = max_etol.max(etol);
-                            if etol > ftol + 1e-15 {
+                            if etol > ftol + TOLERANCE_FLOAT_DEDUP {
                                 has_conflict = true;
                             }
                         }
@@ -11503,7 +11516,7 @@ impl TolerancePropagationEngine {
                 let cur_etol = result.geom.edge_tolerance[ei];
                 let new_etol = cur_etol.max(vtol_s).max(vtol_e).min(self.config.max_tolerance);
 
-                if new_etol > cur_etol + 1e-15 {
+                if new_etol > cur_etol + TOLERANCE_FLOAT_DEDUP {
                     result.geom.edge_tolerance[ei] = new_etol;
                     report.edges_updated += 1;
                 }
@@ -11531,7 +11544,7 @@ impl TolerancePropagationEngine {
                         let cur_ftol = result.geom.face_tolerance.get(flat_fi).copied().unwrap_or(floor);
                         let new_ftol = max_etol.min(self.config.max_tolerance);
 
-                        if new_ftol > cur_ftol + 1e-15
+                        if new_ftol > cur_ftol + TOLERANCE_FLOAT_DEDUP
                             && flat_fi < result.geom.face_tolerance.len() {
                                 result.geom.face_tolerance[flat_fi] = new_ftol;
                                 report.faces_updated += 1;
@@ -11697,7 +11710,7 @@ impl TolerancePropagationEngine {
                 let cur_etol = result.geom.edge_tolerance[ei];
                 let harmonized = cur_etol.max(vtol_s).max(vtol_e);
 
-                if harmonized > cur_etol + 1e-15 {
+                if harmonized > cur_etol + TOLERANCE_FLOAT_DEDUP {
                     result.geom.edge_tolerance[ei] = harmonized;
                     // Update vertex max
                     if edge.start < vertex_max_edge_tol.len() {
@@ -11767,7 +11780,7 @@ impl TolerancePropagationEngine {
             let cur_etol = result.geom.edge_tolerance[ei];
             let new_etol = cur_etol.max(vtol_s).max(vtol_e).min(bound);
 
-            if (new_etol - cur_etol).abs() > 1e-15 {
+            if (new_etol - cur_etol).abs() > TOLERANCE_FLOAT_DEDUP {
                 result.geom.edge_tolerance[ei] = new_etol;
                 report.edges_updated += 1;
             }
@@ -11822,7 +11835,7 @@ impl TolerancePropagationEngine {
     fn propagate_model_scale(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
         let mut result = brep.clone();
         let mut report = TolerancePropagationReport::default();
-        let scale = self.config.model_scale.max(1e-10);
+        let scale = self.config.model_scale.max(TOLERANCE_LINEAR_ULTRA_STRICT);
         let floor = self.config.tolerance_floor.max(TOLERANCE_ABS * scale);
 
         self.ensure_tolerance_arrays(&mut result, floor);
@@ -11892,7 +11905,7 @@ impl TolerancePropagationEngine {
                     let vtol_e = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
                     let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
 
-                    if vtol_s > etol + 1e-15 || vtol_e > etol + 1e-15 {
+                    if vtol_s > etol + TOLERANCE_FLOAT_DEDUP || vtol_e > etol + TOLERANCE_FLOAT_DEDUP {
                         conflicts += 1;
                         // Clamp vertices down
                         if edge.start < brep.geom.vertex_tolerance.len() {
@@ -11917,7 +11930,7 @@ impl TolerancePropagationEngine {
                     let vtol_e = brep.geom.vertex_tolerance.get(edge.end).copied().unwrap_or(floor);
                     let etol = brep.geom.edge_tolerance.get(ei).copied().unwrap_or(floor);
 
-                    if vtol_s > etol + 1e-15 || vtol_e > etol + 1e-15 {
+                    if vtol_s > etol + TOLERANCE_FLOAT_DEDUP || vtol_e > etol + TOLERANCE_FLOAT_DEDUP {
                         conflicts += 1;
                     }
                 }
@@ -12203,7 +12216,7 @@ pub fn analyze_tolerance_consistency(
 
         if edge.start < vertex_tols.len() {
             let vtol = vertex_tols[edge.start];
-            if vtol > etol + 1e-15 {
+            if vtol > etol + TOLERANCE_FLOAT_DEDUP {
                 report.violations.push(ToleranceViolation {
                     violation_type: ToleranceViolationType::VertexExceedsEdge,
                     entity_index: edge.start,
@@ -12218,7 +12231,7 @@ pub fn analyze_tolerance_consistency(
 
         if edge.end < vertex_tols.len() {
             let vtol = vertex_tols[edge.end];
-            if vtol > etol + 1e-15 {
+            if vtol > etol + TOLERANCE_FLOAT_DEDUP {
                 report.violations.push(ToleranceViolation {
                     violation_type: ToleranceViolationType::VertexExceedsEdge,
                     entity_index: edge.end,
@@ -12241,7 +12254,7 @@ pub fn analyze_tolerance_consistency(
 
                 for we in &face.outer_wire.edges {
                     let etol = edge_tols.get(we.idx).copied().unwrap_or(default_tolerance);
-                    if etol > ftol + 1e-15 {
+                    if etol > ftol + TOLERANCE_FLOAT_DEDUP {
                         report.violations.push(ToleranceViolation {
                             violation_type: ToleranceViolationType::EdgeExceedsFace,
                             entity_index: we.idx,
@@ -12257,7 +12270,7 @@ pub fn analyze_tolerance_consistency(
                 for iw in &face.inner_wires {
                     for we in &iw.edges {
                         let etol = edge_tols.get(we.idx).copied().unwrap_or(default_tolerance);
-                        if etol > ftol + 1e-15 {
+                        if etol > ftol + TOLERANCE_FLOAT_DEDUP {
                             report.violations.push(ToleranceViolation {
                                 violation_type: ToleranceViolationType::EdgeExceedsFace,
                                 entity_index: we.idx,
@@ -12880,7 +12893,7 @@ fn detect_internal_faces_by_visibility(
         }
 
         // Cast ray in the direction of the face normal
-        let ray_origin = centroid + face.normal * 1e-4;
+        let ray_origin = centroid + face.normal * TOLERANCE_RETRY_LADDER_COARSE;
         let ray_dir = face.normal;
 
         // Count intersections with other faces
@@ -13403,6 +13416,11 @@ fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Fac
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::{
+        TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_FLOAT_DEDUP,
+        TOLERANCE_LEN_MIN, TOLERANCE_LINEAR_ULTRA_STRICT, TOLERANCE_MESH_LEGACY,
+        TOLERANCE_RETRY_LADDER_COARSE, TOLERANCE_RETRY_LADDER_MID,
+    };
     use crate::check_orientation_consistency;
     use rcad_kernel::PrimitiveSolid;
 
@@ -13435,7 +13453,7 @@ mod tests {
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
-        let (fixed, removed) = remove_small_edges(&brep, 1e-6);
+        let (fixed, removed) = remove_small_edges(&brep, TOLERANCE_MESH_LEGACY);
         assert!(removed >= 1, "degenerate self-loop should be removed");
         assert!(fixed.edges.len() < brep.edges.len());
     }
@@ -13447,7 +13465,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let (fixed, removed) = remove_small_edges(&brep, 1e-7);
+        let (fixed, removed) = remove_small_edges(&brep, TOLERANCE_ABS);
         assert_eq!(removed, 0, "unit box edges are not short");
         assert_eq!(fixed.edges.len(), brep.edges.len());
     }
@@ -13480,7 +13498,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let (fixed, report) = make_connected_baseline(&brep, 1e-6);
+        let (fixed, report) = make_connected_baseline(&brep, TOLERANCE_MESH_LEGACY);
         assert!(report.vertices_merged >= 1);
         assert!(report.small_edges_removed >= 1);
         assert_eq!(report.passes_run, 1);
@@ -13516,12 +13534,12 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let (_fixed, report) = make_connected_iterative(&brep, 1e-6, 4);
+        let (_fixed, report) = make_connected_iterative(&brep, TOLERANCE_MESH_LEGACY, 4);
         assert!(report.vertices_merged >= 1);
         assert!(report.small_edges_removed >= 1);
         assert!(report.converged);
         assert!(report.passes_run >= 2);
-        assert!(report.final_tolerance >= 1e-6);
+        assert!(report.final_tolerance >= TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -13552,9 +13570,9 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let (_fixed, report) = make_connected_iterative_with_growth(&brep, 1e-6, 4, 2.0);
+        let (_fixed, report) = make_connected_iterative_with_growth(&brep, TOLERANCE_MESH_LEGACY, 4, 2.0);
         assert!(report.passes_run >= 2);
-        assert!(report.final_tolerance > 1e-6);
+        assert!(report.final_tolerance > TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -13587,14 +13605,14 @@ mod tests {
 
         let (_fixed, report) = make_connected_iterative_with_growth_cap(
             &brep,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             4,
             10.0,
-            2e-6,
+            2.0 * TOLERANCE_MESH_LEGACY,
         );
         assert!(report.passes_run >= 2);
         assert!(report.tolerance_cap_applied);
-        assert!((report.final_tolerance - 2e-6).abs() <= 1e-15);
+        assert!((report.final_tolerance - 2.0 * TOLERANCE_MESH_LEGACY).abs() <= TOLERANCE_FLOAT_DEDUP);
     }
 
     #[test]
@@ -13605,7 +13623,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(50.0 * TOLERANCE_ABS, 0.0, 0.0) });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -13627,16 +13645,16 @@ mod tests {
 
         let (fixed, report) = make_connected_iterative_with_growth_cap(
             &brep,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             2,
             10.0,
-            1e-5,
+            TOLERANCE_RETRY_LADDER_MID,
         );
 
         assert_eq!(report.passes_run, 2);
         assert!(report.vertices_merged >= 1);
         assert!(fixed.vertices.len() < brep.vertices.len());
-        assert!((report.final_tolerance - 1e-5).abs() <= 1e-15);
+        assert!((report.final_tolerance - TOLERANCE_RETRY_LADDER_MID).abs() <= TOLERANCE_FLOAT_DEDUP);
     }
 
     #[test]
@@ -13647,7 +13665,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(5e-6, 0.0, 0.0) });
+        brep.vertices.push(Vertex { point: DVec3::new(50.0 * TOLERANCE_ABS, 0.0, 0.0) });
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -13670,16 +13688,16 @@ mod tests {
         let (fixed, report) = make_connected_iterative_scoped_with_growth_cap(
             &brep,
             &[0],
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             2,
             10.0,
-            1e-5,
+            TOLERANCE_RETRY_LADDER_MID,
         );
 
         assert_eq!(report.passes_run, 2);
         assert!(report.vertices_merged >= 1);
         assert!(fixed.vertices.len() < brep.vertices.len());
-        assert!((report.final_tolerance - 1e-5).abs() <= 1e-15);
+        assert!((report.final_tolerance - TOLERANCE_RETRY_LADDER_MID).abs() <= TOLERANCE_FLOAT_DEDUP);
     }
 
     #[test]
@@ -13718,10 +13736,10 @@ mod tests {
         let (scoped, report) = make_connected_iterative_scoped_with_growth_cap(
             &brep,
             &[0],
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             3,
             1.0,
-            1e-4,
+            TOLERANCE_RETRY_LADDER_COARSE,
         );
 
         assert!(report.vertices_merged >= 1);
@@ -13731,7 +13749,7 @@ mod tests {
         let has_far = scoped
             .vertices
             .iter()
-            .any(|v| (v.point - DVec3::new(10.0, 0.0, 0.0)).length() <= 1e-12);
+            .any(|v| (v.point - DVec3::new(10.0, 0.0, 0.0)).length() <= TOLERANCE_LEN_MIN);
         assert!(has_far);
     }
 
@@ -13742,7 +13760,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let (fixed, report) = repair(&brep, 1e-7);
+        let (fixed, report) = repair(&brep, TOLERANCE_ABS);
         assert_eq!(report.vertices_merged, 0);
         assert_eq!(report.degenerate_faces_removed, 0);
         // Face count unchanged
@@ -13764,7 +13782,7 @@ mod tests {
             point: DVec3::new(0.0, 0.0, 0.0),
         });
         brep.vertices.push(Vertex {
-            point: DVec3::new(1e-9, 0.0, 0.0),
+            point: DVec3::new(TOLERANCE_COORD_SUB, 0.0, 0.0),
         }); // dup of 0
         brep.vertices.push(Vertex {
             point: DVec3::new(1.0, 0.0, 0.0),
@@ -13788,7 +13806,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let (fixed, merged) = merge_close_vertices(&brep, 1e-6);
+        let (fixed, merged) = merge_close_vertices(&brep, TOLERANCE_MESH_LEGACY);
         assert!(merged >= 1, "should merge the near-duplicate vertex");
         assert!(
             fixed.vertices.len() < brep.vertices.len(),
@@ -13864,7 +13882,7 @@ mod tests {
         face.normal = -face.normal;
         face.outer_wire = reverse_wire(&face.outer_wire);
 
-        let (_fixed, report) = repair(&brep, 1e-7);
+        let (_fixed, report) = repair(&brep, TOLERANCE_ABS);
         assert!(report.faces_reoriented >= 1);
     }
 
@@ -13926,7 +13944,7 @@ mod tests {
         let pc = brep.geom.edge_pcurves[0][0];
         brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]); // mismatched
 
-        let (fixed, n) = fix_same_range_flags(&brep, 1e-9);
+        let (fixed, n) = fix_same_range_flags(&brep, TOLERANCE_COORD_SUB);
         assert!(n >= 1);
         assert!(fixed.geom.edge_same_range[0]);
         assert_eq!(
@@ -13958,7 +13976,7 @@ mod tests {
         brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]);
         brep.geom.edge_same_range[0] = false;
 
-        let (fixed, n) = fix_same_range_with_scan(&brep, 1e-9);
+        let (fixed, n) = fix_same_range_with_scan(&brep, TOLERANCE_COORD_SUB);
         assert!(n >= 1);
         assert!(fixed.geom.edge_same_range[0]);
         assert_eq!(
@@ -13995,16 +14013,16 @@ mod tests {
         });
 
         // Set vertex 0 with a large tolerance.
-        brep.geom.vertex_tolerance = vec![1e-3, 0.0, 0.0];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ADAPTIVE_MAX, 0.0, 0.0];
 
-        let out = propagate_tolerances(&brep, 1e-7, ToleranceFlowDirection::BottomUp);
+        let out = propagate_tolerances(&brep, TOLERANCE_ABS, ToleranceFlowDirection::BottomUp);
 
         // vertex_tolerance slots must be filled.
         assert_eq!(out.geom.vertex_tolerance.len(), 3);
         // Edge tolerances should be at least floor.
         assert!(out.geom.edge_tolerance.len() >= 3);
-        // Edge 0 connects v0 (tol=1e-3) and v1 (tol=floor); must ≥ 1e-3.
-        assert!(out.geom.edge_tolerance[0] >= 1e-3);
+        // Edge 0 connects v0 (tol=TOLERANCE_ADAPTIVE_MAX) and v1 (tol=floor); must ≥ TOLERANCE_ADAPTIVE_MAX.
+        assert!(out.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
         // Face tolerance should be ≥ max edge tolerance.
         assert!(out.geom.face_tolerance[0] >= out.geom.edge_tolerance[0]);
     }
@@ -14034,17 +14052,17 @@ mod tests {
             }],
         });
         // Assign a large face tolerance.
-        brep.geom.face_tolerance = vec![5e-4];
+        brep.geom.face_tolerance = vec![0.5 * TOLERANCE_RETRY_LADDER_COARSE];
 
-        let out = propagate_tolerances(&brep, 1e-7, ToleranceFlowDirection::TopDown);
+        let out = propagate_tolerances(&brep, TOLERANCE_ABS, ToleranceFlowDirection::TopDown);
 
         // All edge tolerances should be ≥ face tolerance.
         for etol in &out.geom.edge_tolerance {
-            assert!(*etol >= 5e-4);
+            assert!(*etol >= 0.5 * TOLERANCE_RETRY_LADDER_COARSE);
         }
         // All vertex tolerances should be ≥ face tolerance after propagation.
         for vtol in &out.geom.vertex_tolerance {
-            assert!(*vtol >= 5e-4);
+            assert!(*vtol >= 0.5 * TOLERANCE_RETRY_LADDER_COARSE);
         }
     }
 
@@ -14075,7 +14093,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let report = detect_shared_topology_advanced(&brep, 1e-6);
+        let report = detect_shared_topology_advanced(&brep, TOLERANCE_MESH_LEGACY);
         assert!(report.shared_vertex_pairs >= 1, "Should detect at least one shared vertex pair");
         assert!(report.has_shared_topology);
     }
@@ -14088,7 +14106,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = detect_shared_topology_advanced(&brep, 1e-6);
+        let report = detect_shared_topology_advanced(&brep, TOLERANCE_MESH_LEGACY);
         // A clean box should have NO fully shared (duplicate) faces
         assert_eq!(report.fully_shared_faces.len(), 0, "Clean box should have no duplicate faces");
         // A clean box has no duplicate vertices
@@ -14128,7 +14146,7 @@ mod tests {
 
         let (fixed, report) = make_connected_enhanced_with_mode(
             &brep,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             4,
             MakeConnectedMode::Standard,
             false,
@@ -14172,7 +14190,7 @@ mod tests {
 
         let (fixed, report) = make_connected_enhanced_with_mode(
             &brep,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             4,
             MakeConnectedMode::Conservative,
             false,
@@ -14214,7 +14232,7 @@ mod tests {
 
         let (fixed, report) = make_connected_enhanced_with_mode(
             &brep,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             4,
             MakeConnectedMode::Aggressive,
             false,
@@ -14415,13 +14433,13 @@ mod tests {
             ],
         };
 
-        let result = bspline_same_domain(&surf, &surf, 1e-6);
+        let result = bspline_same_domain(&surf, &surf, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(match_result.is_same_domain);
         assert!(match_result.degrees_match);
         assert!(match_result.knots_match);
-        assert!(match_result.max_control_point_deviation < 1e-9);
+        assert!(match_result.max_control_point_deviation < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -14460,7 +14478,7 @@ mod tests {
             ],
         };
 
-        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        let result = bspline_same_domain(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(!match_result.is_same_domain);
@@ -14501,7 +14519,7 @@ mod tests {
             ],
         };
 
-        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        let result = bspline_same_domain(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(!match_result.is_same_domain);
@@ -14543,7 +14561,7 @@ mod tests {
             ],
         };
 
-        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        let result = bspline_same_domain(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(!match_result.is_same_domain);
@@ -14579,7 +14597,7 @@ mod tests {
             ],
         };
 
-        let continuity = check_bspline_continuity(&surf, &surf, 1e-6);
+        let continuity = check_bspline_continuity(&surf, &surf, TOLERANCE_MESH_LEGACY);
         // A bicubic B-spline with clamped boundary knots (multiplicity 4) has C0 continuity
         // at boundaries due to knot multiplicity = degree, but is C2 inside the domain.
         // Our implementation reports minimum continuity at any knot, which is C0 at boundaries.
@@ -14620,7 +14638,7 @@ mod tests {
             ],
         };
 
-        let continuity = check_bspline_continuity(&surf1, &surf2, 1e-6);
+        let continuity = check_bspline_continuity(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(continuity >= BsplineContinuity::C0);
     }
 
@@ -14701,11 +14719,11 @@ mod tests {
 
         let surf2 = surf1.clone();
 
-        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        let result = bspline_same_domain(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(match_result.is_same_domain);
-        assert!(match_result.max_weight_deviation < 1e-9);
+        assert!(match_result.max_weight_deviation < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -14746,7 +14764,7 @@ mod tests {
             ],
         };
 
-        let result = bspline_same_domain(&surf1, &surf2, 1e-6);
+        let result = bspline_same_domain(&surf1, &surf2, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(!match_result.is_same_domain);
@@ -15579,7 +15597,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = detect_duplicate_faces(&brep, 1e-6);
+        let report = detect_duplicate_faces(&brep, TOLERANCE_MESH_LEGACY);
         // A clean box should have no duplicate faces
         assert_eq!(report.duplicate_pairs.len(), 0, "Clean box should have no duplicate faces");
         assert_eq!(report.internal_face_count, 0, "Clean box should have no internal faces");
@@ -15629,7 +15647,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face1, face2] }],
         });
 
-        let report = detect_duplicate_faces(&brep, 1e-6);
+        let report = detect_duplicate_faces(&brep, TOLERANCE_MESH_LEGACY);
 
         // Should detect the duplicate face pair
         assert!(report.duplicate_pairs.len() >= 1, "Should detect duplicate face pair");
@@ -15789,7 +15807,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let (result, report) = cleanup_boolean_result(&brep, 1e-6);
+        let (result, report) = cleanup_boolean_result(&brep, TOLERANCE_MESH_LEGACY);
 
         // A clean box should pass through with minimal changes
         assert!(report.is_valid, "Result should be valid");
@@ -15840,7 +15858,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face1, face2] }],
         });
 
-        let (result, report) = cleanup_boolean_result(&brep, 1e-6);
+        let (result, report) = cleanup_boolean_result(&brep, TOLERANCE_MESH_LEGACY);
 
         // Should have cleaned up the internal face
         assert!(report.is_valid, "Result should be valid");
@@ -15967,9 +15985,9 @@ mod tests {
         let centroid = compute_face_centroid_from_wire(&brep, &face);
 
         // Centroid should be at (1, 1, 0)
-        assert!((centroid.x - 1.0).abs() < 1e-10);
-        assert!((centroid.y - 1.0).abs() < 1e-10);
-        assert!((centroid.z - 0.0).abs() < 1e-10);
+        assert!((centroid.x - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((centroid.y - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((centroid.z - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -16240,7 +16258,7 @@ mod tests {
         });
 
         let solid = &brep.solids[0];
-        let result = repair_solid(solid, &brep, 1e-6);
+        let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
 
         assert!(result.success, "Box repair should succeed");
         assert!(result.validation_report.is_valid, "Repaired box should be valid");
@@ -16254,7 +16272,7 @@ mod tests {
         });
 
         let solid = &brep.solids[0];
-        let result = repair_solid(solid, &brep, 1e-6);
+        let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
 
         // Sphere should have closed shells after repair
         assert!(result.validation_report.closure_report.all_shells_closed, "Sphere should have closed shells");
@@ -16268,7 +16286,7 @@ mod tests {
         });
 
         let solid = &brep.solids[0];
-        let result = repair_solid(solid, &brep, 1e-6);
+        let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder should have closed shells after repair
         assert!(result.validation_report.closure_report.all_shells_closed, "Cylinder should have closed shells");
@@ -16281,7 +16299,7 @@ mod tests {
         let brep = BRep::new();
         let solid = TopologySolid { shells: vec![] };
 
-        let result = repair_solid(&solid, &brep, 1e-6);
+        let result = repair_solid(&solid, &brep, TOLERANCE_MESH_LEGACY);
 
         // Empty solid should be "repaired" to an empty solid
         assert!(!result.success, "Empty solid repair should not succeed");
@@ -16367,7 +16385,7 @@ mod tests {
         });
 
         let solid = &brep.solids[0];
-        let result = repair_solid(solid, &brep, 1e-6);
+        let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
 
         // Torus should have closed shells after repair
         assert!(result.validation_report.closure_report.all_shells_closed, "Torus should have closed shells");
@@ -16537,9 +16555,9 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set up conflict: vertex tolerance > edge tolerance
-        brep.geom.vertex_tolerance = vec![1e-3, 1e-3, 1e-7]; // v0 and v1 have high tolerance
-        brep.geom.edge_tolerance = vec![1e-7, 1e-7, 1e-7]; // edges have low tolerance
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ADAPTIVE_MAX, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_ABS]; // v0 and v1 have high tolerance
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS, TOLERANCE_ABS, TOLERANCE_ABS]; // edges have low tolerance
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let mut cloned = brep.clone();
         let (conflicts, resolved) = detect_and_resolve_tolerance_conflicts(&mut cloned, TOLERANCE_ABS);
@@ -16547,7 +16565,7 @@ mod tests {
         assert!(conflicts >= 1, "Should detect at least one conflict");
         assert!(resolved >= 1, "Should resolve at least one conflict");
         // Edge 0 should now have higher tolerance (>= vertex 0 and 1)
-        assert!(cloned.geom.edge_tolerance[0] >= 1e-3);
+        assert!(cloned.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -16582,14 +16600,14 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Initialize tolerances
-        brep.geom.vertex_tolerance = vec![1e-7; 4];
-        brep.geom.edge_tolerance = vec![1e-7; 4];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ABS; 4];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS; 4];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         // Simulate seam edge pairs (edge 3 was sewn)
         let seam_pairs = vec![(3, 3)];
 
-        let (_result, report) = propagate_tolerances_post_sew(&brep, 1e-4, &seam_pairs);
+        let (_result, report) = propagate_tolerances_post_sew(&brep, TOLERANCE_RETRY_LADDER_COARSE, &seam_pairs);
 
         // Verify function runs successfully
         assert!(report.max_seam_tolerance > 0.0 || report.seam_edges_updated == 0);
@@ -16612,9 +16630,9 @@ mod tests {
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
-        brep.geom.vertex_tolerance = vec![1e-7; 2];
-        brep.geom.edge_tolerance = vec![1e-7];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ABS; 2];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let config = PostSewToleranceConfig {
             seam_tolerance_factor: 2.0,
@@ -16625,7 +16643,7 @@ mod tests {
         let seam_pairs = vec![(0, 0)];
         let (_result, report) = propagate_tolerances_post_sew_with_config(
             &brep,
-            1e-4,
+            TOLERANCE_RETRY_LADDER_COARSE,
             &seam_pairs,
             &config,
         );
@@ -16695,7 +16713,7 @@ mod tests {
 
         let model_scale = TolerancePropagationConfig::model_scale(100.0);
         assert_eq!(model_scale.rule, ToleranceRule::ModelScale);
-        assert!((model_scale.model_scale - 100.0).abs() < 1e-10);
+        assert!((model_scale.model_scale - 100.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -16728,15 +16746,15 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set vertex tolerances higher than edge tolerances
-        brep.geom.vertex_tolerance = vec![1e-4, 1e-4, 1e-4];
-        brep.geom.edge_tolerance = vec![1e-7, 1e-7, 1e-7];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_RETRY_LADDER_COARSE, TOLERANCE_RETRY_LADDER_COARSE, TOLERANCE_RETRY_LADDER_COARSE];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS, TOLERANCE_ABS, TOLERANCE_ABS];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let engine = TolerancePropagationEngine::occt_standard();
         let (result, report) = engine.propagate(&brep);
 
         // Edges should now have higher tolerances (propagated from vertices)
-        assert!(result.geom.edge_tolerance[0] >= 1e-4);
+        assert!(result.geom.edge_tolerance[0] >= TOLERANCE_RETRY_LADDER_COARSE);
         assert!(report.rule_applied == ToleranceRule::OcctStandard);
     }
 
@@ -16777,9 +16795,9 @@ mod tests {
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
-        brep.geom.vertex_tolerance = vec![1e-7; 3];
-        brep.geom.edge_tolerance = vec![1e-7; 3];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ABS; 3];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS; 3];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let engine = TolerancePropagationEngine::aggressive();
         let (result, report) = engine.propagate(&brep);
@@ -16811,13 +16829,13 @@ mod tests {
         brep.geom.edge_tolerance = vec![1.0];
         brep.geom.face_tolerance = vec![1.0];
 
-        let engine = TolerancePropagationEngine::bounded(1e-3);
+        let engine = TolerancePropagationEngine::bounded(TOLERANCE_ADAPTIVE_MAX);
         let (result, report) = engine.propagate(&brep);
 
         // All tolerances should be clamped to bound
-        assert!(result.geom.vertex_tolerance[0] <= 1e-3);
-        assert!(result.geom.edge_tolerance[0] <= 1e-3);
-        assert!(result.geom.face_tolerance[0] <= 1e-3);
+        assert!(result.geom.vertex_tolerance[0] <= TOLERANCE_ADAPTIVE_MAX);
+        assert!(result.geom.edge_tolerance[0] <= TOLERANCE_ADAPTIVE_MAX);
+        assert!(result.geom.face_tolerance[0] <= TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -16838,9 +16856,9 @@ mod tests {
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
-        brep.geom.vertex_tolerance = vec![1e-7, 1e-7];
-        brep.geom.edge_tolerance = vec![1e-7];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ABS, TOLERANCE_ABS];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let engine = TolerancePropagationEngine::with_config(
             TolerancePropagationConfig::model_scale(1000.0)
@@ -16849,7 +16867,7 @@ mod tests {
 
         assert_eq!(report.rule_applied, ToleranceRule::ModelScale);
         // Tolerances should be scaled
-        assert!(result.geom.vertex_tolerance[0] > 1e-7);
+        assert!(result.geom.vertex_tolerance[0] > TOLERANCE_ABS);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -16864,7 +16882,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
         // Unit box should have consistent tolerances
         assert!(report.is_consistent || report.violation_count == 0);
@@ -16889,11 +16907,11 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set vertex tolerance > edge tolerance (violation)
-        brep.geom.vertex_tolerance = vec![1e-3, 1e-3];
-        brep.geom.edge_tolerance = vec![1e-7];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ADAPTIVE_MAX, TOLERANCE_ADAPTIVE_MAX];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
-        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
         assert!(!report.is_consistent, "Should detect inconsistency");
         assert!(report.violation_count >= 1, "Should have at least one violation");
@@ -16921,11 +16939,11 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set edge tolerance > face tolerance (violation)
-        brep.geom.vertex_tolerance = vec![1e-7, 1e-7];
-        brep.geom.edge_tolerance = vec![1e-3];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ABS, TOLERANCE_ABS];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ADAPTIVE_MAX];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
-        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
         let edge_face_violations = report.violations_by_type(ToleranceViolationType::EdgeExceedsFace);
         assert!(!edge_face_violations.is_empty(), "Should have edge>face violations");
@@ -16950,11 +16968,11 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set NaN and negative tolerances
-        brep.geom.vertex_tolerance = vec![f64::NAN, -1e-10];
+        brep.geom.vertex_tolerance = vec![f64::NAN, -TOLERANCE_LINEAR_ULTRA_STRICT];
         brep.geom.edge_tolerance = vec![f64::INFINITY];
         brep.geom.face_tolerance = vec![0.0];
 
-        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
         let invalid_violations = report.violations_by_type(ToleranceViolationType::InvalidValue);
         assert!(invalid_violations.len() >= 2, "Should detect invalid values");
@@ -16966,8 +16984,8 @@ mod tests {
             violation_type: ToleranceViolationType::VertexExceedsEdge,
             entity_index: 0,
             related_index: Some(0),
-            actual_tolerance: 1e-3,
-            expected_tolerance: 1e-7,
+            actual_tolerance: TOLERANCE_ADAPTIVE_MAX,
+            expected_tolerance: TOLERANCE_ABS,
             severity: 4,
             suggested_fix: ToleranceFix::IncreaseLower,
         };
@@ -16993,8 +17011,8 @@ mod tests {
             violation_type: ToleranceViolationType::VertexExceedsEdge,
             entity_index: 0,
             related_index: None,
-            actual_tolerance: 1e-3,
-            expected_tolerance: 1e-6,
+            actual_tolerance: TOLERANCE_ADAPTIVE_MAX,
+            expected_tolerance: TOLERANCE_MESH_LEGACY,
             severity: 4,
             suggested_fix: ToleranceFix::Propagate,
         };
@@ -17002,8 +17020,8 @@ mod tests {
             violation_type: ToleranceViolationType::EdgeExceedsFace,
             entity_index: 1,
             related_index: None,
-            actual_tolerance: 1e-4,
-            expected_tolerance: 1e-6,
+            actual_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
+            expected_tolerance: TOLERANCE_MESH_LEGACY,
             severity: 2,
             suggested_fix: ToleranceFix::Propagate,
         };
@@ -17040,18 +17058,18 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set up violations
-        brep.geom.vertex_tolerance = vec![1e-3, 1e-3]; // High vertex tolerance
-        brep.geom.edge_tolerance = vec![1e-7]; // Low edge tolerance
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ADAPTIVE_MAX, TOLERANCE_ADAPTIVE_MAX]; // High vertex tolerance
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS]; // Low edge tolerance
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
-        let report = analyze_tolerance_consistency(&brep, 1e-7, 1e-7, 1.0);
+        let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
         assert!(!report.is_consistent);
 
         let (fixed, fixes_applied) = apply_tolerance_fixes(&brep, &report, 0);
 
         assert!(fixes_applied >= 1, "Should apply at least one fix");
         // Edge tolerance should now be >= vertex tolerance
-        assert!(fixed.geom.edge_tolerance[0] >= 1e-3);
+        assert!(fixed.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -17089,9 +17107,9 @@ mod tests {
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
         // Set up a conflict: vertex tolerance > edge tolerance
-        brep.geom.vertex_tolerance = vec![1e-3, 1e-3];
-        brep.geom.edge_tolerance = vec![1e-7];
-        brep.geom.face_tolerance = vec![1e-7];
+        brep.geom.vertex_tolerance = vec![TOLERANCE_ADAPTIVE_MAX, TOLERANCE_ADAPTIVE_MAX];
+        brep.geom.edge_tolerance = vec![TOLERANCE_ABS];
+        brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
         let (_result, report) = propagate_tolerances_post_boolean_op(
             &brep,
@@ -17246,7 +17264,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let gaps = detect_connectivity_gaps(&brep, 1e-3);
+        let gaps = detect_connectivity_gaps(&brep, TOLERANCE_ADAPTIVE_MAX);
         assert!(gaps.is_empty(), "Connected box should have no gaps");
     }
 
@@ -17258,7 +17276,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = validate_connectivity(&brep, 1e-6);
+        let report = validate_connectivity(&brep, TOLERANCE_MESH_LEGACY);
 
         assert!(report.is_connected, "Unit box should be connected");
         assert_eq!(report.component_count, 1);
@@ -17306,7 +17324,7 @@ mod tests {
 
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face1, face2] }] });
 
-        let report = validate_connectivity(&brep, 1e-6);
+        let report = validate_connectivity(&brep, TOLERANCE_MESH_LEGACY);
 
         assert!(!report.is_connected, "Should detect disconnected components");
         assert_eq!(report.component_count, 2);
@@ -17828,7 +17846,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let (result, merged) = merge_adjacent_faces_after_removal(&brep, 1e-6);
+        let (result, merged) = merge_adjacent_faces_after_removal(&brep, TOLERANCE_MESH_LEGACY);
 
         // Simple box faces should not merge (they're not coplanar)
         assert_eq!(merged, 0, "No faces should merge in a simple box");
@@ -18220,10 +18238,10 @@ mod tests {
         let (_, report) = make_connected_iterative_scoped_with_growth_cap(
             &brep,
             &seeds,
-            1e-6,
+            TOLERANCE_MESH_LEGACY,
             3,
             1.5,
-            1e-3,
+            TOLERANCE_ADAPTIVE_MAX,
         );
 
         assert!(
@@ -18334,7 +18352,7 @@ mod tests {
     #[test]
     fn handle_periodic_surface_seams_sphere() {
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
-        let (repaired, report) = handle_periodic_surface_seams(&brep, 1e-6);
+        let (repaired, report) = handle_periodic_surface_seams(&brep, TOLERANCE_MESH_LEGACY);
 
         // The sphere primitive should be well-formed, but we verify the function runs
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
@@ -18347,7 +18365,7 @@ mod tests {
             radius: 1.0,
             height: 2.0,
         });
-        let (repaired, report) = handle_periodic_surface_seams(&brep, 1e-6);
+        let (repaired, report) = handle_periodic_surface_seams(&brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder has a seam edge (the line where U=0 and U=2π meet)
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
@@ -18359,7 +18377,7 @@ mod tests {
             major_radius: 2.0,
             minor_radius: 0.5,
         });
-        let (repaired, report) = handle_periodic_surface_seams(&brep, 1e-6);
+        let (repaired, report) = handle_periodic_surface_seams(&brep, TOLERANCE_MESH_LEGACY);
 
         // Torus is double-periodic
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
@@ -18371,7 +18389,7 @@ mod tests {
             base_radius: 1.0,
             height: 2.0,
         });
-        let (repaired, report) = handle_periodic_surface_seams(&brep, 1e-6);
+        let (repaired, report) = handle_periodic_surface_seams(&brep, TOLERANCE_MESH_LEGACY);
 
         // Cone has a seam and apex
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
@@ -18430,7 +18448,7 @@ mod tests {
         }));
         brep.geom.face_surface.push(Some(0));
 
-        let (result, count) = handle_degenerate_points(&brep, 1e-6);
+        let (result, count) = handle_degenerate_points(&brep, TOLERANCE_MESH_LEGACY);
 
         // Degenerate point detection may not find all expected points
         // Just verify the function runs without error
@@ -18478,7 +18496,7 @@ mod tests {
         }));
         brep.geom.face_surface.push(Some(0));
 
-        let (result, count) = handle_degenerate_points(&brep, 1e-6);
+        let (result, count) = handle_degenerate_points(&brep, TOLERANCE_MESH_LEGACY);
 
         // Degenerate point detection may not find all expected points
         assert_eq!(result.vertices.len(), brep.vertices.len());
@@ -18521,7 +18539,7 @@ mod tests {
         };
 
         assert!(
-            is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, 1e-6),
+            is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, TOLERANCE_MESH_LEGACY),
             "Vertex at north pole should be detected as degenerate"
         );
     }
@@ -18543,7 +18561,7 @@ mod tests {
         };
 
         assert!(
-            is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, 1e-6),
+            is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, TOLERANCE_MESH_LEGACY),
             "Vertex at south pole should be detected as degenerate"
         );
     }
@@ -18565,7 +18583,7 @@ mod tests {
         };
 
         assert!(
-            !is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, 1e-6),
+            !is_vertex_at_degenerate_point(&vertex, &sphere, &periodic_info, TOLERANCE_MESH_LEGACY),
             "Vertex on equator should not be detected as degenerate"
         );
     }
@@ -18589,7 +18607,7 @@ mod tests {
 
         // Degenerate point detection may not work perfectly for all cases
         // Just verify the function runs without panicking
-        let _ = is_vertex_at_degenerate_point(&vertex, &cone, &periodic_info, 1e-6);
+        let _ = is_vertex_at_degenerate_point(&vertex, &cone, &periodic_info, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -18609,7 +18627,7 @@ mod tests {
         };
 
         assert!(
-            !is_vertex_at_degenerate_point(&vertex, &cylinder, &periodic_info, 1e-6),
+            !is_vertex_at_degenerate_point(&vertex, &cylinder, &periodic_info, TOLERANCE_MESH_LEGACY),
             "Cylinder has no degenerate points"
         );
     }

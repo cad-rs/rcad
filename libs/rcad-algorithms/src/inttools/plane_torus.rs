@@ -11,7 +11,7 @@
 
 use rcad_kernel::geom::{Circle3, Plane, ToroidalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 /// Result of plane x torus intersection.
 #[derive(Debug, Clone)]
@@ -224,12 +224,12 @@ mod tests {
         match result {
             PlaneTorusResult::TwoCircles(c1, c2) => {
                 // Outer circle at major_radius + minor_radius
-                assert!((c1.radius - 6.0).abs() < 1e-6, "Outer circle radius expected 6.0, got {}", c1.radius);
+                assert!((c1.radius - 6.0).abs() < TOLERANCE_MESH_LEGACY, "Outer circle radius expected 6.0, got {}", c1.radius);
                 // Inner circle at major_radius - minor_radius
-                assert!((c2.radius - 4.0).abs() < 1e-6, "Inner circle radius expected 4.0, got {}", c2.radius);
+                assert!((c2.radius - 4.0).abs() < TOLERANCE_MESH_LEGACY, "Inner circle radius expected 4.0, got {}", c2.radius);
                 // Both circles should have the same center
-                assert!((c1.center - DVec3::ZERO).length() < 1e-6);
-                assert!((c2.center - DVec3::ZERO).length() < 1e-6);
+                assert!((c1.center - DVec3::ZERO).length() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center - DVec3::ZERO).length() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }
@@ -255,19 +255,19 @@ mod tests {
         match result {
             PlaneTorusResult::TwoCircles(c1, c2) => {
                 // Both circles should have radius equal to minor radius
-                assert!((c1.radius - 1.0).abs() < 1e-6, "Circle 1 radius expected 1.0, got {}", c1.radius);
-                assert!((c2.radius - 1.0).abs() < 1e-6, "Circle 2 radius expected 1.0, got {}", c2.radius);
+                assert!((c1.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY, "Circle 1 radius expected 1.0, got {}", c1.radius);
+                assert!((c2.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY, "Circle 2 radius expected 1.0, got {}", c2.radius);
                 // Both circles should be in the plane (normal = X)
-                assert!((c1.normal - DVec3::X).length() < 1e-6);
-                assert!((c2.normal - DVec3::X).length() < 1e-6);
+                assert!((c1.normal - DVec3::X).length() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.normal - DVec3::X).length() < TOLERANCE_MESH_LEGACY);
                 // Centers should be at z = ±R = ±5
-                assert!((c1.center.z.abs() - 5.0).abs() < 1e-6, "Circle 1 center z should be ±5");
-                assert!((c2.center.z.abs() - 5.0).abs() < 1e-6, "Circle 2 center z should be ±5");
+                assert!((c1.center.z.abs() - 5.0).abs() < TOLERANCE_MESH_LEGACY, "Circle 1 center z should be ±5");
+                assert!((c2.center.z.abs() - 5.0).abs() < TOLERANCE_MESH_LEGACY, "Circle 2 center z should be ±5");
                 // Both centers at x=0, y=0
-                assert!(c1.center.x.abs() < 1e-6);
-                assert!(c1.center.y.abs() < 1e-6);
-                assert!(c2.center.x.abs() < 1e-6);
-                assert!(c2.center.y.abs() < 1e-6);
+                assert!(c1.center.x.abs() < TOLERANCE_MESH_LEGACY);
+                assert!(c1.center.y.abs() < TOLERANCE_MESH_LEGACY);
+                assert!(c2.center.x.abs() < TOLERANCE_MESH_LEGACY);
+                assert!(c2.center.y.abs() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }
@@ -293,15 +293,15 @@ mod tests {
         match result {
             PlaneTorusResult::TwoCircles(c1, c2) => {
                 // Both circles should have radius equal to minor radius
-                assert!((c1.radius - 1.0).abs() < 1e-6);
-                assert!((c2.radius - 1.0).abs() < 1e-6);
+                assert!((c1.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
                 // Centers should be at x=3 (the plane's position)
-                assert!((c1.center.x - 3.0).abs() < 1e-6);
-                assert!((c2.center.x - 3.0).abs() < 1e-6);
+                assert!((c1.center.x - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center.x - 3.0).abs() < TOLERANCE_MESH_LEGACY);
                 // z = ±sqrt(R² - d²) = ±sqrt(25 - 9) = ±4
                 let expected_z = (25.0_f64 - 9.0_f64).sqrt();
-                assert!((c1.center.z.abs() - expected_z).abs() < 1e-6);
-                assert!((c2.center.z.abs() - expected_z).abs() < 1e-6);
+                assert!((c1.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }
@@ -388,15 +388,15 @@ mod tests {
         match result {
             PlaneTorusResult::TwoCircles(c1, c2) => {
                 // Both circles should have radius equal to minor radius
-                assert!((c1.radius - 1.0).abs() < 1e-6);
-                assert!((c2.radius - 1.0).abs() < 1e-6);
+                assert!((c1.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
                 // Centers should be at x=-4
-                assert!((c1.center.x + 4.0).abs() < 1e-6);
-                assert!((c2.center.x + 4.0).abs() < 1e-6);
+                assert!((c1.center.x + 4.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center.x + 4.0).abs() < TOLERANCE_MESH_LEGACY);
                 // z = ±sqrt(R² - d²) = ±sqrt(25 - 16) = ±3
                 let expected_z = (25.0_f64 - 16.0_f64).sqrt();
-                assert!((c1.center.z.abs() - expected_z).abs() < 1e-6);
-                assert!((c2.center.z.abs() - expected_z).abs() < 1e-6);
+                assert!((c1.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }
@@ -423,12 +423,12 @@ mod tests {
         match result {
             PlaneTorusResult::TwoCircles(c1, c2) => {
                 // d = 4 < R = 5, so we still get two circles
-                assert!((c1.radius - 1.0).abs() < 1e-6);
-                assert!((c2.radius - 1.0).abs() < 1e-6);
+                assert!((c1.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
                 // z = ±sqrt(R² - d²) = ±sqrt(25 - 16) = ±3
                 let expected_z = (25.0_f64 - 16.0_f64).sqrt();
-                assert!((c1.center.z.abs() - expected_z).abs() < 1e-6);
-                assert!((c2.center.z.abs() - expected_z).abs() < 1e-6);
+                assert!((c1.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((c2.center.z.abs() - expected_z).abs() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }
@@ -454,7 +454,7 @@ mod tests {
         match result {
             PlaneTorusResult::TangentCircle(c) => {
                 // Tangent circle at the major radius
-                assert!((c.radius - 5.0).abs() < 1e-6);
+                assert!((c.radius - 5.0).abs() < TOLERANCE_MESH_LEGACY);
             }
             other => panic!("Expected TangentCircle, got {:?}", other),
         }
@@ -503,8 +503,8 @@ mod tests {
                 let expected_r1 = 5.0 + expected_tube_r;
                 let expected_r2 = 5.0 - expected_tube_r;
 
-                assert!((c1.radius - expected_r1).abs() < 1e-6, "Outer circle radius mismatch");
-                assert!((c2.radius - expected_r2).abs() < 1e-6, "Inner circle radius mismatch");
+                assert!((c1.radius - expected_r1).abs() < TOLERANCE_MESH_LEGACY, "Outer circle radius mismatch");
+                assert!((c2.radius - expected_r2).abs() < TOLERANCE_MESH_LEGACY, "Inner circle radius mismatch");
             }
             other => panic!("Expected TwoCircles, got {:?}", other),
         }

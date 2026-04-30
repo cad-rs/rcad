@@ -22,7 +22,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, ConicalSurface, ToroidalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -230,8 +230,8 @@ mod tests {
                 let z2 = c2.center.z;
                 let expected_z1 = (10.0 - 28_f64.sqrt()) / 4.0;
                 let expected_z2 = (10.0 + 28_f64.sqrt()) / 4.0;
-                assert!((z1 - expected_z1).abs() < 1e-6 || (z1 - expected_z2).abs() < 1e-6);
-                assert!((z2 - expected_z1).abs() < 1e-6 || (z2 - expected_z2).abs() < 1e-6);
+                assert!((z1 - expected_z1).abs() < TOLERANCE_MESH_LEGACY || (z1 - expected_z2).abs() < TOLERANCE_MESH_LEGACY);
+                assert!((z2 - expected_z1).abs() < TOLERANCE_MESH_LEGACY || (z2 - expected_z2).abs() < TOLERANCE_MESH_LEGACY);
             }
             TorusConeResult::SingleCircle(_) => {
                 // Also acceptable - tangent case

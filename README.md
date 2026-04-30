@@ -42,6 +42,7 @@ A parametric solid modeling kernel implemented in Rust, designed for CAD/CAE app
 | `rcad-iges` | IGES B-Rep read/write |
 | `rcad-render` | wgpu rendering, picking, HLR stroke lines |
 | `rcad-scene` | Scene management, tool states |
+| `rcad-py` | Python bindings (PyO3): B-rep primitives, booleans, STEP/IGES |
 
 ## Building
 
@@ -52,6 +53,20 @@ cargo build --release
 # WebAssembly build
 cargo build --target wasm32-unknown-unknown --release
 ```
+
+### Python (uv + maturin)
+
+The `rcad-py` crate publishes the `rcad` package. From `libs/rcad-py`:
+
+```bash
+uv sync --group dev
+uv run maturin develop   # editable install with native extension
+uv run python -c "import rcad; print(rcad.BRep.sphere((0,0,0), 1.0).volume())"
+```
+
+Requires a Rust toolchain (`cargo`) on `PATH`. The extension uses the stable **abi3** binary interface for Python 3.9+.
+
+`BRep` exposes primitives and I/O (`read_step`, `read_step_with_metadata` for geometry plus a JSON-derived metadata `dict`, `write_step`, IGES), booleans (`union`, `intersection`, `difference`), sweeps (`extrude`, `revolve`, `loft`, `sweep_pipe`, `pipe_sweep_wire`, `sweep_wire_linear`), offset (`offset_solid`), projection (`project_wire_to_face`), local ops (`fillet_edge`, `fillet_edges`, `chamfer_edge`, `repair`), rigid transforms (`translate`, `rotate_axis_angle`, `scale_uniform`), and mass-properties / counts (`volume`, `surface_area`, `signed_volume`, `centroid`, `bounding_box`, `inertia_tensor`, `face_count`, …).
 
 ## Applications
 

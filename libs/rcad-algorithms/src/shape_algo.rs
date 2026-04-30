@@ -11,6 +11,7 @@
 //! - `GetTorusGeometry`: Extract torus parameters from a BRep
 //! - `IsPrimitive`: Check if a shape matches a primitive type
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
@@ -267,7 +268,7 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
     let dz = (max_pt.z - min_pt.z).abs();
 
     // Verify the planes correspond to the bounding box
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
     for plane in &planes {
         // Each plane should pass through one of the bbox corners
         let d = plane.normal.dot(plane.origin);
@@ -370,7 +371,7 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
 
     // Determine the actual bottom of the cylinder
     let origin_proj = cyl.origin.dot(axis);
-    let origin = if (origin_proj - min_proj).abs() < 1e-6 {
+    let origin = if (origin_proj - min_proj).abs() < TOLERANCE_MESH_LEGACY {
         // Cylinder origin is at the bottom
         cyl.origin
     } else {
@@ -731,9 +732,9 @@ mod tests {
         assert!(geom.is_some());
         let g = geom.unwrap();
         // The box is centered at origin, so dimensions should match
-        assert!((g.dx - 2.0).abs() < 1e-6);
-        assert!((g.dy - 3.0).abs() < 1e-6);
-        assert!((g.dz - 4.0).abs() < 1e-6);
+        assert!((g.dx - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((g.dy - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((g.dz - 4.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -757,7 +758,7 @@ mod tests {
         assert!(geom.is_some());
         let g = geom.unwrap();
         assert_eq!(g.center, DVec3::ZERO);
-        assert!((g.radius - 5.0).abs() < 1e-6);
+        assert!((g.radius - 5.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -780,10 +781,10 @@ mod tests {
 
         assert!(geom.is_some());
         let g = geom.unwrap();
-        assert!((g.radius - 3.0).abs() < 1e-6);
-        assert!((g.height - 10.0).abs() < 1e-6);
+        assert!((g.radius - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((g.height - 10.0).abs() < TOLERANCE_MESH_LEGACY);
         // Axis should be normalized
-        assert!((g.axis.length() - 1.0).abs() < 1e-6);
+        assert!((g.axis.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -807,7 +808,7 @@ mod tests {
         assert!(geom.is_some());
         let g = geom.unwrap();
         // Axis should be normalized
-        assert!((g.axis.length() - 1.0).abs() < 1e-6);
+        assert!((g.axis.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
         // Angle should be positive
         assert!(g.angle > 0.0);
     }
@@ -833,10 +834,10 @@ mod tests {
         assert!(geom.is_some());
         let g = geom.unwrap();
         assert_eq!(g.center, DVec3::ZERO);
-        assert!((g.major_radius - 5.0).abs() < 1e-6);
-        assert!((g.minor_radius - 1.5).abs() < 1e-6);
+        assert!((g.major_radius - 5.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((g.minor_radius - 1.5).abs() < TOLERANCE_MESH_LEGACY);
         // Axis should be normalized
-        assert!((g.axis.length() - 1.0).abs() < 1e-6);
+        assert!((g.axis.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -935,9 +936,9 @@ mod tests {
         };
 
         assert_eq!(geom.origin, DVec3::new(1.0, 2.0, 3.0));
-        assert!((geom.dx - 4.0).abs() < 1e-10);
-        assert!((geom.dy - 5.0).abs() < 1e-10);
-        assert!((geom.dz - 6.0).abs() < 1e-10);
+        assert!((geom.dx - 4.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((geom.dy - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((geom.dz - 6.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -951,8 +952,8 @@ mod tests {
 
         assert_eq!(geom.origin, DVec3::ZERO);
         assert_eq!(geom.axis, DVec3::Y);
-        assert!((geom.radius - 5.0).abs() < 1e-10);
-        assert!((geom.height - 10.0).abs() < 1e-10);
+        assert!((geom.radius - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((geom.height - 10.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -963,7 +964,7 @@ mod tests {
         };
 
         assert_eq!(geom.center, DVec3::new(1.0, 2.0, 3.0));
-        assert!((geom.radius - 7.0).abs() < 1e-10);
+        assert!((geom.radius - 7.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -976,7 +977,7 @@ mod tests {
 
         assert_eq!(geom.apex, DVec3::new(0.0, 5.0, 0.0));
         assert_eq!(geom.axis, DVec3::Y);
-        assert!((geom.angle - PI / 6.0).abs() < 1e-10);
+        assert!((geom.angle - PI / 6.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -990,8 +991,8 @@ mod tests {
 
         assert_eq!(geom.center, DVec3::new(1.0, 2.0, 3.0));
         assert_eq!(geom.axis, DVec3::Z);
-        assert!((geom.major_radius - 10.0).abs() < 1e-10);
-        assert!((geom.minor_radius - 2.0).abs() < 1e-10);
+        assert!((geom.major_radius - 10.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((geom.minor_radius - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

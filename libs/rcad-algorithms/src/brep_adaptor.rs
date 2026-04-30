@@ -10,6 +10,7 @@
 //! - [`WireAdaptor`]: Adapts a wire to act as a composite 3D curve
 //! - [`CurveAdaptorArray`]: Array of edge adaptors for indexed access
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
 use std::f64::consts::PI;
@@ -461,7 +462,7 @@ impl<'a> FaceAdaptor<'a> {
                 first
                     .iter()
                     .zip(last.iter())
-                    .all(|(a, b)| (a - b).length_squared() < 1e-10)
+                    .all(|(a, b)| (a - b).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT)
             }
             Surface3::Bezier(_) => false,
             Surface3::TriBezier(_) => false,
@@ -494,7 +495,7 @@ impl<'a> FaceAdaptor<'a> {
                     | Surface3::Revolution(_) => {
                         let [u0, u1, _, _] = inner.trim;
                         let [du0, du1, _, _] = inner.basis.default_domain();
-                        (u0 - du0).abs() < 1e-10 && (u1 - du1).abs() < 1e-10
+                        (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
                     }
                     _ => false,
                 }
@@ -525,7 +526,7 @@ impl<'a> FaceAdaptor<'a> {
                 | Surface3::Revolution(_) => {
                     let [u0, u1, _, _] = inner.trim;
                     let [du0, du1, _, _] = inner.basis.default_domain();
-                    if (u0 - du0).abs() < 1e-10 && (u1 - du1).abs() < 1e-10 {
+                    if (u0 - du0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (u1 - du1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
                         Some(2.0 * PI)
                     } else {
                         None
@@ -573,7 +574,7 @@ impl<'a> FaceAdaptor<'a> {
                 (0..n_u).all(|i| {
                     let first = &s.control_points[i][0];
                     let last = &s.control_points[i][n_v - 1];
-                    (first - last).length_squared() < 1e-10
+                    (first - last).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT
                 })
             }
             Surface3::Bezier(_) => false,
@@ -589,7 +590,7 @@ impl<'a> FaceAdaptor<'a> {
                 if let Surface3::Torus(_) = inner.basis.as_ref() {
                     let [_, _, v0, v1] = inner.trim;
                     let [_, _, dv0, dv1] = inner.basis.default_domain();
-                    (v0 - dv0).abs() < 1e-10 && (v1 - dv1).abs() < 1e-10
+                    (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT
                 } else {
                     false
                 }
@@ -608,7 +609,7 @@ impl<'a> FaceAdaptor<'a> {
                 if let Surface3::Torus(_) = inner.basis.as_ref() {
                     let [_, _, v0, v1] = inner.trim;
                     let [_, _, dv0, dv1] = inner.basis.default_domain();
-                    if (v0 - dv0).abs() < 1e-10 && (v1 - dv1).abs() < 1e-10 {
+                    if (v0 - dv0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - dv1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
                         Some(2.0 * PI)
                     } else {
                         None
@@ -688,7 +689,7 @@ impl<'a> FaceAdaptor<'a> {
             .face_tolerance
             .get(self.face_idx)
             .copied()
-            .unwrap_or(1e-7)
+            .unwrap_or(TOLERANCE_ABS)
     }
 }
 
@@ -792,7 +793,7 @@ impl<'a> WireAdaptor<'a> {
         }
 
         // Compute cumulative fractions.
-        if total_length > 1e-15 {
+        if total_length > TOLERANCE_FLOAT_DEDUP {
             let mut cum_length = 0.0f64;
             for seg in &mut segments {
                 seg.start_frac = cum_length / total_length;
@@ -1149,8 +1150,8 @@ mod tests {
         let brep = box_brep();
         let adaptor = EdgeAdaptor::new(&brep, 0);
         let domain = adaptor.domain();
-        assert!((domain[0] - 0.0).abs() < 1e-10);
-        assert!((domain[1] - 1.0).abs() < 1e-10);
+        assert!((domain[0] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((domain[1] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1167,8 +1168,8 @@ mod tests {
         let v_start = brep.vertices[edge.start].point;
         let v_end = brep.vertices[edge.end].point;
 
-        assert!((p0 - v_start).length() < 1e-10, "p0: {:?}, v_start: {:?}", p0, v_start);
-        assert!((p1 - v_end).length() < 1e-10, "p1: {:?}, v_end: {:?}", p1, v_end);
+        assert!((p0 - v_start).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "p0: {:?}, v_start: {:?}", p0, v_start);
+        assert!((p1 - v_end).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "p1: {:?}, v_end: {:?}", p1, v_end);
     }
 
     #[test]
@@ -1181,7 +1182,7 @@ mod tests {
         let tan_fwd = adaptor_fwd.tangent_at(0.5);
         let tan_rev = adaptor_rev.tangent_at(0.5);
 
-        assert!((tan_fwd + tan_rev).length() < 1e-10, "tan_fwd: {:?}, tan_rev: {:?}", tan_fwd, tan_rev);
+        assert!((tan_fwd + tan_rev).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "tan_fwd: {:?}, tan_rev: {:?}", tan_fwd, tan_rev);
     }
 
     #[test]
@@ -1223,12 +1224,12 @@ mod tests {
         let adaptor = EdgeAdaptor::new(&brep, 0);
         let period = adaptor.period();
         assert!(period.is_some());
-        assert!((period.unwrap() - 2.0 * PI).abs() < 1e-10);
+        assert!((period.unwrap() - 2.0 * PI).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(adaptor.is_periodic());
-        assert!((adaptor.first_parameter() - 0.0).abs() < 1e-12);
-        assert!((adaptor.last_parameter() - 1.0).abs() < 1e-12);
-        assert!((adaptor.value(0.25) - adaptor.point_at(0.25)).length() < 1e-12);
-        assert!((adaptor.d1(0.25) - adaptor.tangent_at(0.25)).length() < 1e-12);
+        assert!((adaptor.first_parameter() - 0.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_parameter() - 1.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.value(0.25) - adaptor.point_at(0.25)).length() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.d1(0.25) - adaptor.tangent_at(0.25)).length() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -1243,11 +1244,11 @@ mod tests {
         let p0 = adaptor.point_at(0.0);
         let p1 = adaptor.point_at(1.0);
 
-        assert!((p0 - DVec3::ZERO).length() < 1e-10);
-        assert!((p1 - DVec3::X).length() < 1e-10);
+        assert!((p0 - DVec3::ZERO).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((p1 - DVec3::X).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let tangent = adaptor.tangent_at(0.5);
-        assert!((tangent - DVec3::X).length() < 1e-10);
+        assert!((tangent - DVec3::X).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ==================== FaceAdaptor Tests ====================
@@ -1288,7 +1289,7 @@ mod tests {
                 let p = adaptor.point_at(u, v);
                 let r = p.length();
                 assert!(
-                    (r - 1.0).abs() < 1e-9,
+                    (r - 1.0).abs() < TOLERANCE_COORD_SUB,
                     "Point at ({}, {}) has radius {}",
                     u, v, r
                 );
@@ -1310,7 +1311,7 @@ mod tests {
 
         // Normal should be parallel to position vector (outward or inward).
         let dot = p.normalize_or_zero().dot(n);
-        assert!((dot.abs() - 1.0).abs() < 1e-9, "Normal dot product: {}", dot);
+        assert!((dot.abs() - 1.0).abs() < TOLERANCE_COORD_SUB, "Normal dot product: {}", dot);
     }
 
     #[test]
@@ -1375,9 +1376,9 @@ mod tests {
         let adaptor = WireAdaptor::new(&brep, wire, 0);
 
         assert_eq!(adaptor.num_edges(), 4, "Box face should have 4 edges");
-        assert!((adaptor.first_parameter() - 0.0).abs() < 1e-12);
-        assert!((adaptor.last_parameter() - 1.0).abs() < 1e-12);
-        assert!((adaptor.value(0.3) - adaptor.point_at(0.3)).length() < 1e-12);
+        assert!((adaptor.first_parameter() - 0.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.last_parameter() - 1.0).abs() < TOLERANCE_LEN_MIN);
+        assert!((adaptor.value(0.3) - adaptor.point_at(0.3)).length() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -1393,7 +1394,7 @@ mod tests {
 
         // For a closed wire, these should be the same.
         assert!(
-            (p0 - p1).length() < 1e-6,
+            (p0 - p1).length() < TOLERANCE_MESH_LEGACY,
             "Closed wire: p0 {:?} should equal p1 {:?}",
             p0, p1
         );
@@ -1527,8 +1528,8 @@ mod tests {
         // Points at t=0 and t=1 should be on the sphere
         let p0 = seam_adaptor.point_at(0.0);
         let p1 = seam_adaptor.point_at(1.0);
-        assert!((p0.length() - 1.0).abs() < 1e-6, "p0 should be on sphere: {:?}", p0);
-        assert!((p1.length() - 1.0).abs() < 1e-6, "p1 should be on sphere: {:?}", p1);
+        assert!((p0.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY, "p0 should be on sphere: {:?}", p0);
+        assert!((p1.length() - 1.0).abs() < TOLERANCE_MESH_LEGACY, "p1 should be on sphere: {:?}", p1);
     }
 
     #[test]
@@ -1582,7 +1583,7 @@ mod tests {
         // Normal should be perpendicular to axis (Y).
         let y_component = n.dot(DVec3::Y);
         assert!(
-            y_component.abs() < 1e-6,
+            y_component.abs() < TOLERANCE_MESH_LEGACY,
             "Cylinder normal should be radial, y_component: {}",
             y_component
         );

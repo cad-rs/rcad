@@ -56,7 +56,7 @@ use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurf
 use rcad_kernel::topology::{Face, Wire};
 use rcad_modeling::make_cylinder_brep;
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 use crate::{BooleanOpType, BooleanOptions, boolean_op, boolean_op_robust, BooleanRobustOptions, BooleanRetryPolicy};
 use crate::brep_repair::make_connected_enhanced;
 
@@ -64,10 +64,10 @@ use crate::brep_repair::make_connected_enhanced;
 
 /// Maximum cross-product magnitude for two normalized axis vectors to be
 /// considered parallel.
-const AXIS_PARALLEL_TOL: f64 = 1e-5;
+const AXIS_PARALLEL_TOL: f64 = TOLERANCE_RETRY_LADDER_MID;
 
 /// Maximum allowable difference in cylinder radii to be grouped together.
-const RADIUS_TOL: f64 = 1e-5;
+const RADIUS_TOL: f64 = TOLERANCE_RETRY_LADDER_MID;
 
 /// Default fill margin along the axis: how much the fill solid extends beyond
 /// the detected hole extent to ensure a clean boolean union.
@@ -815,7 +815,7 @@ fn axes_same_line(o1: DVec3, ax1: DVec3, o2: DVec3, ax2: DVec3) -> bool {
 fn is_hole_face(face: &Face, brep: &BRep, cyl: &CylindricalSurface) -> bool {
     let ax = cyl.axis.normalize_or_zero();
     let face_n = face.normal.normalize_or_zero();
-    if face_n.length_squared() < 1e-20 {
+    if face_n.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
         return true; // no normal stored -> assume hole
     }
 
@@ -841,7 +841,7 @@ fn is_hole_face(face: &Face, brep: &BRep, cyl: &CylindricalSurface) -> bool {
         let Some(v) = brep.vertices.get(vi) else { continue; };
         let to_pt = v.point - cyl.origin;
         let radial = to_pt - to_pt.dot(ax) * ax;
-        if radial.length_squared() < 1e-20 {
+        if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             continue;
         }
         let radial_dir = radial.normalize();
@@ -854,9 +854,9 @@ fn is_hole_face(face: &Face, brep: &BRep, cyl: &CylindricalSurface) -> bool {
         // so the same seam normal convention still holds: dot > 0 -> hole wall.
         // We therefore use dot > 0 as the "outward (hole)" signal.
         let dot = face_n.dot(radial_dir);
-        if dot > 1e-6 {
+        if dot > TOLERANCE_MESH_LEGACY {
             hole_votes += 1;
-        } else if dot < -1e-6 {
+        } else if dot < -TOLERANCE_MESH_LEGACY {
             boss_votes += 1;
         }
     }
@@ -1131,7 +1131,7 @@ pub fn detect_conical_features(
                     if !axes_same_line(cone.apex, cone.axis, ncone.apex, ncone.axis) {
                         continue;
                     }
-                    if (ncone.half_angle_rad - cone.half_angle_rad).abs() > 1e-4 {
+                    if (ncone.half_angle_rad - cone.half_angle_rad).abs() > TOLERANCE_RETRY_LADDER_COARSE {
                         continue;
                     }
                     visited[nfi] = true;
@@ -1158,15 +1158,15 @@ pub fn detect_conical_features(
                         if let Some(v) = brep.vertices.get(vi) {
                             let to_pt = v.point - cone.apex;
                             let radial = to_pt - to_pt.dot(ax) * ax;
-                            if radial.length_squared() < 1e-20 {
+                            if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
                                 continue;
                             }
                             let radial_dir = radial.normalize();
                             // Dot < 0 means normal points toward axis (hole).
                             let dot = fnormal.dot(radial_dir);
-                            if dot < -1e-6 {
+                            if dot < -TOLERANCE_MESH_LEGACY {
                                 toward_axis_votes += 1;
-                            } else if dot > 1e-6 {
+                            } else if dot > TOLERANCE_MESH_LEGACY {
                                 away_axis_votes += 1;
                             }
                         }
@@ -1397,25 +1397,25 @@ fn analyze_slot_group(
     }
 
     // Determine slot orientation
-    let length_dir = if (dimensions.x - length).abs() < 1e-6 {
+    let length_dir = if (dimensions.x - length).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::X
-    } else if (dimensions.y - length).abs() < 1e-6 {
+    } else if (dimensions.y - length).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::Y
     } else {
         DVec3::Z
     };
 
-    let width_dir = if (dimensions.x - width).abs() < 1e-6 {
+    let width_dir = if (dimensions.x - width).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::X
-    } else if (dimensions.y - width).abs() < 1e-6 {
+    } else if (dimensions.y - width).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::Y
     } else {
         DVec3::Z
     };
 
-    let depth_dir = if (dimensions.x - depth).abs() < 1e-6 {
+    let depth_dir = if (dimensions.x - depth).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::X
-    } else if (dimensions.y - depth).abs() < 1e-6 {
+    } else if (dimensions.y - depth).abs() < TOLERANCE_MESH_LEGACY {
         DVec3::Y
     } else {
         DVec3::Z
@@ -2409,7 +2409,7 @@ pub fn detect_fillets(brep: &BRep, max_radius: f64) -> Vec<FilletFeature> {
                         }
                         if let Some((nr, _, _)) = detect_fillet_face(brep, si, shi, nfi, max_radius) {
                             // Check if similar radius
-                            if (nr - radius).abs() < 1e-4 {
+                            if (nr - radius).abs() < TOLERANCE_RETRY_LADDER_COARSE {
                                 visited[nfi] = true;
                                 queue.push_back(nfi);
                                 total_radius += nr;
@@ -2423,7 +2423,7 @@ pub fn detect_fillets(brep: &BRep, max_radius: f64) -> Vec<FilletFeature> {
             }
 
             let avg_radius = total_radius / count as f64;
-            let is_variable = (max_radius_found - min_radius) > 1e-4;
+            let is_variable = (max_radius_found - min_radius) > TOLERANCE_RETRY_LADDER_COARSE;
 
             // Find adjacent faces
             let adjacent_faces = find_adjacent_faces(&edge_to_faces, &group);
@@ -2555,7 +2555,7 @@ pub fn detect_chamfers(brep: &BRep, max_distance: f64) -> Vec<ChamferFeature> {
                             detect_chamfer_face(brep, si, shi, nfi, max_distance, &edge_to_faces)
                         {
                             // Check if similar chamfer
-                            if (nd - distance).abs() < 1e-4 && (na - angle).abs() < 0.1 {
+                            if (nd - distance).abs() < TOLERANCE_RETRY_LADDER_COARSE && (na - angle).abs() < 0.1 {
                                 visited[nfi] = true;
                                 queue.push_back(nfi);
                             }
@@ -2947,7 +2947,7 @@ pub fn detect_blend_features(
                         if let Some(nblend) = detect_blend_face(brep, si, shi, nfi, max_blend_radius, max_chamfer_distance) {
                             // Check if similar blend
                             if (nblend.is_fillet == blend.is_fillet)
-                                && (nblend.radius - blend.radius).abs() < 1e-4
+                                && (nblend.radius - blend.radius).abs() < TOLERANCE_RETRY_LADDER_COARSE
                             {
                                 visited[nfi] = true;
                                 queue.push_back(nfi);
@@ -3173,7 +3173,7 @@ pub fn detect_hole_patterns(
         return Vec::new();
     }
 
-    let radius_tol = radius_tolerance.max(1e-6);
+    let radius_tol = radius_tolerance.max(TOLERANCE_MESH_LEGACY);
     let _spacing_tol = spacing_tolerance.max(0.01).min(0.5); // Clamp to reasonable range
 
     // Group features by similar radius and axis direction
@@ -3275,7 +3275,7 @@ fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatte
             .map(|&d| (d - avg_dist).abs())
             .fold(0.0, f64::max);
 
-        if avg_dist > 1e-6 && max_deviation / avg_dist < spacing_tolerance {
+        if avg_dist > TOLERANCE_MESH_LEGACY && max_deviation / avg_dist < spacing_tolerance {
             return HolePatternType::Circular;
         }
     }
@@ -3295,7 +3295,7 @@ fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatte
 
             // If all points are close to the line, it's a linear pattern
             let line_length = (centers[n - 1] - centers[0]).length();
-            if line_length > 1e-6 && max_dist_from_line / line_length < spacing_tolerance {
+            if line_length > TOLERANCE_MESH_LEGACY && max_dist_from_line / line_length < spacing_tolerance {
                 return HolePatternType::Linear;
             }
         }
@@ -3314,14 +3314,14 @@ fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatte
         let dims = max_pt - min_pt;
         let mut dim_count = 0;
         for &d in &[dims.x, dims.y, dims.z] {
-            if d > 1e-6 {
+            if d > TOLERANCE_MESH_LEGACY {
                 dim_count += 1;
             }
         }
 
         if dim_count >= 2 {
             // Check if points form a regular grid
-            let spacing_x = if dims.x > 1e-6 {
+            let spacing_x = if dims.x > TOLERANCE_MESH_LEGACY {
                 let unique_x: std::collections::BTreeSet<i64> = centers
                     .iter()
                     .map(|p| (p.x / dims.x * 100.0).round() as i64)
@@ -3335,7 +3335,7 @@ fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatte
                 0.0
             };
 
-            let spacing_y = if dims.y > 1e-6 {
+            let spacing_y = if dims.y > TOLERANCE_MESH_LEGACY {
                 let unique_y: std::collections::BTreeSet<i64> = centers
                     .iter()
                     .map(|p| (p.y / dims.y * 100.0).round() as i64)
@@ -3349,7 +3349,7 @@ fn classify_pattern_type(centers: &[DVec3], spacing_tolerance: f64) -> HolePatte
                 0.0
             };
 
-            if spacing_x > 1e-6 || spacing_y > 1e-6 {
+            if spacing_x > TOLERANCE_MESH_LEGACY || spacing_y > TOLERANCE_MESH_LEGACY {
                 return HolePatternType::RectangularGrid;
             }
         }
@@ -4111,7 +4111,7 @@ mod tests {
         let hole = features.iter().find(|f| f.is_hole);
         assert!(hole.is_some(), "expected found feature to be a hole");
         let hole = hole.unwrap();
-        assert!((hole.radius - hole_radius).abs() < 1e-3);
+        assert!((hole.radius - hole_radius).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]

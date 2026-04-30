@@ -8,6 +8,7 @@
 //! - Numerical integration
 //! - Optimization (golden section search)
 
+use crate::tolerance::*;
 use glam::{DMat2, DMat3, DVec2, DVec3};
 use std::f64::consts::FRAC_1_SQRT_2;
 
@@ -42,7 +43,7 @@ pub fn newton_raphson(
         }
 
         let dfx = df(x);
-        if dfx.abs() < 1e-15 {
+        if dfx.abs() < TOLERANCE_FLOAT_DEDUP {
             return None; // Derivative too small
         }
 
@@ -139,7 +140,7 @@ pub fn secant(f: fn(f64) -> f64, x0: f64, x1: f64, tol: f64) -> Option<f64> {
         }
 
         let denom = f_curr - f_prev;
-        if denom.abs() < 1e-15 {
+        if denom.abs() < TOLERANCE_FLOAT_DEDUP {
             return None;
         }
 
@@ -195,7 +196,7 @@ pub fn newton_2d(
         let j = jacobian(x);
         let det = j.determinant();
 
-        if det.abs() < 1e-15 {
+        if det.abs() < TOLERANCE_FLOAT_DEDUP {
             return None; // Singular Jacobian
         }
 
@@ -249,7 +250,7 @@ pub fn newton_3d(
         let j = jacobian(x);
         let det = j.determinant();
 
-        if det.abs() < 1e-15 {
+        if det.abs() < TOLERANCE_FLOAT_DEDUP {
             return None; // Singular Jacobian
         }
 
@@ -280,8 +281,8 @@ pub fn newton_3d(
 
 /// Solve linear equation ax + b = 0
 pub fn solve_linear(a: f64, b: f64) -> Option<f64> {
-    if a.abs() < 1e-15 {
-        if b.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
+        if b.abs() < TOLERANCE_FLOAT_DEDUP {
             Some(0.0) // Infinite solutions, return 0
         } else {
             None // No solution
@@ -295,7 +296,7 @@ pub fn solve_linear(a: f64, b: f64) -> Option<f64> {
 ///
 /// Returns real roots in ascending order
 pub fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
-    if a.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
         // Linear case
         return solve_linear(b, c).into_iter().collect();
     }
@@ -306,7 +307,7 @@ pub fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
         return Vec::new(); // No real roots
     }
 
-    if disc.abs() < 1e-15 {
+    if disc.abs() < TOLERANCE_FLOAT_DEDUP {
         // Single root (double root)
         return vec![-b / (2.0 * a)];
     }
@@ -327,7 +328,7 @@ pub fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
 ///
 /// Uses Cardano's formula and returns real roots in ascending order
 pub fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
-    if a.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
         return solve_quadratic(b, c, d);
     }
 
@@ -344,9 +345,9 @@ pub fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
 
     let offset = p / 3.0;
 
-    if disc.abs() < 1e-15 {
+    if disc.abs() < TOLERANCE_FLOAT_DEDUP {
         // One or two roots (discriminant near zero)
-        if a_coef.abs() < 1e-15 {
+        if a_coef.abs() < TOLERANCE_FLOAT_DEDUP {
             // Triple root
             return vec![-offset];
         }
@@ -391,7 +392,7 @@ fn cube_root(x: f64) -> f64 {
 ///
 /// Uses Ferrari's method and returns real roots in ascending order
 pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
-    if a.abs() < 1e-15 {
+    if a.abs() < TOLERANCE_FLOAT_DEDUP {
         return solve_cubic(b, c, d, e);
     }
 
@@ -407,12 +408,12 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     let c1 = s - 3.0 * p * p * p * p / 256.0 + p * p * q / 16.0 - p * r / 4.0;
 
     // Handle b1 = 0 case (quartic with only even powers)
-    if b1.abs() < 1e-12 {
+    if b1.abs() < TOLERANCE_LEN_MIN {
         let disc = a1 * a1 - 4.0 * c1;
-        if disc < -1e-10 {
+        if disc < -TOLERANCE_LINEAR_ULTRA_STRICT {
             return Vec::new();
         }
-        if disc.abs() < 1e-10 {
+        if disc.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             let y = (-a1 / 2.0).sqrt();
             return vec![y - p / 4.0, -y - p / 4.0];
         }
@@ -421,12 +422,12 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
         let y2_sq = (-a1 - sqrt_disc) / 2.0;
 
         let mut roots = Vec::new();
-        if y1_sq >= -1e-10 {
+        if y1_sq >= -TOLERANCE_LINEAR_ULTRA_STRICT {
             let y1 = y1_sq.max(0.0).sqrt();
             roots.push(y1 - p / 4.0);
             roots.push(-y1 - p / 4.0);
         }
-        if y2_sq >= -1e-10 {
+        if y2_sq >= -TOLERANCE_LINEAR_ULTRA_STRICT {
             let y2 = y2_sq.max(0.0).sqrt();
             roots.push(y2 - p / 4.0);
             roots.push(-y2 - p / 4.0);
@@ -445,7 +446,7 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     // Find a positive root of the resolvent
     let t = resolvent_roots
         .iter()
-        .find(|&&t| t > 1e-10)
+        .find(|&&t| t > TOLERANCE_LINEAR_ULTRA_STRICT)
         .copied()
         .unwrap_or(resolvent_roots[0]);
 
@@ -453,16 +454,16 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
 
     let mut roots = Vec::new();
 
-    if sqrt_t > 1e-10 {
+    if sqrt_t > TOLERANCE_LINEAR_ULTRA_STRICT {
         let inner1 = -(a1 + t + b1 / sqrt_t);
         let inner2 = -(a1 + t - b1 / sqrt_t);
 
-        if inner1 >= -1e-10 {
+        if inner1 >= -TOLERANCE_LINEAR_ULTRA_STRICT {
             let s1 = inner1.max(0.0).sqrt();
             roots.push((sqrt_t + s1) / 2.0 - p / 4.0);
             roots.push((sqrt_t - s1) / 2.0 - p / 4.0);
         }
-        if inner2 >= -1e-10 {
+        if inner2 >= -TOLERANCE_LINEAR_ULTRA_STRICT {
             let s2 = inner2.max(0.0).sqrt();
             roots.push((-sqrt_t + s2) / 2.0 - p / 4.0);
             roots.push((-sqrt_t - s2) / 2.0 - p / 4.0);
@@ -470,7 +471,7 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     } else {
         // t is nearly zero, use alternative formula
         let inner = -(a1 + t);
-        if inner >= -1e-10 {
+        if inner >= -TOLERANCE_LINEAR_ULTRA_STRICT {
             let s = inner.max(0.0).sqrt();
             roots.push(s / 2.0 - p / 4.0);
             roots.push(-s / 2.0 - p / 4.0);
@@ -478,7 +479,7 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     }
 
     roots.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    roots.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+    roots.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     roots
 }
 
@@ -557,7 +558,7 @@ pub fn eigenvalues_3x3(m: DMat3) -> (f64, f64, f64) {
 /// Returns None if the matrix is singular
 pub fn inverse_3x3(m: DMat3) -> Option<DMat3> {
     let det = determinant_3x3(m);
-    if det.abs() < 1e-15 {
+    if det.abs() < TOLERANCE_FLOAT_DEDUP {
         return None;
     }
 
@@ -745,9 +746,9 @@ mod tests {
         let f = |x: f64| x * x - 4.0;
         let df = |x: f64| 2.0 * x;
 
-        let root = newton_raphson(f, df, 3.0, 1e-10, 100);
+        let root = newton_raphson(f, df, 3.0, TOLERANCE_LINEAR_ULTRA_STRICT, 100);
         assert!(root.is_some());
-        assert!((root.unwrap() - 2.0).abs() < 1e-8);
+        assert!((root.unwrap() - 2.0).abs() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     #[test]
@@ -756,9 +757,9 @@ mod tests {
         let f = |x: f64| x * x * x - x - 2.0;
         let df = |x: f64| 3.0 * x * x - 1.0;
 
-        let root = newton_raphson(f, df, 2.0, 1e-10, 100);
+        let root = newton_raphson(f, df, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT, 100);
         assert!(root.is_some());
-        assert!((root.unwrap() - 1.521379706804567).abs() < 1e-6);
+        assert!((root.unwrap() - 1.521379706804567).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -766,9 +767,9 @@ mod tests {
         // Solve x^2 - 4 = 0 in [0, 3]
         let f = |x: f64| x * x - 4.0;
 
-        let root = bisection(f, 0.0, 3.0, 1e-10);
+        let root = bisection(f, 0.0, 3.0, TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(root.is_some());
-        assert!((root.unwrap() - 2.0).abs() < 1e-8);
+        assert!((root.unwrap() - 2.0).abs() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     #[test]
@@ -776,7 +777,7 @@ mod tests {
         // Try to find root of x^2 + 1 = 0 (no real roots)
         let f = |x: f64| x * x + 1.0;
 
-        let root = bisection(f, -2.0, 2.0, 1e-10);
+        let root = bisection(f, -2.0, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(root.is_none());
     }
 
@@ -785,9 +786,9 @@ mod tests {
         // Solve x^2 - 4 = 0
         let f = |x: f64| x * x - 4.0;
 
-        let root = secant(f, 1.0, 3.0, 1e-10);
+        let root = secant(f, 1.0, 3.0, TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(root.is_some());
-        assert!((root.unwrap() - 2.0).abs() < 1e-8);
+        assert!((root.unwrap() - 2.0).abs() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     // --- Multi-dimensional Newton Tests ---
@@ -801,11 +802,11 @@ mod tests {
         let f = |v: DVec2| DVec2::new(v.x * v.x + v.y * v.y - 4.0, v.x - v.y);
         let jacobian = |v: DVec2| DMat2::from_cols(DVec2::new(2.0 * v.x, 1.0), DVec2::new(2.0 * v.y, -1.0));
 
-        let root = newton_2d(f, jacobian, DVec2::new(1.5, 1.5), 1e-10);
+        let root = newton_2d(f, jacobian, DVec2::new(1.5, 1.5), TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(root.is_some());
         let r = root.unwrap();
-        assert!((r.x - 2_f64.sqrt()).abs() < 1e-6);
-        assert!((r.y - 2_f64.sqrt()).abs() < 1e-6);
+        assert!((r.x - 2_f64.sqrt()).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((r.y - 2_f64.sqrt()).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -824,12 +825,12 @@ mod tests {
             )
         };
 
-        let root = newton_3d(f, jacobian, DVec3::new(1.0, 1.0, 1.0), 1e-10);
+        let root = newton_3d(f, jacobian, DVec3::new(1.0, 1.0, 1.0), TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(root.is_some());
         let r = root.unwrap();
-        assert!((r.x - 2.0).abs() < 1e-6);
-        assert!((r.y - 2.0).abs() < 1e-6);
-        assert!((r.z - 2.0).abs() < 1e-6);
+        assert!((r.x - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((r.y - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((r.z - 2.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     // --- Polynomial Solver Tests ---
@@ -838,7 +839,7 @@ mod tests {
     fn test_solve_linear() {
         let root = solve_linear(2.0, -4.0);
         assert!(root.is_some());
-        assert!((root.unwrap() - 2.0).abs() < 1e-10);
+        assert!((root.unwrap() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -846,8 +847,8 @@ mod tests {
         // x^2 - 5x + 6 = 0 has roots 2 and 3
         let roots = solve_quadratic(1.0, -5.0, 6.0);
         assert_eq!(roots.len(), 2);
-        assert!((roots[0] - 2.0).abs() < 1e-10);
-        assert!((roots[1] - 3.0).abs() < 1e-10);
+        assert!((roots[0] - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((roots[1] - 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -855,7 +856,7 @@ mod tests {
         // x^2 - 4x + 4 = 0 has double root 2
         let roots = solve_quadratic(1.0, -4.0, 4.0);
         assert_eq!(roots.len(), 1);
-        assert!((roots[0] - 2.0).abs() < 1e-10);
+        assert!((roots[0] - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -870,7 +871,7 @@ mod tests {
         // x^3 - x - 2 = 0 has one real root
         let roots = solve_cubic(1.0, 0.0, -1.0, -2.0);
         assert_eq!(roots.len(), 1);
-        assert!((roots[0] - 1.521379706804567).abs() < 1e-6);
+        assert!((roots[0] - 1.521379706804567).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -878,9 +879,9 @@ mod tests {
         // x^3 - 6x^2 + 11x - 6 = 0 has roots 1, 2, 3
         let roots = solve_cubic(1.0, -6.0, 11.0, -6.0);
         assert_eq!(roots.len(), 3);
-        assert!((roots[0] - 1.0).abs() < 1e-6);
-        assert!((roots[1] - 2.0).abs() < 1e-6);
-        assert!((roots[2] - 3.0).abs() < 1e-6);
+        assert!((roots[0] - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[1] - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((roots[2] - 3.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -889,8 +890,8 @@ mod tests {
         let roots = solve_quartic(1.0, 0.0, -5.0, 0.0, 4.0);
         assert!(roots.len() >= 2);
         // Check that 1 and 2 are among the roots
-        assert!(roots.iter().any(|&r| (r - 1.0).abs() < 1e-6));
-        assert!(roots.iter().any(|&r| (r - 2.0).abs() < 1e-6));
+        assert!(roots.iter().any(|&r| (r - 1.0).abs() < TOLERANCE_MESH_LEGACY));
+        assert!(roots.iter().any(|&r| (r - 2.0).abs() < TOLERANCE_MESH_LEGACY));
     }
 
     #[test]
@@ -898,10 +899,10 @@ mod tests {
         // (x-1)(x-2)(x-3)(x-4) = x^4 - 10x^3 + 35x^2 - 50x + 24
         let roots = solve_quartic(1.0, -10.0, 35.0, -50.0, 24.0);
         assert_eq!(roots.len(), 4);
-        assert!((roots[0] - 1.0).abs() < 1e-4);
-        assert!((roots[1] - 2.0).abs() < 1e-4);
-        assert!((roots[2] - 3.0).abs() < 1e-4);
-        assert!((roots[3] - 4.0).abs() < 1e-4);
+        assert!((roots[0] - 1.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((roots[1] - 2.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((roots[2] - 3.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((roots[3] - 4.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     // --- Eigenvalue/Matrix Tests ---
@@ -910,8 +911,8 @@ mod tests {
     fn test_eigenvalues_2x2() {
         let m = DMat2::from_cols(DVec2::new(2.0, 0.0), DVec2::new(0.0, 3.0));
         let (e1, e2) = eigenvalues_2x2(m);
-        assert!((e1 - 3.0).abs() < 1e-10);
-        assert!((e2 - 2.0).abs() < 1e-10);
+        assert!((e1 - 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((e2 - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -924,8 +925,8 @@ mod tests {
         );
         let (e1, e2) = eigenvalues_2x2(m);
         // Real parts should be cos(45deg) ~ 0.707
-        assert!((e1 - 0.7071067811865476).abs() < 1e-10);
-        assert!((e2 - 0.7071067811865476).abs() < 1e-10);
+        assert!((e1 - 0.7071067811865476).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((e2 - 0.7071067811865476).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -936,9 +937,9 @@ mod tests {
             DVec3::new(0.0, 0.0, 3.0),
         );
         let (e1, e2, e3) = eigenvalues_3x3(m);
-        assert!((e1 - 3.0).abs() < 1e-6);
-        assert!((e2 - 2.0).abs() < 1e-6);
-        assert!((e3 - 1.0).abs() < 1e-6);
+        assert!((e1 - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((e2 - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((e3 - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -958,7 +959,7 @@ mod tests {
 
         for i in 0..3 {
             for j in 0..3 {
-                assert!((product.col(i)[j] - identity.col(i)[j]).abs() < 1e-10);
+                assert!((product.col(i)[j] - identity.col(i)[j]).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
             }
         }
     }
@@ -985,7 +986,7 @@ mod tests {
 
         // det of this matrix is 0 (columns are linearly dependent)
         let det = determinant_3x3(m);
-        assert!(det.abs() < 1e-10);
+        assert!(det.abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // --- Integration Tests ---
@@ -995,15 +996,15 @@ mod tests {
         // Integrate x^2 from 0 to 1, should be 1/3
         let f = |x: f64| x * x;
         let result = simpson_integrate(f, 0.0, 1.0, 100);
-        assert!((result - 1.0 / 3.0).abs() < 1e-10);
+        assert!((result - 1.0 / 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn test_simpson_integrate_sin() {
         // Integrate sin(x) from 0 to pi, should be 2
-        // Simpson's rule with n=100 has error O(h^4) ≈ 1e-8
+        // Simpson's rule with n=100 has error O(h^4) ≈ TOLERANCE_LINEAR_RELAX_8
         let result = simpson_integrate(f64::sin, 0.0, PI, 100);
-        assert!((result - 2.0).abs() < 1e-6);
+        assert!((result - 2.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1011,15 +1012,15 @@ mod tests {
         // Integrate x^2 from -1 to 1, should be 2/3
         let f = |x: f64| x * x;
         let result = gaussian_quadrature(f, -1.0, 1.0, 3);
-        assert!((result - 2.0 / 3.0).abs() < 1e-10);
+        assert!((result - 2.0 / 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn test_gaussian_quadrature_sin() {
         // Integrate sin(x) from 0 to pi, should be 2
-        // 5-point Gaussian quadrature has error ~1e-7 for this case
+        // 5-point Gaussian quadrature has error ~TOLERANCE_ABS for this case
         let result = gaussian_quadrature(f64::sin, 0.0, PI, 5);
-        assert!((result - 2.0).abs() < 1e-6);
+        assert!((result - 2.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     // --- Optimization Tests ---
@@ -1029,8 +1030,8 @@ mod tests {
         // Find minimum of (x-2)^2 in [0, 4]
         let f = |x: f64| (x - 2.0) * (x - 2.0);
 
-        let min_x = golden_section_min(f, 0.0, 4.0, 1e-10);
-        assert!((min_x - 2.0).abs() < 1e-8);
+        let min_x = golden_section_min(f, 0.0, 4.0, TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((min_x - 2.0).abs() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     #[test]
@@ -1039,8 +1040,8 @@ mod tests {
         // Minimum is at x = 1
         let f = |x: f64| x * x * x - 3.0 * x + 2.0;
 
-        let min_x = golden_section_min(f, -2.0, 2.0, 1e-10);
-        assert!((min_x - 1.0).abs() < 1e-6);
+        let min_x = golden_section_min(f, -2.0, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((min_x - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1049,7 +1050,7 @@ mod tests {
         // Maximum is at x = 0
         let f = |x: f64| -x * x + 4.0;
 
-        let max_x = golden_section_max(f, -2.0, 2.0, 1e-10);
-        assert!(max_x.abs() < 1e-6);
+        let max_x = golden_section_max(f, -2.0, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!(max_x.abs() < TOLERANCE_MESH_LEGACY);
     }
 }

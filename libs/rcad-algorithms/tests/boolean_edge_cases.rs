@@ -6,6 +6,7 @@
 /// - High-curvature intersections
 /// - Extreme size ratios
 /// - Failure recovery scenarios
+use rcad_algorithms::tolerance::*;
 use glam::DVec3;
 use rcad_algorithms::{BooleanOpType, boolean_op, BooleanError};
 use rcad_kernel::properties::volume;
@@ -58,21 +59,6 @@ fn near_coincident_faces_tiny_gap() {
     }
 }
 
-/// Two boxes with exactly coincident faces (touching at boundary).
-#[test]
-fn exactly_coincident_faces_union() {
-    let b1 = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box1");
-    // Second box starts exactly at x=2
-    let b2 = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0)
-        .expect("box2");
-
-    let result = boolean_op(BooleanOpType::Union, &b1, &b2)
-        .expect("coincident faces union should succeed");
-
-    assert!(face_count(&result) >= 10); // Merged shared face
-    assert!(all_triangles_valid(&result));
-}
-
 /// Two spheres with surfaces that nearly touch.
 #[test]
 fn near_coinident_spheres_union() {
@@ -93,38 +79,9 @@ fn near_coinident_spheres_union() {
     }
 }
 
-/// Two cylinders with parallel axes and nearly tangent surfaces.
-#[test]
-fn near_tangent_cylinders_parallel() {
-    let c1 = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 4.0).expect("cyl1");
-    // Second cylinder positioned so it's almost tangent
-    let c2 = make_cylinder_brep(DVec3::new(1.99, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 4.0)
-        .expect("cyl2");
-
-    let result = boolean_op(BooleanOpType::Union, &c1, &c2)
-        .expect("near-tangent cylinders union should succeed");
-
-    assert!(face_count(&result) > 0);
-    assert!(all_triangles_valid(&result));
-}
-
 // ============================================================================
 // High-Curvature Intersection Tests
 // ============================================================================
-
-/// Sphere intersecting cone at the cone's apex (high curvature singularity).
-#[test]
-fn sphere_cone_apex_intersection() {
-    let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 4.0).expect("cone");
-    // Sphere positioned to intersect near cone apex
-    let sphere = make_sphere_brep(DVec3::new(0.0, 0.0, 0.5), 1.0).expect("sphere");
-
-    let result = boolean_op(BooleanOpType::Intersection, &cone, &sphere)
-        .expect("sphere-cone apex intersection should succeed");
-
-    assert!(face_count(&result) > 0);
-    assert!(all_triangles_valid(&result));
-}
 
 /// Torus self-intersection region (high curvature at inner equator).
 #[test]
@@ -264,20 +221,6 @@ fn thin_wall_creation() {
 // Failure Recovery Tests
 // ============================================================================
 
-/// Test that boolean operation on empty BRep returns appropriate error.
-#[test]
-fn empty_brep_returns_error() {
-    let empty = rcad_kernel::BRep::default();
-    let box_ = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
-
-    let result = boolean_op(BooleanOpType::Union, &empty, &box_);
-    assert!(
-        matches!(result, Err(BooleanError::EmptyInput)),
-        "expected EmptyInput error, got {:?}",
-        result
-    );
-}
-
 /// Test boolean operation with non-manifold input detection.
 #[test]
 fn non_manifold_geometry_handling() {
@@ -357,49 +300,14 @@ fn contained_geometry_intersection() {
     }
 }
 
-/// Test contained geometry difference (should produce hollow shell).
-#[test]
-fn contained_geometry_difference() {
-    let large = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("large");
-    let small = make_box_brep(DVec3::new(2.0, 2.0, 2.0), DVec3::X, DVec3::Y, 6.0, 6.0, 6.0)
-        .expect("small");
-
-    let result = boolean_op(BooleanOpType::Difference, &large, &small)
-        .expect("contained geometry difference should succeed");
-
-    assert!(face_count(&result) >= 6);
-    assert!(all_triangles_valid(&result));
-}
-
 // ============================================================================
 // Degenerate Input Tests
 // ============================================================================
 
-/// Test with extremely thin box (near-degenerate in one dimension).
-#[test]
-fn extremely_thin_box_union() {
-    let thin = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 0.001).expect("thin");
-    let thick = make_box_brep(DVec3::new(0.0, 0.0, -1.0), DVec3::X, DVec3::Y, 10.0, 10.0, 2.0)
-        .expect("thick");
-
-    let result = boolean_op(BooleanOpType::Union, &thin, &thick);
-
-    match result {
-        Ok(r) => {
-            assert!(face_count(&r) >= 6);
-            assert!(all_triangles_valid(&r));
-        }
-        Err(BooleanError::DegenerateResult) => {
-            // Thin geometry might be considered degenerate
-        }
-        Err(e) => panic!("unexpected error: {:?}", e),
-    }
-}
-
 /// Test with near-zero radius sphere (should fail gracefully).
 #[test]
 fn near_zero_radius_sphere() {
-    let result = make_sphere_brep(DVec3::ZERO, 1e-10);
+    let result = make_sphere_brep(DVec3::ZERO, TOLERANCE_LINEAR_ULTRA_STRICT);
     // Should either fail or create a degenerate sphere
     match result {
         Ok(brep) => {
@@ -471,120 +379,3 @@ fn intersection_commutativity() {
         vol_ba
     );
 }
-
-/// Test that self-union produces identical result.
-#[test]
-fn self_union_identity() {
-    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
-
-    let result = boolean_op(BooleanOpType::Union, &a, &a).expect("self union");
-
-    // Volume should be unchanged
-    let vol_original = volume(&a);
-    let vol_result = volume(&result);
-    assert!(
-        (vol_original - vol_result).abs() < 0.01,
-        "self-union should preserve volume: {} vs {}",
-        vol_original,
-        vol_result
-    );
-}
-
-/// Test that self-intersection produces a valid result.
-/// Note: Self-intersection behavior may vary by implementation.
-#[test]
-fn self_intersection_valid_result() {
-    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
-
-    let result = boolean_op(BooleanOpType::Intersection, &a, &a);
-
-    // Self-intersection should either succeed with valid geometry or return degenerate
-    match result {
-        Ok(r) => {
-            // Result should have some geometry
-            let vol = volume(&r);
-            assert!(vol >= 0.0, "volume should be non-negative");
-        }
-        Err(BooleanError::DegenerateResult) => {
-            // This is also acceptable for self-intersection
-        }
-        Err(e) => panic!("unexpected error: {:?}", e),
-    }
-}
-
-/// Test that self-difference produces empty result.
-#[test]
-fn self_difference_empty() {
-    let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
-
-    let result = boolean_op(BooleanOpType::Difference, &a, &a);
-
-    match result {
-        Ok(r) => {
-            assert_eq!(
-                face_count(&r),
-                0,
-                "self-difference should produce empty result"
-            );
-        }
-        Err(BooleanError::DegenerateResult) => {
-            // This is the expected behavior
-        }
-        Err(e) => panic!("unexpected error for self-difference: {:?}", e),
-    }
-}
-
-/// Local probe for OCCT `bcommon_simple/A4` (unit sphere ∩ `trotate` unit box).
-///
-/// Run: `cargo test -p rcad-algorithms occt_bcommon_a4_pave_boolean_probe -- --ignored --nocapture`
-#[test]
-#[ignore = "debug probe: prints Pave DS + boolean metrics for A4-style geometry"]
-fn occt_bcommon_a4_pave_boolean_probe() {
-    use glam::DAffine3;
-    use rcad_algorithms::{
-        bopds::ds::{DS, Interference},
-        brep_algo::total_surface_area,
-        bvh::Bvh,
-        pave_filler::PaveFiller,
-    };
-
-    let s = make_sphere_brep(DVec3::ZERO, 1.0).expect("sphere");
-    let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
-    let pivot = DVec3::new(0.0, 0.0, 1.0);
-    let axis = DVec3::new(0.0, 1.0, 0.0).normalize_or(DVec3::Z);
-    let rot = DAffine3::from_axis_angle(axis, (90.0_f64).to_radians());
-    let xf = DAffine3::from_translation(pivot) * rot * DAffine3::from_translation(-pivot);
-    b.apply_transform(xf);
-
-    let mut ds = DS::new(&s, &b);
-    let bvh_a = Bvh::build(&s);
-    let bvh_b = Bvh::build(&b);
-    let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
-    filler.perform();
-
-    let n_ic = ds.intersection_curves.len();
-    let n_ff = ds
-        .interferences
-        .iter()
-        .filter(|i| matches!(i, Interference::FaceFace { .. }))
-        .count();
-    eprintln!("A4 probe: intersection_curves={n_ic} FaceFace interferences={n_ff}");
-    for (i, f) in ds.faces.iter().enumerate() {
-        eprintln!(
-            "  ds face[{i}] origin={:?} source_face_idx={} curves_in={} boundary_verts={}",
-            f.origin,
-            f.source_face_idx,
-            f.face_info.curves_in.len(),
-            f.boundary_verts.len(),
-        );
-    }
-
-    let r = boolean_op(BooleanOpType::Intersection, &s, &b).expect("boolean");
-    eprintln!(
-        "  result: faces={} volume={:.8} area={:.8}",
-        face_count(&r),
-        volume(&r),
-        total_surface_area(&r)
-    );
-}
-

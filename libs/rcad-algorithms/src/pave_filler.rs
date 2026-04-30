@@ -104,7 +104,7 @@ impl<'a> PaveFiller<'a> {
             let p1 = edge.curve.point_at(edge.t_range[0]);
             let p2 = edge.curve.point_at(edge.t_range[1]);
             let length = (p2 - p1).length();
-            if length > 1e-10 {
+            if length > TOLERANCE_LINEAR_ULTRA_STRICT {
                 min_edge_length = min_edge_length.min(length);
             }
         }
@@ -123,7 +123,7 @@ impl<'a> PaveFiller<'a> {
                     max_pt = max_pt.max(*p);
                 }
                 let diag = (max_pt - min_pt).length();
-                if diag > 1e-10 {
+                if diag > TOLERANCE_LINEAR_ULTRA_STRICT {
                     min_face_area = min_face_area.min(diag * diag);
                 }
             }
@@ -156,12 +156,13 @@ impl<'a> PaveFiller<'a> {
     /// When detected, it automatically adjusts the fuzzy tolerance to ensure
     /// robust intersection computation.
     ///
+    /// Near-tangent / near-coincident distance scales use **`ff_tol` per face pair**
+    /// (`max(fuzzy_tol, both faces' geom_tol)`), matching glue and pave coincidence logic.
+    ///
     /// # Returns
     /// The adjusted fuzzy tolerance (may be the same as input if no adjustment needed).
     pub fn detect_and_handle_extreme_geometry(&mut self) -> f64 {
         let base_tol = self.tol();
-        let tangent_threshold = base_tol * 100.0;
-        let coincident_threshold = base_tol * 10.0;
 
         let mut near_tangent_faces = Vec::new();
         let mut near_coincident_faces = Vec::new();
@@ -170,6 +171,10 @@ impl<'a> PaveFiller<'a> {
         // Iterate over all face pairs from different shapes
         for f1_idx in 0..self.ds.a_face_count {
             for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
+                let pair_base = self.ff_tol(f1_idx, f2_idx);
+                let tangent_threshold = pair_base * 100.0;
+                let coincident_threshold = pair_base * 10.0;
+
                 // Check for near-tangency
                 if let Some(info) = self.check_near_tangent_enhanced(f1_idx, f2_idx, tangent_threshold) {
                     max_suggested_fuzzy = max_suggested_fuzzy.max(info.suggested_fuzzy);
@@ -269,8 +274,9 @@ impl<'a> PaveFiller<'a> {
         }
 
         // Compute suggested fuzzy based on distance
-        let suggested_fuzzy = if distance < self.tol() {
-            self.tol() * 10.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if distance < ptol {
+            ptol * 10.0
         } else {
             distance * 10.0
         };
@@ -308,8 +314,9 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let suggested_fuzzy = if radius_dist < self.tol() {
-            self.tol() * 100.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if radius_dist < ptol {
+            ptol * 100.0
         } else {
             radius_dist * 10.0
         };
@@ -349,8 +356,9 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let suggested_fuzzy = if radius_dist < self.tol() {
-            self.tol() * 100.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if radius_dist < ptol {
+            ptol * 100.0
         } else {
             radius_dist * 10.0
         };
@@ -391,8 +399,9 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let suggested_fuzzy = if min_dist < self.tol() {
-            self.tol() * 100.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if min_dist < ptol {
+            ptol * 100.0
         } else {
             min_dist * 10.0
         };
@@ -438,8 +447,9 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let suggested_fuzzy = if distance < self.tol() {
-            self.tol() * 100.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if distance < ptol {
+            ptol * 100.0
         } else {
             distance * 10.0
         };
@@ -506,8 +516,9 @@ impl<'a> PaveFiller<'a> {
             return None;
         }
 
-        let suggested_fuzzy = if max_distance < self.tol() {
-            self.tol() * 10.0
+        let ptol = self.ff_tol(f1_idx, f2_idx);
+        let suggested_fuzzy = if max_distance < ptol {
+            ptol * 10.0
         } else {
             max_distance * 10.0
         };
@@ -527,6 +538,50 @@ impl<'a> PaveFiller<'a> {
     #[inline]
     fn tol(&self) -> f64 {
         self.ds.fuzzy_tol
+    }
+
+    /// Coincidence tolerance for a vertex pair (fuzzy ∩ per-vertex model tolerances).
+    #[inline]
+    fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
+        self.tol()
+            .max(self.ds.vertices[vi].geom_tol)
+            .max(self.ds.vertices[vj].geom_tol)
+    }
+
+    #[inline]
+    fn ve_tol(&self, vi: usize, ei: usize) -> f64 {
+        self.tol()
+            .max(self.ds.vertices[vi].geom_tol)
+            .max(self.ds.edges[ei].geom_tol)
+    }
+
+    #[inline]
+    fn ee_tol(&self, e1: usize, e2: usize) -> f64 {
+        self.tol()
+            .max(self.ds.edges[e1].geom_tol)
+            .max(self.ds.edges[e2].geom_tol)
+    }
+
+    #[inline]
+    fn vf_tol(&self, vi: usize, fi: usize) -> f64 {
+        self.tol()
+            .max(self.ds.vertices[vi].geom_tol)
+            .max(self.ds.faces[fi].geom_tol)
+    }
+
+    #[inline]
+    fn ef_tol(&self, ei: usize, fi: usize) -> f64 {
+        self.tol()
+            .max(self.ds.edges[ei].geom_tol)
+            .max(self.ds.faces[fi].geom_tol)
+    }
+
+    /// Effective tolerance for a face pair (pave fuzzy and both faces' model tolerances).
+    #[inline]
+    fn ff_tol(&self, f1: usize, f2: usize) -> f64 {
+        self.tol()
+            .max(self.ds.faces[f1].geom_tol)
+            .max(self.ds.faces[f2].geom_tol)
     }
 
     fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
@@ -600,7 +655,9 @@ impl<'a> PaveFiller<'a> {
             .filter(|d| d.is_finite() && *d > 0.0)
             .fold(f64::INFINITY, f64::min)
             .min(1.0);
-        let snap_tol = (local_scale * 4.0).max(1e-4);
+        let snap_tol = (local_scale * 4.0)
+            .max(TOLERANCE_RETRY_LADDER_COARSE)
+            .max(self.ff_tol(f1, f2));
 
         if (start - chain[0]).length() <= snap_tol {
             chain[0] = start;
@@ -820,7 +877,7 @@ impl<'a> PaveFiller<'a> {
 
         for &ai in &a_verts {
             for &bi in &b_verts {
-                let tol = self.tol();
+                let tol = self.vv_pair_tol(ai, bi);
                 let dist = (self.ds.vertices[ai].point - self.ds.vertices[bi].point).length();
                 if dist <= tol {
                     self.ds.interferences.push(Interference::VertexVertex {
@@ -860,7 +917,13 @@ impl<'a> PaveFiller<'a> {
         let edge = &self.ds.edges[ei];
         match &edge.curve {
             Curve3::Line(line) => {
-                if let Some(t) = inttools::vertex_ops::vertex_on_line(point, line, edge.t_range) {
+                let te = self.ve_tol(vi, ei);
+                if let Some(t) = inttools::vertex_ops::vertex_on_line_with_tol(
+                    point,
+                    line,
+                    edge.t_range,
+                    te,
+                ) {
                     self.ds.interferences.push(Interference::VertexEdge {
                         vertex: vi,
                         edge: ei,
@@ -876,8 +939,9 @@ impl<'a> PaveFiller<'a> {
                 // Check if point lies on the circle arc
                 let v = point - circle.center;
                 let dist = v.length();
-                if (dist - circle.radius).abs() < TOLERANCE_ABS {
-                    let on_plane = v.dot(circle.normal).abs() < TOLERANCE_ABS;
+                let te = self.ve_tol(vi, ei);
+                if (dist - circle.radius).abs() < te {
+                    let on_plane = v.dot(circle.normal).abs() < te;
                     if on_plane {
                         // Compute angular parameter
                         let u = if circle.normal.x.abs() < 0.9 {
@@ -888,9 +952,7 @@ impl<'a> PaveFiller<'a> {
                         let w = circle.normal.cross(u);
                         let theta = w.dot(v).atan2(u.dot(v));
                         let t_range = edge.t_range;
-                        if theta >= t_range[0] - TOLERANCE_ABS
-                            && theta <= t_range[1] + TOLERANCE_ABS
-                        {
+                        if theta >= t_range[0] - te && theta <= t_range[1] + te {
                             self.ds.interferences.push(Interference::VertexEdge {
                                 vertex: vi,
                                 edge: ei,
@@ -951,7 +1013,8 @@ impl<'a> PaveFiller<'a> {
         let edge2 = &self.ds.edges[e2];
 
         if let (Curve3::Line(l1), Curve3::Line(l2)) = (&edge1.curve, &edge2.curve)
-            && let Some((t1, t2, point)) = intersect_line_line(l1, edge1.t_range, l2, edge2.t_range)
+            && let Some((t1, t2, point)) =
+                intersect_line_line(l1, edge1.t_range, l2, edge2.t_range, self.ee_tol(e1, e2))
         {
             let new_v = self.ds.add_vertex(point);
             self.ds.interferences.push(Interference::EdgeEdge {
@@ -998,12 +1061,13 @@ impl<'a> PaveFiller<'a> {
     fn check_vertex_face(&mut self, vi: usize, fi: usize) {
         let point = self.ds.vertices[vi].point;
         let face = &self.ds.faces[fi];
+        let tf = self.vf_tol(vi, fi);
 
         if let Surface3::Plane(plane) = &face.surface
-            && inttools::vertex_ops::vertex_on_plane(point, plane)
+            && inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf)
         {
             let face_verts = self.ds.face_boundary_points(fi);
-            if inttools::edge_face::point_in_planar_face(point, plane, &face_verts) {
+            if inttools::edge_face::point_in_planar_face_with_tol(point, plane, &face_verts, tf) {
                 self.ds.interferences.push(Interference::VertexFace {
                     vertex: vi,
                     face: fi,
@@ -1017,7 +1081,7 @@ impl<'a> PaveFiller<'a> {
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
                     rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
-                if proj.distance < self.tol() {
+                if proj.distance < tf {
                     self.ds.interferences.push(Interference::VertexFace {
                         vertex: vi,
                         face: fi,
@@ -1053,61 +1117,102 @@ impl<'a> PaveFiller<'a> {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
         let face_surface = self.ds.faces[face_idx].surface.clone();
+        let etf = self.ef_tol(edge_idx, face_idx);
 
         // Dispatch based on curve type × surface type
         let hits: Vec<(DVec3, f64)> = match (&edge_curve, &face_surface) {
             (Curve3::Line(line), Surface3::Plane(plane)) => {
-                inttools::edge_face::intersect_line_plane(line, edge_t_range, plane)
-                    .into_iter()
-                    .map(|h| (h.point, h.edge_param))
-                    .collect()
+                inttools::edge_face::intersect_line_plane_with_tol(
+                    line,
+                    edge_t_range,
+                    plane,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.edge_param))
+                .collect()
             }
             (Curve3::Line(line), Surface3::Cylinder(cyl)) => {
-                inttools::curve_surface::intersect_line_cylinder(line, edge_t_range, cyl)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_line_cylinder_with_tol(
+                    line,
+                    edge_t_range,
+                    cyl,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Line(line), Surface3::Sphere(sph)) => {
-                inttools::curve_surface::intersect_line_sphere(line, edge_t_range, sph)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_line_sphere_with_tol(
+                    line,
+                    edge_t_range,
+                    sph,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Line(line), Surface3::Cone(cone)) => {
-                inttools::curve_surface::intersect_line_cone(line, edge_t_range, cone)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_line_cone_with_tol(
+                    line,
+                    edge_t_range,
+                    cone,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Circle(circle), Surface3::Plane(plane)) => {
-                inttools::curve_surface::intersect_circle_plane(circle, edge_t_range, plane)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_circle_plane_with_tol(
+                    circle,
+                    edge_t_range,
+                    plane,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Circle(circle), Surface3::Cylinder(cyl)) => {
-                inttools::curve_surface::intersect_circle_cylinder(circle, edge_t_range, cyl)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_circle_cylinder_with_tol(
+                    circle,
+                    edge_t_range,
+                    cyl,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Circle(circle), Surface3::Sphere(sph)) => {
-                inttools::curve_surface::intersect_circle_sphere(circle, edge_t_range, sph)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_circle_sphere_with_tol(
+                    circle,
+                    edge_t_range,
+                    sph,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             (Curve3::Circle(circle), Surface3::Cone(cone)) => {
-                inttools::curve_surface::intersect_circle_cone(circle, edge_t_range, cone)
-                    .into_iter()
-                    .map(|h| (h.point, h.curve_param))
-                    .collect()
+                inttools::curve_surface::intersect_circle_cone_with_tol(
+                    circle,
+                    edge_t_range,
+                    cone,
+                    etf,
+                )
+                .into_iter()
+                .map(|h| (h.point, h.curve_param))
+                .collect()
             }
             _ => {
                 // Numeric fallback: sample the curve, find sign changes of the
                 // surface implicit function. Works for any Curve3 × Surface3 pair.
-                intersect_edge_face_numeric(&edge_curve, &face_surface, edge_t_range)
+                intersect_edge_face_numeric(&edge_curve, &face_surface, edge_t_range, etf)
             }
         };
 
@@ -1116,7 +1221,7 @@ impl<'a> PaveFiller<'a> {
             let in_face = match &face_surface {
                 Surface3::Plane(plane) => {
                     let face_verts = self.ds.face_boundary_points(face_idx);
-                    inttools::edge_face::point_in_planar_face(point, plane, &face_verts)
+                    inttools::edge_face::point_in_planar_face_with_tol(point, plane, &face_verts, etf)
                 }
                 _ => true,
             };
@@ -1128,7 +1233,9 @@ impl<'a> PaveFiller<'a> {
             // Skip if point is an edge endpoint
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
-            let tol = self.tol();
+            let tol = etf
+                .max(self.ds.vertices[sv].geom_tol)
+                .max(self.ds.vertices[ev].geom_tol);
             if (point - self.ds.vertices[sv].point).length() <= tol
                 || (point - self.ds.vertices[ev].point).length() <= tol
             {
@@ -1480,13 +1587,18 @@ impl<'a> PaveFiller<'a> {
             inttools::plane_plane::PlanePlaneResult::Line(line) => {
                 let verts1 = self.ds.face_boundary_points(f1);
                 let verts2 = self.ds.face_boundary_points(f2);
+                let clip_tol = self.ff_tol(f1, f2);
 
-                let range1 = inttools::edge_face::clip_line_to_convex_polygon(&line, p1, &verts1);
-                let range2 = inttools::edge_face::clip_line_to_convex_polygon(&line, p2, &verts2);
+                let range1 =
+                    inttools::edge_face::clip_line_to_convex_polygon_with_tol(&line, p1, &verts1, clip_tol);
+                let range2 =
+                    inttools::edge_face::clip_line_to_convex_polygon_with_tol(&line, p2, &verts2, clip_tol);
 
                 if let (Some((t1_min, t1_max)), Some((t2_min, t2_max))) = (range1, range2) {
                     let t_min = t1_min.max(t2_min);
                     let t_max = t1_max.min(t2_max);
+                    // Keep strict: overlap length along the intersection line is parametric, not V–V
+                    // coincidence — tying this to `fuzzy_tol` can change sphere–box trims and area.
                     if t_max - t_min < TOLERANCE_ABS {
                         return;
                     }
@@ -1567,7 +1679,8 @@ impl<'a> PaveFiller<'a> {
             PlaneSphereResult::TangentPoint(pt) => {
                 let verts1 = self.ds.face_boundary_points(f1);
                 let verts2 = self.ds.face_boundary_points(f2);
-                if inttools::edge_face::point_in_planar_face(pt, plane, &verts1)
+                let tff = self.ff_tol(f1, f2);
+                if inttools::edge_face::point_in_planar_face_with_tol(pt, plane, &verts1, tff)
                     && point_in_sphere_face(pt, &verts2, self.ds)
                 {
                     let v = self.ds.add_vertex(pt);
@@ -1598,7 +1711,7 @@ impl<'a> PaveFiller<'a> {
                     .normalize()
                     .dot(plane.normal.normalize())
                     .abs();
-                let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < 1e-6 {
+                let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < TOLERANCE_MESH_LEGACY {
                     // Axis is parallel to plane normal → latitude line is exact.
                     circle_pcurve_on_sphere(&circle, sphere)
                 } else {
@@ -1662,7 +1775,7 @@ impl<'a> PaveFiller<'a> {
         let d = d_vec.length();
 
         // No intersection if disjoint or one contains the other
-        if d < 1e-14 || d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
+        if d < TOLERANCE_FLOAT_LOOSE || d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
             return;
         }
 
@@ -1838,8 +1951,8 @@ impl<'a> PaveFiller<'a> {
         // Determine which face is cyl1 (for pcurve_on_a/b ordering)
         let cyl1_is_f1 = {
             if let Surface3::Cylinder(c) = &self.ds.faces[f1].surface {
-                (c.origin - cyl1.origin).length_squared() < 1e-10
-                    && (c.axis - cyl1.axis).length_squared() < 1e-10
+                (c.origin - cyl1.origin).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT * TOLERANCE_LINEAR_ULTRA_STRICT
+                    && (c.axis - cyl1.axis).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT * TOLERANCE_LINEAR_ULTRA_STRICT
             } else {
                 false
             }
@@ -2480,8 +2593,8 @@ impl<'a> PaveFiller<'a> {
         // Determine which face is cone1 (for pcurve_on_a/b ordering).
         let cone1_is_f1 = {
             if let Surface3::Cone(c) = &self.ds.faces[f1].surface {
-                (c.apex - cone1.apex).length_squared() < 1e-10
-                    && (c.axis - cone1.axis).length_squared() < 1e-10
+                (c.apex - cone1.apex).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT * TOLERANCE_LINEAR_ULTRA_STRICT
+                    && (c.axis - cone1.axis).length_squared() < TOLERANCE_LINEAR_ULTRA_STRICT * TOLERANCE_LINEAR_ULTRA_STRICT
             } else {
                 false
             }
@@ -2557,10 +2670,10 @@ impl<'a> PaveFiller<'a> {
         s2: &Surface3,
         torus_is_f1: bool,
     ) {
-        use inttools::intss::{intersect_surfaces, SurfaceCurve};
+        use inttools::intss::{intersect_surfaces_with_density_tol, SurfaceCurve};
         use inttools::pcurve_derive::polyline_pcurve_by_projection;
 
-        let result = intersect_surfaces(s1, s2);
+        let result = intersect_surfaces_with_density_tol(s1, s2, 48, self.ff_tol(f1, f2));
         if result.is_empty() {
             return;
         }
@@ -2642,7 +2755,7 @@ impl<'a> PaveFiller<'a> {
                         polyline: pts.clone(),
                         start_vertex: v_start,
                         end_vertex: v_end,
-                        t_range: [0.0, arc_len.max(1e-10)],
+                        t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                     });
@@ -2886,7 +2999,14 @@ impl<'a> PaveFiller<'a> {
                 None
             });
 
-        let result = numeric_intss_with_domains(s1, s2, 64, dom1, dom2);
+        let result = numeric_intss_with_domains(
+            s1,
+            s2,
+            64,
+            dom1,
+            dom2,
+            Some(self.ff_tol(f1, f2)),
+        );
         if result.is_empty() {
             return;
         }
@@ -2930,7 +3050,7 @@ impl<'a> PaveFiller<'a> {
                 polyline: chain,
                 start_vertex: v_start,
                 end_vertex: v_end,
-                t_range: [0.0, arc_len.max(1e-10)],
+                t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
             });
@@ -2984,12 +3104,13 @@ impl<'a> PaveFiller<'a> {
         // Use multi-scale seed detection for improved robustness
         // Scales: coarse (8x8), medium (16x16), fine (32x32)
         let base_step = self.estimate_step_size(&s1, &s2);
+        let seed_dedup = (base_step * 2.0).max(self.ff_tol(f1, f2) * 2.0);
         let seeds = inttools::marching::find_seed_points_multiscale(
             &s1,
             &s2,
             |nu, nv| self.generate_surface_samples_grid(&s1, nu, nv),
             &[8, 16, 32],
-            base_step * 2.0, // dedup tolerance
+            seed_dedup,
         );
 
         if seeds.is_empty() {
@@ -3037,7 +3158,7 @@ impl<'a> PaveFiller<'a> {
 
         // Use adaptive step size based on characteristic lengths
         let char_len = sampling1.characteristic_length.min(sampling2.characteristic_length);
-        let step_size = base_step.min(char_len * 0.5).max(1e-6);
+        let step_size = base_step.min(char_len * 0.5).max(TOLERANCE_MESH_LEGACY);
 
         // Configure marching with convergence monitoring
         let marching_config = MarchingConfig {
@@ -3053,7 +3174,8 @@ impl<'a> PaveFiller<'a> {
         // Track all points already covered by marched curves, to deduplicate
         // seeds that trace the same intersection curve.
         let mut covered_points: Vec<DVec3> = Vec::new();
-        let dedup_tol = step_size * 3.0;
+        let ff = self.ff_tol(f1, f2);
+        let dedup_tol = (step_size * 3.0).max(ff * 2.0);
 
         for seed in seeds {
             // Skip if this seed is near any point already covered by a previous curve
@@ -3108,7 +3230,7 @@ impl<'a> PaveFiller<'a> {
                 polyline: curve.points.clone(),
                 start_vertex: v_start,
                 end_vertex: v_end,
-                t_range: [0.0, arc_len.max(1e-10)],
+                t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
             });
@@ -3347,7 +3469,10 @@ fn intersect_line_line(
     r1: [f64; 2],
     l2: &Line3,
     r2: [f64; 2],
+    coincidence_tol: f64,
 ) -> Option<(f64, f64, DVec3)> {
+    let tol = coincidence_tol.max(TOLERANCE_ABS);
+    let tol_sq = tol * tol;
     let d1 = l1.direction;
     let d2 = l2.direction;
     let w0 = l1.origin - l2.origin;
@@ -3360,25 +3485,21 @@ fn intersect_line_line(
 
     let denom = a * c - b * b;
     if denom.abs() < TOLERANCE_ABS * TOLERANCE_ABS {
-        return None; // parallel
+        return None; // parallel — keep strict for conditioning
     }
 
     let t1 = (b * e - c * d) / denom;
     let t2 = (a * e - b * d) / denom;
 
     // Check within ranges
-    if t1 < r1[0] - TOLERANCE_ABS
-        || t1 > r1[1] + TOLERANCE_ABS
-        || t2 < r2[0] - TOLERANCE_ABS
-        || t2 > r2[1] + TOLERANCE_ABS
-    {
+    if t1 < r1[0] - tol || t1 > r1[1] + tol || t2 < r2[0] - tol || t2 > r2[1] + tol {
         return None;
     }
 
     let p1 = l1.origin + d1 * t1;
     let p2 = l2.origin + d2 * t2;
 
-    if !points_coincide(p1, p2) {
+    if (p1 - p2).length_squared() > tol_sq {
         return None; // skew, don't actually intersect
     }
 
@@ -3455,20 +3576,20 @@ fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
         let b = boundary_verts[1];
         let diam = (a - b).length();
         let r = diam * 0.5;
-        if r < 1e-12 {
+        if r < TOLERANCE_LEN_MIN {
             return false;
         }
         let c = (a + b) * 0.5;
         let radial_err = ((pt - c).length() - r).abs();
-        return radial_err < (TOLERANCE_ABS * 500.0).max(1e-9 * r);
+        return radial_err < (TOLERANCE_ABS * 500.0).max(TOLERANCE_COORD_SUB * r);
     }
     // Convex hull approximation for faces with a full boundary polygon.
     let cx = boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::min)
-        ..(boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::max) + 1e-9);
+        ..(boundary_verts.iter().map(|v| v.x).fold(0.0_f64, f64::max) + TOLERANCE_COORD_SUB);
     let cy = boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::min)
-        ..(boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::max) + 1e-9);
+        ..(boundary_verts.iter().map(|v| v.y).fold(0.0_f64, f64::max) + TOLERANCE_COORD_SUB);
     let cz = boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::min)
-        ..(boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::max) + 1e-9);
+        ..(boundary_verts.iter().map(|v| v.z).fold(0.0_f64, f64::max) + TOLERANCE_COORD_SUB);
     cx.contains(&pt.x) && cy.contains(&pt.y) && cz.contains(&pt.z)
 }
 
@@ -3500,10 +3621,14 @@ fn intersect_edge_face_numeric(
     curve: &Curve3,
     surface: &Surface3,
     t_range: [f64; 2],
+    geom_tol: f64,
 ) -> Vec<(DVec3, f64)> {
     use rcad_kernel::CurveEval;
     const N_SAMPLES: usize = 64;
     const MAX_BISECT: usize = 30;
+
+    let eps = geom_tol.max(TOLERANCE_ABS);
+    let zero_tol = (eps * TOLERANCE_AREA_REL).max(TOLERANCE_LEN_MIN);
 
     let [t0, t1] = t_range;
     let mut values = Vec::with_capacity(N_SAMPLES + 1);
@@ -3543,11 +3668,11 @@ fn intersect_edge_face_numeric(
                 break;
             }
             let fm = inttools::marching::surface_implicit(surface, pm);
-            if fm.abs() < 1e-12 {
+            if fm.abs() < zero_tol {
                 hits.push((pm, tm));
                 break;
             }
-            if (tb - ta).abs() < 1e-12 {
+            if (tb - ta).abs() < zero_tol {
                 hits.push((pm, tm));
                 break;
             }
@@ -3562,7 +3687,8 @@ fn intersect_edge_face_numeric(
         // If bisection didn't converge well, use midpoint
         let tm = (ta + tb) * 0.5;
         let pm = curve.point_at(tm);
-        if pm.is_finite() && !hits.iter().any(|(_, t)| (t - tm).abs() < 1e-6) {
+        let dedup_dt = (TOLERANCE_MESH_LEGACY).max(eps * 10.0);
+        if pm.is_finite() && !hits.iter().any(|(_, t)| (t - tm).abs() < dedup_dt) {
             hits.push((pm, tm));
         }
     }
@@ -3738,11 +3864,11 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `PartialOverlapInfo` describing the detected partial overlaps.
     pub fn detect_partial_glue_overlaps(&self) -> Vec<PartialOverlapInfo> {
         let mut overlaps = Vec::new();
-        let tol = self.tol();
 
         // Iterate over all face pairs from different shapes
         for f1_idx in 0..self.ds.a_face_count {
             for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
+                let tol = self.ff_tol(f1_idx, f2_idx);
                 if let Some(overlap) = self.check_partial_overlap(f1_idx, f2_idx, tol) {
                     overlaps.push(overlap);
                 }
@@ -3855,11 +3981,11 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `EdgeOverlapResult` describing detected edge overlaps.
     pub fn detect_edge_overlaps(&self) -> Vec<EdgeOverlapResult> {
         let mut overlaps = Vec::new();
-        let tol = self.tol();
 
         // Iterate over all edge pairs from different shapes
         for e1_idx in 0..self.ds.a_edge_count {
             for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
+                let tol = self.ee_tol(e1_idx, e2_idx);
                 if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol)
                     && overlap.overlap_type != EdgeOverlapType::None {
                         overlaps.push(overlap);
@@ -4454,10 +4580,10 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `EdgeContainmentResult` describing detected containments.
     pub fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
         let mut containments = Vec::new();
-        let tol = self.tol();
 
         for e1_idx in 0..self.ds.a_edge_count {
             for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
+                let tol = self.ee_tol(e1_idx, e2_idx);
                 if let Some(containment) = self.detect_edge_containment(e1_idx, e2_idx, tol) {
                     containments.push(containment);
                 }
@@ -4477,15 +4603,14 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `NearTangentFaceInfo` describing detected near-tangent face pairs.
     ///
     /// # Tolerance
-    /// Uses `fuzzy_tol` for the tangent distance threshold.
+    /// Per face pair, uses `max(fuzzy_tol, both faces' geom_tol) × 100` as the tangent distance scale.
     pub fn handle_near_tangent_faces(&self) -> Vec<NearTangentFaceInfo> {
         let mut tangent_faces = Vec::new();
-        let tol = self.tol();
-        let tangent_threshold = tol * 100.0; // Threshold for "near tangent"
 
         // Iterate over all face pairs from different shapes
         for f1_idx in 0..self.ds.a_face_count {
             for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
+                let tangent_threshold = self.ff_tol(f1_idx, f2_idx) * 100.0;
                 if let Some(info) = self.check_near_tangent_faces(f1_idx, f2_idx, tangent_threshold) {
                     tangent_faces.push(info);
                 }
@@ -4750,11 +4875,10 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `NearCoincidentFaceInfo` describing detected near-coincident face pairs.
     pub fn handle_near_coincident_faces(&self) -> Vec<NearCoincidentFaceInfo> {
         let mut coincident_faces = Vec::new();
-        let tol = self.tol();
-        let coincident_threshold = tol * 10.0;
 
         for f1_idx in 0..self.ds.a_face_count {
             for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
+                let coincident_threshold = self.ff_tol(f1_idx, f2_idx) * 10.0;
                 if let Some(info) = self.check_near_coincident_faces(f1_idx, f2_idx, coincident_threshold) {
                     coincident_faces.push(info);
                 }
@@ -4974,8 +5098,6 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `MicroGapInfo` describing detected micro-gaps.
     pub fn handle_micro_gaps(&self) -> Vec<MicroGapInfo> {
         let mut gaps = Vec::new();
-        let tol = self.tol();
-        let gap_threshold = tol * 1000.0; // Max gap to consider as micro-gap
 
         // Check edge-to-edge gaps
         let a_edges: Vec<usize> = self.ds.edges
@@ -4994,7 +5116,9 @@ impl<'a> PaveFiller<'a> {
 
         for &ea in &a_edges {
             for &eb in &b_edges {
-                if let Some(gap) = self.check_micro_gap(ea, eb, gap_threshold) {
+                let ee = self.ee_tol(ea, eb);
+                let gap_threshold = ee * 1000.0;
+                if let Some(gap) = self.check_micro_gap(ea, eb, gap_threshold, ee) {
                     gaps.push(gap);
                 }
             }
@@ -5004,7 +5128,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// Check if there's a micro-gap between two edges.
-    fn check_micro_gap(&self, e1: usize, e2: usize, gap_threshold: f64) -> Option<MicroGapInfo> {
+    fn check_micro_gap(&self, e1: usize, e2: usize, gap_threshold: f64, coincident_tol: f64) -> Option<MicroGapInfo> {
         let _edge1 = &self.ds.edges[e1];
         let _edge2 = &self.ds.edges[e2];
 
@@ -5026,8 +5150,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // Check if it's a micro-gap (within threshold but not coincident)
-        let tol = self.tol();
-        if min_gap <= tol {
+        if min_gap <= coincident_tol {
             return None; // Already coincident
         }
         if min_gap > gap_threshold {
@@ -5102,8 +5225,6 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `CoincidentEdgeInfo` describing detected coincident edge pairs.
     pub fn handle_coincident_edges(&self) -> Vec<CoincidentEdgeInfo> {
         let mut coincident_edges = Vec::new();
-        let tol = self.tol();
-        let coincident_threshold = tol * 10.0;
 
         let a_edges: Vec<usize> = self.ds.edges
             .iter()
@@ -5121,6 +5242,7 @@ impl<'a> PaveFiller<'a> {
 
         for &ea in &a_edges {
             for &eb in &b_edges {
+                let coincident_threshold = self.ee_tol(ea, eb) * 10.0;
                 if let Some(info) = self.check_coincident_edges(ea, eb, coincident_threshold) {
                     coincident_edges.push(info);
                 }
@@ -5267,7 +5389,7 @@ mod tests {
 
         // Translate box2 so faces are nearly tangent (small gap)
         let mut box2_moved = box2.clone();
-        let small_gap = 1e-6; // Small gap within tangent tolerance
+        let small_gap = TOLERANCE_MESH_LEGACY; // Small gap within tangent tolerance
         for v in &mut box2_moved.vertices {
             v.point.x += 2.0 + small_gap;
         }
@@ -5295,7 +5417,7 @@ mod tests {
         // Create a sphere near the top face of the box
         let sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let mut sphere_moved = sphere.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut sphere_moved.vertices {
             v.point.y += 2.0 + small_gap; // Near top of box
         }
@@ -5338,7 +5460,7 @@ mod tests {
         // Place boxes so one pair of faces is nearly coincident
         let mut box2_moved = box2.clone();
         for v in &mut box2_moved.vertices {
-            v.point.x += 1e-6; // Very small offset
+            v.point.x += TOLERANCE_MESH_LEGACY; // Very small offset
         }
 
         let mut ds = DS::new(&box1, &box2_moved);
@@ -5373,7 +5495,7 @@ mod tests {
 
         // Create a micro-gap between the boxes
         let mut box2_moved = box2.clone();
-        let gap = 1e-5; // Small gap
+        let gap = TOLERANCE_RETRY_LADDER_MID; // Small gap
         for v in &mut box2_moved.vertices {
             v.point.x += 2.0 + gap;
         }
@@ -5405,7 +5527,7 @@ mod tests {
         // Place boxes with nearly coincident edges
         let mut box2_moved = box2.clone();
         for v in &mut box2_moved.vertices {
-            v.point.x += 1e-6; // Small offset
+            v.point.x += TOLERANCE_MESH_LEGACY; // Small offset
         }
 
         let mut ds = DS::new(&box1, &box2_moved);
@@ -5438,7 +5560,7 @@ mod tests {
 
         // Place cylinder so its surface is nearly tangent to a box face
         let mut cylinder_moved = cylinder.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut cylinder_moved.vertices {
             v.point.x += 1.0 + small_gap; // Near face of box
         }
@@ -5467,7 +5589,7 @@ mod tests {
 
         // Place cylinders side by side with small gap
         let mut cyl2_moved = cyl2.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut cyl2_moved.vertices {
             v.point.x += 2.0 + small_gap; // Near tangent
         }
@@ -5507,7 +5629,7 @@ mod tests {
             normal: DVec3::Z,
         };
         let dist = filler.point_to_surface_distance(DVec3::new(1.0, 1.0, 0.5), &Surface3::Plane(plane));
-        assert!((dist - 0.5).abs() < 1e-10, "Plane distance should be 0.5");
+        assert!((dist - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Plane distance should be 0.5");
 
         // Test sphere distance
         let sphere = SphericalSurface {
@@ -5516,7 +5638,7 @@ mod tests {
             axis: DVec3::Z,
         };
         let dist = filler.point_to_surface_distance(DVec3::new(0.0, 0.0, 1.5), &Surface3::Sphere(sphere));
-        assert!((dist - 0.5).abs() < 1e-10, "Sphere distance should be 0.5");
+        assert!((dist - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Sphere distance should be 0.5");
 
         // Test cylinder distance
         let cyl = CylindricalSurface {
@@ -5525,7 +5647,7 @@ mod tests {
             radius: 1.0,
         };
         let dist = filler.point_to_surface_distance(DVec3::new(1.5, 0.0, 0.0), &Surface3::Cylinder(cyl));
-        assert!((dist - 0.5).abs() < 1e-10, "Cylinder distance should be 0.5");
+        assert!((dist - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Cylinder distance should be 0.5");
     }
 
     #[test]
@@ -5552,7 +5674,7 @@ mod tests {
             DVec3::new(0.0, 1.0, 0.0),
         ];
         let area = filler.compute_polygon_area(&square);
-        assert!((area - 1.0).abs() < 1e-10, "Square area should be 1.0");
+        assert!((area - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Square area should be 1.0");
 
         // Test with a triangle
         let triangle = vec![
@@ -5561,7 +5683,7 @@ mod tests {
             DVec3::new(1.0, 1.0, 0.0),
         ];
         let area = filler.compute_polygon_area(&triangle);
-        assert!((area - 1.0).abs() < 1e-10, "Triangle area should be 1.0");
+        assert!((area - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "Triangle area should be 1.0");
     }
 
     #[test]
@@ -5824,7 +5946,7 @@ mod tests {
         // Get first edge from each shape
         if let (Some(c1), Some(c2)) = (&curve1, &curve2) {
             // Check collinearity
-            let collinear = filler.curves_are_collinear(c1, c2, 1e-6);
+            let collinear = filler.curves_are_collinear(c1, c2, TOLERANCE_MESH_LEGACY);
 
             // For identical boxes, edges should be collinear
             assert!(collinear, "Edges from identical boxes should be collinear");
@@ -5859,7 +5981,7 @@ mod tests {
                 let curve2 = &curves[e2_idx];
 
                 if matches!(curve1, Curve3::Circle(_)) && matches!(curve2, Curve3::Circle(_)) {
-                    let collinear = filler.curves_are_collinear(curve1, curve2, 1e-6);
+                    let collinear = filler.curves_are_collinear(curve1, curve2, TOLERANCE_MESH_LEGACY);
                     // Collinearity check may not work for all cases
                     // Just verify the function runs without panic
                     let _ = collinear;
@@ -5883,19 +6005,19 @@ mod tests {
 
         let mut ds = DS::new(&box1, &box2);
         let filler = PaveFiller::new(&mut ds);
-        let tol = 1e-6;
+        let tol = TOLERANCE_MESH_LEGACY;
 
         // Test full overlap
         let overlap = filler.compute_interval_overlap([0.0, 1.0], [0.0, 1.0], tol);
         assert_eq!(overlap.overlap_type, ParamOverlapType::Exact, "Identical ranges should have exact overlap");
-        assert!((overlap.ratio_a - 1.0).abs() < 1e-10);
-        assert!((overlap.ratio_b - 1.0).abs() < 1e-10);
+        assert!((overlap.ratio_a - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((overlap.ratio_b - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Test partial overlap
         let overlap = filler.compute_interval_overlap([0.0, 2.0], [1.0, 3.0], tol);
         assert_eq!(overlap.overlap_type, ParamOverlapType::Partial, "Partially overlapping ranges should have partial overlap");
-        assert!((overlap.ratio_a - 0.5).abs() < 1e-10);
-        assert!((overlap.ratio_b - 0.5).abs() < 1e-10);
+        assert!((overlap.ratio_a - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((overlap.ratio_b - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         // Test containment
         let overlap = filler.compute_interval_overlap([0.0, 1.0], [0.0, 2.0], tol);
@@ -5921,7 +6043,7 @@ mod tests {
 
         let mut ds = DS::new(&box1, &box2);
         let filler = PaveFiller::new(&mut ds);
-        let tol = 1e-6;
+        let tol = TOLERANCE_MESH_LEGACY;
         let period = std::f64::consts::PI * 2.0;
 
         // Test wraparound overlap (e.g., from 5.0 to 1.0 wraps around 2*PI)
@@ -5955,7 +6077,7 @@ mod tests {
         let total_edges = ds.edges.len();
 
         let mut filler = PaveFiller::new(&mut ds);
-        filler.configure_glue(true, 1e-6);
+        filler.configure_glue(true, TOLERANCE_MESH_LEGACY);
 
         // Find faces from different shapes that might share edges
         for f1_idx in 0..a_face_count {
@@ -5995,7 +6117,7 @@ mod tests {
 
         let mut ds = DS::new(&box1, &box2_moved);
         let mut filler = PaveFiller::new(&mut ds);
-        filler.configure_glue(true, 1e-6);
+        filler.configure_glue(true, TOLERANCE_MESH_LEGACY);
 
         let overlaps = filler.detect_partial_glue_overlaps();
 
@@ -6031,7 +6153,7 @@ mod tests {
 
         // Place cylinder so its surface is nearly tangent to a box face
         let mut cylinder_moved = cylinder.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut cylinder_moved.vertices {
             v.point.x += 1.0 + small_gap; // Near face of box
         }
@@ -6094,7 +6216,7 @@ mod tests {
 
         // Place boxes with nearly coincident faces
         let mut box2_moved = box2.clone();
-        let small_gap = 1e-7;
+        let small_gap = TOLERANCE_ABS;
         for v in &mut box2_moved.vertices {
             v.point.z += 1.0 + small_gap;
         }
@@ -6136,7 +6258,7 @@ mod tests {
 
         // Place cylinders nearly tangent (distance slightly larger than sum of radii)
         let mut cyl2_moved = cyl2.clone();
-        let near_tangent_gap = 1e-5;
+        let near_tangent_gap = TOLERANCE_RETRY_LADDER_MID;
         for v in &mut cyl2_moved.vertices {
             v.point.x += 2.0 + near_tangent_gap; // Near tangent
         }
@@ -6180,7 +6302,7 @@ mod tests {
 
         // Place sphere so its surface is nearly tangent to a box face
         let mut sphere_moved = sphere.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut sphere_moved.vertices {
             v.point.x += 1.0 + small_gap; // Near face of box (tangent point)
         }
@@ -6223,7 +6345,7 @@ mod tests {
 
         // Place boxes with nearly parallel faces very close together
         let mut box2_moved = box2.clone();
-        let small_gap = 1e-6;
+        let small_gap = TOLERANCE_MESH_LEGACY;
         for v in &mut box2_moved.vertices {
             v.point.x += 2.0 + small_gap;
         }
@@ -6260,7 +6382,7 @@ mod tests {
         // Place cylinder nearly tangent to box face
         let mut cylinder_moved = cylinder.clone();
         for v in &mut cylinder_moved.vertices {
-            v.point.x += 1.0 + 1e-6;
+            v.point.x += 1.0 + TOLERANCE_MESH_LEGACY;
         }
 
         let mut ds = DS::new(&box1, &cylinder_moved);

@@ -45,6 +45,7 @@
 //! }
 //! ```
 
+use crate::tolerance::*;
 use std::collections::{HashMap, HashSet};
 use rcad_kernel::{
     BRep, BRepGraph, Face, Shell,
@@ -730,7 +731,7 @@ impl Default for MakeManifoldOptions {
         Self {
             split_edges: true,
             remove_orphans: true,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -856,10 +857,10 @@ impl Default for ManifoldConversionOptions {
             duplicate_vertices: true,
             remove_orphans: true,
             remove_isolated_vertices: true,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             preserve_geometry: true,
             stitch_boundaries: false,
-            stitch_tolerance: 1e-6,
+            stitch_tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -872,10 +873,10 @@ impl ManifoldConversionOptions {
             duplicate_vertices: false,
             remove_orphans: false,
             remove_isolated_vertices: false,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             preserve_geometry: true,
             stitch_boundaries: false,
-            stitch_tolerance: 1e-6,
+            stitch_tolerance: TOLERANCE_MESH_LEGACY,
         }
     }
 
@@ -886,10 +887,10 @@ impl ManifoldConversionOptions {
             duplicate_vertices: true,
             remove_orphans: true,
             remove_isolated_vertices: true,
-            tolerance: 1e-5,
+            tolerance: TOLERANCE_RETRY_LADDER_MID,
             preserve_geometry: true,
             stitch_boundaries: true,
-            stitch_tolerance: 1e-5,
+            stitch_tolerance: TOLERANCE_RETRY_LADDER_MID,
         }
     }
 }
@@ -1471,7 +1472,7 @@ pub struct NonManifoldSewingOptions {
 impl Default for NonManifoldSewingOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             non_manifold_mode: NonManifoldSewingMode::default(),
             max_faces_per_edge: usize::MAX,
             merge_vertices: true,
@@ -1768,7 +1769,7 @@ pub struct NonManifoldMakeConnectedOptions {
 impl Default for NonManifoldMakeConnectedOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             allow_non_manifold: false,
             split_non_manifold_after: true,
             max_passes: 3,
@@ -1896,7 +1897,7 @@ pub struct MergeShellsOptions {
 impl Default for MergeShellsOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             create_non_manifold: true,
             merge_vertices: true,
         }
@@ -2612,20 +2613,20 @@ mod tests {
 
     #[test]
     fn test_non_manifold_sewing_options() {
-        let strict = NonManifoldSewingOptions::strict(1e-6);
+        let strict = NonManifoldSewingOptions::strict(TOLERANCE_MESH_LEGACY);
         assert_eq!(strict.non_manifold_mode, NonManifoldSewingMode::StrictManifold);
 
-        let allow = NonManifoldSewingOptions::allow_non_manifold(1e-6);
+        let allow = NonManifoldSewingOptions::allow_non_manifold(TOLERANCE_MESH_LEGACY);
         assert_eq!(allow.non_manifold_mode, NonManifoldSewingMode::AllowNonManifold);
 
-        let create = NonManifoldSewingOptions::create_non_manifold(1e-6);
+        let create = NonManifoldSewingOptions::create_non_manifold(TOLERANCE_MESH_LEGACY);
         assert_eq!(create.non_manifold_mode, NonManifoldSewingMode::CreateNonManifold);
     }
 
     #[test]
     fn test_sew_non_manifold_aware_strict() {
         let brep = unit_box();
-        let options = NonManifoldSewingOptions::strict(1e-6);
+        let options = NonManifoldSewingOptions::strict(TOLERANCE_MESH_LEGACY);
         let (result, report) = sew_non_manifold_aware(&brep, &options);
 
         // A closed box has no free edges to sew
@@ -2636,7 +2637,7 @@ mod tests {
     #[test]
     fn test_sew_non_manifold_aware_allow_non_manifold() {
         let brep = unit_box();
-        let options = NonManifoldSewingOptions::allow_non_manifold(1e-6);
+        let options = NonManifoldSewingOptions::allow_non_manifold(TOLERANCE_MESH_LEGACY);
         let (result, report) = sew_non_manifold_aware(&brep, &options);
 
         assert!(report.is_successful());

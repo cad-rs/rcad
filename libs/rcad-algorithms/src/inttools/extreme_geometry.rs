@@ -12,7 +12,7 @@ use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::{BRep, Edge, Face};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, AdaptiveTolerance, ToleranceLevel};
+use crate::tolerance::*;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Near-Tangent Geometry
@@ -65,7 +65,7 @@ impl Default for NearTangentHandler {
     fn default() -> Self {
         Self {
             base_tolerance: TOLERANCE_ABS,
-            angular_threshold: TOLERANCE_ANG.sqrt(), // ~1e-4.5 radians
+            angular_threshold: TOLERANCE_ANG.sqrt(), // ~TOLERANCE_RETRY_LADDER_COARSE.5 radians
             fuzzy_multiplier: 10.0,
             max_fuzzy: TOLERANCE_ABS * 1000.0,
         }
@@ -686,7 +686,7 @@ impl SizeDifferenceHandler {
             max_pt = max_pt.max(vertex.point);
         }
 
-        (max_pt - min_pt).length().max(1e-10)
+        (max_pt - min_pt).length().max(TOLERANCE_LINEAR_ULTRA_STRICT)
     }
 
     /// Analyze size difference between two BReps.
@@ -727,8 +727,8 @@ impl SizeDifferenceHandler {
     /// Get effective tolerance for the smaller shape.
     pub fn effective_tolerance_for_small_shape(&self, analysis: &SizeDifferenceAnalysis) -> f64 {
         let smaller_size = analysis.size_a.min(analysis.size_b);
-        // Use a relative tolerance of 1e-7 of the smaller dimension
-        (smaller_size * 1e-7).max(self.base_tolerance)
+        // Use a relative tolerance of TOLERANCE_ABS of the smaller dimension
+        (smaller_size * TOLERANCE_ABS).max(self.base_tolerance)
     }
 }
 
@@ -902,7 +902,7 @@ fn compute_brep_scale(brep: &BRep) -> f64 {
         max_pt = max_pt.max(vertex.point);
     }
 
-    (max_pt - min_pt).length().max(1e-10)
+    (max_pt - min_pt).length().max(TOLERANCE_LINEAR_ULTRA_STRICT)
 }
 
 #[cfg(test)]

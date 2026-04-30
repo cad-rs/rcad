@@ -22,6 +22,7 @@
 //! - [`simplify_geometry`] - Convert BSpline surfaces to analytic where possible
 //! - [`make_direct_faces`] - Convert indirect faces to direct
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
     BRep, Curve3, Surface3,
@@ -50,7 +51,7 @@ use std::f64::consts::PI;
 pub struct BSplineSimplifyOptions {
     /// Maximum degree allowed (default: 3).
     pub max_degree: usize,
-    /// Tolerance for approximation when reducing degree (default: 1e-6).
+    /// Tolerance for approximation when reducing degree (default: TOLERANCE_MESH_LEGACY).
     pub tolerance: f64,
     /// Whether to preserve endpoint tangents (default: true).
     pub preserve_ends: bool,
@@ -64,7 +65,7 @@ impl Default for BSplineSimplifyOptions {
     fn default() -> Self {
         Self {
             max_degree: 3,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             preserve_ends: true,
             min_reduction_ratio: 0.8,
             max_iterations: 10,
@@ -233,7 +234,7 @@ fn remove_redundant_control_points(
     while i < knots.len() - degree - 1 {
         let k = knots[i];
         if k > knots[degree] && k < knots[knots.len() - degree - 1]
-            && interior_knots.last().is_none_or(|&last| (k - last).abs() > 1e-10) {
+            && interior_knots.last().is_none_or(|&last| (k - last).abs() > TOLERANCE_LINEAR_ULTRA_STRICT) {
                 interior_knots.push(k);
             }
         i += 1;
@@ -283,7 +284,7 @@ fn try_remove_knot(
     tolerance: f64,
 ) -> Option<(BSplineCurve3, f64)> {
     // Find knot index
-    let knot_idx = curve.knots.iter().position(|&k| (k - knot).abs() < 1e-10)?;
+    let knot_idx = curve.knots.iter().position(|&k| (k - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT)?;
 
     // Build new knot vector without this knot
     let mut new_knots = curve.knots.clone();
@@ -655,7 +656,7 @@ impl Default for GeometryRestrictions {
     fn default() -> Self {
         Self {
             max_degree: 3,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             curves_to_bspline: true,
             surfaces_to_bspline: true,
             convert_offset_curves: true,
@@ -696,7 +697,7 @@ pub struct ConversionReport {
 /// # Example
 /// ```ignore
 /// use rcad_algorithms::shape_custom::convert_to_bspline;
-/// let bspline_brep = convert_to_bspline(&brep, 1e-6);
+/// let bspline_brep = convert_to_bspline(&brep, TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn convert_to_bspline(brep: &BRep, tolerance: f64) -> (BRep, ConversionReport) {
     let mut restrictions = GeometryRestrictions::default();
@@ -1046,7 +1047,7 @@ pub fn curve_to_bspline_from_edge(
 /// # Returns
 /// A new BRep with all geometry in BSpline form.
 pub fn restrict_to_bspline(brep: &BRep) -> BRep {
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
     let (result, _report) = convert_to_bspline(brep, tolerance);
     result
 }
@@ -1104,7 +1105,7 @@ pub struct CanonicalConversionOptions {
 impl Default for CanonicalConversionOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             convert_planes: true,
             convert_revolution_surfaces: true,
             convert_spheres: true,
@@ -1272,7 +1273,7 @@ pub enum AnalyticType {
 /// # Example
 /// ```ignore
 /// let bspline: BSplineSurface = /* ... */;
-/// if let Some(analytic) = try_convert_to_analytic(&bspline, 1e-6) {
+/// if let Some(analytic) = try_convert_to_analytic(&bspline, TOLERANCE_MESH_LEGACY) {
 ///     println!("Converted to analytic: {:?}", analytic);
 /// }
 /// ```
@@ -1352,7 +1353,7 @@ fn try_detect_plane(surface: &BSplineSurface, tolerance: f64) -> Option<Plane> {
             cov[2][0] * normal.x + cov[2][1] * normal.y + cov[2][2] * normal.z,
         );
         let len = n.length();
-        if len < 1e-12 {
+        if len < TOLERANCE_LEN_MIN {
             break;
         }
         normal = n / len;
@@ -1416,7 +1417,7 @@ fn try_detect_cylinder(surface: &BSplineSurface, tolerance: f64) -> Option<Cylin
             cov[2][0] * axis.x + cov[2][1] * axis.y + cov[2][2] * axis.z,
         );
         let len = n.length();
-        if len < 1e-12 {
+        if len < TOLERANCE_LEN_MIN {
             break;
         }
         axis = n / len;
@@ -1593,7 +1594,7 @@ fn try_detect_cone(surface: &BSplineSurface, tolerance: f64) -> Option<ConicalSu
             cov[2][0] * axis.x + cov[2][1] * axis.y + cov[2][2] * axis.z,
         );
         let len = n.length();
-        if len < 1e-12 {
+        if len < TOLERANCE_LEN_MIN {
             break;
         }
         axis = n / len;
@@ -1617,7 +1618,7 @@ fn try_detect_cone(surface: &BSplineSurface, tolerance: f64) -> Option<ConicalSu
     let sum_ar: f64 = radius_axial.iter().map(|(r, a)| r * a).sum();
 
     let denom = n * sum_aa - sum_axial * sum_axial;
-    if denom.abs() < 1e-12 {
+    if denom.abs() < TOLERANCE_LEN_MIN {
         return None;
     }
 
@@ -1639,7 +1640,7 @@ fn try_detect_cone(surface: &BSplineSurface, tolerance: f64) -> Option<ConicalSu
     let half_angle = slope.atan().abs();
     let radius = intercept.max(0.0);
 
-    if !(1e-6..=PI / 2.0 - 1e-6).contains(&half_angle) {
+    if !(TOLERANCE_MESH_LEGACY..=PI / 2.0 - TOLERANCE_MESH_LEGACY).contains(&half_angle) {
         return None; // Degenerate cone
     }
 
@@ -1921,8 +1922,8 @@ pub fn customize_shape(brep: &BRep, tolerance: f64) -> (BRep, ShapeCustomReport)
 fn count_canonical_conversions(before: &BRep, after: &BRep) -> usize {
     let mut count = 0;
     for (s_before, s_after) in before.geom.surfaces.iter().zip(after.geom.surfaces.iter()) {
-        let form_before = identify_canonical_form(s_before, 1e-6);
-        let form_after = identify_canonical_form(s_after, 1e-6);
+        let form_before = identify_canonical_form(s_before, TOLERANCE_MESH_LEGACY);
+        let form_after = identify_canonical_form(s_after, TOLERANCE_MESH_LEGACY);
         if form_before != form_after && form_after != CanonicalForm::NonCanonical {
             count += 1;
         }
@@ -2027,7 +2028,7 @@ mod tests {
         // Check that endpoints match
         let p0 = bspline.point_at(0.0);
         let p1 = bspline.point_at(1.0);
-        assert!((p0 - p1).length() < 1e-10, "circle should be closed");
+        assert!((p0 - p1).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "circle should be closed");
     }
 
     #[test]
@@ -2046,7 +2047,7 @@ mod tests {
     #[test]
     fn convert_brep_to_bspline() {
         let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
-        let (converted, report) = convert_to_bspline(&brep, 1e-6);
+        let (converted, report) = convert_to_bspline(&brep, TOLERANCE_MESH_LEGACY);
 
         // All curves and surfaces should now be BSpline
         for curve in &converted.geom.curves {
@@ -2128,13 +2129,13 @@ mod tests {
 
                 // Check clamped start: first degree+1 knots should be 0
                 for i in 0..=degree {
-                    assert!((knots[i] - 0.0).abs() < 1e-10, "knot[{}] should be 0", i);
+                    assert!((knots[i] - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "knot[{}] should be 0", i);
                 }
 
                 // Check clamped end: last degree+1 knots should be 1
                 for i in 0..=degree {
                     assert!(
-                        (knots[knots.len() - 1 - i] - 1.0).abs() < 1e-10,
+                        (knots[knots.len() - 1 - i] - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT,
                         "knot[{}] should be 1",
                         knots.len() - 1 - i
                     );
@@ -2202,8 +2203,8 @@ mod tests {
 
         let bspline = curve_to_bspline_from_edge(&brep.edges[0], 0, &brep);
         assert_eq!(bspline.degree, 1);
-        assert!(approx_eq3(bspline.point_at(0.0), DVec3::ZERO, 1e-10));
-        assert!(approx_eq3(bspline.point_at(1.0), DVec3::X, 1e-10));
+        assert!(approx_eq3(bspline.point_at(0.0), DVec3::ZERO, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq3(bspline.point_at(1.0), DVec3::X, TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -2227,13 +2228,13 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         });
-        assert_eq!(identify_canonical_form(&plane, 1e-6), CanonicalForm::PlaneXY);
+        assert_eq!(identify_canonical_form(&plane, TOLERANCE_MESH_LEGACY), CanonicalForm::PlaneXY);
 
         let plane_neg = Surface3::Plane(Plane {
             origin: DVec3::new(1.0, 2.0, 3.0),
             normal: DVec3::NEG_Z,
         });
-        assert_eq!(identify_canonical_form(&plane_neg, 1e-6), CanonicalForm::PlaneXY);
+        assert_eq!(identify_canonical_form(&plane_neg, TOLERANCE_MESH_LEGACY), CanonicalForm::PlaneXY);
     }
 
     #[test]
@@ -2242,7 +2243,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Y,
         });
-        assert_eq!(identify_canonical_form(&plane, 1e-6), CanonicalForm::PlaneXZ);
+        assert_eq!(identify_canonical_form(&plane, TOLERANCE_MESH_LEGACY), CanonicalForm::PlaneXZ);
     }
 
     #[test]
@@ -2251,7 +2252,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::X,
         });
-        assert_eq!(identify_canonical_form(&plane, 1e-6), CanonicalForm::PlaneYZ);
+        assert_eq!(identify_canonical_form(&plane, TOLERANCE_MESH_LEGACY), CanonicalForm::PlaneYZ);
     }
 
     #[test]
@@ -2261,14 +2262,14 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
         });
-        assert_eq!(identify_canonical_form(&cylinder, 1e-6), CanonicalForm::CylinderZ);
+        assert_eq!(identify_canonical_form(&cylinder, TOLERANCE_MESH_LEGACY), CanonicalForm::CylinderZ);
 
         let tilted_cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::new(1.0, 1.0, 1.0).normalize(),
             radius: 1.0,
         });
-        assert_eq!(identify_canonical_form(&tilted_cylinder, 1e-6), CanonicalForm::CylinderGeneral);
+        assert_eq!(identify_canonical_form(&tilted_cylinder, TOLERANCE_MESH_LEGACY), CanonicalForm::CylinderGeneral);
     }
 
     #[test]
@@ -2278,14 +2279,14 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.0,
         });
-        assert_eq!(identify_canonical_form(&sphere, 1e-6), CanonicalForm::SphereOrigin);
+        assert_eq!(identify_canonical_form(&sphere, TOLERANCE_MESH_LEGACY), CanonicalForm::SphereOrigin);
 
         let shifted_sphere = Surface3::Sphere(SphericalSurface {
             center: DVec3::new(1.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
         });
-        assert_eq!(identify_canonical_form(&shifted_sphere, 1e-6), CanonicalForm::SphereGeneral);
+        assert_eq!(identify_canonical_form(&shifted_sphere, TOLERANCE_MESH_LEGACY), CanonicalForm::SphereGeneral);
     }
 
     #[test]
@@ -2296,13 +2297,13 @@ mod tests {
             major_radius: 2.0,
             minor_radius: 0.5,
         });
-        assert_eq!(identify_canonical_form(&torus, 1e-6), CanonicalForm::TorusOriginZ);
+        assert_eq!(identify_canonical_form(&torus, TOLERANCE_MESH_LEGACY), CanonicalForm::TorusOriginZ);
     }
 
     #[test]
     fn test_convert_to_canonical() {
         let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
-        let result = convert_to_canonical(&brep, 1e-6);
+        let result = convert_to_canonical(&brep, TOLERANCE_MESH_LEGACY);
 
         // Sphere should be detected as canonical (origin-centered)
         assert!(!result.geom.surfaces.is_empty());
@@ -2317,11 +2318,11 @@ mod tests {
         };
         let bspline = plane_to_bspline(&plane);
 
-        let result = try_convert_to_analytic(&bspline, 1e-6);
+        let result = try_convert_to_analytic(&bspline, TOLERANCE_MESH_LEGACY);
         assert!(result.is_some());
 
         if let Some(Surface3::Plane(p)) = result {
-            assert!(approx_eq3(p.normal.normalize(), DVec3::Z, 1e-6));
+            assert!(approx_eq3(p.normal.normalize(), DVec3::Z, TOLERANCE_MESH_LEGACY));
         } else {
             panic!("Expected Plane surface");
         }
@@ -2383,7 +2384,7 @@ mod tests {
         });
         brep.geom.surfaces.push(Surface3::BSpline(bspline));
 
-        let simplified = simplify_geometry(&brep, 1e-4);
+        let simplified = simplify_geometry(&brep, TOLERANCE_RETRY_LADDER_COARSE);
 
         // Should have been converted back to a plane
         assert!(matches!(simplified.geom.surfaces[0], Surface3::Plane(_)));
@@ -2417,7 +2418,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let (result, report) = customize_shape(&brep, 1e-6);
+        let (result, report) = customize_shape(&brep, TOLERANCE_MESH_LEGACY);
 
         // Check that all surfaces are valid
         for surface in &result.geom.surfaces {
@@ -2440,7 +2441,7 @@ mod tests {
     #[test]
     fn test_canonical_conversion_options() {
         let options = CanonicalConversionOptions {
-            tolerance: 1e-8,
+            tolerance: TOLERANCE_LINEAR_RELAX_8,
             convert_planes: false,
             convert_revolution_surfaces: true,
             convert_spheres: true,
@@ -2461,7 +2462,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         });
-        let result = try_convert_to_analytic(&plane_bspline, 1e-6);
+        let result = try_convert_to_analytic(&plane_bspline, TOLERANCE_MESH_LEGACY);
         assert!(matches!(result, Some(Surface3::Plane(_))));
 
         // Test cylinder detection
@@ -2470,7 +2471,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 2.0,
         });
-        let result = try_convert_to_analytic(&cylinder_bspline, 1e-4);
+        let result = try_convert_to_analytic(&cylinder_bspline, TOLERANCE_RETRY_LADDER_COARSE);
         if let Some(Surface3::Cylinder(c)) = result {
             assert!(approx_eq(c.radius, 2.0, 0.1));
         }
@@ -2481,7 +2482,7 @@ mod tests {
             axis: DVec3::Z,
             radius: 1.5,
         });
-        let result = try_convert_to_analytic(&sphere_bspline, 1e-3);
+        let result = try_convert_to_analytic(&sphere_bspline, TOLERANCE_ADAPTIVE_MAX);
         if let Some(Surface3::Sphere(s)) = result {
             assert!(approx_eq(s.radius, 1.5, 0.1));
         }
@@ -2515,7 +2516,7 @@ mod tests {
             weights,
         };
 
-        let result = try_convert_to_analytic(&bspline, 1e-3);
+        let result = try_convert_to_analytic(&bspline, TOLERANCE_ADAPTIVE_MAX);
         // This complex surface should not convert to analytic
         assert!(result.is_none());
     }
@@ -2529,7 +2530,7 @@ mod tests {
             bspline_curve_to_analytic: 1,
             faces_made_direct: 3,
             canonical_conversions: 1,
-            max_deviation: 1e-6,
+            max_deviation: TOLERANCE_MESH_LEGACY,
         };
 
         assert_eq!(report.surfaces_to_bspline, 5);

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
-use rcad_kernel::geom::{Line3, Plane, Surface3};
+use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Vertex, WireEdge};
 
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
@@ -79,6 +79,338 @@ fn rotate_point(p: DVec3, axis_origin: DVec3, axis_dir: DVec3, angle: f64) -> DV
 /// Compute the outward normal of a planar quad (or triangle) given CCW vertices.
 fn quad_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
     (b - a).cross(c - a).normalize_or_zero()
+}
+
+/// Full 360° revolution: tessellate in angle so lateral strips never use zero-length rotation edges
+/// (the naive quad sweep collapses when angle = 2π because rotated endpoints coincide).
+///
+/// Profile edges lying **on** the rotation axis produce triangular strips (one radial edge degenerates).
+fn revolve_full_turn_tessellated(
+    profile_pts: &[DVec3],
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+) -> Result<(BRep, SweepHistory), BuildError> {
+    let n = profile_pts.len();
+    if n < 3 {
+        return Err(BuildError::DegenerateGeometry(
+            "profile has fewer than 3 vertices",
+        ));
+    }
+
+    // Angular segments: each profile edge yields ~one lateral strip per segment, so total lateral
+    // patches scale as ~(nseg × n). A fixed 128 segments explodes boolean paving / planar face
+    // splitting against boxes (OCCT `bfuse_simple/K1`-style unions). Scale down when the profile
+    // has many vertices; keep a minimum so axis-touching strips stay non-degenerate.
+    const NSEG_MIN: usize = 16;
+    const NSEG_MAX: usize = 96;
+    let nseg = (320usize / n.max(3)).clamp(NSEG_MIN, NSEG_MAX);
+
+    let mut result = BRep {
+        vertices: Vec::new(),
+        edges: Vec::new(),
+        solids: Vec::new(),
+        geom: rcad_kernel::GeomStore::default(),
+        compound: None,
+        compsolid: None,
+    };
+
+    let mut lateral_faces = Vec::new();
+    let mut profile_edge_to_lateral = HashMap::new();
+
+    let eps_pt = 1e-12_f64;
+    let eps_a = 1e-22_f64;
+
+    for seg in 0..nseg {
+        let a0 = seg as f64 / nseg as f64 * std::f64::consts::TAU;
+        let a1 = (seg + 1) as f64 / nseg as f64 * std::f64::consts::TAU;
+        let ring0: Vec<DVec3> = profile_pts
+            .iter()
+            .copied()
+            .map(|p| rotate_point(p, axis_origin, axis_dir, a0))
+            .collect();
+        let ring1: Vec<DVec3> = profile_pts
+            .iter()
+            .copied()
+            .map(|p| rotate_point(p, axis_origin, axis_dir, a1))
+            .collect();
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let p00 = ring0[i];
+            let p01 = ring0[j];
+            let p11 = ring1[j];
+            let p10 = ring1[i];
+
+            let deg_left = (p10 - p00).length_squared() <= eps_pt * eps_pt;
+            let deg_right = (p11 - p01).length_squared() <= eps_pt * eps_pt;
+
+            let face_idx = if deg_left && deg_right {
+                continue;
+            } else if deg_left {
+                // Triangle p00 — p01 — p11
+                let nrm = quad_normal(p00, p01, p11);
+                if nrm.length_squared() <= eps_a {
+                    continue;
+                }
+                let v0 = result.vertices.len();
+                result.vertices.push(Vertex { point: p00 });
+                let v1 = result.vertices.len();
+                result.vertices.push(Vertex { point: p01 });
+                let v2 = result.vertices.len();
+                result.vertices.push(Vertex { point: p11 });
+
+                let l01 = (p01 - p00).length();
+                let l12 = (p11 - p01).length();
+                let l20 = (p00 - p11).length();
+                if l01 <= eps_pt || l12 <= eps_pt || l20 <= eps_pt {
+                    continue;
+                }
+
+                let e01 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p00,
+                        direction: (p01 - p00).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l01,
+                    v0,
+                    v1,
+                )?;
+                let e12 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p01,
+                        direction: (p11 - p01).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l12,
+                    v1,
+                    v2,
+                )?;
+                let e20 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p11,
+                        direction: (p00 - p11).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l20,
+                    v2,
+                    v0,
+                )?;
+
+                let surface = Surface3::Plane(Plane {
+                    origin: p00,
+                    normal: nrm,
+                });
+                make_face(
+                    &mut result,
+                    surface,
+                    make_wire(vec![
+                        WireEdge {
+                            idx: e01,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e12,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e20,
+                            forward: true,
+                        },
+                    ]),
+                    vec![],
+                )?
+            } else if deg_right {
+                let nrm = quad_normal(p11, p10, p00);
+                if nrm.length_squared() <= eps_a {
+                    continue;
+                }
+                let v0 = result.vertices.len();
+                result.vertices.push(Vertex { point: p00 });
+                let v1 = result.vertices.len();
+                result.vertices.push(Vertex { point: p10 });
+                let v2 = result.vertices.len();
+                result.vertices.push(Vertex { point: p11 });
+
+                let l01 = (p10 - p00).length();
+                let l12 = (p11 - p10).length();
+                let l20 = (p00 - p11).length();
+                if l01 <= eps_pt || l12 <= eps_pt || l20 <= eps_pt {
+                    continue;
+                }
+
+                let e01 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p00,
+                        direction: (p10 - p00).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l01,
+                    v0,
+                    v1,
+                )?;
+                let e12 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p10,
+                        direction: (p11 - p10).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l12,
+                    v1,
+                    v2,
+                )?;
+                let e20 = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p11,
+                        direction: (p00 - p11).normalize_or_zero(),
+                    }),
+                    0.0,
+                    l20,
+                    v2,
+                    v0,
+                )?;
+
+                let surface = Surface3::Plane(Plane {
+                    origin: p00,
+                    normal: nrm,
+                });
+                make_face(
+                    &mut result,
+                    surface,
+                    make_wire(vec![
+                        WireEdge {
+                            idx: e01,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e12,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e20,
+                            forward: true,
+                        },
+                    ]),
+                    vec![],
+                )?
+            } else {
+                let lat_normal = quad_normal(p00, p01, p11);
+                if lat_normal.length_squared() <= eps_a {
+                    continue;
+                }
+
+                let v00 = result.vertices.len();
+                result.vertices.push(Vertex { point: p00 });
+                let v01 = result.vertices.len();
+                result.vertices.push(Vertex { point: p01 });
+                let v11 = result.vertices.len();
+                result.vertices.push(Vertex { point: p11 });
+                let v10 = result.vertices.len();
+                result.vertices.push(Vertex { point: p10 });
+
+                let len_bot = (p01 - p00).length();
+                let len_top = (p11 - p10).length();
+                let len_r = (p11 - p01).length();
+                let len_l = (p10 - p00).length();
+                if len_bot <= eps_pt || len_top <= eps_pt || len_r <= eps_pt || len_l <= eps_pt {
+                    continue;
+                }
+
+                let e_bot = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p00,
+                        direction: (p01 - p00).normalize_or_zero(),
+                    }),
+                    0.0,
+                    len_bot,
+                    v00,
+                    v01,
+                )?;
+                let e_right = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p01,
+                        direction: (p11 - p01).normalize_or_zero(),
+                    }),
+                    0.0,
+                    len_r,
+                    v01,
+                    v11,
+                )?;
+                let e_top = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p11,
+                        direction: (p10 - p11).normalize_or_zero(),
+                    }),
+                    0.0,
+                    len_top,
+                    v11,
+                    v10,
+                )?;
+                let e_left = make_edge(
+                    &mut result,
+                    Curve3::Line(Line3 {
+                        origin: p10,
+                        direction: (p00 - p10).normalize_or_zero(),
+                    }),
+                    0.0,
+                    len_l,
+                    v10,
+                    v00,
+                )?;
+
+                let surface = Surface3::Plane(Plane {
+                    origin: p00,
+                    normal: lat_normal,
+                });
+                make_face(
+                    &mut result,
+                    surface,
+                    make_wire(vec![
+                        WireEdge {
+                            idx: e_bot,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e_right,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e_top,
+                            forward: true,
+                        },
+                        WireEdge {
+                            idx: e_left,
+                            forward: true,
+                        },
+                    ]),
+                    vec![],
+                )?
+            };
+
+            lateral_faces.push(face_idx);
+            if seg == 0 {
+                profile_edge_to_lateral.insert(i, face_idx);
+            }
+        }
+    }
+
+    let history = SweepHistory {
+        bottom_cap: Vec::new(),
+        top_cap: Vec::new(),
+        lateral_faces,
+        profile_edge_to_lateral,
+    };
+
+    Ok((result, history))
 }
 
 /// Extract ordered boundary points from a face's outer wire.
@@ -406,7 +738,14 @@ pub fn revolve_with_history(
     }
 
     let n = profile_pts.len();
-    let full_revolution = (angle - std::f64::consts::TAU).abs() < 1e-6;
+    if (angle - std::f64::consts::TAU).abs() < 1e-6 {
+        if n < 3 {
+            return Err(BuildError::DegenerateGeometry(
+                "profile has fewer than 3 vertices",
+            ));
+        }
+        return revolve_full_turn_tessellated(&profile_pts, axis_origin, dir);
+    }
 
     let mut result = BRep {
         vertices: Vec::new(),
@@ -433,24 +772,20 @@ pub fn revolve_with_history(
         })
         .collect();
 
-    // Add end vertices — if full revolution, share with start vertices
-    let end_vi: Vec<usize> = if full_revolution {
-        start_vi.clone()
-    } else {
-        rot_pts
-            .iter()
-            .map(|&p| {
-                let idx = result.vertices.len();
-                result.vertices.push(Vertex { point: p });
-                idx
-            })
-            .collect()
-    };
+    // End vertices for partial revolution (distinct from start)
+    let end_vi: Vec<usize> = rot_pts
+        .iter()
+        .map(|&p| {
+            let idx = result.vertices.len();
+            result.vertices.push(Vertex { point: p });
+            idx
+        })
+        .collect();
 
-    // Create cap faces (bottom = original profile, top = rotated) for partial revolution
+    // Cap faces (bottom = original profile, top = rotated profile)
     let mut bottom_cap = Vec::new();
     let mut top_cap = Vec::new();
-    if !full_revolution {
+    {
         // Bottom cap: original profile
         let bot_pts_ref = &profile_pts;
         let bot_face = {
@@ -459,7 +794,7 @@ pub fn revolve_with_history(
                 let j = (i + 1) % n;
                 let a = bot_pts_ref[i];
                 let b = bot_pts_ref[j];
-                let line = rcad_kernel::geom::Curve3::Line(Line3 {
+                let line = Curve3::Line(Line3 {
                     origin: a,
                     direction: (b - a).normalize_or_zero(),
                 });
@@ -493,7 +828,7 @@ pub fn revolve_with_history(
                 let j = (i + 1) % n;
                 let a = top_pts_ref[i];
                 let b = top_pts_ref[j];
-                let line = rcad_kernel::geom::Curve3::Line(Line3 {
+                let line = Curve3::Line(Line3 {
                     origin: a,
                     direction: (b - a).normalize_or_zero(),
                 });

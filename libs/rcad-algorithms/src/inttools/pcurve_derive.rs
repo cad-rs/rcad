@@ -5,6 +5,7 @@
 //! and returns the exact [`Curve2d`] that represents that intersection in the
 //! surface's (u, v) parameter domain.
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
@@ -36,7 +37,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
         .normalize()
         .dot(plane.normal.normalize())
         .abs();
-    if (normal_dot - 1.0).abs() < 1e-6 {
+    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
         // Circle lies in the plane → analytic Circle2d.
         let diff = circle.center - plane.origin;
         let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
@@ -75,7 +76,7 @@ pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
     let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
 
     let major_proj = DVec2::new(ellipse.major_dir.dot(u_axis), ellipse.major_dir.dot(v_axis));
-    let major_dir_2d = if major_proj.length() > 1e-12 {
+    let major_dir_2d = if major_proj.length() > TOLERANCE_LEN_MIN {
         major_proj.normalize()
     } else {
         DVec2::X
@@ -101,7 +102,7 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
     let origin_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
 
     let dir_2d = DVec2::new(line.direction.dot(u_axis), line.direction.dot(v_axis));
-    let direction_2d = if dir_2d.length() > 1e-12 {
+    let direction_2d = if dir_2d.length() > TOLERANCE_LEN_MIN {
         dir_2d.normalize()
     } else {
         DVec2::X
@@ -246,7 +247,7 @@ fn sampled_curve_pcurve_on_cone(
 pub fn circle_pcurve_on_cone(circle: &Circle3, cone: &ConicalSurface) -> Curve2d {
     let axis = cone.axis_dir();
     let normal_dot = circle.normal.normalize().dot(axis).abs();
-    if (normal_dot - 1.0).abs() < 1e-6 {
+    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
         let slant = cone.slant_from_axial((circle.center - cone.apex).dot(axis));
         return Curve2d::Line(Line2d {
             origin: DVec2::new(0.0, slant),
@@ -260,7 +261,7 @@ pub fn line_pcurve_on_cone(line: &Line3, cone: &ConicalSurface) -> Curve2d {
     let uv0 = cone_uv_from_point(line.origin, cone);
     let uv1 = cone_uv_from_point(line.origin + line.direction, cone);
     let du = (uv1.x - uv0.x).abs().min((uv1.x - uv0.x + std::f64::consts::TAU).abs());
-    if du < 1e-6 {
+    if du < TOLERANCE_MESH_LEGACY {
         let dir_v = if uv1.y >= uv0.y { 1.0 } else { -1.0 };
         return Curve2d::Line(Line2d {
             origin: uv0,
@@ -338,7 +339,7 @@ pub fn fallback_pcurve_by_projection(
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
             let d = b - a;
-            let dir = if d.length_squared() > 1e-24 {
+            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
                 d.normalize()
             } else {
                 DVec2::X
@@ -413,7 +414,7 @@ mod tests {
 
         match pcurve {
             Curve2d::Circle(c) => {
-                assert!((c.radius - 3.0).abs() < 1e-9, "radius={}", c.radius);
+                assert!((c.radius - 3.0).abs() < TOLERANCE_COORD_SUB, "radius={}", c.radius);
             }
             other => panic!("expected Circle2d, got {other:?}"),
         }
@@ -440,19 +441,19 @@ mod tests {
             Curve2d::Line(l) => {
                 let expected_phi = (0.5_f64).acos(); // π/3
                 assert!(
-                    (l.origin.y - expected_phi).abs() < 1e-9,
+                    (l.origin.y - expected_phi).abs() < TOLERANCE_COORD_SUB,
                     "phi={}, expected {expected_phi}",
                     l.origin.y
                 );
                 // Origin x starts at -π so the line spans [-π, +π] over [0, 2π] sampling.
                 assert!(
-                    (l.origin.x + PI).abs() < 1e-9,
+                    (l.origin.x + PI).abs() < TOLERANCE_COORD_SUB,
                     "expected origin.x = -π, got {}",
                     l.origin.x
                 );
                 // Direction must be horizontal (constant colatitude).
-                assert!((l.direction.x - 1.0).abs() < 1e-9);
-                assert!(l.direction.y.abs() < 1e-9);
+                assert!((l.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!(l.direction.y.abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected Line2d, got {other:?}"),
         }
@@ -478,12 +479,12 @@ mod tests {
         match pcurve {
             Curve2d::Line(l) => {
                 assert!(
-                    (l.origin.y - 3.0).abs() < 1e-9,
+                    (l.origin.y - 3.0).abs() < TOLERANCE_COORD_SUB,
                     "h={}, expected 3.0",
                     l.origin.y
                 );
-                assert!((l.direction.x - 1.0).abs() < 1e-9);
-                assert!(l.direction.y.abs() < 1e-9);
+                assert!((l.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!(l.direction.y.abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected Line2d, got {other:?}"),
         }
@@ -508,9 +509,9 @@ mod tests {
         let pcurve = circle_pcurve_on_cone(&circle, &cone);
         match pcurve {
             Curve2d::Line(l) => {
-                assert!((l.origin.y - slant).abs() < 1e-9);
-                assert!((l.direction.x - 1.0).abs() < 1e-9);
-                assert!(l.direction.y.abs() < 1e-9);
+                assert!((l.origin.y - slant).abs() < TOLERANCE_COORD_SUB);
+                assert!((l.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!(l.direction.y.abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected Line2d, got {other:?}"),
         }
@@ -535,8 +536,8 @@ mod tests {
                 // The origin's u coordinate depends on the arbitrary perpendicular chosen,
                 // so we only verify that the line is a v-line (direction purely in v)
                 // by checking that the x direction is zero.
-                assert!(l.direction.x.abs() < 1e-9, "v-line should have zero u direction");
-                assert!((l.direction.y - 1.0).abs() < 1e-9, "v-line should have unit v direction");
+                assert!(l.direction.x.abs() < TOLERANCE_COORD_SUB, "v-line should have zero u direction");
+                assert!((l.direction.y - 1.0).abs() < TOLERANCE_COORD_SUB, "v-line should have unit v direction");
             }
             other => panic!("expected Line2d, got {other:?}"),
         }
@@ -604,12 +605,12 @@ mod tests {
             Curve2d::Line(l) => {
                 let expected_phi = std::f64::consts::PI / 2.0;
                 assert!(
-                    (l.origin.y - expected_phi).abs() < 1e-9,
+                    (l.origin.y - expected_phi).abs() < TOLERANCE_COORD_SUB,
                     "phi={}, expected π/2",
                     l.origin.y
                 );
-                assert!((l.direction.x - 1.0).abs() < 1e-9);
-                assert!(l.direction.y.abs() < 1e-9);
+                assert!((l.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!(l.direction.y.abs() < TOLERANCE_COORD_SUB);
                 // origin.x = longitude of circle.point_at(0) — just check it's finite
                 assert!(l.origin.x.is_finite());
             }

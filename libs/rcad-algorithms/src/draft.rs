@@ -18,6 +18,7 @@
 //! - **Conical faces**: Inherit draft angle from base, adjusted for cone angle
 //! - **Spherical/toroidal faces**: Limited support via approximation
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
@@ -25,7 +26,7 @@ use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use std::collections::HashMap;
 
 /// Default tolerance for geometric operations.
-const TOLERANCE: f64 = 1e-9;
+const TOLERANCE: f64 = TOLERANCE_COORD_SUB;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Parameters and Configuration
@@ -96,7 +97,7 @@ impl Default for DraftValidationConfig {
         Self {
             min_draft_angle: 0.5_f64.to_radians(),  // 0.5 degrees minimum
             max_draft_angle: 45.0_f64.to_radians(), // 45 degrees maximum
-            undercut_tolerance: 1e-6,
+            undercut_tolerance: TOLERANCE_MESH_LEGACY,
             check_self_intersection: true,
             detect_internal_features: true,
         }
@@ -297,7 +298,7 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
         let n = face.normal.normalize();
         let axis = n.cross(pull);
         let axis_len = axis.length();
-        if axis_len < 1e-10 {
+        if axis_len < TOLERANCE_LINEAR_ULTRA_STRICT {
             return n;
         }
         let k = axis / axis_len;
@@ -399,7 +400,7 @@ pub fn draft_cylindrical_face(
         let h = (v.point - neutral).dot(pull);
         // For a cylinder, the radial displacement is proportional to height
         let radial_dir = (v.point - cyl.origin).reject_from(axis).normalize_or(DVec3::ZERO);
-        if radial_dir.length() > 1e-10 {
+        if radial_dir.length() > TOLERANCE_LINEAR_ULTRA_STRICT {
             let radial_displacement = h * tan_angle;
             new_pts[vi] = v.point + radial_dir * radial_displacement;
         }
@@ -469,7 +470,7 @@ pub fn draft_conical_face(
             let new_radial_dist = axial_dist * tan_effective;
             let radial_change = new_radial_dist - radial_dist;
             let radial_dir = radial_vec.reject_from(axis).normalize_or(DVec3::ZERO);
-            if radial_dir.length() > 1e-10 {
+            if radial_dir.length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                 new_pts[vi] = v.point + radial_dir * radial_change;
             }
         }
@@ -822,7 +823,7 @@ fn compute_rotated_normal(normal: &DVec3, pull: DVec3, angle: f64) -> DVec3 {
     let n = normal.normalize();
     let axis = n.cross(pull);
     let axis_len = axis.length();
-    if axis_len < 1e-10 {
+    if axis_len < TOLERANCE_LINEAR_ULTRA_STRICT {
         return n;
     }
     let k = axis / axis_len;
@@ -1307,10 +1308,10 @@ mod tests {
 
         // Vertices at z=0 (on the neutral plane) should not move
         for (i, v) in brep.vertices.iter().enumerate() {
-            if (v.point.z - 0.0).abs() < 1e-9 {
+            if (v.point.z - 0.0).abs() < TOLERANCE_COORD_SUB {
                 let new_v = &result.vertices[i];
                 assert!(
-                    (new_v.point.z - 0.0).abs() < 1e-9,
+                    (new_v.point.z - 0.0).abs() < TOLERANCE_COORD_SUB,
                     "vertex {i} on neutral plane should stay at z=0, got z={}",
                     new_v.point.z
                 );

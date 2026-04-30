@@ -8,7 +8,10 @@
 //! **Gap/overlap detection** (`detect_gaps_overlaps`): reports pairs of faces
 //! from two BReps that are either too close (gap) or interpenetrating (overlap),
 //! using face bounding-box pre-filtering and `closest_point_on_surface`.
-
+//!
+//! **Phase C:** UV trim endpoint closure uses [`crate::tolerance::uv_polyline_trim_closed_len_sq_from_uv_poly`]
+//! (scales with the face UV polygon bbox; ceiling [`UV_POLYLINE_TRIM_LEGACY_SQ`]).
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::geom::*;
@@ -965,7 +968,7 @@ fn point_near_polygon_2d(poly: &[DVec2], pt: DVec2, margin: f64) -> bool {
         let b = poly[j];
         let ab = b - a;
         let len_sq = ab.length_squared();
-        let t = if len_sq < 1e-14 { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
+        let t = if len_sq < TOLERANCE_FLOAT_LOOSE { 0.0 } else { ((pt - a).dot(ab) / len_sq).clamp(0.0, 1.0) };
         let closest = a + t * ab;
         if (pt - closest).length() < margin {
             return true;
@@ -1002,7 +1005,8 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
 
     let trim_start = trim[0];
     let trim_end = trim[trim.len() - 1];
-    let is_closed = (trim_start - trim_end).length_squared() < 1e-6;
+    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
+    let is_closed = (trim_start - trim_end).length_squared() < close_sq;
     if !is_closed {
         return None;
     }
@@ -1023,12 +1027,12 @@ fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) 
     if u_span < 0.9 * u_period {
         return None;
     }
-    if poly_v_span <= 1e-12 || v_span > 0.1 * poly_v_span {
+    if poly_v_span <= TOLERANCE_LEN_MIN || v_span > 0.1 * poly_v_span {
         return None;
     }
 
     let v_level = trim.iter().map(|p| p.y).sum::<f64>() / trim.len() as f64;
-    if v_level <= poly_v_min + 1e-9 || v_level >= poly_v_max - 1e-9 {
+    if v_level <= poly_v_min + TOLERANCE_COORD_SUB || v_level >= poly_v_max - TOLERANCE_COORD_SUB {
         return None;
     }
 
@@ -1048,15 +1052,16 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let trim_start = trim[0];
     let trim_end = trim[trim.len() - 1];
 
-    // Detect closed trim
-    let is_closed_trim = (trim_start - trim_end).length_squared() < 1e-6;
+    // Detect closed trim (UV threshold scales with face bbox; phase C)
+    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
+    let is_closed_trim = (trim_start - trim_end).length_squared() < close_sq;
     if is_closed_trim {
         let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
         let is_inside = point_in_polygon_2d(poly, trim_centroid);
         if is_inside {
             let trim_dedup: Vec<DVec2> = {
                 let mut v = trim.to_vec();
-                if v.len() > 1 && (v[0] - v[v.len() - 1]).length_squared() < 1e-12 {
+                if v.len() > 1 && (v[0] - v[v.len() - 1]).length_squared() < TOLERANCE_LEN_MIN {
                     v.pop();
                 }
                 v
@@ -1081,7 +1086,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             let b = poly[j];
             let ab = b - a;
             let len_sq = ab.dot(ab);
-            let t = if len_sq < 1e-14 {
+            let t = if len_sq < TOLERANCE_FLOAT_LOOSE {
                 0.0
             } else {
                 ((q - a).dot(ab) / len_sq).clamp(0.0, 1.0)
@@ -1137,11 +1142,11 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
         let mut result: Vec<DVec2> = Vec::new();
         for p in v {
-            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > 1e-18 {
+            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
                 result.push(p);
             }
         }
-        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < 1e-18 {
+        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
             result.pop();
         }
         result

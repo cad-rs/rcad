@@ -11,12 +11,24 @@ pub struct EdgeFaceHit {
 /// Intersect a line segment (bounded by t_range) with a plane.
 /// Does NOT check face boundary containment — caller must do that.
 pub fn intersect_line_plane(line: &Line3, t_range: [f64; 2], plane: &Plane) -> Option<EdgeFaceHit> {
+    intersect_line_plane_with_tol(line, t_range, plane, TOLERANCE_ABS)
+}
+
+/// Same as [`intersect_line_plane`] with explicit edge-parameter margin (minimum [`TOLERANCE_ABS`]).
+/// Parallel/near-parallel denom threshold stays strict at [`TOLERANCE_ABS`].
+pub fn intersect_line_plane_with_tol(
+    line: &Line3,
+    t_range: [f64; 2],
+    plane: &Plane,
+    param_tol: f64,
+) -> Option<EdgeFaceHit> {
+    let ptol = param_tol.max(TOLERANCE_ABS);
     let denom = line.direction.dot(plane.normal);
     if denom.abs() < TOLERANCE_ABS {
         return None;
     }
     let t = (plane.origin - line.origin).dot(plane.normal) / denom;
-    if t < t_range[0] - TOLERANCE_ABS || t > t_range[1] + TOLERANCE_ABS {
+    if t < t_range[0] - ptol || t > t_range[1] + ptol {
         return None;
     }
     let point = line.origin + line.direction * t;
@@ -38,9 +50,21 @@ pub fn plane_local_basis(plane: &Plane) -> (DVec3, DVec3) {
 /// Check if `point` lies inside a planar face whose boundary vertices are given
 /// in order. Uses 2D projection + ray-casting.
 pub fn point_in_planar_face(point: DVec3, plane: &Plane, face_verts: &[DVec3]) -> bool {
+    point_in_planar_face_with_tol(point, plane, face_verts, TOLERANCE_ABS)
+}
+
+/// Same as [`point_in_planar_face`], with a 2D ray-cast margin (minimum [`TOLERANCE_ABS`]).
+/// Use the same magnitude as pave [`bopds::ds::DS::fuzzy_tol`] for consistent V–F containment.
+pub fn point_in_planar_face_with_tol(
+    point: DVec3,
+    plane: &Plane,
+    face_verts: &[DVec3],
+    geom_tol: f64,
+) -> bool {
     if face_verts.len() < 3 {
         return false;
     }
+    let eps = geom_tol.max(TOLERANCE_ABS);
     let (u_axis, v_axis) = plane_local_basis(plane);
 
     let project = |p: DVec3| -> (f64, f64) {
@@ -51,18 +75,26 @@ pub fn point_in_planar_face(point: DVec3, plane: &Plane, face_verts: &[DVec3]) -
     let (px, py) = project(point);
     let poly: Vec<(f64, f64)> = face_verts.iter().map(|v| project(*v)).collect();
 
-    ray_cast_contains(px, py, &poly)
+    ray_cast_contains_with_tol(px, py, &poly, eps)
 }
 
-fn ray_cast_contains(px: f64, py: f64, poly: &[(f64, f64)]) -> bool {
+fn ray_cast_contains_with_tol(px: f64, py: f64, poly: &[(f64, f64)], eps: f64) -> bool {
     let n = poly.len();
     let mut inside = false;
     let mut j = n - 1;
     for i in 0..n {
         let (xi, yi) = poly[i];
         let (xj, yj) = poly[j];
-        if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
-            inside = !inside;
+        if (yi > py) != (yj > py) {
+            let dy = yj - yi;
+            if dy.abs() < eps {
+                j = i;
+                continue;
+            }
+            let xint = (xj - xi) * (py - yi) / dy + xi;
+            if px < xint + eps {
+                inside = !inside;
+            }
         }
         j = i;
     }
@@ -77,6 +109,18 @@ pub fn clip_line_to_convex_polygon(
     plane: &Plane,
     face_verts: &[DVec3],
 ) -> Option<(f64, f64)> {
+    clip_line_to_convex_polygon_with_tol(line, plane, face_verts, TOLERANCE_ABS)
+}
+
+/// Same as [`clip_line_to_convex_polygon`] with clip margins scaled from `geom_tol`
+/// (minimum [`TOLERANCE_ABS`] for parallel-edge and empty-interval tests).
+pub fn clip_line_to_convex_polygon_with_tol(
+    line: &Line3,
+    plane: &Plane,
+    face_verts: &[DVec3],
+    geom_tol: f64,
+) -> Option<(f64, f64)> {
+    let eps = geom_tol.max(TOLERANCE_ABS);
     if face_verts.len() < 3 {
         return None;
     }
@@ -125,9 +169,9 @@ pub fn clip_line_to_convex_polygon(
         let denom = nx * line_u + ny * line_v;
         let num = nx * (origin_u - ax) + ny * (origin_v - ay);
 
-        if denom.abs() < TOLERANCE_ABS {
+        if denom.abs() < eps {
             // Line parallel to edge
-            if num > TOLERANCE_ABS {
+            if num > eps {
                 // Line is outside this edge
                 return None;
             }
@@ -144,7 +188,7 @@ pub fn clip_line_to_convex_polygon(
         }
     }
 
-    if t_enter > t_exit + TOLERANCE_ABS {
+    if t_enter > t_exit + eps {
         return None;
     }
     Some((t_enter, t_exit))
@@ -223,7 +267,7 @@ mod tests {
             direction: DVec3::Y,
         };
         let (t_min, t_max) = clip_line_to_convex_polygon(&line, &plane, &verts).unwrap();
-        assert!((t_min - 1.0).abs() < 1e-6, "t_min={t_min}");
-        assert!((t_max - 2.0).abs() < 1e-6, "t_max={t_max}");
+        assert!((t_min - 1.0).abs() < TOLERANCE_MESH_LEGACY, "t_min={t_min}");
+        assert!((t_max - 2.0).abs() < TOLERANCE_MESH_LEGACY, "t_max={t_max}");
     }
 }

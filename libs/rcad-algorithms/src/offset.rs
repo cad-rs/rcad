@@ -49,7 +49,7 @@ use rcad_kernel::{
     geom::{Curve3, Surface3, Line3, Plane, Circle3, Ellipse3, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, OffsetSurface},
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
@@ -287,7 +287,7 @@ impl VariableThickness {
                     reason: format!("face index {} out of range (0..{})", ft.face_index, face_count),
                 });
             }
-            if ft.thickness.abs() < 1e-12 {
+            if ft.thickness.abs() < TOLERANCE_LEN_MIN {
                 return Err(OffsetError::InvalidVariableThickness {
                     face_index: ft.face_index,
                     thickness: ft.thickness,
@@ -295,7 +295,7 @@ impl VariableThickness {
                 });
             }
         }
-        if self.default_thickness.abs() < 1e-12 {
+        if self.default_thickness.abs() < TOLERANCE_LEN_MIN {
             return Err(OffsetError::InvalidVariableThickness {
                 face_index: 0,
                 thickness: self.default_thickness,
@@ -334,7 +334,7 @@ impl Default for SelfIntersectionConfig {
             auto_repair: false,
             max_repair_attempts: 5,
             reduction_factor: 0.8,
-            min_offset_distance: 1e-6,
+            min_offset_distance: TOLERANCE_MESH_LEGACY,
             allow_partial_results: false,
         }
     }
@@ -422,8 +422,8 @@ pub struct QualityThresholds {
 impl Default for QualityThresholds {
     fn default() -> Self {
         Self {
-            min_wall_thickness: 1e-6,
-            max_deviation: 1e-4,
+            min_wall_thickness: TOLERANCE_MESH_LEGACY,
+            max_deviation: TOLERANCE_RETRY_LADDER_COARSE,
             allow_self_intersection: false,
             max_degenerate_ratio: 0.1,
         }
@@ -470,14 +470,14 @@ impl Default for OffsetOptions {
             tolerance: TOLERANCE_ABS,
             check_self_intersection: true,
             auto_repair: false,
-            min_feature_size: 1e-6,
+            min_feature_size: TOLERANCE_MESH_LEGACY,
             join_type: JoinType::default(),
             variable_thickness: None,
             self_intersection_config: SelfIntersectionConfig::default(),
             quality_thresholds: QualityThresholds::default(),
-            approximation_tolerance: 1e-4,
+            approximation_tolerance: TOLERANCE_RETRY_LADDER_COARSE,
             check_wall_thickness: false,
-            min_wall_thickness: 1e-6,
+            min_wall_thickness: TOLERANCE_MESH_LEGACY,
         }
     }
 }
@@ -631,7 +631,7 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
             let cos_a = c.half_angle_rad.cos();
 
             // Axial shift of the apex along the cone axis
-            let axial_shift = if sin_a.abs() > 1e-10 { d / sin_a } else { d };
+            let axial_shift = if sin_a.abs() > TOLERANCE_LINEAR_ULTRA_STRICT { d / sin_a } else { d };
 
             // New radius at the reference point (apex field)
             let new_radius = c.radius + d * cos_a;
@@ -913,7 +913,7 @@ pub fn intersect_offset_cylinder_cylinder(
         }
         crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
             // Fall back to numerical approximation
-            intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2)
+            intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2, d1, d2)
         }
     }
 }
@@ -1060,7 +1060,7 @@ pub fn intersect_offset_cylinder_sphere(
         }
         crate::inttools::sphere_cylinder::SphereCylinderResult::General => {
             // Fall back to numerical approximation
-            intersect_cylinder_sphere_numerical(&offset_cyl, &offset_sphere)
+            intersect_cylinder_sphere_numerical(&offset_cyl, &offset_sphere, d_cyl, d_sphere)
         }
     }
 }
@@ -1106,16 +1106,29 @@ pub fn intersect_offset_surfaces(
 // Numerical Intersection Fallbacks
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[inline]
+fn offset_numeric_geom_floor(da: f64, db: f64) -> f64 {
+    if !(da.is_finite() && db.is_finite()) {
+        return TOLERANCE_ABS;
+    }
+    da.abs().max(db.abs()).max(TOLERANCE_ABS)
+}
+
 /// Numerical approximation of cylinder-cylinder intersection using marching.
 fn intersect_cylinders_numerical(
     cyl1: &CylindricalSurface,
     cyl2: &CylindricalSurface,
+    offset_d1: f64,
+    offset_d2: f64,
 ) -> OffsetIntersectionCurve {
     let surf1 = Surface3::Cylinder(*cyl1);
     let surf2 = Surface3::Cylinder(*cyl2);
 
     // Use the existing marching algorithm
-    let result = crate::inttools::intss::intersect_surfaces_with_density(&surf1, &surf2, 64);
+    let tol_floor = offset_numeric_geom_floor(offset_d1, offset_d2);
+    let result = crate::inttools::intss::intersect_surfaces_with_density_tol(
+        &surf1, &surf2, 64, tol_floor,
+    );
 
     if result.curves.is_empty() {
         return OffsetIntersectionCurve::NoIntersection;
@@ -1140,11 +1153,16 @@ fn intersect_cylinders_numerical(
 fn intersect_cylinder_sphere_numerical(
     cyl: &CylindricalSurface,
     sphere: &SphericalSurface,
+    offset_d_cyl: f64,
+    offset_d_sphere: f64,
 ) -> OffsetIntersectionCurve {
     let surf1 = Surface3::Cylinder(*cyl);
     let surf2 = Surface3::Sphere(*sphere);
 
-    let result = crate::inttools::intss::intersect_surfaces_with_density(&surf1, &surf2, 64);
+    let tol_floor = offset_numeric_geom_floor(offset_d_cyl, offset_d_sphere);
+    let result = crate::inttools::intss::intersect_surfaces_with_density_tol(
+        &surf1, &surf2, 64, tol_floor,
+    );
 
     if result.curves.is_empty() {
         return OffsetIntersectionCurve::NoIntersection;
@@ -1182,7 +1200,13 @@ fn intersect_surfaces_numerical(
     };
 
     // Use existing intersection
-    let result = crate::inttools::intss::intersect_surfaces_with_density(&offset_surf1, &offset_surf2, 64);
+    let tol_floor = offset_numeric_geom_floor(d1, d2);
+    let result = crate::inttools::intss::intersect_surfaces_with_density_tol(
+        &offset_surf1,
+        &offset_surf2,
+        64,
+        tol_floor,
+    );
 
     if result.curves.is_empty() {
         return OffsetIntersectionCurve::NoIntersection;
@@ -1227,7 +1251,7 @@ fn intersect_surfaces_numerical(
 ///
 /// # Precision
 ///
-/// Target precision is 1e-10 for planes and 1e-8 for curved surfaces.
+/// Target precision is TOLERANCE_LINEAR_ULTRA_STRICT for planes and TOLERANCE_LINEAR_RELAX_8 for curved surfaces.
 pub fn project_point_to_surface_uv(
     point: DVec3,
     surf: &Surface3,
@@ -1445,7 +1469,7 @@ fn project_point_to_cone_uv(
     //             axial_from_slant = slant * cos(half_angle)
     // Given axial distance, compute slant:
     let cos_half = cone.half_angle_rad.cos();
-    let slant = if cos_half.abs() > 1e-12 {
+    let slant = if cos_half.abs() > TOLERANCE_LEN_MIN {
         axial / cos_half
     } else {
         0.0
@@ -1548,7 +1572,7 @@ fn refine_torus_uv(
     hint_uv: Option<[f64; 2]>,
 ) -> [f64; 2] {
     let mut uv = initial_uv;
-    let tol = 1e-10;
+    let tol = TOLERANCE_LINEAR_ULTRA_STRICT;
     let max_iter = 10;
 
     let axis = torus.axis.normalize_or(DVec3::Z);
@@ -1586,7 +1610,7 @@ fn refine_torus_uv(
         let c = dv.dot(dv);
 
         let det = a * c - b * b;
-        if det.abs() < 1e-20 {
+        if det.abs() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             break;
         }
 
@@ -1615,7 +1639,7 @@ fn refine_torus_uv(
         let p = tube_center + torus.minor_radius * (cos_v * radial + sin_v * axis);
         let final_err = (point - p).length_squared();
 
-        if final_err > 1e-6 {
+        if final_err > TOLERANCE_MESH_LEGACY {
             // Fall back to hint-based approach
             let adjusted_u = adjust_angle_to_hint(uv[0], hint_u);
             return [adjusted_u, uv[1]];
@@ -1642,7 +1666,7 @@ fn project_point_to_parametric_surface(
 
     let tol = TOLERANCE_ABS;
     let max_iter = 30;
-    let h = 1e-6; // Finite difference step
+    let h = TOLERANCE_MESH_LEGACY; // Finite difference step
 
     // Track best solution for fallback
     let mut best_uv = uv;
@@ -1678,7 +1702,7 @@ fn project_point_to_parametric_surface(
         let c = dv.dot(dv);
 
         let det = a * c - b * b;
-        if det.abs() < 1e-12 {
+        if det.abs() < TOLERANCE_LEN_MIN {
             // Singular Jacobian - try a small perturbation
             if iter < max_iter - 1 {
                 uv[0] += 0.01 * (rand_det() - 0.5);
@@ -2810,7 +2834,7 @@ fn offset_shell_with_options_impl(
 
     let distance = opts.distance;
 
-    if distance.abs() < 1e-12 {
+    if distance.abs() < TOLERANCE_LEN_MIN {
         return Err(OffsetError::ZeroDistance);
     }
 
@@ -2955,7 +2979,7 @@ pub fn offset_shell_with_options(
 ) -> Result<BRep, OffsetError> {
     let distance = opts.distance;
 
-    if distance.abs() < 1e-12 {
+    if distance.abs() < TOLERANCE_LEN_MIN {
         return Err(OffsetError::ZeroDistance);
     }
 
@@ -3087,7 +3111,7 @@ pub fn offset_solid_with_options(
 ) -> Result<BRep, OffsetError> {
     let distance = opts.distance;
 
-    if distance.abs() < 1e-12 {
+    if distance.abs() < TOLERANCE_LEN_MIN {
         return Err(OffsetError::ZeroDistance);
     }
 
@@ -3324,7 +3348,7 @@ pub fn hollow_solid_with_options(
             let p3 = result.vertices[f_vs].point;
 
             let normal = (p1 - p0).cross(p3 - p0).normalize_or(DVec3::Z);
-            if normal.length() < 1e-10 {
+            if normal.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 continue;
             }
 
@@ -3375,7 +3399,7 @@ pub fn hollow_solid_with_options(
 ///
 /// A new BRep with offset geometry.
 pub fn offset_shape(brep: &BRep, opts: OffsetOptions) -> Result<OffsetResult, OffsetError> {
-    if opts.distance.abs() < 1e-12 {
+    if opts.distance.abs() < TOLERANCE_LEN_MIN {
         return Err(OffsetError::ZeroDistance);
     }
 
@@ -3446,8 +3470,8 @@ mod tests {
         let offset = offset_surface(&plane, 0.5).unwrap();
 
         if let Surface3::Plane(p) = offset {
-            assert!((p.origin.z - 0.5).abs() < 1e-9, "plane should translate by offset distance");
-            assert!((p.normal - DVec3::Z).length() < 1e-9, "normal should be unchanged");
+            assert!((p.origin.z - 0.5).abs() < TOLERANCE_COORD_SUB, "plane should translate by offset distance");
+            assert!((p.normal - DVec3::Z).length() < TOLERANCE_COORD_SUB, "normal should be unchanged");
         } else {
             panic!("expected Plane");
         }
@@ -3464,7 +3488,7 @@ mod tests {
         let offset = offset_surface(&sphere, 0.5).unwrap();
 
         if let Surface3::Sphere(s) = offset {
-            assert!((s.radius - 2.5).abs() < 1e-9, "radius should increase by offset");
+            assert!((s.radius - 2.5).abs() < TOLERANCE_COORD_SUB, "radius should increase by offset");
         } else {
             panic!("expected Sphere");
         }
@@ -3481,7 +3505,7 @@ mod tests {
         let offset = offset_surface(&cylinder, 0.3).unwrap();
 
         if let Surface3::Cylinder(c) = offset {
-            assert!((c.radius - 1.3).abs() < 1e-9, "radius should increase by offset");
+            assert!((c.radius - 1.3).abs() < TOLERANCE_COORD_SUB, "radius should increase by offset");
         } else {
             panic!("expected Cylinder");
         }
@@ -3520,12 +3544,12 @@ mod tests {
     #[test]
     fn offset_options_builder() {
         let opts = OffsetOptions::new(0.5)
-            .with_tolerance(1e-6)
+            .with_tolerance(TOLERANCE_MESH_LEGACY)
             .with_self_intersection_check(false)
             .with_auto_repair(true);
 
         assert_eq!(opts.distance, 0.5);
-        assert!((opts.tolerance - 1e-6).abs() < 1e-12);
+        assert!((opts.tolerance - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
         assert!(!opts.check_self_intersection);
         assert!(opts.auto_repair);
     }
@@ -3706,8 +3730,8 @@ mod tests {
         let offset = offset_surface(&torus, 0.1).unwrap();
 
         if let Surface3::Torus(t) = offset {
-            assert!((t.minor_radius - 0.6).abs() < 1e-9, "minor radius should increase by offset");
-            assert!((t.major_radius - 2.0).abs() < 1e-9, "major radius should be unchanged");
+            assert!((t.minor_radius - 0.6).abs() < TOLERANCE_COORD_SUB, "minor radius should increase by offset");
+            assert!((t.major_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "major radius should be unchanged");
         } else {
             panic!("expected Torus");
         }
@@ -3890,7 +3914,7 @@ mod tests {
         assert!(config.detect);
         assert!(!config.auto_repair);
         assert_eq!(config.max_repair_attempts, 5);
-        assert!((config.reduction_factor - 0.8).abs() < 1e-10);
+        assert!((config.reduction_factor - 0.8).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -3912,7 +3936,7 @@ mod tests {
     fn offset_quality_check_thresholds() {
         let quality = OffsetQuality {
             min_wall_thickness: 0.5,
-            max_deviation: 1e-5,
+            max_deviation: TOLERANCE_RETRY_LADDER_MID,
             degenerate_edge_count: 0,
             self_intersection_count: 0,
             face_area_ratio: 1.0,
@@ -3928,7 +3952,7 @@ mod tests {
     #[test]
     fn offset_quality_check_thresholds_failure() {
         let quality = OffsetQuality {
-            min_wall_thickness: 1e-9, // Below threshold
+            min_wall_thickness: TOLERANCE_COORD_SUB, // Below threshold
             max_deviation: 0.0,
             degenerate_edge_count: 0,
             self_intersection_count: 0,
@@ -3946,10 +3970,10 @@ mod tests {
     fn quality_thresholds_default() {
         let thresholds = QualityThresholds::default();
 
-        assert!((thresholds.min_wall_thickness - 1e-6).abs() < 1e-12);
-        assert!((thresholds.max_deviation - 1e-4).abs() < 1e-12);
+        assert!((thresholds.min_wall_thickness - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
+        assert!((thresholds.max_deviation - TOLERANCE_RETRY_LADDER_COARSE).abs() < TOLERANCE_LEN_MIN);
         assert!(!thresholds.allow_self_intersection);
-        assert!((thresholds.max_degenerate_ratio - 0.1).abs() < 1e-12);
+        assert!((thresholds.max_degenerate_ratio - 0.1).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4003,7 +4027,7 @@ mod tests {
         crate::geom_populate::populate_box_geom(&mut brep2);
 
         let ratio = compute_face_area_ratio(&brep1, &brep2);
-        assert!((ratio - 1.0).abs() < 1e-10, "same box should have ratio 1.0");
+        assert!((ratio - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "same box should have ratio 1.0");
     }
 
     #[test]
@@ -4023,7 +4047,7 @@ mod tests {
         crate::geom_populate::populate_box_geom(&mut brep2);
 
         let ratio = compute_edge_length_ratio(&brep1, &brep2);
-        assert!((ratio - 1.0).abs() < 1e-10, "same box should have ratio 1.0");
+        assert!((ratio - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "same box should have ratio 1.0");
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -4078,16 +4102,16 @@ mod tests {
         let opts = OffsetOptions::new(0.5)
             .with_quality_thresholds(thresholds.clone());
 
-        assert!((opts.quality_thresholds.min_wall_thickness - 0.1).abs() < 1e-12);
+        assert!((opts.quality_thresholds.min_wall_thickness - 0.1).abs() < TOLERANCE_LEN_MIN);
         assert!(opts.quality_thresholds.allow_self_intersection);
     }
 
     #[test]
     fn offset_options_with_approximation_tolerance() {
         let opts = OffsetOptions::new(0.5)
-            .with_approximation_tolerance(1e-6);
+            .with_approximation_tolerance(TOLERANCE_MESH_LEGACY);
 
-        assert!((opts.approximation_tolerance - 1e-6).abs() < 1e-12);
+        assert!((opts.approximation_tolerance - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4096,7 +4120,7 @@ mod tests {
             .with_wall_thickness_check(0.1);
 
         assert!(opts.check_wall_thickness);
-        assert!((opts.min_wall_thickness - 0.1).abs() < 1e-12);
+        assert!((opts.min_wall_thickness - 0.1).abs() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -4201,7 +4225,7 @@ mod tests {
             .with_join_type(JoinType::Arc)
             .with_self_intersection_check(true)
             .with_wall_thickness_check(0.01)
-            .with_approximation_tolerance(1e-5);
+            .with_approximation_tolerance(TOLERANCE_RETRY_LADDER_MID);
 
         let result = offset_shape(&brep, opts).unwrap();
 
@@ -4248,11 +4272,11 @@ mod tests {
         match intersect_offset_sphere_sphere(&s1, &s2, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
                 // Circle should be perpendicular to line of centers (X-axis)
-                assert!((c.center.x - 1.0).abs() < 1e-9); // Midpoint
-                assert!((c.normal.x.abs() - 1.0).abs() < 1e-9);
+                assert!((c.center.x - 1.0).abs() < TOLERANCE_COORD_SUB); // Midpoint
+                assert!((c.normal.x.abs() - 1.0).abs() < TOLERANCE_COORD_SUB);
                 // Radius: sqrt(r² - a²) where a = d/2 = 1, r = 3
                 let expected_r: f64 = (9.0_f64 - 1.0_f64).sqrt();
-                assert!((c.radius - expected_r).abs() < 1e-9);
+                assert!((c.radius - expected_r).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4272,11 +4296,11 @@ mod tests {
         // With offset 0.5 each: r1=2.5, r2=2.5, sum=5, tangent
         match intersect_offset_sphere_sphere(&s1, &s2, 0.5, 0.5) {
             OffsetIntersectionCurve::TangentPoint(pt) => {
-                assert!((pt.x - 2.5).abs() < 1e-9);
+                assert!((pt.x - 2.5).abs() < TOLERANCE_COORD_SUB);
             }
             // Circle with radius 0 is equivalent to a tangent point
-            OffsetIntersectionCurve::Circle(c) if c.radius < 1e-9 => {
-                assert!((c.center.x - 2.5).abs() < 1e-9);
+            OffsetIntersectionCurve::Circle(c) if c.radius < TOLERANCE_COORD_SUB => {
+                assert!((c.center.x - 2.5).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected TangentPoint with offset, got {other:?}"),
         }
@@ -4290,7 +4314,7 @@ mod tests {
         // Reduce both radii
         match intersect_offset_sphere_sphere(&s1, &s2, -1.0, -1.0) {
             OffsetIntersectionCurve::Circle(c) => {
-                assert!((c.radius - (4.0_f64 - 1.0_f64).sqrt()).abs() < 1e-9);
+                assert!((c.radius - (4.0_f64 - 1.0_f64).sqrt()).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle with reduced radii, got {other:?}"),
         }
@@ -4334,8 +4358,8 @@ mod tests {
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
-                assert!((c.radius - 2.0).abs() < 1e-9);
-                assert!((c.center.y - 5.0).abs() < 1e-9);
+                assert!((c.radius - 2.0).abs() < TOLERANCE_COORD_SUB);
+                assert!((c.center.y - 5.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4349,8 +4373,8 @@ mod tests {
         // Plane offset by 1 (y=1), cylinder offset by 0.5 (r=2.5)
         match intersect_offset_plane_cylinder(&plane, &cyl, 1.0, 0.5) {
             OffsetIntersectionCurve::Circle(c) => {
-                assert!((c.radius - 2.5).abs() < 1e-9);
-                assert!((c.center.y - 1.0).abs() < 1e-9);
+                assert!((c.radius - 2.5).abs() < TOLERANCE_COORD_SUB);
+                assert!((c.center.y - 1.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4388,7 +4412,7 @@ mod tests {
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::Ellipse(e) => {
-                assert!((e.minor_radius - 1.0).abs() < 1e-9);
+                assert!((e.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB);
                 assert!(e.major_radius > 1.0);
             }
             other => panic!("Expected Ellipse, got {other:?}"),
@@ -4402,7 +4426,7 @@ mod tests {
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
-                assert!((c.radius - 3.0).abs() < 1e-9);
+                assert!((c.radius - 3.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4416,7 +4440,7 @@ mod tests {
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
                 let expected_r: f64 = (9.0_f64 - 4.0_f64).sqrt();
-                assert!((c.radius - expected_r).abs() < 1e-9);
+                assert!((c.radius - expected_r).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4429,11 +4453,11 @@ mod tests {
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::TangentPoint(pt) => {
-                assert!((pt.y - 3.0).abs() < 1e-9);
+                assert!((pt.y - 3.0).abs() < TOLERANCE_COORD_SUB);
             }
-            // Degenerate circle (near-zero radius) is equivalent to a tangent point; numeric path may use ~1e-6.
-            OffsetIntersectionCurve::Circle(c) if c.radius < 5e-6 => {
-                assert!((c.center.y - 3.0).abs() < 1e-9);
+            // Degenerate circle (near-zero radius) is equivalent to a tangent point; numeric path may use ~TOLERANCE_MESH_LEGACY.
+            OffsetIntersectionCurve::Circle(c) if c.radius < 50.0 * TOLERANCE_ABS => {
+                assert!((c.center.y - 3.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("Expected TangentPoint, got {other:?}"),
         }
@@ -4460,8 +4484,8 @@ mod tests {
                 // Sphere center at z=3, R=5, cylinder r=2
                 // dz = sqrt(25-4) = sqrt(21) ≈ 4.58
                 let expected_dz: f64 = (25.0_f64 - 4.0_f64).sqrt();
-                assert!((c1.center.z - (3.0 - expected_dz)).abs() < 1e-8);
-                assert!((c2.center.z - (3.0 + expected_dz)).abs() < 1e-8);
+                assert!((c1.center.z - (3.0 - expected_dz)).abs() < TOLERANCE_LINEAR_RELAX_8);
+                assert!((c2.center.z - (3.0 + expected_dz)).abs() < TOLERANCE_LINEAR_RELAX_8);
             }
             other => panic!("Expected TwoCircles, got {other:?}"),
         }
@@ -4476,7 +4500,7 @@ mod tests {
         // A Circle with radius equal to the cylinder radius is a tangent circle
         match intersect_offset_cylinder_sphere(&cyl, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::TangentCircle(_) => {}
-            OffsetIntersectionCurve::Circle(c) if (c.radius - 2.0).abs() < 1e-9 => {}
+            OffsetIntersectionCurve::Circle(c) if (c.radius - 2.0).abs() < TOLERANCE_COORD_SUB => {}
             other => panic!("Expected TangentCircle (or Circle with r=2) without offset, got {other:?}"),
         }
 
@@ -4528,7 +4552,7 @@ mod tests {
 
     #[test]
     fn offset_plane_plane_high_precision() {
-        // Test that high precision (1e-10) is achieved
+        // Test that high precision (TOLERANCE_LINEAR_ULTRA_STRICT) is achieved
         let p1 = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
         let p2 = Plane {
             origin: DVec3::new(1.0, 1.0, 0.0),
@@ -4540,8 +4564,8 @@ mod tests {
                 // Verify point is on both planes
                 let d1 = line.origin.dot(p1.normal);
                 let d2 = (line.origin - p2.origin).dot(p2.normal);
-                assert!(d1.abs() < 1e-9, "Point should be on plane 1");
-                assert!(d2.abs() < 1e-9, "Point should be on plane 2");
+                assert!(d1.abs() < TOLERANCE_COORD_SUB, "Point should be on plane 1");
+                assert!(d2.abs() < TOLERANCE_COORD_SUB, "Point should be on plane 2");
             }
             other => panic!("Expected Line, got {other:?}"),
         }
@@ -4549,7 +4573,7 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_precision() {
-        // Test curved surface precision (1e-8 target)
+        // Test curved surface precision (TOLERANCE_LINEAR_RELAX_8 target)
         let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1000.0 };
         let s2 = SphericalSurface { center: DVec3::new(100.0, 0.0, 0.0), axis: DVec3::Z, radius: 950.0 };
 
@@ -4561,7 +4585,7 @@ mod tests {
 
                 // Distance from center to sphere surface should match circle radius
                 let r1_expected = (s1.radius * s1.radius - d1 * d1).sqrt();
-                assert!((c.radius - r1_expected).abs() < 1e-6, "Circle radius should match");
+                assert!((c.radius - r1_expected).abs() < TOLERANCE_MESH_LEGACY, "Circle radius should match");
             }
             other => panic!("Expected Circle, got {other:?}"),
         }
@@ -4585,7 +4609,7 @@ mod tests {
 
         // Verify by reconstructing the point
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-10, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "Reconstructed point should match");
     }
 
     #[test]
@@ -4601,7 +4625,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-10, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_ULTRA_STRICT, "Reconstructed point should match");
     }
 
     #[test]
@@ -4618,7 +4642,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4635,7 +4659,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4660,8 +4684,8 @@ mod tests {
         // Both should reconstruct to the same point
         let p1 = surf.point_at(uv_no_hint[0], uv_no_hint[1]);
         let p2 = surf.point_at(uv_with_hint[0], uv_with_hint[1]);
-        assert!((point - p1).length() < 1e-8, "Reconstructed point should match");
-        assert!((point - p2).length() < 1e-8, "Reconstructed point should match with hint");
+        assert!((point - p1).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
+        assert!((point - p2).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match with hint");
     }
 
     #[test]
@@ -4678,7 +4702,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4696,10 +4720,10 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
 
         // Check that v is 3.0
-        assert!((uv[1] - 3.0).abs() < 1e-10, "v should be 3.0");
+        assert!((uv[1] - 3.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v should be 3.0");
 
         // The u angle depends on the basis chosen by any_perpendicular
         // Just verify that reconstruction works correctly
@@ -4719,7 +4743,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, Some([1.0, 0.0])).unwrap();
 
         // v should be 5.0, u can be anything
-        assert!((uv[1] - 5.0).abs() < 1e-10, "v should be 5.0");
+        assert!((uv[1] - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v should be 5.0");
     }
 
     #[test]
@@ -4737,7 +4761,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4755,7 +4779,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4773,7 +4797,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4791,7 +4815,7 @@ mod tests {
         let uv = project_point_to_surface_uv(point, &surf, None).unwrap();
 
         let reconstructed = surf.point_at(uv[0], uv[1]);
-        assert!((point - reconstructed).length() < 1e-8, "Reconstructed point should match");
+        assert!((point - reconstructed).length() < TOLERANCE_LINEAR_RELAX_8, "Reconstructed point should match");
     }
 
     #[test]
@@ -4809,8 +4833,8 @@ mod tests {
         let uv1 = project_point_to_surface_uv(point, &surf, None).unwrap();
         let uv2 = project_point_to_surface_uv(point, &surf, None).unwrap();
 
-        assert!((uv1[0] - uv2[0]).abs() < 1e-12, "u should be consistent");
-        assert!((uv1[1] - uv2[1]).abs() < 1e-12, "v should be consistent");
+        assert!((uv1[0] - uv2[0]).abs() < TOLERANCE_LEN_MIN, "u should be consistent");
+        assert!((uv1[1] - uv2[1]).abs() < TOLERANCE_LEN_MIN, "v should be consistent");
     }
 
     #[test]
@@ -4836,7 +4860,7 @@ mod tests {
         let reconstructed = surf.point_at(uv[0], uv[1]);
 
         // Should achieve sub-micron precision for 100m sphere
-        assert!((point - reconstructed).length() < 1e-6, "High precision should be achieved");
+        assert!((point - reconstructed).length() < TOLERANCE_MESH_LEGACY, "High precision should be achieved");
     }
 
     #[test]
@@ -4850,8 +4874,8 @@ mod tests {
         let (u1, v1) = orthonormal_basis_from_normal(n1);
         let (u2, v2) = orthonormal_basis_from_normal(n2);
 
-        assert!((u1 - u2).length() < 1e-12, "u should be deterministic");
-        assert!((v1 - v2).length() < 1e-12, "v should be deterministic");
+        assert!((u1 - u2).length() < TOLERANCE_LEN_MIN, "u should be deterministic");
+        assert!((v1 - v2).length() < TOLERANCE_LEN_MIN, "v should be deterministic");
     }
 
     #[test]
@@ -4870,11 +4894,11 @@ mod tests {
             let (u, v) = orthonormal_basis_from_normal(n);
 
             // Check orthonormality
-            assert!(u.dot(n).abs() < 1e-10, "u should be perpendicular to n");
-            assert!(v.dot(n).abs() < 1e-10, "v should be perpendicular to n");
-            assert!((u.length() - 1.0).abs() < 1e-10, "u should be unit");
-            assert!((v.length() - 1.0).abs() < 1e-10, "v should be unit");
-            assert!((u.dot(v)).abs() < 1e-10, "u and v should be perpendicular");
+            assert!(u.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u should be perpendicular to n");
+            assert!(v.dot(n).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v should be perpendicular to n");
+            assert!((u.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u should be unit");
+            assert!((v.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "v should be unit");
+            assert!((u.dot(v)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "u and v should be perpendicular");
         }
     }
 
@@ -4895,7 +4919,7 @@ mod tests {
         assert!(result.is_some(), "offset torus should succeed");
 
         if let Surface3::Torus(t) = result.unwrap() {
-            assert!((t.minor_radius - 1.5).abs() < 1e-9, "minor radius should increase");
+            assert!((t.minor_radius - 1.5).abs() < TOLERANCE_COORD_SUB, "minor radius should increase");
         }
     }
 
@@ -4910,7 +4934,7 @@ mod tests {
         let offset = offset_surface(&sphere, -0.5).unwrap();
 
         if let Surface3::Sphere(s) = offset {
-            assert!((s.radius - 1.5).abs() < 1e-9, "radius should decrease with negative offset");
+            assert!((s.radius - 1.5).abs() < TOLERANCE_COORD_SUB, "radius should decrease with negative offset");
         } else {
             panic!("expected Sphere");
         }
@@ -4966,7 +4990,7 @@ mod tests {
         let offset = offset_surface(&cylinder, -1.0).unwrap();
 
         if let Surface3::Cylinder(c) = offset {
-            assert!((c.radius - 1.0).abs() < 1e-9, "radius should decrease with negative offset");
+            assert!((c.radius - 1.0).abs() < TOLERANCE_COORD_SUB, "radius should decrease with negative offset");
         }
     }
 
@@ -4998,7 +5022,7 @@ mod tests {
         assert!(result.is_some(), "negative offset torus should succeed if within bounds");
 
         if let Some(Surface3::Torus(t)) = result {
-            assert!((t.minor_radius - 0.5).abs() < 1e-9, "minor radius should decrease");
+            assert!((t.minor_radius - 0.5).abs() < TOLERANCE_COORD_SUB, "minor radius should decrease");
         }
     }
 
@@ -5101,9 +5125,9 @@ mod tests {
     #[test]
     fn offset_tolerance_propagation() {
         let opts = OffsetOptions::new(0.5)
-            .with_tolerance(1e-8);
+            .with_tolerance(TOLERANCE_LINEAR_RELAX_8);
 
-        assert!((opts.tolerance - 1e-8).abs() < 1e-15);
+        assert!((opts.tolerance - TOLERANCE_LINEAR_RELAX_8).abs() < TOLERANCE_FLOAT_DEDUP);
     }
 
     #[test]

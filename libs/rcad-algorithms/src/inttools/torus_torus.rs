@@ -29,7 +29,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, ToroidalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -323,7 +323,7 @@ mod tests {
         match result {
             TorusTorusResult::TangentCircle(c) => {
                 // Tangent circle should be at rho = (5 + 7) / 2 = 6
-                assert!((c.radius - 6.0).abs() < 1e-6);
+                assert!((c.radius - 6.0).abs() < TOLERANCE_MESH_LEGACY);
             }
             TorusTorusResult::SingleCircle(_) => {}
             TorusTorusResult::NoIntersection => {}

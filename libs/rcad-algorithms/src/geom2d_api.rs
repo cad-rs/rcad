@@ -8,6 +8,7 @@
 //! - `ExtremaCurvePoint`: Distance from point to 2D curve
 //! - Angle and curvature analysis
 
+use crate::tolerance::*;
 use glam::DVec2;
 use rcad_kernel::geom::{BSplineCurve2, Circle2d, Curve2d, Curve2dEval, Line2d};
 use std::f64::consts::PI;
@@ -37,7 +38,7 @@ pub fn circle_through_three_points(p1: DVec2, p2: DVec2, p3: DVec2) -> Option<Ci
     let a = p2 - p1;
     let b = p3 - p1;
     let det = 2.0 * (a.x * b.y - a.y * b.x);
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return None;
     }
 
@@ -49,7 +50,7 @@ pub fn circle_through_three_points(p1: DVec2, p2: DVec2, p3: DVec2) -> Option<Ci
     );
     let center = p1 + center_offset;
     let radius = (center - p1).length();
-    if radius <= 1e-12 || !radius.is_finite() {
+    if radius <= TOLERANCE_LEN_MIN || !radius.is_finite() {
         return None;
     }
 
@@ -67,7 +68,7 @@ pub fn circles_tangent_to_circle_through_points(
 ) -> Vec<Circle2d> {
     let chord = p2 - p1;
     let chord_len = chord.length();
-    if chord_len <= 1e-12 || base.radius <= 1e-12 {
+    if chord_len <= TOLERANCE_LEN_MIN || base.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
 
@@ -83,13 +84,13 @@ pub fn circles_tangent_to_circle_through_points(
     let qb = 2.0 * a * b;
     let qc = a * a - c * half_chord * half_chord;
     let mut roots = Vec::new();
-    if qa.abs() <= 1e-14 {
-        if qb.abs() > 1e-14 {
+    if qa.abs() <= TOLERANCE_FLOAT_LOOSE {
+        if qb.abs() > TOLERANCE_FLOAT_LOOSE {
             roots.push(-qc / qb);
         }
     } else {
         let disc = qb * qb - 4.0 * qa * qc;
-        if disc >= -1e-8 {
+        if disc >= -TOLERANCE_LINEAR_RELAX_8 {
             let sqrt_disc = disc.max(0.0).sqrt();
             roots.push((-qb - sqrt_disc) / (2.0 * qa));
             roots.push((-qb + sqrt_disc) / (2.0 * qa));
@@ -100,17 +101,17 @@ pub fn circles_tangent_to_circle_through_points(
     for root in roots {
         let center = midpoint + normal * root;
         let radius = (center - p1).length();
-        if radius <= 1e-12 || !radius.is_finite() {
+        if radius <= TOLERANCE_LEN_MIN || !radius.is_finite() {
             continue;
         }
         let center_distance = (center - base.center).length();
-        let is_tangent = (center_distance - (radius + base.radius)).abs() < 1e-7
-            || (center_distance - (radius - base.radius).abs()).abs() < 1e-7;
+        let is_tangent = (center_distance - (radius + base.radius)).abs() < TOLERANCE_ABS
+            || (center_distance - (radius - base.radius).abs()).abs() < TOLERANCE_ABS;
         if !is_tangent {
             continue;
         }
         if circles.iter().any(|c: &Circle2d| {
-            (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
         }) {
             continue;
         }
@@ -129,7 +130,7 @@ pub fn circles_tangent_to_two_circles_through_point(
     c2: Circle2d,
     point: DVec2,
 ) -> Vec<Circle2d> {
-    if c1.radius <= 1e-12 || c2.radius <= 1e-12 {
+    if c1.radius <= TOLERANCE_LEN_MIN || c2.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
 
@@ -153,7 +154,7 @@ pub fn circles_tangent_to_circle_and_line_through_point(
     line: Line2d,
     point: DVec2,
 ) -> Vec<Circle2d> {
-    if circle.radius <= 1e-12 {
+    if circle.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let Some(normal) = unit_line_normal(line.direction) else {
@@ -188,7 +189,7 @@ pub fn circles_tangent_to_circle_and_two_lines(
     l1: Line2d,
     l2: Line2d,
 ) -> Vec<Circle2d> {
-    if circle.radius <= 1e-12 {
+    if circle.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let Some(n1) = unit_line_normal(l1.direction) else {
@@ -254,7 +255,7 @@ pub fn circles_tangent_to_two_lines_through_point(
 pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2) -> Vec<Circle2d> {
     let chord = p2 - p1;
     let chord_len = chord.length();
-    if chord_len <= 1e-12 {
+    if chord_len <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let Some(line_normal) = unit_line_normal(line.direction) else {
@@ -273,13 +274,13 @@ pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2
         let qb = 2.0 * line_offset * slope;
         let qc = line_offset * line_offset - half_chord * half_chord;
         let mut roots = Vec::new();
-        if qa.abs() <= 1e-14 {
-            if qb.abs() > 1e-14 {
+        if qa.abs() <= TOLERANCE_FLOAT_LOOSE {
+            if qb.abs() > TOLERANCE_FLOAT_LOOSE {
                 roots.push(-qc / qb);
             }
         } else {
             let disc = qb * qb - 4.0 * qa * qc;
-            if disc >= -1e-8 {
+            if disc >= -TOLERANCE_LINEAR_RELAX_8 {
                 let sqrt_disc = disc.max(0.0).sqrt();
                 roots.push((-qb - sqrt_disc) / (2.0 * qa));
                 roots.push((-qb + sqrt_disc) / (2.0 * qa));
@@ -289,15 +290,15 @@ pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2
         for root in roots {
             let center = midpoint + chord_normal * root;
             let radius = (center - p1).length();
-            if radius <= 1e-10 || !radius.is_finite() {
+            if radius <= TOLERANCE_LINEAR_ULTRA_STRICT || !radius.is_finite() {
                 continue;
             }
             let signed_distance = signed_distance_to_line(center, line, line_normal);
-            if (signed_distance - line_sign * radius).abs() > 1e-7 {
+            if (signed_distance - line_sign * radius).abs() > TOLERANCE_ABS {
                 continue;
             }
             if result.iter().any(|c: &Circle2d| {
-                (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+                (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
             }) {
                 continue;
             }
@@ -348,14 +349,14 @@ pub fn circles_tangent_to_two_circles_and_line(
     c2: Circle2d,
     line: Line2d,
 ) -> Vec<Circle2d> {
-    if c1.radius <= 1e-12 || c2.radius <= 1e-12 {
+    if c1.radius <= TOLERANCE_LEN_MIN || c2.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let Some(n) = unit_line_normal(line.direction) else {
         return Vec::new();
     };
     let t_len = line.direction.length();
-    if t_len <= 1e-12 {
+    if t_len <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let t = line.direction / t_len;
@@ -378,7 +379,7 @@ pub fn circles_tangent_to_two_circles_and_line(
     for sig in [-1.0_f64, 1.0] {
         for e1 in [-1.0_f64, 1.0] {
             for e2 in [-1.0_f64, 1.0] {
-                if denom.abs() <= 1e-12 {
+                if denom.abs() <= TOLERANCE_LEN_MIN {
                     continue;
                 }
                 let a = e1 * r1 - sig * n_dot_v1 - e2 * r2 + sig * n_dot_v2;
@@ -392,7 +393,7 @@ pub fn circles_tangent_to_two_circles_and_line(
                 let coeff_r = 4.0 * a * b + 4.0 * t_dot_v1 * a * d - 2.0 * k1 * d * d;
                 let c_const = b * b + 2.0 * t_dot_v1 * b * d - c1term * d * d;
                 for r in solve_quadratic(coeff_r2, coeff_r, c_const) {
-                    if r <= 1e-10 || !r.is_finite() {
+                    if r <= TOLERANCE_LINEAR_ULTRA_STRICT || !r.is_finite() {
                         continue;
                     }
                     let u = (2.0 * a * r + b) / d;
@@ -401,7 +402,7 @@ pub fn circles_tangent_to_two_circles_and_line(
                     {
                         continue;
                     }
-                    if (signed_distance_to_line(center, line, n).abs() - r).abs() > 1e-6 {
+                    if (signed_distance_to_line(center, line, n).abs() - r).abs() > TOLERANCE_MESH_LEGACY {
                         continue;
                     }
                     out.push(Circle2d { center, radius: r });
@@ -420,7 +421,7 @@ pub fn circles_tangent_to_two_circles_and_line(
 /// Returns up to eight solutions in a fixed branch order that matches
 /// OCCT `circ2d3Tan` / `CircleCircleCircle_11` for `checklength tan1_1` … `tan1_8`.
 pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d) -> Vec<Circle2d> {
-    if c1.radius <= 1e-12 || c2.radius <= 1e-12 || c3.radius <= 1e-12 {
+    if c1.radius <= TOLERANCE_LEN_MIN || c2.radius <= TOLERANCE_LEN_MIN || c3.radius <= TOLERANCE_LEN_MIN {
         return Vec::new();
     }
     let o1 = c1.center;
@@ -441,7 +442,7 @@ pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d
     let a13 = 2.0 * (x3 - x1);
     let b13 = 2.0 * (y3 - y1);
     let det0 = a12 * b13 - a13 * b12;
-    if det0.abs() <= 1e-14 {
+    if det0.abs() <= TOLERANCE_FLOAT_LOOSE {
         return Vec::new();
     }
 
@@ -461,7 +462,7 @@ pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d
                 for r_candidate in apollonius_three_circles_r_roots(
                     a12, b12, c12_0, c12_1, a13, b13, c13_0, c13_1, x1, y1, s1, r1, det0,
                 ) {
-                    if r_candidate <= 1e-10 || !r_candidate.is_finite() {
+                    if r_candidate <= TOLERANCE_LINEAR_ULTRA_STRICT || !r_candidate.is_finite() {
                         continue;
                     }
                     let c12 = c12_0 + c12_1 * r_candidate;
@@ -476,7 +477,7 @@ pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d
                         continue;
                     }
                     if out.iter().any(|c: &Circle2d| {
-                        (c.center - center).length() < 1e-6 && (c.radius - r_candidate).abs() < 1e-6
+                        (c.center - center).length() < TOLERANCE_MESH_LEGACY && (c.radius - r_candidate).abs() < TOLERANCE_MESH_LEGACY
                     }) {
                         continue;
                     }
@@ -544,8 +545,8 @@ fn apollonius_three_circles_r_roots(
 }
 
 fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
-    if a.abs() <= 1e-14 {
-        if b.abs() <= 1e-14 {
+    if a.abs() <= TOLERANCE_FLOAT_LOOSE {
+        if b.abs() <= TOLERANCE_FLOAT_LOOSE {
             return Vec::new();
         }
         return vec![-c / b]
@@ -554,13 +555,13 @@ fn solve_quadratic(a: f64, b: f64, c: f64) -> Vec<f64> {
             .collect();
     }
     let disc = b * b - 4.0 * a * c;
-    if disc < -1e-8 {
+    if disc < -TOLERANCE_LINEAR_RELAX_8 {
         return Vec::new();
     }
     let sd = disc.max(0.0).sqrt();
     let mut v = vec![(-b - sd) / (2.0 * a), (-b + sd) / (2.0 * a)];
     v.sort_by(f64::total_cmp);
-    v.dedup_by(|a, b| (*a - *b).abs() < 1e-8);
+    v.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_LINEAR_RELAX_8);
     v
 }
 
@@ -583,7 +584,7 @@ fn append_circle_circle_point_solutions(
     let d2 = 2.0 * s2 * c2.radius;
 
     let det = a1 * b2 - a2 * b1;
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return;
     }
 
@@ -600,13 +601,13 @@ fn append_circle_circle_point_solutions(
     let qc = qx * qx + qy * qy;
 
     let mut roots = Vec::new();
-    if qa.abs() <= 1e-14 {
-        if qb.abs() > 1e-14 {
+    if qa.abs() <= TOLERANCE_FLOAT_LOOSE {
+        if qb.abs() > TOLERANCE_FLOAT_LOOSE {
             roots.push(-qc / qb);
         }
     } else {
         let disc = qb * qb - 4.0 * qa * qc;
-        if disc >= -1e-8 {
+        if disc >= -TOLERANCE_LINEAR_RELAX_8 {
             let sqrt_disc = disc.max(0.0).sqrt();
             roots.push((-qb - sqrt_disc) / (2.0 * qa));
             roots.push((-qb + sqrt_disc) / (2.0 * qa));
@@ -614,7 +615,7 @@ fn append_circle_circle_point_solutions(
     }
 
     for radius in roots {
-        if radius <= 1e-10 || !radius.is_finite() {
+        if radius <= TOLERANCE_LINEAR_ULTRA_STRICT || !radius.is_finite() {
             continue;
         }
         let center = DVec2::new(x0 + xr * radius, y0 + yr * radius);
@@ -627,7 +628,7 @@ fn append_circle_circle_point_solutions(
 
 fn is_tangent_to_circle(center: DVec2, radius: f64, base: Circle2d) -> bool {
     let d = (center - base.center).length();
-    (d - (radius + base.radius)).abs() < 1e-7 || (d - (radius - base.radius).abs()).abs() < 1e-7
+    (d - (radius + base.radius)).abs() < TOLERANCE_ABS || (d - (radius - base.radius).abs()).abs() < TOLERANCE_ABS
 }
 
 fn append_circle_line_point_solutions(
@@ -651,7 +652,7 @@ fn append_circle_line_point_solutions(
     let d2 = -line_sign;
 
     let det = a1 * b2 - a2 * b1;
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return;
     }
 
@@ -668,7 +669,7 @@ fn append_circle_line_point_solutions(
         yr,
         |center, radius| {
             is_tangent_to_circle(center, radius, circle)
-                && (signed_distance_to_line(center, line, normal).abs() - radius).abs() <= 1e-7
+                && (signed_distance_to_line(center, line, normal).abs() - radius).abs() <= TOLERANCE_ABS
         },
         result,
     );
@@ -684,7 +685,7 @@ fn append_circle_line_line_solutions(
     result: &mut Vec<Circle2d>,
 ) {
     let det = n1.x * n2.y - n2.x * n1.y;
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return;
     }
 
@@ -702,13 +703,13 @@ fn append_circle_line_line_solutions(
     let qc = qx * qx + qy * qy - circle.radius * circle.radius;
 
     let mut roots = Vec::new();
-    if qa.abs() <= 1e-14 {
-        if qb.abs() > 1e-14 {
+    if qa.abs() <= TOLERANCE_FLOAT_LOOSE {
+        if qb.abs() > TOLERANCE_FLOAT_LOOSE {
             roots.push(-qc / qb);
         }
     } else {
         let disc = qb * qb - 4.0 * qa * qc;
-        if disc >= -1e-8 {
+        if disc >= -TOLERANCE_LINEAR_RELAX_8 {
             let sqrt_disc = disc.max(0.0).sqrt();
             roots.push((-qb - sqrt_disc) / (2.0 * qa));
             roots.push((-qb + sqrt_disc) / (2.0 * qa));
@@ -716,13 +717,13 @@ fn append_circle_line_line_solutions(
     }
 
     for radius in roots {
-        if radius <= 1e-10 || !radius.is_finite() {
+        if radius <= TOLERANCE_LINEAR_ULTRA_STRICT || !radius.is_finite() {
             continue;
         }
         let center = DVec2::new(x0 + xr * radius, y0 + yr * radius);
         if !is_tangent_to_circle(center, radius, circle)
-            || (signed_distance_to_line(center, l1, n1).abs() - radius).abs() > 1e-7
-            || (signed_distance_to_line(center, l2, n2).abs() - radius).abs() > 1e-7
+            || (signed_distance_to_line(center, l1, n1).abs() - radius).abs() > TOLERANCE_ABS
+            || (signed_distance_to_line(center, l2, n2).abs() - radius).abs() > TOLERANCE_ABS
         {
             continue;
         }
@@ -741,7 +742,7 @@ fn append_line_line_point_solutions(
     result: &mut Vec<Circle2d>,
 ) {
     let det = n1.x * n2.y - n2.x * n1.y;
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return;
     }
 
@@ -760,8 +761,8 @@ fn append_line_line_point_solutions(
         xr,
         yr,
         |center, radius| {
-            (signed_distance_to_line(center, l1, n1).abs() - radius).abs() <= 1e-7
-                && (signed_distance_to_line(center, l2, n2).abs() - radius).abs() <= 1e-7
+            (signed_distance_to_line(center, l1, n1).abs() - radius).abs() <= TOLERANCE_ABS
+                && (signed_distance_to_line(center, l2, n2).abs() - radius).abs() <= TOLERANCE_ABS
         },
         result,
     );
@@ -769,7 +770,7 @@ fn append_line_line_point_solutions(
 
 fn unit_line_normal(direction: DVec2) -> Option<DVec2> {
     let len = direction.length();
-    (len > 1e-12).then(|| DVec2::new(-direction.y, direction.x) / len)
+    (len > TOLERANCE_LEN_MIN).then(|| DVec2::new(-direction.y, direction.x) / len)
 }
 
 fn signed_distance_to_line(point: DVec2, line: Line2d, normal: DVec2) -> f64 {
@@ -792,13 +793,13 @@ fn append_radius_roots(
     let qc = qx * qx + qy * qy;
 
     let mut roots = Vec::new();
-    if qa.abs() <= 1e-14 {
-        if qb.abs() > 1e-14 {
+    if qa.abs() <= TOLERANCE_FLOAT_LOOSE {
+        if qb.abs() > TOLERANCE_FLOAT_LOOSE {
             roots.push(-qc / qb);
         }
     } else {
         let disc = qb * qb - 4.0 * qa * qc;
-        if disc >= -1e-8 {
+        if disc >= -TOLERANCE_LINEAR_RELAX_8 {
             let sqrt_disc = disc.max(0.0).sqrt();
             roots.push((-qb - sqrt_disc) / (2.0 * qa));
             roots.push((-qb + sqrt_disc) / (2.0 * qa));
@@ -806,7 +807,7 @@ fn append_radius_roots(
     }
 
     for radius in roots {
-        if radius <= 1e-10 || !radius.is_finite() {
+        if radius <= TOLERANCE_LINEAR_ULTRA_STRICT || !radius.is_finite() {
             continue;
         }
         let center = DVec2::new(x0 + xr * radius, y0 + yr * radius);
@@ -814,7 +815,7 @@ fn append_radius_roots(
             continue;
         }
         if result.iter().any(|c: &Circle2d| {
-            (c.center - center).length() < 1e-8 && (c.radius - radius).abs() < 1e-8
+            (c.center - center).length() < TOLERANCE_LINEAR_RELAX_8 && (c.radius - radius).abs() < TOLERANCE_LINEAR_RELAX_8
         }) {
             continue;
         }
@@ -834,18 +835,18 @@ fn solve_three_signed_lines(lines: &[(Line2d, DVec2); 3], signs: [f64; 3]) -> Op
     let solution = solve_3x3(a, b)?;
     let center = DVec2::new(solution[0], solution[1]);
     let radius = solution[2];
-    if radius <= 1e-10 || !radius.is_finite() {
+    if radius <= TOLERANCE_LINEAR_ULTRA_STRICT || !radius.is_finite() {
         return None;
     }
     let is_tangent = lines.iter().all(|(line, normal)| {
-        (signed_distance_to_line(center, *line, *normal).abs() - radius).abs() <= 1e-7
+        (signed_distance_to_line(center, *line, *normal).abs() - radius).abs() <= TOLERANCE_ABS
     });
     is_tangent.then_some(Circle2d { center, radius })
 }
 
 fn solve_3x3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
     let det = det_3x3(a);
-    if det.abs() <= 1e-12 {
+    if det.abs() <= TOLERANCE_LEN_MIN {
         return None;
     }
 
@@ -1154,7 +1155,7 @@ pub fn curve2d_curvature_at(curve: &Curve2d, t: f64) -> f64 {
     let cross = d1.x * d2.y - d1.y * d2.x;
     let speed = d1.length();
 
-    if speed < 1e-15 {
+    if speed < TOLERANCE_FLOAT_DEDUP {
         return 0.0;
     }
 
@@ -1191,13 +1192,13 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
 
 /// Compute the first derivative of a 2D curve using finite differences.
 fn curve2d_derivative(curve: &Curve2d, t: f64) -> DVec2 {
-    const H: f64 = 1e-7;
+    const H: f64 = TOLERANCE_ABS;
     (curve.point_at(t + H) - curve.point_at(t - H)) / (2.0 * H)
 }
 
 /// Compute the second derivative of a 2D curve using finite differences.
 fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
-    const H: f64 = 1e-6;
+    const H: f64 = TOLERANCE_MESH_LEGACY;
     let d_plus = curve2d_derivative(curve, t + H);
     let d_minus = curve2d_derivative(curve, t - H);
     (d_plus - d_minus) / (2.0 * H)
@@ -1207,7 +1208,7 @@ fn curve2d_second_derivative(curve: &Curve2d, t: f64) -> DVec2 {
 fn curve2d_tangent(curve: &Curve2d, t: f64) -> DVec2 {
     let d = curve2d_derivative(curve, t);
     let len = d.length();
-    if len < 1e-15 { DVec2::X } else { d / len }
+    if len < TOLERANCE_FLOAT_DEDUP { DVec2::X } else { d / len }
 }
 
 /// Newton refinement for curve-curve intersection.
@@ -1223,7 +1224,7 @@ fn refine_curve2d_intersection(
     let mut t2 = t2;
 
     const MAX_ITER: usize = 30;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let p1 = curve1.point_at(t1);
@@ -1278,7 +1279,7 @@ fn refine_point_curve2d_distance(
     let mut t = initial_t;
 
     const MAX_ITER: usize = 20;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let p = curve.point_at(t);
@@ -1334,7 +1335,7 @@ fn chord_length_params_2d(pts: &[DVec2]) -> Vec<f64> {
         total += (pts[i] - pts[i - 1]).length();
         params.push(total);
     }
-    if total < 1e-14 {
+    if total < TOLERANCE_FLOAT_LOOSE {
         return vec![0.0; n];
     }
     for p in &mut params {
@@ -1485,7 +1486,7 @@ fn gauss_solve_2d(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
         mat.swap(col, max_row);
 
         let pivot = mat[col][col];
-        if pivot.abs() < 1e-14 {
+        if pivot.abs() < TOLERANCE_FLOAT_LOOSE {
             continue;
         }
 
@@ -1509,7 +1510,7 @@ fn gauss_solve_2d(a: &[Vec<f64>], rhs: &[f64]) -> Vec<f64> {
             sum -= mat[i][j] * x[j];
         }
         let diag = mat[i][i];
-        x[i] = if diag.abs() > 1e-14 { sum / diag } else { 0.0 };
+        x[i] = if diag.abs() > TOLERANCE_FLOAT_LOOSE { sum / diag } else { 0.0 };
     }
     x
 }
@@ -1537,7 +1538,7 @@ mod tests {
 
         let circumference = 2.0 * PI * circle.radius;
 
-        assert!((circumference - 566.81157580298293).abs() < 1e-9);
+        assert!((circumference - 566.81157580298293).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1565,8 +1566,8 @@ mod tests {
         assert_eq!(circles.len(), 2);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 157.07963267948966).abs() < 1e-9);
-        assert!((lengths[1] - 31.415926535897931).abs() < 1e-9);
+        assert!((lengths[0] - 157.07963267948966).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 31.415926535897931).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1583,7 +1584,7 @@ mod tests {
         assert_eq!(circles.len(), 1);
         let circumference = 2.0 * PI * circles[0].radius;
 
-        assert!((circumference - 39.269908169872416).abs() < 1e-9);
+        assert!((circumference - 39.269908169872416).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1603,8 +1604,8 @@ mod tests {
         assert_eq!(circles.len(), 2);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 13.802267767659149).abs() < 1e-9);
-        assert!((lengths[1] - 80.445511840034683).abs() < 1e-9);
+        assert!((lengths[0] - 13.802267767659149).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 80.445511840034683).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1624,8 +1625,8 @@ mod tests {
         assert_eq!(circles.len(), 2);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 563.33998470950314).abs() < 1e-9);
-        assert!((lengths[1] - 132.07599572229086).abs() < 1e-9);
+        assert!((lengths[0] - 563.33998470950314).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 132.07599572229086).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1648,10 +1649,10 @@ mod tests {
         assert_eq!(circles.len(), 4);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 461.86006847878718).abs() < 1e-9);
-        assert!((lengths[1] - 163.75801021417183).abs() < 1e-9);
-        assert!((lengths[2] - 321.80336707682847).abs() < 1e-9);
-        assert!((lengths[3] - 235.02950419226329).abs() < 1e-9);
+        assert!((lengths[0] - 461.86006847878718).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 163.75801021417183).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[2] - 321.80336707682847).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[3] - 235.02950419226329).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1671,8 +1672,8 @@ mod tests {
         assert_eq!(circles.len(), 2);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 269.03484941268533).abs() < 1e-9);
-        assert!((lengths[1] - 130.52381207643296).abs() < 1e-9);
+        assert!((lengths[0] - 269.03484941268533).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 130.52381207643296).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1689,8 +1690,8 @@ mod tests {
         assert_eq!(circles.len(), 2);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 419.71016104587477).abs() < 1e-9);
-        assert!((lengths[1] - 282.77131205819785).abs() < 1e-9);
+        assert!((lengths[0] - 419.71016104587477).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 282.77131205819785).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1713,10 +1714,10 @@ mod tests {
         assert_eq!(circles.len(), 4);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 213.09795279419643).abs() < 1e-9);
-        assert!((lengths[1] - 284.90187851033369).abs() < 1e-9);
-        assert!((lengths[2] - 131.38343888467227).abs() < 1e-9);
-        assert!((lengths[3] - 63.235238531994284).abs() < 1e-9);
+        assert!((lengths[0] - 213.09795279419643).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[1] - 284.90187851033369).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[2] - 131.38343888467227).abs() < TOLERANCE_COORD_SUB);
+        assert!((lengths[3] - 63.235238531994284).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1739,10 +1740,10 @@ mod tests {
         assert_eq!(circles.len(), 4);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 115.99869565347736).abs() < 1e-6);
-        assert!((lengths[1] - 156.18117752496227).abs() < 1e-6);
-        assert!((lengths[2] - 165.15717356376749).abs() < 1e-6);
-        assert!((lengths[3] - 198.5849242626559).abs() < 1e-6);
+        assert!((lengths[0] - 115.99869565347736).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((lengths[1] - 156.18117752496227).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((lengths[2] - 165.15717356376749).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((lengths[3] - 198.5849242626559).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1765,14 +1766,14 @@ mod tests {
         assert_eq!(circles.len(), 8);
         let lengths: Vec<f64> = circles.iter().map(|c| 2.0 * PI * c.radius).collect();
 
-        assert!((lengths[0] - 168.36566348025758).abs() < 1e-4);
-        assert!((lengths[1] - 244.52937099154383).abs() < 1e-4);
-        assert!((lengths[2] - 131.42863607625242).abs() < 1e-4);
-        assert!((lengths[3] - 182.73062928272694).abs() < 1e-4);
-        assert!((lengths[4] - 182.7306292827268).abs() < 1e-4);
-        assert!((lengths[5] - 131.42863607625236).abs() < 1e-4);
-        assert!((lengths[6] - 94.936311385359318).abs() < 1e-4);
-        assert!((lengths[7] - 178.56704904481091).abs() < 1e-4);
+        assert!((lengths[0] - 168.36566348025758).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[1] - 244.52937099154383).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[2] - 131.42863607625242).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[3] - 182.73062928272694).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[4] - 182.7306292827268).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[5] - 131.42863607625236).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[6] - 94.936311385359318).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((lengths[7] - 178.56704904481091).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -1786,11 +1787,11 @@ mod tests {
             direction: DVec2::Y,
         });
 
-        let intersections = intersect_curves2d(&line1, &line2, 1e-6);
+        let intersections = intersect_curves2d(&line1, &line2, TOLERANCE_MESH_LEGACY);
 
         assert_eq!(intersections.len(), 1);
         let int = &intersections[0];
-        assert!((int.point - DVec2::ZERO).length() < 1e-4);
+        assert!((int.point - DVec2::ZERO).length() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -1804,7 +1805,7 @@ mod tests {
             direction: DVec2::X,
         });
 
-        let intersections = intersect_curves2d(&circle, &line, 1e-6);
+        let intersections = intersect_curves2d(&circle, &line, TOLERANCE_MESH_LEGACY);
 
         // Line through center may or may not find all intersections
         assert!(!intersections.is_empty() || true); // Just verify no panic
@@ -1812,11 +1813,11 @@ mod tests {
         for int in &intersections {
             let p = int.point;
             assert!(
-                (p.length() - 1.0).abs() < 1e-3,
+                (p.length() - 1.0).abs() < TOLERANCE_ADAPTIVE_MAX,
                 "Point {} should be on circle",
                 p
             );
-            assert!(p.y.abs() < 1e-3, "Point {} should have y=0", p);
+            assert!(p.y.abs() < TOLERANCE_ADAPTIVE_MAX, "Point {} should have y=0", p);
         }
     }
 
@@ -1831,7 +1832,7 @@ mod tests {
             direction: DVec2::X,
         });
 
-        let intersections = intersect_curves2d(&line1, &line2, 1e-6);
+        let intersections = intersect_curves2d(&line1, &line2, TOLERANCE_MESH_LEGACY);
 
         // Parallel lines should not intersect
         assert!(intersections.is_empty());
@@ -1853,8 +1854,8 @@ mod tests {
         let p0 = curve.point_at(0.0);
         let p1 = curve.point_at(1.0);
 
-        assert!((p0 - points[0]).length() < 1e-6);
-        assert!((p1 - points[2]).length() < 1e-6);
+        assert!((p0 - points[0]).length() < TOLERANCE_MESH_LEGACY);
+        assert!((p1 - points[2]).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1872,8 +1873,8 @@ mod tests {
         let p0 = curve.point_at(0.0);
         let p1 = curve.point_at(1.0);
 
-        assert!((p0 - points[0]).length() < 1e-5);
-        assert!((p1 - points[3]).length() < 1e-5);
+        assert!((p0 - points[0]).length() < TOLERANCE_RETRY_LADDER_MID);
+        assert!((p1 - points[3]).length() < TOLERANCE_RETRY_LADDER_MID);
     }
 
     #[test]
@@ -1898,8 +1899,8 @@ mod tests {
 
         let (closest, param) = project_point_on_curve2d(point, &line);
 
-        assert!((closest - DVec2::new(0.5, 0.0)).length() < 1e-4);
-        assert!((param - 0.5).abs() < 1e-4);
+        assert!((closest - DVec2::new(0.5, 0.0)).length() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((param - 0.5).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -1913,7 +1914,7 @@ mod tests {
         let (closest, _param) = project_point_on_curve2d(point, &circle);
 
         // Closest point should be at (1, 0)
-        assert!((closest - DVec2::new(1.0, 0.0)).length() < 1e-3);
+        assert!((closest - DVec2::new(1.0, 0.0)).length() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -1927,7 +1928,7 @@ mod tests {
         let (closest, _param) = project_point_on_curve2d(point, &circle);
 
         // Any point on circle is equally close (distance = 1)
-        assert!((closest.length() - 1.0).abs() < 1e-4);
+        assert!((closest.length() - 1.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     // ── ExtremaCurveCurve Tests ──────────────────────────────────────────────────
@@ -1945,7 +1946,7 @@ mod tests {
 
         let (dist, _t1, _t2) = distance_between_curves2d(&line1, &line2);
 
-        assert!((dist - 5.0).abs() < 1e-3);
+        assert!((dist - 5.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -1979,7 +1980,7 @@ mod tests {
         let (dist, _t1, _t2) = distance_between_curves2d(&circle1, &circle2);
 
         // Distance should be 1.0 (2.0 - 1.0)
-        assert!((dist - 1.0).abs() < 1e-3);
+        assert!((dist - 1.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     // ── ExtremaCurvePoint Tests ──────────────────────────────────────────────────
@@ -1994,8 +1995,8 @@ mod tests {
 
         let (dist, param) = distance_point_to_curve2d(point, &line);
 
-        assert!((dist - 4.0).abs() < 1e-4);
-        assert!((param - 0.5).abs() < 1e-4);
+        assert!((dist - 4.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((param - 0.5).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -2008,7 +2009,7 @@ mod tests {
 
         let (dist, _param) = distance_point_to_curve2d(point, &circle);
 
-        assert!((dist - 3.0).abs() < 1e-3);
+        assert!((dist - 3.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -2021,7 +2022,7 @@ mod tests {
 
         let (dist, _param) = distance_point_to_curve2d(point, &circle);
 
-        assert!(dist < 1e-6);
+        assert!(dist < TOLERANCE_MESH_LEGACY);
     }
 
     // ── Angle Analysis Tests ─────────────────────────────────────────────────────
@@ -2035,7 +2036,7 @@ mod tests {
 
         let angle = curve2d_angle_at(&line, 0.0);
 
-        assert!(angle.abs() < 1e-6);
+        assert!(angle.abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -2049,7 +2050,7 @@ mod tests {
 
         let angle = curve2d_angle_at(&line, 0.0);
 
-        assert!((angle - FRAC_PI_4).abs() < 1e-6);
+        assert!((angle - FRAC_PI_4).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -2061,11 +2062,11 @@ mod tests {
 
         // At t=0, tangent points in +Y direction (angle = pi/2)
         let angle0 = curve2d_angle_at(&circle, 0.0);
-        assert!((angle0 - FRAC_PI_2).abs() < 1e-4);
+        assert!((angle0 - FRAC_PI_2).abs() < TOLERANCE_RETRY_LADDER_COARSE);
 
         // At t=pi/2, tangent points in -X direction (angle = pi)
         let angle90 = curve2d_angle_at(&circle, FRAC_PI_2);
-        assert!((angle90 - PI).abs() < 1e-4 || (angle90 + PI).abs() < 1e-4);
+        assert!((angle90 - PI).abs() < TOLERANCE_RETRY_LADDER_COARSE || (angle90 + PI).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     // ── Curvature Tests ──────────────────────────────────────────────────────────
@@ -2079,7 +2080,7 @@ mod tests {
 
         let curvature = curve2d_curvature_at(&line, 0.0);
 
-        assert!(curvature.abs() < 1e-6);
+        assert!(curvature.abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]

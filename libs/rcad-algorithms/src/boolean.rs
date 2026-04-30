@@ -6,6 +6,12 @@
 
 use std::fmt;
 
+use crate::tolerance::{
+    TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_CLAMP_MIN, TOLERANCE_FLOAT_DEDUP,
+    TOLERANCE_LEN_MIN, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE,
+    TOLERANCE_RETRY_LADDER_MID,
+};
+
 /// Detailed failure classification for boolean operations.
 ///
 /// This enum provides more specific failure types than `BooleanRetryClass`,
@@ -159,12 +165,12 @@ impl Default for RetryPolicy {
         Self {
             max_attempts: 5,
             fuzzy_growth_factor: 10.0,
-            fuzzy_tolerance_cap: 1e-3,
+            fuzzy_tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             enable_glue_after_n_failures: 2,
-            glue_tolerance: 1e-6,
+            glue_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_aggressiveness: 5,
             make_connected_max_passes: 5,
-            make_connected_initial_tolerance: 1e-6,
+            make_connected_initial_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_tolerance_growth: 2.0,
             use_scoped_make_connected: true,
             fallback_to_global_cleanup: true,
@@ -180,12 +186,12 @@ impl RetryPolicy {
         Self {
             max_attempts: 3,
             fuzzy_growth_factor: 5.0,
-            fuzzy_tolerance_cap: 1e-4,
+            fuzzy_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE,
             enable_glue_after_n_failures: 3,
-            glue_tolerance: 1e-7,
+            glue_tolerance: TOLERANCE_ABS,
             make_connected_aggressiveness: 3,
             make_connected_max_passes: 3,
-            make_connected_initial_tolerance: 1e-7,
+            make_connected_initial_tolerance: TOLERANCE_ABS,
             make_connected_tolerance_growth: 1.5,
             use_scoped_make_connected: true,
             fallback_to_global_cleanup: true,
@@ -199,12 +205,12 @@ impl RetryPolicy {
         Self {
             max_attempts: 10,
             fuzzy_growth_factor: 20.0,
-            fuzzy_tolerance_cap: 1e-2,
+            fuzzy_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE * 100.0,
             enable_glue_after_n_failures: 1,
-            glue_tolerance: 1e-5,
+            glue_tolerance: TOLERANCE_RETRY_LADDER_MID,
             make_connected_aggressiveness: 8,
             make_connected_max_passes: 10,
-            make_connected_initial_tolerance: 1e-5,
+            make_connected_initial_tolerance: TOLERANCE_RETRY_LADDER_MID,
             make_connected_tolerance_growth: 3.0,
             use_scoped_make_connected: false,
             fallback_to_global_cleanup: true,
@@ -218,12 +224,12 @@ impl RetryPolicy {
         Self {
             max_attempts: 8,
             fuzzy_growth_factor: 15.0,
-            fuzzy_tolerance_cap: 5e-3,
+            fuzzy_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE * 50.0,
             enable_glue_after_n_failures: 1,
-            glue_tolerance: 1e-5,
+            glue_tolerance: TOLERANCE_RETRY_LADDER_MID,
             make_connected_aggressiveness: 6,
             make_connected_max_passes: 7,
-            make_connected_initial_tolerance: 1e-6,
+            make_connected_initial_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_tolerance_growth: 2.5,
             use_scoped_make_connected: true,
             fallback_to_global_cleanup: true,
@@ -237,12 +243,12 @@ impl RetryPolicy {
         Self {
             max_attempts: 6,
             fuzzy_growth_factor: 5.0,
-            fuzzy_tolerance_cap: 1e-3,
+            fuzzy_tolerance_cap: TOLERANCE_ADAPTIVE_MAX,
             enable_glue_after_n_failures: 2,
-            glue_tolerance: 1e-6,
+            glue_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_aggressiveness: 9,
             make_connected_max_passes: 10,
-            make_connected_initial_tolerance: 1e-5,
+            make_connected_initial_tolerance: TOLERANCE_RETRY_LADDER_MID,
             make_connected_tolerance_growth: 2.0,
             use_scoped_make_connected: false,
             fallback_to_global_cleanup: true,
@@ -256,12 +262,12 @@ impl RetryPolicy {
         Self {
             max_attempts: 6,
             fuzzy_growth_factor: 10.0,
-            fuzzy_tolerance_cap: 5e-3,
+            fuzzy_tolerance_cap: TOLERANCE_RETRY_LADDER_COARSE * 50.0,
             enable_glue_after_n_failures: 0, // Enable immediately
-            glue_tolerance: 1e-5,
+            glue_tolerance: TOLERANCE_RETRY_LADDER_MID,
             make_connected_aggressiveness: 5,
             make_connected_max_passes: 5,
-            make_connected_initial_tolerance: 1e-6,
+            make_connected_initial_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_tolerance_growth: 2.0,
             use_scoped_make_connected: true,
             fallback_to_global_cleanup: true,
@@ -477,9 +483,9 @@ impl FailureAnalyzer {
     /// Creates a new failure analyzer with default thresholds.
     pub fn new() -> Self {
         Self {
-            degenerate_edge_threshold: 1e-12,
-            degenerate_triangle_threshold: 1e-15,
-            self_intersection_threshold: 1e-6,
+            degenerate_edge_threshold: TOLERANCE_LEN_MIN,
+            degenerate_triangle_threshold: TOLERANCE_CLAMP_MIN,
+            self_intersection_threshold: TOLERANCE_MESH_LEGACY,
         }
     }
 
@@ -657,6 +663,10 @@ impl RetryPolicyBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::{
+        TOLERANCE_ABS, TOLERANCE_FLOAT_DEDUP, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE,
+        TOLERANCE_RETRY_LADDER_MID,
+    };
 
     #[test]
     fn failure_class_is_recoverable() {
@@ -722,11 +732,11 @@ mod tests {
     #[test]
     fn retry_policy_next_fuzzy_tolerance() {
         let policy = RetryPolicy::default();
-        let next = policy.next_fuzzy_tolerance(1e-6);
-        assert!((next - 1e-5).abs() < 1e-15);
+        let next = policy.next_fuzzy_tolerance(TOLERANCE_MESH_LEGACY);
+        assert!((next - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_FLOAT_DEDUP);
 
         // Should cap at the maximum
-        let capped = policy.next_fuzzy_tolerance(1e-2);
+        let capped = policy.next_fuzzy_tolerance(TOLERANCE_RETRY_LADDER_COARSE * 100.0);
         assert!(capped <= policy.fuzzy_tolerance_cap);
     }
 
@@ -788,7 +798,7 @@ mod tests {
         // Add a failed attempt
         let failed_attempt = BooleanAttemptDiagnostic {
             attempt_number: 1,
-            fuzzy_tolerance: 1e-6,
+            fuzzy_tolerance: TOLERANCE_MESH_LEGACY,
             success: false,
             failure_class: Some(BooleanFailureClass::NumericalInstability),
             recovery_strategy: Some(RecoveryStrategy::IncreaseFuzzyTolerance),
@@ -800,7 +810,7 @@ mod tests {
         // Add a successful attempt
         let success_attempt = BooleanAttemptDiagnostic {
             attempt_number: 2,
-            fuzzy_tolerance: 1e-5,
+            fuzzy_tolerance: TOLERANCE_RETRY_LADDER_MID,
             glue_enabled: true,
             success: true,
             result_faces: Some(10),
@@ -848,14 +858,14 @@ mod tests {
     #[test]
     fn make_connected_tolerance_computation() {
         let policy = RetryPolicy {
-            make_connected_initial_tolerance: 1e-6,
+            make_connected_initial_tolerance: TOLERANCE_MESH_LEGACY,
             make_connected_tolerance_growth: 2.0,
             ..Default::default()
         };
 
-        assert!((policy.make_connected_tolerance(0) - 1e-6).abs() < 1e-15);
-        assert!((policy.make_connected_tolerance(1) - 2e-6).abs() < 1e-15);
-        assert!((policy.make_connected_tolerance(2) - 4e-6).abs() < 1e-15);
+        assert!((policy.make_connected_tolerance(0) - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_FLOAT_DEDUP);
+        assert!((policy.make_connected_tolerance(1) - 2.0 * TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_FLOAT_DEDUP);
+        assert!((policy.make_connected_tolerance(2) - 4e-6).abs() < TOLERANCE_FLOAT_DEDUP);
     }
 
     // ============================================================================
@@ -875,7 +885,11 @@ mod tests {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         // B's corner is very close to A's corner at (2, 2, 2)
         let b = make_box_brep(
-            DVec3::new(2.0 - 1e-5, 2.0 - 1e-5, 2.0 - 1e-5),
+            DVec3::new(
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+            ),
             DVec3::X,
             DVec3::Y,
             1.0,
@@ -885,7 +899,7 @@ mod tests {
         .unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 
@@ -908,7 +922,11 @@ mod tests {
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         // B's corner is very close to A's corner at (2, 2, 2)
         let b = make_box_brep(
-            DVec3::new(2.0 - 1e-5, 2.0 - 1e-5, 2.0 - 1e-5),
+            DVec3::new(
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+                2.0 - TOLERANCE_RETRY_LADDER_MID,
+            ),
             DVec3::X,
             DVec3::Y,
             1.0,
@@ -918,7 +936,7 @@ mod tests {
         .unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 
@@ -941,12 +959,12 @@ mod tests {
         use glam::DVec3;
         use crate::{boolean_op_with_options, BooleanOptions, BooleanOpType};
 
-        // Two boxes with faces nearly touching (gap = 1e-5, within fuzzy tolerance)
+        // Two boxes with faces nearly touching (gap = TOLERANCE_RETRY_LADDER_MID, within fuzzy tolerance)
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0 + 1e-5, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0 + TOLERANCE_RETRY_LADDER_MID, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 
@@ -962,12 +980,12 @@ mod tests {
         use glam::DVec3;
         use crate::{boolean_op_with_options, BooleanOptions, BooleanOpType};
 
-        // Two boxes with faces nearly touching (gap = 1e-5, within fuzzy tolerance)
+        // Two boxes with faces nearly touching (gap = TOLERANCE_RETRY_LADDER_MID, within fuzzy tolerance)
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0 + 1e-5, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0 + TOLERANCE_RETRY_LADDER_MID, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 
@@ -986,11 +1004,11 @@ mod tests {
 
         // Cylinder intersecting with a box where the cylinder surface is nearly tangent to a box face
         let cylinder = make_cylinder_brep(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, DVec3::X, 1.0, 4.0).unwrap();
-        // Box positioned so its face is nearly tangent to cylinder surface (gap = 1e-5)
-        let box_ = make_box_brep(DVec3::new(1.0 + 1e-5, -2.0, -1.0), DVec3::X, DVec3::Y, 4.0, 4.0, 6.0).unwrap();
+        // Box positioned so its face is nearly tangent to cylinder surface (gap = TOLERANCE_RETRY_LADDER_MID)
+        let box_ = make_box_brep(DVec3::new(1.0 + TOLERANCE_RETRY_LADDER_MID, -2.0, -1.0), DVec3::X, DVec3::Y, 4.0, 4.0, 6.0).unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 
@@ -1145,7 +1163,7 @@ mod tests {
 
         // Use conservative simplification to preserve small features
         let opts = SimplifyOptions {
-            merge_tolerance: 1e-7,
+            merge_tolerance: TOLERANCE_ABS,
             ..SimplifyOptions::default()
         };
 
@@ -1529,7 +1547,7 @@ mod tests {
         let b = make_box_brep(DVec3::new(1.99999, 1.99999, 1.99999), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
 
         let opts = BooleanOptions {
-            fuzzy_tol: 1e-4,
+            fuzzy_tol: TOLERANCE_RETRY_LADDER_COARSE,
             ..Default::default()
         };
 

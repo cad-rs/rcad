@@ -31,7 +31,7 @@ use rcad_kernel::geom::{
 };
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // =============================================================================
 // Curve Construction
@@ -49,7 +49,7 @@ use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
 /// let p1 = DVec3::ZERO;
 /// let p2 = DVec3::X;
 /// let line = construct_line(p1, p2).unwrap();
-/// assert!((line.origin - p1).length() < 1e-10);
+/// assert!((line.origin - p1).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
 pub fn construct_line(p1: DVec3, p2: DVec3) -> Option<Line3> {
     let delta = p2 - p1;
@@ -671,7 +671,7 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+    use crate::tolerance::*;
     use rcad_kernel::geom::{Curve3, CurveEval, SurfaceEval};
 
     // -------------------------------------------------------------------------
@@ -704,7 +704,7 @@ mod tests {
         let circle = construct_circle_from_3_points(p1, p2, p3).unwrap();
 
         assert!((circle.center - DVec3::ZERO).length() < TOLERANCE_ABS);
-        assert!((circle.radius - 1.0).abs() < 1e-6);
+        assert!((circle.radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
         assert!((circle.normal - DVec3::Z).length() < TOLERANCE_ANG
             || (circle.normal + DVec3::Z).length() < TOLERANCE_ANG);
     }
@@ -750,8 +750,8 @@ mod tests {
         let ellipse = construct_ellipse_from_points(p1, p2, p3).unwrap();
 
         assert!((ellipse.center - DVec3::ZERO).length() < TOLERANCE_ABS);
-        assert!((ellipse.major_radius - 2.0).abs() < 1e-6);
-        assert!((ellipse.minor_radius - 1.0).abs() < 1e-6);
+        assert!((ellipse.major_radius - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((ellipse.minor_radius - 1.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -892,7 +892,7 @@ mod tests {
         // Linear B-spline should be a straight line
         let curve_geom = Curve3::BSpline(curve);
         let p_mid = curve_geom.point_at(0.5);
-        assert!((p_mid - DVec3::new(0.5, 0.0, 0.0)).length() < 1e-6);
+        assert!((p_mid - DVec3::new(0.5, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -983,7 +983,7 @@ mod tests {
         // Check that vertices lie on a circle
         for v in &vertices {
             let r = (v.x * v.x + v.y * v.y).sqrt();
-            assert!((r - 1.0).abs() < 1e-10);
+            assert!((r - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         }
 
         // Check that wire is closed
@@ -1008,7 +1008,7 @@ mod tests {
 
         // Check that vertices are centered correctly
         let avg: DVec3 = vertices.iter().sum::<DVec3>() / vertices.len() as f64;
-        assert!((avg - center).length() < 1e-10);
+        assert!((avg - center).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // -------------------------------------------------------------------------

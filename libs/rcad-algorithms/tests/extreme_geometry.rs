@@ -9,7 +9,7 @@ use rcad_algorithms::{
     ASPECT_RATIO_THRESHOLD,
 };
 use rcad_kernel::BRep;
-use rcad_algorithms::tolerance::{TOLERANCE_ABS, AdaptiveTolerance, ToleranceLevel};
+use rcad_algorithms::tolerance::*;
 
 // ── Near-Tangent Geometry Tests ────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ fn near_tangent_handler_default() {
 fn near_tangent_handler_from_adaptive() {
     let adaptive = AdaptiveTolerance::from_scale(100.0);
     let handler = NearTangentHandler::from_adaptive(adaptive);
-    assert!((handler.base_tolerance - adaptive.coincidence()).abs() < 1e-15);
+    assert!((handler.base_tolerance - adaptive.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn near_tangent_adjust_tolerance_empty_configs() {
     let handler = NearTangentHandler::default();
     let base_fuzzy = TOLERANCE_ABS;
     let adjusted = handler.adjust_tolerance_for_tangency(base_fuzzy, &[]);
-    assert!((adjusted - base_fuzzy).abs() < 1e-15);
+    assert!((adjusted - base_fuzzy).abs() < TOLERANCE_FLOAT_DEDUP);
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn aspect_ratio_tolerance_multiplier_normal() {
     let aat = AspectRatioAdaptiveTolerance::default();
     // Below threshold should return 1.0
     let mult = aat.compute_tolerance_multiplier(10.0);
-    assert!((mult - 1.0).abs() < 1e-10);
+    assert!((mult - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn degenerate_geometry_handler_default() {
 fn degenerate_geometry_handler_from_adaptive() {
     let adaptive = AdaptiveTolerance::from_scale(100.0);
     let handler = DegenerateGeometryHandler::from_adaptive(adaptive);
-    assert!((handler.zero_tolerance - adaptive.coincidence()).abs() < 1e-15);
+    assert!((handler.zero_tolerance - adaptive.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn size_difference_handler_default() {
 fn size_difference_handler_from_adaptive() {
     let adaptive = AdaptiveTolerance::from_scale(100.0);
     let handler = SizeDifferenceHandler::from_adaptive(adaptive);
-    assert!((handler.base_tolerance - adaptive.coincidence()).abs() < 1e-15);
+    assert!((handler.base_tolerance - adaptive.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn size_difference_compute_characteristic_size_empty() {
     let handler = SizeDifferenceHandler::default();
     let brep = BRep::default();
     let size = handler.compute_characteristic_size(&brep);
-    assert!((size - 1.0).abs() < 1e-10);
+    assert!((size - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 }
 
 // ── Extreme Geometry Retry Policy Tests ──────────────────────────────────────────
@@ -324,10 +324,10 @@ fn adaptive_tolerance_integration() {
     let size_handler = SizeDifferenceHandler::from_adaptive(tol);
 
     // All handlers should use the adaptive tolerance
-    assert!((near_tangent_handler.base_tolerance - tol.coincidence()).abs() < 1e-15);
-    assert!((aspect_handler.base_tolerance - tol.coincidence()).abs() < 1e-15);
-    assert!((degenerate_handler.zero_tolerance - tol.coincidence()).abs() < 1e-15);
-    assert!((size_handler.base_tolerance - tol.coincidence()).abs() < 1e-15);
+    assert!((near_tangent_handler.base_tolerance - tol.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
+    assert!((aspect_handler.base_tolerance - tol.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
+    assert!((degenerate_handler.zero_tolerance - tol.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
+    assert!((size_handler.base_tolerance - tol.coincidence()).abs() < TOLERANCE_FLOAT_DEDUP);
 }
 
 #[test]

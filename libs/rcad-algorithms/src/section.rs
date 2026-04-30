@@ -20,7 +20,7 @@
 //! - Multiple section support: parallel planes, cross-sections along a path
 
 use glam::DVec3;
-use rcad_kernel::BRep;
+use rcad_kernel::{face_tolerance, BRep};
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
     SphericalSurface, Surface3, ToroidalSurface, any_perpendicular,
@@ -29,11 +29,30 @@ use rcad_kernel::topology::{Edge, Shell, Solid, Vertex, Wire, WireEdge};
 use std::f64::consts::PI;
 
 use crate::inttools::{
-    intersect_surfaces, SurfaceCurve, SurfaceIntersectionResult,
+    intersect_surfaces_with_density_tol, SurfaceCurve, SurfaceIntersectionResult,
+};
+use crate::tolerance::{
+    intss_geom_tol_floor,
+    max_face_tolerance_or_abs_pair,
+    tessellation_merge_linear_from_brep, tessellation_merge_linear_from_two_breps, TOLERANCE_ABS,
+    TOLERANCE_AREA_REL, TOLERANCE_CLAMP_MIN, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
+    TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_MID,
 };
 use crate::triangulate::triangulate_polygon;
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Flat BRep face index → geometric floor for numerical IntSS (phase C).
+#[inline]
+fn face_geom_floor(brep: &BRep, flat_face_idx: usize) -> f64 {
+    intss_geom_tol_floor(TOLERANCE_ABS, face_tolerance(brep, flat_face_idx))
+}
+
+/// World-space merge / closed-loop slack for triangle-soup plane section (phase C).
+#[inline]
+fn plane_section_mesh_merge_eps(brep: &BRep) -> f64 {
+    tessellation_merge_linear_from_brep(brep)
+}
 
 /// Signed distance from a point to the plane (positive on the normal side).
 #[inline]
@@ -46,13 +65,13 @@ fn plane_dist(plane: &Plane, p: DVec3) -> f64 {
 fn segment_plane_intersect(plane: &Plane, a: DVec3, b: DVec3) -> Option<DVec3> {
     let da = plane_dist(plane, a);
     let db = plane_dist(plane, b);
-    if da.signum() == db.signum() || (da.abs() < 1e-10 && db.abs() < 1e-10) {
+    if da.signum() == db.signum() || (da.abs() < TOLERANCE_ABS && db.abs() < TOLERANCE_ABS) {
         return None;
     }
-    if da.abs() < 1e-10 {
+    if da.abs() < TOLERANCE_ABS {
         return Some(a);
     }
-    if db.abs() < 1e-10 {
+    if db.abs() < TOLERANCE_ABS {
         return Some(b);
     }
     let t = da / (da - db);
@@ -119,28 +138,72 @@ pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
 }
 
 /// Intersect two triangle soups and chain intersection segments into polylines.
+///
+/// Uses [`TOLERANCE_MESH_LEGACY`] for pair/merge (historic default; unchanged for back-compat).
+/// When both [`BRep`] operands are known, prefer [`intersect_triangle_soups_adaptive`] or [`intersect_triangle_soups_for_brep_tolerance`].
 pub fn intersect_triangle_soups(tris_a: &[[DVec3; 3]], tris_b: &[[DVec3; 3]]) -> Vec<Vec<DVec3>> {
+    intersect_triangle_soups_eps(tris_a, tris_b, TOLERANCE_MESH_LEGACY, TOLERANCE_MESH_LEGACY)
+}
+
+/// Triangle–triangle chaining with pair/merge epsilon from [`crate::tolerance::tessellation_merge_linear_from_two_breps`]
+/// (**Relaxed adaptive** + **`TOLERANCE_MESH_LEGACY`** minimum + pairwise **`model_tolerance`**).
+pub fn intersect_triangle_soups_adaptive(
+    tris_a: &[[DVec3; 3]],
+    tris_b: &[[DVec3; 3]],
+    brep_a: &BRep,
+    brep_b: &BRep,
+) -> Vec<Vec<DVec3>> {
+    let e = crate::tolerance::tessellation_merge_linear_from_two_breps(brep_a, brep_b);
+    intersect_triangle_soups_eps(tris_a, tris_b, e, e)
+}
+/// Intersect two triangle soups; `pair_eps` feeds [`triangle_triangle_intersect_eps`],
+/// `merge_eps` feeds [`chain_segments_eps`]. Both clamp up to [`TOLERANCE_ABS`].
+pub fn intersect_triangle_soups_eps(
+    tris_a: &[[DVec3; 3]],
+    tris_b: &[[DVec3; 3]],
+    pair_eps: f64,
+    merge_eps: f64,
+) -> Vec<Vec<DVec3>> {
+    let pair = pair_eps.max(TOLERANCE_ABS);
+    let merge = merge_eps.max(TOLERANCE_ABS);
     let mut segments: Vec<[DVec3; 2]> = Vec::new();
     for ta in tris_a {
         for tb in tris_b {
-            if let Some(seg) = triangle_triangle_intersect(ta, tb) {
+            if let Some(seg) = triangle_triangle_intersect_eps(ta, tb, pair) {
                 segments.push(seg);
             }
         }
     }
-    chain_segments(segments)
+    chain_segments_eps(segments, merge)
+}
+
+/// Intersect two triangle soups using [`crate::tolerance::max_face_tolerance_or_abs_pair`] as both
+/// pair and merge epsilon (see [`intersect_triangle_soups_eps`]).
+pub fn intersect_triangle_soups_for_brep_tolerance(
+    tris_a: &[[DVec3; 3]],
+    tris_b: &[[DVec3; 3]],
+    brep_a: &BRep,
+    brep_b: &BRep,
+) -> Vec<Vec<DVec3>> {
+    let e = max_face_tolerance_or_abs_pair(brep_a, brep_b);
+    intersect_triangle_soups_eps(tris_a, tris_b, e, e)
 }
 
 /// Intersect a single triangle with the plane. Returns a segment [p0, p1] if
 /// the triangle straddles the plane, or `None` otherwise.
 fn triangle_section(plane: &Plane, tri: [DVec3; 3]) -> Option<[DVec3; 2]> {
+    triangle_section_eps(plane, tri, TOLERANCE_ABS)
+}
+
+fn triangle_section_eps(plane: &Plane, tri: [DVec3; 3], dedup_eps: f64) -> Option<[DVec3; 2]> {
+    let dedup = dedup_eps.max(TOLERANCE_CLAMP_MIN);
     let [a, b, c] = tri;
     let edges = [[a, b], [b, c], [c, a]];
     let mut pts = Vec::new();
     for [p, q] in edges {
         if let Some(hit) = segment_plane_intersect(plane, p, q) {
             // Deduplicate near-identical hits (e.g. at a vertex)
-            if pts.iter().all(|&x: &DVec3| (x - hit).length() > 1e-8) {
+            if pts.iter().all(|&x: &DVec3| (x - hit).length() > dedup) {
                 pts.push(hit);
             }
         }
@@ -154,18 +217,16 @@ fn triangle_section(plane: &Plane, tri: [DVec3; 3]) -> Option<[DVec3; 2]> {
 
 /// Check if two points are close (within tolerance).
 #[inline]
-fn pts_close(a: DVec3, b: DVec3) -> bool {
-    (a - b).length() < 1e-6
+fn pts_close_eps(a: DVec3, b: DVec3, eps: f64) -> bool {
+    (a - b).length() < eps
 }
 
-/// Chain a set of unordered segments into ordered polylines.
-///
-/// Returns a list of loops (each loop is an ordered list of DVec3 points).
-/// Attempts to close loops; open chains are also returned as-is.
-fn chain_segments(segments: Vec<[DVec3; 2]>) -> Vec<Vec<DVec3>> {
+fn chain_segments_eps(segments: Vec<[DVec3; 2]>, merge_eps: f64) -> Vec<Vec<DVec3>> {
     if segments.is_empty() {
         return Vec::new();
     }
+
+    let merge_eps = merge_eps.max(TOLERANCE_CLAMP_MIN);
 
     // Represent each segment as (start, end); build adjacency by proximity
     let mut remaining: Vec<[DVec3; 2]> = segments;
@@ -182,12 +243,12 @@ fn chain_segments(segments: Vec<[DVec3; 2]>) -> Vec<Vec<DVec3>> {
             extended = false;
             let tail = *chain.last().expect("chain is non-empty (initialized with 2 points)");
             for i in 0..remaining.len() {
-                if pts_close(remaining[i][0], tail) {
+                if pts_close_eps(remaining[i][0], tail, merge_eps) {
                     chain.push(remaining[i][1]);
                     remaining.remove(i);
                     extended = true;
                     break;
-                } else if pts_close(remaining[i][1], tail) {
+                } else if pts_close_eps(remaining[i][1], tail, merge_eps) {
                     chain.push(remaining[i][0]);
                     remaining.remove(i);
                     extended = true;
@@ -202,12 +263,12 @@ fn chain_segments(segments: Vec<[DVec3; 2]>) -> Vec<Vec<DVec3>> {
             extended = false;
             let head = chain[0];
             for i in 0..remaining.len() {
-                if pts_close(remaining[i][1], head) {
+                if pts_close_eps(remaining[i][1], head, merge_eps) {
                     chain.insert(0, remaining[i][0]);
                     remaining.remove(i);
                     extended = true;
                     break;
-                } else if pts_close(remaining[i][0], head) {
+                } else if pts_close_eps(remaining[i][0], head, merge_eps) {
                     chain.insert(0, remaining[i][1]);
                     remaining.remove(i);
                     extended = true;
@@ -231,6 +292,9 @@ fn chain_segments(segments: Vec<[DVec3; 2]>) -> Vec<Vec<DVec3>> {
 ///
 /// For rendering, callers can extract vertices from the returned BRep's wires.
 ///
+/// Triangle-soup segment chaining uses [`crate::tolerance::tessellation_merge_linear_from_brep`]
+/// (phase C), not a fixed [`TOLERANCE_MESH_LEGACY`] merge alone.
+///
 /// Analogous to OCCT `BRepAlgoAPI_Section`.
 pub fn section(brep: &BRep, plane: &Plane) -> BRep {
     // Collect all section segments from all triangles
@@ -253,7 +317,8 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
     }
 
     // Chain segments into loops
-    let loops = chain_segments(segments);
+    let merge_eps = plane_section_mesh_merge_eps(brep);
+    let loops = chain_segments_eps(segments, merge_eps);
 
     // Build result BRep
     let mut result = BRep::new();
@@ -284,7 +349,7 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
 
             // Register curve in geom
             let len = (b - a).length();
-            let dir = if len > 1e-10 { (b - a) / len } else { DVec3::X };
+            let dir = if len > TOLERANCE_ABS { (b - a) / len } else { DVec3::X };
             let curve_idx = result.geom.curves.len();
             result.geom.curves.push(Curve3::Line(Line3 {
                 origin: a,
@@ -337,6 +402,7 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
 /// Convenience: extract all section polylines as ordered lists of 3D points.
 ///
 /// Each entry is one closed (or open) loop of points from the plane section.
+/// Chaining tolerance follows [`crate::tolerance::tessellation_merge_linear_from_brep`].
 pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
     // Collect segments directly without building full BRep
     let mut segments: Vec<[DVec3; 2]> = Vec::new();
@@ -353,7 +419,8 @@ pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
         }
     }
 
-    chain_segments(segments)
+    let merge_eps = plane_section_mesh_merge_eps(brep);
+    chain_segments_eps(segments, merge_eps)
 }
 
 // ── Public API: Curved Surface Section ────────────────────────────────────────
@@ -523,6 +590,7 @@ pub fn section_with_surface(brep: &BRep, cutting_surface: &CuttingSurface) -> Se
 
 /// Section by plane with full result.
 fn section_by_plane(brep: &BRep, plane: &Plane) -> SectionResult {
+    let merge_eps = plane_section_mesh_merge_eps(brep);
     let polylines = section_polylines(brep, plane);
 
     let mut curves = Vec::new();
@@ -533,7 +601,7 @@ fn section_by_plane(brep: &BRep, plane: &Plane) -> SectionResult {
             continue;
         }
 
-        let is_closed = pts_close(polyline[0], *polyline.last().unwrap());
+        let is_closed = pts_close_eps(polyline[0], *polyline.last().unwrap(), merge_eps);
 
         // Try to fit a BSpline for smooth representation
         let curve = if polyline.len() >= 4 && !is_closed {
@@ -588,6 +656,7 @@ fn section_by_torus(brep: &BRep, torus: &ToroidalSurface) -> SectionResult {
 
 /// Section by arbitrary analytic surface.
 fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> SectionResult {
+    let mesh_merge_eps = plane_section_mesh_merge_eps(brep);
     let mut curves = Vec::new();
     let mut polylines = Vec::new();
 
@@ -595,6 +664,8 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
     for solid in &brep.solids {
         for shell in &solid.shells {
             for face in &shell.faces {
+                let geom_floor = face_geom_floor(brep, face_global_idx);
+
                 // Get the analytic surface for this face
                 let face_surface = brep
                     .geom
@@ -604,11 +675,17 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
                     .and_then(|si| brep.geom.surfaces.get(si).cloned());
 
                 if let Some(face_surf) = face_surface {
-                    // Compute surface-surface intersection
-                    let intersection = intersect_surfaces(&face_surf, cutting_surface);
+                    // Compute surface-surface intersection (numeric branch uses model face tol floor)
+                    let intersection = intersect_surfaces_with_density_tol(
+                        &face_surf,
+                        cutting_surface,
+                        48,
+                        geom_floor,
+                    );
 
                     for curve_result in intersection.curves {
-                        let (curve, polyline, is_closed) = convert_surface_curve(&curve_result);
+                        let (curve, polyline, is_closed) =
+                            convert_surface_curve(&curve_result, mesh_merge_eps);
 
                         curves.push(SectionCurveResult {
                             curve,
@@ -622,9 +699,11 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
                     }
                 } else {
                     // Fall back to triangle-based section for non-analytic faces
-                    let face_polylines = section_face_by_surface_marching(brep, face, cutting_surface);
+                    let face_polylines =
+                        section_face_by_surface_marching(brep, face, cutting_surface, geom_floor);
                     for pts in &face_polylines {
-                        let is_closed = pts.len() > 2 && pts_close(pts[0], *pts.last().unwrap());
+                        let is_closed = pts.len() > 2
+                            && pts_close_eps(pts[0], *pts.last().unwrap(), geom_floor);
                         curves.push(SectionCurveResult {
                             curve: SectionCurveType::Polyline(pts.clone()),
                             is_closed,
@@ -663,13 +742,15 @@ fn section_by_brep_surface(brep: &BRep, tool_brep: &BRep, face_idx: usize) -> Se
         None => {
             // Fall back to triangle-based intersection
             let cutting_face = find_face_in_brep(tool_brep, face_idx);
-            let polylines = section_by_face_triangles(brep, tool_brep, cutting_face);
+            let (polylines, merge_eps) =
+                section_by_face_triangles(brep, tool_brep, face_idx, cutting_face);
 
             let curves = polylines
                 .iter()
                 .map(|pts| SectionCurveResult {
                     curve: SectionCurveType::Polyline(pts.clone()),
-                    is_closed: pts.len() > 2 && pts_close(pts[0], *pts.last().unwrap()),
+                    is_closed: pts.len() > 2
+                        && pts_close_eps(pts[0], *pts.last().unwrap(), merge_eps),
                     param_range: [0.0, pts.len() as f64],
                 })
                 .collect();
@@ -704,6 +785,7 @@ fn find_face_in_brep(brep: &BRep, face_idx: usize) -> Option<&rcad_kernel::Face>
 /// Convert a SurfaceCurve from intersection to SectionCurveType.
 fn convert_surface_curve(
     result: &SurfaceIntersectionResult,
+    polyline_close_eps: f64,
 ) -> (SectionCurveType, Option<Vec<DVec3>>, bool) {
     match &result.curve_3d {
         SurfaceCurve::Line(line) => {
@@ -753,7 +835,8 @@ fn convert_surface_curve(
         }
         SurfaceCurve::Point(_) => (SectionCurveType::Polyline(vec![]), None, false),
         SurfaceCurve::Polyline(pts) => {
-            let is_closed = pts.len() > 2 && pts_close(pts[0], *pts.last().unwrap());
+            let is_closed = pts.len() > 2
+                && pts_close_eps(pts[0], *pts.last().unwrap(), polyline_close_eps);
             // Try to fit a BSpline for smoother curves
             if pts.len() >= 4
                 && let Ok(bspline) = rcad_kernel::fit::approximate_points(pts, (pts.len() / 2).max(4)) {
@@ -769,7 +852,14 @@ fn section_face_by_surface_marching(
     brep: &BRep,
     face: &rcad_kernel::Face,
     cutting_surface: &Surface3,
+    geom_floor: f64,
 ) -> Vec<Vec<DVec3>> {
+    let edge_eps = geom_floor.max(TOLERANCE_ABS);
+    // Bisection residual: scale with face interrogation tol; cap by `edge_eps` so phase-C
+    // `face_geom_floor` can widen roots (legacy hard cap at `TOLERANCE_MESH_LEGACY` only).
+    let bisect_tol =
+        (edge_eps * TOLERANCE_AREA_REL).clamp(TOLERANCE_CLAMP_MIN, edge_eps.max(TOLERANCE_MESH_LEGACY));
+
     // Get triangles for the face
     let triangles = face_triangles(brep, face);
 
@@ -777,17 +867,24 @@ fn section_face_by_surface_marching(
     let mut segments: Vec<[DVec3; 2]> = Vec::new();
 
     for tri in triangles {
-        if let Some(seg) = triangle_surface_intersect(&tri, cutting_surface) {
+        if let Some(seg) =
+            triangle_surface_intersect(&tri, cutting_surface, edge_eps, bisect_tol)
+        {
             segments.push(seg);
         }
     }
 
     // Chain segments into polylines
-    chain_segments(segments)
+    chain_segments_eps(segments, edge_eps)
 }
 
 /// Intersect a triangle with a surface.
-fn triangle_surface_intersect(tri: &[DVec3; 3], surface: &Surface3) -> Option<[DVec3; 2]> {
+fn triangle_surface_intersect(
+    tri: &[DVec3; 3],
+    surface: &Surface3,
+    edge_eps: f64,
+    bisect_tol: f64,
+) -> Option<[DVec3; 2]> {
     // Sample points on triangle edges and find where surface distance changes sign
     let edges = [[tri[0], tri[1]], [tri[1], tri[2]], [tri[2], tri[0]]];
 
@@ -804,12 +901,15 @@ fn triangle_surface_intersect(tri: &[DVec3; 3], surface: &Surface3) -> Option<[D
             let dist = signed_distance_to_surface(p, surface);
 
             // Check for sign change or zero crossing
-            if prev_dist * dist < 0.0 || dist.abs() < 1e-6 {
+            if prev_dist * dist < 0.0 || dist.abs() < edge_eps {
                 // Binary search for exact intersection
-                let intersection = find_surface_intersection(a, b, surface);
+                let intersection = find_surface_intersection(a, b, surface, bisect_tol);
                 if let Some(pt) = intersection {
                     // Avoid duplicates
-                    if intersection_points.iter().all(|&x: &DVec3| (x - pt).length() > 1e-6) {
+                    if intersection_points
+                        .iter()
+                        .all(|&x: &DVec3| (x - pt).length() > edge_eps)
+                    {
                         intersection_points.push(pt);
                     }
                 }
@@ -879,7 +979,12 @@ fn signed_distance_to_surface(p: DVec3, surface: &Surface3) -> f64 {
 }
 
 /// Find the intersection of a line segment with a surface using binary search.
-fn find_surface_intersection(a: DVec3, b: DVec3, surface: &Surface3) -> Option<DVec3> {
+fn find_surface_intersection(
+    a: DVec3,
+    b: DVec3,
+    surface: &Surface3,
+    bisect_tol: f64,
+) -> Option<DVec3> {
     let dist_a = signed_distance_to_surface(a, surface);
     let dist_b = signed_distance_to_surface(b, surface);
 
@@ -897,7 +1002,7 @@ fn find_surface_intersection(a: DVec3, b: DVec3, surface: &Surface3) -> Option<D
         let p = a.lerp(b, mid);
         let dist_mid = signed_distance_to_surface(p, surface);
 
-        if dist_mid.abs() < 1e-9 {
+        if dist_mid.abs() < bisect_tol {
             return Some(p);
         }
 
@@ -912,47 +1017,66 @@ fn find_surface_intersection(a: DVec3, b: DVec3, surface: &Surface3) -> Option<D
 }
 
 /// Section by face triangles (for non-analytic surfaces).
+///
+/// Returns polylines and merge epsilon: `max` of per-face IntSS floors and
+/// [`crate::tolerance::tessellation_merge_linear_from_two_breps`] (phase C soup-style chaining).
 fn section_by_face_triangles(
     brep: &BRep,
-    _tool_brep: &BRep,
+    tool_brep: &BRep,
+    tool_face_idx: usize,
     cutting_face: Option<&rcad_kernel::Face>,
-) -> Vec<Vec<DVec3>> {
+) -> (Vec<Vec<DVec3>>, f64) {
     let cutting_face = match cutting_face {
         Some(f) => f,
-        None => return Vec::new(),
+        None => return (Vec::new(), TOLERANCE_ABS),
     };
 
-    // Get cutting triangles
-    let cutting_triangles = face_triangles(_tool_brep, cutting_face);
+    let tool_floor = face_geom_floor(tool_brep, tool_face_idx);
+    let cutting_triangles = face_triangles(tool_brep, cutting_face);
 
     let mut segments: Vec<[DVec3; 2]> = Vec::new();
+    let mut merge_eps = tool_floor;
+    let mut obj_idx = 0usize;
 
-    // Intersect each brep face with each cutting triangle
     for solid in &brep.solids {
         for shell in &solid.shells {
             for face in &shell.faces {
+                let obj_floor = face_geom_floor(brep, obj_idx);
+                merge_eps = merge_eps.max(obj_floor);
+                let pair_eps = obj_floor.max(tool_floor);
                 let brep_triangles = face_triangles(brep, face);
 
                 for brep_tri in &brep_triangles {
                     for cut_tri in &cutting_triangles {
-                        if let Some(seg) = triangle_triangle_intersect(brep_tri, cut_tri) {
+                        if let Some(seg) =
+                            triangle_triangle_intersect_eps(brep_tri, cut_tri, pair_eps)
+                        {
                             segments.push(seg);
                         }
                     }
                 }
+                obj_idx += 1;
             }
         }
     }
 
-    chain_segments(segments)
+    merge_eps = merge_eps.max(tessellation_merge_linear_from_two_breps(brep, tool_brep));
+
+    (chain_segments_eps(segments, merge_eps), merge_eps)
 }
 
-/// Intersect two triangles.
-fn triangle_triangle_intersect(tri1: &[DVec3; 3], tri2: &[DVec3; 3]) -> Option<[DVec3; 2]> {
+fn triangle_triangle_intersect_eps(
+    tri1: &[DVec3; 3],
+    tri2: &[DVec3; 3],
+    pair_eps: f64,
+) -> Option<[DVec3; 2]> {
+    let pe = pair_eps.max(TOLERANCE_ABS);
+    let degen_len = (TOLERANCE_LEN_MIN).max(pe * TOLERANCE_COORD_SUB);
+
     // Compute plane of tri2
     let normal2 = (tri2[1] - tri2[0]).cross(tri2[2] - tri2[0]);
     let len2 = normal2.length();
-    if len2 < 1e-12 {
+    if len2 < degen_len {
         return None;
     }
     let normal2 = normal2 / len2;
@@ -962,17 +1086,21 @@ fn triangle_triangle_intersect(tri1: &[DVec3; 3], tri2: &[DVec3; 3]) -> Option<[
     };
 
     // Find intersection of tri1 with plane of tri2
-    let seg = triangle_section(&plane2, *tri1)?;
+    let seg = triangle_section_eps(&plane2, *tri1, pe)?;
 
     // Clip segment to triangle 2 bounds
-    clip_segment_to_triangle(&seg, tri2)
+    clip_segment_to_triangle_eps(&seg, tri2, pe)
 }
 
 /// Clip a segment to a triangle's bounds.
-fn clip_segment_to_triangle(seg: &[DVec3; 2], tri: &[DVec3; 3]) -> Option<[DVec3; 2]> {
+fn clip_segment_to_triangle_eps(
+    seg: &[DVec3; 2],
+    tri: &[DVec3; 3],
+    pair_eps: f64,
+) -> Option<[DVec3; 2]> {
     // Simple check: both endpoints inside triangle
-    let a_inside = point_in_triangle(seg[0], tri);
-    let b_inside = point_in_triangle(seg[1], tri);
+    let a_inside = point_in_triangle_eps(seg[0], tri, pair_eps);
+    let b_inside = point_in_triangle_eps(seg[1], tri, pair_eps);
 
     if a_inside && b_inside {
         return Some(*seg);
@@ -986,11 +1114,14 @@ fn clip_segment_to_triangle(seg: &[DVec3; 2], tri: &[DVec3; 3]) -> Option<[DVec3
     None
 }
 
-/// Check if a point is inside a triangle (2D projection).
-fn point_in_triangle(p: DVec3, tri: &[DVec3; 3]) -> bool {
+/// Check if a point is inside a triangle (2D projection), with length-scale margin from `pair_eps`.
+fn point_in_triangle_eps(p: DVec3, tri: &[DVec3; 3], pair_eps: f64) -> bool {
+    let pe = pair_eps.max(TOLERANCE_ABS);
+    let degen_len = (TOLERANCE_LEN_MIN).max(pe * TOLERANCE_COORD_SUB);
+
     let normal = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
     let len = normal.length();
-    if len < 1e-12 {
+    if len < degen_len {
         return false;
     }
     let normal = normal / len;
@@ -1013,14 +1144,20 @@ fn point_in_triangle(p: DVec3, tri: &[DVec3; 3]) -> bool {
 
     // Barycentric check
     let denom = v1_local.x * v2_local.y - v2_local.x * v1_local.y;
-    if denom.abs() < 1e-12 {
+    if denom.abs() < degen_len {
         return false;
     }
 
     let s = (u * v2_local.y - v * v2_local.x) / denom;
     let t = (v * v1_local.x - u * v1_local.y) / denom;
 
-    s >= -1e-6 && t >= -1e-6 && s + t <= 1.0 + 1e-6
+    let e0 = tri[1] - tri[0];
+    let e1_edge = tri[2] - tri[1];
+    let e2_edge = tri[2] - tri[0];
+    let scale = e0.length().max(e1_edge.length()).max(e2_edge.length()).max(TOLERANCE_LEN_MIN);
+    let margin = (pe / scale).min(0.05).max(TOLERANCE_LEN_MIN);
+
+    s >= -margin && t >= -margin && s + t <= 1.0 + margin
 }
 
 /// Build a BRep from polylines.
@@ -1050,7 +1187,7 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
             });
 
             let len = (b - a).length();
-            let dir = if len > 1e-10 { (b - a) / len } else { DVec3::X };
+            let dir = if len > TOLERANCE_ABS { (b - a) / len } else { DVec3::X };
             let curve_idx = result.geom.curves.len();
             result.geom.curves.push(Curve3::Line(Line3 {
                 origin: a,
@@ -1163,7 +1300,7 @@ fn compute_polygon_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> (f64, 
         total_area += signed_area;
 
         // Compute centroid
-        if signed_area.abs() > 1e-12 {
+        if signed_area.abs() > TOLERANCE_LEN_MIN {
             for i in 0..n {
                 let j = (i + 1) % n;
                 let factor = pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
@@ -1173,7 +1310,7 @@ fn compute_polygon_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> (f64, 
         }
     }
 
-    if total_area.abs() < 1e-12 {
+    if total_area.abs() < TOLERANCE_LEN_MIN {
         return (0.0, plane.origin, 0.0, 0.0, 0.0);
     }
 
@@ -1489,7 +1626,7 @@ fn resample_polyline(pts: &[DVec3], n: usize) -> Vec<DVec3> {
         let seg_end = lengths[seg + 1];
         let seg_len = seg_end - seg_start;
 
-        let t = if seg_len > 1e-12 {
+        let t = if seg_len > TOLERANCE_LEN_MIN {
             (target - seg_start) / seg_len
         } else {
             0.0
@@ -1519,7 +1656,8 @@ pub enum SectionCurve {
 /// For faces backed by `Plane`, `Sphere`, `Cylinder`, or `Cone` surfaces the
 /// function dispatches to the exact analytical intersection tools and returns
 /// `SectionCurve::Analytic`. For all other surfaces it falls back to the
-/// triangle-mesh polyline method and returns `SectionCurve::Polyline`.
+/// triangle-mesh polyline method and returns `SectionCurve::Polyline`
+/// (segment chaining uses [`crate::tolerance::tessellation_merge_linear_from_brep`]).
 ///
 /// Curves that do not intersect the given plane are silently omitted.
 ///
@@ -1550,6 +1688,8 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
     if brep.solids.is_empty() {
         return results;
     }
+
+    let merge_eps = plane_section_mesh_merge_eps(brep);
 
     let mut face_global_idx = 0usize;
     for solid in &brep.solids {
@@ -1600,7 +1740,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                                 .filter_map(|tri| triangle_section(plane, tri))
                                 .collect();
                             if !segs.is_empty() {
-                                let chains = chain_segments(segs);
+                                let chains = chain_segments_eps(segs, merge_eps);
                                 for chain in chains {
                                     if chain.len() >= 2 {
                                         results.push(SectionCurve::Polyline(chain));
@@ -1622,7 +1762,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
                         .filter_map(|tri| triangle_section(plane, tri))
                         .collect();
                     if !segs.is_empty() {
-                        let chains = chain_segments(segs);
+                        let chains = chain_segments_eps(segs, merge_eps);
                         for chain in chains {
                             if chain.len() >= 2 {
                                 results.push(SectionCurve::Polyline(chain));
@@ -1669,7 +1809,7 @@ mod tests {
         for poly in &polylines {
             for &p in poly {
                 assert!(
-                    (p.z - 0.5).abs() < 1e-5,
+                    (p.z - 0.5).abs() < TOLERANCE_RETRY_LADDER_MID,
                     "section point z should be 0.5, got {}",
                     p.z
                 );
@@ -1710,8 +1850,8 @@ mod tests {
 
         for poly in &polylines {
             for &p in poly {
-                assert!(p.x >= -1e-5 && p.x <= 2.0 + 1e-5);
-                assert!(p.z >= -1e-5 && p.z <= 4.0 + 1e-5);
+                assert!(p.x >= -TOLERANCE_RETRY_LADDER_MID && p.x <= 2.0 + TOLERANCE_RETRY_LADDER_MID);
+                assert!(p.z >= -TOLERANCE_RETRY_LADDER_MID && p.z <= 4.0 + TOLERANCE_RETRY_LADDER_MID);
             }
         }
     }
@@ -2018,7 +2158,7 @@ mod tests {
         // All points should be at radius 2
         for p in &pts {
             let r = DVec2::new(p.x, p.y).length();
-            assert!((r - 2.0).abs() < 1e-6, "radius = {}", r);
+            assert!((r - 2.0).abs() < TOLERANCE_MESH_LEGACY, "radius = {}", r);
         }
     }
 
@@ -2038,8 +2178,8 @@ mod tests {
         assert_eq!(pts.len(), 20);
 
         // First point should be at (3, 0, 0)
-        assert!((pts[0].x - 3.0).abs() < 1e-6);
-        assert!(pts[0].y.abs() < 1e-6);
+        assert!((pts[0].x - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!(pts[0].y.abs() < TOLERANCE_MESH_LEGACY);
     }
 
     // ── Integration Tests ────────────────────────────────────────────────────────

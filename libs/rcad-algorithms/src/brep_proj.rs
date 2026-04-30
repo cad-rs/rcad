@@ -12,12 +12,20 @@ use rcad_kernel::topology::{Edge, Vertex};
 use rcad_kernel::BRep;
 
 use crate::brep_tools;
-use crate::section::{brep_triangle_soup, intersect_triangle_soups};
+use crate::section::{brep_triangle_soup, intersect_triangle_soups_eps};
+use crate::tolerance::*;
 
 /// Options for [`brep_proj_cylindrical`].
+///
+/// Default [`BrepProjOptions::tolerance`] is [`TOLERANCE_MESH_LEGACY`] for backward compatibility.
+/// [`brep_proj_cylindrical`] still **raises** soup / wire eps by `max` with
+/// [`max_face_tolerance_or_abs_pair`](crate::tolerance::max_face_tolerance_or_abs_pair) and
+/// [`tessellation_merge_linear_from_two_breps`](crate::tolerance::tessellation_merge_linear_from_two_breps)
+/// (phase C). To force a stricter user floor, set `tolerance` below those only when you accept possible
+/// dropped hits on coarse models.
 #[derive(Debug, Clone)]
 pub struct BrepProjOptions {
-    /// Geometric tolerance (segment chaining, degenerate skips).
+    /// Geometric tolerance (segment chaining, degenerate skips, triangle–triangle intersection).
     pub tolerance: f64,
     /// Uniform samples per edge when discretizing edge curves (≥ 2).
     pub samples_per_edge: usize,
@@ -26,7 +34,7 @@ pub struct BrepProjOptions {
 impl Default for BrepProjOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             samples_per_edge: 24,
         }
     }
@@ -45,7 +53,7 @@ fn proj_distance_scale(wire_brep: &BRep, target: &BRep) -> f64 {
     let la = da.length();
     let lb = db.length();
     let sep = aabb_distance(ba, bb);
-    (la + lb + sep.max(0.0)).max(1e-6)
+    (la + lb + sep.max(0.0)).max(TOLERANCE_MESH_LEGACY)
 }
 
 fn aabb_distance(a: [DVec3; 2], b: [DVec3; 2]) -> f64 {
@@ -297,7 +305,7 @@ pub fn brep_proj_cylindrical(
     options: &BrepProjOptions,
 ) -> Vec<BRep> {
     let dir = direction.normalize_or_zero();
-    if dir.length_squared() < 1e-30 {
+    if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
         return Vec::new();
     }
     let target_tris = brep_triangle_soup(target);
@@ -324,12 +332,19 @@ pub fn brep_proj_cylindrical(
         if prism_tris.is_empty() {
             continue;
         }
-        let loops = intersect_triangle_soups(&prism_tris, &target_tris);
+        let model_te = max_face_tolerance_or_abs_pair(shape, target);
+        let mesh_te = tessellation_merge_linear_from_two_breps(shape, target);
+        let te = options
+            .tolerance
+            .max(model_te)
+            .max(mesh_te)
+            .max(TOLERANCE_ABS);
+        let loops = intersect_triangle_soups_eps(&prism_tris, &target_tris, te, te);
         for lp in loops {
             if lp.len() < 2 {
                 continue;
             }
-            let wb = wire_brep_from_polyline(&lp, options.tolerance);
+            let wb = wire_brep_from_polyline(&lp, te);
             if wb.edges.is_empty() {
                 continue;
             }

@@ -25,9 +25,10 @@
 //! });
 //! let point = DVec3::new(3.0, 0.0, 0.0);
 //! let (proj_point, uv) = project_point_on_surface(point, &sphere, &ProjectionOptions::default());
-//! assert!((proj_point - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+//! assert!((proj_point - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
 //! ```
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
 use rcad_kernel::{BRep, Face};
@@ -73,7 +74,7 @@ pub struct ProjectionOptions {
 impl Default for ProjectionOptions {
     fn default() -> Self {
         Self {
-            tolerance: 1e-9,
+            tolerance: TOLERANCE_COORD_SUB,
             max_iterations: 40,
             samples: 32,
             direction: ProjectionDirection::default(),
@@ -85,7 +86,7 @@ impl Default for ProjectionOptions {
 impl ProjectionOptions {
     /// Create options with a specific tolerance.
     pub fn with_tolerance(mut self, tol: f64) -> Self {
-        self.tolerance = tol.abs().max(1e-12);
+        self.tolerance = tol.abs().max(TOLERANCE_LEN_MIN);
         self
     }
 
@@ -187,7 +188,7 @@ pub struct PointBRepProjection {
 ///     radius: 1.0,
 /// });
 /// let (proj, t) = project_point_on_curve(DVec3::new(2.0, 0.0, 0.0), &circle);
-/// assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+/// assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn project_point_on_curve(point: DVec3, curve: &Curve3) -> (DVec3, f64) {
     let result = closest_point_on_curve(curve, point, 64);
@@ -241,7 +242,7 @@ pub fn project_point_on_curve_with_options(
 ///     normal: DVec3::Z,
 /// });
 /// let (proj, uv) = project_point_on_surface(DVec3::new(1.0, 2.0, 5.0), &plane, &Default::default());
-/// assert!(proj.z.abs() < 1e-6);
+/// assert!(proj.z.abs() < TOLERANCE_MESH_LEGACY);
 /// ```
 pub fn project_point_on_surface(
     point: DVec3,
@@ -494,7 +495,7 @@ fn project_point_along_direction(point: DVec3, surface: &Surface3, direction: DV
         Surface3::Plane(plane) => {
             // Plane intersection: P + t*D where (P + t*D - origin) · normal = 0
             let denom = ray_dir.dot(plane.normal);
-            if denom.abs() < 1e-12 {
+            if denom.abs() < TOLERANCE_LEN_MIN {
                 // Ray parallel to plane - use closest point
                 let proj = closest_point_on_surface(surface, point, 8);
                 return proj.point;
@@ -892,7 +893,7 @@ fn refine_silhouette_v(
         let n_mid = surface.normal_at(u, mid);
         let dot_mid = n_mid.dot(view_dir);
 
-        if dot_mid.abs() < 1e-9 {
+        if dot_mid.abs() < TOLERANCE_COORD_SUB {
             return mid;
         }
 
@@ -1223,7 +1224,7 @@ mod tests {
             direction: DVec3::X,
         });
         let (proj, t) = project_point_on_curve(DVec3::new(3.0, 4.0, 0.0), &line);
-        assert!((proj - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-6);
+        assert!((proj - DVec3::new(3.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1234,7 +1235,7 @@ mod tests {
             radius: 1.0,
         });
         let (proj, _t) = project_point_on_curve(DVec3::new(2.0, 0.0, 0.0), &circle);
-        assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+        assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1245,7 +1246,7 @@ mod tests {
         });
         let options = ProjectionOptions::default();
         let (proj, uv) = project_point_on_surface(DVec3::new(1.0, 2.0, 5.0), &plane, &options);
-        assert!(proj.z.abs() < 1e-6);
+        assert!(proj.z.abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1257,7 +1258,7 @@ mod tests {
         });
         let options = ProjectionOptions::default();
         let (proj, _uv) = project_point_on_surface(DVec3::new(3.0, 0.0, 0.0), &sphere, &options);
-        assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < 1e-6);
+        assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1269,7 +1270,7 @@ mod tests {
         });
         let options = ProjectionOptions::default();
         let (proj, _uv) = project_point_on_surface(DVec3::new(3.0, 2.0, 0.0), &cylinder, &options);
-        assert!((proj - DVec3::new(1.0, 2.0, 0.0)).length() < 1e-6);
+        assert!((proj - DVec3::new(1.0, 2.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1332,19 +1333,19 @@ mod tests {
         });
         let options = ProjectionOptions {
             samples: 64,
-            tolerance: 1e-7,
+            tolerance: TOLERANCE_ABS,
             ..Default::default()
         };
         let curve2d = project_curve_on_surface(&circle3, &plane, &options);
         if let Curve2d::Circle(c) = &curve2d {
             let len = 2.0 * PI * c.radius;
-            assert!((len - 2.0 * PI * r).abs() < 1e-4);
+            assert!((len - 2.0 * PI * r).abs() < TOLERANCE_RETRY_LADDER_COARSE);
         } else {
             let (t0, t1) = curve2d_t_bounds(&curve2d);
             let chord_len = approx_curve2d_chord_length(&curve2d, t0, t1, 4096);
             let expect = 2.0 * PI * r;
             assert!(
-                (chord_len - expect).abs() < 0.05 * expect + 1e-3,
+                (chord_len - expect).abs() < 0.05 * expect + TOLERANCE_ADAPTIVE_MAX,
                 "chord-approx length {chord_len} should be near {expect}"
             );
         }
@@ -1370,7 +1371,7 @@ mod tests {
         let bs_surf = Surface3::BSpline(bs);
         let options = ProjectionOptions {
             samples: 128,
-            tolerance: 1e-7,
+            tolerance: TOLERANCE_ABS,
             ..Default::default()
         };
         let c2d_plane = project_curve_on_surface(&circle3, &plane_surf, &options);
@@ -1418,7 +1419,7 @@ mod tests {
     #[test]
     fn projection_options_default() {
         let options = ProjectionOptions::default();
-        assert_eq!(options.tolerance, 1e-9);
+        assert_eq!(options.tolerance, TOLERANCE_COORD_SUB);
         assert_eq!(options.max_iterations, 40);
         assert_eq!(options.samples, 32);
     }
@@ -1426,17 +1427,17 @@ mod tests {
     #[test]
     fn projection_options_builder() {
         let options = ProjectionOptions::default()
-            .with_tolerance(1e-6)
+            .with_tolerance(TOLERANCE_MESH_LEGACY)
             .with_max_iterations(100)
             .with_samples(64)
             .with_direction(DVec3::Y);
 
-        assert_eq!(options.tolerance, 1e-6);
+        assert_eq!(options.tolerance, TOLERANCE_MESH_LEGACY);
         assert_eq!(options.max_iterations, 100);
         assert_eq!(options.samples, 64);
         match options.direction {
             ProjectionDirection::AlongDirection(dir) => {
-                assert!((dir - DVec3::Y).length() < 1e-6);
+                assert!((dir - DVec3::Y).length() < TOLERANCE_MESH_LEGACY);
             }
             _ => panic!("Expected AlongDirection"),
         }
@@ -1459,7 +1460,7 @@ mod tests {
         match curve2d {
             Curve2d::Line(l) => {
                 // The origin should be near (0, 0)
-                assert!(l.origin.x.abs() < 1e-6);
+                assert!(l.origin.x.abs() < TOLERANCE_MESH_LEGACY);
             }
             Curve2d::BSpline(_) => {}
             _ => {}
@@ -1491,7 +1492,7 @@ mod tests {
         let view = ProjectionDirection::ViewDirection(DVec3::X);
 
         match along {
-            ProjectionDirection::AlongDirection(d) => assert!((d - DVec3::Z).length() < 1e-6),
+            ProjectionDirection::AlongDirection(d) => assert!((d - DVec3::Z).length() < TOLERANCE_MESH_LEGACY),
             _ => panic!("Expected AlongDirection"),
         }
 
@@ -1501,7 +1502,7 @@ mod tests {
         }
 
         match view {
-            ProjectionDirection::ViewDirection(d) => assert!((d - DVec3::X).length() < 1e-6),
+            ProjectionDirection::ViewDirection(d) => assert!((d - DVec3::X).length() < TOLERANCE_MESH_LEGACY),
             _ => panic!("Expected ViewDirection"),
         }
     }

@@ -14,10 +14,10 @@ use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::BRep;
 
 use crate::bvh::{Aabb, Bvh};
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 /// Finite difference step size for derivative computation.
-const H: f64 = 1e-6;
+const H: f64 = TOLERANCE_MESH_LEGACY;
 
 // =============================================================================
 // DistShapeShape - Distance between shapes
@@ -559,7 +559,7 @@ fn refine_point_curve_distance(curve: &Curve3, domain: [f64; 2], point: DVec3, i
     let mut t = initial_t;
 
     const MAX_ITER: usize = 20;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let p = curve.point_at(t);
@@ -595,7 +595,7 @@ fn refine_point_surface_distance(surface: &Surface3, domain: [f64; 4], point: DV
     let mut v = initial_v;
 
     const MAX_ITER: usize = 20;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let p = surface.point_at(u, v);
@@ -653,7 +653,7 @@ fn refine_curve_curve_distance(
     let mut t2 = t2;
 
     const MAX_ITER: usize = 30;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let p1 = curve1.point_at(t1);
@@ -709,7 +709,7 @@ fn refine_curve_surface_distance(
     let mut v = v;
 
     const MAX_ITER: usize = 30;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
     for _ in 0..MAX_ITER {
         let pc = curve.point_at(t);
@@ -759,7 +759,7 @@ fn refine_surface_surface_distance(
     let mut v2 = v2;
 
     const MAX_ITER: usize = 30;
-    const TOL: f64 = 1e-10;
+    const TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
     const STEP: f64 = 0.3;
 
     for _ in 0..MAX_ITER {
@@ -814,14 +814,14 @@ mod tests {
         let p1 = DVec3::ZERO;
         let p2 = DVec3::new(3.0, 4.0, 0.0);
         let dist = distance_point_point(p1, p2);
-        assert!((dist - 5.0).abs() < 1e-10);
+        assert!((dist - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn test_distance_point_point_zero() {
         let p = DVec3::new(1.0, 2.0, 3.0);
         let dist = distance_point_point(p, p);
-        assert!(dist.abs() < 1e-10);
+        assert!(dist.abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ── Point-Curve Tests ───────────────────────────────────────────────────────
@@ -836,8 +836,8 @@ mod tests {
 
         let (dist, param) = distance_point_curve(point, &line);
 
-        assert!((dist - 3.0).abs() < 1e-4);
-        assert!((param - 0.5).abs() < 1e-4);
+        assert!((dist - 3.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((param - 0.5).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -852,7 +852,7 @@ mod tests {
         let (dist, _param) = distance_point_curve(point, &circle);
 
         // Distance should be 2.0 (3.0 - 1.0)
-        assert!((dist - 2.0).abs() < 1e-4);
+        assert!((dist - 2.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     #[test]
@@ -865,8 +865,8 @@ mod tests {
 
         let (param, closest) = closest_point_on_curve(&line, point);
 
-        assert!((param - 2.5).abs() < 1e-4);
-        assert!((closest - DVec3::new(2.5, 0.0, 0.0)).length() < 1e-4);
+        assert!((param - 2.5).abs() < TOLERANCE_RETRY_LADDER_COARSE);
+        assert!((closest - DVec3::new(2.5, 0.0, 0.0)).length() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     // ── Point-Surface Tests ──────────────────────────────────────────────────────
@@ -881,7 +881,7 @@ mod tests {
 
         let (dist, _u, _v) = distance_point_surface(point, &plane);
 
-        assert!((dist - 5.0).abs() < 1e-4);
+        assert!((dist - 5.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
         // Note: UV coordinates depend on the plane's internal parameterization
         // which uses any_perpendicular for the x-axis direction.
     }
@@ -898,7 +898,7 @@ mod tests {
         let (dist, _u, _v) = distance_point_surface(point, &sphere);
 
         // Distance should be 3.0 (5.0 - 2.0)
-        assert!((dist - 3.0).abs() < 1e-3);
+        assert!((dist - 3.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -914,7 +914,7 @@ mod tests {
         // The closest point should be the projection onto the plane
         // Note: UV coordinates depend on the plane's internal parameterization
         // which uses any_perpendicular for the x-axis direction.
-        assert!((closest - DVec3::new(3.0, 4.0, 0.0)).length() < 1e-4);
+        assert!((closest - DVec3::new(3.0, 4.0, 0.0)).length() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
     // ── Curve-Curve Tests ────────────────────────────────────────────────────────
@@ -932,7 +932,7 @@ mod tests {
 
         let (dist, _t1, _t2) = distance_curve_curve(&line1, &line2);
 
-        assert!((dist - 5.0).abs() < 1e-3);
+        assert!((dist - 5.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -949,7 +949,7 @@ mod tests {
         let (dist, _t1, _t2) = distance_curve_curve(&line1, &line2);
 
         // Skew lines: minimum distance is 1.0
-        assert!((dist - 1.0).abs() < 1e-3);
+        assert!((dist - 1.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     // ── Curve-Surface Tests ──────────────────────────────────────────────────────
@@ -967,7 +967,7 @@ mod tests {
 
         let (dist, _t, _u, _v) = distance_curve_surface(&line, &plane);
 
-        assert!((dist - 5.0).abs() < 1e-3);
+        assert!((dist - 5.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     // ── Surface-Surface Tests ────────────────────────────────────────────────────
@@ -985,7 +985,7 @@ mod tests {
 
         let (dist, _u1, _v1, _u2, _v2) = distance_surface_surface(&plane1, &plane2);
 
-        assert!((dist - 3.0).abs() < 1e-3);
+        assert!((dist - 3.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
     #[test]
@@ -1044,7 +1044,7 @@ mod tests {
         // Should return valid parameters
         assert!(!closest.is_empty());
         for (_, dist) in &closest {
-            assert!((dist - 1.0).abs() < 1e-3);
+            assert!((dist - 1.0).abs() < TOLERANCE_ADAPTIVE_MAX);
         }
     }
 
@@ -1114,7 +1114,7 @@ mod tests {
         let (dist, _param) = distance_point_curve(point, &circle);
 
         // Distance should be 2.0 (10 - 5 - 3)
-        assert!((dist - 2.0).abs() < 1e-3);
+        assert!((dist - 2.0).abs() < TOLERANCE_ADAPTIVE_MAX);
         // Note: The exact parameter value depends on the circle's internal parameterization
         // which uses any_perpendicular for the x-axis direction.
         // For a circle with Z normal, the parameterization is:

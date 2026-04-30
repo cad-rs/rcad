@@ -20,7 +20,7 @@
 //! let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 //!
 //! // Intersect a line through the box
-//! let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, 1e-7);
+//! let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, TOLERANCE_ABS);
 //! assert_eq!(intersections.len(), 2); // Entry and exit points
 //!
 //! // Ray cast from above
@@ -32,7 +32,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
 use rcad_kernel::{BRep, Face};
 use crate::bvh::{Aabb, Bvh};
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
 use crate::inttools::curve_surface::{
     intersect_line_cylinder as intersect_line_cylinder_range,
@@ -146,7 +146,7 @@ impl Default for RayHit {
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let line = Curve3::Line(Line3 { origin: DVec3::new(1.0, 1.0, 5.0), direction: DVec3::NEG_Z });
-/// let intersections = intersect_curve_with_brep(&line, &box_brep, 1e-7);
+/// let intersections = intersect_curve_with_brep(&line, &box_brep, TOLERANCE_ABS);
 /// assert_eq!(intersections.len(), 2);
 /// ```
 pub fn intersect_curve_with_brep(
@@ -222,7 +222,7 @@ pub fn intersect_curve_with_brep(
 /// use rcad_algorithms::brep_int_curve_surface::intersect_line_with_brep;
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-/// let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, 1e-7);
+/// let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, TOLERANCE_ABS);
 /// assert_eq!(intersections.len(), 2);
 /// ```
 pub fn intersect_line_with_brep(
@@ -752,7 +752,7 @@ fn refine_line_surface_intersection(
     let mut v = initial_v;
 
     const MAX_ITER: usize = 20;
-    const H: f64 = 1e-7;
+    const H: f64 = TOLERANCE_ABS;
 
     for _ in 0..MAX_ITER {
         let line_point = line.origin + t * line.direction;
@@ -776,8 +776,8 @@ fn refine_line_surface_intersection(
         let residual = line_point - surf_point;
 
         // Update parameters
-        let delta_u = residual.dot(du) / du.length_squared().max(1e-12);
-        let delta_v = residual.dot(dv) / dv.length_squared().max(1e-12);
+        let delta_u = residual.dot(du) / du.length_squared().max(TOLERANCE_LEN_MIN);
+        let delta_v = residual.dot(dv) / dv.length_squared().max(TOLERANCE_LEN_MIN);
         let delta_t = residual.dot(line.direction);
 
         u += delta_u * 0.5;
@@ -813,7 +813,7 @@ fn refine_curve_surface_intersection(
     let mut t = (t_lo + t_hi) / 2.0;
 
     const MAX_ITER: usize = 30;
-    const H: f64 = 1e-7;
+    const H: f64 = TOLERANCE_ABS;
 
     for _ in 0..MAX_ITER {
         let curve_point = curve.point_at(t);
@@ -836,7 +836,7 @@ fn refine_curve_surface_intersection(
         let to_surface = proj.point - curve_point;
 
         // Update t to move curve point toward surface
-        if tangent.length_squared() > 1e-12 {
+        if tangent.length_squared() > TOLERANCE_LEN_MIN {
             let delta_t = to_surface.dot(tangent) / tangent.length_squared();
             t += delta_t * 0.5;
         }
@@ -1513,7 +1513,7 @@ mod tests {
             face_index: 1,
             normal: DVec3::Z,
         };
-        assert!((rh.distance - 3.74).abs() < 1e-6);
+        assert!((rh.distance - 3.74).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]

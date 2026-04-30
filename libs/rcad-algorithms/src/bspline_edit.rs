@@ -1,3 +1,4 @@
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{BSplineCurve2, BSplineCurve3, Curve2dEval, CurveEval};
 use std::collections::BTreeMap;
@@ -18,7 +19,7 @@ pub fn move_bspline2_point(curve: &BSplineCurve2, u: f64, target: DVec2) -> BSpl
         u,
     );
     let denom: f64 = coeffs.iter().map(|(_, c)| c * c).sum();
-    if denom <= 1e-24 {
+    if denom <= TOLERANCE_VEC_SQ_MIN {
         return curve.clone();
     }
 
@@ -43,7 +44,7 @@ pub fn move_bspline3_point(curve: &BSplineCurve3, u: f64, target: DVec3) -> BSpl
         u,
     );
     let denom: f64 = coeffs.iter().map(|(_, c)| c * c).sum();
-    if denom <= 1e-24 {
+    if denom <= TOLERANCE_VEC_SQ_MIN {
         return curve.clone();
     }
 
@@ -289,7 +290,7 @@ fn auxiliary_function_values(
     let mut values = vec![0.0; greville.len()];
     let left_den = greville[pivot] - start_value;
     let right_den = end_value - greville[pivot];
-    if left_den.abs() <= 1e-14 || right_den.abs() <= 1e-14 {
+    if left_den.abs() <= TOLERANCE_FLOAT_LOOSE || right_den.abs() <= TOLERANCE_FLOAT_LOOSE {
         return None;
     }
 
@@ -318,7 +319,7 @@ where
     let first = scalar_rational_value_and_derivative(degree, knots, weights, first_fn, u)?;
     let second = scalar_rational_value_and_derivative(degree, knots, weights, second_fn, u)?;
     let det = first.0 * second.1 - second.0 * first.1;
-    if det.abs() <= 1e-14 {
+    if det.abs() <= TOLERANCE_FLOAT_LOOSE {
         return None;
     }
 
@@ -371,7 +372,7 @@ fn rational_basis_coefficients(
         })
         .collect();
     let weight_sum: f64 = weighted.iter().map(|(_, value)| *value).sum();
-    if weight_sum.abs() <= 1e-24 {
+    if weight_sum.abs() <= TOLERANCE_VEC_SQ_MIN {
         return Vec::new();
     }
 
@@ -392,10 +393,10 @@ fn rational_basis_and_derivative_coefficients(
     if coeffs.is_empty() {
         return Vec::new();
     }
-    let eps = ((knots[knots.len() - degree - 1] - knots[degree]).abs() * 1e-6).max(1e-8);
+    let eps = ((knots[knots.len() - degree - 1] - knots[degree]).abs() * TOLERANCE_MESH_LEGACY).max(TOLERANCE_LINEAR_RELAX_8);
     let u0 = (u - eps).max(knots[degree]);
     let u1 = (u + eps).min(knots[knots.len() - degree - 1]);
-    if (u1 - u0).abs() <= 1e-14 {
+    if (u1 - u0).abs() <= TOLERANCE_FLOAT_LOOSE {
         return coeffs.into_iter().map(|(idx, c)| (idx, c, 0.0)).collect();
     }
 
@@ -427,7 +428,7 @@ where
     let ab: f64 = coeffs.iter().map(|(_, c, d)| c * d).sum();
     let bb: f64 = coeffs.iter().map(|(_, _, d)| d * d).sum();
     let det = aa * bb - ab * ab;
-    if det.abs() <= 1e-24 {
+    if det.abs() <= TOLERANCE_VEC_SQ_MIN {
         return None;
     }
 
@@ -476,7 +477,7 @@ fn basis_functions(span: usize, u: f64, degree: usize, knots: &[f64]) -> Vec<f64
         let mut saved = 0.0;
         for r in 0..j {
             let denom = right[r + 1] + left[j - r];
-            let temp = if denom.abs() <= 1e-24 {
+            let temp = if denom.abs() <= TOLERANCE_VEC_SQ_MIN {
                 0.0
             } else {
                 basis[r] / denom
@@ -504,7 +505,7 @@ mod tests {
 
         let edited = move_bspline2_point(&curve, 0.5, DVec2::new(1.0, 3.0));
 
-        assert!((edited.point_at(0.5) - DVec2::new(1.0, 3.0)).length() < 1e-12);
+        assert!((edited.point_at(0.5) - DVec2::new(1.0, 3.0)).length() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -518,7 +519,7 @@ mod tests {
 
         let edited = move_bspline3_point(&curve, 0.5, DVec3::new(1.0, 3.0, -2.0));
 
-        assert!((edited.point_at(0.5) - DVec3::new(1.0, 3.0, -2.0)).length() < 1e-12);
+        assert!((edited.point_at(0.5) - DVec3::new(1.0, 3.0, -2.0)).length() < TOLERANCE_LEN_MIN);
     }
 
     #[test]
@@ -532,8 +533,8 @@ mod tests {
 
         let edited = move_bspline2_tangent(&curve, 0.5, DVec2::new(1.0, 3.0), DVec2::new(4.0, 2.0));
 
-        assert!((edited.point_at(0.5) - DVec2::new(1.0, 3.0)).length() < 1e-10);
-        assert!((edited.derivative_at(0.5) - DVec2::new(4.0, 2.0)).length() < 1e-8);
+        assert!((edited.point_at(0.5) - DVec2::new(1.0, 3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((edited.derivative_at(0.5) - DVec2::new(4.0, 2.0)).length() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     #[test]
@@ -552,8 +553,8 @@ mod tests {
             DVec3::new(4.0, 2.0, 1.0),
         );
 
-        assert!((edited.point_at(0.5) - DVec3::new(1.0, 3.0, -2.0)).length() < 1e-10);
-        assert!((edited.derivative_at(0.5) - DVec3::new(4.0, 2.0, 1.0)).length() < 1e-8);
+        assert!((edited.point_at(0.5) - DVec3::new(1.0, 3.0, -2.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((edited.derivative_at(0.5) - DVec3::new(4.0, 2.0, 1.0)).length() < TOLERANCE_LINEAR_RELAX_8);
     }
 
     #[test]
@@ -584,7 +585,7 @@ mod tests {
         let length = sample_bspline2_length(&curve, 4096);
 
         assert!(
-            (length - 5.9590472422107315).abs() < 1e-4,
+            (length - 5.9590472422107315).abs() < TOLERANCE_RETRY_LADDER_COARSE,
             "length={length}"
         );
     }

@@ -36,6 +36,7 @@
 //! - **Sliver face detection**: very thin triangular faces
 //! - **Small feature detection**: tiny faces, edges, vertices
 
+use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
@@ -471,7 +472,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                         // Tolerance check: allow same position even if different vertex objects
                         let end_pt = brep.vertices[end_v].point;
                         let start_pt = brep.vertices[start_v].point;
-                        if (end_pt - start_pt).length() > 1e-6 {
+                        if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
                             issues.push(CheckIssue::OpenWire {
                                 solid: si,
                                 shell: shi,
@@ -540,7 +541,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                         if end_v != start_v {
                             let end_pt = brep.vertices[end_v].point;
                             let start_pt = brep.vertices[start_v].point;
-                            if (end_pt - start_pt).length() > 1e-6 {
+                            if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
                                 issues.push(CheckIssue::OpenWire {
                                     solid: si,
                                     shell: shi,
@@ -647,7 +648,7 @@ fn check_geometric_self_intersection(
         let mut found = None;
         for i in 0..n {
             let d = segs[i].1 - segs[i].0;
-            if d.length() > 1e-12 {
+            if d.length() > TOLERANCE_LEN_MIN {
                 let u = d.normalize();
                 // Pick an arbitrary perpendicular
                 let tmp = if u.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
@@ -705,7 +706,7 @@ fn segments_2d_properly_intersect(
 
     let cross = d1[0] * d2[1] - d1[1] * d2[0];
 
-    if cross.abs() < 1e-12 {
+    if cross.abs() < TOLERANCE_LEN_MIN {
         return false; // Parallel or collinear
     }
 
@@ -715,7 +716,7 @@ fn segments_2d_properly_intersect(
     let s = (dx * d1[1] - dy * d1[0]) / cross;
 
     // Proper interior intersection: t and s must be strictly in (0, 1)
-    let eps = 1e-9;
+    let eps = TOLERANCE_COORD_SUB;
     t > eps && t < 1.0 - eps && s > eps && s < 1.0 - eps
 }
 
@@ -741,7 +742,7 @@ fn count_geometric_self_intersections(
         let mut found = None;
         for i in 0..n {
             let d = segs[i].1 - segs[i].0;
-            if d.length() > 1e-12 {
+            if d.length() > TOLERANCE_LEN_MIN {
                 let u = d.normalize();
                 let tmp = if u.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
                 let v = u.cross(tmp).normalize();
@@ -2679,8 +2680,8 @@ pub fn check_tolerance_consistency(brep: &BRep, max_ratio: f64) -> ToleranceVali
         }
         report.edges_checked += 1;
 
-        let tol_a = brep.geom.face_tolerance.get(faces[0]).copied().unwrap_or(1e-7);
-        let tol_b = brep.geom.face_tolerance.get(faces[1]).copied().unwrap_or(1e-7);
+        let tol_a = brep.geom.face_tolerance.get(faces[0]).copied().unwrap_or(TOLERANCE_ABS);
+        let tol_b = brep.geom.face_tolerance.get(faces[1]).copied().unwrap_or(TOLERANCE_ABS);
 
         let ratio = if tol_b > 0.0 { tol_a / tol_b } else { tol_a * 1e7 };
 
@@ -2877,10 +2878,10 @@ impl Default for QualityMetricsConfig {
     fn default() -> Self {
         Self {
             max_aspect_ratio: 100.0,
-            min_edge_length: 1e-6,
-            min_face_area: 1e-12,
-            min_face_dimension: 1e-6,
-            min_feature_size: 1e-4,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
+            min_face_area: TOLERANCE_LEN_MIN,
+            min_face_dimension: TOLERANCE_MESH_LEGACY,
+            min_feature_size: TOLERANCE_RETRY_LADDER_COARSE,
         }
     }
 }
@@ -3011,8 +3012,8 @@ fn compute_face_metrics(brep: &BRep, face: &rcad_kernel::topology::Face) -> (f64
         v_max = v_max.max(v);
     }
 
-    let width = (u_max - u_min).max(1e-12);
-    let height = (v_max - v_min).max(1e-12);
+    let width = (u_max - u_min).max(TOLERANCE_LEN_MIN);
+    let height = (v_max - v_min).max(TOLERANCE_LEN_MIN);
     let min_dimension = width.min(height);
     let aspect_ratio = width.max(height) / min_dimension;
 
@@ -3167,7 +3168,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let diagnosis = diagnose_same_parameter(&brep, 1e-7);
+        let diagnosis = diagnose_same_parameter(&brep, TOLERANCE_ABS);
         assert!(
             diagnosis.is_clean(),
             "primitive box with no edge_curve entries should have no violations"
@@ -3211,7 +3212,7 @@ mod tests {
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
-        let diagnosis = diagnose_same_parameter(&brep, 1e-6);
+        let diagnosis = diagnose_same_parameter(&brep, TOLERANCE_MESH_LEGACY);
         assert!(!diagnosis.is_clean(), "mismatch should be detected");
         assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
         assert!(diagnosis.suspect_edges[0].end_gap > 1.0, "end gap should be ~998");
@@ -3235,7 +3236,7 @@ mod tests {
         let pc = brep.geom.edge_pcurves[0][0];
         brep.geom.curve2d_range[pc.curve2d_idx] = Some([1.0, 2.0]);
 
-        let diagnosis = diagnose_same_range(&brep, 1e-9);
+        let diagnosis = diagnose_same_range(&brep, TOLERANCE_COORD_SUB);
         assert!(!diagnosis.is_clean());
         assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
         assert!(diagnosis.suspect_edges[0].mismatched_pcurves >= 1);
@@ -3267,7 +3268,7 @@ mod tests {
         }
         brep.geom.curve2d_range[pc.curve2d_idx] = Some([0.0, 1.0]);
 
-        let diagnosis = diagnose_face_surface_consistency(&brep, 1e-6);
+        let diagnosis = diagnose_face_surface_consistency(&brep, TOLERANCE_MESH_LEGACY);
         assert!(!diagnosis.is_clean());
         assert_eq!(diagnosis.suspect_edges[0].edge_idx, 0);
         assert!(diagnosis.suspect_edges[0].max_gap > 1.0);
@@ -3586,7 +3587,7 @@ mod tests {
             result.issues
         );
 
-        let wire_report = analyze_wire_issues(&brep, 1e-6);
+        let wire_report = analyze_wire_issues(&brep, TOLERANCE_MESH_LEGACY);
         assert!(
             wire_report.total_topological_self_intersections >= 1,
             "wire analysis should report topological self-intersections"
@@ -3630,7 +3631,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let wire_report = analyze_wire_issues(&brep, 1e-6);
+        let wire_report = analyze_wire_issues(&brep, TOLERANCE_MESH_LEGACY);
         assert!(wire_report.total_open_gaps >= 1);
         assert!(!wire_report.is_clean());
     }
@@ -3779,7 +3780,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let report = check_surface_continuity(&brep, 1e-6);
+        let report = check_surface_continuity(&brep, TOLERANCE_MESH_LEGACY);
         // Box has sharp edges (no C1 continuity between adjacent faces).
         // Without pcurves, the check uses default UV coordinates which give
         // correct plane normals. The box should have C1 violations at all 12 edges.
@@ -3797,7 +3798,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let report = check_curve_surface_consistency(&brep, 1e-6);
+        let report = check_curve_surface_consistency(&brep, TOLERANCE_MESH_LEGACY);
         // Box has no 3D curves, so we expect no issues
         assert!(report.is_clean(), "box should pass curve-surface consistency check");
     }
@@ -3954,7 +3955,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let report = check_vertex_tolerance(&brep, 1e-7);
+        let report = check_vertex_tolerance(&brep, TOLERANCE_ABS);
         // Box has no 3D curves, so vertices should have no deviation
         assert!(report.is_clean(), "box vertex tolerances should be adequate");
     }
@@ -3966,7 +3967,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let report = check_edge_tolerance(&brep, 1e-7);
+        let report = check_edge_tolerance(&brep, TOLERANCE_ABS);
         assert!(report.is_clean(), "box edge tolerances should be adequate");
     }
 
@@ -4017,7 +4018,7 @@ mod tests {
         });
 
         let config = QualityMetricsConfig {
-            min_edge_length: 1e-6,
+            min_edge_length: TOLERANCE_MESH_LEGACY,
             ..Default::default()
         };
         let report = analyze_quality_metrics(&brep, &config);
@@ -4034,7 +4035,7 @@ mod tests {
         // Create a very thin (sliver) triangle
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
-        brep.vertices.push(Vertex { point: DVec3::new(0.5, 1e-9, 0.0) }); // 2: very close to base
+        brep.vertices.push(Vertex { point: DVec3::new(0.5, TOLERANCE_COORD_SUB, 0.0) }); // 2: very close to base
 
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
@@ -4054,7 +4055,7 @@ mod tests {
         });
 
         let config = QualityMetricsConfig {
-            min_face_dimension: 1e-6,
+            min_face_dimension: TOLERANCE_MESH_LEGACY,
             ..Default::default()
         };
         let report = analyze_quality_metrics(&brep, &config);
@@ -4070,7 +4071,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         // Box has sharp edges (C1 discontinuities) which is expected for a box.
         // The geometry check will report these as issues, but the box is still valid.
         // Note: is_valid requires geometry.is_clean(), so we check components separately.
@@ -4083,7 +4084,7 @@ mod tests {
     #[test]
     fn check_comprehensive_sphere_passes() {
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         // Just verify the check runs without panicking
         // Primitives from PrimitiveSolid may have different topology structure
         let _ = result.is_valid;
@@ -4095,7 +4096,7 @@ mod tests {
             radius: 1.0,
             height: 2.0,
         });
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         // Just verify the check runs without panicking
         let _ = result.is_valid;
     }
@@ -4106,7 +4107,7 @@ mod tests {
             major_radius: 2.0,
             minor_radius: 0.5,
         });
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         // Just verify the check runs without panicking
         let _ = result.is_valid;
     }
@@ -4118,7 +4119,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         let summary = result.summary();
         // Box has sharp edges (C1 violations), so is_valid is false and summary shows issues.
         // Just verify the summary is non-empty and properly formatted.
@@ -4158,7 +4159,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let result = check_comprehensive(&brep, 1e-7);
+        let result = check_comprehensive(&brep, TOLERANCE_ABS);
         // Should have issues from basic check (non-manifold) and quality (degenerate edge)
         let all_issues = result.all_issues();
         assert!(all_issues.len() > 0, "should have multiple issues aggregated");
@@ -4179,7 +4180,7 @@ mod tests {
             DVec3::new(0.0, 1.0, 0.0),
         ];
         let normal = compute_polygon_normal(&points);
-        assert!((normal - DVec3::Z).length() < 1e-10 || (normal + DVec3::Z).length() < 1e-10,
+        assert!((normal - DVec3::Z).length() < TOLERANCE_LINEAR_ULTRA_STRICT || (normal + DVec3::Z).length() < TOLERANCE_LINEAR_ULTRA_STRICT,
             "normal should be along Z axis");
     }
 
@@ -4192,7 +4193,7 @@ mod tests {
             DVec3::new(0.0, 0.0, 1.0),
         ];
         let normal = compute_polygon_normal(&points);
-        assert!((normal - DVec3::Y).length() < 1e-10 || (normal + DVec3::Y).length() < 1e-10,
+        assert!((normal - DVec3::Y).length() < TOLERANCE_LINEAR_ULTRA_STRICT || (normal + DVec3::Y).length() < TOLERANCE_LINEAR_ULTRA_STRICT,
             "normal should be along Y axis");
     }
 

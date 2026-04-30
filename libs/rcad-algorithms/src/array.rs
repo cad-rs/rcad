@@ -12,6 +12,7 @@
 //! - **Variable spacing pattern**: non-uniform spacing along a direction
 //! - **Path pattern**: pattern along a curve with optional alignment
 
+use crate::tolerance::*;
 use glam::{DMat4, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{
@@ -1135,7 +1136,7 @@ mod tests {
         let result = linear_pattern(&brep, &params).unwrap();
         let v_result = rcad_kernel::properties::volume(&result);
 
-        assert!((v_result - v_orig).abs() < 1e-9);
+        assert!((v_result - v_orig).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1411,7 +1412,7 @@ mod tests {
 
         assert_eq!(result.solids.len(), 1);
         let v_result = rcad_kernel::properties::volume(&result);
-        assert!((v_result - v_orig).abs() < 1e-9);
+        assert!((v_result - v_orig).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1501,9 +1502,9 @@ mod tests {
         let mat = rectangular_pattern_transform(&params, 1, 1).unwrap();
         let offset = mat.transform_point3(glam::DVec3::ZERO);
 
-        assert!((offset.x - 2.0).abs() < 1e-9, "expected x=2.0, got {}", offset.x);
-        assert!((offset.y - 3.0).abs() < 1e-9, "expected y=3.0, got {}", offset.y);
-        assert!((offset.z - 0.0).abs() < 1e-9, "expected z=0.0, got {}", offset.z);
+        assert!((offset.x - 2.0).abs() < TOLERANCE_COORD_SUB, "expected x=2.0, got {}", offset.x);
+        assert!((offset.y - 3.0).abs() < TOLERANCE_COORD_SUB, "expected y=3.0, got {}", offset.y);
+        assert!((offset.z - 0.0).abs() < TOLERANCE_COORD_SUB, "expected z=0.0, got {}", offset.z);
     }
 
     // ── Variable Spacing Pattern Tests ──────────────────────────────────────────
@@ -1916,8 +1917,8 @@ mod tests {
         };
         let scaled = scale_rectangular_params(&params, 0.5);
 
-        assert!((scaled.spacing1 - 1.0).abs() < 1e-9);
-        assert!((scaled.spacing2 - 1.5).abs() < 1e-9);
+        assert!((scaled.spacing1 - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((scaled.spacing2 - 1.5).abs() < TOLERANCE_COORD_SUB);
     }
 
     // ── Error Display Tests ──────────────────────────────────────────────────────

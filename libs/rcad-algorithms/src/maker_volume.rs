@@ -5,6 +5,7 @@
 //! a region mask, an explicit cell index list, or a [`CellExpr`] boolean
 //! expression.
 
+use crate::tolerance::*;
 use std::collections::HashSet;
 
 use rcad_kernel::BRep;
@@ -272,7 +273,7 @@ mod tests {
         ]);
 
         let solid = volume_builder.build_all().expect("build_all should succeed");
-        assert!((volume(&solid) - 3.0).abs() < 1e-9);
+        assert!((volume(&solid) - 3.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -285,7 +286,7 @@ mod tests {
 
         let solid = make_solid_from_region(&cells, &[true, false, true])
             .expect("region mask should build a two-cell solid");
-        assert!((volume(&solid) - 2.0).abs() < 1e-9);
+        assert!((volume(&solid) - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -347,7 +348,7 @@ mod tests {
         let solid = volume_builder
             .build_from_expr(&expr)
             .expect("expression-based build should succeed");
-        assert!((volume(&solid) - 2.0).abs() < 1e-9);
+        assert!((volume(&solid) - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -374,6 +375,6 @@ mod tests {
         let solid = volume_builder
             .build_from_indices(&[0, 1, 1, 0])
             .expect("duplicate selection should still succeed");
-        assert!((volume(&solid) - 2.0).abs() < 1e-9);
+        assert!((volume(&solid) - 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 }

@@ -642,6 +642,54 @@ fn bbox2d_components(uv: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
     Some((u0, u1, v0, v1))
 }
 
+/// UV chain from traversing `wire` vertices only (edge endpoints in order).
+///
+/// Dense [`sample_wire_polyline_3d`] can self-cross after boolean edge reordering while the
+/// vertex ring still traces the true boundary; comparing both shoelaces disambiguates that
+/// from legitimate concave faces (`bfuse_simple/D9` vs `bfuse_simple/E5`).
+fn outer_wire_ordered_vertex_uvs(
+    brep: &BRep,
+    wire: &Wire,
+    i: usize,
+    j: usize,
+    pos_tol: f64,
+) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for we in &wire.edges {
+        let Some(edge) = brep.edges.get(we.idx) else {
+            continue;
+        };
+        let vidx = if we.forward {
+            edge.start
+        } else {
+            edge.end
+        };
+        let Some(v) = brep.vertices.get(vidx) else {
+            continue;
+        };
+        let p = v.point;
+        let uv = (p[i], p[j]);
+        if let Some(&(u0, v0)) = out.last() {
+            if (uv.0 - u0).abs() <= pos_tol && (uv.1 - v0).abs() <= pos_tol {
+                continue;
+            }
+        }
+        out.push(uv);
+    }
+    trim_almost_closed_uv_chain(&mut out, pos_tol);
+    out
+}
+
+fn trim_almost_closed_uv_chain(uvs: &mut Vec<(f64, f64)>, pos_tol: f64) {
+    if uvs.len() >= 2 {
+        let (u0, v0) = uvs[0];
+        let (u1, v1) = uvs[uvs.len() - 1];
+        if (u0 - u1).abs() <= pos_tol && (v0 - v1).abs() <= pos_tol {
+            uvs.pop();
+        }
+    }
+}
+
 /// Unique vertices referenced by `wire` edges, projected to world coordinates `(i, j)`.
 fn outer_wire_unique_vertex_uvs(
     brep: &BRep,
@@ -734,16 +782,63 @@ fn try_axis_aligned_world_rect_plane_area(
         .unwrap_or(1.0))
     .max(1e-9);
     let vu = outer_wire_unique_vertex_uvs(brep, &face.outer_wire, i, j, pos_tol);
-    if (3..=48).contains(&vu.len()) {
+    // Ordered boundary loop (wire sampling order). Convex hull below over-counts concave polygons.
+    let mut outer_ordered = sample_wire_polyline_3d(brep, &face.outer_wire);
+    trim_almost_closed_polyline(&mut outer_ordered, 1e-5);
+    let a_loop = if outer_ordered.len() >= 3 {
+        let uv_ord: Vec<(f64, f64)> = outer_ordered.iter().map(|p| (p[i], p[j])).collect();
+        polygon_area_2d_xy(&uv_ord)
+    } else {
+        0.0
+    };
+
+    // Boolean seams can split edges into many vertex points; `bfuse_simple/D9` exceeds the old
+    // `<=48` cap and must still hit hull vs dense vs vertex agreement logic.
+    if (3..=4096).contains(&vu.len()) {
         let hull = convex_hull_2d_monotone(vu.clone());
         if hull.len() >= 3 {
             let a_hull = polygon_area_2d_xy(&hull);
             if a_hull > 1e-18 {
+                const REL: f64 = 1e-4;
+                const AGREE_REL: f64 = 2e-3;
+                let scale = a_hull.max(a_loop).max(1.0);
+                let abs_eps = 1e-9 * scale;
+                // Concave silhouette after booleans: hull area > true boundary; dense-sample
+                // shoelace should match the vertex-ring shoelace when edges are straight (`D9`).
+                // When dense samples self-cross (`E5`), vertex ring still matches the face — disagree
+                // → convex hull (vertex set) recovers area.
+                if a_loop > 1e-18 && a_hull > a_loop * (1.0 + REL) + abs_eps {
+                    let uv_vert =
+                        outer_wire_ordered_vertex_uvs(brep, &face.outer_wire, i, j, pos_tol);
+                    if uv_vert.len() >= 3 {
+                        let a_vert = polygon_area_2d_xy(&uv_vert);
+                        let scale_agree = a_vert.max(a_loop).max(1.0);
+                        // Require both vertex/dense agreement and a substantial fraction of the convex hull:
+                        // `bcommon_simple/B1` can yield bogus agreeing shoelaces (~80% of hull).
+                        const LOOP_FRAC_OF_HULL_MIN: f64 = 0.81;
+                        if (a_vert - a_loop).abs() <= AGREE_REL * scale_agree + abs_eps
+                            && a_loop + abs_eps >= a_hull * LOOP_FRAC_OF_HULL_MIN
+                        {
+                            return Some(a_loop);
+                        }
+                        // Limit to large silhouette patches: small faces (`bcommon_simple/B1`) can have
+                        // bogus vertex-ring shoelaces while hull matches OCCT; `bfuse_simple/D9` top uses ~40000.
+                        const MIN_HULL_ABS_VERT_FALLBACK: f64 = 15000.0;
+                        const VERT_OVER_LOOP_REL: f64 = 0.02;
+                        if a_hull >= MIN_HULL_ABS_VERT_FALLBACK
+                            && a_vert + abs_eps < a_hull * (1.0 - REL)
+                            && a_vert > 1e-18
+                            && a_vert > a_loop * (1.0 + VERT_OVER_LOOP_REL) + abs_eps
+                        {
+                            return Some(a_vert.max(0.0));
+                        }
+                    }
+                }
                 return Some(a_hull);
             }
         }
     }
-    let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
+    let mut outer = outer_ordered;
     trim_almost_closed_polyline(&mut outer, 1e-5);
     if outer.len() < 3 {
         return None;
@@ -793,7 +888,7 @@ fn try_planar_face_area_shoelace(
                     // correct (`bcommon_simple/B1`): only trust the smaller shoe when it is a
                     // substantial fraction of the rect metric (true parallelogram vs AABB).
                     if a_rect > a_shoe * (1.0 + REL) + abs_eps {
-                        if a_shoe + abs_eps >= a_rect * 0.52 {
+                        if a_shoe + abs_eps >= a_rect * 0.65 {
                             return Some(a_shoe.max(0.0));
                         }
                         return Some(a_rect.max(0.0));

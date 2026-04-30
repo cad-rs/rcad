@@ -35,6 +35,7 @@
 //! - OCCT `BRepFilletAPI_MakeChamfer`
 //! - OCCT `ChFi3d_FilBuilder` (chamfer algorithm internals)
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
     BRep,
@@ -48,10 +49,10 @@ use std::collections::HashMap;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Default tolerance for geometric operations.
-const TOLERANCE: f64 = 1e-9;
+const TOLERANCE: f64 = TOLERANCE_COORD_SUB;
 
 /// Small value for checking if vectors are parallel.
-const PARALLEL_TOL: f64 = 1e-10;
+const PARALLEL_TOL: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Chamfer Modes and Parameters
@@ -1254,8 +1255,8 @@ mod tests {
         assert!(params.validate().is_ok());
 
         let (d1, d2) = params.get_distances();
-        assert!((d1 - 0.5).abs() < 1e-10);
-        assert!((d2 - 0.5).abs() < 1e-10); // tan(45) = 1
+        assert!((d1 - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((d2 - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT); // tan(45) = 1
     }
 
     #[test]
@@ -1523,8 +1524,8 @@ mod tests {
         assert!(result.is_ok());
 
         let geom = result.unwrap();
-        assert!((geom.d1 - 0.1).abs() < 1e-10);
-        assert!((geom.d2 - 0.1).abs() < 1e-10);
+        assert!((geom.d1 - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((geom.d2 - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ============================================================================
@@ -1547,8 +1548,8 @@ mod tests {
         // Verify the chamfer geometry has correct distances
         let params = ChamferParams::asymmetric(0.1, 0.3);
         let (d1, d2) = params.get_distances();
-        assert!((d1 - 0.1).abs() < 1e-10, "distance1 should be 0.1");
-        assert!((d2 - 0.3).abs() < 1e-10, "distance2 should be 0.3");
+        assert!((d1 - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "distance1 should be 0.1");
+        assert!((d2 - 0.3).abs() < TOLERANCE_LINEAR_ULTRA_STRICT, "distance2 should be 0.3");
     }
 
     /// Test chamfer defined by distance and angle.
@@ -1568,7 +1569,7 @@ mod tests {
         // Verify angle parameter
         let params = ChamferParams::distance_angle(0.2, angle);
         assert_eq!(params.mode, ChamferMode::DistanceAngle);
-        assert!((params.angle - angle).abs() < 1e-10);
+        assert!((params.angle - angle).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     /// Test chamfer on all edges of a box simultaneously.

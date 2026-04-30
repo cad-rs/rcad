@@ -8,6 +8,7 @@
 //!
 //! All functions are non-destructive analysis tools that return structured reports.
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Surface3, CurveEval, SurfaceEval, Curve2dEval};
 use rcad_kernel::{BRep, Face, PCurve};
@@ -120,7 +121,7 @@ pub fn analyze_surface(surf: &Surface3) -> SurfaceAnalysisReport {
 
     let (is_u_periodic, is_v_periodic) = detect_periodicity(surf);
     let singular_points = detect_singular_points(surf);
-    let uv_issues = check_uv_consistency(surf, 1e-9);
+    let uv_issues = check_uv_consistency(surf, TOLERANCE_COORD_SUB);
     let bounds_degenerate = check_bounds_degeneracy(surf);
     let orientation_ok = check_surface_orientation(surf);
 
@@ -252,7 +253,7 @@ fn is_bspline_periodic(knots: &[f64], degree: usize) -> bool {
 
     // Check if first (degree+1) knots equal the first internal knot
     // and last (degree+1) knots equal the last internal knot
-    let eps = 1e-9;
+    let eps = TOLERANCE_COORD_SUB;
     let first_knot = knots[0];
     let last_knot = knots[n - 1];
 
@@ -291,7 +292,7 @@ fn detect_singular_points(surf: &Surface3) -> Vec<SingularPoint> {
 
         Surface3::Cone(c) => {
             // Cone has an apex at v=0 (if radius at apex is 0)
-            if c.radius.abs() < 1e-12 {
+            if c.radius.abs() < TOLERANCE_LEN_MIN {
                 let domain = surf.default_domain();
                 let u_mid = (domain[0] + domain[1]) / 2.0;
 
@@ -305,7 +306,7 @@ fn detect_singular_points(surf: &Surface3) -> Vec<SingularPoint> {
 
         Surface3::Torus(t) => {
             // Torus has no singular points unless minor_radius is 0
-            if t.minor_radius.abs() < 1e-12 {
+            if t.minor_radius.abs() < TOLERANCE_LEN_MIN {
                 let domain = surf.default_domain();
                 // The entire center circle becomes singular
                 for i in 0..8 {
@@ -354,7 +355,7 @@ fn check_bounds_degeneracy(surf: &Surface3) -> bool {
         return false;
     }
 
-    let eps = 1e-9;
+    let eps = TOLERANCE_COORD_SUB;
 
     // Check if opposite boundaries map to the same 3D curve
     // (this indicates a degenerate boundary)
@@ -396,7 +397,7 @@ fn check_bounds_degeneracy(surf: &Surface3) -> bool {
 
 /// Check derivative continuity at a point using finite differences.
 fn check_derivative_continuity(surf: &Surface3, u: f64, v: f64, _tolerance: f64) -> bool {
-    let eps = 1e-6;
+    let eps = TOLERANCE_MESH_LEGACY;
 
     let p = surf.point_at(u, v);
 
@@ -516,7 +517,7 @@ pub fn analyze_curve(curve: &Curve3, n_samples: usize) -> CurveAnalysisReport {
     let self_intersections = detect_curve_self_intersections(curve, n_samples);
     let continuity = determine_curve_continuity(curve);
     let arc_length = compute_curve_length(curve, n_samples);
-    let is_degenerate = arc_length < 1e-12;
+    let is_degenerate = arc_length < TOLERANCE_LEN_MIN;
 
     CurveAnalysisReport {
         param_range,
@@ -546,7 +547,7 @@ fn check_curve_closed(curve: &Curve3) -> bool {
     let p_start = curve.point_at(domain[0]);
     let p_end = curve.point_at(domain[1]);
 
-    (p_start - p_end).length() < 1e-9
+    (p_start - p_end).length() < TOLERANCE_COORD_SUB
 }
 
 /// Detect self-intersections in a curve by sampling.
@@ -572,7 +573,7 @@ fn detect_curve_self_intersections(curve: &Curve3, n_samples: usize) -> Vec<Curv
         .collect();
 
     // Check for non-adjacent segments that intersect
-    let _tol = 1e-6;
+    let _tol = TOLERANCE_MESH_LEGACY;
 
     for i in 0..points.len() - 1 {
         // Only check segments that are not adjacent (at least 2 apart)
@@ -620,7 +621,7 @@ fn segment_intersection_2d(
 
     let cross = d1[0] * d2[1] - d1[1] * d2[0];
 
-    if cross.abs() < 1e-12 {
+    if cross.abs() < TOLERANCE_LEN_MIN {
         return None; // Parallel segments
     }
 
@@ -840,7 +841,7 @@ pub fn analyze_wire(
             let start_pt = brep.vertices.get(start).map(|v| v.point).unwrap_or(DVec3::ZERO);
             let end_pt = brep.vertices.get(end).map(|v| v.point).unwrap_or(DVec3::ZERO);
             let gap_dist = (start_pt - end_pt).length();
-            report.is_closed = gap_dist < 1e-6;
+            report.is_closed = gap_dist < TOLERANCE_MESH_LEGACY;
             if !report.is_closed {
                 report.gaps.push(WireGap {
                     after_edge: 0,
@@ -850,7 +851,7 @@ pub fn analyze_wire(
                 });
             }
         }
-        report.is_degenerate = report.length < 1e-12;
+        report.is_degenerate = report.length < TOLERANCE_LEN_MIN;
         return report;
     }
 
@@ -865,7 +866,7 @@ pub fn analyze_wire(
             let start_pt = brep.vertices.get(start_v).map(|v| v.point).unwrap_or(DVec3::ZERO);
             let gap_dist = (end_pt - start_pt).length();
 
-            if gap_dist > 1e-6 {
+            if gap_dist > TOLERANCE_MESH_LEGACY {
                 report.is_closed = false;
                 report.gaps.push(WireGap {
                     after_edge: i,
@@ -904,7 +905,7 @@ pub fn analyze_wire(
         }
     }
 
-    report.is_degenerate = report.length < 1e-12;
+    report.is_degenerate = report.length < TOLERANCE_LEN_MIN;
     report
 }
 
@@ -1081,7 +1082,7 @@ fn check_surface_wire_consistency(
                             }
                         }
 
-                        if max_deviation > 1e-6 {
+                        if max_deviation > TOLERANCE_MESH_LEGACY {
                             issues.push(SurfaceWireIssue {
                                 kind: SurfaceWireIssueKind::EdgeNotOnSurface,
                                 description: format!("Edge {} does not lie on surface (max deviation: {})", we.idx, max_deviation),
@@ -1112,7 +1113,7 @@ fn project_point_to_surface_simple(surface: &Surface3, point: DVec3) -> Option<D
         Surface3::Sphere(s) => {
             let v = point - s.center;
             let len = v.length();
-            if len < 1e-14 {
+            if len < TOLERANCE_FLOAT_LOOSE {
                 None
             } else {
                 Some(s.center + v / len * s.radius)
@@ -1123,7 +1124,7 @@ fn project_point_to_surface_simple(surface: &Surface3, point: DVec3) -> Option<D
             let along = v.dot(c.axis);
             let radial = v - c.axis * along;
             let radial_len = radial.length();
-            if radial_len < 1e-14 {
+            if radial_len < TOLERANCE_FLOAT_LOOSE {
                 None
             } else {
                 Some(c.origin + c.axis * along + radial / radial_len * c.radius)
@@ -1314,7 +1315,7 @@ pub enum UvDirection {
 /// use rcad_algorithms::shape_analysis::analyze_surface_bounds;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
-/// let report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
+/// let report = analyze_surface_bounds(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// assert!(report.bounds_match || report.seam_edge_count > 0);
 /// ```
 pub fn analyze_surface_bounds(
@@ -1646,7 +1647,7 @@ pub enum UvConsistencyIssueKind {
 ///     radius: 1.0,
 ///     height: 2.0,
 /// });
-/// let report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
+/// let report = check_face_uv_consistency(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// // Report contains UV consistency information for the face
 /// println!("Edges checked: {}", report.edges_checked);
 /// ```
@@ -1981,7 +1982,7 @@ pub enum ContinuityIssueKind {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// // Analyze continuity between faces 0 and 1
-/// let report = analyze_surface_continuity(0, 0, 1, &brep, 1e-6);
+/// let report = analyze_surface_continuity(0, 0, 1, &brep, TOLERANCE_MESH_LEGACY);
 /// // Check if faces share an edge
 /// println!("Has shared edge: {}", report.has_shared_edge);
 /// ```
@@ -2154,7 +2155,7 @@ fn analyze_edge_continuity(
         };
 
         if normal_angle > tolerance
-            && normal_angle > 1e-3 {
+            && normal_angle > TOLERANCE_ADAPTIVE_MAX {
                 // Tangent plane deviation
                 max_tangent_dev = max_tangent_dev.max(normal_angle);
                 if normal_angle > 0.1 {
@@ -2172,7 +2173,7 @@ fn analyze_edge_continuity(
             }
 
         // Check curvature continuity (simplified: compare normal derivative)
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
         let t_plus = (t + eps).min(range[1]);
         let t_minus = (t - eps).max(range[0]);
 
@@ -2226,7 +2227,7 @@ fn compute_normal_at_edge_point(
         Surface3::Sphere(s) => {
             let v = p3d - s.center;
             let len = v.length();
-            if len > 1e-10 {
+            if len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 Some(v / len)
             } else {
                 None
@@ -2237,7 +2238,7 @@ fn compute_normal_at_edge_point(
             let along = v.dot(c.axis);
             let radial = v - c.axis * along;
             let radial_len = radial.length();
-            if radial_len > 1e-10 {
+            if radial_len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 Some(radial / radial_len)
             } else {
                 None
@@ -2248,7 +2249,7 @@ fn compute_normal_at_edge_point(
             let along = v.dot(c.axis.normalize());
             let radial = v - c.axis.normalize() * along;
             let radial_len = radial.length();
-            if radial_len > 1e-10 {
+            if radial_len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 // Normal on a cone points outward at half_angle from the axis
                 let axis_dir = c.axis.normalize();
                 let radial_dir = radial / radial_len;
@@ -2263,7 +2264,7 @@ fn compute_normal_at_edge_point(
             let along = v.dot(t.axis.normalize());
             let radial = v - t.axis.normalize() * along;
             let radial_len = radial.length();
-            if radial_len > 1e-10 {
+            if radial_len > TOLERANCE_LINEAR_ULTRA_STRICT {
                 let circle_center = t.center + t.axis.normalize() * along + radial / radial_len * t.major_radius;
                 let to_point = p3d - circle_center;
                 Some(to_point.normalize())
@@ -2383,7 +2384,7 @@ pub enum UnusualIsoCurveKind {
 /// use rcad_algorithms::shape_analysis::analyze_isoparametric_curves;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
-/// let report = analyze_isoparametric_curves(0, 0, 0, &brep, 1e-6);
+/// let report = analyze_isoparametric_curves(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// // Sphere has degenerate isocurves at poles (v = 0 and v = PI)
 /// assert!(!report.degenerate_isocurves.is_empty());
 /// ```
@@ -2663,7 +2664,7 @@ fn segment_segment_distance_3d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> f6
     let e = d2.dot(d2); // |d2|^2
     let f = d2.dot(r);
 
-    let eps = 1e-14;
+    let eps = TOLERANCE_FLOAT_LOOSE;
 
     // Check if both segments are degenerate (points)
     if a < eps && e < eps {
@@ -2855,7 +2856,7 @@ pub struct PeriodicGap {
 ///     radius: 1.0,
 ///     height: 2.0,
 /// });
-/// let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+/// let report = detect_uv_gaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// // Check if any gaps were detected
 /// println!("Has gaps: {}, count: {}", report.has_gaps, report.total_gap_count);
 /// ```
@@ -3137,7 +3138,7 @@ fn check_periodic_gap(
         0.0
     };
 
-    if seam_gap > 1e-10 {
+    if seam_gap > TOLERANCE_LINEAR_ULTRA_STRICT {
         Some(PeriodicGap {
             edge_idx,
             direction,
@@ -3228,7 +3229,7 @@ pub struct SeamOverlap {
 /// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere {
 ///     radius: 1.0,
 /// });
-/// let report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+/// let report = detect_uv_overlaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// println!("Overlaps detected: {}", report.overlap_count);
 /// ```
 pub fn detect_uv_overlaps(
@@ -3548,7 +3549,7 @@ pub enum UvOrientation {
 /// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
-/// let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+/// let report = validate_trimming_loops(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// assert!(report.is_valid || !report.issues.is_empty());
 /// ```
 pub fn validate_trimming_loops(
@@ -3898,7 +3899,7 @@ pub enum PeriodicSurfaceIssueKind {
 ///     radius: 1.0,
 ///     height: 2.0,
 /// });
-/// let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+/// let report = analyze_periodic_surface_handling(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// assert!(report.is_u_periodic); // Cylinder is U-periodic
 /// ```
 pub fn analyze_periodic_surface_handling(
@@ -4324,7 +4325,7 @@ pub fn analyze_surface_bounds_for_face(
     if u_min.is_finite() && u_max.is_finite() && v_min.is_finite() && v_max.is_finite() {
         analysis.used_uv_range = [u_min, u_max, v_min, v_max];
 
-        let tolerance = 1e-6;
+        let tolerance = TOLERANCE_MESH_LEGACY;
 
         // Check for over-trimmed regions (face extends beyond surface bounds)
         if !is_u_periodic {
@@ -4552,7 +4553,7 @@ pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &BRep) -> UvConsi
     };
 
     let _domain = surface.default_domain();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
     let mut orientations_match = true;
 
     // Analyze all edges in the face
@@ -4813,7 +4814,7 @@ pub fn compute_surface_deviation(face_idx: usize, brep: &BRep, samples: usize) -
         return result;
     };
 
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
     let mut total_deviation = 0.0_f64;
     let mut deviation_count = 0usize;
 
@@ -4907,7 +4908,7 @@ fn compute_point_surface_deviation(point: DVec3, surface: &Surface3) -> f64 {
             // For a sphere, deviation is the difference in radius
             let v = point - s.center;
             let len = v.length();
-            if len < 1e-10 {
+            if len < TOLERANCE_LINEAR_ULTRA_STRICT {
                 s.radius
             } else {
                 (len - s.radius).abs()
@@ -4941,7 +4942,7 @@ fn compute_point_surface_deviation(point: DVec3, surface: &Surface3) -> f64 {
             let radial = v - axis * along;
             let radial_len = radial.length();
 
-            if radial_len < 1e-10 {
+            if radial_len < TOLERANCE_LINEAR_ULTRA_STRICT {
                 // On the axis - distance is to the inner surface
                 t.major_radius - t.minor_radius
             } else {
@@ -4964,7 +4965,7 @@ fn compute_point_surface_deviation(point: DVec3, surface: &Surface3) -> f64 {
                 let p = surface.point_at(u, v);
                 let diff = point - p;
 
-                let eps = 1e-6;
+                let eps = TOLERANCE_MESH_LEGACY;
                 let p_u = surface.point_at(u + eps, v);
                 let p_v = surface.point_at(u, v + eps);
 
@@ -5094,7 +5095,7 @@ pub fn detect_surface_self_intersection(surface: &Surface3) -> bool {
 
     // Check for self-intersection: different UV parameters map to the same 3D point
     // Use a more generous tolerance to avoid false positives
-    let tolerance = 1e-4;
+    let tolerance = TOLERANCE_RETRY_LADDER_COARSE;
 
     for i in 0..surface_points.len() {
         for j in (i + 4)..surface_points.len() {
@@ -5128,11 +5129,11 @@ fn detect_surface_folding(
     // Check for surface folding by analyzing the cross product of partial derivatives
     // A folded surface will have normal direction changes
 
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     for ((u, v), _) in points {
         // Compute partial derivatives
-        let eps = 1e-6;
+        let eps = TOLERANCE_MESH_LEGACY;
 
         let p = surface.point_at(*u, *v);
         let p_u = surface.point_at(u + eps, *v);
@@ -5177,7 +5178,7 @@ mod tests {
     };
     use std::f64::consts::PI;
 
-    const TOL: f64 = 1e-5;
+    const TOL: f64 = TOLERANCE_RETRY_LADDER_MID;
 
     fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
@@ -5374,7 +5375,7 @@ mod tests {
         });
 
         // Analyze the first face of the box
-        let report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
+        let report = analyze_surface_bounds(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Box faces are planes with infinite bounds, so bounds_match should be true
         // (no PCurve constraints to check)
@@ -5389,7 +5390,7 @@ mod tests {
         });
 
         // Analyze the cylindrical face (first face)
-        let _report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
+        let _report = analyze_surface_bounds(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5398,7 +5399,7 @@ mod tests {
             radius: 1.0,
         });
 
-        let _report = analyze_surface_bounds(0, 0, 0, &brep, 1e-6);
+        let _report = analyze_surface_bounds(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5409,7 +5410,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let _report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
+        let _report = check_face_uv_consistency(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5419,7 +5420,7 @@ mod tests {
             height: 2.0,
         });
 
-        let _report = check_face_uv_consistency(0, 0, 0, &brep, 1e-6);
+        let _report = check_face_uv_consistency(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5431,7 +5432,7 @@ mod tests {
         });
 
         // Check continuity between faces 0 and 1 (adjacent faces of a box)
-        let report = analyze_surface_continuity(0, 0, 1, &brep, 1e-6);
+        let report = analyze_surface_continuity(0, 0, 1, &brep, TOLERANCE_MESH_LEGACY);
 
         // Adjacent faces of a box share an edge with C0 continuity (sharp corner)
         // They may or may not share an edge depending on face ordering
@@ -5451,7 +5452,7 @@ mod tests {
         let mut found_non_adjacent = false;
         for i in 0..6 {
             for j in (i+1)..6 {
-                let report = analyze_surface_continuity(0, i, j, &brep, 1e-6);
+                let report = analyze_surface_continuity(0, i, j, &brep, TOLERANCE_MESH_LEGACY);
                 if !report.has_shared_edge {
                     found_non_adjacent = true;
                     assert_eq!(report.continuity, GeometricContinuity::None);
@@ -5474,7 +5475,7 @@ mod tests {
         });
 
         // Analyze isocurves for the spherical face
-        let report = analyze_isoparametric_curves(0, 0, 0, &brep, 1e-6);
+        let report = analyze_isoparametric_curves(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Sphere has isocurves, and may have degenerate ones at poles
         assert!(report.u_isocurves_analyzed > 0 || report.v_isocurves_analyzed > 0);
@@ -5488,7 +5489,7 @@ mod tests {
         });
 
         // Analyze isocurves for the cylindrical face
-        let report = analyze_isoparametric_curves(0, 0, 0, &brep, 1e-6);
+        let report = analyze_isoparametric_curves(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder should not have degenerate isocurves (no singularities)
         assert!(report.u_isocurves_analyzed > 0 || report.v_isocurves_analyzed > 0);
@@ -5502,7 +5503,7 @@ mod tests {
         });
 
         // Analyze isocurves for the toroidal face
-        let report = analyze_isoparametric_curves(0, 0, 0, &brep, 1e-6);
+        let report = analyze_isoparametric_curves(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Torus has no singularities
         assert!(report.u_isocurves_analyzed > 0 || report.v_isocurves_analyzed > 0);
@@ -5644,7 +5645,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let _report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+        let _report = detect_uv_gaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5655,7 +5656,7 @@ mod tests {
         });
 
         // Analyze the cylindrical face
-        let report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+        let report = detect_uv_gaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder is U-periodic, so no U gaps expected
         assert!(report.u_min_gaps.is_empty() || report.u_max_gaps.is_empty());
@@ -5667,7 +5668,7 @@ mod tests {
             radius: 1.0,
         });
 
-        let _report = detect_uv_gaps(0, 0, 0, &brep, 1e-6);
+        let _report = detect_uv_gaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5695,7 +5696,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let _report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+        let _report = detect_uv_overlaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5705,7 +5706,7 @@ mod tests {
             minor_radius: 0.5,
         });
 
-        let _report = detect_uv_overlaps(0, 0, 0, &brep, 1e-6);
+        let _report = detect_uv_overlaps(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -5731,7 +5732,7 @@ mod tests {
         });
 
         // Validate trimming loops for the first face
-        let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+        let report = validate_trimming_loops(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Box should have 6 faces, each with a valid trimming loop
         // The function returns default if indices are invalid
@@ -5746,7 +5747,7 @@ mod tests {
         });
 
         // Validate trimming loops for the cylindrical face
-        let report = validate_trimming_loops(0, 0, 0, &brep, 1e-6);
+        let report = validate_trimming_loops(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder should have valid trimming loops
         assert!(report.loop_count >= 1);
@@ -5778,7 +5779,7 @@ mod tests {
             height: 2.0,
         });
 
-        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Cylinder is U-periodic
         assert!(report.is_u_periodic);
@@ -5793,7 +5794,7 @@ mod tests {
             minor_radius: 0.5,
         });
 
-        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Torus is U and V periodic
         assert!(report.is_u_periodic);
@@ -5810,7 +5811,7 @@ mod tests {
             depth: 1.0,
         });
 
-        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, 1e-6);
+        let report = analyze_periodic_surface_handling(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 
         // Plane is not periodic
         assert!(!report.is_u_periodic);
@@ -5900,15 +5901,15 @@ mod tests {
         });
 
         // Test with invalid solid index
-        let report = detect_uv_gaps(99, 0, 0, &brep, 1e-6);
+        let report = detect_uv_gaps(99, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.has_gaps);
 
         // Test with invalid shell index
-        let report = detect_uv_gaps(0, 99, 0, &brep, 1e-6);
+        let report = detect_uv_gaps(0, 99, 0, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.has_gaps);
 
         // Test with invalid face index
-        let report = detect_uv_gaps(0, 0, 99, &brep, 1e-6);
+        let report = detect_uv_gaps(0, 0, 99, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.has_gaps);
     }
 
@@ -5921,7 +5922,7 @@ mod tests {
         });
 
         // Test with invalid indices
-        let report = detect_uv_overlaps(99, 99, 99, &brep, 1e-6);
+        let report = detect_uv_overlaps(99, 99, 99, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.has_overlaps);
     }
 
@@ -5934,7 +5935,7 @@ mod tests {
         });
 
         // Test with invalid indices
-        let report = validate_trimming_loops(99, 99, 99, &brep, 1e-6);
+        let report = validate_trimming_loops(99, 99, 99, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.is_valid);
     }
 
@@ -5947,7 +5948,7 @@ mod tests {
         });
 
         // Test with invalid indices
-        let report = analyze_periodic_surface_handling(99, 99, 99, &brep, 1e-6);
+        let report = analyze_periodic_surface_handling(99, 99, 99, &brep, TOLERANCE_MESH_LEGACY);
         assert!(!report.is_u_periodic);
         assert!(!report.is_v_periodic);
     }

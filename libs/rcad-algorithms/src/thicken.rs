@@ -28,7 +28,7 @@ use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 use crate::triangulate::{TessellationParams, mesh_brep};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -911,7 +911,7 @@ fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
         }
         Surface3::Cone(c) => {
             let sin_a = c.half_angle_rad.sin();
-            let shift = if sin_a.abs() > 1e-10 { d / sin_a } else { d };
+            let shift = if sin_a.abs() > TOLERANCE_LINEAR_ULTRA_STRICT { d / sin_a } else { d };
             let new_r = c.radius + d;
             if new_r <= TOLERANCE_ABS { return None; }
             Some(Surface3::Cone(ConicalSurface {
@@ -1269,7 +1269,7 @@ fn create_lateral_faces(
             let p3 = out.vertices[f_vs].point;
 
             let normal = (p1 - p0).cross(p3 - p0).normalize_or(DVec3::Z);
-            if normal.length() < 1e-10 {
+            if normal.length() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 continue;
             }
 
@@ -1277,7 +1277,7 @@ fn create_lateral_faces(
             let should_split = if options.lateral_faces.split_at_sharp_edges {
                 let edge_len = (p1 - p0).length();
                 let thickness_len = (p3 - p0).length();
-                let aspect_ratio = edge_len / thickness_len.max(1e-10);
+                let aspect_ratio = edge_len / thickness_len.max(TOLERANCE_LINEAR_ULTRA_STRICT);
                 options.lateral_faces.max_aspect_ratio.is_some_and(|max_ratio| aspect_ratio > max_ratio)
             } else {
                 false
@@ -1416,7 +1416,7 @@ fn detect_self_intersection(brep: &BRep, thickness: f64) -> bool {
 /// Returns `None` if the shell is closed, has no geometry, or the offset
 /// would create degenerate surfaces.
 pub fn thicken_shell(brep: &BRep, thickness: f64) -> Option<ThickeningResult> {
-    if thickness.abs() < 1e-12 { return None; }
+    if thickness.abs() < TOLERANCE_LEN_MIN { return None; }
 
     let shell = brep.solids.first()?.shells.first()?;
     if shell.faces.is_empty() { return None; }
@@ -1501,7 +1501,7 @@ pub fn thicken_shell(brep: &BRep, thickness: f64) -> Option<ThickeningResult> {
             let p3 = out.vertices[f_vs].point;
 
             let normal = (p1 - p0).cross(p3 - p0).normalize_or(DVec3::Z);
-            if normal.length() < 1e-10 { continue; }
+            if normal.length() < TOLERANCE_LINEAR_ULTRA_STRICT { continue; }
 
             let surf = Surface3::Plane(rcad_kernel::geom::Plane { origin: p0, normal });
 
@@ -1552,7 +1552,7 @@ mod tests {
         });
         let off = offset_surface(&plane, 0.5).unwrap();
         if let Surface3::Plane(p) = off {
-            assert!((p.origin.z - 0.5).abs() < 1e-9);
+            assert!((p.origin.z - 0.5).abs() < TOLERANCE_COORD_SUB);
         } else { panic!("expected Plane"); }
     }
 
@@ -1563,7 +1563,7 @@ mod tests {
         });
         let off = offset_surface(&s, 0.5).unwrap();
         if let Surface3::Sphere(s) = off {
-            assert!((s.radius - 2.5).abs() < 1e-9);
+            assert!((s.radius - 2.5).abs() < TOLERANCE_COORD_SUB);
         } else { panic!("expected Sphere"); }
     }
 
@@ -1574,7 +1574,7 @@ mod tests {
         });
         let off = offset_surface(&c, 0.3).unwrap();
         if let Surface3::Cylinder(c) = off {
-            assert!((c.radius - 1.3).abs() < 1e-9);
+            assert!((c.radius - 1.3).abs() < TOLERANCE_COORD_SUB);
         } else { panic!("expected Cylinder"); }
     }
 
@@ -1862,15 +1862,15 @@ mod tests {
     #[test]
     fn thickness_spec_uniform() {
         let spec = ThicknessSpec::uniform(0.5);
-        assert!((spec.base - 0.5).abs() < 1e-10);
+        assert!((spec.base - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn thickness_spec_with_limits() {
         let spec = ThicknessSpec::with_limits(0.5, 0.1, 1.0);
-        assert!((spec.base - 0.5).abs() < 1e-10);
-        assert!((spec.min.unwrap() - 0.1).abs() < 1e-10);
-        assert!((spec.max.unwrap() - 1.0).abs() < 1e-10);
+        assert!((spec.base - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((spec.min.unwrap() - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((spec.max.unwrap() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     // ── Warning Tests ─────────────────────────────────────────────────────────────

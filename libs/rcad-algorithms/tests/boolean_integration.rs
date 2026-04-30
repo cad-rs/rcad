@@ -1,6 +1,7 @@
 /// Integration tests for boolean operations across multiple shapes and scenarios.
 /// These complement the inline unit tests by testing multi-step workflows and
 /// error path behavior at crate boundary.
+use rcad_algorithms::tolerance::*;
 use glam::DVec3;
 use rcad_algorithms::{
     BooleanError, BooleanOpType, CellExpr, MakerVolume, boolean_op, boolean_op_simplified,
@@ -445,7 +446,7 @@ fn maker_volume_region_mask_unions_selected_cells() {
 
     let result = make_solid_from_region(&cells, &[true, false, true])
         .expect("maker volume region mask should succeed");
-    assert!((volume(&result) - 2.0).abs() < 1e-9);
+    assert!((volume(&result) - 2.0).abs() < TOLERANCE_COORD_SUB);
 }
 
 #[test]
@@ -467,7 +468,7 @@ fn maker_volume_expression_and_history_workflow() {
         .build_from_indices_with_history(&[0, 1, 2])
         .expect("maker volume history path should succeed");
 
-    assert!((volume(&expr_result) - 3.0).abs() < 1e-9);
+    assert!((volume(&expr_result) - 3.0).abs() < TOLERANCE_COORD_SUB);
     assert_eq!(history.steps.len(), 2);
 }
 
@@ -825,6 +826,20 @@ fn sphere_with_cross_drilled_holes() {
     assert!(all_triangles_valid(&result));
 }
 
+/// Difference creating an L-shaped solid.
+#[test]
+fn l_shaped_by_difference() {
+    let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).expect("outer");
+    let inner = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 4.0, 4.0)
+        .expect("inner");
+
+    let result = boolean_op(BooleanOpType::Difference, &outer, &inner)
+        .expect("L-shaped difference should succeed");
+
+    assert!(face_count(&result) >= 6);
+    assert!(all_triangles_valid(&result));
+}
+
 // ─- Symmetry and orientation tests ─────────────────────────────────────────────
 
 /// Union of two boxes sharing a face (face-on-face contact).
@@ -841,17 +856,4 @@ fn boxes_sharing_face() {
     assert!(all_triangles_valid(&result));
 }
 
-/// Difference creating an L-shaped solid.
-#[test]
-fn l_shaped_by_difference() {
-    let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).expect("outer");
-    let inner = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 2.0, 4.0, 4.0)
-        .expect("inner");
-
-    let result = boolean_op(BooleanOpType::Difference, &outer, &inner)
-        .expect("L-shaped difference should succeed");
-
-    assert!(face_count(&result) >= 6);
-    assert!(all_triangles_valid(&result));
-}
 

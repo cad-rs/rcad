@@ -31,7 +31,9 @@ use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, ma
 use rcad_modeling::builder::ops::LoftHistory;
 use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
 
-const TOL: f64 = 1e-4;
+use crate::tolerance::*;
+
+const TOL: f64 = TOLERANCE_RETRY_LADDER_COARSE;
 
 fn is_unit_sphere_at_origin(b: &BRep) -> bool {
     b.solids.len() == 1
@@ -46,7 +48,8 @@ fn is_unit_sphere_at_origin(b: &BRep) -> bool {
             .and_then(|si| b.geom.surfaces.get(si))
             .is_some_and(|s| {
                 if let Surface3::Sphere(s) = s {
-                    s.radius - 1.0 < 1e-2 && s.center.length() < 1e-2
+                    s.radius - 1.0 < TOLERANCE_RETRY_LADDER_COARSE * 100.0
+                        && s.center.length() < TOLERANCE_RETRY_LADDER_COARSE * 100.0
                 } else {
                     false
                 }
@@ -104,12 +107,12 @@ pub fn try_difference_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     let (ca, ra) = try_sphere_primitive_center_radius(a)?;
     let (cb, rb) = try_sphere_primitive_center_radius(b)?;
     let scale = ra.max(rb).max(1.0);
-    if (ca - cb).length() > TOL.max(1e-9 * scale) {
+    if (ca - cb).length() > TOL.max(TOLERANCE_COORD_SUB * scale) {
         return None;
     }
     let ro = ra.max(rb);
     let ri = ra.min(rb);
-    if ro - ri <= 1e-12 * ro.max(1.0) {
+    if ro - ri <= TOLERANCE_LEN_MIN * ro.max(1.0) {
         return None;
     }
     let center = ca;
@@ -128,11 +131,11 @@ pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     let (ca, ra) = try_sphere_primitive_center_radius(a)?;
     let (cb, rb) = try_sphere_primitive_center_radius(b)?;
     let scale = ra.max(rb).max(1.0);
-    if (ca - cb).length() > TOL.max(1e-9 * scale) {
+    if (ca - cb).length() > TOL.max(TOLERANCE_COORD_SUB * scale) {
         return None;
     }
     let r = ra.min(rb);
-    let r_eps = 1e-12 * scale.max(1.0);
+    let r_eps = TOLERANCE_LEN_MIN * scale.max(1.0);
     if r <= r_eps {
         return None;
     }
@@ -142,8 +145,8 @@ pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
 // --- Coaxial cone ∩ cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
 
 fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
-    const APAR: f64 = 1e-3;
-    const XY: f64 = 2e-3;
+    const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
+    const XY: f64 = 2.0 * TOLERANCE_ADAPTIVE_MAX;
     let sh = cone.solids.get(0)?.shells.get(0)?;
     if sh.faces.len() != 2 {
         return None;
@@ -156,7 +159,7 @@ fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
             for _ in &sh.faces {
                 let si = *cone.geom.face_surface.get(fi)?.as_ref()?;
                 match cone.geom.surfaces.get(si)? {
-                    Surface3::Cone(c) if c.radius.abs() <= 1e-6 => cf = Some(*c),
+                    Surface3::Cone(c) if c.radius.abs() <= TOLERANCE_MESH_LEGACY => cf = Some(*c),
                     Surface3::Plane(p) => po = Some(p.origin),
                     _ => return None,
                 }
@@ -179,15 +182,15 @@ fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
     }
     let t = (b - apex).dot(u);
     let rb = t * c.half_angle_rad.tan();
-    if t < 1e-6 || rb < 1e-6 {
+    if t < TOLERANCE_MESH_LEGACY || rb < TOLERANCE_MESH_LEGACY {
         return None;
     }
     Some((apex.z, b.z, rb))
 }
 
 fn z_axis_cylinder_z_span_r(cyl: &BRep) -> Option<(f64, f64, f64)> {
-    const APAR: f64 = 1e-3;
-    const XY: f64 = 2e-3;
+    const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
+    const XY: f64 = 2.0 * TOLERANCE_ADAPTIVE_MAX;
     let sh = cyl.solids.get(0)?.shells.get(0)?;
     if sh.faces.len() != 3 {
         return None;
@@ -230,7 +233,7 @@ fn try_intersection_coaxial_cone_cylinder_pair(cone: &BRep, cyl: &BRep) -> Optio
     let zcx = zb.max(za);
     let z0 = zlo.max(zcn);
     let z1 = zhi.min(zcx);
-    if z1 - z0 < 1e-6 {
+    if z1 - z0 < TOLERANCE_MESH_LEGACY {
         return None;
     }
     let apex_hi = za > zb;
@@ -241,7 +244,7 @@ fn try_intersection_coaxial_cone_cylinder_pair(cone: &BRep, cyl: &BRep) -> Optio
     };
     let r0 = rcz(z0).min(rc);
     let r1 = rcz(z1).min(rc);
-    if r0 < 1e-9 && r1 < 1e-9 {
+    if r0 < TOLERANCE_COORD_SUB && r1 < TOLERANCE_COORD_SUB {
         return None;
     }
     let zm = (z0 + z1) * 0.5;
@@ -261,27 +264,27 @@ pub fn try_difference_coaxial_cone_minus_cylinder(cone: &BRep, cyl: &BRep) -> Op
     use rcad_modeling::make_cone_brep;
     let (za, zb, rb) = z_axis_sharp_cone_z_span(cone)?;
     let (zlo, zhi, rc) = z_axis_cylinder_z_span_r(cyl)?;
-    if za <= zb + 1e-6 {
+    if za <= zb + TOLERANCE_MESH_LEGACY {
         return None;
     }
     let hc = za - zb;
     let r_at = |z: f64| rb * (za - z) / hc;
     // Cylinder starts on cone base disk; radius at least the cone base radius.
-    if (zlo - zb).abs() > 2e-2 {
+    if (zlo - zb).abs() > TOLERANCE_AXIS_CORNER_SLACK {
         return None;
     }
-    if (rc + 1e-3) < rb {
+    if (rc + TOLERANCE_ADAPTIVE_MAX) < rb {
         return None;
     }
     // Cylinder covers the cone cross-section at `z_hi` (disk of radius `rc` vs cone radius `r_at(z_hi)`).
-    if rc + 1e-6 < r_at(zhi) {
+    if rc + TOLERANCE_MESH_LEGACY < r_at(zhi) {
         return None;
     }
-    if zhi <= zb + 1e-6 || zhi >= za - 1e-6 {
+    if zhi <= zb + TOLERANCE_MESH_LEGACY || zhi >= za - TOLERANCE_MESH_LEGACY {
         return None;
     }
     let r_cut = r_at(zhi);
-    if r_cut < 1e-9 {
+    if r_cut < TOLERANCE_COORD_SUB {
         return None;
     }
     let h_rem = za - zhi;
@@ -360,7 +363,9 @@ fn annulus_between_rings(outer: &[DVec3], inner: &[DVec3]) -> Result<BRep, rcad_
         ));
     }
     let z = outer[0].z;
-    if inner.iter().any(|p| (p.z - z).abs() > 1e-9) || outer.iter().any(|p| (p.z - z).abs() > 1e-9) {
+    if inner.iter().any(|p| (p.z - z).abs() > TOLERANCE_COORD_SUB)
+        || outer.iter().any(|p| (p.z - z).abs() > TOLERANCE_COORD_SUB)
+    {
         return Err(rcad_modeling::BuildError::DegenerateGeometry(
             "annulus_between_rings not coplanar",
         ));
@@ -444,7 +449,7 @@ fn coaxial_cylinder_minus_frustum_loft_pieces(
     let zcx = zb.max(za);
     let z0 = z_lo.max(zcn);
     let z1 = z_hi.min(zcx);
-    if z1 - z0 < 1e-6 {
+    if z1 - z0 < TOLERANCE_MESH_LEGACY {
         return None;
     }
     let apex_hi = za > zb;
@@ -459,7 +464,7 @@ fn coaxial_cylinder_minus_frustum_loft_pieces(
     };
     let r0 = rcz(z0).min(rc);
     let r1 = rcz(z1).min(rc);
-    if r0 < 1e-9 || r1 < 1e-9 {
+    if r0 < TOLERANCE_COORD_SUB || r1 < TOLERANCE_COORD_SUB {
         return None;
     }
 
@@ -473,7 +478,7 @@ fn coaxial_cylinder_minus_frustum_loft_pieces(
         let s = ang.sin();
         let ob = DVec3::new(rc * c, rc * s, z_lo);
         outer_bot.push(ob);
-        let ib = if (r0 - rc).abs() <= 1e-12 && (z0 - z_lo).abs() <= 1e-12 {
+        let ib = if (r0 - rc).abs() <= TOLERANCE_LEN_MIN && (z0 - z_lo).abs() <= TOLERANCE_LEN_MIN {
             ob
         } else {
             DVec3::new(r0 * c, r0 * s, z0)
@@ -507,7 +512,7 @@ fn try_coaxial_cylinder_minus_frustum_loft_shell(
 ) -> Option<BRep> {
     let (outer_strip, inner_strip, annulus) =
         coaxial_cylinder_minus_frustum_loft_pieces(z_lo, z_hi, rc, za, zb, rb)?;
-    let tol = (1e-4_f64).max(1e-6 * rc.max(z_hi.abs()));
+    let tol = (TOLERANCE_RETRY_LADDER_COARSE).max(TOLERANCE_MESH_LEGACY * rc.max(z_hi.abs()));
     let sewn = sew_shells(&[outer_strip, inner_strip, annulus], tol);
     if !sewn.free_edges.is_empty() {
         return None;
@@ -529,20 +534,20 @@ fn cyl_minus_cone_inner(maybe_cyl: &BRep, maybe_cone: &BRep) -> Option<BRep> {
     let (za, zb, rb) = z_axis_sharp_cone_z_span(cone)?;
     let (zlo, zhi, rc) = z_axis_cylinder_z_span_r(cyl)?;
     let hc = za - zb;
-    if hc.abs() < 1e-6 {
+    if hc.abs() < TOLERANCE_MESH_LEGACY {
         return None;
     }
     let r_at = |z: f64| rb * (za - z) / hc;
-    if (zlo - zb).abs() > 2e-2 {
+    if (zlo - zb).abs() > TOLERANCE_AXIS_CORNER_SLACK {
         return None;
     }
-    if (rc + 1e-3) < rb {
+    if (rc + TOLERANCE_ADAPTIVE_MAX) < rb {
         return None;
     }
-    if rc + 1e-6 < r_at(zhi) {
+    if rc + TOLERANCE_MESH_LEGACY < r_at(zhi) {
         return None;
     }
-    if zhi <= zb + 1e-6 || zhi >= za - 1e-6 {
+    if zhi <= zb + TOLERANCE_MESH_LEGACY || zhi >= za - TOLERANCE_MESH_LEGACY {
         return None;
     }
     try_coaxial_cylinder_minus_frustum_loft_shell(zlo, zhi, rc, za, zb, rb)
@@ -550,7 +555,7 @@ fn cyl_minus_cone_inner(maybe_cyl: &BRep, maybe_cone: &BRep) -> Option<BRep> {
 
 fn add_vertex(verts: &mut Vec<Vertex>, p: DVec3) -> usize {
     for (i, v) in verts.iter().enumerate() {
-        if (v.point - p).length() < 1e-7 {
+        if (v.point - p).length() < TOLERANCE_ABS {
             return i;
         }
     }
@@ -723,7 +728,7 @@ mod tests {
         let a_ex = 4.0 * pi * (ro * ro + ri * ri);
         let a = surface_area(&shell);
         assert!(
-            (a - a_ex).abs() < 5e-3 * a_ex.max(1.0),
+            (a - a_ex).abs() < 50.0 * TOLERANCE_RETRY_LADDER_COARSE * a_ex.max(1.0),
             "surface area {a} vs analytic shell SA {a_ex}"
         );
         // `signed_volume` across compounds relies on consistent face normals vs tessellation;
@@ -780,7 +785,7 @@ mod tests {
         let sum = rcad_kernel::surface_area(&outer_strip)
             + rcad_kernel::surface_area(&inner_strip)
             + rcad_kernel::surface_area(&ann);
-        let tol = (5e-3_f64).max(0.0625 * 1390.8_f64);
+        let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.0625 * 1390.8_f64);
         assert!(
             (sum - 1390.8_f64).abs() <= tol,
             "sum loose pieces ~1390.8, got {sum}"
@@ -815,7 +820,7 @@ mod tests {
             -10.0, 0.0, 10.0, 10.0, -10.0, 10.0,
         )
         .expect("loft pieces");
-        let tol = (1e-4_f64).max(1e-6 * 10.0);
+        let tol = (TOLERANCE_RETRY_LADDER_COARSE).max(TOLERANCE_MESH_LEGACY * 10.0);
         let sewn = sew_shells(&[outer_strip.clone(), inner_strip, annulus], tol);
         assert!(sewn.free_edges.is_empty(), "free {:?}", sewn.free_edges);
         let f_loose = &outer_strip.solids[0].shells[0].faces[0];
@@ -823,7 +828,7 @@ mod tests {
         let a_loose = rcad_kernel::face_surface_area(&outer_strip, f_loose, 0);
         let a_sewn = rcad_kernel::face_surface_area(&sewn.brep, f_sewn, 0);
         assert!(
-            (a_loose - a_sewn).abs() < 1e-2,
+            (a_loose - a_sewn).abs() < TOLERANCE_RETRY_LADDER_COARSE * 100.0,
             "first outer lateral face area loose {a_loose} vs sewn {a_sewn}"
         );
     }
@@ -850,7 +855,7 @@ mod tests {
             (v - 1310.0).abs() < 80.0,
             "expected volume cylinder minus frustum ~1310, got {v}"
         );
-        let tol = (5e-3_f64).max(0.0625 * 1390.8_f64);
+        let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.0625 * 1390.8_f64);
         assert!(
             (a - 1390.8_f64).abs() <= tol,
             "surface area: expected ~1390.8, got {a} (nf={nf}, vol={v})"

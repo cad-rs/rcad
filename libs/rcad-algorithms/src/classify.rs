@@ -15,7 +15,10 @@ use std::sync::Arc;
 use crate::bopds::ds::*;
 use crate::bvh::{Aabb, Bvh};
 use crate::inttools;
-use crate::tolerance::{AdaptiveTolerance, ToleranceLevel};
+use crate::tolerance::{
+    AdaptiveTolerance, ToleranceContext, ToleranceLevel, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
+    TOLERANCE_MESH_LEGACY, TOLERANCE_ANG,
+};
 
 // =============================================================================
 // Classification Types
@@ -117,6 +120,9 @@ struct SolidClassifyCache {
 pub struct ClassifyContext {
     ds: Arc<DS>,
     tolerance: AdaptiveTolerance,
+    /// Same role as [`ToleranceContext::workspace_fuzzy`]: lower bound on linear bands for
+    /// coarse AABB expansion and relaxed-on-surface checks (boolean fuzzy / user workspace).
+    workspace_fuzzy: f64,
     /// Cache keyed by a hash of face indices.
     cache: HashMap<u64, SolidClassifyCache>,
 }
@@ -128,6 +134,7 @@ impl ClassifyContext {
         Self {
             ds,
             tolerance,
+            workspace_fuzzy: 0.0,
             cache: HashMap::new(),
         }
     }
@@ -137,8 +144,27 @@ impl ClassifyContext {
         Self {
             ds,
             tolerance,
+            workspace_fuzzy: 0.0,
             cache: HashMap::new(),
         }
+    }
+
+    /// Build from a [`ToleranceContext`] (adaptive scale + optional workspace fuzzy).
+    ///
+    /// Relaxed / coarse linear bases use `max(adaptive(level), workspace_fuzzy)`, consistent with
+    /// [`ToleranceContext::workspace_linear`].
+    pub fn with_tolerance_context(ds: Arc<DS>, ctx: ToleranceContext) -> Self {
+        Self {
+            ds,
+            tolerance: ctx.adaptive,
+            workspace_fuzzy: ctx.workspace_fuzzy.max(0.0),
+            cache: HashMap::new(),
+        }
+    }
+
+    #[inline]
+    fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
+        self.tolerance.tolerance(level).max(self.workspace_fuzzy)
     }
 
     /// Get or create cache for a solid.
@@ -213,8 +239,18 @@ impl ClassifyContext {
         }
 
         // Extract tolerance before borrowing
-        let coarse_tol = self.tolerance.tolerance(ToleranceLevel::Coarse);
+        let mut sorted_for_tol = solid_face_indices.to_vec();
+        sorted_for_tol.sort_unstable();
+        let face_geom_max = sorted_for_tol
+            .iter()
+            .filter_map(|&fi| self.ds.faces.get(fi).map(|f| f.geom_tol))
+            .fold(0.0_f64, f64::max);
+        let coarse_tol = crate::tolerance::effective_linear_with_geom_tol(
+            self.workspace_linear(ToleranceLevel::Coarse),
+            face_geom_max,
+        );
         let tolerance = self.tolerance;
+        let workspace_fuzzy = self.workspace_fuzzy;
 
         // Clone sorted face list so the cache borrow does not block `&self.ds` for classification.
         let face_indices_owned = {
@@ -234,7 +270,13 @@ impl ClassifyContext {
             cache.face_indices.clone()
         };
 
-        classify_point_internal(point, &face_indices_owned, &self.ds, tolerance)
+        classify_point_internal(
+            point,
+            &face_indices_owned,
+            &self.ds,
+            tolerance,
+            workspace_fuzzy,
+        )
     }
 
     /// Classify multiple points in parallel.
@@ -267,6 +309,7 @@ impl ClassifyContext {
 
         let ds = Arc::clone(&self.ds);
         let tolerance = self.tolerance;
+        let workspace_fuzzy = self.workspace_fuzzy;
         let mut face_indices = solid_face_indices.to_vec();
         face_indices.sort_unstable();
 
@@ -281,7 +324,15 @@ impl ClassifyContext {
                 thread::spawn(move || {
                     points_chunk
                         .iter()
-                        .map(|&p| classify_point_internal(p, &face_indices, &ds, tolerance))
+                        .map(|&p| {
+                            classify_point_internal(
+                                p,
+                                &face_indices,
+                                &ds,
+                                tolerance,
+                                workspace_fuzzy,
+                            )
+                        })
                         .collect::<Vec<_>>()
                 })
             })
@@ -306,6 +357,39 @@ impl ClassifyContext {
 }
 
 // =============================================================================
+// Relaxed linear tolerance with DS-propagated face tolerances (phase B+)
+// =============================================================================
+
+#[inline]
+fn relaxed_tol_for_face_geom(
+    ds: &DS,
+    tol: AdaptiveTolerance,
+    face_idx: usize,
+    workspace_fuzzy: f64,
+) -> f64 {
+    let base = tol.tolerance(ToleranceLevel::Relaxed).max(workspace_fuzzy);
+    ds.faces
+        .get(face_idx)
+        .map(|f| crate::tolerance::effective_linear_with_geom_tol(base, f.geom_tol))
+        .unwrap_or(base)
+}
+
+#[inline]
+fn relaxed_tol_for_solid_face_set(
+    ds: &DS,
+    tol: AdaptiveTolerance,
+    solid_face_indices: &[usize],
+    workspace_fuzzy: f64,
+) -> f64 {
+    let base = tol.tolerance(ToleranceLevel::Relaxed).max(workspace_fuzzy);
+    let geom_max = solid_face_indices
+        .iter()
+        .filter_map(|&fi| ds.faces.get(fi).map(|f| f.geom_tol))
+        .fold(0.0_f64, f64::max);
+    crate::tolerance::effective_linear_with_geom_tol(base, geom_max)
+}
+
+// =============================================================================
 // Core Classification Functions
 // =============================================================================
 
@@ -325,7 +409,7 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     sorted.sort_unstable();
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
-    classify_point_internal(point, &sorted, ds, tol)
+    classify_point_internal(point, &sorted, ds, tol, 0.0)
 }
 
 fn classify_point_internal(
@@ -333,8 +417,10 @@ fn classify_point_internal(
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
+    workspace_fuzzy: f64,
 ) -> Classification {
-    let on_surface_tol = tol.tolerance(ToleranceLevel::Relaxed);
+    let wf = workspace_fuzzy.max(0.0);
+    let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
 
     // 1. Check analytic primitives first (fast path)
     if let Some(class) = classify_analytic_cylinder_solid(point, solid_face_indices, ds, on_surface_tol) {
@@ -357,13 +443,14 @@ fn classify_point_internal(
 
     // 2. Check if point is ON any face surface within face bounds
     for &fi in solid_face_indices {
-        if let Some(class) = check_point_on_face(point, fi, ds, on_surface_tol) {
+        let tol_f = relaxed_tol_for_face_geom(ds, tol, fi, wf);
+        if let Some(class) = check_point_on_face(point, fi, ds, tol_f) {
             return class;
         }
     }
 
     // 3. Multi-ray casting with voting for robustness
-    classify_with_multi_ray_voting(point, solid_face_indices, ds, tol)
+    classify_with_multi_ray_voting(point, solid_face_indices, ds, tol, wf)
 }
 
 /// Multi-ray casting with voting for robust classification.
@@ -375,6 +462,7 @@ fn classify_with_multi_ray_voting(
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
+    workspace_fuzzy: f64,
 ) -> Classification {
     // Use more rays for better reliability
     // These directions are chosen to avoid axis-aligned edges
@@ -397,7 +485,7 @@ fn classify_with_multi_ray_voting(
     let mut valid_rays = 0u32;
 
     for ray_dir in &ray_dirs {
-        match ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol) {
+        match ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol, workspace_fuzzy) {
             Some(Classification::In) => {
                 in_votes += 1;
                 valid_rays += 1;
@@ -421,7 +509,7 @@ fn classify_with_multi_ray_voting(
 
     // If not enough valid rays, fall back to winding number
     if valid_rays < 3 {
-        return classify_with_winding_number(point, solid_face_indices, ds, tol);
+        return classify_with_winding_number(point, solid_face_indices, ds, tol, workspace_fuzzy);
     }
 
     // Majority voting
@@ -431,7 +519,7 @@ fn classify_with_multi_ray_voting(
         Classification::Out
     } else {
         // Tie-breaker: use winding number
-        classify_with_winding_number(point, solid_face_indices, ds, tol)
+        classify_with_winding_number(point, solid_face_indices, ds, tol, workspace_fuzzy)
     }
 }
 
@@ -444,13 +532,14 @@ fn classify_with_winding_number(
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
+    workspace_fuzzy: f64,
 ) -> Classification {
     // Compute solid angle contribution from each face
     let mut total_winding = 0.0;
-    let boundary_tol = tol.tolerance(ToleranceLevel::Relaxed);
 
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
+        let boundary_tol = relaxed_tol_for_face_geom(ds, tol, fi, workspace_fuzzy);
         let winding = compute_face_winding_contribution(point, face, ds, boundary_tol);
         total_winding += winding;
     }
@@ -679,7 +768,7 @@ fn classify_analytic_cone_solid(
                 if let Some(base) = cone {
                     let same = (base.apex - c.apex).length() <= on_surface_tol * 10.0
                         && (base.axis.dot(c.axis)).abs() >= 0.9999
-                        && (base.half_angle_rad - c.half_angle_rad).abs() <= 1e-9;
+                        && (base.half_angle_rad - c.half_angle_rad).abs() <= TOLERANCE_ANG;
                     if !same {
                         return None;
                     }
@@ -696,7 +785,7 @@ fn classify_analytic_cone_solid(
     let axis = cone.axis.normalize_or_zero();
     let apex = cone.apex;
     let tan_half = cone.half_angle_rad.tan();
-    if tan_half.abs() < 1e-12 {
+    if tan_half.abs() < TOLERANCE_LEN_MIN {
         return None;
     }
 
@@ -767,7 +856,12 @@ pub fn classify_point_on_face(
             match surface {
                 Surface3::Plane(plane) => {
                     let face_verts = ds.face_boundary_points(face_idx);
-                    inttools::edge_face::point_in_planar_face(point, plane, &face_verts)
+                    inttools::edge_face::point_in_planar_face_with_tol(
+                        point,
+                        plane,
+                        &face_verts,
+                        tolerance,
+                    )
                 }
                 _ => {
                     // For curved faces without UV boundary, use AABB approximation
@@ -805,7 +899,12 @@ fn check_point_on_face(
             let d = (point - plane.origin).dot(plane.normal);
             if d.abs() < tolerance {
                 let face_verts = ds.face_boundary_points(face_idx);
-                if inttools::edge_face::point_in_planar_face(point, plane, &face_verts) {
+                if inttools::edge_face::point_in_planar_face_with_tol(
+                    point,
+                    plane,
+                    &face_verts,
+                    tolerance,
+                ) {
                     return Some(Classification::On);
                 }
             }
@@ -870,14 +969,15 @@ fn ray_cast_classify(
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
+    workspace_fuzzy: f64,
 ) -> Option<Classification> {
     let mut crossings = 0u32;
     let ray_tol = tol.tolerance(ToleranceLevel::Strict);
-    let boundary_tol = tol.tolerance(ToleranceLevel::Relaxed);
     let parallel_tol_sq = tol.tolerance_sq(ToleranceLevel::Strict);
 
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
+        let boundary_tol = relaxed_tol_for_face_geom(ds, tol, fi, workspace_fuzzy);
         match &face.surface {
             Surface3::Plane(plane) => {
                 let denom = ray_dir.dot(plane.normal);
@@ -896,7 +996,12 @@ fn ray_cast_classify(
                     return None;
                 }
 
-                if inttools::edge_face::point_in_planar_face(hit, plane, &face_verts) {
+                if inttools::edge_face::point_in_planar_face_with_tol(
+                    hit,
+                    plane,
+                    &face_verts,
+                    boundary_tol,
+                ) {
                     crossings += 1;
                 }
             }
@@ -1084,7 +1189,7 @@ fn ray_torus_crossings(
             let h_loc = hit - t.center;
             let z_hit = h_loc.dot(axis);
             let radial_sq = h_loc.length_squared() - z_hit * z_hit;
-            if radial_sq >= -1e-9
+            if radial_sq >= -TOLERANCE_COORD_SUB
                 && point_in_face_aabb(hit, &face_verts, boundary_tol)
             {
                 crossings += 1;
@@ -1377,7 +1482,7 @@ fn cylinder_face_angle_range(
         if a < min_a { min_a = a; }
         if a > max_a { max_a = a; }
     }
-    if max_a - min_a < 1e-6 {
+    if max_a - min_a < TOLERANCE_MESH_LEGACY {
         return (0.0, std::f64::consts::TAU);
     }
     if max_a - min_a > std::f64::consts::PI {
@@ -1398,7 +1503,7 @@ fn cylinder_face_angle_range(
             return (0.0, std::f64::consts::TAU);
         }
     }
-    if max_a - min_a < 1e-6 {
+    if max_a - min_a < TOLERANCE_MESH_LEGACY {
         return (0.0, std::f64::consts::TAU);
     }
     (min_a, max_a)
@@ -1645,6 +1750,25 @@ mod tests {
     }
 
     #[test]
+    fn classify_context_from_tolerance_context() {
+        let brep = create_box_brep();
+        let ds = Arc::new(DS::new(&brep, &BRep::new()));
+        let face_indices: Vec<usize> = (0..ds.faces.len())
+            .filter(|&i| ds.faces[i].origin == ShapeOrigin::ShapeA)
+            .collect();
+        let base_ctx = ToleranceContext::from_scale(ds.model_scale());
+        let fuzzy_ctx =
+            ToleranceContext::new(AdaptiveTolerance::from_scale(ds.model_scale()), 1e-5);
+
+        let mut ctx_base = ClassifyContext::with_tolerance_context(Arc::clone(&ds), base_ctx);
+        let mut ctx_fuzzy = ClassifyContext::with_tolerance_context(ds, fuzzy_ctx);
+
+        let p = DVec3::new(0.5, 0.5, 0.5);
+        assert_eq!(ctx_base.classify_point(p, &face_indices), Classification::In);
+        assert_eq!(ctx_fuzzy.classify_point(p, &face_indices), Classification::In);
+    }
+
+    #[test]
     fn parallel_classification() {
         let brep = create_box_brep();
         let ds = Arc::new(DS::new(&brep, &BRep::new()));
@@ -1700,7 +1824,7 @@ mod tests {
             .collect();
 
         // Small box B is entirely inside larger box A
-        let result = classify_solid_in_solid(&faces_a, &faces_b, &ds, 1e-6);
+        let result = classify_solid_in_solid(&faces_a, &faces_b, &ds, TOLERANCE_MESH_LEGACY);
         // Due to implementation details, may return Inside or Touching
         assert!(matches!(result, SolidClassification::Inside | SolidClassification::Touching),
             "small box should be inside large box, got {:?}", result);
@@ -1720,12 +1844,12 @@ mod tests {
         let v1 = ds.vertices[edge.end_vertex].point;
         let mid = (v0 + v1) * 0.5;
 
-        let result = classify_point_on_edge(mid, edge_idx, &ds, 1e-6);
+        let result = classify_point_on_edge(mid, edge_idx, &ds, TOLERANCE_MESH_LEGACY);
         assert_eq!(result, EdgeClassification::OnEdge);
 
         // Point far from edge
         let far = mid + DVec3::new(10.0, 10.0, 10.0);
-        let result = classify_point_on_edge(far, edge_idx, &ds, 1e-6);
+        let result = classify_point_on_edge(far, edge_idx, &ds, TOLERANCE_MESH_LEGACY);
         assert_eq!(result, EdgeClassification::Off);
     }
 
@@ -1738,7 +1862,7 @@ mod tests {
         // The box has 6 faces, find one that returns OnSurface or OnBoundary
         let mut found_on_surface = false;
         for face_idx in 0..ds.faces.len() {
-            let result = classify_point_on_face(DVec3::new(0.5, 0.5, 1.0), face_idx, &ds, 1e-6);
+            let result = classify_point_on_face(DVec3::new(0.5, 0.5, 1.0), face_idx, &ds, TOLERANCE_MESH_LEGACY);
             if matches!(result, FaceClassification::OnSurface | FaceClassification::OnBoundary) {
                 found_on_surface = true;
                 break;
@@ -1749,7 +1873,7 @@ mod tests {
         // Point outside all faces
         let mut all_outside = true;
         for face_idx in 0..ds.faces.len() {
-            let result = classify_point_on_face(DVec3::new(10.0, 10.0, 1.0), face_idx, &ds, 1e-6);
+            let result = classify_point_on_face(DVec3::new(10.0, 10.0, 1.0), face_idx, &ds, TOLERANCE_MESH_LEGACY);
             if result != FaceClassification::Outside {
                 all_outside = false;
                 break;

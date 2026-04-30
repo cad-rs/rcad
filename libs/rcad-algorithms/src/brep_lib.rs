@@ -24,6 +24,7 @@
 //! assert!(!sorted.is_empty());
 //! ```
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
@@ -171,7 +172,7 @@ pub fn find_surface_through_edges(
         }
     }
 
-    find_surface_through_points(&points, 1e-6)
+    find_surface_through_points(&points, TOLERANCE_MESH_LEGACY)
 }
 
 /// Find a surface through a set of points.
@@ -412,7 +413,7 @@ fn fit_sphere_to_points(points: &[DVec3]) -> Option<FittedSphere> {
     let coeffs = solve_linear_4x4(&a, &b)?;
 
     let center = DVec3::new(coeffs[0], coeffs[1], coeffs[2]);
-    let radius = (coeffs[0] * coeffs[0] + coeffs[1] * coeffs[1] + coeffs[2] * coeffs[2] + coeffs[3]).sqrt().max(1e-10);
+    let radius = (coeffs[0] * coeffs[0] + coeffs[1] * coeffs[1] + coeffs[2] * coeffs[2] + coeffs[3]).sqrt().max(TOLERANCE_LINEAR_ULTRA_STRICT);
 
     // Compute RMS error
     let mut sum_sq = 0.0;
@@ -578,14 +579,14 @@ fn fit_cone_with_axis(points: &[DVec3], centroid: DVec3, axis: DVec3) -> Option<
 
     // Solve for tan(angle) and offset
     let denom = n * sum_a2 - sum_a * sum_a;
-    if denom.abs() < 1e-14 {
+    if denom.abs() < TOLERANCE_FLOAT_LOOSE {
         return None;
     }
 
     let tan_angle = (n * sum_ra - sum_r * sum_a) / denom;
     let t = (sum_r * sum_a2 - sum_a * sum_ra) / denom;
 
-    if tan_angle.abs() < 1e-6 || tan_angle.abs() > 100.0 {
+    if tan_angle.abs() < TOLERANCE_MESH_LEGACY || tan_angle.abs() > 100.0 {
         return None; // Not a reasonable cone
     }
 
@@ -599,7 +600,7 @@ fn fit_cone_with_axis(points: &[DVec3], centroid: DVec3, axis: DVec3) -> Option<
         let axial = d.dot(axis);
         let radial = (d - axial * axis).length();
         let expected_radial = semi_angle.tan() * axial.abs();
-        let error = if expected_radial > 1e-10 {
+        let error = if expected_radial > TOLERANCE_LINEAR_ULTRA_STRICT {
             (radial - expected_radial).abs()
         } else {
             radial
@@ -645,7 +646,7 @@ fn compute_eigendecomposition(m: &[[f64; 3]; 3]) -> ([f64; 3], [DVec3; 3]) {
     let mut v = [DVec3::X, DVec3::Y, DVec3::Z];
 
     const MAX_ITER: usize = 100;
-    const TOL: f64 = 1e-12;
+    const TOL: f64 = TOLERANCE_LEN_MIN;
 
     for _ in 0..MAX_ITER {
         // Find largest off-diagonal element
@@ -749,7 +750,7 @@ fn fit_circle_2d(points: &[(f64, f64)]) -> Option<(f64, f64, f64)> {
 
     let cx = coeffs[0];
     let cy = coeffs[1];
-    let radius = (cx * cx + cy * cy + coeffs[2]).sqrt().max(1e-10);
+    let radius = (cx * cx + cy * cy + coeffs[2]).sqrt().max(TOLERANCE_LINEAR_ULTRA_STRICT);
 
     Some((cx, cy, radius))
 }
@@ -769,7 +770,7 @@ fn solve_linear_3x3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
             }
         }
 
-        if max_val < 1e-14 {
+        if max_val < TOLERANCE_FLOAT_LOOSE {
             return None;
         }
 
@@ -813,7 +814,7 @@ fn solve_linear_4x4(a: &[[f64; 4]; 4], b: &[f64; 4]) -> Option<[f64; 4]> {
             }
         }
 
-        if max_val < 1e-14 {
+        if max_val < TOLERANCE_FLOAT_LOOSE {
             return None;
         }
 
@@ -942,7 +943,7 @@ pub fn faces_share_surface(brep: &BRep, face1_idx: usize, face2_idx: usize) -> R
 
 /// Check if two surfaces are geometrically equivalent within tolerance.
 fn surfaces_equivalent(s1: &Surface3, s2: &Surface3) -> Result<bool, BRepLibError> {
-    const TOL: f64 = 1e-6;
+    const TOL: f64 = TOLERANCE_MESH_LEGACY;
 
     match (s1, s2) {
         (Surface3::Plane(p1), Surface3::Plane(p2)) => {
@@ -1252,7 +1253,7 @@ fn compute_face_area(brep: &BRep, face_idx: usize) -> f64 {
     }
 
     // If no triangles, estimate from wire
-    if area < 1e-10 {
+    if area < TOLERANCE_LINEAR_ULTRA_STRICT {
         area = estimate_wire_area(brep, &face.outer_wire);
     }
 
@@ -1393,9 +1394,9 @@ mod tests {
             DVec3::new(0.0, 1.0, 0.0),
         ];
 
-        let result = find_surface_through_points(&points, 1e-6).unwrap();
+        let result = find_surface_through_points(&points, TOLERANCE_MESH_LEGACY).unwrap();
         assert_eq!(result.surface_type, FittedSurfaceType::Plane);
-        assert!(result.rms_error < 1e-6);
+        assert!(result.rms_error < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1438,7 +1439,7 @@ mod tests {
 
     #[test]
     fn test_find_surface_empty_input() {
-        let result = find_surface_through_points(&[], 1e-6);
+        let result = find_surface_through_points(&[], TOLERANCE_MESH_LEGACY);
         assert!(matches!(result, Err(BRepLibError::EmptyInput)));
 
         let brep = BRep::new();
@@ -1465,7 +1466,7 @@ mod tests {
 
         // Verify descending order
         for i in 1..areas.len() {
-            assert!(areas[i] <= areas[i - 1] + 1e-6);
+            assert!(areas[i] <= areas[i - 1] + TOLERANCE_MESH_LEGACY);
         }
     }
 
@@ -1818,7 +1819,7 @@ mod tests {
             }
         }
 
-        let result = find_surface_through_points(&points, 1e-3).unwrap();
+        let result = find_surface_through_points(&points, TOLERANCE_ADAPTIVE_MAX).unwrap();
 
         // Cone fitting may be approximate
         assert!(result.rms_error < 1.0);

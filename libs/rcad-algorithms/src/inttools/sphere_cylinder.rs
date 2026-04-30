@@ -44,7 +44,7 @@
 
 use rcad_kernel::geom::{Circle3, CylindricalSurface, SphericalSurface};
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -193,10 +193,10 @@ mod tests {
             SphereCylinderResult::TwoCircles(c1, c2) => {
                 // delta_h = sqrt(25 - 16) = 3
                 // h1 = 3 - 3 = 0, h2 = 3 + 3 = 6
-                assert!((c1.center.z - 0.0).abs() < 1e-9, "c1.z={}", c1.center.z);
-                assert!((c2.center.z - 6.0).abs() < 1e-9, "c2.z={}", c2.center.z);
-                assert!((c1.radius - 4.0).abs() < 1e-9);
-                assert!((c2.radius - 4.0).abs() < 1e-9);
+                assert!((c1.center.z - 0.0).abs() < TOLERANCE_COORD_SUB, "c1.z={}", c1.center.z);
+                assert!((c2.center.z - 6.0).abs() < TOLERANCE_COORD_SUB, "c2.z={}", c2.center.z);
+                assert!((c1.radius - 4.0).abs() < TOLERANCE_COORD_SUB);
+                assert!((c2.radius - 4.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected TwoCircles, got {other:?}"),
         }
@@ -209,8 +209,8 @@ mod tests {
         let c = cyl(DVec3::ZERO, 3.0);
         match intersect_sphere_cylinder(&sph, &c) {
             SphereCylinderResult::TangentCircle(tc) => {
-                assert!((tc.center.z - 5.0).abs() < 1e-9, "tc.z={}", tc.center.z);
-                assert!((tc.radius - 3.0).abs() < 1e-9);
+                assert!((tc.center.z - 5.0).abs() < TOLERANCE_COORD_SUB, "tc.z={}", tc.center.z);
+                assert!((tc.radius - 3.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected TangentCircle, got {other:?}"),
         }

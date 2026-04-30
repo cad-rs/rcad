@@ -1,4 +1,4 @@
-﻿//! BRepMesh-style mesh generation for BRep shapes.
+//! BRepMesh-style mesh generation for BRep shapes.
 //!
 //! This module provides mesh generation capabilities similar to OCCT's BRepMesh.
 //! It includes:
@@ -9,6 +9,7 @@
 //! - Quality metrics for mesh analysis
 //! - Mesh refinement for improved quality
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
@@ -72,7 +73,7 @@ impl MeshParams {
     /// The deflection controls how closely the mesh approximates the surface.
     /// Smaller values produce more triangles but better accuracy.
     pub fn with_deflection(mut self, deflection: f64) -> Self {
-        self.deflection = deflection.abs().max(1e-10);
+        self.deflection = deflection.abs().max(TOLERANCE_LINEAR_ULTRA_STRICT);
         self
     }
 
@@ -402,7 +403,7 @@ fn subdivide_quad_for_face(
         let step_v = v1 - v0;
 
         // Check minimum step size
-        if step_u < 1e-8 && step_v < 1e-8 {
+        if step_u < TOLERANCE_LINEAR_RELAX_8 && step_v < TOLERANCE_LINEAR_RELAX_8 {
             false
         } else {
             // Check deflection
@@ -476,7 +477,7 @@ fn normal_angle(n0: DVec3, n1: DVec3) -> f64 {
 
 /// Weld duplicate mesh nodes in a mesh.
 fn weld_mesh(mesh: Mesh) -> Mesh {
-    const WELD_TOLERANCE: f64 = 1e-9;
+    const WELD_TOLERANCE: f64 = TOLERANCE_COORD_SUB;
 
     if mesh.nodes.is_empty() {
         return mesh;
@@ -712,7 +713,7 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
             let end_idx = if we.forward { edge.end } else { edge.start };
 
             if let Some(v) = brep.vertices.get(start_idx)
-                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9) {
+                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > TOLERANCE_COORD_SUB) {
                     poly_pts.push(v.point);
                 }
 
@@ -730,12 +731,12 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
                     };
 
                     let span = (t1 - t0).abs();
-                    if span > 1e-12 {
+                    if span > TOLERANCE_LEN_MIN {
                         let n_segs = estimate_curve_segments(curve, span);
                         for i in 1..=n_segs {
                             let t = t0 + (t1 - t0) * (i as f64 / n_segs as f64);
                             let pt = curve.point_at(t);
-                            if poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > 1e-9 {
+                            if poly_pts.is_empty() || (poly_pts.last().unwrap() - pt).length() > TOLERANCE_COORD_SUB {
                                 poly_pts.push(pt);
                             }
                         }
@@ -744,14 +745,14 @@ fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
 
             // Add end point
             if let Some(v) = brep.vertices.get(end_idx)
-                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > 1e-9) {
+                && (poly_pts.is_empty() || (poly_pts.last().unwrap() - v.point).length() > TOLERANCE_COORD_SUB) {
                     poly_pts.push(v.point);
                 }
         }
     }
 
     // Remove duplicate closing point
-    if poly_pts.len() >= 2 && (poly_pts[0] - poly_pts[poly_pts.len() - 1]).length() < 1e-9 {
+    if poly_pts.len() >= 2 && (poly_pts[0] - poly_pts[poly_pts.len() - 1]).length() < TOLERANCE_COORD_SUB {
         poly_pts.pop();
     }
 
@@ -1054,7 +1055,7 @@ pub fn mesh_aspect_ratio(mesh: &Mesh) -> f64 {
         let max_edge = e0.max(e1).max(e2);
         let min_edge = e0.min(e1).min(e2);
 
-        if min_edge > 1e-12 {
+        if min_edge > TOLERANCE_LEN_MIN {
             let ratio = max_edge / min_edge;
             max_ratio = max_ratio.max(ratio);
         } else {
@@ -1262,8 +1263,8 @@ mod tests {
     #[test]
     fn mesh_params_default() {
         let params = MeshParams::default();
-        assert!((params.deflection - 0.001).abs() < 1e-10);
-        assert!((params.angle_deflection - 0.5).abs() < 1e-10);
+        assert!((params.deflection - 0.001).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((params.angle_deflection - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
         assert_eq!(params.min_mesh_size, 0.0);
         assert_eq!(params.max_mesh_size, f64::MAX);
         assert!(params.optimize);
@@ -1277,10 +1278,10 @@ mod tests {
             .with_min_mesh_size(0.1)
             .with_max_mesh_size(10.0);
 
-        assert!((params.deflection - 0.01).abs() < 1e-10);
-        assert!((params.angle_deflection - 0.3).abs() < 1e-10);
-        assert!((params.min_mesh_size - 0.1).abs() < 1e-10);
-        assert!((params.max_mesh_size - 10.0).abs() < 1e-10);
+        assert!((params.deflection - 0.01).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((params.angle_deflection - 0.3).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((params.min_mesh_size - 0.1).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((params.max_mesh_size - 10.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1358,8 +1359,8 @@ mod tests {
         mesh.nodes.push(DVec3::new(-1.0, -2.0, -3.0));
 
         let (min, max) = mesh.bounding_box();
-        assert!((min - DVec3::new(-1.0, -2.0, -3.0)).length() < 1e-10);
-        assert!((max - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-10);
+        assert!((min - DVec3::new(-1.0, -2.0, -3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((max - DVec3::new(1.0, 2.0, 3.0)).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]

@@ -23,6 +23,7 @@
 //! - [`approx_curve_to_bspline`] - Approximate any curve with BSpline
 //! - [`approx_surface_to_bspline`] - Approximate any surface with BSplineSurface
 
+use crate::tolerance::*;
 use glam::DVec3;
 use std::f64::consts::PI;
 
@@ -43,7 +44,7 @@ use rcad_kernel::fit::interpolate_points;
 /// and `AdvApprox_ApproxAFunction` settings.
 #[derive(Debug, Clone)]
 pub struct ConvertParams {
-    /// Tolerance for approximation (default: 1e-6).
+    /// Tolerance for approximation (default: TOLERANCE_MESH_LEGACY).
     pub tolerance: f64,
     /// Maximum degree for the resulting BSpline (default: 3 for curves, 3 for surfaces).
     pub max_degree: usize,
@@ -60,7 +61,7 @@ pub struct ConvertParams {
 impl Default for ConvertParams {
     fn default() -> Self {
         Self {
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             max_degree: 3,
             min_degree: 1,
             continuity: 2,
@@ -119,8 +120,8 @@ impl ConvertParams {
 ///
 /// let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
 /// let bspline = line_to_bspline(&line, 1);
-/// assert!((bspline.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
-/// assert!((bspline.point_at(1.0) - DVec3::X).length() < 1e-10);
+/// assert!((bspline.point_at(0.0) - DVec3::ZERO).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
+/// assert!((bspline.point_at(1.0) - DVec3::X).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
 pub fn line_to_bspline(line: &Line3, _degree: usize) -> BSplineCurve3 {
     let p0 = line.origin;
@@ -250,7 +251,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3, _degree: usize) -> BSplineCurve3 {
 /// // Check that it produces points on the circle
 /// for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
 ///     let p = bspline.point_at(t);
-///     assert!((p.length() - 1.0).abs() < 1e-9);
+///     assert!((p.length() - 1.0).abs() < TOLERANCE_COORD_SUB);
 /// }
 /// ```
 pub fn curve_to_bspline(curve: &Curve3, params: &ConvertParams) -> BSplineCurve3 {
@@ -439,7 +440,7 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface, _u_deg: usize, _v_deg: usize
         let radius_at_lat = sin_v * r;
 
         // 9 control points for the circle at this latitude
-        let row_pts: Vec<DVec3> = if radius_at_lat.abs() < 1e-10 {
+        let row_pts: Vec<DVec3> = if radius_at_lat.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             // Pole: all control points at the same location
             vec![center; 9]
         } else {
@@ -456,7 +457,7 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface, _u_deg: usize, _v_deg: usize
             ]
         };
 
-        let row_w: Vec<f64> = if radius_at_lat.abs() < 1e-10 {
+        let row_w: Vec<f64> = if radius_at_lat.abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
             vec![1.0; 9]
         } else {
             [1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0].to_vec()
@@ -652,7 +653,7 @@ pub fn torus_to_bspline(torus: &ToroidalSurface, _u_deg: usize, _v_deg: usize) -
 ///
 /// // Check equator point
 /// let p = bspline.point_at(0.0, 0.5);
-/// assert!((p.length() - 2.0).abs() < 1e-9);
+/// assert!((p.length() - 2.0).abs() < TOLERANCE_COORD_SUB);
 /// ```
 pub fn surface_to_bspline(surf: &Surface3, params: &ConvertParams) -> BSplineSurface {
     match surf {
@@ -795,12 +796,12 @@ pub fn bspline_to_bezier(spline: &BSplineCurve3) -> Vec<BezierCurve3> {
         while i < spline.knots.len() {
             let knot = spline.knots[i];
             let mut mult = 0;
-            while i < spline.knots.len() && (spline.knots[i] - knot).abs() < 1e-10 {
+            while i < spline.knots.len() && (spline.knots[i] - knot).abs() < TOLERANCE_LINEAR_ULTRA_STRICT {
                 mult += 1;
                 i += 1;
             }
             // Only interior knots
-            if knot > spline.knots[0] + 1e-10 && knot < spline.knots[spline.knots.len() - 1] - 1e-10 {
+            if knot > spline.knots[0] + TOLERANCE_LINEAR_ULTRA_STRICT && knot < spline.knots[spline.knots.len() - 1] - TOLERANCE_LINEAR_ULTRA_STRICT {
                 result.push((knot, mult));
             }
         }
@@ -855,7 +856,7 @@ fn insert_knot(
     // Find the span where this knot belongs
     let mut k = degree;
     for i in degree..n - degree {
-        if knots[i] > u + 1e-10 {
+        if knots[i] > u + TOLERANCE_LINEAR_ULTRA_STRICT {
             break;
         }
         k = i;
@@ -864,7 +865,7 @@ fn insert_knot(
     // Compute new control points
     let alpha = |i: usize| -> f64 {
         let denom = knots[i + degree] - knots[i];
-        if denom.abs() < 1e-15 {
+        if denom.abs() < TOLERANCE_FLOAT_DEDUP {
             0.0
         } else {
             (u - knots[i]) / denom
@@ -1031,8 +1032,8 @@ mod tests {
 
         assert_eq!(bs.degree, 1);
         assert_eq!(bs.control_points.len(), 2);
-        assert!(approx_eq3(bs.point_at(0.0), line.origin, 1e-10));
-        assert!(approx_eq3(bs.point_at(1.0), line.origin + line.direction, 1e-10));
+        assert!(approx_eq3(bs.point_at(0.0), line.origin, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq3(bs.point_at(1.0), line.origin + line.direction, TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     #[test]
@@ -1049,7 +1050,7 @@ mod tests {
             let t = i as f64 / 8.0;
             let p = bs.point_at(t);
             let r = (p - circle.center).length();
-            assert!(approx_eq(r, circle.radius, 1e-9), "t={}: radius={}", t, r);
+            assert!(approx_eq(r, circle.radius, TOLERANCE_COORD_SUB), "t={}: radius={}", t, r);
         }
     }
 
@@ -1066,11 +1067,11 @@ mod tests {
 
         // Test at t=0 (major axis endpoint)
         let p0 = bs.point_at(0.0);
-        assert!(approx_eq3(p0, DVec3::new(3.0, 0.0, 0.0), 1e-9));
+        assert!(approx_eq3(p0, DVec3::new(3.0, 0.0, 0.0), TOLERANCE_COORD_SUB));
 
         // Test at t=0.25 (90 degrees = minor axis endpoint)
         let p90 = bs.point_at(0.25);
-        assert!(approx_eq3(p90, DVec3::new(0.0, 1.5, 0.0), 1e-9));
+        assert!(approx_eq3(p90, DVec3::new(0.0, 1.5, 0.0), TOLERANCE_COORD_SUB));
     }
 
     #[test]
@@ -1112,7 +1113,7 @@ mod tests {
         for u in [0.0, 0.5, 1.0] {
             for v in [0.0, 0.5, 1.0] {
                 let p = bs.point_at(u, v);
-                assert!(p.z.abs() < 1e-10);
+                assert!(p.z.abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
             }
         }
     }
@@ -1215,7 +1216,7 @@ mod tests {
                 let dist_to_tube = (p - tube_center).length();
 
                 assert!(
-                    approx_eq(dist_to_tube, torus.minor_radius, 1e-6),
+                    approx_eq(dist_to_tube, torus.minor_radius, TOLERANCE_MESH_LEGACY),
                     "u={}, v={}: distance to tube center={}",
                     u, v, dist_to_tube
                 );
@@ -1303,12 +1304,12 @@ mod tests {
         assert_eq!(beziers.len(), 2);
 
         // First segment
-        assert!(approx_eq3(beziers[0].point_at(0.0), DVec3::ZERO, 1e-10));
-        assert!(approx_eq3(beziers[0].point_at(1.0), DVec3::X, 1e-10));
+        assert!(approx_eq3(beziers[0].point_at(0.0), DVec3::ZERO, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq3(beziers[0].point_at(1.0), DVec3::X, TOLERANCE_LINEAR_ULTRA_STRICT));
 
         // Second segment
-        assert!(approx_eq3(beziers[1].point_at(0.0), DVec3::X, 1e-10));
-        assert!(approx_eq3(beziers[1].point_at(1.0), DVec3::new(2.0, 0.0, 0.0), 1e-10));
+        assert!(approx_eq3(beziers[1].point_at(0.0), DVec3::X, TOLERANCE_LINEAR_ULTRA_STRICT));
+        assert!(approx_eq3(beziers[1].point_at(1.0), DVec3::new(2.0, 0.0, 0.0), TOLERANCE_LINEAR_ULTRA_STRICT));
     }
 
     // ── Approximation tests ─────────────────────────────────────────────────────
@@ -1320,7 +1321,7 @@ mod tests {
             normal: DVec3::Z,
         });
 
-        let approx = approx_surface_to_bspline(&plane, 1e-6, 1, 1);
+        let approx = approx_surface_to_bspline(&plane, TOLERANCE_MESH_LEGACY, 1, 1);
 
         // Should produce a reasonable approximation
         assert!(approx.control_points.len() >= 2);
@@ -1333,7 +1334,7 @@ mod tests {
     fn convert_params_default() {
         let params = ConvertParams::default();
 
-        assert_eq!(params.tolerance, 1e-6);
+        assert_eq!(params.tolerance, TOLERANCE_MESH_LEGACY);
         assert_eq!(params.max_degree, 3);
         assert_eq!(params.continuity, 2);
         assert_eq!(params.sample_count, 20);
@@ -1342,12 +1343,12 @@ mod tests {
 
     #[test]
     fn convert_params_builder() {
-        let params = ConvertParams::new(1e-8)
+        let params = ConvertParams::new(TOLERANCE_LINEAR_RELAX_8)
             .with_max_degree(5)
             .with_continuity(1)
             .with_sample_count(30);
 
-        assert_eq!(params.tolerance, 1e-8);
+        assert_eq!(params.tolerance, TOLERANCE_LINEAR_RELAX_8);
         assert_eq!(params.max_degree, 5);
         assert_eq!(params.continuity, 1);
         assert_eq!(params.sample_count, 30);

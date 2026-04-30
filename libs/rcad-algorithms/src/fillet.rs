@@ -42,13 +42,13 @@ use rcad_kernel::{
     topology::{Face, Wire},
 };
 
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const EPS: f64 = 1e-12;
+const EPS: f64 = TOLERANCE_LEN_MIN;
 const PI: f64 = std::f64::consts::PI;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ impl Default for FilletParams {
             continuity: FilletContinuity::C1,
             mode: FilletMode::Uniform,
             tension: 0.5,
-            angular_tolerance: 1e-6,
+            angular_tolerance: TOLERANCE_MESH_LEGACY,
             distance_tolerance: TOLERANCE_ABS,
         }
     }
@@ -1397,14 +1397,14 @@ mod tests {
         assert_eq!(params.radius, 0.5);
         assert_eq!(params.continuity, FilletContinuity::C2);
         assert_eq!(params.mode, FilletMode::Chordal);
-        assert!((params.tension - 0.8).abs() < 1e-10);
+        assert!((params.tension - 0.8).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn test_variable_radius_point() {
         let point = VariableRadiusPoint::new(0.5, 2.0);
-        assert!((point.parameter - 0.5).abs() < 1e-10);
-        assert!((point.radius - 2.0).abs() < 1e-10);
+        assert!((point.parameter - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((point.radius - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
@@ -1427,25 +1427,25 @@ mod tests {
     fn test_any_perpendicular() {
         let v = DVec3::X;
         let p = any_perpendicular(v);
-        assert!((p.dot(v)).abs() < 1e-10);
-        assert!((p.length() - 1.0).abs() < 1e-10);
+        assert!((p.dot(v)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((p.length() - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let v = DVec3::Z;
         let p = any_perpendicular(v);
-        assert!((p.dot(v)).abs() < 1e-10);
+        assert!((p.dot(v)).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]
     fn test_interpolate_radius() {
         // Linear interpolation (tension = 0)
         let r = interpolate_radius(1.0, 2.0, 0.0, 0.0);
-        assert!((r - 1.0).abs() < 1e-10);
+        assert!((r - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let r = interpolate_radius(1.0, 2.0, 1.0, 0.0);
-        assert!((r - 2.0).abs() < 1e-10);
+        assert!((r - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 
         let r = interpolate_radius(1.0, 2.0, 0.5, 0.0);
-        assert!((r - 1.5).abs() < 1e-10);
+        assert!((r - 1.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]

@@ -78,7 +78,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
             let perp_in_plane = cross.normalize();
             let projected_axis =
                 (axis_n - plane_n * axis_n.dot(plane_n)).normalize_or_zero();
-            if projected_axis.length_squared() < 1e-12 {
+            if projected_axis.length_squared() < TOLERANCE_LEN_MIN {
                 return PlaneConicalResult::Point(apex);
             }
             let d1 = (projected_axis * half.cos() + perp_in_plane * half.sin()).normalize();
@@ -142,7 +142,7 @@ fn build_ellipse(
     // (This is the standard textbook formula for plane-cone ellipse.)
     let tan_beta = cone.half_angle_rad.tan();
     let denom = axis_n.dot(plane.normal);
-    if denom.abs() < 1e-14 {
+    if denom.abs() < TOLERANCE_FLOAT_LOOSE {
         return PlaneConicalResult::NoIntersection;
     }
     let t = apex_to_plane / denom;
@@ -172,7 +172,7 @@ fn build_ellipse(
 
     // Major direction in the plane (toward the steeper axis)
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let major_dir = if major_dir.length_squared() < 1e-12 {
+    let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         major_dir
@@ -205,7 +205,7 @@ fn build_parabola(
     // the cutting plane: find the generator in the plane spanned by axis and
     // the "steepest descent" direction in the cutting plane.
     let steepest = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let steepest = if steepest.length_squared() < 1e-12 {
+    let steepest = if steepest.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         steepest
@@ -217,18 +217,18 @@ fn build_parabola(
 
     // Vertex: foot of generator on the plane
     let denom = gen_dir.dot(plane.normal);
-    let vertex = if denom.abs() > 1e-12 {
+    let vertex = if denom.abs() > TOLERANCE_LEN_MIN {
         let t = apex_to_plane / denom;
         cone.apex_point() + gen_dir * t
     } else {
         // Generator is parallel to plane; use foot of axis on plane
-        let t = apex_to_plane / axis_n.dot(plane.normal).max(1e-12);
+        let t = apex_to_plane / axis_n.dot(plane.normal).max(TOLERANCE_LEN_MIN);
         cone.apex_point() + axis_n * t
     };
 
     // Axis direction of the parabola: projection of cone axis onto the plane
     let axis_2d = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let axis_dir = if axis_2d.length_squared() < 1e-12 {
+    let axis_dir = if axis_2d.length_squared() < TOLERANCE_LEN_MIN {
         steepest
     } else {
         axis_2d
@@ -271,7 +271,7 @@ fn build_hyperbola(
 
     // Major direction in the plane: projection of cone axis onto the plane.
     let major_dir = (axis_n - plane.normal * axis_n.dot(plane.normal)).normalize_or_zero();
-    let major_dir = if major_dir.length_squared() < 1e-12 {
+    let major_dir = if major_dir.length_squared() < TOLERANCE_LEN_MIN {
         any_perpendicular(plane.normal)
     } else {
         major_dir

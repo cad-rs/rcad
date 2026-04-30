@@ -1,3 +1,4 @@
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::PCurve;
@@ -24,7 +25,7 @@ pub fn populate_box_geom(brep: &mut BRep) {
         let p1 = brep.vertices[edge.end].point;
         let delta = p1 - p0;
         let len = delta.length();
-        let dir = if len > 1e-12 { delta / len } else { DVec3::X };
+        let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
         let curve_idx = geom.curves.len();
         geom.curves.push(Curve3::Line(Line3 {
             origin: p0,
@@ -35,7 +36,7 @@ pub fn populate_box_geom(brep: &mut BRep) {
         let t0 = 0.0_f64;
         let t1 = (p1 - p0).dot(dir); // = len
         geom.edge_curve_range.push(Some([t0, t1]));
-        geom.edge_degenerated.push(len <= 1e-12);
+        geom.edge_degenerated.push(len <= TOLERANCE_LEN_MIN);
     }
 
     // Faces → Plane
@@ -122,12 +123,12 @@ pub fn recompute_plane_surfaces(brep: &mut BRep) {
         let p1 = brep.vertices[edge.end].point;
         let delta = p1 - p0;
         let len = delta.length();
-        let dir = if len > 1e-12 { delta / len } else { DVec3::X };
+        let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
         let curve_idx = brep.geom.curves.len();
         brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
         brep.geom.edge_curve[ei] = Some(curve_idx);
         brep.geom.edge_curve_range[ei] = Some([0.0, (p1 - p0).dot(dir)]);
-        brep.geom.edge_degenerated[ei] = len <= 1e-12;
+        brep.geom.edge_degenerated[ei] = len <= TOLERANCE_LEN_MIN;
     }
 }
 
@@ -232,7 +233,7 @@ pub fn populate_boolean_result_pcurves(brep: &mut BRep) {
             let Some(p1) = brep.vertices.get(edge.end).map(|v| v.point) else {
                 continue;
             };
-            if (p1 - p0).length_squared() < 1e-20 {
+            if (p1 - p0).length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
                 continue; // degenerate
             }
             // Project a polyline of 17 equally-spaced points between the endpoints.

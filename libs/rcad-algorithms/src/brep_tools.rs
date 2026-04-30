@@ -23,6 +23,7 @@
 //! let restored = read_brep_from_string(&json).unwrap();
 //! ```
 
+use crate::tolerance::*;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::{BRep, Curve2d, Curve3, Surface3};
 use rcad_kernel::topology::{Face, Shell, Wire};
@@ -224,7 +225,7 @@ pub fn read_brep_from_file<P: AsRef<Path>>(path: P) -> Result<BRep, BRepToolsErr
 /// let translation = DAffine3::from_translation(DVec3::new(5.0, 0.0, 0.0));
 /// transform_shape(&mut brep, translation);
 /// // The box is now centered at (5.5, 0.5, 0.5)
-/// assert!((brep.vertices[0].point.x - 5.0).abs() < 1e-9);
+/// assert!((brep.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
 /// ```
 pub fn transform_shape(brep: &mut BRep, transform: DAffine3) {
     brep.apply_transform(transform);
@@ -889,7 +890,7 @@ mod tests {
 
         // Check vertices match
         for (orig, rest) in original.vertices.iter().zip(restored.vertices.iter()) {
-            assert!((orig.point - rest.point).length() < 1e-9);
+            assert!((orig.point - rest.point).length() < TOLERANCE_COORD_SUB);
         }
     }
 
@@ -904,7 +905,7 @@ mod tests {
         transform_shape(&mut brep, translation);
 
         let expected = original_vertex + DVec3::new(5.0, 0.0, 0.0);
-        assert!((brep.vertices[0].point - expected).length() < 1e-9);
+        assert!((brep.vertices[0].point - expected).length() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -951,7 +952,7 @@ mod tests {
         let new_volume = rcad_kernel::volume(&brep);
 
         // Volume should scale by 2^3 = 8
-        assert!((new_volume / original_volume - 8.0).abs() < 1e-6);
+        assert!((new_volume / original_volume - 8.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -970,9 +971,9 @@ mod tests {
         let new_size = new_bb[1] - new_bb[0];
 
         // X and Y dimensions should have swapped
-        assert!((original_size.x - new_size.y).abs() < 1e-9);
-        assert!((original_size.y - new_size.x).abs() < 1e-9);
-        assert!((original_size.z - new_size.z).abs() < 1e-9);
+        assert!((original_size.x - new_size.y).abs() < TOLERANCE_COORD_SUB);
+        assert!((original_size.y - new_size.x).abs() < TOLERANCE_COORD_SUB);
+        assert!((original_size.z - new_size.z).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -985,7 +986,7 @@ mod tests {
 
         // The box should still have the same volume
         let volume = rcad_kernel::volume(&brep);
-        assert!((volume - 6.0).abs() < 1e-6); // 1 * 2 * 3
+        assert!((volume - 6.0).abs() < TOLERANCE_MESH_LEGACY); // 1 * 2 * 3
     }
 
     // ── Shape Type Tests ────────────────────────────────────────────────────
@@ -1072,12 +1073,12 @@ mod tests {
         let brep = make_box();
         let bb = bounding_box(&brep).unwrap();
 
-        assert!((bb[0].x - 0.0).abs() < 1e-9);
-        assert!((bb[0].y - 0.0).abs() < 1e-9);
-        assert!((bb[0].z - 0.0).abs() < 1e-9);
-        assert!((bb[1].x - 1.0).abs() < 1e-9);
-        assert!((bb[1].y - 2.0).abs() < 1e-9);
-        assert!((bb[1].z - 3.0).abs() < 1e-9);
+        assert!((bb[0].x - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[0].y - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[0].z - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[1].x - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[1].y - 2.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[1].z - 3.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -1095,11 +1096,11 @@ mod tests {
 
         // The sphere has vertices at (0, +r, 0) and (0, -r, 0)
         // So bounding box is: min=(0, -1, 0), max=(0, 1, 0)
-        assert!((bb[0].y - (-1.0)).abs() < 1e-9);
-        assert!((bb[1].y - 1.0).abs() < 1e-9);
+        assert!((bb[0].y - (-1.0)).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[1].y - 1.0).abs() < TOLERANCE_COORD_SUB);
         // X and Z are 0 because only pole vertices exist
-        assert!((bb[0].x - 0.0).abs() < 1e-9);
-        assert!((bb[1].x - 0.0).abs() < 1e-9);
+        assert!((bb[0].x - 0.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bb[1].x - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     // ── Wire Query Tests ─────────────────────────────────────────────────────
@@ -1170,7 +1171,7 @@ mod tests {
         let restored_volume = rcad_kernel::volume(&restored);
 
         // Volume should be 6.0 * 8 = 48.0
-        assert!((restored_volume - 48.0).abs() < 1e-6);
+        assert!((restored_volume - 48.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1186,7 +1187,7 @@ mod tests {
 
         // Volume should be scaled by 1.5^3 = 3.375
         let new_volume = rcad_kernel::volume(&brep);
-        assert!((new_volume / original_volume - 3.375).abs() < 1e-6);
+        assert!((new_volume / original_volume - 3.375).abs() < TOLERANCE_MESH_LEGACY);
 
         // Bounding box should be shifted
         let bb = bounding_box(&brep).unwrap();
@@ -1208,7 +1209,7 @@ mod tests {
         scale_shape(&mut brep, 2.0, DVec3::ZERO);
 
         // Vertex should be scaled by 2
-        assert!((brep.vertices[0].point.y - original_y * 2.0).abs() < 1e-9);
+        assert!((brep.vertices[0].point.y - original_y * 2.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]

@@ -1,0 +1,20 @@
+[package]
+name = "rcad-py"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/cad-rs/rcad"
+description = "Python bindings for the RCAD solid modeling kernel"
+
+[lib]
+name = "_rcad"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39", "generate-import-lib"] }
+rcad-kernel = { path = "../rcad-kernel" }
+rcad-modeling = { path = "../rcad-modeling" }
+rcad-algorithms = { path = "../rcad-algorithms" }
+rcad-step = { path = "../rcad-step" }
+glam.workspace = true
+serde_json.workspace = true

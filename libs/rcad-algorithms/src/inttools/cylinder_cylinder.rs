@@ -31,7 +31,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, CylindricalSurface, Ellipse3, Line3};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -220,7 +220,7 @@ fn intersect_perpendicular_cylinders(
     let b = a1.dot(a2);
     let denom = 1.0 - b * b;
 
-    if denom.abs() < 1e-12 {
+    if denom.abs() < TOLERANCE_LEN_MIN {
         // Degenerate (should not reach here since we checked perpendicularity)
         return CylinderCylinderResult::General;
     }
@@ -335,8 +335,8 @@ mod tests {
         match intersect_cylinder_cylinder(&c1, &c2) {
             CylinderCylinderResult::OneGeneratorLine(l) => {
                 // Tangent at x=1, y=0
-                assert!((l.origin.x - 1.0).abs() < 1e-9, "x={}", l.origin.x);
-                assert!(l.origin.y.abs() < 1e-9);
+                assert!((l.origin.x - 1.0).abs() < TOLERANCE_COORD_SUB, "x={}", l.origin.x);
+                assert!(l.origin.y.abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected OneGeneratorLine, got {other:?}"),
         }
@@ -350,15 +350,15 @@ mod tests {
         match intersect_cylinder_cylinder(&c1, &c2) {
             CylinderCylinderResult::TwoGeneratorLines(l1, l2) => {
                 // Both lines parallel to Z
-                assert!((l1.direction.z.abs() - 1.0).abs() < 1e-9);
-                assert!((l2.direction.z.abs() - 1.0).abs() < 1e-9);
+                assert!((l1.direction.z.abs() - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!((l2.direction.z.abs() - 1.0).abs() < TOLERANCE_COORD_SUB);
                 // x-coordinate of intersection: x = (1 + 1 - 1)/(2) = 0.5
-                assert!((l1.origin.x - 0.5).abs() < 1e-9, "l1.x={}", l1.origin.x);
-                assert!((l2.origin.x - 0.5).abs() < 1e-9, "l2.x={}", l2.origin.x);
+                assert!((l1.origin.x - 0.5).abs() < TOLERANCE_COORD_SUB, "l1.x={}", l1.origin.x);
+                assert!((l2.origin.x - 0.5).abs() < TOLERANCE_COORD_SUB, "l2.x={}", l2.origin.x);
                 // y-coordinates are symmetric: y = ±sqrt(1 - 0.25) = ±sqrt(0.75)
                 let expected_y = (0.75_f64).sqrt();
-                assert!((l1.origin.y.abs() - expected_y).abs() < 1e-9, "l1.y={}", l1.origin.y);
-                assert!((l2.origin.y.abs() - expected_y).abs() < 1e-9, "l2.y={}", l2.origin.y);
+                assert!((l1.origin.y.abs() - expected_y).abs() < TOLERANCE_COORD_SUB, "l1.y={}", l1.origin.y);
+                assert!((l2.origin.y.abs() - expected_y).abs() < TOLERANCE_COORD_SUB, "l2.y={}", l2.origin.y);
             }
             other => panic!("expected TwoGeneratorLines, got {other:?}"),
         }
@@ -373,8 +373,8 @@ mod tests {
         let c2 = cyl(DVec3::ZERO, DVec3::Y, 1.0);
         match intersect_cylinder_cylinder(&c1, &c2) {
             CylinderCylinderResult::TwoCircles(circ1, circ2) => {
-                assert!((circ1.radius - 1.0).abs() < 1e-9);
-                assert!((circ2.radius - 1.0).abs() < 1e-9);
+                assert!((circ1.radius - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!((circ2.radius - 1.0).abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected TwoCircles, got {other:?}"),
         }
@@ -389,10 +389,10 @@ mod tests {
         let c2 = cyl(DVec3::ZERO, DVec3::Y, 1.0);
         match intersect_cylinder_cylinder(&c1, &c2) {
             CylinderCylinderResult::TwoEllipses(e1, e2) => {
-                assert!((e1.minor_radius - 2.0).abs() < 1e-9, "e1.minor={}", e1.minor_radius);
-                assert!((e1.major_radius - 1.0).abs() < 1e-9, "e1.major={}", e1.major_radius);
-                assert!((e2.minor_radius - 1.0).abs() < 1e-9, "e2.minor={}", e2.minor_radius);
-                assert!((e2.major_radius - 2.0).abs() < 1e-9, "e2.major={}", e2.major_radius);
+                assert!((e1.minor_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "e1.minor={}", e1.minor_radius);
+                assert!((e1.major_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e1.major={}", e1.major_radius);
+                assert!((e2.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e2.minor={}", e2.minor_radius);
+                assert!((e2.major_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "e2.major={}", e2.major_radius);
             }
             other => panic!("expected TwoEllipses, got {other:?}"),
         }
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn fuzzy_tolerance_recovers_near_tangent_parallel_case() {
         let c1 = cyl(DVec3::ZERO, DVec3::Z, 1.0);
-        let c2 = cyl(DVec3::new(2.0 + 3.0e-7, 0.0, 0.0), DVec3::Z, 1.0);
+        let c2 = cyl(DVec3::new(2.0 + 3.0 * TOLERANCE_ABS, 0.0, 0.0), DVec3::Z, 1.0);
 
         assert!(matches!(
             intersect_cylinder_cylinder(&c1, &c2),
@@ -420,7 +420,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            intersect_cylinder_cylinder_with_tolerance(&c1, &c2, 4.0e-7),
+            intersect_cylinder_cylinder_with_tolerance(&c1, &c2, 4.0 * TOLERANCE_ABS),
             CylinderCylinderResult::OneGeneratorLine(_)
         ));
     }

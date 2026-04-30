@@ -3,6 +3,7 @@
 //! This module builds practical feature workflows on top of the existing
 //! boolean kernel. The first shipped feature is a cylindrical hole.
 
+use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DVec3};
 use rcad_kernel::{BRep, GeomStore, PrimitiveSolid};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
@@ -50,7 +51,7 @@ impl From<rcad_modeling::BuildError> for FeatureError {
     }
 }
 
-const EPS: f64 = 1e-12;
+const EPS: f64 = TOLERANCE_LEN_MIN;
 
 fn validate_finite(name: &'static str, v: f64) -> Result<f64, FeatureError> {
     if v.is_finite() {
@@ -125,6 +126,48 @@ pub fn make_cylindrical_hole(
     Ok(boolean_op(BooleanOpType::Difference, target, &tool)?)
 }
 
+/// Extrude a closed planar polygon into a solid prism (no boolean against a target).
+///
+/// Uses the same section loft as [`make_prism`], but returns the tool solid directly.
+pub fn extrude_polygon_solid(
+    profile_verts: &[DVec3],
+    direction: DVec3,
+    depth: f64,
+) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::InvalidInput(
+            "profile_verts needs >= 3 vertices",
+        ));
+    }
+    let dir = normalize("direction", direction)?;
+    let depth = validate_positive("depth", depth)?;
+    build_polygon_prism(profile_verts, dir, depth)
+}
+
+/// Revolve a closed planar polygon (wires only; no boolean against a target).
+///
+/// Analogous to OCCT DRAW `revol` of an `mkplane` face for solids of revolution.
+pub fn revolve_polygon_solid(
+    profile_verts: &[DVec3],
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+    angle_rad: f64,
+) -> Result<BRep, FeatureError> {
+    if profile_verts.len() < 3 {
+        return Err(FeatureError::InvalidInput(
+            "profile_verts needs >= 3 vertices",
+        ));
+    }
+    if !axis_origin.is_finite() {
+        return Err(FeatureError::NonFiniteInput("axis_origin"));
+    }
+    let axis_dir = normalize("axis_dir", axis_dir)?;
+    let angle_rad = validate_positive("angle_rad", angle_rad)?;
+
+    let profile = build_polygon_face_brep(profile_verts)?;
+    rcad_modeling::revolve(&profile, 0, axis_origin, axis_dir, angle_rad).map_err(Into::into)
+}
+
 /// Create a prismatic boss or pocket by extruding a polygon profile and
 /// performing a boolean union (boss) or difference (pocket) with `target`.
 ///
@@ -173,7 +216,7 @@ pub fn make_draft_prism(
     let dir = normalize("direction", direction)?;
     let depth = validate_positive("depth", depth)?;
     let angle = validate_finite("draft_angle_rad", draft_angle_rad)?;
-    if angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+    if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
         return Err(FeatureError::InvalidInput("draft_angle_rad must be in (-pi/2, pi/2)"));
     }
 
@@ -368,7 +411,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             let ab = b - a;
             let ac = c - a;
             let nv = ab.cross(ac);
-            if nv.length_squared() > 1e-24 { nv.normalize() } else { -dir.cross(ab).normalize() }
+            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { -dir.cross(ab).normalize() }
         };
         // wire: bot[i]->bot[j], vert bot[j]->top[j], top[j]->top[i] (reversed), vert top[i]->bot[i] (reversed)
         let wire_edges = vec![
@@ -658,7 +701,7 @@ pub fn split_face_by_wire(
         let p1 = brep.vertices[ev].point;
         let d = p1 - p0;
         let len = d.length();
-        let dir = if len > 1e-30 { d / len } else { DVec3::X };
+        let dir = if len > TOLERANCE_LEN_SQ_DIV_SAFE { d / len } else { DVec3::X };
         brep.edges.push(Edge { start: sv, end: ev });
         let ci = brep.geom.curves.len();
         brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));

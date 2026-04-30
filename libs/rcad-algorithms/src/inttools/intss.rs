@@ -16,6 +16,14 @@
 //! | Cone × Cone | Circle (coaxial) / Numeric |
 //! | Everything else | Numeric polylines via marching |
 //!
+//! The numerical branch uses a geometric **tolerance band** (cell scale and optional
+//! floor ≥ [`crate::tolerance::TOLERANCE_ABS`] by default ([`numeric_intss_with_domains`] /
+//! [`numeric_intss_with_density`] with `geom_tol_floor: None`) unless a tighter bound is injected
+//! via [`intersect_surfaces_with_density_tol`]): XOR edge
+//! topology, chord minima for grazing contacts, split checks when
+//! both edge corners lie inside the band, and closest-approach seeding when crossings
+//! are still empty. Seeds are tightened with [`project_onto_intersection_tol`](crate::inttools::marching::project_onto_intersection_tol).
+//!
 //! Analogous to OCCT `GeomAPI_IntSS`.
 
 use glam::DVec3;
@@ -28,6 +36,7 @@ use crate::inttools::{
     cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
     cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance},
+    marching::project_onto_intersection_tol,
     pcurve_derive::{
         circle_pcurve_on_cone, circle_pcurve_on_cylinder, circle_pcurve_on_plane,
         circle_pcurve_on_sphere, ellipse_pcurve_on_cone, ellipse_pcurve_on_plane,
@@ -42,7 +51,7 @@ use crate::inttools::{
     torus_cone::{TorusConeResult, intersect_torus_cone_with_tolerance},
     torus_torus::{TorusTorusResult, intersect_torus_torus_with_tolerance},
 };
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG, vectors_parallel};
+use crate::tolerance::*;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public result types
@@ -97,15 +106,27 @@ impl SurfaceSurfaceIntersection {
 ///
 /// Returns exact analytic curves where possible; falls back to numerical
 /// polylines for unsupported surface-type combinations.
+///
+/// Uses the same grid density as [`intersect_surfaces_with_density`] (`n = 48`).
+/// On the **numerical** fallback, applies at least [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) as the
+/// geometric tolerance floor (sign-change threshold and polyline chaining). Use
+/// [`intersect_surfaces_with_density`] if you need the numerical branch without
+/// an explicit floor.
 pub fn intersect_surfaces(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
-    intersect_surfaces_with_density(s1, s2, 48)
+    intersect_surfaces_with_density_tol(s1, s2, 48, TOLERANCE_ABS)
 }
 
 /// Like [`intersect_surfaces`] but allows fuzzy geometric tolerance routing for
-/// selected analytic cases.
+/// selected analytic cases, and strengthens the **numeric** marching branch when
+/// a floor is imposed (see [`intersect_surfaces_with_density_tol`]).
 ///
-/// Currently this applies to `Cone x Cone`, `Sphere x Cone`, `Torus x Cone`,
-/// and `Torus x Torus` near-coaxial handling. Other pairs keep existing behavior.
+/// Applies to `Cone x Cone`, `Cylinder x Cylinder`, `Sphere x Cylinder`,
+/// `Sphere x Cone`, `Torus x Cone`, and `Torus x Torus` near-degenerate routing.
+/// All other pairs use the same analytic dispatch as strict mode; the numerical
+/// fallback then uses `fuzzy_tol.max(TOLERANCE_ABS)` as the geometric floor and
+/// enables **tolerance intersection** refinements (interior edge minima, localized
+/// closest-approach recovery, intersection projection) for near-tangent / narrow
+/// contacts.
 pub fn intersect_surfaces_with_tolerance(
     s1: &Surface3,
     s2: &Surface3,
@@ -114,6 +135,8 @@ pub fn intersect_surfaces_with_tolerance(
     if fuzzy_tol <= 0.0 {
         return intersect_surfaces(s1, s2);
     }
+
+    let numeric_floor = fuzzy_tol.max(TOLERANCE_ABS);
 
     match (s1, s2) {
         (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
@@ -137,7 +160,7 @@ pub fn intersect_surfaces_with_tolerance(
         (Surface3::Torus(t1), Surface3::Torus(t2)) => {
             torus_x_torus_with_tolerance(t1, t2, fuzzy_tol)
         }
-        _ => intersect_surfaces(s1, s2),
+        _ => intersect_surfaces_with_density_tol(s1, s2, 48, numeric_floor),
     }
 }
 
@@ -148,10 +171,43 @@ pub fn intersect_surfaces_with_tolerance(
 ///
 /// Higher `n` gives more accurate intersection polylines at the cost of O(n²)
 /// work.  The default used by [`intersect_surfaces`] is `n = 48`.
+///
+/// When using [`intersect_surfaces_with_density`] (caller does not supply `geom_tol_floor`),
+/// numerical marching resolves to at least [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS)
+/// inside [`numeric_intss_impl`] (aligned with [`intersect_surfaces`]' default density).
+///
+/// Prefer [`crate::tolerance::intss_geom_tol_floor`] (or pairwise [`crate::tolerance::combined_linear_tol_*`])
+/// via [`intersect_surfaces_with_density_tol`] when BRep topology tolerances are known.
 pub fn intersect_surfaces_with_density(
     s1: &Surface3,
     s2: &Surface3,
     grid_n: usize,
+) -> SurfaceSurfaceIntersection {
+    intersect_surfaces_with_density_impl(s1, s2, grid_n, None)
+}
+
+/// Like [`intersect_surfaces_with_density`] but supplies a **minimum geometric tolerance**
+/// for the numerical fallback (sign-change threshold and polyline chaining).
+/// Analytic branches ignore `geom_tol_floor`.
+pub fn intersect_surfaces_with_density_tol(
+    s1: &Surface3,
+    s2: &Surface3,
+    grid_n: usize,
+    geom_tol_floor: f64,
+) -> SurfaceSurfaceIntersection {
+    let floor = if geom_tol_floor.is_finite() && geom_tol_floor > 0.0 {
+        Some(geom_tol_floor)
+    } else {
+        None
+    };
+    intersect_surfaces_with_density_impl(s1, s2, grid_n, floor)
+}
+
+fn intersect_surfaces_with_density_impl(
+    s1: &Surface3,
+    s2: &Surface3,
+    grid_n: usize,
+    geom_tol_floor: Option<f64>,
 ) -> SurfaceSurfaceIntersection {
     use Surface3::*;
     match (s1, s2) {
@@ -187,7 +243,7 @@ pub fn intersect_surfaces_with_density(
         (Torus(t1), Torus(t2)) => torus_x_torus(t1, t2),
 
         // ── All others → numeric marching ─────────────────────────────────
-        _ => numeric_intss_with_density(s1, s2, grid_n),
+        _ => numeric_intss_with_density(s1, s2, grid_n, geom_tol_floor),
     }
 }
 
@@ -858,7 +914,7 @@ fn torus_x_plane(
     // Check whether the plane is perpendicular to the torus axis.
     // cos(angle between normal and axis): perpendicular ⟺ |cos| ≈ 1.
     let cos_angle = axis.dot(normal).abs();
-    const PERP_TOL: f64 = 1e-6;
+    const PERP_TOL: f64 = TOLERANCE_MESH_LEGACY;
 
     if (cos_angle - 1.0).abs() > PERP_TOL {
         // Not perpendicular — fall back to numerical
@@ -1373,6 +1429,65 @@ fn torus_x_torus_with_tolerance(
 
 
 
+/// Minimum of `approx_dist` along segment `pa`–`pb` for `t ∈ [0,1]` (ternary search).
+///
+/// Used when endpoints stay outside the distance band but a **narrow tangent** trough
+/// exists along the grid edge — the classic topology-only `(da<th) XOR (db<th)` test misses this.
+fn min_approx_dist_on_segment(
+    pa: DVec3,
+    pb: DVec3,
+    approx_dist: &impl Fn(DVec3) -> f64,
+) -> (f64, f64) {
+    let mut a = 0.0_f64;
+    let mut b = 1.0_f64;
+    let mut best_t = 0.5;
+    let mut best_d = approx_dist(pa.lerp(pb, best_t));
+
+    for _ in 0..18 {
+        if (b - a) < TOLERANCE_FLOAT_DEDUP {
+            break;
+        }
+        let t1 = a + (b - a) / 3.0;
+        let t2 = a + 2.0 * (b - a) / 3.0;
+        let d1 = approx_dist(pa.lerp(pb, t1));
+        let d2 = approx_dist(pa.lerp(pb, t2));
+        if d1 < best_d {
+            best_d = d1;
+            best_t = t1;
+        }
+        if d2 < best_d {
+            best_d = d2;
+            best_t = t2;
+        }
+        if d1 < d2 {
+            b = t2;
+        } else {
+            a = t1;
+        }
+    }
+
+    (best_t, best_d)
+}
+
+fn dedup_points_spatial(pts: Vec<DVec3>, tol: f64) -> Vec<DVec3> {
+    if pts.is_empty() || !tol.is_finite() || tol <= 0.0 {
+        return pts;
+    }
+    let tol_sq = tol * tol;
+    let mut kept: Vec<DVec3> = Vec::with_capacity(pts.len());
+    for p in pts {
+        if !kept
+            .iter()
+            .any(|q| (*q - p).length_squared() <= tol_sq)
+        {
+            kept.push(p);
+        }
+    }
+    kept
+}
+
+
+
 /// Numerical surface-surface intersection via sign-change edge marching.
 ///
 /// **Algorithm**:
@@ -1385,7 +1500,7 @@ fn torus_x_torus_with_tolerance(
 ///    by picking the nearest unvisited neighbor. Repeat until all points are visited.
 ///    This produces ordered polylines suitable for UV splitting.
 fn numeric_intss(s1: &Surface3, s2: &Surface3) -> SurfaceSurfaceIntersection {
-    numeric_intss_with_density(s1, s2, 48)
+    numeric_intss_with_density(s1, s2, 48, None)
 }
 
 /// Same as `numeric_intss` but with configurable grid density N.
@@ -1393,21 +1508,27 @@ pub fn numeric_intss_with_density(
     s1: &Surface3,
     s2: &Surface3,
     n: usize,
+    geom_tol_floor: Option<f64>,
 ) -> SurfaceSurfaceIntersection {
-    numeric_intss_impl(s1, s2, n, None, None)
+    numeric_intss_impl(s1, s2, n, None, None, geom_tol_floor)
 }
 
 /// Same as `numeric_intss_with_density` but uses caller-supplied UV domains
 /// for s1 and s2 instead of `default_domain()`.  Pass `None` for either to
 /// use the surface's own default domain (with infinite-domain clamping).
+///
+/// `geom_tol_floor` (when `Some`) lower-bounds the sign-change threshold
+/// (`max(cell_scale×2, floor)`) and the polyline chain-join tolerances so
+/// coarse grids still admit intersections on models with larger face/edge tolerances.
 pub fn numeric_intss_with_domains(
     s1: &Surface3,
     s2: &Surface3,
     n: usize,
     dom1_override: Option<[f64; 4]>,
     dom2_override: Option<[f64; 4]>,
+    geom_tol_floor: Option<f64>,
 ) -> SurfaceSurfaceIntersection {
-    numeric_intss_impl(s1, s2, n, dom1_override, dom2_override)
+    numeric_intss_impl(s1, s2, n, dom1_override, dom2_override, geom_tol_floor)
 }
 
 fn numeric_intss_impl(
@@ -1416,6 +1537,7 @@ fn numeric_intss_impl(
     n: usize,
     dom1_override: Option<[f64; 4]>,
     dom2_override: Option<[f64; 4]>,
+    geom_tol_floor: Option<f64>,
 ) -> SurfaceSurfaceIntersection {
     let dom1 = s1.default_domain();
     let dom2 = s2.default_domain();
@@ -1472,8 +1594,12 @@ fn numeric_intss_impl(
     let p00 = s1.point_at(u1_0, v1_0);
     let p10 = s1.point_at(u1_0 + du, v1_0);
     let p01 = s1.point_at(u1_0, v1_0 + dv);
-    let cell_size = (p10 - p00).length().max((p01 - p00).length()).max(1e-6);
-    let threshold = cell_size * 2.0;
+    let cell_size = (p10 - p00).length().max((p01 - p00).length()).max(TOLERANCE_MESH_LEGACY);
+    let floor = geom_tol_floor
+        .filter(|t| t.is_finite() && *t > 0.0)
+        .unwrap_or(TOLERANCE_ABS)
+        .max(TOLERANCE_ABS);
+    let threshold = (cell_size * 2.0).max(floor);
 
     // Compute distance at each grid point
     let nn = n + 1; // grid has (n+1) × (n+1) nodes
@@ -1508,13 +1634,33 @@ fn numeric_intss_impl(
             let db = dist[b];
             // Sign change: one below threshold, other above (or vice versa)
             if (da < threshold) != (db < threshold) {
-                let t = if (da - db).abs() < 1e-15 {
+                let t = if (da - db).abs() < TOLERANCE_FLOAT_DEDUP {
                     0.5
                 } else {
                     (threshold - da) / (db - da)
                 };
                 let t = t.clamp(0.0, 1.0);
                 crossing_pts.push(pts[a].lerp(pts[b], t));
+            } else if da > threshold && db > threshold {
+                // Grazing band: trough along the chord, both endpoints “outside”.
+                let (t, dmin) =
+                    min_approx_dist_on_segment(pts[a], pts[b], &approx_dist_to_s2);
+                if dmin <= threshold {
+                    crossing_pts.push(pts[a].lerp(pts[b], t));
+                }
+            } else if da <= threshold && db <= threshold {
+                let pm = pts[a].lerp(pts[b], 0.5);
+                let dm = approx_dist_to_s2(pm);
+                if dm > threshold {
+                    let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
+                    if d1 <= threshold {
+                        crossing_pts.push(pts[a].lerp(pm, t1));
+                    }
+                    let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
+                    if d2 <= threshold {
+                        crossing_pts.push(pm.lerp(pts[b], t2));
+                    }
+                }
             }
         }
     }
@@ -1527,20 +1673,89 @@ fn numeric_intss_impl(
             let da = dist[a];
             let db = dist[b];
             if (da < threshold) != (db < threshold) {
-                let t = if (da - db).abs() < 1e-15 {
+                let t = if (da - db).abs() < TOLERANCE_FLOAT_DEDUP {
                     0.5
                 } else {
                     (threshold - da) / (db - da)
                 };
                 let t = t.clamp(0.0, 1.0);
                 crossing_pts.push(pts[a].lerp(pts[b], t));
+            } else if da > threshold && db > threshold {
+                let (t, dmin) =
+                    min_approx_dist_on_segment(pts[a], pts[b], &approx_dist_to_s2);
+                if dmin <= threshold {
+                    crossing_pts.push(pts[a].lerp(pts[b], t));
+                }
+            } else if da <= threshold && db <= threshold {
+                let pm = pts[a].lerp(pts[b], 0.5);
+                let dm = approx_dist_to_s2(pm);
+                if dm > threshold {
+                    let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
+                    if d1 <= threshold {
+                        crossing_pts.push(pts[a].lerp(pm, t1));
+                    }
+                    let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
+                    if d2 <= threshold {
+                        crossing_pts.push(pm.lerp(pts[b], t2));
+                    }
+                }
             }
         }
     }
 
+    let refine_tol = threshold.max(floor).max(TOLERANCE_ABS);
+
+    // Localized closest approach: avoids returning nothing when crossings stay in a tangential pocket
+    // but grid edges fail the XOR topology test because of coarse sampling noise.
+    if crossing_pts.is_empty() {
+        let mut min_d = f64::INFINITY;
+        let mut max_d = f64::NEG_INFINITY;
+        let mut min_p = DVec3::ZERO;
+        for i in 0..dist.len() {
+            let di = dist[i];
+            if !di.is_finite() {
+                continue;
+            }
+            if di < min_d {
+                min_d = di;
+                min_p = pts[i];
+            }
+            if di > max_d {
+                max_d = di;
+            }
+        }
+        let spread = max_d - min_d;
+        let spread_tol = cell_size.max(threshold * 0.5).max(floor);
+        if spread.is_finite() && min_d <= threshold && spread >= spread_tol {
+            crossing_pts.push(min_p);
+        }
+    }
+
+    crossing_pts = crossing_pts
+        .into_iter()
+        .map(|p| project_onto_intersection_tol(s1, s2, p, refine_tol))
+        .collect();
+
+    // Keep dedup **much** tighter than `refine_tol` / `threshold` so polylines are not collapsed
+    // to a few clusters (e.g. Steinmetz cylinder-cylinder numeric paths).
+    let dedup_tol = (cell_size * 0.08)
+        .max(floor)
+        .max(TOLERANCE_MESH_LEGACY);
+    crossing_pts = dedup_points_spatial(crossing_pts, dedup_tol);
+
     let mut out = SurfaceSurfaceIntersection::default();
 
-    if crossing_pts.len() < 2 {
+    if crossing_pts.is_empty() {
+        return out;
+    }
+
+    if crossing_pts.len() == 1 {
+        let p = crossing_pts[0];
+        out.curves.push(SurfaceIntersectionResult {
+            curve_3d: SurfaceCurve::Point(p),
+            pcurve_on_a: None,
+            pcurve_on_b: None,
+        });
         return out;
     }
 
@@ -1548,7 +1763,7 @@ fn numeric_intss_impl(
     // This works well for smooth curves; for self-intersecting surfaces it may
     // produce slightly wrong orderings near the crossing, which is acceptable
     // for topological boolean operations.
-    let ordered = greedy_order_points(crossing_pts);
+    let ordered = greedy_order_points(crossing_pts, floor);
 
     for chain in ordered {
         if chain.len() < 2 {
@@ -1573,10 +1788,16 @@ fn numeric_intss_impl(
 /// After chain formation, chains are stitched together when their endpoints
 /// are close enough, producing fewer, longer chains (typically one closed loop
 /// for a single intersection curve).
-fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
+fn greedy_order_points(pts: Vec<DVec3>, gap_floor: f64) -> Vec<Vec<DVec3>> {
     if pts.is_empty() {
         return vec![];
     }
+
+    let gap_floor = if gap_floor.is_finite() && gap_floor > 0.0 {
+        gap_floor
+    } else {
+        0.0
+    };
 
     // Estimate gap tolerance from average nearest-neighbor distance
     // (rough: use 3x the median distance between sorted x-coordinates)
@@ -1596,7 +1817,7 @@ fn greedy_order_points(pts: Vec<DVec3>) -> Vec<Vec<DVec3>> {
         }
         dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median = dists[dists.len() / 2];
-        (median * 5.0).max(1e-9)
+        (median * 5.0).max(TOLERANCE_COORD_SUB).max(gap_floor)
     };
 
     // Stitch gap tolerance: more generous than within-chain growth.
@@ -1764,7 +1985,7 @@ mod tests {
         let r = intersect_surfaces(&s1, &s2);
         assert_eq!(r.curves.len(), 1, "expected one circle");
         if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
-            assert!((c.center.x - 0.5).abs() < 1e-6, "center should be at x=0.5");
+            assert!((c.center.x - 0.5).abs() < TOLERANCE_MESH_LEGACY, "center should be at x=0.5");
         } else {
             panic!("expected Circle");
         }
@@ -1830,13 +2051,13 @@ mod tests {
             radius: 1.0,
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
-            origin: DVec3::new(2.0 + 3.0e-7, 0.0, 0.0),
+            origin: DVec3::new(2.0 + 3.0 * TOLERANCE_ABS, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
         });
 
         let strict = intersect_surfaces(&c1, &c2);
-        let fuzzy = intersect_surfaces_with_tolerance(&c1, &c2, 4.0e-7);
+        let fuzzy = intersect_surfaces_with_tolerance(&c1, &c2, 4.0 * TOLERANCE_ABS);
 
         assert!(strict.is_empty(), "strict mode should be disjoint");
         assert_eq!(
@@ -1861,7 +2082,7 @@ mod tests {
         let r = intersect_surfaces(&p, &s);
         assert_eq!(r.curves.len(), 1);
         if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
-            assert!((c.radius - 3.0).abs() < 1e-6);
+            assert!((c.radius - 3.0).abs() < TOLERANCE_MESH_LEGACY);
         } else {
             panic!("expected Circle");
         }
@@ -1897,9 +2118,9 @@ mod tests {
 
         match pcurve {
             Curve2d::Line(line) => {
-                assert!((line.origin.y - expected_slant).abs() < 1e-9);
-                assert!((line.direction.x - 1.0).abs() < 1e-9);
-                assert!(line.direction.y.abs() < 1e-9);
+                assert!((line.origin.y - expected_slant).abs() < TOLERANCE_COORD_SUB);
+                assert!((line.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+                assert!(line.direction.y.abs() < TOLERANCE_COORD_SUB);
             }
             other => panic!("expected analytic cone pcurve line, got {other:?}"),
         }
@@ -1910,9 +2131,9 @@ mod tests {
                 Surface3::Cone(surface) => surface.point_at(uv.x, uv.y),
                 _ => unreachable!(),
             };
-            assert!((p3.z - plane_height).abs() < 1e-6, "lifted point z={} at t={}", p3.z, t);
+            assert!((p3.z - plane_height).abs() < TOLERANCE_MESH_LEGACY, "lifted point z={} at t={}", p3.z, t);
             assert!(
-                (p3.distance(circle.center) - circle.radius).abs() < 1e-6,
+                (p3.distance(circle.center) - circle.radius).abs() < TOLERANCE_MESH_LEGACY,
                 "lifted point radius mismatch at t={}: got {}, expected {}",
                 t,
                 p3.distance(circle.center),
@@ -1985,12 +2206,12 @@ mod tests {
 
         assert_eq!(radii.len(), 2, "expected 2 Circle3 results");
         assert!(
-            (radii[0] - 4.0).abs() < 1e-6,
+            (radii[0] - 4.0).abs() < TOLERANCE_MESH_LEGACY,
             "inner circle radius should be 4, got {}",
             radii[0]
         );
         assert!(
-            (radii[1] - 6.0).abs() < 1e-6,
+            (radii[1] - 6.0).abs() < TOLERANCE_MESH_LEGACY,
             "outer circle radius should be 6, got {}",
             radii[1]
         );
@@ -2016,8 +2237,8 @@ mod tests {
         let r = intersect_surfaces(&cyl, &cone);
         assert_eq!(r.curves.len(), 1, "coaxial cylinder-cone should give one circle");
         if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
-            assert!((c.center.z - 2.0).abs() < 1e-6, "circle center.z={}", c.center.z);
-            assert!((c.radius - 2.0).abs() < 1e-6, "circle radius={}", c.radius);
+            assert!((c.center.z - 2.0).abs() < TOLERANCE_MESH_LEGACY, "circle center.z={}", c.center.z);
+            assert!((c.radius - 2.0).abs() < TOLERANCE_MESH_LEGACY, "circle radius={}", c.radius);
         } else {
             panic!("expected Circle, got {:?}", r.curves[0].curve_3d);
         }
@@ -2046,7 +2267,7 @@ mod tests {
         if let SurfaceCurve::Circle(c) = &r.curves[0].curve_3d {
             let expected_r = 3_f64.sqrt() + 1.0;
             assert!(
-                (c.radius - expected_r).abs() < 1e-6,
+                (c.radius - expected_r).abs() < TOLERANCE_MESH_LEGACY,
                 "circle radius={}, expected {}",
                 c.radius,
                 expected_r
@@ -2088,14 +2309,14 @@ mod tests {
             half_angle_rad: 45.0_f64.to_radians(),
         });
         let k2 = Surface3::Cone(ConicalSurface {
-            apex: DVec3::new(2.5e-7, 0.0, 0.0),
+            apex: DVec3::new(2.5 * TOLERANCE_ABS, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 0.0,
             half_angle_rad: 30.0_f64.to_radians(),
         });
 
         let strict = intersect_surfaces(&k1, &k2);
-        let fuzzy = intersect_surfaces_with_tolerance(&k1, &k2, 2.0e-7);
+        let fuzzy = intersect_surfaces_with_tolerance(&k1, &k2, 2.0 * TOLERANCE_ABS);
 
         assert!(!fuzzy.is_empty(), "fuzzy result should not be empty");
         assert!(
@@ -2122,7 +2343,7 @@ mod tests {
         // Sphere center is slightly off-axis: strict mode takes numeric fallback,
         // fuzzy mode should recover analytic circle branch.
         let sph = Surface3::Sphere(SphericalSurface {
-            center: DVec3::new(2.0e-5, 0.0, 0.0),
+            center: DVec3::new(2.0 * TOLERANCE_RETRY_LADDER_MID, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 3.0,
         });
@@ -2133,7 +2354,7 @@ mod tests {
         });
 
         let strict = intersect_surfaces(&sph, &cyl);
-        let fuzzy = intersect_surfaces_with_tolerance(&sph, &cyl, 2.0e-5);
+        let fuzzy = intersect_surfaces_with_tolerance(&sph, &cyl, 2.0 * TOLERANCE_RETRY_LADDER_MID);
 
         assert!(
             fuzzy
@@ -2222,7 +2443,7 @@ mod tests {
         );
         for c in &r.curves {
             if let SurfaceCurve::Circle(circ) = &c.curve_3d {
-                assert!((circ.radius - 5.0).abs() < 1e-6);
+                assert!((circ.radius - 5.0).abs() < TOLERANCE_MESH_LEGACY);
             } else {
                 panic!("expected Circle");
             }

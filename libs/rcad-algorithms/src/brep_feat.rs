@@ -13,6 +13,7 @@
 //! - **Pipe**: Feature-based pipe along a spine curve
 //! - **Draft**: Apply draft angle to faces for moldability
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
@@ -117,6 +118,10 @@ impl From<FuseMode> for BooleanOpType {
 #[derive(Debug, Clone)]
 pub struct FeatureParams {
     /// Tolerance for merging vertices and edges after the operation.
+    ///
+    /// [`Default`] uses [`TOLERANCE_MESH_LEGACY`] for backward compatibility.
+    /// For phase-C alignment with pairwise BRep stitching, derive a floor from
+    /// [`Self::merge_tolerance_for_operands`].
     pub merge_tolerance: f64,
     /// Whether to perform validity checks after the operation.
     pub validate_result: bool,
@@ -127,10 +132,20 @@ pub struct FeatureParams {
 impl Default for FeatureParams {
     fn default() -> Self {
         Self {
-            merge_tolerance: 1e-6,
+            merge_tolerance: TOLERANCE_MESH_LEGACY,
             validate_result: true,
             simplify_result: true,
         }
+    }
+}
+
+impl FeatureParams {
+    /// Linear merge tolerance aligned with phase-C mesh chaining: **`tessellation_merge_linear_from_two_breps`**
+    /// (Relaxed adaptive, [`TOLERANCE_MESH_LEGACY`] minimum, topological fold).
+    ///
+    /// Use when post–feature-result stitching should match [`crate::section::intersect_triangle_soups_adaptive`]-style pipelines.
+    pub fn merge_tolerance_for_operands(base: &BRep, tool: &BRep) -> f64 {
+        tessellation_merge_linear_from_two_breps(base, tool)
     }
 }
 
@@ -186,7 +201,7 @@ impl Default for GrooveParams {
 // Helper Functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const EPS: f64 = 1e-12;
+const EPS: f64 = TOLERANCE_LEN_MIN;
 
 fn validate_finite(name: &'static str, v: f64) -> Result<f64, BRepFeatError> {
     if v.is_finite() {
@@ -313,7 +328,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             let ab = b - a;
             let ac = c - a;
             let nv = ab.cross(ac);
-            if nv.length_squared() > 1e-24 { nv.normalize() } else { -dir.cross(ab).normalize_or(DVec3::X) }
+            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { -dir.cross(ab).normalize_or(DVec3::X) }
         };
         let wire_edges = vec![
             WireEdge { idx: bot_edges[i], forward: true },
@@ -976,7 +991,7 @@ pub fn apply_draft_feature(
     neutral_plane: DVec3,
 ) -> Result<BRep, BRepFeatError> {
     // Validate angle
-    if angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+    if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
         return Err(BRepFeatError::InvalidDraftAngle { angle_rad: angle });
     }
 
@@ -1029,7 +1044,7 @@ pub fn apply_draft_feature(
                         let h = (v - neutral_plane).dot(pull_dir);
                         // Apply draft displacement
                         let radial_dir = (v - neutral_plane).reject_from(pull_dir).normalize_or(DVec3::ZERO);
-                        if radial_dir.length() > 1e-10 {
+                        if radial_dir.length() > TOLERANCE_LINEAR_ULTRA_STRICT {
                             new_positions[vi] = v + radial_dir * (h * tan_angle);
                         }
                     }
@@ -1056,7 +1071,7 @@ pub fn apply_depouille(
     blocks: &[(usize, f64, DVec3, DVec3)],
 ) -> Result<BRep, BRepFeatError> {
     let pull = pull_direction.normalize_or(DVec3::Z);
-    if pull.length_squared() < 1e-30 {
+    if pull.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
         return Err(BRepFeatError::ZeroVector("pull_direction"));
     }
 
@@ -1068,11 +1083,11 @@ pub fn apply_depouille(
     let mut contrib = vec![0u32; target.vertices.len()];
 
     for &(face_index, angle, neutral_point, neutral_normal) in blocks {
-        if angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+        if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
             return Err(BRepFeatError::InvalidDraftAngle { angle_rad: angle });
         }
         let n = neutral_normal.normalize_or(DVec3::Z);
-        if n.length_squared() < 1e-30 {
+        if n.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
             return Err(BRepFeatError::ZeroVector("neutral_normal"));
         }
         if face_index >= shell.faces.len() {
@@ -1122,20 +1137,20 @@ fn draft_vertex_displacement_occt(
     let w = v - neutral_point;
     let h = w.dot(pull);
     let radial = w - pull * h;
-    const EPS_PLANE: f64 = 1e-7;
-    const EPS_PAR: f64 = 1e-6;
+    const EPS_PLANE: f64 = TOLERANCE_ABS;
+    const EPS_PAR: f64 = TOLERANCE_MESH_LEGACY;
 
     // Face lies in (or parallel to) neutral plane and pull is along plane normal: in-plane taper
     // (same sign convention as OCCT `depouille` / `checkprops -s` on `tests/draft/angle/A1`).
     if pull.dot(n).abs() >= 1.0 - EPS_PAR && w.dot(n).abs() < EPS_PLANE {
         let tang = w - n * w.dot(n);
-        if tang.length_squared() > 1e-20 {
+        if tang.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO {
             return tang * tan_a;
         }
         return DVec3::ZERO;
     }
 
-    if radial.length_squared() > 1e-20 {
+    if radial.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO {
         return radial.normalize() * (h * tan_a);
     }
     DVec3::ZERO
@@ -1231,7 +1246,7 @@ pub fn make_drafted_prism(
     let dir = normalize("direction", direction)?;
     let depth = validate_positive("depth", depth)?;
 
-    if draft_angle.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+    if draft_angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
         return Err(BRepFeatError::InvalidDraftAngle { angle_rad: draft_angle });
     }
 
@@ -1489,7 +1504,7 @@ mod tests {
         let r = apply_depouille(&bx, pull, &blocks).expect("depouille A1");
         let a = total_surface_area(&r);
         let expected = 2333.52_f64;
-        let tol = (5e-3_f64).max(0.0625 * expected.abs());
+        let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.0625 * expected.abs());
         assert!(
             (a - expected).abs() <= tol,
             "surface area: expected {expected}, got {a}"
@@ -1528,7 +1543,7 @@ mod tests {
         let a = total_surface_area(&r);
         let expected = 2191.56_f64;
         // Multi-face `depouille`: vertex averaging vs OCCT global `BRepOffsetAPI_DraftAngle`.
-        let tol = (5e-3_f64).max(0.18 * expected.abs());
+        let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.18 * expected.abs());
         assert!(
             (a - expected).abs() <= tol,
             "surface area: expected {expected}, got {a}"
@@ -1555,7 +1570,7 @@ mod tests {
         let r = apply_depouille(&bx, pull, &blocks).expect("depouille A4");
         let a = total_surface_area(&r);
         let expected = 2084.26_f64;
-        let tol = (5e-3_f64).max(0.18 * expected.abs());
+        let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.18 * expected.abs());
         assert!(
             (a - expected).abs() <= tol,
             "surface area: expected {expected}, got {a}"
@@ -1659,6 +1674,15 @@ mod tests {
         assert!(params.merge_tolerance > 0.0);
         assert!(params.validate_result);
         assert!(params.simplify_result);
+    }
+
+    #[test]
+    fn feature_params_merge_tolerance_for_operands_is_finite_floor() {
+        let a = make_test_box();
+        let b = make_test_box();
+        let m = FeatureParams::merge_tolerance_for_operands(&a, &b);
+        assert!(m.is_finite() && m >= TOLERANCE_ABS);
+        assert!(m + crate::tolerance::TOLERANCE_FLOAT_DEDUP >= TOLERANCE_MESH_LEGACY);
     }
 
     #[test]

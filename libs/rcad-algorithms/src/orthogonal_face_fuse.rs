@@ -10,7 +10,12 @@ use rcad_kernel::topology::{Edge, Face, Vertex, Wire, WireEdge};
 use rcad_kernel::{face_surface_area, surface_area, volume, BRep};
 
 use crate::inttools::edge_face::plane_local_basis;
-use crate::tolerance::TOLERANCE_ABS;
+use crate::tolerance::{
+    TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_AREA_REL, TOLERANCE_COORD_SUB,
+    TOLERANCE_FLOAT_DEDUP, TOLERANCE_FLOAT_ULTRA, TOLERANCE_LEN_MIN, TOLERANCE_MESH_LEGACY,
+    TOLERANCE_RETRY_LADDER_COARSE, TOLERANCE_RETRY_LADDER_MID, TOLERANCE_TOL_SCALE_MICRO,
+    TOLERANCE_VEC_SQ_MIN,
+};
 
 type Pt = (i64, i64);
 
@@ -138,7 +143,7 @@ fn try_pick_redundant_axis_coplanar_face(
         .max(bj.3 - bj.2)
         .abs()
         .max(1.0);
-    let eps = (1e-9_f64 * scale).max(tol * 1e-6);
+    let eps = (TOLERANCE_COORD_SUB * scale).max(tol * TOLERANCE_TOL_SCALE_MICRO);
 
     let subset = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| -> bool {
         let (au0, au1, av0, av1) = a;
@@ -227,7 +232,7 @@ pub fn remove_spurious_intersection_face_preserving_volume(
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
         .sum::<usize>();
-    let vtol = vol_abs_tol.max(1e-15 * v0.abs().max(1.0));
+    let vtol = vol_abs_tol.max(TOLERANCE_FLOAT_DEDUP * v0.abs().max(1.0));
     for flat_rm in 0..n {
         let Some((si, shi, local_rm)) = flat_index_to_local_shell_face(brep, flat_rm) else {
             continue;
@@ -297,7 +302,7 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
                 continue;
             };
             let nrm = face.normal.normalize_or_zero();
-            if nrm.length_squared() < 1e-24 {
+            if nrm.length_squared() < TOLERANCE_VEC_SQ_MIN {
                 continue;
             }
             let nrm = snap_almost_axis(nrm);
@@ -327,13 +332,17 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
 
         let mut merged = false;
         for fis in group_list {
-            if try_fuse_orthogonal_group(brep, si, shi, &fis, tol) {
+            if try_fuse_orthogonal_group(brep, si, shi, &fis, tol, false) {
                 *total += 1;
                 merged = true;
                 break;
             }
         }
         if !merged {
+            if try_fuse_one_axis_aligned_edge_adjacent_pair(brep, si, shi, tol) {
+                *total += 1;
+                continue;
+            }
             return;
         }
     }
@@ -349,6 +358,178 @@ fn rects_2d_bbox_positive_area_overlap(
     let wu = au1.min(bu1) - au0.max(bu0);
     let wv = av1.min(bv1) - av0.max(bv0);
     wu > gap && wv > gap
+}
+
+/// Two axis-aligned UV rectangles share a full edge: one overlap dimension is ~0, the other > `tt`.
+/// Corner-only (`wu`≈0 and `wv`≈0) and separated rectangles are excluded.
+fn rects_2d_bbox_share_full_edge(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), tt: f64) -> bool {
+    let wu = a.1.min(b.1) - a.0.max(b.0);
+    let wv = a.3.min(b.3) - a.2.max(b.2);
+    let touch = tt.max(TOLERANCE_COORD_SUB);
+    if wu < -touch || wv < -touch {
+        return false;
+    }
+    let near = |x: f64| x.abs() <= touch;
+    if near(wu) && near(wv) {
+        return false;
+    }
+    (wu > touch && near(wv)) || (wv > touch && near(wu))
+}
+
+fn face_outer_vertex_set(brep: &BRep, face: &Face) -> std::collections::HashSet<usize> {
+    let mut s = std::collections::HashSet::new();
+    for we in &face.outer_wire.edges {
+        let Some(e) = brep.edges.get(we.idx) else {
+            continue;
+        };
+        if we.forward {
+            s.insert(e.start);
+            s.insert(e.end);
+        } else {
+            s.insert(e.end);
+            s.insert(e.start);
+        }
+    }
+    s
+}
+
+fn face_outer_edge_segments(brep: &BRep, face: &Face) -> Vec<(DVec3, DVec3)> {
+    let mut out = Vec::new();
+    for we in &face.outer_wire.edges {
+        let Some(e) = brep.edges.get(we.idx) else {
+            continue;
+        };
+        let Some(va) = brep.vertices.get(if we.forward { e.start } else { e.end }) else {
+            continue;
+        };
+        let Some(vb) = brep.vertices.get(if we.forward { e.end } else { e.start }) else {
+            continue;
+        };
+        out.push((va.point, vb.point));
+    }
+    out
+}
+
+fn segment_coincident(a0: DVec3, a1: DVec3, b0: DVec3, b1: DVec3, tol: f64) -> bool {
+    let same = |u: DVec3, v: DVec3| (u - v).length() <= tol;
+    (same(a0, b0) && same(a1, b1)) || (same(a0, b1) && same(a1, b0))
+}
+
+/// True when the two faces share a full edge (≥2 coincident vertex indices, or the same segment
+/// within `geom_tol` — booleans often duplicate vertex indices on seams).
+fn faces_share_full_edge_geom(
+    brep: &BRep,
+    face_i: &Face,
+    face_j: &Face,
+    geom_tol: f64,
+) -> bool {
+    let vi = face_outer_vertex_set(brep, face_i);
+    let vj = face_outer_vertex_set(brep, face_j);
+    if vi.intersection(&vj).count() >= 2 {
+        return true;
+    }
+    let segsi = face_outer_edge_segments(brep, face_i);
+    let segsj = face_outer_edge_segments(brep, face_j);
+    for &(p0, p1) in &segsi {
+        for &(q0, q1) in &segsj {
+            if segment_coincident(p0, p1, q0, q1, geom_tol) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn faces_share_full_edge_geom_by_index(
+    brep: &BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+    fj: usize,
+    geom_tol: f64,
+) -> bool {
+    let fi_face = &brep.solids[si].shells[shi].faces[fi];
+    let fj_face = &brep.solids[si].shells[shi].faces[fj];
+    faces_share_full_edge_geom(brep, fi_face, fj_face, geom_tol)
+}
+
+/// Merge one coplanar axis-aligned pair that shares a geometric full edge in UV but has no 2D area
+/// overlap (not in the same `split_fis_by_plane_uv_connectivity` component). Skips corner-only
+/// contacts via [`rects_2d_bbox_share_full_edge`] and requires [`faces_share_full_edge_geom`].
+fn try_fuse_one_axis_aligned_edge_adjacent_pair(brep: &mut BRep, si: usize, shi: usize, tol: f64) -> bool {
+    let n = brep.solids[si].shells[shi].faces.len();
+    if n < 2 {
+        return false;
+    }
+    let t = tol.max(TOLERANCE_ABS);
+    let gap = (t * 1e2).max(TOLERANCE_MESH_LEGACY);
+    let touch = (t * 1e3).max(TOLERANCE_RETRY_LADDER_MID);
+    let geom_edge_tol = (t * 1e4).max(TOLERANCE_RETRY_LADDER_COARSE);
+
+    let mut meta: Vec<Option<((i64, i64, i64, i64), (f64, f64, f64, f64))>> = vec![None; n];
+    for fi in 0..n {
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        if !face.inner_wires.is_empty() {
+            continue;
+        }
+        let Some(p0) = face_first_point(brep, face) else {
+            continue;
+        };
+        let nrm = snap_almost_axis(face.normal.normalize_or_zero());
+        if axis_aligned_world_plane_uv_axes(nrm).is_none() {
+            continue;
+        }
+        let d = nrm.dot(p0);
+        let (nk, dk) = canonicalize_plane_n_d(nrm, d);
+        let key = plane_key(nk, dk, t);
+        let Some(bb) = face_axis_world_bbox(brep, face, nrm) else {
+            continue;
+        };
+        meta[fi] = Some((key, bb));
+    }
+
+    for fi in 0..n {
+        let Some((ki, bi)) = meta[fi] else {
+            continue;
+        };
+        for fj in (fi + 1)..n {
+            let Some((kj, bj)) = meta[fj] else {
+                continue;
+            };
+            if ki != kj {
+                continue;
+            }
+            if rects_2d_bbox_positive_area_overlap(bi, bj, gap) {
+                continue;
+            }
+            if !rects_2d_bbox_share_full_edge(bi, bj, touch) {
+                continue;
+            }
+            if !faces_share_full_edge_geom_by_index(brep, si, shi, fi, fj, geom_edge_tol) {
+                continue;
+            }
+            // XOR / difference lumps can meet along a planar interface with geometrically coincident
+            // edges but **opposing** outward normals on the two sheets; do not orthogonal-fuse those.
+            let n1 = brep.solids[si].shells[shi].faces[fi]
+                .normal
+                .normalize_or_zero();
+            let n2 = brep.solids[si].shells[shi].faces[fj]
+                .normal
+                .normalize_or_zero();
+            const MIN_SAME_SHELL_COS: f64 = 1e-6;
+            if n1.dot(n2) <= MIN_SAME_SHELL_COS {
+                continue;
+            }
+            let cur_n = brep.solids[si].shells[shi].faces.len();
+            if fi >= cur_n || fj >= cur_n {
+                continue;
+            }
+            if try_fuse_orthogonal_group(brep, si, shi, &[fi, fj], tol, true) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn uf_find(p: &mut [usize], mut i: usize) -> usize {
@@ -394,7 +575,7 @@ fn redundant_axis_uv_bbox_fill_ratio(
     let b = face_axis_world_bbox(brep, face, n)?;
     let ab = axis_uv_bbox_rect_area(b);
     let s = scale.max(1.0);
-    let eps_area = (1e-15_f64 * s * s).max(1e-18);
+    let eps_area = (TOLERANCE_FLOAT_DEDUP * s * s).max(TOLERANCE_FLOAT_ULTRA);
     if !ab.is_finite() || ab <= eps_area {
         return None;
     }
@@ -428,7 +609,7 @@ fn split_fis_by_plane_uv_connectivity(
         return vec![fis.to_vec()];
     }
     let bboxes: Vec<_> = bboxes.into_iter().map(|b| b.unwrap()).collect();
-    let gap = (tol * 1e2).max(1e-6);
+    let gap = (tol * 1e2).max(TOLERANCE_MESH_LEGACY);
     let mut parent: Vec<usize> = (0..fis.len()).collect();
     for i in 0..fis.len() {
         for j in (i + 1)..fis.len() {
@@ -453,7 +634,7 @@ fn split_fis_by_plane_uv_connectivity(
 }
 
 fn plane_key(n: DVec3, d: f64, tol: f64) -> (i64, i64, i64, i64) {
-    let s = 1.0 / tol.max(1e-9);
+    let s = 1.0 / tol.max(TOLERANCE_COORD_SUB);
     (
         (n.x * s).round() as i64,
         (n.y * s).round() as i64,
@@ -466,11 +647,11 @@ fn plane_key(n: DVec3, d: f64, tol: f64) -> (i64, i64, i64, i64) {
 /// When `n` is ±X/±Y/±Z, return the two world axis indices that span the plane (e.g. Ẑ → (x,y)).
 fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
     let a = n.abs();
-    if a.x > 1.0 - 2e-3 {
+    if a.x > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
         Some([1, 2])
-    } else if a.y > 1.0 - 2e-3 {
+    } else if a.y > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
         Some([0, 2])
-    } else if a.z > 1.0 - 2e-3 {
+    } else if a.z > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
         Some([0, 1])
     } else {
         None
@@ -480,9 +661,9 @@ fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
 /// Inverse of [`axis_aligned_world_plane_uv_axes`]: build 3D from two free world coordinates.
 fn point_from_axis_plane_world_uv(n: DVec3, o: DVec3, u: f64, v2: f64) -> DVec3 {
     let a = n.abs();
-    if a.x > 1.0 - 2e-3 {
+    if a.x > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
         DVec3::new(o.x, u, v2)
-    } else if a.y > 1.0 - 2e-3 {
+    } else if a.y > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
         DVec3::new(u, o.y, v2)
     } else {
         DVec3::new(u, v2, o.z)
@@ -490,7 +671,7 @@ fn point_from_axis_plane_world_uv(n: DVec3, o: DVec3, u: f64, v2: f64) -> DVec3 
 }
 
 fn snap_almost_axis(n: DVec3) -> DVec3 {
-    let t = 2e-3_f64;
+    let t = 2.0 * TOLERANCE_ADAPTIVE_MAX;
     for i in 0..3 {
         if n[i].abs() > 1.0 - t {
             let mut o = DVec3::ZERO;
@@ -504,7 +685,7 @@ fn snap_almost_axis(n: DVec3) -> DVec3 {
 /// Map `n·x = d` to a canonical `n` so that `(n, d)` and `(-n, -d)` (same
 /// infinite plane) share the same key when bucketing.
 fn canonicalize_plane_n_d(n: DVec3, d: f64) -> (DVec3, f64) {
-    const E: f64 = 1e-12;
+    const E: f64 = TOLERANCE_LEN_MIN;
     let mut n = n;
     let mut d = d;
     if n.x < -E
@@ -524,12 +705,17 @@ fn face_first_point(brep: &BRep, face: &Face) -> Option<DVec3> {
     Some(brep.vertices.get(vi)?.point)
 }
 
+/// `allow_two_patch_full_edge_touch_only`: must be true only for pairs verified by
+/// `faces_share_full_edge_geom_by_index` in [`try_fuse_one_axis_aligned_edge_adjacent_pair`].
+/// Batch groups from UV-overlap connectivity keep the overlap-only two-patch gate so XOR / glued
+/// shells do not wrongly coalesce disjoint surface sheets.
 fn try_fuse_orthogonal_group(
     brep: &mut BRep,
     si: usize,
     shi: usize,
     fis: &[usize],
     tol: f64,
+    allow_two_patch_full_edge_touch_only: bool,
 ) -> bool {
     let n_faces_shell = brep.solids[si].shells[shi].faces.len();
     if fis.is_empty() || fis[0] >= n_faces_shell {
@@ -593,28 +779,39 @@ fn try_fuse_orthogonal_group(
     if geo_rings.len() > 1 {
         return false;
     }
-    // Grid `union_rects` rings have many collinear points along each edge. Collapse those first;
-    // a merged axis-aligned rectangle then has 4 corners, while an L-union has 6+.
-    // See `touching_edge_union` vs `overlapping_box_union_orthogonal_fuse_matches_occt_surface_area`.
+    // Grid union rings have collinear samples along edges. After removal: 4 corners for a merged
+    // rectangle, 6+ for an L (e.g. two overlapping boxes with different y/z extents).
     let t = tol.max(TOLERANCE_ABS);
-    if ring_corner_count_after_collinear_removal(&geo_rings[0], t) != 4 {
+    let simplified_outer = simplify_ring_collinear_uv_closed(&geo_rings[0], t);
+    if simplified_outer.len() < 4 {
         return false;
     }
+    if !ring_is_axis_aligned_orthogonal_uv(&simplified_outer, t) {
+        return false;
+    }
+    let rings_for_mesh = vec![simplified_outer];
     if fis.len() == 2 {
-        let g = (t * 1e2).max(1e-6);
-        if !rects_2d_bbox_positive_area_overlap(rects[0], rects[1], g) {
-            return false;
+        let g = (t * 1e2).max(TOLERANCE_MESH_LEGACY);
+        let overlap = rects_2d_bbox_positive_area_overlap(rects[0], rects[1], g);
+        if !overlap {
+            if !allow_two_patch_full_edge_touch_only {
+                return false;
+            }
+            let touch = (t * 1e3).max(TOLERANCE_RETRY_LADDER_MID);
+            if !rects_2d_bbox_share_full_edge(rects[0], rects[1], touch) {
+                return false;
+            }
         }
     }
 
     let normal = brep.solids[si].shells[shi].faces[fis[0]].normal;
 
     let ring_vertices = if world_axes.is_some() {
-        add_vertices_for_rings_with_eval(brep, &geo_rings, |u, v| {
+        add_vertices_for_rings_with_eval(brep, &rings_for_mesh, |u, v| {
             point_from_axis_plane_world_uv(n_unit, plane.origin, u, v)
         }, tol)
     } else {
-        add_vertices_for_rings(brep, &geo_rings, &plane, u_axis, v_axis, tol)
+        add_vertices_for_rings(brep, &rings_for_mesh, &plane, u_axis, v_axis, tol)
     };
     if ring_vertices.is_empty() || ring_vertices[0].len() < 3 {
         return false;
@@ -776,7 +973,7 @@ fn union_rects_to_rings_grid(rects: &[(f64, f64, f64, f64)], tol: f64) -> Option
         }
     }
 
-    let scale = 1.0 / t.max(1e-12);
+    let scale = 1.0 / t.max(TOLERANCE_LEN_MIN);
     let mut rings = Vec::new();
     if let Some(r0) = segments_to_ring(&outer_segs, scale) {
         rings.push(r0);
@@ -807,8 +1004,8 @@ fn build_padded_occ_grid(
     if xs.len() < 2 || ys.len() < 2 {
         return None;
     }
-    let dx = ((xs[xs.len() - 1] - xs[0]).abs()).max(1.0) * 1e-4;
-    let dy = ((ys[ys.len() - 1] - ys[0]).abs()).max(1.0) * 1e-4;
+    let dx = ((xs[xs.len() - 1] - xs[0]).abs()).max(1.0) * TOLERANCE_AREA_REL;
+    let dy = ((ys[ys.len() - 1] - ys[0]).abs()).max(1.0) * TOLERANCE_AREA_REL;
     let mut xs_e = vec![xs[0] - dx];
     xs_e.extend(xs.iter().cloned());
     xs_e.push(xs[xs.len() - 1] + dx);
@@ -1037,7 +1234,7 @@ fn push_new_edges(brep: &mut BRep, edges: Vec<(usize, usize)>) {
         let p1 = brep.vertices[b].point;
         let delta = p1 - p0;
         let len = delta.length();
-        let dir = if len > 1e-12 { delta / len } else { DVec3::X };
+        let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
         let curve_idx = brep.geom.curves.len();
         brep.geom.curves.push(rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 {
             origin: p0,
@@ -1045,7 +1242,7 @@ fn push_new_edges(brep: &mut BRep, edges: Vec<(usize, usize)>) {
         }));
         brep.geom.edge_curve[ei] = Some(curve_idx);
         brep.geom.edge_curve_range[ei] = Some([0.0, (p1 - p0).dot(dir)]);
-        brep.geom.edge_degenerated[ei] = len <= 1e-12;
+        brep.geom.edge_degenerated[ei] = len <= TOLERANCE_LEN_MIN;
     }
 }
 
@@ -1219,30 +1416,28 @@ fn bbox2d(uv: &[(f64, f64)]) -> (f64, f64, f64, f64) {
     (umin, umax, vmin, vmax)
 }
 
-/// Vertices of a closed ring from [`union_rects_to_rings_grid`] include many collinear samples.
-/// This removes 180° vertices until only corners remain. A true merged rectangle has 4; an L
-/// (two edge-adjacent quads) keeps 6+.
-fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> usize {
+/// Collapse 180° vertices on a closed UV ring from [`union_rects_to_rings_grid`].
+fn simplify_ring_collinear_uv_closed(ring: &[(f64, f64)], tol: f64) -> Vec<(f64, f64)> {
     if ring.len() < 3 {
-        return ring.len();
+        return ring.to_vec();
     }
-    let collinear_abs = (tol * 1e2).max(1e-9);
+    let collinear_abs = (tol * 1e2).max(TOLERANCE_COORD_SUB);
     let mut pts: Vec<(f64, f64)> = ring.to_vec();
     if pts.len() > 1 {
         let a = pts[0];
         let b = *pts.last().unwrap();
-        if (a.0 - b.0).abs() + (a.1 - b.1).abs() < (tol * 10.0).max(1e-9) {
+        if (a.0 - b.0).abs() + (a.1 - b.1).abs() < (tol * 10.0).max(TOLERANCE_COORD_SUB) {
             pts.pop();
         }
     }
     if pts.len() < 3 {
-        return pts.len();
+        return pts;
     }
     let max_rounds = pts.len() * 8 + 8;
     for _ in 0..max_rounds {
         let n = pts.len();
         if n < 3 {
-            return n;
+            break;
         }
         let mut remove: Option<usize> = None;
         for i in 0..n {
@@ -1262,7 +1457,36 @@ fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> u
             None => break,
         }
     }
-    pts.len()
+    pts
+}
+
+/// Closed ring with only axis-aligned edges (each step moves in u **or** v, not both).
+fn ring_is_axis_aligned_orthogonal_uv(compact: &[(f64, f64)], tol: f64) -> bool {
+    let t = tol.max(TOLERANCE_ABS);
+    let n = compact.len();
+    if n < 4 {
+        return false;
+    }
+    for i in 0..n {
+        let (u0, v0) = compact[i];
+        let (u1, v1) = compact[(i + 1) % n];
+        let du = (u1 - u0).abs();
+        let dv = (v1 - v0).abs();
+        if du > t && dv > t {
+            return false;
+        }
+        if du <= t && dv <= t {
+            return false;
+        }
+    }
+    true
+}
+
+/// Vertices of a closed ring from [`union_rects_to_rings_grid`] include many collinear samples.
+/// This removes 180° vertices until only corners remain. A true merged rectangle has 4; an L
+/// (two edge-adjacent quads) keeps 6+.
+fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> usize {
+    simplify_ring_collinear_uv_closed(ring, tol).len()
 }
 
 #[cfg(test)]
@@ -1270,6 +1494,7 @@ mod orth_union_tests {
     use super::ring_corner_count_after_collinear_removal;
     use super::rects_2d_bbox_positive_area_overlap;
     use super::union_rects_to_rings_grid;
+    use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE};
 
     #[test]
     fn union_rects_three_adjacent_strips_forms_outer_ring() {
@@ -1278,7 +1503,7 @@ mod orth_union_tests {
             (5.0, 10.0, 0.0, 10.0),
             (10.0, 15.0, 0.0, 10.0),
         ];
-        let rings = union_rects_to_rings_grid(&rects, 1e-7);
+        let rings = union_rects_to_rings_grid(&rects, TOLERANCE_ABS);
         assert!(rings.is_some(), "expected grid union to succeed for three strips");
         let rings = rings.unwrap();
         assert!(!rings.is_empty(), "expected at least one ring");
@@ -1287,7 +1512,7 @@ mod orth_union_tests {
     /// Same bucket key as disjoint islands on one plane: no 2D area overlap in UV.
     #[test]
     fn bbox_positive_area_overlap_distinguishes_disjoint_corner_edge() {
-        let gap = 1e-4;
+        let gap = TOLERANCE_RETRY_LADDER_COARSE;
         let a = (0.0, 1.0, 0.0, 1.0);
         let b_corner = (2.0, 3.0, 2.0, 3.0);
         assert!(!rects_2d_bbox_positive_area_overlap(a, b_corner, gap));
@@ -1300,7 +1525,7 @@ mod orth_union_tests {
     /// L-shaped outline keeps >4 corners; a 3×1 rectangle of samples collapses to 4 corners.
     #[test]
     fn ring_collinear_simplify_rect_vs_l() {
-        let tol = 1e-6;
+        let tol = TOLERANCE_MESH_LEGACY;
         let l_ring: Vec<(f64, f64)> = vec![
             (0.0, 0.0),
             (1.0, 0.0),
@@ -1327,7 +1552,9 @@ mod bcommon_g1_bbox_probe_tests {
     use rcad_modeling::make_box_brep;
 
     use crate::boolean_op;
-    use crate::tolerance::TOLERANCE_ABS;
+    use crate::tolerance::{
+        TOLERANCE_ABS, TOLERANCE_COORD_SUB, TOLERANCE_MESH_LEGACY, TOLERANCE_TOL_SCALE_MICRO,
+    };
     use crate::BooleanOpType;
 
     use super::{
@@ -1374,10 +1601,10 @@ mod bcommon_g1_bbox_probe_tests {
         let mut strict_ij = 0usize;
         let mut strict_ji = 0usize;
         let mut overlap_only = 0usize;
-        let gap = (t * 1e2).max(1e-6);
+        let gap = (t * 1e2).max(TOLERANCE_MESH_LEGACY);
 
         let subset_containment = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), scale: f64| -> bool {
-            let eps = (1e-9_f64 * scale).max(t * 1e-6);
+            let eps = (TOLERANCE_COORD_SUB * scale).max(t * TOLERANCE_TOL_SCALE_MICRO);
             let (au0, au1, av0, av1) = a;
             let (bu0, bu1, bv0, bv1) = b;
             au0 >= bu0 - eps && au1 <= bu1 + eps && av0 >= bv0 - eps && av1 <= bv1 + eps

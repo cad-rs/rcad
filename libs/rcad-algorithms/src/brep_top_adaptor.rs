@@ -29,6 +29,7 @@
 //! assert_eq!(face_count, 6);
 //! ```
 
+use crate::tolerance::*;
 use rcad_kernel::BRep;
 use rcad_kernel::topology::Face;
 pub use crate::brep_tools::ShapeType;
@@ -115,7 +116,7 @@ impl<'a> FaceAdaptor<'a> {
     /// Returns the face tolerance.
     pub fn tolerance(&self) -> f64 {
         // Default tolerance, could be extended to read from GeomStore
-        1e-6
+        TOLERANCE_MESH_LEGACY
     }
 }
 
@@ -182,7 +183,7 @@ impl<'a> EdgeAdaptor<'a> {
 
     /// Returns the edge tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.brep.geom.edge_tolerance.get(self.edge_idx).copied().unwrap_or(1e-6)
+        self.brep.geom.edge_tolerance.get(self.edge_idx).copied().unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 
@@ -217,7 +218,7 @@ impl<'a> VertexAdaptor<'a> {
 
     /// Returns the vertex tolerance.
     pub fn tolerance(&self) -> f64 {
-        self.brep.geom.vertex_tolerance.get(self.vertex_idx).copied().unwrap_or(1e-6)
+        self.brep.geom.vertex_tolerance.get(self.vertex_idx).copied().unwrap_or(TOLERANCE_MESH_LEGACY)
     }
 }
 

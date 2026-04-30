@@ -1,4 +1,14 @@
-﻿use glam::DVec3;
+//! Surface tessellation (adaptive chord error in UV / world space).
+//!
+//! **Phase C note:** several internal checks use [`TOLERANCE_MESH_LEGACY`] and related constants as
+//! **dimensionless UV / angle slacks** (parameter-domain noise, multi-turn heuristics), not as a
+//! substitute for world-space BRep pairing. For mesh–mesh segment chaining tied to operand
+//! topology, use [`crate::tolerance::tessellation_merge_linear_from_brep`] /
+//! [`crate::tolerance::tessellation_merge_linear_from_two_breps`] and
+//! [`crate::section::intersect_triangle_soups_adaptive`].
+//!
+use crate::tolerance::*;
+use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{any_perpendicular, Curve3, CurveEval, Surface3, SurfaceEval};
 use std::collections::HashMap;
@@ -81,7 +91,7 @@ impl Default for TessellationParams {
         Self {
             chord_tolerance: 0.01,
             angle_tolerance: 0.1,  // ~5.7 degrees
-            min_step: 1e-4,
+            min_step: TOLERANCE_RETRY_LADDER_COARSE,
             max_step: 0.5,
             min_triangle_size: 0.0,
             max_triangle_size: f64::MAX,
@@ -102,7 +112,7 @@ impl TessellationParams {
         Self {
             chord_tolerance: 0.1,
             angle_tolerance: 0.3,  // ~17 degrees
-            min_step: 1e-3,
+            min_step: TOLERANCE_ADAPTIVE_MAX,
             max_step: 1.0,
             min_triangle_size: 0.01,
             max_triangle_size: f64::MAX,
@@ -121,7 +131,7 @@ impl TessellationParams {
         Self {
             chord_tolerance: 0.01,
             angle_tolerance: 0.1,  // ~5.7 degrees
-            min_step: 1e-4,
+            min_step: TOLERANCE_RETRY_LADDER_COARSE,
             max_step: 0.5,
             min_triangle_size: 0.0,
             max_triangle_size: f64::MAX,
@@ -140,7 +150,7 @@ impl TessellationParams {
         Self {
             chord_tolerance: 0.001,
             angle_tolerance: 0.05,  // ~2.9 degrees
-            min_step: 1e-5,
+            min_step: TOLERANCE_RETRY_LADDER_MID,
             max_step: 0.2,
             min_triangle_size: 0.0,
             max_triangle_size: f64::MAX,
@@ -159,7 +169,7 @@ impl TessellationParams {
         Self {
             chord_tolerance: 0.005,
             angle_tolerance: 0.08,  // ~4.6 degrees
-            min_step: 1e-4,
+            min_step: TOLERANCE_RETRY_LADDER_COARSE,
             max_step: 0.3,
             min_triangle_size: 0.0,
             max_triangle_size: f64::MAX,
@@ -178,7 +188,7 @@ impl TessellationParams {
         Self {
             chord_tolerance: 0.0005,
             angle_tolerance: 0.03,  // ~1.7 degrees
-            min_step: 1e-6,
+            min_step: TOLERANCE_MESH_LEGACY,
             max_step: 0.1,
             min_triangle_size: 0.0,
             max_triangle_size: f64::MAX,
@@ -273,7 +283,7 @@ pub fn triangulate_surface(
 }
 
 fn weld_surface_mesh_nodes(mesh: SurfaceMesh) -> SurfaceMesh {
-    const WELD_TOLERANCE: f64 = 1e-9;
+    const WELD_TOLERANCE: f64 = TOLERANCE_COORD_SUB;
 
     let mut remap = vec![0usize; mesh.nodes.len()];
     let mut welded_nodes: Vec<DVec3> = Vec::new();
@@ -469,7 +479,7 @@ fn check_chord_tolerance(
     let chord_err = (surf_mid - interp_mid).length();
 
     // Also sample chord error at triangle centroids
-    let t1_u = (c1 - p00).length() / (p11 - p00).length().max(1e-10);
+    let t1_u = (c1 - p00).length() / (p11 - p00).length().max(TOLERANCE_LINEAR_ULTRA_STRICT);
     let _ = t1_u; // reserved for finer UV mapping at centroids
     let chord1 = (surface.point_at(um, vm) - c1).length();
     let chord2 = (surface.point_at(um, vm) - c2).length();
@@ -590,7 +600,7 @@ fn estimate_polygon_normal(points: &[DVec3]) -> Option<DVec3> {
         n.z += (a.x - b.x) * (a.y + b.y);
     }
     let len2 = n.length_squared();
-    if len2 <= 1e-20 {
+    if len2 <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
         None
     } else {
         Some(n / len2.sqrt())
@@ -687,12 +697,12 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                         let err_deg = err_for(range_deg);
                         let max_abs = t0.abs().max(t1.abs());
                         let span_abs = (t1 - t0).abs();
-                        let seam_like = (p_start - p_end).length() <= 1e-7;
+                        let seam_like = (p_start - p_end).length() <= TOLERANCE_ABS;
                         let degree_likely_by_magnitude =
-                            max_abs > two_pi + 1e-9 && max_abs <= 360.0 + 1e-6;
+                            max_abs > two_pi + TOLERANCE_COORD_SUB && max_abs <= 360.0 + TOLERANCE_MESH_LEGACY;
                         let tie =
-                            (err_deg - err_rad).abs() <= 1e-8 * (1.0 + err_rad.abs().max(err_deg.abs()));
-                        if err_deg + 1e-9 < err_rad
+                            (err_deg - err_rad).abs() <= TOLERANCE_LINEAR_RELAX_8 * (1.0 + err_rad.abs().max(err_deg.abs()));
+                        if err_deg + TOLERANCE_COORD_SUB < err_rad
                             || (tie && degree_likely_by_magnitude)
                             || (seam_like && degree_likely_by_magnitude && span_abs > two_pi * 1.5)
                         {
@@ -703,7 +713,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                     if !we.forward {
                         std::mem::swap(&mut t0, &mut t1);
                     }
-                    let near_full_turn = ((t1 - t0).abs() - two_pi).abs() <= 1e-3;
+                    let near_full_turn = ((t1 - t0).abs() - two_pi).abs() <= TOLERANCE_ADAPTIVE_MAX;
                     let choose_arc_delta = |a0: f64, a1: f64, span_hint: f64| -> f64 {
                         let mut minor = a1 - a0;
                         if minor > std::f64::consts::PI {
@@ -716,7 +726,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                         } else {
                             minor + two_pi
                         };
-                        if !span_hint.is_finite() || span_hint.abs() <= 1e-12 {
+                        if !span_hint.is_finite() || span_hint.abs() <= TOLERANCE_LEN_MIN {
                             return minor;
                         }
                         let score = |cand: f64| -> f64 {
@@ -746,9 +756,9 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                 out
                             };
                             let span_hint = t1 - t0;
-                            let multi_turn = span_hint.abs() > two_pi + 1e-6;
+                            let multi_turn = span_hint.abs() > two_pi + TOLERANCE_MESH_LEGACY;
                             // Seam edge: same geometric vertex at start/end.
-                            let seam_tol = (1e-7 * c.radius.max(1.0)).max(edge_tol * 5.0).max(1e-8);
+                            let seam_tol = (TOLERANCE_ABS * c.radius.max(1.0)).max(edge_tol * 5.0).max(TOLERANCE_LINEAR_RELAX_8);
                             let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
                             if seam {
                                 // Only force full turn when source trim already indicates
@@ -770,17 +780,17 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                     let v1 = p_end - c.center;
                                     let a0 = wrap_2pi(v0.dot(y_ax).atan2(v0.dot(x_ax)));
                                     let a1 = wrap_2pi(v1.dot(y_ax).atan2(v1.dot(x_ax)));
-                                    let reliable_hint = span_hint.signum() * 1e-3;
+                                    let reliable_hint = span_hint.signum() * TOLERANCE_ADAPTIVE_MAX;
                                     let mut dt = choose_arc_delta(a0, a1, reliable_hint);
-                                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                                    if dt.abs() < TOLERANCE_MESH_LEGACY && span_hint.is_finite() && span_hint.abs() > TOLERANCE_ADAPTIVE_MAX {
                                         let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
-                                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
+                                        dt = sign * span_hint.abs().clamp(TOLERANCE_ADAPTIVE_MAX, two_pi - TOLERANCE_MESH_LEGACY);
                                     }
                                     let chord = (p_end - p_start).length();
-                                    let chord_tol = 1e-8 * c.radius.max(1.0);
-                                    if chord > chord_tol && dt.abs() < 1e-3 {
-                                        let ratio = (chord / (2.0 * c.radius.max(1e-12))).clamp(0.0, 1.0);
-                                        let minor = (2.0 * ratio.asin()).clamp(1e-6, std::f64::consts::PI);
+                                    let chord_tol = TOLERANCE_LINEAR_RELAX_8 * c.radius.max(1.0);
+                                    if chord > chord_tol && dt.abs() < TOLERANCE_ADAPTIVE_MAX {
+                                        let ratio = (chord / (2.0 * c.radius.max(TOLERANCE_LEN_MIN))).clamp(0.0, 1.0);
+                                        let minor = (2.0 * ratio.asin()).clamp(TOLERANCE_MESH_LEGACY, std::f64::consts::PI);
                                         let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
                                         dt = sign * minor;
                                     }
@@ -811,10 +821,10 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                 out
                             };
                             let span_hint = t1 - t0;
-                            let multi_turn = span_hint.abs() > two_pi + 1e-6;
-                            let seam_tol = (1e-7 * e.major_radius.max(e.minor_radius).max(1.0))
+                            let multi_turn = span_hint.abs() > two_pi + TOLERANCE_MESH_LEGACY;
+                            let seam_tol = (TOLERANCE_ABS * e.major_radius.max(e.minor_radius).max(1.0))
                                 .max(edge_tol * 5.0)
-                                .max(1e-8);
+                                .max(TOLERANCE_LINEAR_RELAX_8);
                             let seam = topo_closed || (p_start - p_end).length() <= seam_tol;
                             if seam {
                                 // Only force full turn when source trim already indicates
@@ -836,11 +846,11 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                     let v1 = p_end - e.center;
                                     let a0 = wrap_2pi((v0.dot(y_ax) / e.minor_radius).atan2(v0.dot(x_ax) / e.major_radius));
                                     let a1 = wrap_2pi((v1.dot(y_ax) / e.minor_radius).atan2(v1.dot(x_ax) / e.major_radius));
-                                    let reliable_hint = span_hint.signum() * 1e-3;
+                                    let reliable_hint = span_hint.signum() * TOLERANCE_ADAPTIVE_MAX;
                                     let mut dt = choose_arc_delta(a0, a1, reliable_hint);
-                                    if dt.abs() < 1e-6 && span_hint.is_finite() && span_hint.abs() > 1e-3 {
+                                    if dt.abs() < TOLERANCE_MESH_LEGACY && span_hint.is_finite() && span_hint.abs() > TOLERANCE_ADAPTIVE_MAX {
                                         let sign = if span_hint < 0.0 { -1.0 } else { 1.0 };
-                                        dt = sign * span_hint.abs().clamp(1e-3, two_pi - 1e-6);
+                                        dt = sign * span_hint.abs().clamp(TOLERANCE_ADAPTIVE_MAX, two_pi - TOLERANCE_MESH_LEGACY);
                                     }
                                     t0 = a0;
                                     t1 = a0 + dt;
@@ -864,7 +874,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                     }
 
                     let span = (t1 - t0).abs();
-                    if span > 1e-12 {
+                    if span > TOLERANCE_LEN_MIN {
                         let n_segs = match curve {
                             Curve3::Circle(_) => {
                                 let segs = (span / (2.0 * std::f64::consts::PI) * 64.0).ceil() as usize;
@@ -897,7 +907,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
     }
 
     // Drop duplicated closing point if present.
-    if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length() < 1e-9 {
+    if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length() < TOLERANCE_COORD_SUB {
         pts.pop();
     }
 
@@ -998,7 +1008,7 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
 
 /// Max product of clamped plane `(螖u)(螖v)` below which [`mesh_brep`] skips
 /// analytic [`triangulate_surface`] and uses wire sampling (see seam-only circle caps).
-const PLANE_UV_SLIVER_MAX: f64 = 1e-10;
+const PLANE_UV_SLIVER_MAX: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
 /// Tessellate all faces of a BRep in-place, writing triangle indices into
 /// `face.triangles`.
@@ -1071,7 +1081,7 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                     let plane_analytic_ok = !is_plane
                         || (u1 - u0).abs() * (v1 - v0).abs() >= PLANE_UV_SLIVER_MAX;
 
-                    let domain_ok = (u1 - u0).abs() >= 1e-10 && (v1 - v0).abs() >= 1e-10;
+                    let domain_ok = (u1 - u0).abs() >= TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - v0).abs() >= TOLERANCE_LINEAR_ULTRA_STRICT;
                     let has_inner_wires = !brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
                         .inner_wires
                         .is_empty();
@@ -1210,7 +1220,7 @@ fn canonical_uv_axes(surf: &Surface3) -> CanonicalUvAxes {
 }
 
 fn span_too_small_for_axis(span: f64, period: Option<f64>, natural: Option<(f64, f64)>) -> bool {
-    if span < 1e-12 {
+    if span < TOLERANCE_LEN_MIN {
         return true;
     }
     if let Some(p) = period {
@@ -1220,7 +1230,7 @@ fn span_too_small_for_axis(span: f64, period: Option<f64>, natural: Option<(f64,
     if let Some((lo, hi)) = natural
         && lo.is_finite() && hi.is_finite() {
             let range = (hi - lo).abs();
-            if range > 1e-12 {
+            if range > TOLERANCE_LEN_MIN {
                 let thr = DEGENERATE_TRIM_ABS_MIN.max(range * DEGENERATE_TRIM_REL);
                 return span < thr;
             }
@@ -1273,8 +1283,8 @@ fn hull_uv_box_from_wire(surf: &Surface3, pts: &[DVec3]) -> Option<(f64, f64, f6
     if !u_min.is_finite() || !v_min.is_finite() {
         return None;
     }
-    let mu = (u_max - u_min).abs() * 0.05 + 1e-3;
-    let mv = (v_max - v_min).abs() * 0.05 + 1e-3;
+    let mu = (u_max - u_min).abs() * 0.05 + TOLERANCE_ADAPTIVE_MAX;
+    let mv = (v_max - v_min).abs() * 0.05 + TOLERANCE_ADAPTIVE_MAX;
     let nu0 = u_min - mu;
     let nu1 = u_max + mu;
     let mut nv0 = v_min - mv;
@@ -1369,8 +1379,8 @@ fn clamp_domain_to_vertices(
             let pu1 = us.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let pv0 = vs.iter().cloned().fold(f64::INFINITY, f64::min);
             let pv1 = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let mu = (pu1 - pu0).abs() * 0.05 + 1e-6;
-            let mv = (pv1 - pv0).abs() * 0.05 + 1e-6;
+            let mu = (pu1 - pu0).abs() * 0.05 + TOLERANCE_MESH_LEGACY;
+            let mv = (pv1 - pv0).abs() * 0.05 + TOLERANCE_MESH_LEGACY;
             (pu0 - mu, pu1 + mu, pv0 - mv, pv1 + mv)
         }
         Surface3::Cylinder(_)
@@ -1510,14 +1520,14 @@ pub fn compute_mesh_quality(nodes: &[DVec3], triangles: &[[usize; 3]]) -> MeshQu
         areas.push(area);
 
         // Degenerate (near-collinear) triangles
-        if area < 1e-12 {
+        if area < TOLERANCE_LEN_MIN {
             metrics.degenerate_count += 1;
         }
 
         // Aspect ratio = longest / shortest edge
         let max_edge = e0.max(e1).max(e2);
         let min_edge = e0.min(e1).min(e2);
-        let aspect_ratio = if min_edge > 1e-12 {
+        let aspect_ratio = if min_edge > TOLERANCE_LEN_MIN {
             max_edge / min_edge
         } else {
             f64::INFINITY
@@ -1916,7 +1926,7 @@ fn weld_surface_mesh_nodes_with_exclusion(
     mesh: &SurfaceMesh,
     excluded_nodes: &std::collections::HashSet<usize>,
 ) -> SurfaceMesh {
-    const WELD_TOLERANCE: f64 = 1e-9;
+    const WELD_TOLERANCE: f64 = TOLERANCE_COORD_SUB;
 
     let mut remap = vec![0usize; mesh.nodes.len()];
     let mut welded_nodes: Vec<DVec3> = Vec::new();

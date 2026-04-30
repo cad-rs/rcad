@@ -27,7 +27,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Circle3, ConicalSurface};
 
-use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_ANG};
+use crate::tolerance::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -119,7 +119,7 @@ fn intersect_parallel_cones(
         //   r1 = r2 is only satisfiable if delta_along = 0 (same apex → Coaxial above)
         //   or never (different apices → only the apex itself if a1 == a2 direction).
 
-        if (tan1 - tan2).abs() < 1e-12 {
+        if (tan1 - tan2).abs() < TOLERANCE_LEN_MIN {
             // Equal half-angles, different apices.
             // The two cones are coaxial "nested" with the same angle.
             // They only share a single point if one apex is on the other's surface
@@ -205,7 +205,7 @@ pub fn intersect_cone_cone_with_tolerance(
                 return ConeConeResult::Coaxial;
             }
 
-            if (tan1 - tan2).abs() < 1e-12 {
+            if (tan1 - tan2).abs() < TOLERANCE_LEN_MIN {
                 return ConeConeResult::NoIntersection;
             }
 
@@ -308,7 +308,7 @@ mod tests {
             ConeConeResult::CoaxialCircle(circ) => {
                 let expected_r = 3_f64.sqrt() + 1.0;
                 assert!(
-                    (circ.radius - expected_r).abs() < 1e-6,
+                    (circ.radius - expected_r).abs() < TOLERANCE_MESH_LEGACY,
                     "radius={}, expected {}",
                     circ.radius,
                     expected_r
@@ -318,7 +318,7 @@ mod tests {
                 // center.z = 2 + h = 2 + (√3+1) = 3 + √3 ≈ 4.732.
                 let expected_z = 2.0 + expected_r;
                 assert!(
-                    (circ.center.z - expected_z).abs() < 1e-6,
+                    (circ.center.z - expected_z).abs() < TOLERANCE_MESH_LEGACY,
                     "center.z={}, expected {}",
                     circ.center.z,
                     expected_z

@@ -37,7 +37,7 @@ impl Default for MarchingConfig {
     fn default() -> Self {
         Self {
             step_size: 0.1,
-            min_step_size: 1e-10,
+            min_step_size: TOLERANCE_LINEAR_ULTRA_STRICT,
             max_steps: 500,
             max_oscillations: 3,
             step_reduction_factor: 0.5,
@@ -90,7 +90,7 @@ pub fn adaptive_sampling_density(surface: &Surface3, base_density: usize) -> Ada
         }
         Surface3::Torus(t) => {
             // Torus: major radius for u, minor radius for v
-            let ratio = t.major_radius / t.minor_radius.max(1e-10);
+            let ratio = t.major_radius / t.minor_radius.max(TOLERANCE_LINEAR_ULTRA_STRICT);
             let n_u = (base_density as f64 * ratio.sqrt()).ceil() as usize;
             let n_v = base_density;
             AdaptiveSampling {
@@ -202,7 +202,7 @@ pub fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             let closest = surface.point_at(u, v);
             let normal = surface.normal_at(u, v);
             let n_len = normal.length();
-            if n_len < 1e-14 {
+            if n_len < TOLERANCE_FLOAT_LOOSE {
                 return (point - closest).length();
             }
             (point - closest).dot(normal / n_len)
@@ -264,7 +264,7 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             let (u, v) = closest_uv_coarse(surface, point);
             let normal = surface.normal_at(u, v);
             let n_len = normal.length();
-            if n_len < 1e-14 {
+            if n_len < TOLERANCE_FLOAT_LOOSE {
                 return DVec3::ZERO;
             }
             normal / n_len
@@ -290,13 +290,23 @@ pub fn project_onto_surface(surface: &Surface3, point: DVec3, max_iter: usize) -
     p
 }
 
-/// Project a point onto the intersection of two surfaces.
-fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec3 {
+/// Project a point onto the intersection of two surfaces within `tol`.
+///
+/// Two-surface Newton projection with residual **`tol`** on both implicits (`|f| < tol`).
+/// Numeric IntSS uses the same order of magnitude as **`refine_tol`** when refining grid seeds ([`crate::inttools::intss::intersect_surfaces_with_density_tol`] pathway).
+pub fn project_onto_intersection_tol(
+    s1: &Surface3,
+    s2: &Surface3,
+    point: DVec3,
+    tol: f64,
+) -> DVec3 {
+    let tol = tol.abs().max(TOLERANCE_LEN_MIN);
+    let tol2 = tol * tol;
     let mut p = point;
     for _ in 0..50 {
         let f1 = surface_implicit(s1, p);
         let f2 = surface_implicit(s2, p);
-        if f1.abs() < TOLERANCE_ABS && f2.abs() < TOLERANCE_ABS {
+        if f1.abs() < tol && f2.abs() < tol {
             break;
         }
         let g1 = surface_gradient(s1, p);
@@ -307,7 +317,7 @@ fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec
         let a12 = g1.dot(g2);
         let a22 = g2.dot(g2);
         let det = a11 * a22 - a12 * a12;
-        if det.abs() < TOLERANCE_ABS * TOLERANCE_ABS {
+        if det.abs() < tol2 {
             // Degenerate — just project onto each surface alternately
             p = project_onto_surface(s1, p, 5);
             p = project_onto_surface(s2, p, 5);
@@ -318,6 +328,11 @@ fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec
         p -= g1 * lambda1 + g2 * lambda2;
     }
     p
+}
+
+/// Project onto the intersection using [`TOLERANCE_ABS`] as the residual target.
+fn project_onto_intersection(s1: &Surface3, s2: &Surface3, point: DVec3) -> DVec3 {
+    project_onto_intersection_tol(s1, s2, point, TOLERANCE_ABS)
 }
 
 /// Find seed points for intersection curve marching by sampling one surface.

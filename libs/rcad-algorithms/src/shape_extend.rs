@@ -8,6 +8,7 @@
 //! - `ShapeExtend_MsgRegistrator`: Message registration with shape context
 //! - `ShapeExtend_Explorer`: Extended shape exploration utilities
 
+use crate::tolerance::*;
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Wire};
 use rcad_kernel::{BRep, vertex_indices};
@@ -1342,8 +1343,8 @@ mod tests {
 
         let (idx, u, v) = composite.local_params(0.5, 0.5);
         assert_eq!(idx, 0);
-        assert!((u - 0.5).abs() < 1e-10);
-        assert!((v - 0.5).abs() < 1e-10);
+        assert!((u - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((v - 0.5).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
     #[test]

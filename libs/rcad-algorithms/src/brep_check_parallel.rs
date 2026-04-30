@@ -18,6 +18,7 @@
 //!
 //! Example speedup on an 8-core machine for a 10,000-face model: ~4-6x faster.
 
+use crate::tolerance::*;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
@@ -65,7 +66,7 @@ impl Default for ParallelCheckOptions {
             chunk_size: 32,
             min_edges_for_parallel: 100,
             min_vertices_for_parallel: 100,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             check_duplicate_vertices: true,
             check_isolated_vertices: true,
             check_finite_vertices: true,
@@ -467,7 +468,7 @@ fn check_single_face(
         if end_v != start_v {
             let end_pt = brep.vertices[end_v].point;
             let start_pt = brep.vertices[start_v].point;
-            if (end_pt - start_pt).length() > 1e-6 {
+            if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
                 issues.push(CheckIssue::OpenWire {
                     solid: si,
                     shell: shi,
@@ -536,7 +537,7 @@ fn check_single_face(
             if end_v != start_v {
                 let end_pt = brep.vertices[end_v].point;
                 let start_pt = brep.vertices[start_v].point;
-                if (end_pt - start_pt).length() > 1e-6 {
+                if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
                     issues.push(CheckIssue::OpenWire {
                         solid: si,
                         shell: shi,
@@ -1247,7 +1248,7 @@ impl Default for ParallelCheckConfig {
         Self {
             num_threads: 0, // Use all available
             parallel_threshold: 100,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             check_faces: true,
             check_edges: true,
             check_vertices: true,
@@ -1278,7 +1279,7 @@ impl ParallelCheckConfig {
     /// Create a config for thorough checking (all checks enabled).
     pub fn thorough() -> Self {
         Self {
-            tolerance: 1e-9,
+            tolerance: TOLERANCE_COORD_SUB,
             ..Self::default()
         }
     }
@@ -1396,7 +1397,7 @@ impl ParallelCheckReport {
 /// A vector of `FaceCheckResult`, one per face.
 pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckResult> {
     let n_edges = brep.edges.len();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     // Create a flat list of face references for parallel iteration
     let face_items: Vec<(usize, usize, usize)> = brep.solids
@@ -1638,7 +1639,7 @@ fn check_geometric_self_intersection_face(
 /// A vector of `EdgeCheckResult`, one per edge.
 pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
     let n_verts = brep.vertices.len();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     // Pre-compute edge face counts
     let edge_face_counts = compute_edge_face_counts_parallel(brep, brep.edges.len());
@@ -1778,7 +1779,7 @@ fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationR
     let solid = &brep.solids[si];
     let shell = &solid.shells[shi];
     let n_edges = brep.edges.len();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
@@ -2296,7 +2297,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
 /// Sequential face checking fallback.
 fn check_faces_sequential(brep: &BRep) -> Vec<FaceCheckResult> {
     let n_edges = brep.edges.len();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     let mut results = Vec::new();
     for (si, solid) in brep.solids.iter().enumerate() {
@@ -2312,7 +2313,7 @@ fn check_faces_sequential(brep: &BRep) -> Vec<FaceCheckResult> {
 /// Sequential edge checking fallback.
 fn check_edges_sequential(brep: &BRep) -> Vec<EdgeCheckResult> {
     let n_verts = brep.vertices.len();
-    let tolerance = 1e-6;
+    let tolerance = TOLERANCE_MESH_LEGACY;
 
     // Compute edge face counts
     let mut edge_face_counts = vec![0usize; brep.edges.len()];
@@ -2634,7 +2635,7 @@ mod tests {
             check_duplicate_vertices: true,
             check_isolated_vertices: false,
             check_finite_vertices: false,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             ..ParallelCheckOptions::default()
         };
 
@@ -2780,12 +2781,12 @@ mod tests {
     #[test]
     fn test_parallel_options_builder() {
         let opts = ParallelCheckOptions::default()
-            .with_tolerance(1e-9)
+            .with_tolerance(TOLERANCE_COORD_SUB)
             .with_chunk_size(128)
             .with_duplicate_vertex_check(false)
             .with_isolated_vertex_check(false);
 
-        assert!((opts.tolerance - 1e-9).abs() < 1e-15);
+        assert!((opts.tolerance - TOLERANCE_COORD_SUB).abs() < TOLERANCE_FLOAT_DEDUP);
         assert_eq!(opts.chunk_size, 128);
         assert!(!opts.check_duplicate_vertices);
         assert!(!opts.check_isolated_vertices);
@@ -3114,7 +3115,7 @@ mod tests {
         let report = check_brep_parallel(&brep, &config);
 
         // Thorough config has tighter tolerance
-        assert!((config.tolerance - 1e-9).abs() < 1e-15);
+        assert!((config.tolerance - TOLERANCE_COORD_SUB).abs() < TOLERANCE_FLOAT_DEDUP);
     }
 
     #[test]
@@ -3251,7 +3252,7 @@ mod tests {
             is_degenerate: false,
             face_count: 2,
             is_manifold: true,
-            tolerance: 1e-6,
+            tolerance: TOLERANCE_MESH_LEGACY,
             has_self_intersection: false,
         };
 
@@ -3319,7 +3320,7 @@ mod tests {
         assert!(!fast.check_same_parameter);
 
         let thorough = ParallelCheckConfig::thorough();
-        assert!((thorough.tolerance - 1e-9).abs() < 1e-15);
+        assert!((thorough.tolerance - TOLERANCE_COORD_SUB).abs() < TOLERANCE_FLOAT_DEDUP);
         assert!(thorough.check_self_intersections);
     }
 

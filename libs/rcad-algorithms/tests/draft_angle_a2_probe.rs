@@ -4,6 +4,7 @@
 //! edge filleted while it is still a single `(6,7)` segment, then the vertical `(5,6)`; reversing
 //! order keeps manifold topology so the second `fillet_edge` succeeds.
 
+use rcad_algorithms::tolerance::*;
 use glam::DVec3;
 use rcad_algorithms::{apply_depouille, total_surface_area};
 use rcad_kernel::BRep;
@@ -70,7 +71,7 @@ fn occt_draft_angle_a2_surface_area_matches() {
     ];
     let r = apply_depouille(&m2, PULL, &blocks).expect("depouille");
     let sa = total_surface_area(&r);
-    let tol = (5e-3_f64).max(0.02 * TARGET_SA.abs());
+    let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.02 * TARGET_SA.abs());
     assert!(
         (sa - TARGET_SA).abs() <= tol,
         "A2 surface area: expected {TARGET_SA}, got {sa}"

@@ -22,11 +22,12 @@
 //! add_brep_to_bbox(&brep, &mut bbox);
 //!
 //! assert!(bbox.is_valid());
-//! assert!((bbox.size().x - 1.0).abs() < 1e-6);
-//! assert!((bbox.size().y - 2.0).abs() < 1e-6);
-//! assert!((bbox.size().z - 3.0).abs() < 1e-6);
+//! assert!((bbox.size().x - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+//! assert!((bbox.size().y - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+//! assert!((bbox.size().z - 3.0).abs() < TOLERANCE_MESH_LEGACY);
 //! ```
 
+use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
@@ -657,7 +658,7 @@ mod tests {
         assert_eq!(bbox.size(), DVec3::new(2.0, 4.0, 6.0));
         assert_eq!(bbox.center(), DVec3::new(1.0, 2.0, 3.0));
         // Diagonal = sqrt(2^2 + 4^2 + 6^2) = sqrt(56)
-        assert!((bbox.diagonal() - (2.0_f64.powi(2) + 4.0_f64.powi(2) + 6.0_f64.powi(2)).sqrt()).abs() < 1e-9);
+        assert!((bbox.diagonal() - (2.0_f64.powi(2) + 4.0_f64.powi(2) + 6.0_f64.powi(2)).sqrt()).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -667,9 +668,9 @@ mod tests {
             DVec3::new(2.0, 3.0, 4.0),
         );
 
-        assert!((bbox.volume() - 24.0).abs() < 1e-9);
+        assert!((bbox.volume() - 24.0).abs() < TOLERANCE_COORD_SUB);
         // Surface area = 2*(2*3 + 3*4 + 4*2) = 2*(6 + 12 + 8) = 52
-        assert!((bbox.surface_area() - 52.0).abs() < 1e-9);
+        assert!((bbox.surface_area() - 52.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -813,15 +814,15 @@ mod tests {
         );
 
         // Inside
-        assert!((bbox.distance_to(DVec3::new(0.5, 0.5, 0.5)) - 0.0).abs() < 1e-9);
+        assert!((bbox.distance_to(DVec3::new(0.5, 0.5, 0.5)) - 0.0).abs() < TOLERANCE_COORD_SUB);
 
         // Outside
-        assert!((bbox.distance_to(DVec3::new(2.0, 0.5, 0.5)) - 1.0).abs() < 1e-9);
-        assert!((bbox.distance_to(DVec3::new(-1.0, 0.5, 0.5)) - 1.0).abs() < 1e-9);
+        assert!((bbox.distance_to(DVec3::new(2.0, 0.5, 0.5)) - 1.0).abs() < TOLERANCE_COORD_SUB);
+        assert!((bbox.distance_to(DVec3::new(-1.0, 0.5, 0.5)) - 1.0).abs() < TOLERANCE_COORD_SUB);
 
         // Diagonal distance
         let d = bbox.distance_to(DVec3::new(-1.0, -1.0, -1.0));
-        assert!((d - 3.0_f64.sqrt()).abs() < 1e-9);
+        assert!((d - 3.0_f64.sqrt()).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -834,7 +835,7 @@ mod tests {
         // Ray hitting the box
         let t = bbox.ray_intersect(DVec3::new(-1.0, 0.5, 0.5), DVec3::X);
         assert!(t.is_some());
-        assert!((t.unwrap() - 1.0).abs() < 1e-9);
+        assert!((t.unwrap() - 1.0).abs() < TOLERANCE_COORD_SUB);
 
         // Ray missing the box
         let t = bbox.ray_intersect(DVec3::new(-1.0, 2.0, 0.5), DVec3::X);
@@ -843,7 +844,7 @@ mod tests {
         // Ray starting inside the box
         let t = bbox.ray_intersect(DVec3::new(0.5, 0.5, 0.5), DVec3::X);
         assert!(t.is_some());
-        assert!((t.unwrap() - 0.0).abs() < 1e-9);
+        assert!((t.unwrap() - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
@@ -874,9 +875,9 @@ mod tests {
         add_brep_to_bbox(&brep, &mut bbox);
 
         assert!(bbox.is_valid());
-        assert!((bbox.size().x - 2.0).abs() < 1e-6);
-        assert!((bbox.size().y - 3.0).abs() < 1e-6);
-        assert!((bbox.size().z - 4.0).abs() < 1e-6);
+        assert!((bbox.size().x - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bbox.size().y - 3.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bbox.size().z - 4.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -985,7 +986,7 @@ mod tests {
 
         // Z should be 0 for a plane at origin with Z normal
         assert!(bbox.is_valid());
-        assert!((bbox.center().z).abs() < 1e-6);
+        assert!((bbox.center().z).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     // ── CurveBounds Tests ──────────────────────────────────────────────────────────
@@ -1000,8 +1001,8 @@ mod tests {
         let bbox = curve_bounds(&line, 0.0, 10.0);
 
         assert!(bbox.is_valid());
-        assert!((bbox.min.x - 0.0).abs() < 1e-6);
-        assert!((bbox.max.x - 10.0).abs() < 1e-6);
+        assert!((bbox.min.x - 0.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((bbox.max.x - 10.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 
     #[test]
@@ -1057,11 +1058,11 @@ mod tests {
         add_brep_to_bbox(&brep, &mut bbox);
 
         // Enlarge slightly to account for sampling
-        bbox.enlarge(1e-6);
+        bbox.enlarge(TOLERANCE_MESH_LEGACY);
 
         // All vertices should be inside
         for vertex in &brep.vertices {
-            assert!(bbox.contains(vertex.point, 1e-6));
+            assert!(bbox.contains(vertex.point, TOLERANCE_MESH_LEGACY));
         }
     }
 
@@ -1089,6 +1090,6 @@ mod tests {
         // Point inside the bbox
         let near_point = DVec3::new(0.0, 0.5, 0.0);
         let dist = bbox.distance_to(near_point);
-        assert!((dist - 0.0).abs() < 1e-6);
+        assert!((dist - 0.0).abs() < TOLERANCE_MESH_LEGACY);
     }
 }

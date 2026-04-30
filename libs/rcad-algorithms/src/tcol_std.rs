@@ -4,6 +4,7 @@
 //! These are 1-based indexed arrays, sequences, maps, and lists for compatibility
 //! with OCCT algorithms.
 
+use crate::tolerance::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
@@ -876,7 +877,7 @@ mod tests {
     fn array1_iter_works() {
         let arr = Array1OfReal::from_vec_real(vec![1.0, 2.0, 3.0]);
         let sum: f64 = arr.iter().sum();
-        assert!((sum - 6.0).abs() < 1e-9);
+        assert!((sum - 6.0).abs() < TOLERANCE_COORD_SUB);
     }
 
     #[test]
