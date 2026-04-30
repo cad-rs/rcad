@@ -58,7 +58,7 @@ pub struct StepHeader {
     pub authorization: Option<String>,
 }
 
-/// Unified export options for STEP writing.
+/// Unified export options for STEP writing (OCCT-style interchange by default).
 #[derive(Debug, Clone)]
 pub struct StepWriteOptions {
     pub protocol: StepProtocol,
@@ -66,9 +66,6 @@ pub struct StepWriteOptions {
     pub properties: Vec<StepGeneralProperty>,
     pub ap242_metadata: Option<StepAp242Metadata>,
     pub header: StepHeader,
-    /// When enabled, emit a gmsh-like minimal topology-first organization
-    /// (AP214, primary BRep representation, no extra full-export overlays).
-    pub gmsh_strict: bool,
     /// Include standalone 1D entities as wireframe overlays in full-model export.
     pub export_standalone_wire_overlay: bool,
 }
@@ -81,7 +78,6 @@ impl Default for StepWriteOptions {
             properties: Vec::new(),
             ap242_metadata: None,
             header: StepHeader::default(),
-            gmsh_strict: false,
             export_standalone_wire_overlay: true,
         }
     }
@@ -123,22 +119,22 @@ pub struct StepAp242Metadata {
 
 pub struct StepWriter;
 
+/// B-rep STEP export aligns with OCCT-style interchange (`SURFACE_CURVE`/PCURVE, radians, si_metre).
 struct FaceExportResult {
     face_ids: Vec<u64>,
     used_triangle_fallback: bool,
 }
 
 impl StepWriter {
-    /// Export BRep to STEP with GMSH/OCCT-compatible format.
+    /// Export BRep to STEP (OCCT-style interchange: radians, si_metre, surface-scoped curves).
     ///
-    /// Uses AP214 protocol with the standard export path by default.
+    /// Uses AP214 protocol by default unless overridden via [`write_string_with_options`].
     pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
         Self::write_string_with_options(
             brep,
             selection,
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
-                gmsh_strict: false,
                 export_standalone_wire_overlay: true,
                 ..Default::default()
             },
@@ -155,7 +151,6 @@ impl StepWriter {
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
-            options.gmsh_strict,
             options.export_standalone_wire_overlay,
         );
         writer.write_brep(
@@ -325,7 +320,6 @@ struct Part21Writer {
     edge_geometry_ids: HashMap<usize, u64>,
     protocol: StepProtocol,
     header: StepHeader,
-    gmsh_strict: bool,
     export_standalone_wire_overlay: bool,
     strict_plane_closed_ellipse_done: bool,
 }
@@ -334,7 +328,6 @@ impl Part21Writer {
     fn new_with_protocol_and_header(
         protocol: StepProtocol,
         header: StepHeader,
-        gmsh_strict: bool,
         export_standalone_wire_overlay: bool,
     ) -> Self {
         Self {
@@ -347,7 +340,6 @@ impl Part21Writer {
             edge_geometry_ids: HashMap::new(),
             protocol,
             header,
-            gmsh_strict,
             export_standalone_wire_overlay,
             strict_plane_closed_ellipse_done: false,
         }
@@ -598,7 +590,7 @@ impl Part21Writer {
         }
 
         let mut standalone_point_items = Vec::new();
-        if export_all && self.gmsh_strict {
+        if export_all {
             let mut used_vertices: BTreeSet<usize> = BTreeSet::new();
             for e in &brep.edges {
                 used_vertices.insert(e.start);
@@ -645,22 +637,11 @@ impl Part21Writer {
         let definition = self.product_definition("", "", formation, definition_context);
         let product_shape = self.product_definition_shape("", "", definition);
 
-        let length_unit = if self.gmsh_strict {
-            self.length_unit_millimeter()
-        } else {
-            self.length_unit_meter()
-        };
-        let angle_unit = if self.gmsh_strict {
-            self.plane_angle_unit_radian()
-        } else {
-            self.plane_angle_unit_degree()
-        };
+        // B-rep vertex/surface coordinates are always kernel SI metres; `LENGTH_UNIT` uses si_metre.
+        let length_unit = self.length_unit_meter();
+        let angle_unit = self.plane_angle_unit_radian();
         let solid_angle_unit = self.solid_angle_unit_steradian();
-        let uncertainty = if self.gmsh_strict {
-            self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7)
-        } else {
-            self.uncertainty_measure_with_unit(length_unit)
-        };
+        let uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
         let context = self.geometric_representation_context(
             3,
             uncertainty,
@@ -682,7 +663,7 @@ impl Part21Writer {
             }
         }
 
-        if self.gmsh_strict && export_all {
+        if export_all {
             let origin = self.cartesian_point("asm_origin", [0.0, 0.0, 0.0]);
             let axis = self.direction("asm_axis", [0.0, 0.0, 1.0]);
             let ref_dir = self.direction("asm_ref", [1.0, 0.0, 0.0]);
@@ -1031,7 +1012,7 @@ impl Part21Writer {
 
         let oriented_edges = oriented_face_edges(brep, face);
         if oriented_edges.is_empty() && face_surface.is_some() {
-            // Seam face with no usable edge loop — fall back to triangles.
+            // Seam face with no usable edge loop ??fall back to triangles.
             return FaceExportResult {
                 face_ids: self.write_triangle_faces(brep, face),
                 used_triangle_fallback: true,
@@ -1070,7 +1051,6 @@ impl Part21Writer {
             &loop_points,
             face,
             face_surface.as_ref(),
-            self.gmsh_strict,
         );
 
         // Detect seam edges: same edge_idx appearing multiple times
@@ -1093,16 +1073,14 @@ impl Part21Writer {
                     self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
                 }
             } else {
-                if self.gmsh_strict {
-                    self.seed_edge_surface_curve_from_face_frame(
-                        brep,
-                        edge.edge_idx,
-                        surface,
-                        origin_point,
-                        normal,
-                        face_ref_arr,
-                    );
-                }
+                self.seed_edge_surface_curve_from_face_frame(
+                    brep,
+                    edge.edge_idx,
+                    surface,
+                    origin_point,
+                    normal,
+                    face_ref_arr,
+                );
                 self.write_edge_curve_by_index(brep, edge.edge_idx)
             };
             edge_entries.push((edge.edge_idx, edge.start, edge.end, edge_curve, edge.forward));
@@ -1113,10 +1091,9 @@ impl Part21Writer {
             .map(|(_, _, _, curve, forward)| (*curve, *forward))
             .collect();
 
-        // Strict gmsh-like ordering/orientation for periodic side faces:
+        // OCCT-style cyclic ordering on periodic cylinder/cone side faces:
         // top circle (F) -> seam (F) -> bottom circle (T) -> seam (T)
-        if self.gmsh_strict
-            && matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
+        if matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
             && seam_edge_indices.len() == 1
             && edge_entries.len() == 4
         {
@@ -1296,7 +1273,7 @@ impl Part21Writer {
         .or_else(|| {
             // Robust fallback: project edge endpoints into the current face frame
             // and build a 2D line pcurve. This keeps strict export aligned with
-            // gmsh's expectation that face edges carry parametric curves.
+            // OCCT-style expectation that face edges carry parametric curves.
             let p0 = glam::DVec3::from_array(start_point);
             let p1 = glam::DVec3::from_array(end_point);
             let d0 = p0 - face_origin;
@@ -1323,8 +1300,7 @@ impl Part21Writer {
         let pcurve_id = self.pcurve(surface_id, def_rep);
         let mut pcurve_ids = vec![pcurve_id];
 
-        if self.gmsh_strict
-            && matches!(curve2d, Curve2d::Line(_))
+        if matches!(curve2d, Curve2d::Line(_))
             && count_plane_face_occurrences_for_line_edge(brep, edge_idx) >= 2
         {
             let base_plane = rcad_kernel::geom::Plane {
@@ -1389,7 +1365,7 @@ impl Part21Writer {
         let axis = canonicalize_axis_sign(glam::DVec3::Z);
         let start_proj = start_pt.dot(axis);
         let end_proj = end_pt.dot(axis);
-        let canonical_low_to_high = self.gmsh_strict && seam_is_cylinder;
+        let canonical_low_to_high = seam_is_cylinder;
 
         let (edge_start_idx, edge_end_idx) = if canonical_low_to_high && start_proj > end_proj {
             (edge.end, edge.start)
@@ -1428,14 +1404,10 @@ impl Part21Writer {
                 self.line("seam_line", origin_id, vec)
             }
             Some(Surface3::Cylinder(_)) => {
-                let (origin_pt, delta_vec) = if self.gmsh_strict {
-                    if start_proj <= end_proj {
-                        (start_pt, end_pt - start_pt)
-                    } else {
-                        (end_pt, start_pt - end_pt)
-                    }
-                } else {
+                let (origin_pt, delta_vec) = if start_proj <= end_proj {
                     (start_pt, end_pt - start_pt)
+                } else {
+                    (end_pt, start_pt - end_pt)
                 };
                 let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(origin_pt));
                 let delta = dvec3_to_array(delta_vec);
@@ -1444,7 +1416,7 @@ impl Part21Writer {
                 let vec = self.vector("seam_vec", dir, magnitude);
                 self.line("seam_line", origin_id, vec)
             }
-            Some(Surface3::Torus(torus)) if self.gmsh_strict => {
+            Some(Surface3::Torus(torus)) => {
                 let axis = torus.axis.normalize_or_zero();
                 if axis.length_squared() < 1e-18 {
                     let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
@@ -1518,7 +1490,7 @@ impl Part21Writer {
         let final_curve = if !pcurves.is_empty() {
             let mut pcurve_ids = Vec::new();
             let mut periodic_extra_curve2d: Option<Curve2d> = None;
-            if self.gmsh_strict && (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1
+            if (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1
                 && let Some(pc0) = pcurves.first()
                     && let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
                 {
@@ -1533,7 +1505,7 @@ impl Part21Writer {
             for (pc_i, pc) in pcurves.iter().enumerate() {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
                 let mut curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
-                if self.gmsh_strict && seam_is_cylinder
+                if seam_is_cylinder
                     && let Some(Curve2d::Line(mut l)) = curve2d
                 {
                     let eps = 1e-9;
@@ -1567,7 +1539,7 @@ impl Part21Writer {
                     pcurve_ids.push(extra_pc);
                 }
             }
-            if self.gmsh_strict && pcurve_ids.len() >= 2 {
+            if pcurve_ids.len() >= 2 {
                 self.seam_curve(basis_curve, &pcurve_ids)
             } else {
                 self.surface_curve(basis_curve, &pcurve_ids)
@@ -1586,11 +1558,7 @@ impl Part21Writer {
     ) -> u64 {
         match face_surface {
             Some(Surface3::Plane(plane)) => {
-                let plane_normal = if self.gmsh_strict {
-                    canonicalize_axis_sign(plane.normal)
-                } else {
-                    plane.normal
-                };
+                let plane_normal = canonicalize_axis_sign(plane.normal);
                 let placement =
                     self.axis2_from_origin_axis("plane_axis", plane.origin, plane_normal);
                 self.plane("face_plane", placement)
@@ -1606,15 +1574,12 @@ impl Part21Writer {
             }
             Some(Surface3::Cone(cone)) => {
                 let placement = self.axis2_from_origin_axis("cone_axis", cone.apex, cone.axis);
+                // Matches `parse_conical_surface`: numeric semi-angle is degrees before `to_radians()`.
                 self.conical_surface(
                     "face_cone",
                     placement,
                     cone.radius,
-                    if self.gmsh_strict {
-                        cone.half_angle_rad
-                    } else {
-                        cone.half_angle_rad.to_degrees()
-                    },
+                    cone.half_angle_rad.to_degrees(),
                 )
             }
             Some(Surface3::Torus(torus)) => {
@@ -1808,7 +1773,7 @@ impl Part21Writer {
         let origin_id = self.cartesian_point("surface_origin", dvec3_to_array(origin));
         let axis_arr = normalize(dvec3_to_array(axis));
         let axis_id = self.direction("surface_axis", axis_arr);
-        let ref_dir = if self.gmsh_strict && axis_arr[2] > 0.999999 {
+        let ref_dir = if axis_arr[2] > 0.999999 {
             [1.0, 0.0, 0.0]
         } else {
             orthogonal_dir(axis_arr)
@@ -1908,8 +1873,7 @@ impl Part21Writer {
                 .cloned()
                 .unwrap_or_default();
 
-            let is_single_plane_closed_circle = self.gmsh_strict
-                && !self.strict_plane_closed_ellipse_done
+            let is_single_plane_closed_circle = !self.strict_plane_closed_ellipse_done
                 && edge.start == edge.end
                 && pcurves.len() == 1
                 && matches!(
@@ -1929,7 +1893,7 @@ impl Part21Writer {
                 self.strict_plane_closed_ellipse_done = true;
             }
 
-            let torus_surface = if self.gmsh_strict && !pcurves.is_empty() {
+            let torus_surface = if !pcurves.is_empty() {
                 let mut torus = None;
                 let mut all_torus = true;
                 for pc in &pcurves {
@@ -1952,8 +1916,7 @@ impl Part21Writer {
 
             if let Some(torus) = torus_surface {
                 let mut major_seam = false;
-                if self.gmsh_strict
-                    && let Some(pc0) = pcurves.first()
+                if let Some(pc0) = pcurves.first()
                     && let Some(Curve2d::Line(l)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
                 {
                     // On torus pcurves, dominant +u direction corresponds to a major-circle seam.
@@ -2009,7 +1972,7 @@ impl Part21Writer {
                 let mut pcurve_ids = Vec::new();
                 let mut periodic_extra_curve2d: Option<Curve2d> = None;
                 let mut periodic_line_dup_for_seam = false;
-                if self.gmsh_strict && pcurves.len() == 1
+                if pcurves.len() == 1
                     && let Some(pc0) = pcurves.first() {
                         let is_periodic_u_surface = matches!(
                             brep.geom.surfaces.get(pc0.surface_idx),
@@ -2037,33 +2000,30 @@ impl Part21Writer {
                 for (pc_i, pc) in pcurves.iter().enumerate() {
                     let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
                     let mut curve2d = brep.geom.curve2ds.get(pc.curve2d_idx).cloned();
-                    if self.gmsh_strict {
-                        let is_cylinder = matches!(
-                            brep.geom.surfaces.get(pc.surface_idx),
-                            Some(Surface3::Cylinder(_))
-                        );
-                        if is_cylinder
-                            && let Some(Curve2d::Line(mut l)) = curve2d
-                        {
-                            // Canonicalize periodic-u pcurves on cylinders to
-                            // gmsh/OCCT-like form: origin at u=0 and +u direction.
-                            let eps = 1e-9;
-                            if l.direction.y.abs() <= eps && l.direction.x.abs() > eps {
-                                l.direction.x = l.direction.x.abs();
-                                l.direction.y = 0.0;
-                                let two_pi = 2.0 * std::f64::consts::PI;
-                                let u = l.origin.x.rem_euclid(two_pi);
-                                if u <= 1e-6 || (two_pi - u) <= 1e-6 {
-                                    l.origin.x = 0.0;
-                                } else {
-                                    l.origin.x = u;
-                                }
+                    let is_cylinder = matches!(
+                        brep.geom.surfaces.get(pc.surface_idx),
+                        Some(Surface3::Cylinder(_))
+                    );
+                    if is_cylinder
+                        && let Some(Curve2d::Line(mut l)) = curve2d
+                    {
+                        // Canonicalize periodic-u pcurves on cylinders for OCCT-style seam handling.
+                        let eps = 1e-9;
+                        if l.direction.y.abs() <= eps && l.direction.x.abs() > eps {
+                            l.direction.x = l.direction.x.abs();
+                            l.direction.y = 0.0;
+                            let two_pi = 2.0 * std::f64::consts::PI;
+                            let u = l.origin.x.rem_euclid(two_pi);
+                            if u <= 1e-6 || (two_pi - u) <= 1e-6 {
+                                l.origin.x = 0.0;
+                            } else {
+                                l.origin.x = u;
                             }
-                            curve2d = Some(Curve2d::Line(l));
                         }
+                        curve2d = Some(Curve2d::Line(l));
                     }
 
-                    if self.gmsh_strict && pcurves.len() == 1 {
+                    if pcurves.len() == 1 {
                         first_plane = brep
                             .geom
                             .surfaces
@@ -2081,16 +2041,16 @@ impl Part21Writer {
                     pcurve_ids.push(pcurve_id);
 
                     if pc_i == 0
-                        && let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
-                            let extra_param = self.write_curve2d(Some(extra_curve2d));
-                            let extra_def = self.definitional_representation(extra_param);
-                            let extra_pc = self.pcurve(surface_id, extra_def);
-                            pcurve_ids.push(extra_pc);
-                        }
+                        && let Some(extra_curve2d) = periodic_extra_curve2d.clone()
+                    {
+                        let extra_param = self.write_curve2d(Some(extra_curve2d));
+                        let extra_def = self.definitional_representation(extra_param);
+                        let extra_pc = self.pcurve(surface_id, extra_def);
+                        pcurve_ids.push(extra_pc);
                     }
+                }
 
-                if self.gmsh_strict
-                    && pcurve_ids.len() == 1
+                if pcurve_ids.len() == 1
                     && first_is_line
                 {
                     let mut extra_surface: Option<(Option<usize>, rcad_kernel::geom::Plane)> = None;
@@ -2119,7 +2079,7 @@ impl Part21Writer {
                     {
                         // Fallback for duplicated-topology solids where two planar
                         // faces share a geometric edge but not a shared edge index.
-                        // Emit a second PCURVE to match gmsh/OCCT two-PCURVE pattern.
+                        // Emit a second PCURVE to match OCCT two-PCURVE pattern.
                         extra_surface = Some((None, base_plane));
                     }
 
@@ -2146,13 +2106,15 @@ impl Part21Writer {
                     }
                 }
 
-                let use_torus_seam_curve = self.gmsh_strict
-                    && pcurve_ids.len() >= 2
+                let use_torus_seam_curve = pcurve_ids.len() >= 2
                     && torus_surface.is_some()
-                    && matches!(source_curve, Some(Curve3::Line(_)) | Some(Curve3::Circle(_)) | None);
+                    && matches!(
+                        source_curve,
+                        Some(Curve3::Line(_)) | Some(Curve3::Circle(_)) | None
+                    );
 
                 let use_periodic_line_seam_curve =
-                    self.gmsh_strict && pcurve_ids.len() >= 2 && periodic_line_dup_for_seam;
+                    pcurve_ids.len() >= 2 && periodic_line_dup_for_seam;
 
                 let use_seam_curve = use_torus_seam_curve || use_periodic_line_seam_curve;
 
@@ -2161,7 +2123,7 @@ impl Part21Writer {
                 } else {
                     self.surface_curve(basis_curve_3d, &pcurve_ids)
                 }
-            } else if self.gmsh_strict {
+            } else {
                 if let Some((surface_idx, plane)) = find_plane_surface_for_edge(brep, edge_idx) {
                     if let Some(curve2d) = synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane) {
                         let surface_id = self.get_or_write_surface_id(brep, surface_idx);
@@ -2215,8 +2177,6 @@ impl Part21Writer {
                         basis_curve_3d
                     }
                 }
-            } else {
-                basis_curve_3d
             }
         };
 
@@ -2241,7 +2201,7 @@ impl Part21Writer {
                 // do not trust persisted curve parameter zero blindly after
                 // import/rebuild. Reconstruct trimming from topological edge
                 // endpoints so exported TRIMMED_CURVE orientation matches the
-                // edge traversal seen by viewers (e.g. Gmsh/FreeCAD via OCCT).
+                // edge traversal seen by viewers (e.g. FreeCAD via OCCT).
                 if let Curve3::Circle(circle) = curve
                     && let Some(curve_id) = self.write_standalone_circle_trimmed_from_edge(
                         circle,
@@ -2493,11 +2453,7 @@ impl Part21Writer {
                 self.line("edge_line", origin, vec_id)
             }
             Curve3::Circle(circle) => {
-                let circle_normal = if self.gmsh_strict {
-                    canonicalize_axis_sign(circle.normal)
-                } else {
-                    circle.normal
-                };
+                let circle_normal = canonicalize_axis_sign(circle.normal);
                 let placement =
                     self.axis2_from_origin_axis("circle_axis", circle.center, circle_normal);
                 self.circle("edge_circle", placement, circle.radius.max(1e-9))
@@ -2613,7 +2569,7 @@ impl Part21Writer {
         // Determine knot type
         let knot_type = ".UNSPECIFIED.";
 
-        // All weights 1.0 → non-rational (UNIFORM_RATIONAL if not)
+        // All weights 1.0 ??non-rational (UNIFORM_RATIONAL if not)
         let rational = bs.weights.iter().any(|&w| (w - 1.0).abs() > 1e-8);
 
         self.b_spline_curve_with_knots(
@@ -2801,37 +2757,12 @@ impl Part21Writer {
         self.push("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) )".to_string())
     }
 
-    fn length_unit_millimeter(&mut self) -> u64 {
-        self.push("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )".to_string())
-    }
-
-    fn plane_angle_unit_degree(&mut self) -> u64 {
-        let radian_unit =
-            self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string());
-        let measure = self.push(format!(
-            "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(0.017453292519943295),#{})",
-            radian_unit
-        ));
-        let dim_exp = self.push("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)".to_string());
-        self.push(format!(
-            "( CONVERSION_BASED_UNIT('DEGREE',#{}) NAMED_UNIT(#{}) PLANE_ANGLE_UNIT() )",
-            measure, dim_exp
-        ))
-    }
-
     fn plane_angle_unit_radian(&mut self) -> u64 {
         self.push("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )".to_string())
     }
 
     fn solid_angle_unit_steradian(&mut self) -> u64 {
         self.push("( NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.) )".to_string())
-    }
-
-    fn uncertainty_measure_with_unit(&mut self, length_unit: u64) -> u64 {
-        self.push(format!(
-            "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-6),#{},'distance_accuracy_value','confusion accuracy')",
-            length_unit
-        ))
     }
 
     fn uncertainty_measure_with_unit_value(&mut self, length_unit: u64, value: f64) -> u64 {
@@ -3277,15 +3208,15 @@ impl Part21Writer {
         ))
     }
 
-    // ── Color / presentation entities ─────────────────────────────────
+    // ?? Color / presentation entities ?????????????????????????????????
 
     /// Emit STYLED_ITEM + full presentation chain for a single ADVANCED_FACE.
     ///
     /// STEP presentation chain:
-    ///   COLOUR_RGB → FILL_AREA_STYLE_COLOUR → FILL_AREA_STYLE
-    ///   → SURFACE_STYLE_FILL_AREA → SURFACE_STYLE_USAGE
-    ///   → SURFACE_SIDE_STYLE → PRESENTATION_STYLE_ASSIGNMENT
-    ///   → STYLED_ITEM (references the face)
+    ///   COLOUR_RGB ??FILL_AREA_STYLE_COLOUR ??FILL_AREA_STYLE
+    ///   ??SURFACE_STYLE_FILL_AREA ??SURFACE_STYLE_USAGE
+    ///   ??SURFACE_SIDE_STYLE ??PRESENTATION_STYLE_ASSIGNMENT
+    ///   ??STYLED_ITEM (references the face)
     fn write_face_color(&mut self, face_id: u64, color: Color) {
         let rgb = self.colour_rgb("face_color", color.r, color.g, color.b);
         let fill_color = self.fill_area_style_colour("", rgb);
@@ -3671,7 +3602,7 @@ impl Part21Writer {
         ));
     }
 
-    // ── View and Camera write functions (AP242) ───────────────────────────────
+    // ?? View and Camera write functions (AP242) ???????????????????????????????
 
     fn write_view(&mut self, view: &StepView) {
         let name = opt_step_string(view.name.as_deref());
@@ -3723,7 +3654,7 @@ impl Part21Writer {
         ));
     }
 
-    // ── Annotation write functions (AP242) ────────────────────────────────────
+    // ?? Annotation write functions (AP242) ????????????????????????????????????
 
     fn write_note(&mut self, note: &StepNote) {
         let name = opt_step_string(note.name.as_deref());
@@ -4445,10 +4376,9 @@ fn face_orientation_for_surface(
     loop_points: &[glam::DVec3],
     face: &Face,
     surface: Option<&Surface3>,
-    gmsh_strict: bool,
 ) -> bool {
     match surface {
-        Some(Surface3::Plane(plane)) if gmsh_strict => {
+        Some(Surface3::Plane(plane)) => {
             let plane_normal = canonicalize_axis_sign(plane.normal);
             let mut c = glam::DVec3::ZERO;
             let mut n = 0usize;
@@ -4475,7 +4405,6 @@ fn face_orientation_for_surface(
                 outward >= 0.0
             }
         }
-        Some(Surface3::Plane(plane)) => face.normal.dot(plane.normal) >= 0.0,
         _ => true,
     }
 }
@@ -4528,30 +4457,6 @@ mod tests {
         assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(step.contains("CLOSED_SHELL"));
         // Full solid export should not include wireframe overlays by default.
-        assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
-        assert!(!step.contains("GEOMETRIC_CURVE_SET"));
-        assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
-    }
-
-    #[test]
-    fn non_strict_full_solid_omits_wireframe_overlay() {
-        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
-            .expect("test box should be valid");
-        let step = StepWriter::write_string_with_options(
-            &brep,
-            ExportSelection {
-                selected_faces: &[],
-                selected_edges: &[],
-            },
-            &StepWriteOptions {
-                protocol: StepProtocol::Ap214,
-                gmsh_strict: false,
-                ..Default::default()
-            },
-        );
-
-        assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
-        assert!(step.contains("MANIFOLD_SOLID_BREP"));
         assert!(!step.contains("GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION"));
         assert!(!step.contains("GEOMETRIC_CURVE_SET"));
         assert!(step.contains("SHAPE_DEFINITION_REPRESENTATION"));
@@ -5015,7 +4920,6 @@ mod tests {
             },
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5154,7 +5058,6 @@ mod tests {
             },
             &StepWriteOptions {
                 protocol: StepProtocol::Ap214,
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5307,7 +5210,6 @@ mod tests {
                 selected_edges: &[],
             },
             &StepWriteOptions {
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5351,7 +5253,6 @@ mod tests {
                 selected_edges: &[],
             },
             &StepWriteOptions {
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5407,7 +5308,6 @@ mod tests {
                 selected_edges: &[],
             },
             &StepWriteOptions {
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5453,7 +5353,6 @@ mod tests {
                 selected_edges: &[],
             },
             &StepWriteOptions {
-                gmsh_strict: false,
                 ..Default::default()
             },
         );
@@ -5472,7 +5371,7 @@ mod tests {
         );
     }
 
-    // ── GDT Extended entity write tests ──────────────────────────────────────
+    // ?? GDT Extended entity write tests ??????????????????????????????????????
 
     #[test]
     fn writes_dimensional_tolerances() {

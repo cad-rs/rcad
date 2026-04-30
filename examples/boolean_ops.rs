@@ -11,7 +11,7 @@ use rcad_algorithms::{
 };
 use rcad_kernel::BRep;
 use rcad_modeling::*;
-use rcad_step::writer::{ExportSelection, StepWriteOptions, StepWriter};
+use rcad_step::writer::{ExportSelection, StepWriter};
 use std::collections::HashMap;
 
 fn main() {
@@ -37,7 +37,7 @@ fn main() {
         report.vertices_merged,
     );
     inspect_union_intersection_face_edges(&union_raw);
-    write_step_with_mode(&union_raw, "output_bool_union.step", false);
+    write_step(&union_raw, "output_bool_union.step");
 
     // ── 2. Intersection of two overlapping boxes ───────────────────────
     println!("2. Intersection of two overlapping boxes");
@@ -102,21 +102,12 @@ fn make_box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
 }
 
 fn write_step(brep: &BRep, path: &str) {
-    write_step_with_mode(brep, path, true);
-}
-
-fn write_step_with_mode(brep: &BRep, path: &str, gmsh_strict: bool) {
-    let options = StepWriteOptions {
-        gmsh_strict,
-        ..Default::default()
-    };
-    let step = StepWriter::write_string_with_options(
+    let step = StepWriter::write_string(
         brep,
         ExportSelection {
             selected_faces: &[],
             selected_edges: &[],
         },
-        &options,
     );
     std::fs::write(path, step).expect("write STEP file");
     println!("  -> {path}");

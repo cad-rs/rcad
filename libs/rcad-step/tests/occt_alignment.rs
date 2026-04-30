@@ -9,7 +9,7 @@
 //! 5. Error handling
 //!
 //! Note: Assembly hierarchy tests are in assembly_io.rs and have known issues
-//! being tracked separately.
+//! being tracked separately. FEA-oriented primitive checks live in `fea_roundtrip.rs`.
 
 use glam::{DAffine3, DVec3};
 use rcad_algorithms::{boolean_op, BooleanOpType};
@@ -775,119 +775,8 @@ fn binary_garbage_error() {
 }
 
 // ============================================================================
-// 7. FEA Geometry Support Tests
+// 7. OCCT TKDESTEP Additional Edge Cases
 // ============================================================================
-
-/// Test box geometry suitable for FEA meshing.
-/// OCCT TKDESTEP coverage: box_for_fea, manifold_geometry.
-#[test]
-fn box_fea_geometry() {
-    let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 20.0, 5.0).expect("box");
-
-    let step_str = StepWriter::write_string(&brep, all_faces_selection());
-    let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
-
-    // Verify topology for FEA
-    assert_eq!(face_count(&parsed), 6, "box should have 6 faces");
-
-    // Verify geometry bounds are preserved
-    let bbox = parsed.bounding_box().expect("should have bounding box");
-    let [min, max] = bbox;
-    assert!((max.x - min.x - 10.0).abs() < 0.1, "X dimension should be 10");
-    assert!((max.y - min.y - 20.0).abs() < 0.1, "Y dimension should be 20");
-    assert!((max.z - min.z - 5.0).abs() < 0.1, "Z dimension should be 5");
-}
-
-/// Test cylinder geometry for FEA.
-/// OCCT TKDESTEP coverage: cylinder_for_fea, periodic_surface.
-#[test]
-fn cylinder_fea_geometry() {
-    let radius = 5.0;
-    let height = 15.0;
-    let brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height).expect("cylinder");
-
-    let step_str = StepWriter::write_string(&brep, all_faces_selection());
-    let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
-
-    // Verify topology
-    assert_eq!(face_count(&parsed), 3, "cylinder should have 3 faces");
-
-    // Verify bounds
-    let bbox = parsed.bounding_box().expect("should have bounding box");
-    let [min, max] = bbox;
-    assert!((max.z - min.z - height).abs() < 0.01, "height should be preserved");
-}
-
-/// Test cone geometry for FEA.
-/// OCCT TKDESTEP coverage: cone_for_fea, conical_surface.
-#[test]
-fn cone_fea_geometry() {
-    let radius = 4.0;
-    let height = 8.0;
-    let brep = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height).expect("cone");
-
-    let step_str = StepWriter::write_string(&brep, all_faces_selection());
-    let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
-
-    // Verify topology
-    assert_eq!(face_count(&parsed), 2, "cone should have 2 faces");
-
-    // Verify bounds
-    let bbox = parsed.bounding_box().expect("should have bounding box");
-    let [min, max] = bbox;
-    assert!((max.z - min.z - height).abs() < 0.01, "height should be preserved");
-}
-
-/// Test torus geometry for FEA.
-/// OCCT TKDESTEP coverage: torus_for_fea, toroidal_surface.
-#[test]
-fn torus_fea_geometry() {
-    let major_radius = 5.0;
-    let minor_radius = 1.5;
-    let brep =
-        make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, major_radius, minor_radius).expect("torus");
-
-    let step_str = StepWriter::write_string(&brep, all_faces_selection());
-    let parsed = StepReader::parse_string(&step_str).expect("parse should succeed");
-
-    // Verify topology
-    assert!(face_count(&parsed) >= 1, "torus should have at least 1 face");
-
-    // Verify outer diameter
-    let bbox = parsed.bounding_box().expect("should have bounding box");
-    let [min, max] = bbox;
-    let expected_diameter = 2.0 * (major_radius + minor_radius);
-    assert!(
-        (max.x - min.x - expected_diameter).abs() < 0.1,
-        "outer diameter should be approximately preserved"
-    );
-}
-
-// ============================================================================
-// 8. OCCT TKDESTEP Additional Edge Cases
-// ============================================================================
-
-/// Test torus roundtrip as an alternative primitive.
-/// OCCT TKDESTEP coverage: toroidal_surface, elementary_surface_roundtrip.
-#[test]
-fn torus_primitive_roundtrip() {
-    let major_radius = 3.0;
-    let minor_radius = 1.0;
-    let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, major_radius, minor_radius)
-        .expect("torus");
-
-    let step = StepWriter::write_string(&torus, all_faces_selection());
-    let parsed = StepReader::parse_string(&step).expect("parse torus");
-
-    // Torus should have at least 1 face
-    assert!(face_count(&parsed) >= 1, "torus should have at least 1 face");
-
-    // Verify bounding box
-    let bbox = parsed.bounding_box().expect("should have bounds");
-    let [min, max] = bbox;
-    let expected_diameter = 2.0 * (major_radius + minor_radius);
-    assert!((max.x - min.x - expected_diameter).abs() < 0.5, "diameter preserved");
-}
 
 /// Test cylinder-box intersection roundtrip.
 /// OCCT TKDESTEP coverage: cylinder_boolean, curved_planar_intersection.

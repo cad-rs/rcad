@@ -962,7 +962,7 @@ fn find_shape_rep_for_pd(
 ) -> Option<u64> {
     /// Prefer a shape representation whose closure actually contains B-rep
     /// geometry. `StepWriter` may attach multiple `SHAPE_DEFINITION_REPRESENTATION`
-    /// chains (for example `gmsh_strict` placement scaffolding); those often
+    /// chains (for example STEP assembly placement scaffolding); those often
     /// point at context-only `SHAPE_REPRESENTATION`s and must not win over the
     /// real solid/surface model.
     fn solid_geometry_score(map: &HashMap<u64, String>, sr_id: u64) -> usize {

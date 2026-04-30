@@ -133,8 +133,8 @@ name = "non_manifold_topology"
 path = "non_manifold_topology.rs"
 
 [[example]]
-name = "step_gmsh_test"
-path = "step_gmsh_test.rs"
+name = "step_occt_export"
+path = "step_occt_export.rs"
 
 [[example]]
 name = "diag_intersect"
