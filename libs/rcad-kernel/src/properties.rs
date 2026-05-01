@@ -1291,18 +1291,13 @@ fn face_triangles(
                 let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
                 trim_almost_closed_polyline(&mut outer, 1e-5);
                 if outer.len() >= 3 {
-                    if let Some(tris) = try_spherical_earcut_simple(s, &outer, face.normal)
-                        .or_else(|| try_planar_earcut_simple_outer(&outer, face.normal))
-                        .or_else(|| {
-                            try_spherical_uv_masked_raster(
-                                s,
-                                brep,
-                                face,
-                                face_flat_idx,
-                                face.normal,
-                            )
-                        })
-                    {
+                    if let Some(tris) = try_spherical_earcut_simple(s, &outer, face.normal) {
+                        return tris;
+                    }
+                    if let Some(tris) = try_planar_earcut_simple_outer(&outer, face.normal) {
+                        return tris;
+                    }
+                    if let Some(tris) = try_spherical_uv_masked_raster(s, brep, face, face_flat_idx, face.normal) {
                         return tris;
                     }
                 }
