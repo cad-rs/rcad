@@ -46,6 +46,25 @@ fn debug_box_sphere_raw_builder_vs_postproc() {
     let raw = builder.build().expect("raw union build");
     describe("1  raw builder (no postproc)", &raw);
 
+    // DEBUG: analyze shared boundary vertices
+    {
+        eprintln!("\n=== Face analysis for PATH 1 ===");
+        let brep = &raw;
+        for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
+            let n_edges = face.outer_wire.edges.len();
+            let edge_verts: Vec<(usize, usize)> = face.outer_wire.edges.iter().map(|we| {
+                let e = &brep.edges[we.idx];
+                (e.start, e.end)
+            }).collect();
+            let vert_str: Vec<String> = edge_verts.iter().flat_map(|(s,e)| vec![*s, *e]).take(12).map(|vi| {
+                let p = brep.vertices[vi].point;
+                format!("({:.4},{:.4},{:.4})", p.x, p.y, p.z)
+            }).collect();
+            let n_tris = face.triangles.len();
+            eprintln!("  face[{fi}]: edges={} tris={} first_verts: {:?}", n_edges, n_tris, vert_str);
+        }
+    }
+
     // === PATH 2: raw builder + merge_close_vertices ===
     let (sewn, _n) = merge_close_vertices(&raw, TOLERANCE_ABS * 64.0);
     describe("2  +merge_close_vertices", &sewn);

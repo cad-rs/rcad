@@ -1411,9 +1411,86 @@ impl<'a> BooleanBuilder<'a> {
                     let center_2d = project_to_2d(circle.center);
                     let radius = circle.radius;
                     let mut next: Vec<Vec<DVec2>> = Vec::new();
+
+                    // Pre-sample the 3D circle at 128 3D points, projected to 2D.
+                    // `split_curved_face_parametric` samples sphere UV edges at 32 points
+                    // (EDGE_SAMPLES) per edge, so 128 → 32 per quadrant matches that density,
+                    // ensuring plane-side arc positions are bit-identical to sphere-side
+                    // boundary positions so `ResultBuilder::add_vertex` deduplicates them.
+                    const ARC_PRE_N: usize = 128;
+                    let pre_2d: Vec<DVec2> = (0..ARC_PRE_N)
+                        .map(|i| project_to_2d(circle.point_at(
+                            std::f64::consts::TAU * i as f64 / ARC_PRE_N as f64,
+                        )))
+                        .collect();
+                    let on_circle_tol = TOLERANCE_COORD_SUB;
+
                     for poly in &polygons_2d {
                         let halves = split_polygon_by_circle_2d(poly, center_2d, radius);
-                        next.extend(halves);
+                        for half in halves {
+                            // Check whether this half has a contiguous on-circle arc segment.
+                            let on: Vec<bool> = half.iter()
+                                .map(|p| ((*p - center_2d).length() - radius).abs() < on_circle_tol)
+                                .collect();
+                            let fi = on.iter().position(|&x| x);
+                            let li = on.iter().rposition(|&x| x);
+                            let replace = match (fi, li) {
+                                (Some(f), Some(l)) => {
+                                    let cnt = on.iter().filter(|&&x| x).count();
+                                    cnt >= 3 && l - f + 1 == cnt
+                                }
+                                _ => false,
+                            };
+
+                            if replace {
+                                let fi = fi.unwrap();
+                                let li = li.unwrap();
+
+                                let theta1 = (half[fi] - center_2d).to_angle();
+                                let theta_n = (half[fi + 1] - center_2d).to_angle();
+                                let d_ccw = (theta_n - theta1
+                                    + std::f64::consts::TAU)
+                                    % std::f64::consts::TAU;
+                                let going_ccw = d_ccw < std::f64::consts::PI;
+
+                                let j1 = (((theta1 % std::f64::consts::TAU
+                                    + std::f64::consts::TAU) % std::f64::consts::TAU)
+                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
+                                    .floor() as usize % ARC_PRE_N;
+                                let jn = ((((half[li] - center_2d).to_angle()
+                                    % std::f64::consts::TAU + std::f64::consts::TAU)
+                                    % std::f64::consts::TAU)
+                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
+                                    .floor() as usize % ARC_PRE_N;
+
+                                let mut arc: Vec<DVec2> = Vec::new();
+                                if going_ccw {
+                                    let mut j = (j1 + 1) % ARC_PRE_N;
+                                    while j != jn {
+                                        arc.push(pre_2d[j]);
+                                        j = (j + 1) % ARC_PRE_N;
+                                    }
+                                } else {
+                                    let mut j = (j1 + ARC_PRE_N - 1) % ARC_PRE_N;
+                                    while j != jn {
+                                        arc.push(pre_2d[j]);
+                                        j = (j + ARC_PRE_N - 1) % ARC_PRE_N;
+                                    }
+                                }
+
+                                let mut replaced: Vec<DVec2> =
+                                    Vec::with_capacity(fi + 1 + arc.len() + half.len() - li);
+                                replaced.extend_from_slice(&half[..=fi]);
+                                replaced.extend(arc);
+                                replaced.extend_from_slice(&half[li..]);
+                                replaced.dedup_by(|a, b| {
+                                    (*a - *b).length_squared() < on_circle_tol * on_circle_tol
+                                });
+                                next.push(replaced);
+                            } else {
+                                next.push(half);
+                            }
+                        }
                     }
                     // Track this circle so we can compute correct sample points later
                     embedded_circles.push((center_2d, radius));
@@ -2687,7 +2764,10 @@ fn curved_subface_boundary_3d(
     trim_polylines_uv: &[Vec<DVec2>],
     surface: &Surface3,
 ) -> Vec<DVec3> {
-    const EDGE_SAMPLES: usize = 8;
+    // EDGE_SAMPLES must divide evenly into the 3D curve pre-sampling
+    // density (128) used in split_planar_face so sphere and plane boundary
+    // vertices share the same 3D positions along intersection curves.
+    const EDGE_SAMPLES: usize = 32;
 
     let mut pts: Vec<DVec3> = Vec::new();
 
@@ -3951,11 +4031,22 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
         let di = dists[i];
         let dj = dists[j];
 
-        if di.abs() < tol {
-            continue; // vertex i is on the circle
+        let on_i = di.abs() < tol;
+        let on_j = dj.abs() < tol;
+
+        // Both on circle — edge lies on boundary, no crossing
+        if on_i && on_j {
+            continue;
         }
-        if dj.abs() < tol {
-            continue; // vertex j is on the circle (handled when edge starting at j is processed)
+        // One vertex exactly on circle, adjacent clearly not on circle
+        // → crossing at the on-circle vertex itself
+        if on_i && !on_j {
+            crossings.push((i, poly[i]));
+            continue;
+        }
+        if !on_i && on_j {
+            crossings.push((i, poly[j]));
+            continue;
         }
 
         if di * dj < 0.0 {
@@ -3992,6 +4083,14 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
 
     // Sort crossings by edge index
     crossings.sort_by_key(|(idx, _)| *idx);
+
+    // Deduplicate crossings at the same spatial position (degenerate on-circle vertices
+    // can produce crossings on both adjacent edges at the same point).
+    crossings.dedup_by(|a, b| (a.1 - b.1).length_squared() < tol * tol);
+
+    if crossings.len() < 2 {
+        return vec![poly.to_vec()];
+    }
 
     // Take the first two crossings
     let (idx1, pt1) = crossings[0];
@@ -4031,8 +4130,16 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
         // Compute proper arc from theta1 through inner_mid_theta to theta2
         let delta = {
             let mut d = theta2 - theta1;
-            // Adjust delta to go through inner_mid_theta
-            let going_ccw = inner_mid_theta > theta1 || inner_mid_theta < theta2;
+            // Adjust delta to go through inner_mid_theta.
+            // inner_mid_theta is the arc waypoint inside the polygon.
+            // The CCW arc from theta1 to theta2:
+            //   if theta1 < theta2: spans [theta1, theta2]
+            //   if theta1 > theta2: wraps around — [theta1, 2π) ∪ [0, theta2]
+            let going_ccw = if theta1 < theta2 {
+                inner_mid_theta > theta1 && inner_mid_theta < theta2
+            } else {
+                inner_mid_theta > theta1 || inner_mid_theta < theta2
+            };
             if going_ccw {
                 while d < 0.0 {
                     d += std::f64::consts::TAU;
