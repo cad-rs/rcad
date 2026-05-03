@@ -35,6 +35,7 @@ pub struct LinPlnIntersection {
 ///
 /// # Example
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Line3, Plane};
 /// use rcad_algorithms::int_ana::intersect_line_plane;

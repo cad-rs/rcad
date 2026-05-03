@@ -43,6 +43,7 @@ use crate::tolerance::*;
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_algorithms::shape_construct::construct_line;
 ///

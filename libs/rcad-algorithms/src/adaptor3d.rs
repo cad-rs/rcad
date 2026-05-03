@@ -14,6 +14,7 @@
 //! # Examples
 //!
 //! ```
+//! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::adaptor3d::Curve3dAdaptor;
 //! use rcad_kernel::Curve3;
 //! use rcad_kernel::geom::Circle3;

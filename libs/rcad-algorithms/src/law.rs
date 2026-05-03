@@ -14,6 +14,7 @@
 //! # Example
 //!
 //! ```
+//! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::law::{LinearLaw, LawFunction};
 //!
 //! let law = LinearLaw::new(0.0, 1.0, 1.0, 3.0);

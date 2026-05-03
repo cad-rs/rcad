@@ -20,6 +20,7 @@
 //! # Example
 //!
 //! ```rust
+//! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::approx_int::{IntersectionApproximator, ApproxOptions};
 //! use glam::{DVec3, DVec2};
 //!

@@ -14,6 +14,7 @@
 //! # Example
 //!
 //! ```rust
+//! # use rcad_algorithms::tolerance::*;
 //! use glam::DVec3;
 //! use rcad_kernel::geom::{Surface3, SphericalSurface};
 //! use rcad_algorithms::projection::{project_point_on_surface, ProjectionOptions};
@@ -178,6 +179,7 @@ pub struct PointBRepProjection {
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Curve3, Circle3};
 /// use rcad_algorithms::projection::project_point_on_curve;
@@ -233,6 +235,7 @@ pub fn project_point_on_curve_with_options(
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Surface3, Plane};
 /// use rcad_algorithms::projection::project_point_on_surface;

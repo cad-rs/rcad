@@ -3880,6 +3880,7 @@ fn split_polygon_2d_by_segment(
 /// # Example
 ///
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::builder::GlueConfig;
 ///
 /// let config = GlueConfig {

@@ -13,6 +13,7 @@
 //! # Example
 //!
 //! ```rust
+//! # use rcad_algorithms::tolerance::*;
 //! use glam::DVec3;
 //! use rcad_kernel::{BRep, PrimitiveSolid};
 //! use rcad_algorithms::brep_int_curve_surface::{intersect_line_with_brep, ray_cast};
@@ -139,6 +140,7 @@ impl Default for RayHit {
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Curve3, Line3};
 /// use rcad_kernel::{BRep, PrimitiveSolid};
@@ -217,6 +219,7 @@ pub fn intersect_curve_with_brep(
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use glam::DVec3;
 /// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::intersect_line_with_brep;

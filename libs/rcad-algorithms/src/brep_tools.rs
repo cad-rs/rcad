@@ -215,6 +215,7 @@ pub fn read_brep_from_file<P: AsRef<Path>>(path: P) -> Result<BRep, BRepToolsErr
 /// # Example
 ///
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_tools::transform_shape;
 /// use rcad_kernel::BRep;
 /// use glam::{DAffine3, DVec3};

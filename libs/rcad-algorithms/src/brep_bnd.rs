@@ -10,6 +10,7 @@
 //! # Example
 //!
 //! ```
+//! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::brep_bnd::*;
 //! use rcad_kernel::BRep;
 //!

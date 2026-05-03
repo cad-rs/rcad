@@ -1,4 +1,4 @@
-//! TopLoc-style location utilities for coordinate system management.
+﻿//! TopLoc-style location utilities for coordinate system management.
 //!
 //! This module provides utilities analogous to OCCT's `TopLoc` package:
 //!
@@ -549,6 +549,7 @@ impl Datum {
     ///     DVec3::Z,
     /// );
     /// // Z axis points along world Z
+    /// # use rcad_algorithms::tolerance::*;
     /// assert!((datum.z_direction().dot(DVec3::Z) - 1.0).abs() < TOLERANCE_COORD_SUB);
     /// ```
     pub fn from_origin_and_normal(origin: DVec3, normal: DVec3) -> Self {
@@ -562,9 +563,9 @@ impl Datum {
         };
 
         // For a right-handed coordinate system with z as normal:
-        // y = z × x, so x = temp projected onto the plane perpendicular to z
+        // y = z 脳 x, so x = temp projected onto the plane perpendicular to z
         // First get y as perpendicular to both z and temp
-        // Then x = y × z (completing the right-handed system)
+        // Then x = y 脳 z (completing the right-handed system)
         let y_dir = z_dir.cross(temp).normalize_or(DVec3::Y);
         let x_dir = y_dir.cross(z_dir).normalize_or(DVec3::X);
 
@@ -676,6 +677,7 @@ impl Datum {
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
     /// let local = DVec3::new(0.5, 0.0, 0.0);
     /// let world = datum.to_world(local);
+    /// # use rcad_algorithms::tolerance::*;
     /// assert!((world.x - 1.5).abs() < TOLERANCE_COORD_SUB); // 1.0 (origin) + 0.5 (local x)
     /// ```
     pub fn to_world(&self, local: DVec3) -> DVec3 {
@@ -697,6 +699,7 @@ impl Datum {
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
     /// let world = DVec3::new(1.5, 0.0, 0.0);
     /// let local = datum.to_local(world);
+    /// # use rcad_algorithms::tolerance::*;
     /// assert!((local.x - 0.5).abs() < TOLERANCE_COORD_SUB); // world x - origin x
     /// ```
     pub fn to_local(&self, world: DVec3) -> DVec3 {
@@ -918,6 +921,7 @@ impl LocationManager {
     /// let composed = manager.compose_locations(&[t1, t2]);
     /// let result = composed.transform_point(DVec3::ZERO);
     /// assert!((result.x - 1.0).abs() < TOLERANCE_COORD_SUB);
+    /// # use rcad_algorithms::tolerance::*;
     /// assert!((result.y - 2.0).abs() < TOLERANCE_COORD_SUB);
     /// ```
     pub fn compose_locations(&self, indices: &[usize]) -> Location {
@@ -1064,6 +1068,7 @@ impl LocationManager {
 /// # Example
 ///
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::top_loc::{Location, apply_location_to_shape};
 /// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use glam::DVec3;
@@ -1588,3 +1593,4 @@ mod tests {
         // The location should transform points from camera space to world space
     }
 }
+

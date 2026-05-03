@@ -9,6 +9,7 @@
 //! # Example
 //!
 //! ```
+//! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::brep_algo_api::{BRepAlgoAPI_Fuse, BooleanApiOptions};
 //! use rcad_kernel::{BRep, PrimitiveSolid};
 //!

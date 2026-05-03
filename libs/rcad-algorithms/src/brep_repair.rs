@@ -8965,6 +8965,7 @@ impl SolidRepairResult {
 ///
 /// # Example
 /// ```rust
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::repair_solid;
@@ -9746,6 +9747,7 @@ pub struct DuplicateFaceReport {
 ///
 /// # Example
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_repair::detect_duplicate_faces;
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::PrimitiveSolid;
@@ -10673,6 +10675,7 @@ pub struct BooleanCleanupReport {
 ///
 /// # Example
 /// ```
+/// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_repair::cleanup_boolean_result;
 /// use rcad_kernel::BRep;
 ///
