@@ -2909,6 +2909,136 @@ pub fn boolean_op_robust(
     Err(last_err.unwrap_or(BooleanError::DegenerateResult))
 }
 
+// ── RetryPolicy bridge ──────────────────────────────────────────────────────
+
+/// Build a [`BooleanRobustOptions`] from a [`RetryPolicy`], mapping policy parameters
+/// to the robust boolean retry infrastructure.
+///
+/// The resulting options use [`BooleanRetryPolicy::AdaptiveByFailureClass`] so that
+/// the existing retry machinery can make per-failure-class decisions, while the
+/// [`RetryPolicy`] presets supply the tolerance, glue, and make-connected parameters.
+pub fn retry_policy_to_robust_options(
+    policy: &RetryPolicy,
+    mut base_options: BooleanOptions,
+) -> BooleanRobustOptions {
+    // Generate fuzzy retry ladder from policy growth curve
+    let mut ladder: Vec<f64> = Vec::new();
+    let mut fuzzy = base_options.fuzzy_tol.max(TOLERANCE_ABS);
+    for _ in 0..policy.max_attempts.saturating_sub(1) {
+        fuzzy = policy.next_fuzzy_tolerance(fuzzy);
+        if fuzzy >= policy.fuzzy_tolerance_cap {
+            if !ladder
+                .iter()
+                .any(|v| (*v - policy.fuzzy_tolerance_cap).abs() <= TOLERANCE_FLOAT_DEDUP)
+            {
+                ladder.push(policy.fuzzy_tolerance_cap);
+            }
+            break;
+        }
+        ladder.push(fuzzy);
+    }
+    // Deduplicate and sort ascending
+    ladder.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ladder.dedup_by(|a, b| (*a - *b).abs() <= TOLERANCE_FLOAT_DEDUP);
+
+    // Map glue settings
+    base_options.glue_tolerance = base_options.glue_tolerance.max(policy.glue_tolerance);
+    if policy.enable_glue_after_n_failures == 0 {
+        base_options.use_glue = true;
+    }
+
+    // Map make-connected settings from policy
+    if policy.make_connected_aggressiveness > 0 {
+        base_options.run_make_connected = true;
+        base_options.make_connected_tolerance = base_options
+            .make_connected_tolerance
+            .max(policy.make_connected_initial_tolerance);
+        base_options.make_connected_max_passes = base_options
+            .make_connected_max_passes
+            .max(policy.make_connected_max_passes);
+        base_options.make_connected_tolerance_growth = base_options
+            .make_connected_tolerance_growth
+            .max(policy.make_connected_tolerance_growth);
+        base_options.make_connected_tolerance_cap = base_options
+            .make_connected_tolerance_cap
+            .max(policy.fuzzy_tolerance_cap);
+        base_options.make_connected_scoped = policy.use_scoped_make_connected;
+        base_options.make_connected_scope_fallback_to_global =
+            policy.fallback_to_global_cleanup;
+    }
+
+    BooleanRobustOptions {
+        base: base_options,
+        fuzzy_retry_ladder: ladder,
+        retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+        extreme_geometry: ExtremeGeometryRetryConfig::default(),
+    }
+}
+
+/// Boolean operation using a detailed [`RetryPolicy`] for fine-grained retry control.
+///
+/// This wraps [`boolean_op_robust`] with the advanced retry infrastructure from
+/// [`boolean::RetryPolicy`], converting the execution report into a
+/// [`BooleanDiagnosticReport`] with per-attempt failure classification and
+/// recovery strategy metadata.
+pub fn boolean_op_with_retry_policy(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    policy: &RetryPolicy,
+    base_options: BooleanOptions,
+) -> Result<(BRep, BooleanDiagnosticReport), BooleanError> {
+    let robust_options = retry_policy_to_robust_options(policy, base_options);
+    let (brep, exec_report) = boolean_op_robust(op, a, b, robust_options)?;
+
+    let mut diag_report = BooleanDiagnosticReport {
+        retry_policy: Some(policy.clone()),
+        total_duration_us: 0,
+        ..BooleanDiagnosticReport::default()
+    };
+
+    for attempt in &exec_report.robust_attempts {
+        let failure_class = attempt.retry_class.map(|rc| match rc {
+            BooleanRetryClass::FatalInput => BooleanFailureClass::InvalidInput,
+            BooleanRetryClass::IncompleteData => BooleanFailureClass::IncompleteIntersection,
+            BooleanRetryClass::DegenerateTopology => BooleanFailureClass::DegenerateTopology,
+            BooleanRetryClass::NumericalInstability => BooleanFailureClass::NumericalInstability,
+        });
+
+        let recovery_strategy = failure_class.map(|fc| {
+            FailureAnalyzer::determine_recovery_strategy(
+                fc,
+                diag_report.total_attempts,
+                policy,
+            )
+        });
+
+        diag_report.add_attempt(BooleanAttemptDiagnostic {
+            attempt_number: diag_report.total_attempts + 1,
+            fuzzy_tolerance: attempt.fuzzy_tol,
+            glue_enabled: attempt.used_glue,
+            glue_tolerance: attempt.glue_tolerance,
+            make_connected_run: attempt.made_connected,
+            make_connected_passes: exec_report
+                .make_connected_report
+                .as_ref()
+                .map(|r| r.passes_run)
+                .unwrap_or(0),
+            success: attempt.success,
+            failure_class,
+            recovery_strategy,
+            error_message: attempt.error_message.clone(),
+            result_faces: attempt.output_faces,
+            scoped_make_connected: attempt.make_connected_scoped_enabled,
+            global_fallback: attempt.make_connected_scope_fallback_applied,
+            ..BooleanAttemptDiagnostic::default()
+        });
+    }
+
+    diag_report.finalize();
+    Ok((brep, diag_report))
+}
+
 /// Run post-operation simplification passes on a BRep.
 pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
     fn closure_score(brep: &BRep) -> usize {

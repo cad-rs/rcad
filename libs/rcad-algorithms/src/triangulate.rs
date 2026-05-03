@@ -1006,9 +1006,6 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
     !(has_neg && has_pos)
 }
 
-/// Max product of clamped plane `(螖u)(螖v)` below which [`mesh_brep`] skips
-/// analytic [`triangulate_surface`] and uses wire sampling (see seam-only circle caps).
-const PLANE_UV_SLIVER_MAX: f64 = TOLERANCE_LINEAR_ULTRA_STRICT;
 
 /// Tessellate all faces of a BRep in-place, writing triangle indices into
 /// `face.triangles`.
@@ -1078,10 +1075,14 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
                     );
 
                     let is_plane = matches!(surf, Surface3::Plane(_));
+                    // Scale-aware UV closure tolerance (phase C): min extent grows with
+                    // domain size, bounded by historic mesh-tier cap.
+                    let uv_domain_min = uv_polyline_trim_closed_len_sq(u1 - u0, v1 - v0).sqrt();
                     let plane_analytic_ok = !is_plane
-                        || (u1 - u0).abs() * (v1 - v0).abs() >= PLANE_UV_SLIVER_MAX;
+                        || (u1 - u0).abs() * (v1 - v0).abs() >= uv_domain_min * uv_domain_min;
 
-                    let domain_ok = (u1 - u0).abs() >= TOLERANCE_LINEAR_ULTRA_STRICT && (v1 - v0).abs() >= TOLERANCE_LINEAR_ULTRA_STRICT;
+                    let domain_ok = (u1 - u0).abs() >= uv_domain_min
+                        && (v1 - v0).abs() >= uv_domain_min;
                     let has_inner_wires = !brep.solids[solid_idx].shells[shell_idx].faces[face_idx]
                         .inner_wires
                         .is_empty();
