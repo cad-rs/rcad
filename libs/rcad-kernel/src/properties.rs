@@ -204,21 +204,40 @@ fn try_spherical_earcut_simple(
     }
     let mut outer_uv: Vec<DVec2> = outer.iter().map(|p| sphere_point_to_uv(s, *p)).collect();
     unwrap_sphere_u_in_chain(&mut outer_uv);
-    let mut flat: Vec<f64> = Vec::with_capacity(2 * outer.len());
+    // Remove near-duplicate consecutive UV points (common at sphere poles
+    // and seam boundaries where multiple UV coordinates map to the same 3D
+    // point). The earcut triangulation breaks on degenerate UV polygons.
+    let uv_dedup_tol = 1e-8;
+    outer_uv.dedup_by(|a, b| (*a - *b).length_squared() < uv_dedup_tol);
+    if outer_uv.len() < 3 {
+        return None;
+    }
+    let mut flat: Vec<f64> = Vec::with_capacity(2 * outer_uv.len());
     for uv in &outer_uv {
         flat.push(uv.x);
         flat.push(uv.y);
     }
-    let all_3d: Vec<DVec3> = outer.to_vec();
+    // Rebuild a parallel 3D array from the deduped UV indices
+    let deduped_3d: Vec<DVec3> = outer_uv.iter()
+        .map(|uv| s.point_at(uv.x, uv.y))
+        .collect();
     let indices = earcut_indices_from_flat(&flat, &[]);
     if indices.is_empty() {
         return None;
     }
+    // Guard: if the earcut produces far fewer triangles than expected
+    // for the number of boundary points, the UV polygon is likely
+    // degenerate (winding issues, pole clustering). Fall through to
+    // the UV grid raster which handles this robustly.
+    let expected_min = (outer_uv.len() - 2).saturating_sub(outer_uv.len() / 4);
+    if indices.len() / 3 < expected_min {
+        return None;
+    }
     let mut out = Vec::with_capacity(indices.len() / 3);
     for tri in indices.chunks_exact(3) {
-        let a = all_3d[tri[0]];
-        let b = all_3d[tri[1]];
-        let c = all_3d[tri[2]];
+        let a = deduped_3d[tri[0]];
+        let b = deduped_3d[tri[1]];
+        let c = deduped_3d[tri[2]];
         out.push(orient_tri([a, b, c], face_normal));
     }
     Some(out)
@@ -277,6 +296,13 @@ fn try_planar_earcut_simple_outer(outer: &[DVec3], face_normal: DVec3) -> Option
     let all_3d: Vec<DVec3> = outer.to_vec();
     let indices = earcut_indices_from_flat(&flat, &[]);
     if indices.is_empty() {
+        return None;
+    }
+    // Guard: if earcut produces far fewer triangles than expected, the
+    // projected 2D polygon is self-intersecting (non-planar 3D points).
+    // Fall through to a method that handles this robustly.
+    let expected_min = (outer.len() - 2).saturating_sub(outer.len() / 4);
+    if indices.len() / 3 < expected_min {
         return None;
     }
     let mut out = Vec::with_capacity(indices.len() / 3);
@@ -350,6 +376,35 @@ const SPHERE_UV_MASK_N: usize = 160;
 /// Grid for ‖∂P/∂u×∂P/∂v‖ midpoint integration on a UV rectangle (per-axis).
 const PARAM_RECT_AREA_N: usize = 64;
 
+/// Winding-number test; correct for self-intersecting polygons, unlike the
+/// even-odd ray-crossing test used by [`point_in_polygon_2d`].
+fn winding_number_2d(poly: &[DVec2], pt: DVec2) -> i32 {
+    let n = poly.len();
+    if n < 3 {
+        return 0;
+    }
+    let mut wn = 0i32;
+    let mut j = n - 1;
+    for i in 0..n {
+        let vi = poly[i];
+        let vj = poly[j];
+        if vi.y <= pt.y {
+            if vj.y > pt.y && is_left_2d(vi, vj, pt) > 0.0 {
+                wn += 1;
+            }
+        } else if vj.y <= pt.y && is_left_2d(vi, vj, pt) < 0.0 {
+            wn -= 1;
+        }
+        j = i;
+    }
+    wn
+}
+
+/// Cross product (b−a)×(c−a) for 2D orientation / signed area.
+fn is_left_2d(a: DVec2, b: DVec2, c: DVec2) -> f64 {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
 fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
     let n = poly.len();
     if n < 3 {
@@ -368,6 +423,33 @@ fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
         j = i;
     }
     inside
+}
+
+/// Test if `point` (on the sphere) is inside a spherical polygon defined by
+/// `boundary` (closed 3D polyline on the sphere).  Uses the angular sum test:
+/// the signed angles around the polygon sum to ±2π for inside, 0 for outside.
+/// Correct for any spherical polygon, no UV-mapping degeneracies.
+fn point_in_spherical_polygon_3d(boundary: &[DVec3], point: DVec3) -> bool {
+    let n = boundary.len();
+    if n < 3 {
+        return false;
+    }
+    let mut total = 0.0f64;
+    for i in 0..n {
+        let j = if i + 1 < n { i + 1 } else { 0 };
+        let a = boundary[i] - point;
+        let b = boundary[j] - point;
+        let cross = a.cross(b);
+        let sin_theta = cross.length();
+        let cos_theta = a.dot(b);
+        let theta = sin_theta.atan2(cos_theta);
+        if cross.dot(point) >= 0.0 {
+            total += theta;
+        } else {
+            total -= theta;
+        }
+    }
+    total.abs() > std::f64::consts::PI
 }
 
 /// Shortest signed step from `a` to `b` on the circle, with `a, b` reduced mod 2π to [0,2π).
@@ -442,6 +524,7 @@ fn align_inner_u_chain_to_outer(outer_umin: f64, outer_umax: f64, o_inner: &mut 
 /// without inner loops).
 struct SphereHoledMaskCtx {
     outer_uv: Vec<DVec2>,
+    outer_3d: Vec<DVec3>,
     inner_polys: Vec<Vec<DVec2>>,
     umin: f64,
     umax: f64,
@@ -496,6 +579,43 @@ fn spherical_holed_uv_mask_setup(
         inner_polys.push(huv);
     }
 
+    // Fix degenerate pole-boundary closing edges in UV polygon.
+    // At sphere poles (v ≈ 0 or v ≈ π), many u-values map to the same 3D
+    // point.  The closing edge (last→first sample) can jump diagonally
+    // across the UV interior instead of following the constant-v pole
+    // boundary.  Insert intermediate points along the pole.
+    const POLE_V_THRESHOLD: f64 = 0.15;
+    const U_JUMP_THRESHOLD: f64 = std::f64::consts::FRAC_PI_2;
+    const POLE_N_INSERT: usize = 32;
+    let pi = std::f64::consts::PI;
+    let mut fixed_uv: Vec<DVec2> = Vec::with_capacity(outer_uv.len() + 8);
+    let mut fixed_3d: Vec<DVec3> = Vec::with_capacity(outer3.len() + 8);
+    let nu = outer_uv.len();
+    for i in 0..nu {
+        let j = (i + 1) % nu;
+        let a_uv = outer_uv[i];
+        let b_uv = outer_uv[j];
+        fixed_uv.push(a_uv);
+        fixed_3d.push(outer3[i]);
+        let near_a = a_uv.y < POLE_V_THRESHOLD || a_uv.y > pi - POLE_V_THRESHOLD;
+        let near_b = b_uv.y < POLE_V_THRESHOLD || b_uv.y > pi - POLE_V_THRESHOLD;
+        let same_pole = (a_uv.y < POLE_V_THRESHOLD && b_uv.y < POLE_V_THRESHOLD)
+            || (a_uv.y > pi - POLE_V_THRESHOLD && b_uv.y > pi - POLE_V_THRESHOLD);
+        let big_jump = (b_uv.x - a_uv.x).abs() > U_JUMP_THRESHOLD;
+        if near_a && near_b && same_pole && big_jump {
+            let pole_v = if a_uv.y < POLE_V_THRESHOLD { 0.0 } else { pi };
+            for k in 1..POLE_N_INSERT {
+                let frac = k as f64 / POLE_N_INSERT as f64;
+                let u = a_uv.x + (b_uv.x - a_uv.x) * frac;
+                fixed_uv.push(DVec2::new(u, pole_v));
+                fixed_3d.push(s.point_at(u, pole_v));
+            }
+        }
+    }
+
+    let outer_uv = fixed_uv;
+    let outer_3d = fixed_3d;
+
     let mut umin = f64::INFINITY;
     let mut umax = f64::NEG_INFINITY;
     let mut vmin = f64::INFINITY;
@@ -534,6 +654,7 @@ fn spherical_holed_uv_mask_setup(
     }
     Some(SphereHoledMaskCtx {
         outer_uv,
+        outer_3d,
         inner_polys,
         umin,
         umax,
@@ -993,14 +1114,16 @@ fn try_spherical_uv_masked_raster(
     let vmin = ctx.vmin;
     let vmax = ctx.vmax;
     let outer_uv = &ctx.outer_uv;
+    let outer_3d = &ctx.outer_3d;
     let inner_polys = &ctx.inner_polys;
 
     let nu = SPHERE_UV_MASK_N;
     let nv = SPHERE_UV_MASK_N;
     let du = (umax - umin) / nu as f64;
     let dv = (vmax - vmin) / nv as f64;
+    let radius = s.radius;
 
-    let emit_grid = |outer_poly: &[DVec2], use_inner_mask: bool| -> Vec<[DVec3; 3]> {
+    let emit_grid = |use_inner_mask: bool| -> Vec<[DVec3; 3]> {
         let mut tris: Vec<[DVec3; 3]> = Vec::new();
         for i in 0..nu {
             for j in 0..nv {
@@ -1008,40 +1131,33 @@ fn try_spherical_uv_masked_raster(
                 let u1 = u0 + du;
                 let v0 = vmin + j as f64 * dv;
                 let v1 = v0 + dv;
-                let corners = [
-                    DVec2::new(u0, v0),
-                    DVec2::new(u1, v0),
-                    DVec2::new(u1, v1),
-                    DVec2::new(u0, v1),
-                ];
-                // All corners in the outer UV loop; any corner in a hole excludes the cell
-                // (tighter than centre-only, reduces PIP over-count at the trim).
-                if !corners
-                    .iter()
-                    .all(|q| point_in_polygon_2d(outer_poly, *q))
-                {
-                    continue;
-                }
-                if use_inner_mask
-                    && inner_polys.iter().any(|h| {
-                        corners
-                            .iter()
-                            .any(|q| point_in_polygon_2d(h, *q))
-                    })
-                {
-                    continue;
-                }
                 let uc = umin + (i as f64 + 0.5) * du;
                 let vc = vmin + (j as f64 + 0.5) * dv;
+                let pc = s.point_at(uc, vc);
+                // 5-point OR test: accept if center is inside (UV winding + 3D
+                // angular-sum), OR if any corner is inside (3D angular-sum).
                 let p00 = s.point_at(u0, v0);
                 let p10 = s.point_at(u1, v0);
                 let p11 = s.point_at(u1, v1);
                 let p01 = s.point_at(u0, v1);
-                let pc = s.point_at(uc, vc);
+                let center_in = winding_number_2d(outer_uv, DVec2::new(uc, vc)) > 0
+                    || point_in_spherical_polygon_3d(outer_3d, pc);
+                let any_corner_in = point_in_spherical_polygon_3d(outer_3d, p00)
+                    || point_in_spherical_polygon_3d(outer_3d, p10)
+                    || point_in_spherical_polygon_3d(outer_3d, p11)
+                    || point_in_spherical_polygon_3d(outer_3d, p01);
+                if !center_in && !any_corner_in {
+                    continue;
+                }
+                if use_inner_mask
+                    && inner_polys.iter().any(|h| point_in_polygon_2d(h, DVec2::new(uc, vc)))
+                {
+                    continue;
+                }
                 let nref = s.normal_at(uc, vc);
                 // Exact area in (u, v) for a sphere: R² · du · (cos v0 − cos v1); isotropic
                 // scale of the chordal bilinear patch toward the cell centre to match dA.
-                let r2 = s.radius * s.radius;
+                let r2 = radius * radius;
                 let d_target = r2 * du * (v0.cos() - v1.cos());
                 let a0 = tri_area(p00, p10, p11);
                 let a1 = tri_area(p00, p11, p01);
@@ -1060,17 +1176,9 @@ fn try_spherical_uv_masked_raster(
         tris
     };
 
-    let mut tris = emit_grid(outer_uv, true);
+    let mut tris = emit_grid(true);
     if tris.is_empty() && !inner_polys.is_empty() {
-        tris = emit_grid(outer_uv, false);
-    }
-    if tris.is_empty() {
-        let mut ou = outer_uv.clone();
-        ou.reverse();
-        tris = emit_grid(&ou, true);
-        if tris.is_empty() && !inner_polys.is_empty() {
-            tris = emit_grid(&ou, false);
-        }
+        tris = emit_grid(false);
     }
     if tris.is_empty() {
         None
@@ -1291,13 +1399,16 @@ fn face_triangles(
                 let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
                 trim_almost_closed_polyline(&mut outer, 1e-5);
                 if outer.len() >= 3 {
+                    // UV grid raster first: handles non-convex trimmed patches
+                    // robustly, unlike ear-cut which can produce degenerate tris
+                    // for boundaries near sphere poles or with UV seam crossings.
+                    if let Some(tris) = try_spherical_uv_masked_raster(s, brep, face, face_flat_idx, face.normal) {
+                        return tris;
+                    }
                     if let Some(tris) = try_spherical_earcut_simple(s, &outer, face.normal) {
                         return tris;
                     }
                     if let Some(tris) = try_planar_earcut_simple_outer(&outer, face.normal) {
-                        return tris;
-                    }
-                    if let Some(tris) = try_spherical_uv_masked_raster(s, brep, face, face_flat_idx, face.normal) {
                         return tris;
                     }
                 }
@@ -1396,15 +1507,135 @@ pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 
     }
 }
 
+/// Analytic volume contribution of a sphere face: V = (R/3) × A from the parametric
+/// UV-mask integral using the 5-point OR acceptance test (same as the raster used
+/// by `try_spherical_uv_masked_raster`), not the strict all-corners test used by
+/// `sphere_holed_mask_param_area_sum`.  The 5-point test captures partially-covered
+/// boundary cells that the all-corners test misses, giving a more accurate surface
+/// integral at moderate grid resolutions.
+///
+/// For a sphere centered at origin, r·n = R, so the divergence-theorem integral
+/// V = (1/3)∫∫ r·n dA reduces to (R/3)·A.
+fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
+    const N: usize = SPHERE_UV_MASK_N;
+    let umin = ctx.umin;
+    let umax = ctx.umax;
+    let vmin = ctx.vmin;
+    let vmax = ctx.vmax;
+    let du = (umax - umin) / N as f64;
+    let dv = (vmax - vmin) / N as f64;
+    let r3 = s.radius * s.radius * s.radius;
+    let inner = &ctx.inner_polys;
+
+    let emit = |poly_uv: &[DVec2], poly_3d: &[DVec3], use_inner_mask: bool| -> f64 {
+        let mut v = 0.0_f64;
+        for i in 0..N {
+            for j in 0..N {
+                let u0 = umin + i as f64 * du;
+                let u1 = u0 + du;
+                let v0 = vmin + j as f64 * dv;
+                let v1 = v0 + dv;
+                let uc = umin + (i as f64 + 0.5) * du;
+                let vc = vmin + (j as f64 + 0.5) * dv;
+
+                let p00 = s.point_at(u0, v0);
+                let p10 = s.point_at(u1, v0);
+                let p11 = s.point_at(u1, v1);
+                let p01 = s.point_at(u0, v1);
+                let pc = s.point_at(uc, vc);
+
+                // 5-point OR test matching try_spherical_uv_masked_raster:
+                // accept if center is inside (UV winding + 3D angular-sum), OR
+                // if any corner is inside (3D angular-sum).
+                // Use `!= 0` (not `> 0`) to handle both clockwise and CCW polygons.
+                let center_in = winding_number_2d(poly_uv, DVec2::new(uc, vc)) != 0
+                    || point_in_spherical_polygon_3d(poly_3d, pc);
+                let any_corner_in = point_in_spherical_polygon_3d(poly_3d, p00)
+                    || point_in_spherical_polygon_3d(poly_3d, p10)
+                    || point_in_spherical_polygon_3d(poly_3d, p11)
+                    || point_in_spherical_polygon_3d(poly_3d, p01);
+                if !center_in && !any_corner_in {
+                    continue;
+                }
+                if use_inner_mask
+                    && inner.iter().any(|h| point_in_polygon_2d(h, DVec2::new(uc, vc)))
+                {
+                    continue;
+                }
+
+                // Analytic dV = (R/3) * R² * du * (cos(v₀) - cos(v₁))
+                v += r3 / 3.0 * du * (v0.cos() - v1.cos());
+            }
+        }
+        v
+    };
+
+    let mut t = emit(&ctx.outer_uv, &ctx.outer_3d, true);
+    if t <= 0.0 && !inner.is_empty() {
+        t = emit(&ctx.outer_uv, &ctx.outer_3d, false);
+    }
+    if t > 0.0 {
+        return t;
+    }
+    // Fallback: reversed winding
+    let mut rev_uv = ctx.outer_uv.clone();
+    rev_uv.reverse();
+    let mut rev_3d = ctx.outer_3d.clone();
+    rev_3d.reverse();
+    t = emit(&rev_uv, &rev_3d, true);
+    if t <= 0.0 && !inner.is_empty() {
+        t = emit(&rev_uv, &rev_3d, false);
+    }
+    t
+}
+
+/// Analytic volume contribution of a sphere face: V = (R/3) × A from the parametric
+/// UV-mask integral.  For a sphere centered at origin, r·n = R, so the divergence-theorem
+/// integral V = (1/3)∫∫ r·n dA reduces to (R/3)·A.  This avoids the non-manifold tet-sum
+/// error from the area-corrected chordal triangulation in `try_spherical_uv_masked_raster`.
+///
+/// Only applies when the sphere center is at the origin (within tolerance) — for offset
+/// spheres the surface integral does not simplify to (R/3)·A and the tet sum fallback
+/// is used instead.
+const SPHERE_CENTER_AT_ORIGIN_TOL: f64 = 1e-10;
+fn try_sphere_face_analytic_volume(
+    brep: &BRep,
+    face: &Face,
+    face_flat_idx: usize,
+) -> Option<f64> {
+    let surf_idx = brep.geom.face_surface.get(face_flat_idx).copied().flatten()?;
+    let surf = brep.geom.surfaces.get(surf_idx)?;
+    match surf {
+        Surface3::Sphere(s) if s.center.length_squared() < SPHERE_CENTER_AT_ORIGIN_TOL => {
+            let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
+            let vol = sphere_holed_mask_param_volume_sum(s, &ctx);
+            if vol > 0.0 { Some(vol) } else { None }
+        }
+        _ => None,
+    }
+}
+
 /// Divergence-theorem signed volume: `(1/6) Σ a·(b×c)` over surface triangles (no absolute value).
+///
+/// Sphere faces use the analytic parametric integral (V = (R/3)·A) instead of the
+/// per-cell area-corrected triangulation which creates a non-manifold mesh and
+/// systematically underestimates volume via the tet sum.  Plane and other faces
+/// use the standard triangulation which remains correct.
 ///
 /// For a closed solid with **outward** face normals this is positive; **inward** shells
 /// (e.g. OCCT `treverse` before `prism`) yield a negative sum when the mesh is consistent.
 pub fn signed_volume(brep: &BRep) -> f64 {
-    face_flat_iter(brep)
-        .flat_map(|(fi, f)| face_triangles(brep, f, fi))
-        .map(|[a, b, c]| tet_signed_volume(a, b, c))
-        .sum()
+    let mut vol = 0.0_f64;
+    for (fi, face) in face_flat_iter(brep) {
+        if let Some(analytic_vol) = try_sphere_face_analytic_volume(brep, face, fi) {
+            vol += analytic_vol;
+        } else {
+            for [a, b, c] in face_triangles(brep, face, fi) {
+                vol += tet_signed_volume(a, b, c);
+            }
+        }
+    }
+    vol
 }
 
 /// Absolute volume (see [`signed_volume`]).

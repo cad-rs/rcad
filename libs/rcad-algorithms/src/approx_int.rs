@@ -21,6 +21,7 @@
 //!
 //! ```rust
 //! use rcad_algorithms::approx_int::{IntersectionApproximator, ApproxOptions};
+//! use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 //! use glam::{DVec3, DVec2};
 //!
 //! let mut approx = IntersectionApproximator::new();

@@ -38,6 +38,7 @@ pub struct LinPlnIntersection {
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Line3, Plane};
 /// use rcad_algorithms::int_ana::intersect_line_plane;
+/// use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 ///
 /// let line = Line3 { origin: DVec3::ZERO, direction: DVec3::Z };
 /// let plane = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };

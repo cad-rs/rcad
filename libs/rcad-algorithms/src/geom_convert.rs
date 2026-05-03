@@ -115,6 +115,7 @@ impl ConvertParams {
 /// # Example
 /// ```rust
 /// use rcad_algorithms::geom_convert::line_to_bspline;
+/// use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 /// use rcad_kernel::geom::{Line3, CurveEval};
 /// use glam::DVec3;
 ///
@@ -240,6 +241,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3, _degree: usize) -> BSplineCurve3 {
 /// # Example
 /// ```rust
 /// use rcad_algorithms::geom_convert::{curve_to_bspline, ConvertParams};
+/// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
 /// use rcad_kernel::geom::{Circle3, Curve3, CurveEval};
 /// use glam::DVec3;
 ///
@@ -643,6 +645,7 @@ pub fn torus_to_bspline(torus: &ToroidalSurface, _u_deg: usize, _v_deg: usize) -
 /// # Example
 /// ```rust
 /// use rcad_algorithms::geom_convert::{surface_to_bspline, ConvertParams};
+/// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
 /// use rcad_kernel::geom::{SphericalSurface, Surface3, SurfaceEval};
 /// use glam::DVec3;
 ///

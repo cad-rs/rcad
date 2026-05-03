@@ -16,6 +16,7 @@
 //! use glam::DVec3;
 //! use rcad_kernel::{BRep, PrimitiveSolid};
 //! use rcad_algorithms::brep_int_curve_surface::{intersect_line_with_brep, ray_cast};
+//! use rcad_algorithms::tolerance::TOLERANCE_ABS;
 //!
 //! let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 //!
@@ -143,6 +144,7 @@ impl Default for RayHit {
 /// use rcad_kernel::geom::{Curve3, Line3};
 /// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::intersect_curve_with_brep;
+/// use rcad_algorithms::tolerance::TOLERANCE_ABS;
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let line = Curve3::Line(Line3 { origin: DVec3::new(1.0, 1.0, 5.0), direction: DVec3::NEG_Z });
@@ -220,6 +222,7 @@ pub fn intersect_curve_with_brep(
 /// use glam::DVec3;
 /// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use rcad_algorithms::brep_int_curve_surface::intersect_line_with_brep;
+/// use rcad_algorithms::tolerance::TOLERANCE_ABS;
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, TOLERANCE_ABS);

@@ -188,6 +188,59 @@ impl SubFace {
     }
 }
 
+/// Compute the true area centroid of a planar polygon in 3D by projecting onto
+/// the plane's 2D orthonormal basis and using the shoelace formula.
+/// Guaranteed to lie inside a convex polygon and close to the interior of a
+/// concave polygon — unlike the boundary-vertex centroid which can be arbitrarily
+/// biased by uneven vertex distribution along the boundary.
+fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
+    if boundary.len() < 3 {
+        return if boundary.is_empty() {
+            DVec3::ZERO
+        } else {
+            boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64
+        };
+    }
+
+    // Build orthonormal basis for the plane
+    let n = normal.normalize();
+    let ref_vec = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+    let u = n.cross(ref_vec).normalize();
+    let v = n.cross(u).normalize();
+
+    let origin = boundary[0];
+    let count = boundary.len();
+
+    // Shoelace formula in 2D: 2*area = Σ(x_i·y_{i+1} - x_{i+1}·y_i)
+    // Centroid: C_x = (1/(6A)) Σ(x_i + x_{i+1})(x_i·y_{i+1} - x_{i+1}·y_i)
+    //            C_y = (1/(6A)) Σ(y_i + y_{i+1})(x_i·y_{i+1} - x_{i+1}·y_i)
+    let mut area2 = 0.0_f64;
+    let mut cx6 = 0.0_f64;
+    let mut cy6 = 0.0_f64;
+
+    for i in 0..count {
+        let j = (i + 1) % count;
+        let xi = (boundary[i] - origin).dot(u);
+        let yi = (boundary[i] - origin).dot(v);
+        let xj = (boundary[j] - origin).dot(u);
+        let yj = (boundary[j] - origin).dot(v);
+        let cross = xi * yj - xj * yi;
+        area2 += cross;
+        cx6 += (xi + xj) * cross;
+        cy6 += (yi + yj) * cross;
+    }
+
+    if area2.abs() < 1e-30 {
+        // Degenerate polygon — fall back to boundary centroid
+        return boundary.iter().copied().sum::<DVec3>() / count as f64;
+    }
+
+    // Signed area = area2 / 2. The centroid formula uses 6×area (unsigned), so
+    // we divide by 3×area2 (sign cancels: cx6 / (6 * area2/2) = cx6 / (3 * area2)).
+    let inv = 1.0 / (3.0 * area2);
+    origin + u * (cx6 * inv) + v * (cy6 * inv)
+}
+
 type FaceEntry = (
     Vec<usize>,
     Vec<Vec<usize>>,
@@ -826,6 +879,12 @@ enum SourceSide {
 /// finite cylinder: the inward offset toward the sphere center exits the cylinder
 /// slab). When the primary sample is `Out`, we probe a coarse UV grid on
 /// [`SubFace::uv_domain`] before concluding `Out`.
+///
+/// Conversely, when the primary sample is `On` (within tolerance of the other solid's
+/// surface), the sub-face may be genuinely on the boundary OR the sample point may
+/// happen to fall within the tolerance band of the other solid's surface despite the
+/// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
+/// surface). In that case we probe boundary and interior samples to break the tie.
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     sub: &SubFace,
@@ -837,12 +896,94 @@ fn classify_against_solid_for_boolean(
     if op != BooleanOpType::Intersection {
         return c0;
     }
-    if matches!(
-        c0,
-        Classification::In | Classification::On
-    ) {
+
+    // When the primary sample is In or On, the sub-face centroid may not be
+    // representative for intersection — boundary-vertex centroids can fall inside
+    // the other solid even when the sub-face is entirely outside (e.g. a planar
+    // sub-face of a box near a sphere's surface, where arc points cluster on one
+    // side of the polygon).  Probe additional samples to disambiguate.
+    if matches!(c0, Classification::In | Classification::On) {
+        let probe_pts: Vec<DVec3> = {
+            // 1. True area centroid + interior blend points.
+            //    Boundary-vertex centroids are unreliable when vertices are unevenly
+            //    distributed (e.g. a box-face arc from a sphere intersection clusters
+            //    points along the arc, biasing the centroid toward the sphere).
+            //    The area centroid is always inside a convex polygon, and interior
+            //    blend points (70% centroid + 30% boundary vertex) lie strictly inside
+            //    the sub-face region where classification is unambiguous.
+            let interior_pts: Vec<DVec3> = if sub.boundary.len() >= 3 {
+                let ac = planar_polygon_centroid(&sub.boundary, sub.normal);
+                let step = (sub.boundary.len() / 4).max(1);
+                let blends: Vec<DVec3> = (0..sub.boundary.len())
+                    .step_by(step)
+                    .map(|i| ac * 0.7 + sub.boundary[i] * 0.3)
+                    .collect();
+                let mut pts = vec![ac];
+                pts.extend(blends);
+                pts
+            } else {
+                vec![]
+            };
+
+            // 2. The boundary centroid (fallback for non-planar sub-faces).
+            let centroid = if !sub.boundary.is_empty() {
+                Some(sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64)
+            } else {
+                None
+            };
+
+            // 3. UV-domain interior points when available.
+            let uv_pts: Vec<DVec3> = if let Some([u0, u1, v0, v1]) = sub.uv_domain {
+                if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
+                    && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
+                {
+                    const NU_PROBE: usize = 3;
+                    const NV_PROBE: usize = 3;
+                    (0..NU_PROBE)
+                        .flat_map(|iu| {
+                            (0..NV_PROBE).map(move |iv| {
+                                let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / NU_PROBE as f64;
+                                let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / NV_PROBE as f64;
+                                sub.surface.point_at(u, v)
+                            })
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let mut pts = interior_pts;
+            if let Some(c) = centroid {
+                pts.push(c);
+            }
+            pts.extend(uv_pts);
+            pts
+        };
+
+        // Count In vs Out among the probe points.
+        let mut in_count = 0usize;
+        let mut out_count = 0usize;
+        for &p in &probe_pts {
+            match classify_point(p, solid_face_indices, ds) {
+                Classification::In => in_count += 1,
+                Classification::Out => out_count += 1,
+                Classification::On => {}
+            }
+        }
+        // If the clear majority of probe points are Out, re-classify as Out.
+        // The threshold avoids false positives from a few boundary points that
+        // happen to fall inside the other solid.
+        let total = in_count + out_count;
+        if total >= 3 && out_count >= in_count * 2 {
+            return Classification::Out;
+        }
         return c0;
     }
+
+    // Primary sample is Out: probe the UV grid for any In/On point before concluding Out.
     if let Some([u0, u1, v0, v1]) = sub.uv_domain {
         if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE {
             const NU: usize = 7;
@@ -3500,6 +3641,19 @@ fn sphere_closed_trim_to_open_isolines(
     let u_coverage = (trim_u_max - trim_u_min) / bnd_u_span.abs();
     let v_coverage = (trim_v_max - trim_v_min) / bnd_v_span.abs();
     if u_coverage < 0.35 || v_coverage < 0.75 {
+        // Latitude (constant-v) great circles: v ≈ constant but u spans full range.
+        // These are great circles like the equator that DON'T pass through the poles,
+        // so they form a horizontal line in UV space, not a closed pole-to-pole loop.
+        if (trim_v_max - trim_v_min).abs() <= TOLERANCE_COORD_SUB && u_coverage >= 0.9 {
+            let v_level = (trim_v_min + trim_v_max) / 2.0;
+            if (v_level - bnd_v_min).abs() > TOLERANCE_COORD_SUB
+                && (v_level - bnd_v_max).abs() > TOLERANCE_COORD_SUB
+            {
+                return Some(vec![
+                    vec![DVec2::new(bnd_u_min, v_level), DVec2::new(bnd_u_max, v_level)]
+                ]);
+            }
+        }
         return None;
     }
 
@@ -4424,6 +4578,7 @@ fn split_polygon_2d_by_segment(
 ///
 /// ```
 /// use rcad_algorithms::builder::GlueConfig;
+/// use rcad_algorithms::tolerance::TOLERANCE_RETRY_LADDER_MID;
 ///
 /// let config = GlueConfig {
 ///     face_tolerance: TOLERANCE_RETRY_LADDER_MID,

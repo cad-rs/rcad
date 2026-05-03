@@ -1,6 +1,7 @@
 //! Integration tests for `rcad-modeling` primitive builders and sweep operations.
 
 use glam::{DVec2, DVec3};
+use rcad_algorithms::{total_surface_area, total_volume};
 use rcad_kernel::BRep;
 use rcad_modeling::{
     chamfer_edge, extrude, fillet_edge, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
@@ -53,17 +54,40 @@ fn cone_face_count() {
 #[test]
 fn conical_frustum_builds_solid() {
     let h = 4.0;
+    let rb = 3.0;
+    let rt = 2.0;
     let brep = make_conical_frustum_brep(
         DVec3::new(0.0, 0.0, h * 0.5),
         DVec3::Z,
         DVec3::X,
-        3.0,
-        2.0,
+        rb,
+        rt,
         h,
     )
     .unwrap();
     assert!(!brep.solids.is_empty(), "frustum must have a solid");
-    assert!(face_count(&brep) >= 3, "loft frustum: caps + lateral");
+    assert_eq!(face_count(&brep), 3, "analytic frustum: bottom cap + top cap + lateral = 3 faces");
+
+    // SA and volume should match analytic formulas within tessellation tolerance.
+    let slant = ((rb - rt).powi(2) + h.powi(2)).sqrt();
+    let lat_sa = std::f64::consts::PI * (rb + rt) * slant;
+    let cap_bot = std::f64::consts::PI * rb * rb;
+    let cap_top = std::f64::consts::PI * rt * rt;
+    let expected_sa = lat_sa + cap_bot + cap_top;
+    let expected_vol = std::f64::consts::PI * h / 3.0 * (rb * rb + rt * rt + rb * rt);
+
+    let tol_sa = 1.0; // tessellation discretisation error (~0.06% of expected SA for this size)
+    assert!(
+        (total_surface_area(&brep) - expected_sa).abs() < tol_sa,
+        "frustum SA: expected {expected_sa}, got {}",
+        total_surface_area(&brep)
+    );
+    let tol_vol = 0.5; // tessellation discretisation error
+    assert!(
+        (total_volume(&brep) - expected_vol).abs() < tol_vol,
+        "frustum volume: expected {expected_vol}, got {}",
+        total_volume(&brep)
+    );
 }
 
 #[test]

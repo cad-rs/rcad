@@ -542,6 +542,7 @@ impl Datum {
     ///
     /// ```
     /// use rcad_algorithms::top_loc::Datum;
+    /// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
     /// use glam::DVec3;
     ///
     /// let datum = Datum::from_origin_and_normal(
@@ -671,6 +672,7 @@ impl Datum {
     ///
     /// ```
     /// use rcad_algorithms::top_loc::Datum;
+    /// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
     /// use glam::DVec3;
     ///
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
@@ -692,6 +694,7 @@ impl Datum {
     ///
     /// ```
     /// use rcad_algorithms::top_loc::Datum;
+    /// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
     /// use glam::DVec3;
     ///
     /// let datum = Datum::from_origin_and_normal(DVec3::new(1.0, 0.0, 0.0), DVec3::Z);
@@ -909,6 +912,7 @@ impl LocationManager {
     ///
     /// ```
     /// use rcad_algorithms::top_loc::{LocationManager, Location};
+    /// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
     /// use glam::DVec3;
     ///
     /// let mut manager = LocationManager::new();
@@ -1065,6 +1069,7 @@ impl LocationManager {
 ///
 /// ```
 /// use rcad_algorithms::top_loc::{Location, apply_location_to_shape};
+/// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
 /// use rcad_kernel::{BRep, PrimitiveSolid};
 /// use glam::DVec3;
 ///

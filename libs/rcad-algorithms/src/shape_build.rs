@@ -169,6 +169,7 @@ impl BuildVertex {
     /// use glam::DVec3;
     /// use rcad_kernel::geom::{Surface3, Plane};
     /// use rcad_algorithms::shape_build::BuildVertex;
+    /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
     ///
     /// let plane = Surface3::Plane(Plane {
     ///     origin: DVec3::ZERO,

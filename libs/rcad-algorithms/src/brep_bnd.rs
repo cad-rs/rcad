@@ -11,6 +11,7 @@
 //!
 //! ```
 //! use rcad_algorithms::brep_bnd::*;
+//! use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 //! use rcad_kernel::BRep;
 //!
 //! let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -342,6 +343,7 @@ impl BoundingBox {
 ///
 /// ```
 /// use rcad_algorithms::brep_bnd::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Sphere { radius: 1.0 });

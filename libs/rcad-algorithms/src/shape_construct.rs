@@ -45,6 +45,7 @@ use crate::tolerance::*;
 /// ```rust
 /// use glam::DVec3;
 /// use rcad_algorithms::shape_construct::construct_line;
+/// use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 ///
 /// let p1 = DVec3::ZERO;
 /// let p2 = DVec3::X;
