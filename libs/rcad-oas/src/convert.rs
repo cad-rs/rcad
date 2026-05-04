@@ -5,6 +5,99 @@ use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::{OasCell, OasError, OasLibrary, OasPath, OasPolygon};
 use crate::layer_config::LayerConfig;
 
+/// Build a flat-faced BRep from a polygon at a given Z offset.
+fn polygon_to_brep_face(
+    points: &[glam::DVec2],
+    z_offset: f64,
+) -> Result<BRep, OasError> {
+    if points.len() < 3 {
+        return Err(OasError::GeometryError(
+            "Polygon has fewer than 3 points".to_string(),
+        ));
+    }
+
+    let mut brep = BRep::default();
+    let n_edges = points.len();
+
+    // Vertices at z_offset
+    let vi_start = brep.vertices.len();
+    for pt in points.iter().take(n_edges) {
+        brep.vertices.push(Vertex {
+            point: glam::DVec3::new(pt.x, pt.y, z_offset),
+        });
+    }
+
+    // Edges
+    let ei_start = brep.edges.len();
+    for i in 0..n_edges {
+        brep.edges.push(Edge {
+            start: vi_start + i,
+            end: vi_start + (i + 1) % n_edges,
+        });
+    }
+
+    // Wire
+    let wire = Wire {
+        edges: (0..n_edges)
+            .map(|i| WireEdge::fwd(ei_start + i))
+            .collect(),
+    };
+
+    let face = Face {
+        outer_wire: wire,
+        inner_wires: Vec::new(),
+        normal: glam::DVec3::Z,
+        triangles: Vec::new(),
+        mesh_dirty: true,
+    };
+
+    let shell = Shell { faces: vec![face] };
+    brep.solids.push(Solid { shells: vec![shell] });
+
+    Ok(brep)
+}
+
+/// Merge all vertices, edges, and solids from `src` into `dst`,
+/// offsetting vertex and edge indices.
+fn merge_into(dst: &mut BRep, src: &BRep) {
+    let _v_off = dst.vertices.len();
+    let e_off = dst.edges.len();
+
+    dst.vertices.extend_from_slice(&src.vertices);
+    dst.edges.extend_from_slice(&src.edges);
+
+    for solid in &src.solids {
+        let mut new_solid = Solid { shells: Vec::new() };
+        for shell in &solid.shells {
+            let mut new_shell = Shell { faces: Vec::new() };
+            for face in &shell.faces {
+                let mut new_face = face.clone();
+                let outer = Wire {
+                    edges: new_face.outer_wire.edges.iter()
+                        .map(|we| WireEdge {
+                            idx: we.idx + e_off,
+                            forward: we.forward,
+                        })
+                        .collect(),
+                };
+                let inner: Vec<Wire> = new_face.inner_wires.iter().map(|w| Wire {
+                    edges: w.edges.iter()
+                        .map(|we| WireEdge {
+                            idx: we.idx + e_off,
+                            forward: we.forward,
+                        })
+                        .collect(),
+                }).collect();
+                new_face.outer_wire = outer;
+                new_face.inner_wires = inner;
+                new_shell.faces.push(new_face);
+            }
+            new_solid.shells.push(new_shell);
+        }
+        dst.solids.push(new_solid);
+    }
+}
+
 /// Convert OASIS geometry to RCAD kernel shapes.
 pub struct OasConverter {
     config: LayerConfig,
@@ -180,126 +273,50 @@ impl OasConverter {
         }
     }
 
-    /// Convert an OASIS cell to a BRep compound.
+    /// Convert an OASIS cell to a BRep compound with true 3D extrusion.
+    ///
+    /// Each polygon/path is first built as a flat face at `z_offset`,
+    /// then extruded along +Z by the layer thickness. If thickness ≤ 0
+    /// the face is kept as a 2D sheet.
     pub fn cell_to_brep(&self, cell: &OasCell) -> Result<BRep, OasError> {
-        let mut brep = BRep::default();
+        let mut result = BRep::default();
 
         // Process polygons
         for polygon in &cell.polygons {
-            let layer_settings = self.config.get(polygon.layer);
+            let ls = self.config.get(polygon.layer);
+            let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
-            // Create vertices for this polygon
-            let mut face_vertices: Vec<Vertex> = polygon
-                .points
-                .iter()
-                .map(|p| Vertex {
-                    point: glam::DVec3::new(p.x, p.y, layer_settings.z_offset),
-                })
-                .collect();
-
-            // Create edges
-            let mut face_edges: Vec<Edge> = Vec::new();
-            let mut wire_edges: Vec<WireEdge> = Vec::new();
-
-            for i in 0..polygon.points.len() {
-                let next_idx = (i + 1) % polygon.points.len();
-                face_edges.push(Edge {
-                    start: i,
-                    end: next_idx,
-                });
-                wire_edges.push(WireEdge::fwd(face_edges.len() - 1));
+            if ls.thickness > 0.0 {
+                match rcad_modeling::builder::ops::extrude(
+                    &flat, 0, glam::DVec3::Z, ls.thickness,
+                ) {
+                    Ok(extruded) => merge_into(&mut result, &extruded),
+                    Err(_) => merge_into(&mut result, &flat),
+                }
+            } else {
+                merge_into(&mut result, &flat);
             }
-
-            let _vertex_start = brep.vertices.len();
-            let edge_start = brep.edges.len();
-
-            brep.vertices.append(&mut face_vertices);
-            brep.edges.append(&mut face_edges);
-
-            // Adjust wire edge indices
-            let wire = Wire {
-                edges: wire_edges
-                    .iter()
-                    .map(|we| WireEdge::fwd(we.idx + edge_start))
-                    .collect(),
-            };
-
-            let face = Face {
-                outer_wire: wire,
-                inner_wires: Vec::new(),
-                normal: glam::DVec3::Z,
-                triangles: Vec::new(),
-                mesh_dirty: true,
-            };
-
-            // Create a solid from this face (simplified)
-            let shell = Shell {
-                faces: vec![face],
-            };
-            let solid = Solid {
-                shells: vec![shell],
-            };
-            brep.solids.push(solid);
         }
 
-        // Process paths (convert to polygons)
+        // Process paths (convert to polygons first)
         for path in &cell.paths {
             let polygon = Self::path_to_polygon(path);
-            let layer_settings = self.config.get(path.layer);
+            let ls = self.config.get(path.layer);
+            let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
-            // Create vertices
-            let mut face_vertices: Vec<Vertex> = polygon
-                .points
-                .iter()
-                .map(|p| Vertex {
-                    point: glam::DVec3::new(p.x, p.y, layer_settings.z_offset),
-                })
-                .collect();
-
-            // Create edges
-            let mut face_edges: Vec<Edge> = Vec::new();
-            let mut wire_edges: Vec<WireEdge> = Vec::new();
-
-            for i in 0..polygon.points.len() {
-                let next_idx = (i + 1) % polygon.points.len();
-                face_edges.push(Edge {
-                    start: i,
-                    end: next_idx,
-                });
-                wire_edges.push(WireEdge::fwd(face_edges.len() - 1));
+            if ls.thickness > 0.0 {
+                match rcad_modeling::builder::ops::extrude(
+                    &flat, 0, glam::DVec3::Z, ls.thickness,
+                ) {
+                    Ok(extruded) => merge_into(&mut result, &extruded),
+                    Err(_) => merge_into(&mut result, &flat),
+                }
+            } else {
+                merge_into(&mut result, &flat);
             }
-
-            let _vertex_start = brep.vertices.len();
-            let edge_start = brep.edges.len();
-
-            brep.vertices.append(&mut face_vertices);
-            brep.edges.append(&mut face_edges);
-
-            let wire = Wire {
-                edges: wire_edges
-                    .iter()
-                    .map(|we| WireEdge::fwd(we.idx + edge_start))
-                    .collect(),
-            };
-
-            let face = Face {
-                outer_wire: wire,
-                inner_wires: Vec::new(),
-                normal: glam::DVec3::Z,
-                triangles: Vec::new(),
-                mesh_dirty: true,
-            };
-
-            let shell = Shell {
-                faces: vec![face],
-            };
-            let solid = Solid {
-                shells: vec![shell],
-            };
-            brep.solids.push(solid);
         }
 
-        Ok(brep)
+        Ok(result)
     }
 }
 

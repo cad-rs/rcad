@@ -8,6 +8,7 @@ repository = "https://github.com/cad-rs/rcad"
 [dependencies]
 laykit = { workspace = true }
 rcad-kernel = { path = "../rcad-kernel" }
+rcad-modeling = { path = "../rcad-modeling" }
 glam.workspace = true
 thiserror = { workspace = true }
 serde = { workspace = true }

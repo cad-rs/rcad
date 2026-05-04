@@ -37,71 +37,140 @@ pub fn boundary_to_wire(boundary: &GdsBoundary) -> Result<Wire> {
     })
 }
 
-/// Convert a GdsLibrary to BRep with layer-based extrusion.
+/// Build a flat-faced BRep from a polygon at a given Z offset.
+fn polygon_to_brep_face(
+    points: &[glam::DVec2],
+    z_offset: f64,
+) -> Result<BRep> {
+    if points.len() < 3 {
+        return Err(GdsError::GeometryError(
+            "Polygon has fewer than 3 points".to_string(),
+        ));
+    }
+
+    let mut brep = BRep::default();
+    let n = points.len() - 1; // last point == first (closed loop)
+    let n_edges = if n > 0 { n } else { points.len() };
+
+    // Vertices at z_offset
+    let vi_start = brep.vertices.len();
+    for pt in points.iter().take(n_edges) {
+        brep.vertices.push(Vertex {
+            point: glam::DVec3::new(pt.x, pt.y, z_offset),
+        });
+    }
+
+    // Edges
+    let ei_start = brep.edges.len();
+    for i in 0..n_edges {
+        brep.edges.push(Edge {
+            start: vi_start + i,
+            end: vi_start + (i + 1) % n_edges,
+        });
+    }
+
+    // Wire
+    let wire = Wire {
+        edges: (0..n_edges)
+            .map(|i| WireEdge::fwd(ei_start + i))
+            .collect(),
+    };
+
+    let face = Face {
+        outer_wire: wire,
+        inner_wires: Vec::new(),
+        normal: glam::DVec3::Z,
+        triangles: Vec::new(),
+        mesh_dirty: true,
+    };
+
+    let shell = Shell { faces: vec![face] };
+    brep.solids.push(Solid { shells: vec![shell] });
+
+    Ok(brep)
+}
+
+/// Convert a GdsLibrary to BRep with true 3D layer-based extrusion.
+///
+/// Each GDS boundary is first built as a flat face at `z_offset`,
+/// then extruded along +Z by the layer thickness (from [`LayerConfig`]).
+/// If thickness ≤ 0 the face is kept as-is (2D sheet).
 pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) -> Result<BRep> {
     let structure = library.structures.get(cell_name)
         .ok_or_else(|| GdsError::CellNotFound(cell_name.to_string()))?;
 
-    let mut brep = BRep::default();
+    let mut result = BRep::default();
 
-    // Process boundaries
     for boundary in &structure.boundaries {
         let layer_settings = config.get(boundary.layer);
 
-        // Create a face from the boundary
-        let _wire = boundary_to_wire(boundary)?;
+        // Build a flat-face BRep at z_offset
+        let flat = polygon_to_brep_face(&boundary.points, layer_settings.z_offset)?;
 
-        // Create vertices for this boundary
-        let mut face_vertices: Vec<Vertex> = boundary.points.iter()
-            .map(|p| Vertex {
-                point: glam::DVec3::new(p.x, p.y, layer_settings.z_offset),
-            })
-            .collect();
-
-        // Create edges
-        let mut face_edges: Vec<Edge> = Vec::new();
-        let mut wire_edges: Vec<WireEdge> = Vec::new();
-
-        for i in 0..boundary.points.len() - 1 {
-            face_edges.push(Edge {
-                start: i,
-                end: i + 1,
-            });
-            wire_edges.push(WireEdge::fwd(face_edges.len() - 1));
+        if layer_settings.thickness > 0.0 {
+            // Extrude along +Z
+            match rcad_modeling::builder::ops::extrude(
+                &flat,
+                0, // face_idx = 0 (the only face/solid/shell)
+                glam::DVec3::Z,
+                layer_settings.thickness,
+            ) {
+                Ok(extruded) => {
+                    merge_into(&mut result, &extruded);
+                }
+                Err(_) => {
+                    // Fall back to flat face on extrusion failure
+                    merge_into(&mut result, &flat);
+                }
+            }
+        } else {
+            merge_into(&mut result, &flat);
         }
-
-        let _vertex_start = brep.vertices.len();
-        let edge_start = brep.edges.len();
-
-        brep.vertices.append(&mut face_vertices);
-        brep.edges.append(&mut face_edges);
-
-        // Adjust wire edge indices
-        let wire = Wire {
-            edges: wire_edges.iter()
-                .map(|we| WireEdge::fwd(we.idx + edge_start))
-                .collect(),
-        };
-
-        let face = Face {
-            outer_wire: wire,
-            inner_wires: Vec::new(),
-            normal: glam::DVec3::Z,
-            triangles: Vec::new(),
-            mesh_dirty: true,
-        };
-
-        // Create a solid from this face (simplified)
-        let shell = Shell {
-            faces: vec![face],
-        };
-        let solid = Solid {
-            shells: vec![shell],
-        };
-        brep.solids.push(solid);
     }
 
-    Ok(brep)
+    Ok(result)
+}
+
+/// Merge all vertices, edges, and solids from `src` into `dst`.
+/// Vertex and edge indices in `src` solids are offset to match `dst`.
+fn merge_into(dst: &mut BRep, src: &BRep) {
+    let _v_off = dst.vertices.len();
+    let e_off = dst.edges.len();
+
+    dst.vertices.extend_from_slice(&src.vertices);
+    dst.edges.extend_from_slice(&src.edges);
+
+    for solid in &src.solids {
+        let mut new_solid = Solid { shells: Vec::new() };
+        for shell in &solid.shells {
+            let mut new_shell = Shell { faces: Vec::new() };
+            for face in &shell.faces {
+                let mut new_face = face.clone();
+                // Offset wire edge indices
+                let outer = Wire {
+                    edges: new_face.outer_wire.edges.iter()
+                        .map(|we| WireEdge {
+                            idx: we.idx + e_off,
+                            forward: we.forward,
+                        })
+                        .collect(),
+                };
+                let inner: Vec<Wire> = new_face.inner_wires.iter().map(|w| Wire {
+                    edges: w.edges.iter()
+                        .map(|we| WireEdge {
+                            idx: we.idx + e_off,
+                            forward: we.forward,
+                        })
+                        .collect(),
+                }).collect();
+                new_face.outer_wire = outer;
+                new_face.inner_wires = inner;
+                new_shell.faces.push(new_face);
+            }
+            new_solid.shells.push(new_shell);
+        }
+        dst.solids.push(new_solid);
+    }
 }
 
 impl GdsLibrary {
