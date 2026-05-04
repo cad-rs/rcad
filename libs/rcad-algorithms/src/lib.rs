@@ -2494,16 +2494,50 @@ pub(crate) fn boolean_postprocess_pave_result(
     if matches!(op, BooleanOpType::Intersection)
         && brep_is_pure_plane_solid(a)
         && brep_is_pure_plane_solid(b)
-        && !(brep_is_world_axis_aligned_plane_solid(a) && brep_is_world_axis_aligned_plane_solid(b))
     {
-        let (next, _rm) =
-            orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces(&result, tolerance::TOLERANCE_ABS);
-        result = next;
-        let (next, _sp) = orthogonal_face_fuse::remove_spurious_intersection_face_preserving_volume(
-            &result,
-            tolerance::TOLERANCE_LINEAR_ULTRA_STRICT,
-        );
-        result = next;
+        // Both world-axis-aligned: use the full three-phase pass (pair clipping
+        // + input-copy scan + redundant-copy removal).
+        if brep_is_world_axis_aligned_plane_solid(a)
+            && brep_is_world_axis_aligned_plane_solid(b)
+        {
+            let (next, _clipped) = orthogonal_face_fuse::clip_coplanar_overlap_for_intersection(
+                &result, a, b, tolerance::TOLERANCE_ABS,
+            );
+            result = next;
+        } else {
+            // Mixed / rotated case: three cleanup passes.
+            //
+            // 1. Pairwise coplanar overlap clipping (partial-overlap bboxes,
+            //    neither strictly contains the other — missed by the subset pass).
+            // 2. Singleton input-copy clipping (faces that are still unsplit copies
+            //    of an input face, with no coplanar mate in the result).
+            // 3. Strict bbox-subset redundancy removal — only when passes 1 and 2
+            //    made no changes, since the corrected faces from passes 1/2 can be
+            //    falsely removed by the subset pass.
+            let (next, pairwise_clipped) =
+                orthogonal_face_fuse::clip_coplanar_overlap_pairwise(
+                    &result, a, b, tolerance::TOLERANCE_ABS,
+                );
+            result = next;
+            let (next, singleton_clipped) =
+                orthogonal_face_fuse::clip_input_copy_faces_to_other_solid(
+                    &result, a, b, tolerance::TOLERANCE_ABS,
+                );
+            result = next;
+            if pairwise_clipped == 0 && singleton_clipped == 0 {
+                let (next, _rm) =
+                    orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces(
+                        &result, tolerance::TOLERANCE_ABS,
+                    );
+                result = next;
+                let (next, _sp) =
+                    orthogonal_face_fuse::remove_spurious_intersection_face_preserving_volume(
+                        &result,
+                        tolerance::TOLERANCE_LINEAR_ULTRA_STRICT,
+                    );
+                result = next;
+            }
+        }
     }
     if matches!(op, BooleanOpType::Intersection)
         && brep_is_pure_plane_solid(a)
