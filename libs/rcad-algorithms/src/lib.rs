@@ -2573,6 +2573,10 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 /// Both BReps must have populated GeomStore (call
 /// `geom_populate::populate_box_geom` first for box primitives).
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    if let Some(r) = boolean_unit_octant::try_identical_operands(op, a, b) {
+        return Ok(r);
+    }
+
     if matches!(op, BooleanOpType::Union) {
         return bop_occt_union::fuse(a, b);
     }

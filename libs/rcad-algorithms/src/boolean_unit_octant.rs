@@ -32,6 +32,7 @@ use rcad_modeling::builder::ops::LoftHistory;
 use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
 
 use crate::tolerance::*;
+use crate::BooleanOpType;
 
 const TOL: f64 = TOLERANCE_RETRY_LADDER_COARSE;
 
@@ -67,6 +68,38 @@ fn is_pos_unit_cube_0_1(b: &BRep) -> bool {
         return false;
     };
     (bb[0] - DVec3::ZERO).length() < TOL && (bb[1] - DVec3::ONE).length() < TOL
+}
+
+/// Check if two BReps share the same approximate geometric extent and topology count.
+fn are_breps_approximately_equal(a: &BRep, b: &BRep) -> bool {
+    let Some(bb_a) = a.bounding_box() else { return false };
+    let Some(bb_b) = b.bounding_box() else { return false };
+    let scale = (bb_a[1] - bb_a[0]).length().max((bb_b[1] - bb_b[0]).length()).max(1.0);
+    let tol = TOLERANCE_RETRY_LADDER_COARSE.max(TOLERANCE_COORD_SUB * scale);
+    if (bb_a[0] - bb_b[0]).length() > tol || (bb_a[1] - bb_b[1]).length() > tol {
+        return false;
+    }
+    let nf_a: usize = a.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+    let nf_b: usize = b.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+    if nf_a != nf_b || nf_a == 0 {
+        return false;
+    }
+    if a.vertices.len() != b.vertices.len() {
+        return false;
+    }
+    true
+}
+
+/// Fast path when operands are (approximately) identical.
+/// Union/Intersection → clone; Difference → empty.
+pub fn try_identical_operands(op: BooleanOpType, a: &BRep, b: &BRep) -> Option<BRep> {
+    if !are_breps_approximately_equal(a, b) {
+        return None;
+    }
+    match op {
+        BooleanOpType::Union | BooleanOpType::Intersection => Some(a.clone()),
+        BooleanOpType::Difference => Some(BRep::default()),
+    }
 }
 
 /// Intersection: unit sphere (kernel primitive) ∩ axis box [0,1]³.
