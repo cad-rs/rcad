@@ -113,6 +113,7 @@ pub mod tcol_std;
 pub mod thicken;
 pub mod tolerance;
 use crate::tolerance::*;
+use tracing::{debug, info, warn};
 
 pub mod top_loc;
 pub mod triangulate;
@@ -1134,6 +1135,9 @@ pub struct BooleanExecutionReport {
     pub effective_fuzzy_tol: f64,
     /// Whether [`propagate_tolerances`] (bottom-up) ran after the boolean pipeline.
     pub propagated_geom_tolerances: bool,
+    /// [`ToleranceContext`] snapshot from the boolean execution, capturing
+    /// scale-aware tolerances and workspace fuzzy used during processing.
+    pub tolerance_context: Option<ToleranceContext>,
 }
 
 /// Robust boolean retry controls.
@@ -2621,6 +2625,11 @@ pub fn boolean_op_with_options(
 ) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
     merge_pairwise_model_tol_into_boolean_options(&mut options, a, b);
 
+    let tolerance_ctx_snapshot = ToleranceContext::new(
+        AdaptiveTolerance::from_two_breps(a, b),
+        options.fuzzy_tol.max(0.0),
+    );
+
     let input_faces_a = face_count_of(a);
     let input_faces_b = face_count_of(b);
     let used_bvh = options.use_bvh && has_faces(a) && has_faces(b);
@@ -2665,6 +2674,7 @@ pub fn boolean_op_with_options(
                 input_faces_a,
                 input_faces_b,
                 used_bvh,
+                tolerance_context: Some(tolerance_ctx_snapshot),
                 ..BooleanExecutionReport::default()
             },
             Some(history),
@@ -2707,6 +2717,7 @@ pub fn boolean_op_with_options(
                 input_faces_a,
                 input_faces_b,
                 used_bvh,
+                tolerance_context: Some(tolerance_ctx_snapshot),
                 ..BooleanExecutionReport::default()
             },
             None,
@@ -2792,6 +2803,13 @@ pub fn boolean_op_robust(
 ) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
     const MAX_RETRY_ESCALATION_ROUNDS: usize = 2;
 
+    info!(
+        "boolean_op_robust: {:?} with {} ladder steps, policy {:?}",
+        op,
+        options.fuzzy_retry_ladder.len(),
+        options.retry_policy,
+    );
+
     let mut pending = std::collections::VecDeque::new();
     pending.push_back((options.base.fuzzy_tol.max(0.0), None, 0usize));
     let mut tried: Vec<(f64, Option<BooleanRetryClass>, usize)> = Vec::new();
@@ -2835,8 +2853,18 @@ pub fn boolean_op_robust(
             } else {
                 None
             };
+        debug!(
+            "boolean_op_robust attempt: fuzzy={:.3e}, retry_round={}, glue={}, class={:?}",
+            fuzzy, retry_round, attempt_options.use_glue, origin_retry_class,
+        );
         match boolean_op_with_options(op, a, b, attempt_options) {
             Ok((brep, mut report)) => {
+                debug!(
+                    "boolean_op_robust OK: fuzzy={:.3e}, output_faces={}, retries={}",
+                    fuzzy,
+                    report.output_faces,
+                    tried.len().saturating_sub(1),
+                );
                 attempt_reports.push(BooleanRobustAttemptReport {
                     fuzzy_tol: fuzzy,
                     success: true,
@@ -2888,6 +2916,10 @@ pub fn boolean_op_robust(
             }
             Err(err) => {
                 let retry_class = classify_boolean_retry(&err);
+                debug!(
+                    "boolean_op_robust FAIL: fuzzy={:.3e}, class={:?}, error={:?}",
+                    fuzzy, retry_class, err,
+                );
                 attempt_reports.push(BooleanRobustAttemptReport {
                     fuzzy_tol: fuzzy,
                     success: false,
@@ -2944,6 +2976,12 @@ pub fn boolean_op_robust(
         }
     }
 
+    warn!(
+        "boolean_op_robust exhausted: {:?}, {} attempts, last_err={:?}",
+        op,
+        tried.len(),
+        last_err,
+    );
     Err(last_err.unwrap_or(BooleanError::DegenerateResult))
 }
 
@@ -4700,6 +4738,10 @@ pub fn boolean_op_compound_with_options(
         input_faces_b: face_count_of(b),
         configured_fuzzy_tol: options.fuzzy_tol,
         effective_fuzzy_tol: resolved_boolean_fuzzy_tol_for_ds(options.fuzzy_tol),
+        tolerance_context: Some(ToleranceContext::new(
+            AdaptiveTolerance::from_two_breps(a, b),
+            options.fuzzy_tol.max(0.0),
+        )),
         ..BooleanExecutionReport::default()
     };
 

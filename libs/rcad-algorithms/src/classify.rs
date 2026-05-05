@@ -19,6 +19,7 @@ use crate::tolerance::{
     AdaptiveTolerance, ToleranceContext, ToleranceLevel, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
     TOLERANCE_MESH_LEGACY, TOLERANCE_ANG,
 };
+use tracing::debug;
 
 // =============================================================================
 // Classification Types
@@ -409,6 +410,12 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     sorted.sort_unstable();
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
+    debug!(
+        "classify_point: scale={:.3e}, adaptive_tol={:.3e}, faces={}",
+        ds.model_scale(),
+        tol.tolerance(ToleranceLevel::Normal),
+        sorted.len(),
+    );
     classify_point_internal(point, &sorted, ds, tol, 0.0)
 }
 

@@ -67,6 +67,7 @@ use rcad_kernel::{
     edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
     vertex_tolerance as kernel_vertex_tolerance, BRep, CONFUSION,
 };
+use tracing::debug;
 
 /// Absolute tolerance for point coincidence.
 ///
@@ -370,7 +371,16 @@ impl ToleranceContext {
     /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
     #[inline]
     pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
-        self.adaptive.tolerance(level).max(self.wf_nonnegative())
+        let adaptive = self.adaptive.tolerance(level);
+        let wf = self.wf_nonnegative();
+        let result = adaptive.max(wf);
+        if wf > adaptive {
+            debug!(
+                    "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
+                    wf, adaptive, level, result,
+                );
+        }
+        result
     }
 
     /// Angular tolerance at `level` (algorithms-layer [`TOLERANCE_ANG`] scaling).
