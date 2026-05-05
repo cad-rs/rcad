@@ -56,7 +56,7 @@ pub fn analyze_coplanar_faces(poly1: &[DVec3], poly2: &[DVec3], plane: &Plane) -
 
 /// Sutherland-Hodgman polygon clipping: clips `subject` against `clip` polygon.
 /// Both polygons are in 2D. Returns the clipped polygon vertices.
-pub(crate) fn sutherland_hodgman_clip(subject: &[[f64; 2]], clip: &[[f64; 2]]) -> Vec<[f64; 2]> {
+pub fn sutherland_hodgman_clip(subject: &[[f64; 2]], clip: &[[f64; 2]]) -> Vec<[f64; 2]> {
     if subject.is_empty() || clip.is_empty() {
         return vec![];
     }
