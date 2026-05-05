@@ -1284,8 +1284,9 @@ fn hull_uv_box_from_wire(surf: &Surface3, pts: &[DVec3]) -> Option<(f64, f64, f6
     if !u_min.is_finite() || !v_min.is_finite() {
         return None;
     }
-    let mu = (u_max - u_min).abs() * 0.05 + TOLERANCE_ADAPTIVE_MAX;
-    let mv = (v_max - v_min).abs() * 0.05 + TOLERANCE_ADAPTIVE_MAX;
+    let uv_floor = uv_polyline_trim_closed_len_sq(u_max - u_min, v_max - v_min).sqrt();
+    let mu = (u_max - u_min).abs() * 0.05 + uv_floor;
+    let mv = (v_max - v_min).abs() * 0.05 + uv_floor;
     let nu0 = u_min - mu;
     let nu1 = u_max + mu;
     let mut nv0 = v_min - mv;
@@ -1380,8 +1381,9 @@ fn clamp_domain_to_vertices(
             let pu1 = us.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let pv0 = vs.iter().cloned().fold(f64::INFINITY, f64::min);
             let pv1 = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let mu = (pu1 - pu0).abs() * 0.05 + TOLERANCE_MESH_LEGACY;
-            let mv = (pv1 - pv0).abs() * 0.05 + TOLERANCE_MESH_LEGACY;
+            let uv_floor = uv_polyline_trim_closed_len_sq(pu1 - pu0, pv1 - pv0).sqrt();
+            let mu = (pu1 - pu0).abs() * 0.05 + uv_floor;
+            let mv = (pv1 - pv0).abs() * 0.05 + uv_floor;
             (pu0 - mu, pu1 + mu, pv0 - mv, pv1 + mv)
         }
         Surface3::Cylinder(_)
