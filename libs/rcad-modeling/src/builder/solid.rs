@@ -603,19 +603,12 @@ pub fn make_convex_polyhedron_from_half_spaces(
         let mut found = false;
         for eq in &mut eqs {
             let cos = n.dot(eq.n);
-            if cos > 1.0 - tol * tol * tol {
+            if cos > 1.0 - tol {
                 // Same direction – keep the tighter constraint (smaller d for n·p ≤ d)
                 if d < eq.d {
                     eq.d = d;
                     eq.origin = origin;
                 }
-                found = true;
-                break;
-            }
-            if cos < -1.0 + tol * tol * tol {
-                // Opposite direction – one plane bounds +n, the other -n.
-                // Both constraints are independent; keep both.
-                // (But skip if one strictly dominates the other.)
                 found = true;
                 break;
             }
@@ -651,7 +644,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
                 let p = m.inverse() * DVec3::new(eqs[i].d, eqs[j].d, eqs[k].d);
 
                 // Check against all half-space constraints
-                let valid = eqs.iter().all(|eq| eq.n.dot(p) - eq.d <= tol * tol);
+                let valid = eqs.iter().all(|eq| eq.n.dot(p) - eq.d <= tol * 100.0);
                 if !valid {
                     continue;
                 }
@@ -675,7 +668,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
     let mut face_verts: Vec<Vec<usize>> = vec![Vec::new(); np];
     for (vi, &v) in verts.iter().enumerate() {
         for (ei, eq) in eqs.iter().enumerate() {
-            if (eq.n.dot(v) - eq.d).abs() < tol * tol * tol {
+            if (eq.n.dot(v) - eq.d).abs() < tol * 100.0 {
                 face_verts[ei].push(vi);
             }
         }
