@@ -16,5 +16,7 @@ rcad-kernel = { path = "../rcad-kernel" }
 rcad-modeling = { path = "../rcad-modeling" }
 rcad-algorithms = { path = "../rcad-algorithms" }
 rcad-step = { path = "../rcad-step" }
+rcad-history = { path = "../../../libs/rcad-history" }
+rcad-features = { path = "../../../libs/rcad-features" }
 glam.workspace = true
 serde_json.workspace = true

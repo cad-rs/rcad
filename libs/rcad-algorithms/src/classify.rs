@@ -155,12 +155,22 @@ impl ClassifyContext {
     /// Relaxed / coarse linear bases use `max(adaptive(level), workspace_fuzzy)`, consistent with
     /// [`ToleranceContext::workspace_linear`].
     pub fn with_tolerance_context(ds: Arc<DS>, ctx: ToleranceContext) -> Self {
-        Self {
+        let workspace_fuzzy = ctx.workspace_fuzzy.max(0.0);
+        let out = Self {
             ds,
             tolerance: ctx.adaptive,
-            workspace_fuzzy: ctx.workspace_fuzzy.max(0.0),
+            workspace_fuzzy,
             cache: HashMap::new(),
-        }
+        };
+        tracing::debug!(
+            target: "rcad.classify",
+            model_scale = out.tolerance.model_scale,
+            workspace_fuzzy = out.workspace_fuzzy,
+            fine_linear = out.tolerance.tolerance(ToleranceLevel::Strict),
+            relaxed_linear = out.workspace_linear(ToleranceLevel::Relaxed),
+            "ClassifyContext::with_tolerance_context"
+        );
+        out
     }
 
     #[inline]

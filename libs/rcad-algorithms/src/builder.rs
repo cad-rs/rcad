@@ -1013,7 +1013,7 @@ impl<'a> BooleanBuilder<'a> {
         if brep.solids[0].shells[0].faces.is_empty() {
             // OCCT-style empty compound: disjoint or edge/vertex-only touch yields zero faces.
             // Callers (e.g. OCCT `checkprops -s empty`) expect `Ok` + zero surface area, not an error.
-            if self.op == BooleanOpType::Intersection {
+            if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
                 return Ok((BRep::default(), BooleanHistory::default()));
             }
             return Err(BooleanError::DegenerateResult);
@@ -1121,7 +1121,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
-            if self.op == BooleanOpType::Intersection {
+            if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
                 return Ok((BRep::default(), BooleanHistory::default()));
             }
             return Err(BooleanError::DegenerateResult);
@@ -3245,32 +3245,6 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let trim_start = trim[0];
     let trim_end = trim[trim.len() - 1];
 
-    // Detect truly-closed trim: start ≈ end in UV space (e.g. a small loop entirely
-    // inside the face).  Wrapped-closed trims (start and end differ by ~2π in u,
-    // representing a full-circle cut around a cylinder or sphere) are intentionally
-    // NOT treated as closed loops here — they are open trims whose endpoints lie on
-    // opposite sides of the UV boundary seam and should split the face into two bands.
-    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
-    let is_closed_trim = (trim_start - trim_end).length_squared() < close_sq;
-    if is_closed_trim {
-        // The trim is a truly closed loop entirely inside the polygon.
-        // Use the trim as an interior boundary and return [trim_polygon, outer_polygon].
-        let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
-        let is_inside = point_in_polygon_2d(poly, trim_centroid);
-        if is_inside {
-            let mut trim_dedup: Vec<DVec2> = trim.to_vec();
-            if trim_dedup.len() > 1
-                && (trim_dedup[0] - trim_dedup[trim_dedup.len() - 1]).length_squared() < TOLERANCE_LEN_MIN
-            {
-                trim_dedup.pop();
-            }
-            if trim_dedup.len() >= 3 {
-                return vec![trim_dedup, poly.to_vec()];
-            }
-        }
-        return vec![poly.to_vec()];
-    }
-
     // Find closest point on each polygon edge for a query point.
     // Returns (edge_index, t_param, projected_point).
     let closest_on_boundary = |q: DVec2| -> (usize, f64, DVec2) {
@@ -3346,6 +3320,34 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let v_span = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
         - poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
     let boundary_snap_tol = (u_span + v_span) * 0.05;
+
+    // ── Closed trim detection ───────────────────────────────────────────
+    // Detect truly-closed trim: start ≈ end in UV space (e.g. a small loop entirely
+    // inside the face).  Wrapped-closed trims (start and end differ by ~2π in u,
+    // representing a full-circle cut around a cylinder or sphere) are intentionally
+    // NOT treated as closed loops here — they are open trims whose endpoints lie on
+    // opposite sides of the UV boundary seam and should split the face into two bands.
+    let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
+    let is_closed_trim = (trim_start - trim_end).length_squared() < close_sq;
+    if is_closed_trim {
+        // ── INTERIOR CLOSED LOOP ────────────────────────────────────────
+        // The trim is a truly closed loop entirely inside the polygon.
+        // Use the trim as an interior boundary and return [trim_polygon, outer_polygon].
+        let trim_centroid = trim.iter().copied().sum::<DVec2>() / trim.len() as f64;
+        let is_inside = point_in_polygon_2d(poly, trim_centroid);
+        if is_inside {
+            let mut trim_dedup: Vec<DVec2> = trim.to_vec();
+            if trim_dedup.len() > 1
+                && (trim_dedup[0] - trim_dedup[trim_dedup.len() - 1]).length_squared() < TOLERANCE_LEN_MIN
+            {
+                trim_dedup.pop();
+            }
+            if trim_dedup.len() >= 3 {
+                return vec![trim_dedup, poly.to_vec()];
+            }
+        }
+        return vec![poly.to_vec()];
+    }
 
     // For each trim endpoint: if it lies close to the boundary already, use closest_on_boundary.
     // Otherwise, extrapolate along the trim tangent to find the proper boundary edge.

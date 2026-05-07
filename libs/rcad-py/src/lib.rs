@@ -1,14 +1,24 @@
-//! Python bindings for the open-source RCAD kernel (B-rep, primitives, booleans, STEP/IGES).
+//! Python bindings for the open-source RCAD kernel (B-rep, primitives, booleans, STEP/IGES)
+//! and optional parametric [`PyHistoryDocument`] / [`PyFeatureId`] (feature tree JSON / rebuild).
+//!
+//! Error taxonomy exposed to Python:
+//! - ``HistoryError`` and subclasses — ``rcad_history::HistoryError``.
+//! - ``BooleanOpError`` and subclasses — ``rcad_algorithms::BooleanError`` (direct ``BRep`` booleans).
+//! - ``FeaturesKernelError`` and subclasses — ``rcad_features::FeaturesError`` (feature-layer helpers).
+//! - ``ModelingBuildError`` and subclasses — ``rcad_modeling::BuildError`` (primitive constructors, loft, etc.).
+//! - ``OffsetKernelError`` / ``SweepKernelError`` — ``rcad_algorithms`` offset & sweep.
+//! - ``StepExchangeError`` / ``IgesExchangeError`` — STEP / IGES read paths (``rcad_step``).
 
 use glam::{DAffine3, DQuat, DVec2, DVec3};
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyException, PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use rcad_algorithms::{
     boolean_op, boolean_op_with_options, brep_proj_cylindrical, linear_sweep_wire, offset_solid,
     pipe_sweep_wire, repair, resolved_boolean_fuzzy_tol_for_ds, tolerance, BrepProjOptions,
-    BooleanOpType, BooleanOptions,
+    BooleanError, BooleanOpType, BooleanOptions, OffsetError, SweepError,
 };
+use rcad_features::{operations::FeatureOperations, FeaturesError as FeatErr};
 use rcad_kernel::properties::{centroid, inertia_tensor, signed_volume, surface_area, volume};
 use rcad_kernel::BRep;
 use rcad_modeling::{
@@ -70,28 +80,401 @@ fn step_metadata_to_py(
     Ok(obj.unbind())
 }
 
-fn py_bool_err(e: rcad_algorithms::BooleanError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+pyo3::create_exception!(_rcad, HistoryError, PyException);
+pyo3::create_exception!(_rcad, HistoryFeatureNotFound, HistoryError);
+pyo3::create_exception!(_rcad, HistoryFeatureInUse, HistoryError);
+pyo3::create_exception!(_rcad, HistoryInvalidReorder, HistoryError);
+pyo3::create_exception!(_rcad, HistoryParameterExists, HistoryError);
+pyo3::create_exception!(_rcad, HistoryParameterNotFound, HistoryError);
+pyo3::create_exception!(_rcad, HistoryUndefinedVariable, HistoryError);
+pyo3::create_exception!(_rcad, HistoryInvalidExpression, HistoryError);
+pyo3::create_exception!(_rcad, HistoryDivisionByZero, HistoryError);
+pyo3::create_exception!(_rcad, HistoryEvaluationFailed, HistoryError);
+pyo3::create_exception!(_rcad, HistoryEmptyDocument, HistoryError);
+pyo3::create_exception!(_rcad, HistoryNotEvaluated, HistoryError);
+pyo3::create_exception!(_rcad, HistoryPersistError, HistoryError);
+
+pyo3::create_exception!(_rcad, BooleanOpError, PyException);
+pyo3::create_exception!(_rcad, BooleanOpEmptyInput, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpMissingGeometry, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpDegenerateResult, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpNumericalFailure, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpEmptyCollection, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpInvalidResult, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpIncompleteIntersection, BooleanOpError);
+pyo3::create_exception!(_rcad, BooleanOpSelfIntersection, BooleanOpError);
+
+pyo3::create_exception!(_rcad, FeaturesKernelError, PyException);
+pyo3::create_exception!(_rcad, FeaturesZeroNormal, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesZeroDirection, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesInvalidPatternCount, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesInvalidPatternSpacing, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesInvalidHoleDiameter, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesInvalidHoleDepth, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesDatumNotFound, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesPatternGenerationFailed, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesMirrorFailed, FeaturesKernelError);
+pyo3::create_exception!(_rcad, FeaturesBooleanFailed, FeaturesKernelError);
+
+pyo3::create_exception!(_rcad, ModelingBuildError, PyException);
+pyo3::create_exception!(_rcad, ModelingNonFiniteValue, ModelingBuildError);
+pyo3::create_exception!(_rcad, ModelingNonPositiveValue, ModelingBuildError);
+pyo3::create_exception!(_rcad, ModelingZeroVector, ModelingBuildError);
+pyo3::create_exception!(_rcad, ModelingParallelVectors, ModelingBuildError);
+pyo3::create_exception!(_rcad, ModelingDegenerateGeometry, ModelingBuildError);
+pyo3::create_exception!(_rcad, ModelingInvalidIndex, ModelingBuildError);
+
+pyo3::create_exception!(_rcad, OffsetKernelError, PyException);
+pyo3::create_exception!(_rcad, OffsetZeroDistance, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetInvalidInput, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetDegenerateSurface, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetSelfIntersection, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetEdgeIntersectionFailed, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetVertexComputationFailed, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetUnsupportedGeometry, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetNumericalFailure, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetEmptyResult, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetWallThicknessViolation, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetJoinCreationFailed, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetInvalidVariableThickness, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetQualityCheckFailed, OffsetKernelError);
+pyo3::create_exception!(_rcad, OffsetRecoveryFailed, OffsetKernelError);
+
+pyo3::create_exception!(_rcad, SweepKernelError, PyException);
+pyo3::create_exception!(_rcad, SweepZeroVector, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepNonFiniteInput, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepNonPositiveInput, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepInsufficientVertices, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepInsufficientSpinePoints, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepVertexCountMismatch, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepDegenerateGeometry, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepInvalidParameter, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepCornerHandlingFailed, SweepKernelError);
+pyo3::create_exception!(_rcad, SweepModelingError, SweepKernelError);
+
+pyo3::create_exception!(_rcad, StepExchangeError, PyException);
+pyo3::create_exception!(_rcad, StepIoError, StepExchangeError);
+pyo3::create_exception!(_rcad, StepInvalidFormatError, StepExchangeError);
+pyo3::create_exception!(_rcad, StepMissingEntityError, StepExchangeError);
+pyo3::create_exception!(_rcad, StepEmptyResultError, StepExchangeError);
+
+pyo3::create_exception!(_rcad, IgesExchangeError, PyException);
+pyo3::create_exception!(_rcad, IgesIoError, IgesExchangeError);
+pyo3::create_exception!(_rcad, IgesInvalidFormatError, IgesExchangeError);
+pyo3::create_exception!(_rcad, IgesEmptyResultError, IgesExchangeError);
+
+/// Map ``rcad_history::HistoryError`` to typed Python exceptions (subclasses of ``HistoryError``).
+fn py_history_err(e: rcad_history::HistoryError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        rcad_history::HistoryError::FeatureNotFound(_) => HistoryFeatureNotFound::new_err(msg),
+        rcad_history::HistoryError::FeatureInUse(_) => HistoryFeatureInUse::new_err(msg),
+        rcad_history::HistoryError::InvalidReorder { .. } => HistoryInvalidReorder::new_err(msg),
+        rcad_history::HistoryError::ParameterExists(_) => HistoryParameterExists::new_err(msg),
+        rcad_history::HistoryError::ParameterNotFound(_) => HistoryParameterNotFound::new_err(msg),
+        rcad_history::HistoryError::UndefinedVariable(_) => HistoryUndefinedVariable::new_err(msg),
+        rcad_history::HistoryError::InvalidExpression(_) => HistoryInvalidExpression::new_err(msg),
+        rcad_history::HistoryError::DivisionByZero => HistoryDivisionByZero::new_err(msg),
+        rcad_history::HistoryError::EvaluationFailed(_) => HistoryEvaluationFailed::new_err(msg),
+        rcad_history::HistoryError::EmptyDocument => HistoryEmptyDocument::new_err(msg),
+        rcad_history::HistoryError::NotEvaluated(_) => HistoryNotEvaluated::new_err(msg),
+        rcad_history::HistoryError::Persist(_) => HistoryPersistError::new_err(msg),
+    }
+}
+
+fn py_bool_err(e: BooleanError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        BooleanError::EmptyInput => BooleanOpEmptyInput::new_err(msg),
+        BooleanError::MissingGeometry(_) => BooleanOpMissingGeometry::new_err(msg),
+        BooleanError::DegenerateResult => BooleanOpDegenerateResult::new_err(msg),
+        BooleanError::NumericalFailure(_) => BooleanOpNumericalFailure::new_err(msg),
+        BooleanError::EmptyCollection(_) => BooleanOpEmptyCollection::new_err(msg),
+        BooleanError::InvalidResult(_) => BooleanOpInvalidResult::new_err(msg),
+        BooleanError::IncompleteIntersection(_) => BooleanOpIncompleteIntersection::new_err(msg),
+        BooleanError::SelfIntersection(_) => BooleanOpSelfIntersection::new_err(msg),
+    }
+}
+
+fn py_features_err(e: FeatErr) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        FeatErr::ZeroNormal => FeaturesZeroNormal::new_err(msg),
+        FeatErr::ZeroDirection => FeaturesZeroDirection::new_err(msg),
+        FeatErr::InvalidPatternCount(_) => FeaturesInvalidPatternCount::new_err(msg),
+        FeatErr::InvalidPatternSpacing(_) => FeaturesInvalidPatternSpacing::new_err(msg),
+        FeatErr::InvalidHoleDiameter(_) => FeaturesInvalidHoleDiameter::new_err(msg),
+        FeatErr::InvalidHoleDepth(_) => FeaturesInvalidHoleDepth::new_err(msg),
+        FeatErr::FeatureNotFound(_) => FeaturesDatumNotFound::new_err(msg),
+        FeatErr::PatternGenerationFailed(_) => FeaturesPatternGenerationFailed::new_err(msg),
+        FeatErr::MirrorFailed(_) => FeaturesMirrorFailed::new_err(msg),
+        FeatErr::BooleanFailed(_) => FeaturesBooleanFailed::new_err(msg),
+    }
 }
 
 fn py_build_err(e: rcad_modeling::BuildError) -> PyErr {
-    PyValueError::new_err(e.to_string())
+    let msg = e.to_string();
+    match e {
+        rcad_modeling::BuildError::NonFiniteValue(_) => ModelingNonFiniteValue::new_err(msg),
+        rcad_modeling::BuildError::NonPositiveValue(_) => ModelingNonPositiveValue::new_err(msg),
+        rcad_modeling::BuildError::ZeroVector(_) => ModelingZeroVector::new_err(msg),
+        rcad_modeling::BuildError::ParallelVectors(_, _) => ModelingParallelVectors::new_err(msg),
+        rcad_modeling::BuildError::DegenerateGeometry(_) => ModelingDegenerateGeometry::new_err(msg),
+        rcad_modeling::BuildError::InvalidIndex(_) => ModelingInvalidIndex::new_err(msg),
+    }
+}
+
+fn py_offset_err(e: OffsetError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        OffsetError::ZeroDistance => OffsetZeroDistance::new_err(msg),
+        OffsetError::InvalidInput(_) => OffsetInvalidInput::new_err(msg),
+        OffsetError::DegenerateSurface { .. } => OffsetDegenerateSurface::new_err(msg),
+        OffsetError::SelfIntersection { .. } => OffsetSelfIntersection::new_err(msg),
+        OffsetError::EdgeIntersectionFailed { .. } => OffsetEdgeIntersectionFailed::new_err(msg),
+        OffsetError::VertexComputationFailed { .. } => OffsetVertexComputationFailed::new_err(msg),
+        OffsetError::UnsupportedGeometry { .. } => OffsetUnsupportedGeometry::new_err(msg),
+        OffsetError::NumericalFailure(_) => OffsetNumericalFailure::new_err(msg),
+        OffsetError::EmptyResult => OffsetEmptyResult::new_err(msg),
+        OffsetError::WallThicknessViolation { .. } => OffsetWallThicknessViolation::new_err(msg),
+        OffsetError::JoinCreationFailed { .. } => OffsetJoinCreationFailed::new_err(msg),
+        OffsetError::InvalidVariableThickness { .. } => {
+            OffsetInvalidVariableThickness::new_err(msg)
+        }
+        OffsetError::QualityCheckFailed { .. } => OffsetQualityCheckFailed::new_err(msg),
+        OffsetError::RecoveryFailed { .. } => OffsetRecoveryFailed::new_err(msg),
+    }
+}
+
+fn py_sweep_err(e: SweepError) -> PyErr {
+    let msg = e.to_string();
+    match e {
+        SweepError::ZeroVector(_) => SweepZeroVector::new_err(msg),
+        SweepError::NonFiniteInput(_) => SweepNonFiniteInput::new_err(msg),
+        SweepError::NonPositiveInput(_) => SweepNonPositiveInput::new_err(msg),
+        SweepError::InsufficientVertices { .. } => SweepInsufficientVertices::new_err(msg),
+        SweepError::InsufficientSpinePoints { .. } => SweepInsufficientSpinePoints::new_err(msg),
+        SweepError::VertexCountMismatch { .. } => SweepVertexCountMismatch::new_err(msg),
+        SweepError::DegenerateGeometry(_) => SweepDegenerateGeometry::new_err(msg),
+        SweepError::InvalidParameter(_) => SweepInvalidParameter::new_err(msg),
+        SweepError::CornerHandlingFailed(_) => SweepCornerHandlingFailed::new_err(msg),
+        SweepError::ModelingError(_) => SweepModelingError::new_err(msg),
+    }
 }
 
 fn py_step_err(e: rcad_step::StepError) -> PyErr {
-    PyIOError::new_err(e.to_string())
+    let msg = e.to_string();
+    match e {
+        rcad_step::StepError::Io(_) => StepIoError::new_err(msg),
+        rcad_step::StepError::InvalidFormat(_) => StepInvalidFormatError::new_err(msg),
+        rcad_step::StepError::MissingEntity { .. } => StepMissingEntityError::new_err(msg),
+        rcad_step::StepError::EmptyResult(_) => StepEmptyResultError::new_err(msg),
+    }
 }
 
 fn py_iges_err(e: rcad_step::IgesError) -> PyErr {
-    PyIOError::new_err(e.to_string())
+    let msg = e.to_string();
+    match e {
+        rcad_step::IgesError::Io(_) => IgesIoError::new_err(msg),
+        rcad_step::IgesError::InvalidFormat(_) => IgesInvalidFormatError::new_err(msg),
+        rcad_step::IgesError::EmptyResult(_) => IgesEmptyResultError::new_err(msg),
+    }
 }
 
-fn py_offset_err(e: rcad_algorithms::OffsetError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+fn parse_feature_id(feature_id: &Bound<'_, PyAny>) -> PyResult<u64> {
+    if let Ok(v) = feature_id.extract::<u64>() {
+        return Ok(v);
+    }
+    if let Ok(fid) = feature_id.downcast::<PyFeatureId>() {
+        return Ok(fid.borrow().value);
+    }
+    Err(PyTypeError::new_err("feature_id must be int or FeatureId"))
 }
 
-fn py_sweep_err(e: rcad_algorithms::SweepError) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+/// Stable feature identifier (matches Rust ``rcad_history::FeatureId`` numeric value).
+#[pyclass(name = "FeatureId", frozen, eq, hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PyFeatureId {
+    #[pyo3(get)]
+    pub value: u64,
+}
+
+#[pymethods]
+impl PyFeatureId {
+    #[new]
+    fn new(value: u64) -> Self {
+        Self { value }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("FeatureId({})", self.value)
+    }
+
+    fn __int__(&self) -> u64 {
+        self.value
+    }
+}
+
+/// Parametric part document (feature tree + parameters) from ``rcad_history``.
+///
+/// Load/save JSON compatible with the Rust ``Document::to_json`` / ``from_json_str`` format.
+#[pyclass(name = "HistoryDocument")]
+pub struct PyHistoryDocument {
+    inner: rcad_history::Document,
+}
+
+#[pymethods]
+impl PyHistoryDocument {
+    #[staticmethod]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: rcad_history::Document::new(name),
+        }
+    }
+
+    #[staticmethod]
+    fn from_json(s: &str) -> PyResult<Self> {
+        let inner = rcad_history::Document::from_json_str(s).map_err(py_history_err)?;
+        Ok(Self { inner })
+    }
+
+    fn to_json(&self) -> PyResult<String> {
+        self.inner.to_json().map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn to_json_pretty(&self) -> PyResult<String> {
+        self.inner
+            .to_json_pretty()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Document UUID from JSON / ``new`` (same as Rust ``Document::id``).
+    #[getter]
+    fn document_id(&self) -> String {
+        self.inner.id.to_string()
+    }
+
+    fn rebuild(&mut self) -> PyResult<()> {
+        self.inner.rebuild().map_err(py_history_err)
+    }
+
+    /// Dependency order check (referenced features must appear earlier in the tree).
+    fn validate_dependency_order(&self) -> PyResult<()> {
+        self.inner.validate_dependency_order().map_err(py_history_err)
+    }
+
+    /// Feature ids in tree order (same as Rust ``Document::features()``).
+    fn feature_ids(&self) -> Vec<u64> {
+        self.inner
+            .features()
+            .iter()
+            .map(|f| f.id.0)
+            .collect()
+    }
+
+    /// Next id that ``add_feature`` would assign (Rust ``next_feature_sequence``).
+    fn next_feature_sequence(&self) -> u64 {
+        self.inner.next_feature_sequence()
+    }
+
+    /// Last feature id in the tree, if any (convenience for ``final_brep`` / cache lookups).
+    fn final_feature_id(&self) -> Option<u64> {
+        self.inner.features().last().map(|f| f.id.0)
+    }
+
+    fn clear_cache(&mut self) {
+        self.inner.clear_cache();
+    }
+
+    fn update_parameter(&mut self, name: &str, value: f64) -> PyResult<()> {
+        self.inner
+            .update_parameter(name, value)
+            .map_err(py_history_err)
+    }
+
+    /// Add a driving dimension (constant numeric value).
+    fn add_parameter(&mut self, name: &str, value: f64) -> PyResult<()> {
+        let param = rcad_history::Parameter::new(name, value);
+        self.inner.add_parameter(param).map_err(py_history_err)
+    }
+
+    /// Add a parameter whose value is an expression (same evaluator as JSON ``Expression``).
+    fn add_parameter_expression(&mut self, name: &str, expr: &str) -> PyResult<()> {
+        let param = rcad_history::Parameter::with_expression(name, expr);
+        self.inner.add_parameter(param).map_err(py_history_err)
+    }
+
+    /// Append a box primitive feature (constant width/height/depth). Returns assigned feature id.
+    fn add_box_feature(
+        &mut self,
+        name: &str,
+        corner: (f64, f64, f64),
+        width: f64,
+        height: f64,
+        depth: f64,
+    ) -> PyResult<u64> {
+        let f = rcad_history::Feature::new(
+            rcad_history::FeatureId::new(0),
+            name,
+            rcad_history::FeatureType::Box(rcad_history::BoxFeature {
+                corner: vec3_tuple(corner),
+                width: rcad_history::ParameterValue::Constant(width),
+                height: rcad_history::ParameterValue::Constant(height),
+                depth: rcad_history::ParameterValue::Constant(depth),
+            }),
+        );
+        let id = self.inner.add_feature(f);
+        Ok(id.0)
+    }
+
+    /// Number of features in the tree (same ordering as Rust ``Document::features()``).
+    fn feature_count(&self) -> usize {
+        self.inner.features().len()
+    }
+
+    /// Sorted list of parameter names (``Document`` hash map keys).
+    fn parameter_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.inner.parameters().keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Resolved numeric values for all parameters (multi-pass; matches Rust ``Document::resolved_parameter_values``).
+    fn resolved_parameter_values<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.inner
+            .resolved_parameter_values()
+            .into_pyobject(py)
+            .map(|d| d.into_any())
+    }
+
+    /// Cached solid for ``feature_id`` after the last successful ``rebuild`` (Rust ``evaluated_brep``).
+    /// Accepts ``int`` or ``FeatureId``.
+    fn evaluated_brep(&self, feature_id: &Bound<'_, PyAny>) -> PyResult<Option<PyBRep>> {
+        let id = parse_feature_id(feature_id)?;
+        Ok(self
+            .inner
+            .evaluated_brep(rcad_history::FeatureId::new(id))
+            .map(|b| PyBRep { inner: b.clone() }))
+    }
+
+    fn final_brep(&self) -> Option<PyBRep> {
+        self.inner
+            .final_brep()
+            .map(|b| PyBRep { inner: b.clone() })
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HistoryDocument(name={:?}, features={})",
+            self.inner.name,
+            self.inner.features().len()
+        )
+    }
 }
 
 /// Boolean pipeline options matching ``rcad_algorithms::BooleanOptions`` (commonly tuned subset).
@@ -697,14 +1080,305 @@ fn py_brep_proj_cylindrical(
     Ok(out)
 }
 
+/// Validate mirror plane definition (raises ``Features*`` errors). For tests and scripts.
+#[pyfunction]
+#[pyo3(name = "features_create_mirror")]
+fn py_features_create_mirror(
+    name: &str,
+    point: (f64, f64, f64),
+    normal: (f64, f64, f64),
+) -> PyResult<()> {
+    FeatureOperations::create_mirror(name, vec3_tuple(point), vec3_tuple(normal))
+        .map_err(py_features_err)?;
+    Ok(())
+}
+
+/// Validate linear pattern parameters (raises ``Features*`` errors).
+#[pyfunction]
+#[pyo3(name = "features_create_linear_pattern")]
+fn py_features_create_linear_pattern(
+    direction: (f64, f64, f64),
+    count: usize,
+    spacing: f64,
+) -> PyResult<()> {
+    FeatureOperations::create_linear_pattern(vec3_tuple(direction), count, spacing)
+        .map_err(py_features_err)?;
+    Ok(())
+}
+
+/// Boolean union via ``rcad_features::FeatureOperations`` (errors are ``FeaturesBooleanFailed``, not ``BooleanOp*``).
+#[pyfunction]
+#[pyo3(name = "features_boolean_union")]
+fn py_features_boolean_union(a: &PyBRep, b: &PyBRep) -> PyResult<PyBRep> {
+    FeatureOperations::boolean_brep(BooleanOpType::Union, &a.inner, &b.inner)
+        .map(|inner| PyBRep { inner })
+        .map_err(py_features_err)
+}
+
 #[pymodule]
-fn _rcad(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _rcad(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("HistoryError", py.get_type::<HistoryError>())?;
+    m.add(
+        "HistoryFeatureNotFound",
+        py.get_type::<HistoryFeatureNotFound>(),
+    )?;
+    m.add("HistoryFeatureInUse", py.get_type::<HistoryFeatureInUse>())?;
+    m.add(
+        "HistoryInvalidReorder",
+        py.get_type::<HistoryInvalidReorder>(),
+    )?;
+    m.add(
+        "HistoryParameterExists",
+        py.get_type::<HistoryParameterExists>(),
+    )?;
+    m.add(
+        "HistoryParameterNotFound",
+        py.get_type::<HistoryParameterNotFound>(),
+    )?;
+    m.add(
+        "HistoryUndefinedVariable",
+        py.get_type::<HistoryUndefinedVariable>(),
+    )?;
+    m.add(
+        "HistoryInvalidExpression",
+        py.get_type::<HistoryInvalidExpression>(),
+    )?;
+    m.add(
+        "HistoryDivisionByZero",
+        py.get_type::<HistoryDivisionByZero>(),
+    )?;
+    m.add(
+        "HistoryEvaluationFailed",
+        py.get_type::<HistoryEvaluationFailed>(),
+    )?;
+    m.add(
+        "HistoryEmptyDocument",
+        py.get_type::<HistoryEmptyDocument>(),
+    )?;
+    m.add(
+        "HistoryNotEvaluated",
+        py.get_type::<HistoryNotEvaluated>(),
+    )?;
+    m.add(
+        "HistoryPersistError",
+        py.get_type::<HistoryPersistError>(),
+    )?;
+
+    m.add("BooleanOpError", py.get_type::<BooleanOpError>())?;
+    m.add("BooleanOpEmptyInput", py.get_type::<BooleanOpEmptyInput>())?;
+    m.add(
+        "BooleanOpMissingGeometry",
+        py.get_type::<BooleanOpMissingGeometry>(),
+    )?;
+    m.add(
+        "BooleanOpDegenerateResult",
+        py.get_type::<BooleanOpDegenerateResult>(),
+    )?;
+    m.add(
+        "BooleanOpNumericalFailure",
+        py.get_type::<BooleanOpNumericalFailure>(),
+    )?;
+    m.add(
+        "BooleanOpEmptyCollection",
+        py.get_type::<BooleanOpEmptyCollection>(),
+    )?;
+    m.add("BooleanOpInvalidResult", py.get_type::<BooleanOpInvalidResult>())?;
+    m.add(
+        "BooleanOpIncompleteIntersection",
+        py.get_type::<BooleanOpIncompleteIntersection>(),
+    )?;
+    m.add(
+        "BooleanOpSelfIntersection",
+        py.get_type::<BooleanOpSelfIntersection>(),
+    )?;
+
+    m.add(
+        "FeaturesKernelError",
+        py.get_type::<FeaturesKernelError>(),
+    )?;
+    m.add("FeaturesZeroNormal", py.get_type::<FeaturesZeroNormal>())?;
+    m.add(
+        "FeaturesZeroDirection",
+        py.get_type::<FeaturesZeroDirection>(),
+    )?;
+    m.add(
+        "FeaturesInvalidPatternCount",
+        py.get_type::<FeaturesInvalidPatternCount>(),
+    )?;
+    m.add(
+        "FeaturesInvalidPatternSpacing",
+        py.get_type::<FeaturesInvalidPatternSpacing>(),
+    )?;
+    m.add(
+        "FeaturesInvalidHoleDiameter",
+        py.get_type::<FeaturesInvalidHoleDiameter>(),
+    )?;
+    m.add(
+        "FeaturesInvalidHoleDepth",
+        py.get_type::<FeaturesInvalidHoleDepth>(),
+    )?;
+    m.add("FeaturesDatumNotFound", py.get_type::<FeaturesDatumNotFound>())?;
+    m.add(
+        "FeaturesPatternGenerationFailed",
+        py.get_type::<FeaturesPatternGenerationFailed>(),
+    )?;
+    m.add("FeaturesMirrorFailed", py.get_type::<FeaturesMirrorFailed>())?;
+    m.add(
+        "FeaturesBooleanFailed",
+        py.get_type::<FeaturesBooleanFailed>(),
+    )?;
+
+    m.add("ModelingBuildError", py.get_type::<ModelingBuildError>())?;
+    m.add(
+        "ModelingNonFiniteValue",
+        py.get_type::<ModelingNonFiniteValue>(),
+    )?;
+    m.add(
+        "ModelingNonPositiveValue",
+        py.get_type::<ModelingNonPositiveValue>(),
+    )?;
+    m.add("ModelingZeroVector", py.get_type::<ModelingZeroVector>())?;
+    m.add(
+        "ModelingParallelVectors",
+        py.get_type::<ModelingParallelVectors>(),
+    )?;
+    m.add(
+        "ModelingDegenerateGeometry",
+        py.get_type::<ModelingDegenerateGeometry>(),
+    )?;
+    m.add(
+        "ModelingInvalidIndex",
+        py.get_type::<ModelingInvalidIndex>(),
+    )?;
+
+    m.add("OffsetKernelError", py.get_type::<OffsetKernelError>())?;
+    m.add("OffsetZeroDistance", py.get_type::<OffsetZeroDistance>())?;
+    m.add("OffsetInvalidInput", py.get_type::<OffsetInvalidInput>())?;
+    m.add(
+        "OffsetDegenerateSurface",
+        py.get_type::<OffsetDegenerateSurface>(),
+    )?;
+    m.add(
+        "OffsetSelfIntersection",
+        py.get_type::<OffsetSelfIntersection>(),
+    )?;
+    m.add(
+        "OffsetEdgeIntersectionFailed",
+        py.get_type::<OffsetEdgeIntersectionFailed>(),
+    )?;
+    m.add(
+        "OffsetVertexComputationFailed",
+        py.get_type::<OffsetVertexComputationFailed>(),
+    )?;
+    m.add(
+        "OffsetUnsupportedGeometry",
+        py.get_type::<OffsetUnsupportedGeometry>(),
+    )?;
+    m.add(
+        "OffsetNumericalFailure",
+        py.get_type::<OffsetNumericalFailure>(),
+    )?;
+    m.add("OffsetEmptyResult", py.get_type::<OffsetEmptyResult>())?;
+    m.add(
+        "OffsetWallThicknessViolation",
+        py.get_type::<OffsetWallThicknessViolation>(),
+    )?;
+    m.add(
+        "OffsetJoinCreationFailed",
+        py.get_type::<OffsetJoinCreationFailed>(),
+    )?;
+    m.add(
+        "OffsetInvalidVariableThickness",
+        py.get_type::<OffsetInvalidVariableThickness>(),
+    )?;
+    m.add(
+        "OffsetQualityCheckFailed",
+        py.get_type::<OffsetQualityCheckFailed>(),
+    )?;
+    m.add("OffsetRecoveryFailed", py.get_type::<OffsetRecoveryFailed>())?;
+
+    m.add("SweepKernelError", py.get_type::<SweepKernelError>())?;
+    m.add("SweepZeroVector", py.get_type::<SweepZeroVector>())?;
+    m.add(
+        "SweepNonFiniteInput",
+        py.get_type::<SweepNonFiniteInput>(),
+    )?;
+    m.add(
+        "SweepNonPositiveInput",
+        py.get_type::<SweepNonPositiveInput>(),
+    )?;
+    m.add(
+        "SweepInsufficientVertices",
+        py.get_type::<SweepInsufficientVertices>(),
+    )?;
+    m.add(
+        "SweepInsufficientSpinePoints",
+        py.get_type::<SweepInsufficientSpinePoints>(),
+    )?;
+    m.add(
+        "SweepVertexCountMismatch",
+        py.get_type::<SweepVertexCountMismatch>(),
+    )?;
+    m.add(
+        "SweepDegenerateGeometry",
+        py.get_type::<SweepDegenerateGeometry>(),
+    )?;
+    m.add(
+        "SweepInvalidParameter",
+        py.get_type::<SweepInvalidParameter>(),
+    )?;
+    m.add(
+        "SweepCornerHandlingFailed",
+        py.get_type::<SweepCornerHandlingFailed>(),
+    )?;
+    m.add("SweepModelingError", py.get_type::<SweepModelingError>())?;
+
+    m.add(
+        "StepExchangeError",
+        py.get_type::<StepExchangeError>(),
+    )?;
+    m.add("StepIoError", py.get_type::<StepIoError>())?;
+    m.add(
+        "StepInvalidFormatError",
+        py.get_type::<StepInvalidFormatError>(),
+    )?;
+    m.add(
+        "StepMissingEntityError",
+        py.get_type::<StepMissingEntityError>(),
+    )?;
+    m.add(
+        "StepEmptyResultError",
+        py.get_type::<StepEmptyResultError>(),
+    )?;
+
+    m.add(
+        "IgesExchangeError",
+        py.get_type::<IgesExchangeError>(),
+    )?;
+    m.add("IgesIoError", py.get_type::<IgesIoError>())?;
+    m.add(
+        "IgesInvalidFormatError",
+        py.get_type::<IgesInvalidFormatError>(),
+    )?;
+    m.add(
+        "IgesEmptyResultError",
+        py.get_type::<IgesEmptyResultError>(),
+    )?;
+
+    m.add("TRACE_TARGET_BOOLEAN", "rcad.boolean")?;
+    m.add("TRACE_TARGET_CLASSIFY", "rcad.classify")?;
+
     m.add_class::<PyBRep>()?;
+    m.add_class::<PyFeatureId>()?;
+    m.add_class::<PyHistoryDocument>()?;
     m.add_class::<PyBooleanOptions>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("TOLERANCE_ABS", tolerance::TOLERANCE_ABS)?;
     m.add_function(wrap_pyfunction!(py_resolved_boolean_fuzzy_tol, m)?)?;
     m.add_function(wrap_pyfunction!(py_max_face_tolerance, m)?)?;
     m.add_function(wrap_pyfunction!(py_brep_proj_cylindrical, m)?)?;
+    m.add_function(wrap_pyfunction!(py_features_create_mirror, m)?)?;
+    m.add_function(wrap_pyfunction!(py_features_create_linear_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(py_features_boolean_union, m)?)?;
     Ok(())
 }

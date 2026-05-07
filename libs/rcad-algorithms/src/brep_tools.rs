@@ -818,6 +818,15 @@ pub fn count_shells(brep: &BRep) -> usize {
     brep.solids.iter().map(|s| s.shells.len()).sum()
 }
 
+/// Count the total number of wires (outer + inner) across all faces in a BRep.
+pub fn count_wires(brep: &BRep) -> usize {
+    brep.solids.iter()
+        .flat_map(|s| &s.shells)
+        .flat_map(|sh| &sh.faces)
+        .map(|f| 1 + f.inner_wires.len())
+        .sum()
+}
+
 /// Get the bounding box of a BRep.
 ///
 /// Returns `[min_point, max_point]` or `None` if the BRep has no vertices.

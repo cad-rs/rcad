@@ -148,7 +148,7 @@ pub use brep_lib::{
 };
 pub use brep_tools::{
     BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
-    count_vertices, get_curve, get_edge_range, get_edge_tolerance, get_face_tolerance,
+    count_vertices, count_wires, get_curve, get_edge_range, get_edge_tolerance, get_face_tolerance,
     get_inner_wires, get_outer_wire, get_pcurve, get_shape_type, get_surface, get_vertex_tolerance,
     is_closed, is_edge_degenerate, mirror_shape, read_brep_from_file, read_brep_from_string,
     rotate_shape, scale_shape, transform_shape, write_brep_to_file, write_brep_to_string,
@@ -2577,6 +2577,18 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 /// Both BReps must have populated GeomStore (call
 /// `geom_populate::populate_box_geom` first for box primitives).
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    if tracing::enabled!(target: "rcad.boolean", tracing::Level::DEBUG) {
+        let at = AdaptiveTolerance::from_two_breps(a, b);
+        tracing::debug!(
+            target: "rcad.boolean",
+            ?op,
+            faces_a = face_count_of(a),
+            faces_b = face_count_of(b),
+            model_scale = at.model_scale,
+            fine_tol = at.tolerance(ToleranceLevel::Strict),
+            "boolean_op"
+        );
+    }
     if let Some(r) = boolean_unit_octant::try_identical_operands(op, a, b) {
         return Ok(r);
     }
@@ -2613,6 +2625,22 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         }
     }
 
+    // Fast path for shapes whose AABBs don't overlap in volume (only touch at
+    // faces/edges/vertices). The pave-fill-builder can misclassify coincident
+    // surfaces as "inside" the other operand, dropping a face from the result.
+    if let (Some([amin, amax]), Some([bmin, bmax])) = (a.bounding_box(), b.bounding_box()) {
+        let overlap_x = amax.x > bmin.x && bmax.x > amin.x;
+        let overlap_y = amax.y > bmin.y && bmax.y > amin.y;
+        let overlap_z = amax.z > bmin.z && bmax.z > amin.z;
+        if !(overlap_x && overlap_y && overlap_z) {
+            return match op {
+                BooleanOpType::Intersection => Ok(BRep::default()),
+                BooleanOpType::Difference => Ok(a.clone()),
+                _ => boolean_op_pave_fill_build(op, a, b),
+            };
+        }
+    }
+
     boolean_op_pave_fill_build(op, a, b)
 }
 
@@ -2633,6 +2661,23 @@ pub fn boolean_op_with_options(
     let input_faces_a = face_count_of(a);
     let input_faces_b = face_count_of(b);
     let used_bvh = options.use_bvh && has_faces(a) && has_faces(b);
+
+    if tracing::enabled!(target: "rcad.boolean", tracing::Level::DEBUG) {
+        tracing::debug!(
+            target: "rcad.boolean",
+            ?op,
+            input_faces_a,
+            input_faces_b,
+            fuzzy_tol = options.fuzzy_tol,
+            model_scale = tolerance_ctx_snapshot.adaptive.model_scale,
+            workspace_fuzzy = tolerance_ctx_snapshot.workspace_fuzzy,
+            fine_tol = tolerance_ctx_snapshot.adaptive.tolerance(ToleranceLevel::Strict),
+            used_bvh,
+            use_glue = options.use_glue,
+            glue_tolerance = options.glue_tolerance,
+            "boolean_op_with_options"
+        );
+    }
 
     let (mut out, mut report, history_opt) = if options.include_history {
         let (result, history) = if options.use_bvh {
