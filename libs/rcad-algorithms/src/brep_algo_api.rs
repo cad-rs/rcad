@@ -11,6 +11,7 @@
 //! ```
 //! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::brep_algo_api::{BRepAlgoAPI_Fuse, BooleanApiOptions};
+//! use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 //! use rcad_kernel::{BRep, PrimitiveSolid};
 //!
 //! let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });

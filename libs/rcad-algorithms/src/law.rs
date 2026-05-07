@@ -16,6 +16,7 @@
 //! ```
 //! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::law::{LinearLaw, LawFunction};
+//! use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 //!
 //! let law = LinearLaw::new(0.0, 1.0, 1.0, 3.0);
 //! assert!((law.value(0.0) - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);

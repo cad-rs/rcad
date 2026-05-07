@@ -1311,7 +1311,7 @@ pub enum UvDirection {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::analyze_surface_bounds;
 ///
@@ -1641,7 +1641,7 @@ pub enum UvConsistencyIssueKind {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::check_face_uv_consistency;
 ///
@@ -1977,7 +1977,7 @@ pub enum ContinuityIssueKind {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::analyze_surface_continuity;
 ///
@@ -2383,7 +2383,7 @@ pub enum UnusualIsoCurveKind {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::analyze_isoparametric_curves;
 ///
@@ -2853,7 +2853,7 @@ pub struct PeriodicGap {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::detect_uv_gaps;
 ///
@@ -3228,7 +3228,7 @@ pub struct SeamOverlap {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::detect_uv_overlaps;
 ///
@@ -3549,7 +3549,7 @@ pub enum UvOrientation {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::validate_trimming_loops;
 ///
@@ -3899,7 +3899,7 @@ pub enum PeriodicSurfaceIssueKind {
 /// # Example
 ///
 /// ```rust
-/// # use rcad_algorithms::tolerance::*;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::analyze_periodic_surface_handling;
 ///

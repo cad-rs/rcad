@@ -11,6 +11,11 @@ use crate::tolerance::{
     TOLERANCE_LEN_MIN, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE,
     TOLERANCE_RETRY_LADDER_MID,
 };
+use crate::{
+    BRep, BooleanError, BooleanOpType, BooleanOptions, BooleanRetryClass,
+    BooleanRobustOptions, BooleanRetryPolicy, ExtremeGeometryRetryConfig,
+    boolean_op_robust, classify_boolean_failure,
+};
 
 /// Detailed failure classification for boolean operations.
 ///
@@ -657,6 +662,161 @@ impl RetryPolicyBuilder {
     /// Builds the final retry policy.
     pub fn build(self) -> RetryPolicy {
         self.policy
+    }
+}
+
+/// Map a `BooleanRetryClass` (used by the robust pipeline) to a `BooleanFailureClass`
+/// (used by this module) for diagnostic reporting.
+fn boolean_retry_class_to_failure_class(rc: BooleanRetryClass) -> BooleanFailureClass {
+    match rc {
+        BooleanRetryClass::FatalInput | BooleanRetryClass::IncompleteData => {
+            BooleanFailureClass::InvalidInput
+        }
+        BooleanRetryClass::DegenerateTopology => BooleanFailureClass::DegenerateTopology,
+        BooleanRetryClass::NumericalInstability => BooleanFailureClass::NumericalInstability,
+    }
+}
+
+/// Convert a [`RetryPolicy`] into [`BooleanRobustOptions`] for use with
+/// [`crate::boolean_op_robust`].
+///
+/// This bridges the high-level retry policy in this module with the robust boolean
+/// execution pipeline. The generated options use the policy's fuzzy growth factor,
+/// glue settings, and MakeConnected configuration.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_algorithms::boolean::{RetryPolicy, retry_policy_to_robust_options};
+/// use rcad_algorithms::BooleanOptions;
+///
+/// let policy = RetryPolicy::default();
+/// let base = BooleanOptions::default();
+/// let robust_opts = retry_policy_to_robust_options(&policy, base);
+/// assert!(robust_opts.fuzzy_retry_ladder.len() <= policy.max_attempts);
+/// ```
+pub fn retry_policy_to_robust_options(
+    policy: &RetryPolicy,
+    base_options: BooleanOptions,
+) -> BooleanRobustOptions {
+    let start_tol = if base_options.fuzzy_tol > 0.0 {
+        base_options.fuzzy_tol
+    } else {
+        TOLERANCE_ABS
+    };
+    let mut ladder = Vec::new();
+    let mut tol = start_tol;
+    for _ in 0..policy.max_attempts.saturating_sub(1) {
+        tol = policy.next_fuzzy_tolerance(tol);
+        tol = tol.min(policy.fuzzy_tolerance_cap);
+        if !ladder.iter().any(|&v: &f64| (v - tol).abs() <= TOLERANCE_FLOAT_DEDUP) {
+            ladder.push(tol);
+        }
+        if tol >= policy.fuzzy_tolerance_cap {
+            break;
+        }
+    }
+
+    let mut opts = base_options;
+    opts.run_make_connected = true;
+    opts.make_connected_max_passes = policy.make_connected_max_passes;
+    opts.make_connected_tolerance = policy.make_connected_initial_tolerance;
+    opts.make_connected_tolerance_growth = policy.make_connected_tolerance_growth;
+    opts.make_connected_scoped = policy.use_scoped_make_connected;
+    opts.use_glue = true;
+    opts.glue_tolerance = policy.glue_tolerance;
+
+    BooleanRobustOptions {
+        base: opts,
+        fuzzy_retry_ladder: ladder,
+        retry_policy: if policy.try_algorithm_variants {
+            BooleanRetryPolicy::AdaptiveByFailureClass
+        } else {
+            BooleanRetryPolicy::Conservative
+        },
+        extreme_geometry: ExtremeGeometryRetryConfig::default(),
+    }
+}
+
+/// Perform a boolean operation with a retry policy and receive a diagnostic report.
+///
+/// This wraps [`crate::boolean_op_robust`] with the high-level [`RetryPolicy`],
+/// returning a [`BooleanDiagnosticReport`] that provides detailed per-attempt
+/// diagnostics. Use this when you need observable retry data or want to customise
+/// the retry behaviour beyond the built-in presets.
+///
+/// # Example
+///
+/// ```rust
+/// use rcad_algorithms::boolean::{RetryPolicy, boolean_op_with_retry_policy};
+/// use rcad_algorithms::{BooleanOpType, BooleanOptions};
+/// use rcad_kernel::{BRep, PrimitiveSolid};
+///
+/// let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 0.8 });
+/// let policy = RetryPolicy::conservative();
+/// let result = boolean_op_with_retry_policy(
+///     BooleanOpType::Intersection, &a, &b, &policy, BooleanOptions::default()
+/// );
+/// match result {
+///     Ok((brep, report)) => {
+///         println!("Succeeded after {} attempts", report.total_attempts);
+///     }
+///     Err(err) => {
+///         println!("Operation failed: {}", err);
+///     }
+/// }
+/// ```
+pub fn boolean_op_with_retry_policy(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    policy: &RetryPolicy,
+    base_options: BooleanOptions,
+) -> Result<(BRep, BooleanDiagnosticReport), BooleanError> {
+    let start = std::time::Instant::now();
+    let robust_options = retry_policy_to_robust_options(policy, base_options);
+    let mut diagnostic = BooleanDiagnosticReport::new();
+    diagnostic.retry_policy = Some(policy.clone());
+
+    match boolean_op_robust(op, a, b, robust_options) {
+        Ok((brep, report)) => {
+            for (i, attempt) in report.robust_attempts.iter().enumerate() {
+                let mut ad = BooleanAttemptDiagnostic::new(i + 1, attempt.fuzzy_tol);
+                ad.glue_enabled = attempt.used_glue;
+                ad.glue_tolerance = attempt.glue_tolerance;
+                ad.success = attempt.success;
+
+                if let Some(rc) = attempt.retry_class {
+                    // Use FailureAnalyzer for finer-grained classification when possible
+                    let failure_class = attempt
+                        .error_message
+                        .as_deref()
+                        .map(FailureAnalyzer::classify_from_error)
+                        .unwrap_or_else(|| boolean_retry_class_to_failure_class(rc));
+                    ad.failure_class = Some(failure_class);
+                    ad.error_message = attempt.error_message.clone();
+                }
+
+                diagnostic.add_attempt(ad);
+            }
+
+            diagnostic.total_duration_us = start.elapsed().as_micros() as u64;
+            diagnostic.finalize();
+            Ok((brep, diagnostic))
+        }
+        Err(err) => {
+            // Record a single diagnostic entry for the final failure.
+            let mut ad = BooleanAttemptDiagnostic::new(1, 0.0);
+            ad.success = false;
+            ad.failure_class = Some(classify_boolean_failure(&err));
+            ad.error_message = Some(format!("{err:?}"));
+            diagnostic.add_attempt(ad);
+
+            diagnostic.total_duration_us = start.elapsed().as_micros() as u64;
+            diagnostic.finalize();
+            Err(err)
+        }
     }
 }
 

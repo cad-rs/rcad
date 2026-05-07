@@ -60,6 +60,7 @@ use rcad_kernel::geom::{
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Circle3, Curve3};
 /// use rcad_algorithms::geom_lib::is_curve_closed;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
 /// let circle = Circle3 {
 ///     center: DVec3::ZERO,
@@ -100,6 +101,7 @@ pub fn is_curve_closed(curve: &Curve3, tol: f64) -> bool {
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{CylindricalSurface, Surface3};
 /// use rcad_algorithms::geom_lib::is_surface_u_closed;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
 /// let cylinder = CylindricalSurface {
 ///     origin: DVec3::ZERO,
@@ -151,6 +153,7 @@ pub fn is_surface_u_closed(surface: &Surface3, tol: f64) -> bool {
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{SphericalSurface, Surface3};
 /// use rcad_algorithms::geom_lib::is_surface_v_closed;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
 /// let sphere = SphericalSurface {
 ///     center: DVec3::ZERO,

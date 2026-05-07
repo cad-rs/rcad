@@ -14,6 +14,7 @@
 //! ```
 //! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::brep_algo::*;
+//! use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 //! use rcad_kernel::BRep;
 //!
 //! let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -260,6 +261,7 @@ pub fn evaluate_vertex_normal(brep: &BRep, vertex_idx: usize) -> DVec3 {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::propagate_edge_tolerances;
+/// use rcad_algorithms::tolerance::TOLERANCE_ABS;
 /// use rcad_kernel::BRep;
 ///
 /// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -314,6 +316,7 @@ pub fn propagate_edge_tolerances(brep: &mut BRep, tol: f64) {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::propagate_face_tolerances;
+/// use rcad_algorithms::tolerance::TOLERANCE_ABS;
 /// use rcad_kernel::BRep;
 ///
 /// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -385,6 +388,7 @@ pub fn propagate_face_tolerances(brep: &mut BRep, tol: f64) {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::max_face_area;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -420,6 +424,7 @@ pub fn max_face_area(brep: &BRep) -> f64 {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::min_face_area;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -457,6 +462,7 @@ pub fn min_face_area(brep: &BRep) -> f64 {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::max_edge_length;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -498,6 +504,7 @@ pub fn total_edge_length(brep: &BRep) -> f64 {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::total_volume;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -517,6 +524,7 @@ pub fn total_volume(brep: &BRep) -> f64 {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::total_surface_area;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 /// use rcad_kernel::BRep;
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
@@ -765,6 +773,7 @@ pub fn fix_orientation(brep: &mut BRep) -> bool {
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::brep_algo::reverse_face;
+/// use rcad_algorithms::tolerance::TOLERANCE_COORD_SUB;
 /// use rcad_kernel::BRep;
 ///
 /// let mut brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {

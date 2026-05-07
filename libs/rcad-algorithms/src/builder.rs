@@ -188,6 +188,59 @@ impl SubFace {
     }
 }
 
+/// Compute the true area centroid of a planar polygon in 3D by projecting onto
+/// the plane's 2D orthonormal basis and using the shoelace formula.
+/// Guaranteed to lie inside a convex polygon and close to the interior of a
+/// concave polygon — unlike the boundary-vertex centroid which can be arbitrarily
+/// biased by uneven vertex distribution along the boundary.
+fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
+    if boundary.len() < 3 {
+        return if boundary.is_empty() {
+            DVec3::ZERO
+        } else {
+            boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64
+        };
+    }
+
+    // Build orthonormal basis for the plane
+    let n = normal.normalize();
+    let ref_vec = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+    let u = n.cross(ref_vec).normalize();
+    let v = n.cross(u).normalize();
+
+    let origin = boundary[0];
+    let count = boundary.len();
+
+    // Shoelace formula in 2D: 2*area = Σ(x_i·y_{i+1} - x_{i+1}·y_i)
+    // Centroid: C_x = (1/(6A)) Σ(x_i + x_{i+1})(x_i·y_{i+1} - x_{i+1}·y_i)
+    //            C_y = (1/(6A)) Σ(y_i + y_{i+1})(x_i·y_{i+1} - x_{i+1}·y_i)
+    let mut area2 = 0.0_f64;
+    let mut cx6 = 0.0_f64;
+    let mut cy6 = 0.0_f64;
+
+    for i in 0..count {
+        let j = (i + 1) % count;
+        let xi = (boundary[i] - origin).dot(u);
+        let yi = (boundary[i] - origin).dot(v);
+        let xj = (boundary[j] - origin).dot(u);
+        let yj = (boundary[j] - origin).dot(v);
+        let cross = xi * yj - xj * yi;
+        area2 += cross;
+        cx6 += (xi + xj) * cross;
+        cy6 += (yi + yj) * cross;
+    }
+
+    if area2.abs() < 1e-30 {
+        // Degenerate polygon — fall back to boundary centroid
+        return boundary.iter().copied().sum::<DVec3>() / count as f64;
+    }
+
+    // Signed area = area2 / 2. The centroid formula uses 6×area (unsigned), so
+    // we divide by 3×area2 (sign cancels: cx6 / (6 * area2/2) = cx6 / (3 * area2)).
+    let inv = 1.0 / (3.0 * area2);
+    origin + u * (cx6 * inv) + v * (cy6 * inv)
+}
+
 type FaceEntry = (
     Vec<usize>,
     Vec<Vec<usize>>,
@@ -826,6 +879,12 @@ enum SourceSide {
 /// finite cylinder: the inward offset toward the sphere center exits the cylinder
 /// slab). When the primary sample is `Out`, we probe a coarse UV grid on
 /// [`SubFace::uv_domain`] before concluding `Out`.
+///
+/// Conversely, when the primary sample is `On` (within tolerance of the other solid's
+/// surface), the sub-face may be genuinely on the boundary OR the sample point may
+/// happen to fall within the tolerance band of the other solid's surface despite the
+/// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
+/// surface). In that case we probe boundary and interior samples to break the tie.
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     sub: &SubFace,
@@ -837,12 +896,94 @@ fn classify_against_solid_for_boolean(
     if op != BooleanOpType::Intersection {
         return c0;
     }
-    if matches!(
-        c0,
-        Classification::In | Classification::On
-    ) {
+
+    // When the primary sample is In or On, the sub-face centroid may not be
+    // representative for intersection — boundary-vertex centroids can fall inside
+    // the other solid even when the sub-face is entirely outside (e.g. a planar
+    // sub-face of a box near a sphere's surface, where arc points cluster on one
+    // side of the polygon).  Probe additional samples to disambiguate.
+    if matches!(c0, Classification::In | Classification::On) {
+        let probe_pts: Vec<DVec3> = {
+            // 1. True area centroid + interior blend points.
+            //    Boundary-vertex centroids are unreliable when vertices are unevenly
+            //    distributed (e.g. a box-face arc from a sphere intersection clusters
+            //    points along the arc, biasing the centroid toward the sphere).
+            //    The area centroid is always inside a convex polygon, and interior
+            //    blend points (70% centroid + 30% boundary vertex) lie strictly inside
+            //    the sub-face region where classification is unambiguous.
+            let interior_pts: Vec<DVec3> = if sub.boundary.len() >= 3 {
+                let ac = planar_polygon_centroid(&sub.boundary, sub.normal);
+                let step = (sub.boundary.len() / 4).max(1);
+                let blends: Vec<DVec3> = (0..sub.boundary.len())
+                    .step_by(step)
+                    .map(|i| ac * 0.7 + sub.boundary[i] * 0.3)
+                    .collect();
+                let mut pts = vec![ac];
+                pts.extend(blends);
+                pts
+            } else {
+                vec![]
+            };
+
+            // 2. The boundary centroid (fallback for non-planar sub-faces).
+            let centroid = if !sub.boundary.is_empty() {
+                Some(sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64)
+            } else {
+                None
+            };
+
+            // 3. UV-domain interior points when available.
+            let uv_pts: Vec<DVec3> = if let Some([u0, u1, v0, v1]) = sub.uv_domain {
+                if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
+                    && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
+                {
+                    const NU_PROBE: usize = 3;
+                    const NV_PROBE: usize = 3;
+                    (0..NU_PROBE)
+                        .flat_map(|iu| {
+                            (0..NV_PROBE).map(move |iv| {
+                                let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / NU_PROBE as f64;
+                                let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / NV_PROBE as f64;
+                                sub.surface.point_at(u, v)
+                            })
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let mut pts = interior_pts;
+            if let Some(c) = centroid {
+                pts.push(c);
+            }
+            pts.extend(uv_pts);
+            pts
+        };
+
+        // Count In vs Out among the probe points.
+        let mut in_count = 0usize;
+        let mut out_count = 0usize;
+        for &p in &probe_pts {
+            match classify_point(p, solid_face_indices, ds) {
+                Classification::In => in_count += 1,
+                Classification::Out => out_count += 1,
+                Classification::On => {}
+            }
+        }
+        // If the clear majority of probe points are Out, re-classify as Out.
+        // The threshold avoids false positives from a few boundary points that
+        // happen to fall inside the other solid.
+        let total = in_count + out_count;
+        if total >= 3 && out_count >= in_count * 2 {
+            return Classification::Out;
+        }
         return c0;
     }
+
+    // Primary sample is Out: probe the UV grid for any In/On point before concluding Out.
     if let Some([u0, u1, v0, v1]) = sub.uv_domain {
         if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE {
             const NU: usize = 7;
@@ -981,7 +1122,7 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
-            for sub in sub_faces.iter() {
+            for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
 
                 let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
@@ -1261,6 +1402,12 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         if fi.curves_in.is_empty() {
+            // Closed surfaces with seam edges (sphere) may have < 3 boundary vertices,
+            // causing emit_face_with_origin to drop the whole sub-face. Tessellate into
+            // UV patches so each sub-face has a valid boundary polygon.
+            if matches!(face.surface, Surface3::Sphere(_)) {
+                return self.tessellate_sphere_face(face_idx);
+            }
             return self.single_subface_from_whole_face(face_idx);
         }
 
@@ -1276,6 +1423,78 @@ impl<'a> BooleanBuilder<'a> {
                 self.single_subface_from_whole_face(face_idx)
             }
         }
+    }
+
+    /// Tessellate a sphere face with no intersection curves into UV patches.
+    ///
+    /// The sphere's single face with a seam edge has only 2 boundary vertices in the DS
+    /// (north and south poles along the seam). [`emit_face_with_origin`] rejects boundaries
+    /// with fewer than 3 vertices, so we split the sphere into a UV grid where each patch
+    /// has a fine polygon boundary (sampled along the patch edges) for accurate mesh-based
+    /// surface area and volume.
+    fn tessellate_sphere_face(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let sphere = match &face.surface {
+            Surface3::Sphere(s) => *s,
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        use std::f64::consts::PI;
+
+        const N_U: usize = 12;  // longitude divisions
+        const N_V: usize = 6;   // latitude divisions
+        const N_SEG: usize = 16; // samples along each patch edge
+
+        let mut subs = Vec::with_capacity(N_U * N_V);
+        for ui in 0..N_U {
+            let u0 = ui as f64 * (2.0 * PI) / N_U as f64;
+            let u1 = (ui + 1) as f64 * (2.0 * PI) / N_U as f64;
+            for vi in 0..N_V {
+                let v0 = vi as f64 * PI / N_V as f64;
+                let v1 = (vi + 1) as f64 * PI / N_V as f64;
+
+                // Build a fine polygon boundary sampling the patch edges in UV space.
+                // Sampling at N_SEG+1 points along each edge gives (4*N_SEG) boundary
+                // points total, which triangulates to an accurate mesh approximation.
+                let mut boundary = Vec::with_capacity(4 * N_SEG);
+                // Bottom edge (v=v0, u from u0 to u1)
+                for s in 0..=N_SEG {
+                    let u = u0 + (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(sphere.point_at(u, v0));
+                }
+                // Right edge (u=u1, v from v0 to v1)
+                for s in 1..=N_SEG {
+                    let v = v0 + (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(sphere.point_at(u1, v));
+                }
+                // Top edge (v=v1, u from u1 to u0)
+                for s in 1..=N_SEG {
+                    let u = u1 - (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(sphere.point_at(u, v1));
+                }
+                // Left edge (u=u0, v from v1 to v0)
+                for s in 1..N_SEG {
+                    let v = v1 - (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(sphere.point_at(u0, v));
+                }
+
+                // Compute outward normal from sphere center to patch centroid.
+                let u_mid = 0.5 * (u0 + u1);
+                let v_mid = 0.5 * (v0 + v1);
+                let centroid_pt = sphere.point_at(u_mid, v_mid);
+                let outward = (centroid_pt - sphere.center).normalize_or_zero();
+
+                subs.push(SubFace {
+                    boundary,
+                    surface: face.surface.clone(),
+                    normal: outward,
+                    uv_centroid: Some(DVec2::new(0.5 * (u0 + u1), 0.5 * (v0 + v1))),
+                    sample_override: None,
+                    uv_domain: Some([u0, u1, v0, v1]),
+                    inner_wires: vec![],
+                });
+            }
+        }
+        subs
     }
 
     /// Split a planar face by intersection line segments.
@@ -1333,9 +1552,86 @@ impl<'a> BooleanBuilder<'a> {
                     let center_2d = project_to_2d(circle.center);
                     let radius = circle.radius;
                     let mut next: Vec<Vec<DVec2>> = Vec::new();
+
+                    // Pre-sample the 3D circle at 128 3D points, projected to 2D.
+                    // `split_curved_face_parametric` samples sphere UV edges at 32 points
+                    // (EDGE_SAMPLES) per edge, so 128 → 32 per quadrant matches that density,
+                    // ensuring plane-side arc positions are bit-identical to sphere-side
+                    // boundary positions so `ResultBuilder::add_vertex` deduplicates them.
+                    const ARC_PRE_N: usize = 128;
+                    let pre_2d: Vec<DVec2> = (0..ARC_PRE_N)
+                        .map(|i| project_to_2d(circle.point_at(
+                            std::f64::consts::TAU * i as f64 / ARC_PRE_N as f64,
+                        )))
+                        .collect();
+                    let on_circle_tol = TOLERANCE_COORD_SUB;
+
                     for poly in &polygons_2d {
                         let halves = split_polygon_by_circle_2d(poly, center_2d, radius);
-                        next.extend(halves);
+                        for half in halves {
+                            // Check whether this half has a contiguous on-circle arc segment.
+                            let on: Vec<bool> = half.iter()
+                                .map(|p| ((*p - center_2d).length() - radius).abs() < on_circle_tol)
+                                .collect();
+                            let fi = on.iter().position(|&x| x);
+                            let li = on.iter().rposition(|&x| x);
+                            let replace = match (fi, li) {
+                                (Some(f), Some(l)) => {
+                                    let cnt = on.iter().filter(|&&x| x).count();
+                                    cnt >= 3 && l - f + 1 == cnt
+                                }
+                                _ => false,
+                            };
+
+                            if replace {
+                                let fi = fi.unwrap();
+                                let li = li.unwrap();
+
+                                let theta1 = (half[fi] - center_2d).to_angle();
+                                let theta_n = (half[fi + 1] - center_2d).to_angle();
+                                let d_ccw = (theta_n - theta1
+                                    + std::f64::consts::TAU)
+                                    % std::f64::consts::TAU;
+                                let going_ccw = d_ccw < std::f64::consts::PI;
+
+                                let j1 = (((theta1 % std::f64::consts::TAU
+                                    + std::f64::consts::TAU) % std::f64::consts::TAU)
+                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
+                                    .floor() as usize % ARC_PRE_N;
+                                let jn = ((((half[li] - center_2d).to_angle()
+                                    % std::f64::consts::TAU + std::f64::consts::TAU)
+                                    % std::f64::consts::TAU)
+                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
+                                    .floor() as usize % ARC_PRE_N;
+
+                                let mut arc: Vec<DVec2> = Vec::new();
+                                if going_ccw {
+                                    let mut j = (j1 + 1) % ARC_PRE_N;
+                                    while j != jn {
+                                        arc.push(pre_2d[j]);
+                                        j = (j + 1) % ARC_PRE_N;
+                                    }
+                                } else {
+                                    let mut j = (j1 + ARC_PRE_N - 1) % ARC_PRE_N;
+                                    while j != jn {
+                                        arc.push(pre_2d[j]);
+                                        j = (j + ARC_PRE_N - 1) % ARC_PRE_N;
+                                    }
+                                }
+
+                                let mut replaced: Vec<DVec2> =
+                                    Vec::with_capacity(fi + 1 + arc.len() + half.len() - li);
+                                replaced.extend_from_slice(&half[..=fi]);
+                                replaced.extend(arc);
+                                replaced.extend_from_slice(&half[li..]);
+                                replaced.dedup_by(|a, b| {
+                                    (*a - *b).length_squared() < on_circle_tol * on_circle_tol
+                                });
+                                next.push(replaced);
+                            } else {
+                                next.push(half);
+                            }
+                        }
                     }
                     // Track this circle so we can compute correct sample points later
                     embedded_circles.push((center_2d, radius));
@@ -1890,6 +2186,116 @@ impl<'a> BooleanBuilder<'a> {
         result
     }
 
+    /// Extend axis-aligned trim endpoints to the UV boundary so each open trim
+    /// spans from one boundary edge to another. This is necessary for closed
+    /// surfaces (sphere, cylinder, …) where intersection PCurves are clipped
+    /// to the finite face-face overlap and may not reach the UV boundary.
+    ///
+    /// Only trims that are nearly axis-aligned (constant-u or constant-v) are
+    /// extended — general trims pass through unchanged.
+    fn extend_trim_to_uv_boundary(
+        trim: &[DVec2],
+        uv_boundary: &[DVec2],
+        bnd_u_span: f64,
+        bnd_v_span: f64,
+    ) -> Vec<DVec2> {
+        if trim.len() < 2 {
+            return trim.to_vec();
+        }
+
+        // Compute UV bounds from the boundary polygon
+        let u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+        let u_span_trim = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
+            - trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let v_span_trim = trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
+            - trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+
+        let boundary_u_span = u_max - u_min;
+        let boundary_v_span = v_max - v_min;
+        // 0.5 % of the smaller span — well above floating-point noise for any
+        // practical model, yet tight enough to distinguish axis-aligned trims
+        // from oblique ones on a sphere (where u/v vary together).
+        let axis_threshold = (boundary_u_span.abs().min(boundary_v_span.abs())).max(TOLERANCE_ABS) * 0.005;
+
+        let is_const_u = u_span_trim < axis_threshold;
+        let is_const_v = v_span_trim < axis_threshold;
+
+        if !is_const_u && !is_const_v {
+            return trim.to_vec(); // non-axis-aligned — cannot safely extend
+        }
+
+        // ── span-checking guard ──────────────────────────────────────────────
+        // If this axis-aligned trim already covers ≥90 % of the boundary span
+        // in the varying direction, it is a full great-circle-like trim that
+        // already runs boundary-to-boundary.  Extending it would just add
+        // duplicate/redundant points at the boundary, causing over-splitting.
+        if is_const_u && v_span_trim >= 0.9 * bnd_v_span.abs() {
+            return trim.to_vec();
+        }
+        if is_const_v && u_span_trim >= 0.9 * bnd_u_span.abs() {
+            return trim.to_vec();
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        let mut extended = trim.to_vec();
+
+        if is_const_u {
+            // Constant-u trim: extend v range to the boundary.
+            let u_val = trim[0].x;
+            let v_start = extended.first().unwrap().y;
+            let v_end = extended.last().unwrap().y;
+            let v_dir = (v_end - v_start).signum();
+
+            if v_dir >= 0.0 {
+                // v increases from start to end.
+                if (v_start - v_min).abs() > TOLERANCE_ABS {
+                    extended.insert(0, DVec2::new(u_val, v_min));
+                }
+                if (v_max - v_end).abs() > TOLERANCE_ABS {
+                    extended.push(DVec2::new(u_val, v_max));
+                }
+            } else {
+                // v decreases from start to end.
+                if (v_max - v_start).abs() > TOLERANCE_ABS {
+                    extended.insert(0, DVec2::new(u_val, v_max));
+                }
+                if (v_end - v_min).abs() > TOLERANCE_ABS {
+                    extended.push(DVec2::new(u_val, v_min));
+                }
+            }
+        } else {
+            // Constant-v trim: extend u range to the boundary.
+            let v_val = trim[0].y;
+            let u_start = extended.first().unwrap().x;
+            let u_end = extended.last().unwrap().x;
+            let u_dir = (u_end - u_start).signum();
+
+            if u_dir >= 0.0 {
+                // u increases from start to end.
+                if (u_start - u_min).abs() > TOLERANCE_ABS {
+                    extended.insert(0, DVec2::new(u_min, v_val));
+                }
+                if (u_max - u_end).abs() > TOLERANCE_ABS {
+                    extended.push(DVec2::new(u_max, v_val));
+                }
+            } else {
+                // u decreases from start to end.
+                if (u_max - u_start).abs() > TOLERANCE_ABS {
+                    extended.insert(0, DVec2::new(u_max, v_val));
+                }
+                if (u_end - u_min).abs() > TOLERANCE_ABS {
+                    extended.push(DVec2::new(u_min, v_val));
+                }
+            }
+        }
+
+        extended
+    }
+
     /// Split a curved face using parameter-space (UV) 2D clipping.
     ///
     /// For each intersection curve on this face, samples the associated PCurve
@@ -1997,10 +2403,115 @@ impl<'a> BooleanBuilder<'a> {
             return self.split_curved_face_legacy(face_idx);
         }
 
+        // For sphere faces: convert closed-loop great-circle trims (through poles)
+        // into open boundary-to-boundary meridian isolines.
+        //
+        // A great-circle through the poles maps to TWO separate constant-u lines
+        // in UV space, but appears as a single closed-loop PCurve (the PCurve
+        // traces one meridian down and the other back up, connected at the poles).
+        // split_uv_polygon_by_trim cannot split a polygon with a closed loop, so
+        // we replace each such trim with two open isolines at the extremal u-values.
+        if is_sphere {
+            let mut converted: Vec<Vec<DVec2>> = Vec::new();
+            for trim in trim_polylines.drain(..) {
+                if let Some(mut isolines) = sphere_closed_trim_to_open_isolines(&trim, &uv_boundary) {
+                    converted.append(&mut isolines);
+                } else {
+                    converted.push(trim);
+                }
+            }
+            trim_polylines = converted;
+        }
+
+        // Filter degenerate trims (single-point closed loops).
+        // Also handle periodic trims whose u values are uniformly shifted
+        // outside the boundary range (e.g. equator at v=π/2 with u∈[π,3π]).
+        if u_period > 0.0 || is_sphere {
+            let period = if is_sphere { std::f64::consts::TAU } else { u_period };
+            let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let bnd_u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+            let bnd_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+            let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+            let mut clean: Vec<Vec<DVec2>> = Vec::new();
+            for trim in trim_polylines.drain(..) {
+                if trim.len() < 3 {
+                    continue;
+                }
+                let u_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let u_max = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let v_max = trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let u_span = u_max - u_min;
+                let v_span = v_max - v_min;
+
+                // Filter closed degenerate trims (single-point loops, bbox area ~0)
+                if is_closed_uv_trim(&trim) {
+                    let bbox_area = u_span * v_span;
+                    if bbox_area < TOLERANCE_LINEAR_ULTRA_STRICT {
+                        continue;
+                    }
+                }
+
+                // Uniformly wrap trim u values if they are all outside the boundary range.
+                let shifted: Vec<DVec2> = if u_min >= bnd_u_max - TOLERANCE_ABS {
+                    // All points are at or beyond the right boundary — shift left by one period
+                    trim.iter().map(|p| DVec2::new(p.x - period, p.y)).collect()
+                } else if u_max <= bnd_u_min + TOLERANCE_ABS {
+                    // All points are at or beyond the left boundary — shift right by one period
+                    trim.iter().map(|p| DVec2::new(p.x + period, p.y)).collect()
+                } else {
+                    trim // already in range or spanning across
+                };
+
+                // After shifting, filter trims that coincide with the v-boundary
+                // (v=0 or v=π for sphere) — they carry no splitting information.
+                if v_span <= TOLERANCE_COORD_SUB {
+                    let v_level = v_min; // all at same v
+                    if (v_level - bnd_v_min).abs() <= TOLERANCE_COORD_SUB
+                        || (v_level - bnd_v_max).abs() <= TOLERANCE_COORD_SUB
+                    {
+                        continue;
+                    }
+                    // Interior horizontal isoline spanning the full u-period —
+                    // convert to 2-point open isoline so split_uv_polygon_by_trim
+                    // produces a clean split instead of extra fragments.
+                    let bnd_u_span = bnd_u_max - bnd_u_min;
+                    if (u_span - bnd_u_span).abs() < TOLERANCE_ABS {
+                        clean.push(vec![
+                            DVec2::new(bnd_u_min, v_level),
+                            DVec2::new(bnd_u_max, v_level),
+                        ]);
+                        continue;
+                    }
+                }
+
+                clean.push(shifted);
+            }
+            trim_polylines = clean;
+
+            // Sort trims: constant-u (meridian) trims before constant-v (latitude) trims.
+            // This prevents a latitude trim from creating polygon-boundary-aligned splits
+            // when applied after the domain has been divided into narrow columns by earlier
+            // meridian trims.  The latitude endpoints project to distinct column edges only
+            // when the columns are wide enough — applying meridians first guarantees this.
+            if trim_polylines.len() > 1 {
+                trim_polylines.sort_by(|a, b| {
+                    let a_v_min = a.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let a_v_max = a.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    let b_v_min = b.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let b_v_max = b.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    let a_is_latitude = (a_v_max - a_v_min) <= TOLERANCE_COORD_SUB;
+                    let b_is_latitude = (b_v_max - b_v_min) <= TOLERANCE_COORD_SUB;
+                    a_is_latitude.cmp(&b_is_latitude)
+                });
+            }
+        }
+
         // Split UV polygon by each trim polyline
         let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
 
-        for trim in &trim_polylines {
+        for trim in trim_polylines.iter() {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
                 // Skip invalid polygons
@@ -2013,7 +2524,28 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     trim.clone()
                 };
-                let halves = split_uv_polygon_by_trim(&poly, &effective_trim);
+
+                // Quick bounding-box check: skip split if the trim doesn't
+                // overlap the polygon at all (common for sequential splitting
+                // where a trim is interior to only one of many sub-polygons).
+                let pu_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let pu_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let pv_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let pv_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let tu_min = effective_trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let tu_max = effective_trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let tv_min = effective_trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let tv_max = effective_trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let overlap = tu_max >= pu_min - TOLERANCE_ABS
+                    && tu_min <= pu_max + TOLERANCE_ABS
+                    && tv_max >= pv_min - TOLERANCE_ABS
+                    && tv_min <= pv_max + TOLERANCE_ABS;
+
+                let halves = if overlap {
+                    split_uv_polygon_by_trim(&poly, &effective_trim)
+                } else {
+                    vec![poly]
+                };
                 next.extend(halves);
             }
             uv_polygons = next;
@@ -2021,7 +2553,12 @@ impl<'a> BooleanBuilder<'a> {
 
         // Handle seam crossings for periodic surfaces
         if u_period > 0.0 {
-            let seam_u = 0.0; // Standard seam at u=0 (or u=-π for sphere)
+            let seam_u = if is_sphere {
+                -std::f64::consts::PI // Sphere seam at u=-π (UV boundary uses [-π, π])
+            } else {
+                0.0 // Standard seam at u=0 for cylinder/cone
+            };
+
             uv_polygons = uv_polygons
                 .into_iter()
                 .flat_map(|poly| {
@@ -2030,6 +2567,33 @@ impl<'a> BooleanBuilder<'a> {
                     } else {
                         vec![]
                     }
+                })
+                .collect();
+        }
+
+        // Normalise UV u-values to the sphere's [-π, π] domain.
+        // Periodic unwrapping + seam splitting can produce u outside [-π, π] for
+        // trims that cross the seam, causing the 3D boundary / tessellation to
+        // sample the wrong hemisphere (or wrap the full sphere multiple times).
+        if is_sphere {
+            let period = std::f64::consts::TAU;
+            uv_polygons = uv_polygons
+                .into_iter()
+                .map(|poly| {
+                    poly.into_iter()
+                        .map(|p| {
+                            let mut u = p.x;
+                            // Only shift u values that are significantly OUTSIDE [-π, π].
+                            // Values at or near the boundary (e.g. -π itself) must stay put
+                            // to avoid wrapping polygons that touch the seam.
+                            if u > std::f64::consts::PI + TOLERANCE_ABS {
+                                u -= period * ((u + std::f64::consts::PI) / period).floor();
+                            } else if u < -std::f64::consts::PI - TOLERANCE_ABS {
+                                u += period * ((-u + std::f64::consts::PI) / period).floor();
+                            }
+                            DVec2::new(u, p.y)
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .collect();
         }
@@ -2341,7 +2905,10 @@ fn curved_subface_boundary_3d(
     trim_polylines_uv: &[Vec<DVec2>],
     surface: &Surface3,
 ) -> Vec<DVec3> {
-    const EDGE_SAMPLES: usize = 8;
+    // EDGE_SAMPLES must divide evenly into the 3D curve pre-sampling
+    // density (128) used in split_planar_face so sphere and plane boundary
+    // vertices share the same 3D positions along intersection curves.
+    const EDGE_SAMPLES: usize = 32;
 
     let mut pts: Vec<DVec3> = Vec::new();
 
@@ -3008,6 +3575,15 @@ fn dedup_3d_points(points: &[DVec3]) -> Vec<DVec3> {
     result
 }
 
+/// Check if a UV trim is a closed loop (first and last points coincide).
+fn is_closed_uv_trim(trim: &[DVec2]) -> bool {
+    if trim.len() < 2 {
+        return false;
+    }
+    let d_sq = (trim[0] - trim[trim.len() - 1]).length_squared();
+    d_sq < TOLERANCE_LINEAR_ULTRA_STRICT
+}
+
 /// Check if a UV polygon is valid (has sufficient area and no degenerate edges).
 fn is_valid_uv_polygon(poly: &[DVec2]) -> bool {
     if poly.len() < 3 {
@@ -3026,6 +3602,100 @@ fn is_valid_uv_polygon(poly: &[DVec2]) -> bool {
 
     // Area should be significant
     area > TOLERANCE_LINEAR_ULTRA_STRICT
+}
+
+/// Convert a closed loop trim on a sphere face to open boundary-to-boundary
+/// meridian isolines.  Sphere great-circle PCurves often produce closed UV
+/// loops because the UV parameterization has a singularity at the poles
+/// (atan2(0,0)=0).  The min and max u-values of such a closed loop directly
+/// give the two meridian positions of the great circle.
+///
+/// Returns one or two open isolines, or `None` if the trim is not a convertible
+/// great-circle loop.
+fn sphere_closed_trim_to_open_isolines(
+    trim: &[DVec2],
+    uv_boundary: &[DVec2],
+) -> Option<Vec<Vec<DVec2>>> {
+    if trim.len() < 4 {
+        return None;
+    }
+    let first = trim[0];
+    let last = trim[trim.len() - 1];
+    if (first - last).length_squared() >= TOLERANCE_LEN_MIN {
+        return None; // not closed
+    }
+
+    let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let bnd_u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let bnd_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let bnd_u_span = bnd_u_max - bnd_u_min;
+    let bnd_v_span = bnd_v_max - bnd_v_min;
+
+    let trim_u_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let trim_u_max = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let trim_v_min = trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let trim_v_max = trim.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+    // Must cover most of the UV rectangle (great circle).
+    let u_coverage = (trim_u_max - trim_u_min) / bnd_u_span.abs();
+    let v_coverage = (trim_v_max - trim_v_min) / bnd_v_span.abs();
+    if u_coverage < 0.35 || v_coverage < 0.75 {
+        // Latitude (constant-v) great circles: v ≈ constant but u spans full range.
+        // These are great circles like the equator that DON'T pass through the poles,
+        // so they form a horizontal line in UV space, not a closed pole-to-pole loop.
+        if (trim_v_max - trim_v_min).abs() <= TOLERANCE_COORD_SUB && u_coverage >= 0.9 {
+            let v_level = (trim_v_min + trim_v_max) / 2.0;
+            if (v_level - bnd_v_min).abs() > TOLERANCE_COORD_SUB
+                && (v_level - bnd_v_max).abs() > TOLERANCE_COORD_SUB
+            {
+                return Some(vec![
+                    vec![DVec2::new(bnd_u_min, v_level), DVec2::new(bnd_u_max, v_level)]
+                ]);
+            }
+        }
+        return None;
+    }
+
+    // The min and max u-values give the two meridian positions.
+    let mut u_vals = vec![trim_u_min, trim_u_max];
+    // Deduplicate: if the two values are within 5% of the period, they're the same meridian
+    let period = bnd_u_span;
+    let diff = (u_vals[1] - u_vals[0]).abs();
+    if diff > period * 0.5 {
+        // The values straddle the seam (e.g. π and -π) — wrap to get the effective difference
+        let wrapped = (u_vals[1] + period - u_vals[0]).abs();
+        if wrapped < period * 0.05 {
+            // Same point — only one meridian
+            u_vals.pop();
+        }
+    } else if diff < period * 0.05 {
+        u_vals.pop();
+    }
+
+    let mut isolines: Vec<Vec<DVec2>> = Vec::new();
+    for &u in &u_vals {
+        // Skip if the meridian is ON the boundary edge (within 1% of period)
+        let dist_to_left = (u - bnd_u_min).abs();
+        let dist_to_right = (u - bnd_u_max).abs();
+        let edge_tol = period * 0.01;
+        if dist_to_left < edge_tol || dist_to_right < edge_tol {
+            continue;
+        }
+        // Sample 64 intermediate points along the meridian so the 3D
+        // boundary accurately follows the sphere surface (instead of a
+        // straight chord between the two endpoints).
+        const MERIDIAN_N: usize = 64;
+        let mut line: Vec<DVec2> = Vec::with_capacity(MERIDIAN_N + 1);
+        let v_step = (bnd_v_max - bnd_v_min) / MERIDIAN_N as f64;
+        for i in 0..=MERIDIAN_N {
+            let v = bnd_v_min + v_step * i as f64;
+            line.push(DVec2::new(u, v));
+        }
+        isolines.push(line);
+    }
+
+    if isolines.is_empty() { None } else { Some(isolines) }
 }
 
 fn periodic_trim_to_open_isoline(poly: &[DVec2], trim: &[DVec2], u_period: f64) -> Option<Vec<DVec2>> {
@@ -3517,11 +4187,22 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
         let di = dists[i];
         let dj = dists[j];
 
-        if di.abs() < tol {
-            continue; // vertex i is on the circle
+        let on_i = di.abs() < tol;
+        let on_j = dj.abs() < tol;
+
+        // Both on circle — edge lies on boundary, no crossing
+        if on_i && on_j {
+            continue;
         }
-        if dj.abs() < tol {
-            continue; // vertex j is on the circle (handled when edge starting at j is processed)
+        // One vertex exactly on circle, adjacent clearly not on circle
+        // → crossing at the on-circle vertex itself
+        if on_i && !on_j {
+            crossings.push((i, poly[i]));
+            continue;
+        }
+        if !on_i && on_j {
+            crossings.push((i, poly[j]));
+            continue;
         }
 
         if di * dj < 0.0 {
@@ -3558,6 +4239,14 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
 
     // Sort crossings by edge index
     crossings.sort_by_key(|(idx, _)| *idx);
+
+    // Deduplicate crossings at the same spatial position (degenerate on-circle vertices
+    // can produce crossings on both adjacent edges at the same point).
+    crossings.dedup_by(|a, b| (a.1 - b.1).length_squared() < tol * tol);
+
+    if crossings.len() < 2 {
+        return vec![poly.to_vec()];
+    }
 
     // Take the first two crossings
     let (idx1, pt1) = crossings[0];
@@ -3597,8 +4286,16 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
         // Compute proper arc from theta1 through inner_mid_theta to theta2
         let delta = {
             let mut d = theta2 - theta1;
-            // Adjust delta to go through inner_mid_theta
-            let going_ccw = inner_mid_theta > theta1 || inner_mid_theta < theta2;
+            // Adjust delta to go through inner_mid_theta.
+            // inner_mid_theta is the arc waypoint inside the polygon.
+            // The CCW arc from theta1 to theta2:
+            //   if theta1 < theta2: spans [theta1, theta2]
+            //   if theta1 > theta2: wraps around — [theta1, 2π) ∪ [0, theta2]
+            let going_ccw = if theta1 < theta2 {
+                inner_mid_theta > theta1 && inner_mid_theta < theta2
+            } else {
+                inner_mid_theta > theta1 || inner_mid_theta < theta2
+            };
             if going_ccw {
                 while d < 0.0 {
                     d += std::f64::consts::TAU;
@@ -3884,6 +4581,7 @@ fn split_polygon_2d_by_segment(
 /// ```
 /// # use rcad_algorithms::tolerance::*;
 /// use rcad_algorithms::builder::GlueConfig;
+/// use rcad_algorithms::tolerance::TOLERANCE_RETRY_LADDER_MID;
 ///
 /// let config = GlueConfig {
 ///     face_tolerance: TOLERANCE_RETRY_LADDER_MID,

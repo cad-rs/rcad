@@ -18,6 +18,7 @@
 //! use glam::DVec3;
 //! use rcad_kernel::geom::{Surface3, SphericalSurface};
 //! use rcad_algorithms::projection::{project_point_on_surface, ProjectionOptions};
+//! use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 //!
 //! let sphere = Surface3::Sphere(SphericalSurface {
 //!     center: DVec3::ZERO,
@@ -183,6 +184,7 @@ pub struct PointBRepProjection {
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Curve3, Circle3};
 /// use rcad_algorithms::projection::project_point_on_curve;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
 /// let circle = Curve3::Circle(Circle3 {
 ///     center: DVec3::ZERO,
@@ -239,6 +241,7 @@ pub fn project_point_on_curve_with_options(
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Surface3, Plane};
 /// use rcad_algorithms::projection::project_point_on_surface;
+/// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
 /// let plane = Surface3::Plane(Plane {
 ///     origin: DVec3::ZERO,

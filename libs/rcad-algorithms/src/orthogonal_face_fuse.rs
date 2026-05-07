@@ -252,6 +252,33 @@ pub fn remove_spurious_intersection_face_preserving_volume(
             continue;
         }
 
+        let fp = face_first_point(brep, face).unwrap_or(DVec3::ZERO);
+        let d = n_axis.dot(fp);
+        let (n_i_c, d_i_c) = canonicalize_plane_n_d(n_axis, d);
+        let pk = plane_key(n_i_c, d_i_c, vol_abs_tol.max(TOLERANCE_COORD_SUB));
+        // Count faces on the same infinite plane in this shell.  If this is the only one,
+        // removing it would leave a hole — it is structurally necessary even if the
+        // divergence-theorem volume contribution happens to be zero (e.g. a face at x=0
+        // with normal (-1,0,0) where r·n = 0 for all points).
+        let same_plane_count = brep.solids[si].shells[shi]
+            .faces
+            .iter()
+            .filter(|of| {
+                let on = snap_almost_axis(of.normal.normalize_or_zero());
+                let (_axes) = match axis_aligned_world_plane_uv_axes(on) {
+                    Some(a) => a,
+                    None => return false,
+                };
+                let op = face_first_point(brep, of).unwrap_or(DVec3::ZERO);
+                let od = on.dot(op);
+                let (on_c, od_c) = canonicalize_plane_n_d(on, od);
+                plane_key(on_c, od_c, vol_abs_tol.max(TOLERANCE_COORD_SUB)) == pk
+            })
+            .count();
+        if same_plane_count <= 1 {
+            continue;
+        }
+
         let mut br = brep.clone();
         let Some((si, shi, local_rm)) = flat_index_to_local_shell_face(&br, flat_rm) else {
             continue;
@@ -1592,297 +1619,172 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
         }
     }
 
-    // Phase 2 + Phase 3: scan for the largest input-copy faces, clip them, and
-    // remove extra copies on the same plane.  Processing the largest face first
-    // ensures Phase 3 can safely remove all smaller redundant copies.
+    // Pre-scan is no longer needed — the area check (sa_before / max_input_area < 0.97)
+    // correctly distinguishes already-trimmed faces from full coplanar faces.
+
     for si in 0..out.solids.len() {
         for shi in 0..out.solids[si].shells.len() {
-            loop {
-                // Scan ALL faces to find the largest input-copy face on this shell.
-                let candidate = {
+            let mut fi = 0;
+            while fi < out.solids[si].shells[shi].faces.len() {
+                let mut replaced = false;
+
+                // Read face data for the current result face
+                let (face, normal, axes, point, pk, poly_uv, sa_before) = {
                     let shell = &out.solids[si].shells[shi];
-                    let mut best_fi = None;
-                    let mut best_uv_area = -1.0_f64;
-                    let mut best_data = None;
-
-                    for fi in 0..shell.faces.len() {
-                        let f = &shell.faces[fi];
-                        if !f.inner_wires.is_empty() {
-                            continue;
-                        }
-
-                        let n = snap_almost_axis(f.normal.normalize_or_zero());
-                        let Some(axes) = axis_aligned_world_plane_uv_axes(n) else {
-                            continue;
-                        };
-                        let Some(p) = face_first_point(&out, f) else {
-                            continue;
-                        };
-                        let d = n.dot(p);
-                        let (n_c, d_c) = canonicalize_plane_n_d(n, d);
-                        let pk = plane_key(n_c, d_c, t);
-
-                        let Some(input_polys) = input_map.get(&pk) else {
-                            continue;
-                        };
-
-                        let [i, j] = axes;
-                        let uv: Vec<[f64; 2]> = face_outer_points(&out, f)
-                            .iter()
-                            .map(|p| [p[i], p[j]])
-                            .collect();
-                        if uv.len() < 3 {
-                            continue;
-                        }
-
-                        let uv_area = {
-                            let mut a2 = 0.0_f64;
-                            for k in 0..uv.len() {
-                                let l = (k + 1) % uv.len();
-                                a2 += uv[k][0] * uv[l][1] - uv[l][0] * uv[k][1];
-                            }
-                            0.5 * a2.abs()
-                        };
-
-                        let is_input_copy = input_polys.iter().any(|ip| {
-                            ip.len() == uv.len() && {
-                                let mut ip_a2 = 0.0_f64;
-                                for k in 0..ip.len() {
-                                    let l = (k + 1) % ip.len();
-                                    ip_a2 += ip[k][0] * ip[l][1]
-                                        - ip[l][0] * ip[k][1];
-                                }
-                                let ip_area = 0.5 * ip_a2.abs();
-                                (uv_area - ip_area).abs()
-                                    <= 1e-4 * uv_area.max(ip_area).max(1.0)
-                            }
-                        });
-
-                        if !is_input_copy {
-                            continue;
-                        }
-
-                        if uv_area > best_uv_area {
-                            best_uv_area = uv_area;
-                            best_fi = Some(fi);
-                            best_data = Some((
-                                n, axes, p, pk, uv, uv_area,
-                                f.clone(), i, j,
-                            ));
-                        }
-                    }
-
-                    best_fi.map(|fi| (fi, best_data.unwrap()))
-                };
-
-                let Some((fi, (
-                    normal, axes, point, pk, poly_uv, uv_area, face, i, j,
-                ))) = candidate else {
-                    break;
-                };
-
-                // Phase 2: clip the result face polygon against each input polygon
-                let input_polys = input_map.get(&pk).unwrap();
-                let mut clipped = poly_uv.clone();
-                for input_poly in input_polys.iter() {
-                    let sh = crate::inttools::coplanar::sutherland_hodgman_clip(
-                        &clipped, input_poly,
-                    );
-                    clipped = sh;
-                    if clipped.len() < 3 {
+                    if fi >= shell.faces.len() {
                         break;
                     }
-                }
-
-                if clipped.len() < 3 {
-                    continue;
-                }
-
-                // Check whether the clipping actually changed the polygon
-                let changed = clipped.len() != poly_uv.len()
-                    || clipped.iter().zip(poly_uv.iter()).any(|(a, b)| {
-                        (a[0] - b[0]).abs() > t || (a[1] - b[1]).abs() > t
-                    });
-
-                if !changed {
-                    continue;
-                }
-
-                // Minimum area guard
-                let mut area2 = 0.0_f64;
-                for k in 0..clipped.len() {
-                    let (x0, y0) = (clipped[k][0], clipped[k][1]);
-                    let (x1, y1) = (
-                        clipped[(k + 1) % clipped.len()][0],
-                        clipped[(k + 1) % clipped.len()][1],
-                    );
-                    area2 += x0 * y1 - x1 * y0;
-                }
-                let clipped_area = 0.5 * area2.abs();
-                let min_area = (t * t).max(TOLERANCE_FLOAT_ULTRA);
-
-                if clipped_area < min_area {
-                    continue;
-                }
-
-                // Build the clipped face from the 2D polygon
-                let rings = vec![clipped
-                    .iter()
-                    .map(|&c| (c[0], c[1]))
-                    .collect::<Vec<_>>()];
-
-                let ring_vertices = add_vertices_for_rings_with_eval(
-                    &mut out,
-                    &rings,
-                    |u, v| point_from_axis_plane_world_uv(normal, point, u, v),
-                    t,
-                );
-
-                if ring_vertices.is_empty() || ring_vertices[0].len() < 3 {
-                    continue;
-                }
-
-                let mut edge_pairs: Vec<(usize, usize)> = Vec::new();
-                for rv in &ring_vertices {
-                    let nv = rv.len();
-                    for k in 0..nv {
-                        edge_pairs.push((rv[k], rv[(k + 1) % nv]));
+                    let f = &shell.faces[fi];
+                    if !f.inner_wires.is_empty() {
+                        fi += 1;
+                        continue;
                     }
-                }
 
-                let base_ei = out.edges.len();
-                push_new_edges(&mut out, edge_pairs);
+                    let n = snap_almost_axis(f.normal.normalize_or_zero());
+                    let Some(axes) = axis_aligned_world_plane_uv_axes(n) else {
+                        fi += 1;
+                        continue;
+                    };
+                    let Some(p) = face_first_point(&out, f) else {
+                        fi += 1;
+                        continue;
+                    };
+                    let d = n.dot(p);
+                    let (n_c, d_c) = canonicalize_plane_n_d(n, d);
+                    let pk = plane_key(n_c, d_c, t);
 
-                let outer_wire = Wire {
-                    edges: (0..ring_vertices[0].len())
-                        .map(|k| WireEdge::fwd(base_ei + k))
-                        .collect(),
-                };
-
-                let new_face = Face {
-                    outer_wire,
-                    inner_wires: vec![],
-                    normal: face.normal,
-                    triangles: vec![],
-                    mesh_dirty: true,
-                };
-
-                let surf_idx = {
-                    let p0 = face_first_point(&out, &new_face).unwrap_or(point);
-                    let idx = out.geom.surfaces.len();
-                    out.geom
-                        .surfaces
-                        .push(Surface3::Plane(Plane { origin: p0, normal: face.normal }));
-                    idx
-                };
-
-                let flat_idx = flat_face_index(&out, si, shi, fi);
-                replace_shell_faces_and_geom(
-                    &mut out,
-                    si,
-                    shi,
-                    &[fi],
-                    new_face,
-                    surf_idx,
-                    &[flat_idx],
-                );
-                total += 1;
-
-                // Phase 3: remove extra coplanar faces that are unsplit copies
-                // from the other input.  Since we always clip the largest input
-                // copy, any remaining input-copy face on the same plane is
-                // redundant and can be safely removed.
-                let clipped_bbox = {
-                    let mut bb = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-                    for &c in &clipped {
-                        bb.0 = bb.0.min(c[0]);
-                        bb.1 = bb.1.max(c[0]);
-                        bb.2 = bb.2.min(c[1]);
-                        bb.3 = bb.3.max(c[1]);
+                    let [i, j] = axes;
+                    let uv: Vec<[f64; 2]> = face_outer_points(&out, f)
+                        .iter()
+                        .map(|p| [p[i], p[j]])
+                        .collect();
+                    if uv.len() < 3 {
+                        fi += 1;
+                        continue;
                     }
-                    bb
-                };
-                let mut remove_extra: Vec<(usize, usize)> = Vec::new();
-                {
-                    let shell = &out.solids[si].shells[shi];
-                    for ofi in 0..shell.faces.len() {
-                        if ofi == fi {
-                            continue;
-                        }
-                        let ef = &shell.faces[ofi];
-                        if !ef.inner_wires.is_empty() {
-                            continue;
-                        }
-                        let en = snap_almost_axis(ef.normal.normalize_or_zero());
-                        let Some(eaxes) = axis_aligned_world_plane_uv_axes(en) else {
-                            continue;
-                        };
-                        if eaxes != axes {
-                            continue;
-                        }
-                        let Some(ep) = face_first_point(&out, ef) else {
-                            continue;
-                        };
-                        let (en_c, ed_c) = canonicalize_plane_n_d(en, en.dot(ep));
-                        let epk = plane_key(en_c, ed_c, t);
-                        if epk != pk {
-                            continue;
-                        }
-                        if en.dot(normal) <= 0.99 {
-                            continue;
-                        }
 
-                        let euv: Vec<[f64; 2]> = face_outer_points(&out, ef)
+                    let sa = face_surface_area(&out, f, 0);
+
+                    (f.clone(), n, axes, p, pk, uv, sa)
+                };
+
+                if let Some(input_polys) = input_map.get(&pk) {
+                    // Skip faces that were already trimmed by the boolean (area significantly
+                    // smaller than all input faces on this plane).  Further clipping would
+                    // over-trim (e.g. G5 faces with SA=0.75 on a 1.0 plane).
+                    let max_input_area = input_polys
                             .iter()
-                            .map(|p| [p[i], p[j]])
-                            .collect();
-                        if euv.len() < 3 {
+                            .map(|poly| {
+                                let mut a2 = 0.0_f64;
+                                for k in 0..poly.len() {
+                                    let j = (k + 1) % poly.len();
+                                    a2 += poly[k][0] * poly[j][1] - poly[j][0] * poly[k][1];
+                                }
+                                0.5 * a2.abs()
+                            })
+                            .reduce(f64::max)
+                            .unwrap_or(0.0);
+                        if max_input_area > 0.0 && sa_before / max_input_area < 0.97 {
+                            fi += 1;
                             continue;
                         }
 
-                        // Extra face's UV bbox must contain clipped bbox
-                        let ebbox = {
-                            let mut bb = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-                            for &c in &euv {
-                                bb.0 = bb.0.min(c[0]);
-                                bb.1 = bb.1.max(c[0]);
-                                bb.2 = bb.2.min(c[1]);
-                                bb.3 = bb.3.max(c[1]);
+                    // Clip the result face polygon against each input polygon
+                    let mut clipped = poly_uv.clone();
+                    for (pi, input_poly) in input_polys.iter().enumerate() {
+                        let sh = crate::inttools::coplanar::sutherland_hodgman_clip(&clipped, input_poly);
+                        clipped = sh;
+                        if clipped.len() < 3 {
+                            break;
+                        }
+                    }
+
+                    if clipped.len() >= 3 {
+                        // Check whether the clipping actually changed the polygon
+                        let changed = clipped.len() != poly_uv.len()
+                            || clipped.iter().zip(poly_uv.iter()).any(|(a, b)| {
+                                (a[0] - b[0]).abs() > t || (a[1] - b[1]).abs() > t
+                            });
+
+                        if changed {
+                            // Minimum area guard
+                            let mut area2 = 0.0_f64;
+                            for k in 0..clipped.len() {
+                                let (x0, y0) = (clipped[k][0], clipped[k][1]);
+                                let (x1, y1) = (clipped[(k + 1) % clipped.len()][0], clipped[(k + 1) % clipped.len()][1]);
+                                area2 += x0 * y1 - x1 * y0;
                             }
-                            bb
-                        };
-                        let contains = ebbox.0 <= clipped_bbox.0 + 1e-12
-                            && ebbox.1 >= clipped_bbox.1 - 1e-12
-                            && ebbox.2 <= clipped_bbox.2 + 1e-12
-                            && ebbox.3 >= clipped_bbox.3 - 1e-12;
-                        if !contains {
-                            continue;
-                        }
+                            let area = 0.5 * area2.abs();
+                            let min_area = (t * t).max(TOLERANCE_FLOAT_ULTRA);
 
-                        // Extra face's UV area > clipped area (avoid removing
-                        // identical copies, D9 pattern)
-                        let mut ea2 = 0.0_f64;
-                        for k in 0..euv.len() {
-                            let l = (k + 1) % euv.len();
-                            ea2 += euv[k][0] * euv[l][1]
-                                - euv[l][0] * euv[k][1];
-                        }
-                        let earea = 0.5 * ea2.abs();
-                        if earea <= clipped_area * 1.01 {
-                            continue;
-                        }
+                            if area >= min_area {
 
-                        let efi = flat_face_index(&out, si, shi, ofi);
-                        remove_extra.push((ofi, efi));
+                                let rings = vec![clipped
+                                    .iter()
+                                    .map(|&c| (c[0], c[1]))
+                                    .collect::<Vec<_>>()];
+
+                                let ring_vertices =
+                                    add_vertices_for_rings_with_eval(&mut out, &rings, |u, v| {
+                                        point_from_axis_plane_world_uv(normal, point, u, v)
+                                    }, t);
+
+                                if !ring_vertices.is_empty() && ring_vertices[0].len() >= 3 {
+                                    let mut edge_pairs: Vec<(usize, usize)> = Vec::new();
+                                    for rv in &ring_vertices {
+                                        let nv = rv.len();
+                                        for k in 0..nv {
+                                            edge_pairs.push((rv[k], rv[(k + 1) % nv]));
+                                        }
+                                    }
+
+                                    let base_ei = out.edges.len();
+                                    push_new_edges(&mut out, edge_pairs);
+
+                                    let outer_wire = Wire {
+                                        edges: (0..ring_vertices[0].len())
+                                            .map(|k| WireEdge::fwd(base_ei + k))
+                                            .collect(),
+                                    };
+
+                                    let new_face = Face {
+                                        outer_wire,
+                                        inner_wires: vec![],
+                                        normal: face.normal,
+                                        triangles: vec![],
+                                        mesh_dirty: true,
+                                    };
+
+                                    let surf_idx = {
+                                        let p0 =
+                                            face_first_point(&out, &new_face).unwrap_or(point);
+                                        let idx = out.geom.surfaces.len();
+                                        out.geom
+                                            .surfaces
+                                            .push(Surface3::Plane(Plane { origin: p0, normal: face.normal }));
+                                        idx
+                                    };
+
+                                    let flat_idx = flat_face_index(&out, si, shi, fi);
+                                    replace_shell_faces_and_geom(
+                                        &mut out,
+                                        si,
+                                        shi,
+                                        &[fi],
+                                        new_face,
+                                        surf_idx,
+                                        &[flat_idx],
+                                    );
+                                    total += 1;
+                                    replaced = true;
+                                }
+                            }
+                        }
                     }
                 }
-                if !remove_extra.is_empty() {
-                    remove_extra.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-                    for (rfi, refi) in &remove_extra {
-                        crate::remove_flat_face_geom_slots(&mut out.geom, *refi);
-                        out.solids[si].shells[shi].faces.remove(*rfi);
-                    }
-                    total += remove_extra.len();
+
+                if !replaced {
+                    fi += 1;
                 }
             }
         }
@@ -2083,306 +1985,6 @@ fn clip_one_coplanar_pair(
 
     Some(())
 }
-
-/// Phase 1 only: pair-based coplanar overlap clipping.
-///
-/// Finds coplanar face pairs in the result (axis-aligned faces on the same infinite plane
-/// whose 2D bboxes overlap but neither strictly contains the other) and replaces each pair
-/// with a single face covering their 2D polygon overlap.
-///
-/// This is safe to call regardless of operand axis alignment — it only inspects and clips
-/// axis-aligned face pairs within the result, skipping faces whose normals don't snap to
-/// a world axis.
-pub fn clip_coplanar_overlap_pairwise(
-    brep: &BRep,
-    _a: &BRep,
-    _b: &BRep,
-    tol: f64,
-) -> (BRep, usize) {
-    let mut out = brep.clone();
-    let mut total = 0usize;
-    let t = tol.max(TOLERANCE_ABS);
-
-    for si in 0..out.solids.len() {
-        for shi in 0..out.solids[si].shells.len() {
-            loop {
-                let n = out.solids[si].shells[shi].faces.len();
-                if n < 2 {
-                    break;
-                }
-                let mut found = false;
-                'pair: for fi in 0..n {
-                    for fj in (fi + 1)..n {
-                        if clip_one_coplanar_pair(&mut out, si, shi, fi, fj, t).is_some() {
-                            total += 1;
-                            found = true;
-                            break 'pair;
-                        }
-                    }
-                }
-                if !found {
-                    break;
-                }
-            }
-        }
-    }
-
-    (out, total)
-}
-
-/// Phase 2 only: clip singleton input-copy faces against input solids.
-///
-/// After pair-based clipping handles coplanar face pairs, this pass catches faces
-/// that are still unsplit copies of an input face (same vertex count and area) but
-/// have no coplanar mate in the result (the other operand's face was correctly
-/// classified OUT).  It clips each such face against every axis-aligned face on the
-/// same plane from the *other* operand, then replaces the face with the clipped
-/// polygon.
-pub fn clip_input_copy_faces_to_other_solid(
-    brep: &BRep,
-    a: &BRep,
-    b: &BRep,
-    tol: f64,
-) -> (BRep, usize) {
-    let mut out = brep.clone();
-    let mut total = 0usize;
-    let t = tol.max(TOLERANCE_ABS);
-
-    // Build input map: plane_key → Vec<Vec<[f64; 2]>>
-    let mut input_map: HashMap<(i64, i64, i64, i64), Vec<Vec<[f64; 2]>>> = HashMap::new();
-    for input in [a, b] {
-        for s in &input.solids {
-            for sh in &s.shells {
-                for f in &sh.faces {
-                    if !f.inner_wires.is_empty() {
-                        continue;
-                    }
-                    let n = snap_almost_axis(f.normal.normalize_or_zero());
-                    let Some(axes) = axis_aligned_world_plane_uv_axes(n) else {
-                        continue;
-                    };
-                    let Some(p) = face_first_point(input, f) else {
-                        continue;
-                    };
-                    let d = n.dot(p);
-                    let (n_c, d_c) = canonicalize_plane_n_d(n, d);
-                    let pk = plane_key(n_c, d_c, t);
-
-                    let [i, j] = axes;
-                    let uv: Vec<[f64; 2]> = face_outer_points(input, f)
-                        .iter()
-                        .map(|p| [p[i], p[j]])
-                        .collect();
-                    if uv.len() < 3 {
-                        continue;
-                    }
-
-                    input_map.entry(pk).or_default().push(ensure_ccw(&uv));
-                }
-            }
-        }
-    }
-
-    for si in 0..out.solids.len() {
-        for shi in 0..out.solids[si].shells.len() {
-            loop {
-                let shell = &out.solids[si].shells[shi];
-                let mut best_fi = None;
-                let mut best_data = None;
-                let mut best_uv_area = -1.0_f64;
-
-                for fi in 0..shell.faces.len() {
-                    let f = &shell.faces[fi];
-                    if !f.inner_wires.is_empty() {
-                        continue;
-                    }
-
-                    let n = snap_almost_axis(f.normal.normalize_or_zero());
-                    let Some(axes) = axis_aligned_world_plane_uv_axes(n) else {
-                        continue;
-                    };
-                    let Some(p) = face_first_point(&out, f) else {
-                        continue;
-                    };
-                    let d = n.dot(p);
-                    let (n_c, d_c) = canonicalize_plane_n_d(n, d);
-                    let pk = plane_key(n_c, d_c, t);
-
-                    let Some(input_polys) = input_map.get(&pk) else {
-                        continue;
-                    };
-
-                    let [i, j] = axes;
-                    let uv: Vec<[f64; 2]> = face_outer_points(&out, f)
-                        .iter()
-                        .map(|p| [p[i], p[j]])
-                        .collect();
-                    if uv.len() < 3 {
-                        continue;
-                    }
-
-                    let uv_area = {
-                        let mut a2 = 0.0_f64;
-                        for k in 0..uv.len() {
-                            let l = (k + 1) % uv.len();
-                            a2 += uv[k][0] * uv[l][1] - uv[l][0] * uv[k][1];
-                        }
-                        0.5 * a2.abs()
-                    };
-
-                    // Must be an exact copy of some input face
-                    let is_input_copy = input_polys.iter().any(|ip| {
-                        ip.len() == uv.len()
-                            && {
-                                let mut ip_a2 = 0.0_f64;
-                                for k in 0..ip.len() {
-                                    let l = (k + 1) % ip.len();
-                                    ip_a2 += ip[k][0] * ip[l][1]
-                                        - ip[l][0] * ip[k][1];
-                                }
-                                let ip_area = 0.5 * ip_a2.abs();
-                                (uv_area - ip_area).abs()
-                                    <= 1e-4 * uv_area.max(ip_area).max(1.0)
-                            }
-                    });
-
-                    if !is_input_copy {
-                        continue;
-                    }
-
-                    if uv_area > best_uv_area {
-                        best_uv_area = uv_area;
-                        best_fi = Some(fi);
-                        best_data = Some((
-                            n, axes, p, pk, uv, uv_area, f.clone(), i, j,
-                        ));
-                    }
-                }
-
-                let Some((fi, (normal, axes, point, pk, poly_uv, _uv_area, face, i, j))) =
-                    best_fi.zip(best_data)
-                else {
-                    break;
-                };
-
-                // Clip against all input polygons on the same plane
-                let input_polys = input_map.get(&pk).unwrap();
-                let mut clipped = poly_uv.clone();
-                for input_poly in input_polys.iter() {
-                    let sh = crate::inttools::coplanar::sutherland_hodgman_clip(
-                        &clipped, input_poly,
-                    );
-                    clipped = sh;
-                    if clipped.len() < 3 {
-                        break;
-                    }
-                }
-
-                if clipped.len() < 3 {
-                    total += 1;
-                    let flat_idx = flat_face_index(&out, si, shi, fi);
-                    crate::remove_flat_face_geom_slots(&mut out.geom, flat_idx);
-                    out.solids[si].shells[shi].faces.remove(fi);
-                    continue;
-                }
-
-                // Check if clipping changed the polygon
-                let changed = clipped.len() != poly_uv.len()
-                    || clipped
-                        .iter()
-                        .zip(poly_uv.iter())
-                        .any(|(a, b)| (a[0] - b[0]).abs() > t || (a[1] - b[1]).abs() > t);
-
-                if !changed {
-                    break;
-                }
-
-                // Minimum area guard
-                let mut area2 = 0.0_f64;
-                for k in 0..clipped.len() {
-                    let (x0, y0) = (clipped[k][0], clipped[k][1]);
-                    let (x1, y1) = (clipped[(k + 1) % clipped.len()][0], clipped[(k + 1) % clipped.len()][1]);
-                    area2 += x0 * y1 - x1 * y0;
-                }
-                let clipped_area = 0.5 * area2.abs();
-                let min_area = (t * t).max(TOLERANCE_FLOAT_ULTRA);
-                if clipped_area < min_area {
-                    total += 1;
-                    let flat_idx = flat_face_index(&out, si, shi, fi);
-                    crate::remove_flat_face_geom_slots(&mut out.geom, flat_idx);
-                    out.solids[si].shells[shi].faces.remove(fi);
-                    continue;
-                }
-
-                // Build the clipped face
-                let rings = vec![clipped
-                    .iter()
-                    .map(|&c| (c[0], c[1]))
-                    .collect::<Vec<_>>()];
-
-                let ring_vertices = add_vertices_for_rings_with_eval(
-                    &mut out,
-                    &rings,
-                    |u, v| point_from_axis_plane_world_uv(normal, point, u, v),
-                    t,
-                );
-
-                if ring_vertices.is_empty() || ring_vertices[0].len() < 3 {
-                    break;
-                }
-
-                let mut edge_pairs: Vec<(usize, usize)> = Vec::new();
-                for rv in &ring_vertices {
-                    let nv = rv.len();
-                    for k in 0..nv {
-                        edge_pairs.push((rv[k], rv[(k + 1) % nv]));
-                    }
-                }
-
-                let base_ei = out.edges.len();
-                push_new_edges(&mut out, edge_pairs);
-
-                let outer_wire = Wire {
-                    edges: (0..ring_vertices[0].len())
-                        .map(|k| WireEdge::fwd(base_ei + k))
-                        .collect(),
-                };
-
-                let new_face = Face {
-                    outer_wire,
-                    inner_wires: vec![],
-                    normal: face.normal,
-                    triangles: vec![],
-                    mesh_dirty: true,
-                };
-
-                let surf_idx = {
-                    let p0 = face_first_point(&out, &new_face).unwrap_or(point);
-                    let idx = out.geom.surfaces.len();
-                    out.geom
-                        .surfaces
-                        .push(Surface3::Plane(Plane { origin: p0, normal: face.normal }));
-                    idx
-                };
-
-                let flat_idx = flat_face_index(&out, si, shi, fi);
-                replace_shell_faces_and_geom(
-                    &mut out,
-                    si,
-                    shi,
-                    &[fi],
-                    new_face,
-                    surf_idx,
-                    &[flat_idx],
-                );
-                total += 1;
-            }
-        }
-    }
-
-    (out, total)
-}
-
 
 #[cfg(test)]
 mod orth_union_tests {

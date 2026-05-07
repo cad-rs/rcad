@@ -1215,6 +1215,7 @@ dependencies = [
  "glam",
  "laykit",
  "rcad-kernel",
+ "rcad-modeling",
  "serde",
  "serde_json",
  "tempfile",
@@ -1262,6 +1263,7 @@ name = "rcad-modeling"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "rcad-algorithms",
  "rcad-kernel",
 ]
 
@@ -1272,6 +1274,7 @@ dependencies = [
  "glam",
  "laykit",
  "rcad-kernel",
+ "rcad-modeling",
  "serde",
  "serde_json",
  "tempfile",

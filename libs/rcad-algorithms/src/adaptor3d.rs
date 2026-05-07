@@ -16,6 +16,7 @@
 //! ```
 //! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::adaptor3d::Curve3dAdaptor;
+//! use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
 //! use rcad_kernel::Curve3;
 //! use rcad_kernel::geom::Circle3;
 //! use glam::dvec3;

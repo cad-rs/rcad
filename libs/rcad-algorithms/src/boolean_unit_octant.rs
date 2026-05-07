@@ -26,13 +26,13 @@
 use glam::DVec3;
 use rcad_kernel::geom::{ConicalSurface, Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
-use rcad_kernel::{BRep, GeomStore, Vertex};
+use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
 use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
+use crate::BooleanOpType;
 
 use crate::tolerance::*;
-use crate::BooleanOpType;
 
 const TOL: f64 = TOLERANCE_RETRY_LADDER_COARSE;
 
@@ -70,30 +70,56 @@ fn is_pos_unit_cube_0_1(b: &BRep) -> bool {
     (bb[0] - DVec3::ZERO).length() < TOL && (bb[1] - DVec3::ONE).length() < TOL
 }
 
-/// Check if two BReps share the same approximate geometric extent and topology count.
-fn are_breps_approximately_equal(a: &BRep, b: &BRep) -> bool {
-    let Some(bb_a) = a.bounding_box() else { return false };
-    let Some(bb_b) = b.bounding_box() else { return false };
-    let scale = (bb_a[1] - bb_a[0]).length().max((bb_b[1] - bb_b[0]).length()).max(1.0);
-    let tol = TOLERANCE_RETRY_LADDER_COARSE.max(TOLERANCE_COORD_SUB * scale);
-    if (bb_a[0] - bb_b[0]).length() > tol || (bb_a[1] - bb_b[1]).length() > tol {
+/// Check if two BReps are structurally identical (same bounding box, face count, solid count).
+///
+/// Used as a fast-path predicate: when operands are identical, the boolean result is trivial
+/// (union = intersection = either operand, difference = empty).
+fn breps_are_identical(a: &BRep, b: &BRep) -> bool {
+    // Fast structural check: same number of solids, shells, faces
+    let a_n_faces: usize = a.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
+    let b_n_faces: usize = b.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
+    if a_n_faces != b_n_faces || a.solids.len() != b.solids.len() {
         return false;
     }
-    let nf_a: usize = a.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-    let nf_b: usize = b.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-    if nf_a != nf_b || nf_a == 0 {
+
+    // Same bounding box (within tolerance)
+    let Some([amin, amax]) = a.bounding_box() else { return false };
+    let Some([bmin, bmax]) = b.bounding_box() else { return false };
+    let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
+    let tol = TOLERANCE_ABS.max(TOLERANCE_LEN_MIN * scale);
+    if (amin - bmin).length() > tol || (amax - bmax).length() > tol {
         return false;
     }
-    if a.vertices.len() != b.vertices.len() {
+
+    // Size check: surface area and volume should match (within relaxed tolerance)
+    // Use relative tolerance for scale-independent comparison
+    let sa_a = surface_area(a);
+    let sa_b = surface_area(b);
+    let sa_scale = sa_a.max(sa_b).max(1.0);
+    if (sa_a - sa_b).abs() > TOLERANCE_AREA_REL * sa_scale {
         return false;
     }
+
+    let vol_a = volume(a);
+    let vol_b = volume(b);
+    let vol_scale = vol_a.abs().max(vol_b.abs()).max(1.0);
+    if (vol_a - vol_b).abs() > TOLERANCE_AREA_REL * vol_scale {
+        return false;
+    }
+
     true
 }
 
-/// Fast path when operands are (approximately) identical.
-/// Union/Intersection → clone; Difference → empty.
-pub fn try_identical_operands(op: BooleanOpType, a: &BRep, b: &BRep) -> Option<BRep> {
-    if !are_breps_approximately_equal(a, b) {
+/// Fast-path for boolean operations on identical operands.
+///
+/// When both operands are structurally identical:
+/// - [`Union`](BooleanOpType::Union) / [`Intersection`](BooleanOpType::Intersection) → returns a clone of `a`
+/// - [`Difference`](BooleanOpType::Difference) → returns empty [`BRep`]
+///
+/// Returns [`None`] for non-identical operands or unknown ops, letting the caller fall
+/// through to the generic Pave/Builder path.
+pub fn try_identical_operands(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
+    if !breps_are_identical(a, b) {
         return None;
     }
     match op {
