@@ -113,6 +113,12 @@ fn try_pick_redundant_axis_coplanar_face(
     if !face_i.inner_wires.is_empty() || !face_j.inner_wires.is_empty() {
         return None;
     }
+    // Both faces must be on planar surfaces — a cylindrical wall whose normal happens
+    // to snap to an axis (e.g. (-0,-1,0) → -Y) would be falsely matched with a planar
+    // face on the same axis, causing incorrect removal of valid geometry (H8 box∩cyl).
+    if !face_is_plane(brep, fi_flat) || !face_is_plane(brep, fj_flat) {
+        return None;
+    }
     let n_i = snap_almost_axis(face_i.normal.normalize_or_zero());
     let n_j = snap_almost_axis(face_j.normal.normalize_or_zero());
     if axis_aligned_world_plane_uv_axes(n_i).is_none()
@@ -238,6 +244,9 @@ pub fn remove_spurious_intersection_face_preserving_volume(
             continue;
         };
         let face = &brep.solids[si].shells[shi].faces[local_rm];
+        if !face_is_plane(brep, flat_rm) {
+            continue;
+        }
         let n_axis = snap_almost_axis(face.normal.normalize_or_zero());
         if axis_aligned_world_plane_uv_axes(n_axis).is_none() {
             continue;
@@ -260,10 +269,15 @@ pub fn remove_spurious_intersection_face_preserving_volume(
         // removing it would leave a hole — it is structurally necessary even if the
         // divergence-theorem volume contribution happens to be zero (e.g. a face at x=0
         // with normal (-1,0,0) where r·n = 0 for all points).
-        let same_plane_count = brep.solids[si].shells[shi]
-            .faces
-            .iter()
-            .filter(|of| {
+        // Only planar faces are counted — curved faces (e.g. cylinder wall) whose normals
+        // happen to snap to an axis are excluded to prevent false plane matches (H8 box∩cyl).
+        let same_plane_count = (0..brep.solids[si].shells[shi].faces.len())
+            .filter(|&local_fi| {
+                let of_flat = flat_face_index(brep, si, shi, local_fi);
+                if !face_is_plane(brep, of_flat) {
+                    return false;
+                }
+                let of = &brep.solids[si].shells[shi].faces[local_fi];
                 let on = snap_almost_axis(of.normal.normalize_or_zero());
                 let (_axes) = match axis_aligned_world_plane_uv_axes(on) {
                     Some(a) => a,
@@ -1179,6 +1193,13 @@ fn ring_area_uv(ring: &[(f64, f64)]) -> f64 {
         a += x0 * y1 - x1 * y0;
     }
     0.5 * a.abs()
+}
+
+fn face_is_plane(brep: &BRep, flat_idx: usize) -> bool {
+    brep.geom.face_surface.get(flat_idx)
+        .and_then(|&o| o)
+        .and_then(|sidx| brep.geom.surfaces.get(sidx))
+        .is_some_and(|s| matches!(s, Surface3::Plane(_)))
 }
 
 fn flat_face_index(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {

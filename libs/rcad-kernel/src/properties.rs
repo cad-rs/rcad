@@ -1031,6 +1031,28 @@ fn try_planar_face_area_shoelace(
     let (ux, uy) = local_basis_from_normal(face_normal);
     let pivot = outer.first().copied()?;
     let mut a = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
+    // Boolean T-junction repair can scramble wire edge order so the dense-sampled
+    // polyline zig-zags across the face instead of tracing the boundary.  The
+    // shoelace then gives ~0 even for a valid face (e.g. rotated-box ∩ unit cube in
+    // bcommon_simple/G1).  Compute a rough bbox and bail if the area is implausible:
+    // face_triangles uses stored boundary or triangle fan, which is robust to this.
+    if a < 1e-12 {
+        let mut bbox_min = outer[0];
+        let mut bbox_max = outer[0];
+        for p in &outer {
+            bbox_min = bbox_min.min(*p);
+            bbox_max = bbox_max.max(*p);
+        }
+        let bbox_diag = (bbox_max - bbox_min).length();
+        if bbox_diag > 1e-10 {
+            // bbox area ≈ diag², so if a << diag² the polyline is degenerate
+            if a < 1e-12 * bbox_diag * bbox_diag {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
     for w in &face.inner_wires {
         let mut h = sample_wire_polyline_3d(brep, w);
         trim_almost_closed_polyline(&mut h, 1e-5);

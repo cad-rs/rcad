@@ -1140,7 +1140,7 @@ impl<'a> BooleanBuilder<'a> {
         // Process B faces against A solid
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
-            for sub in sub_faces.iter() {
+            for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &a_faces, self.ds);
                 let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
                 if keep {
@@ -1440,22 +1440,6 @@ impl<'a> BooleanBuilder<'a> {
 
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
-            if face_idx < 10 {
-                let boundary_3d: Vec<DVec3> = face
-                    .boundary_verts
-                    .iter()
-                    .map(|&vi| self.ds.vertices[vi].point)
-                    .collect();
-                eprintln!("[split_face] Plane face_idx={} cids={:?} boundary_verts={:?} uv_boundary.len={} n_boundary_3d={} origin={:?}",
-                    face_idx, cids, face.boundary_verts,
-                    face.uv_boundary.as_ref().map(|b| b.len()).unwrap_or(0),
-                    boundary_3d.len(),
-                    face.origin);
-                if let Some(uvb) = &face.uv_boundary {
-                    eprintln!("  uv_boundary first 4 pts: {:.3?} {:.3?} {:.3?} {:.3?}",
-                        uvb[0], uvb[1], uvb[2], uvb[3]);
-                }
-            } // end diagnostic block
             if cids.is_empty() {
                 // No intersection curves — return the whole face as one subface.
                 // split_planar_face would only return the unsplit polygon.
@@ -1465,15 +1449,6 @@ impl<'a> BooleanBuilder<'a> {
             // split_planar_face handles circular faces (< 3 boundary verts) internally
             // by reconstructing the circular boundary from the two diameter endpoints.
             let subs = self.split_planar_face(face_idx, plane, &cids);
-            if face_idx < 10 {
-                eprintln!("[split_face]  => {} subfaces from split_planar_face", subs.len());
-                for (si, sub) in subs.iter().enumerate() {
-                    eprintln!("  sub[{}]: boundary.len={} surface={:?} normal={:.3?}",
-                        si, sub.boundary.len(),
-                        std::mem::discriminant(&sub.surface),
-                        sub.normal);
-                }
-            }
             return subs;
         }
 
@@ -1881,15 +1856,6 @@ impl<'a> BooleanBuilder<'a> {
                                     .dot(v_axis),
                             );
                             let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
-                            if face_idx < 10 && split_curve_ids.len() == 1 {
-                                eprintln!("    [split_planar] line split: poly.len={} halves={} seg_s2d={:.3?} dir={:.3?}",
-                                    poly.len(), halves.len(), seg_s2d, dir);
-                                for (hi, h) in halves.iter().enumerate() {
-                                    eprintln!("      half[{}]: len={} pts=({:.3?})..({:.3?})", hi, h.len(),
-                                        h.first().unwrap_or(&DVec2::ZERO),
-                                        h.last().unwrap_or(&DVec2::ZERO));
-                                }
-                            }
                             next.extend(halves);
                         }
                         Some(next)
@@ -2462,30 +2428,55 @@ impl<'a> BooleanBuilder<'a> {
             return trim.to_vec(); // non-axis-aligned — cannot safely extend
         }
 
-        // ── span-checking guard ──────────────────────────────────────────────
-        // If this axis-aligned trim already covers ≥90 % of the boundary span
-        // in the varying direction, it is a full great-circle-like trim that
-        // already runs boundary-to-boundary.  Extending it would just add
-        // duplicate/redundant points at the boundary, causing over-splitting.
-        if is_const_u && v_span_trim >= 0.9 * bnd_v_span.abs() {
-            return trim.to_vec();
+        // ── Clip trim points to boundary bounds ──────────────────────────────
+        // Intersection PCurves may have t_range extending far outside the face's
+        // actual UV boundary (hardcoded extent=20 in intersect_plane_cylinder_faces).
+        // Without clipping, out-of-bounds points inflate the UV sub-polygon bounding
+        // box, causing tessellate_curved_face to sample a much larger surface.
+        let mut extended = trim.to_vec();
+        if is_const_u {
+            for p in &mut extended {
+                p.y = p.y.clamp(v_min, v_max);
+            }
+        } else {
+            for p in &mut extended {
+                p.x = p.x.clamp(u_min, u_max);
+            }
         }
-        if is_const_v && u_span_trim >= 0.9 * bnd_u_span.abs() {
-            return trim.to_vec();
+
+        // Deduplicate consecutive points after clamping
+        extended.dedup_by(|a, b| {
+            (a.x - b.x).abs() < TOLERANCE_FLOAT_ULTRA
+                && (a.y - b.y).abs() < TOLERANCE_FLOAT_ULTRA
+        });
+        if extended.len() < 2 {
+            return extended;
+        }
+
+        // ── span-checking guard (AFTER clipping) ─────────────────────────────
+        // If this axis-aligned trim already covers ≥90 % of the boundary span
+        // in the varying direction (measured within the boundary, not the raw
+        // PCurve span), it runs boundary-to-boundary and needs no extension.
+        let clipped_v_span = extended.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
+            - extended.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let clipped_u_span = extended.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
+            - extended.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        if is_const_u && clipped_v_span >= 0.9 * bnd_v_span.abs() {
+            return extended;
+        }
+        if is_const_v && clipped_u_span >= 0.9 * bnd_u_span.abs() {
+            return extended;
         }
         // ─────────────────────────────────────────────────────────────────────
 
-        let mut extended = trim.to_vec();
-
         if is_const_u {
             // Constant-u trim: extend v range to the boundary.
-            let u_val = trim[0].x;
+            let u_val = extended[0].x;
             let v_start = extended.first().unwrap().y;
             let v_end = extended.last().unwrap().y;
             let v_dir = (v_end - v_start).signum();
 
             if v_dir >= 0.0 {
-                // v increases from start to end.
                 if (v_start - v_min).abs() > TOLERANCE_ABS {
                     extended.insert(0, DVec2::new(u_val, v_min));
                 }
@@ -2493,7 +2484,6 @@ impl<'a> BooleanBuilder<'a> {
                     extended.push(DVec2::new(u_val, v_max));
                 }
             } else {
-                // v decreases from start to end.
                 if (v_max - v_start).abs() > TOLERANCE_ABS {
                     extended.insert(0, DVec2::new(u_val, v_max));
                 }
@@ -2503,13 +2493,12 @@ impl<'a> BooleanBuilder<'a> {
             }
         } else {
             // Constant-v trim: extend u range to the boundary.
-            let v_val = trim[0].y;
+            let v_val = extended[0].y;
             let u_start = extended.first().unwrap().x;
             let u_end = extended.last().unwrap().x;
             let u_dir = (u_end - u_start).signum();
 
             if u_dir >= 0.0 {
-                // u increases from start to end.
                 if (u_start - u_min).abs() > TOLERANCE_ABS {
                     extended.insert(0, DVec2::new(u_min, v_val));
                 }
@@ -2517,7 +2506,6 @@ impl<'a> BooleanBuilder<'a> {
                     extended.push(DVec2::new(u_max, v_val));
                 }
             } else {
-                // u decreases from start to end.
                 if (u_max - u_start).abs() > TOLERANCE_ABS {
                     extended.insert(0, DVec2::new(u_max, v_val));
                 }
@@ -2761,27 +2749,51 @@ impl<'a> BooleanBuilder<'a> {
         // Split UV polygon by each trim polyline
         let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
 
-        for trim in trim_polylines.iter() {
+        for (ti, trim) in trim_polylines.iter().enumerate() {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
                 // Skip invalid polygons
                 if !is_valid_uv_polygon(&poly) {
                     continue;
                 }
-                let effective_trim = if u_period > 0.0 {
+                let mut effective_trim = if u_period > 0.0 {
                     periodic_trim_to_open_isoline(&poly, trim, u_period)
                         .unwrap_or_else(|| trim.clone())
                 } else {
                     trim.clone()
                 };
 
-                // Quick bounding-box check: skip split if the trim doesn't
-                // overlap the polygon at all (common for sequential splitting
-                // where a trim is interior to only one of many sub-polygons).
+                // Polygon bounding box (used for both trim clipping and overlap check)
                 let pu_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
                 let pu_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
                 let pv_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
                 let pv_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+
+                // Clip axis-aligned 2-point trims to the polygon's u/v range so
+                // both endpoints land on the boundary.  This prevents ray_to_boundary
+                // from projecting in the wrong direction when the trim's u-range
+                // (e.g. [0, 2π] from the global 2-point simplification) is much
+                // wider than the polygon's actual range (e.g. [1.57, 4.71]).
+                if effective_trim.len() == 2 {
+                    let tv0 = effective_trim[0].y;
+                    let tv1 = effective_trim[1].y;
+                    if (tv0 - tv1).abs() <= TOLERANCE_COORD_SUB {
+                        // Constant-v trim: clip u to polygon u-bounds
+                        effective_trim[0].x = effective_trim[0].x.clamp(pu_min, pu_max);
+                        effective_trim[1].x = effective_trim[1].x.clamp(pu_min, pu_max);
+                    }
+                    let tu0 = effective_trim[0].x;
+                    let tu1 = effective_trim[1].x;
+                    if (tu0 - tu1).abs() <= TOLERANCE_COORD_SUB {
+                        // Constant-u trim: clip v to polygon v-bounds
+                        effective_trim[0].y = effective_trim[0].y.clamp(pv_min, pv_max);
+                        effective_trim[1].y = effective_trim[1].y.clamp(pv_min, pv_max);
+                    }
+                }
+
+                // Quick bounding-box check: skip split if the trim doesn't
+                // overlap the polygon at all (common for sequential splitting
+                // where a trim is interior to only one of many sub-polygons).
                 let tu_min = effective_trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
                 let tu_max = effective_trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
                 let tv_min = effective_trim.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
@@ -4320,8 +4332,8 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     // Sub-polygon A: poly[0..=ia] + p_a + trim_pts (interior only) + p_b + poly[ib+1..]
     let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
     sub_a.push(p_a);
-    // Interior trim points (skip first and last which are endpoints)
-    for &p in trim_pts.iter().skip(1).rev().skip(1) {
+    // Interior trim points in FORWARD order (p_a → p_b)
+    for &p in trim_pts.iter().skip(1).take(trim_pts.len().saturating_sub(2)) {
         sub_a.push(p);
     }
     sub_a.push(p_b);
@@ -4331,7 +4343,8 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
     sub_b.push(p_b);
-    for &p in trim_pts.iter().skip(1).rev().skip(1).rev() {
+    // Interior trim points in REVERSED order (p_b → p_a)
+    for &p in trim_pts.iter().skip(1).rev().skip(1) {
         sub_b.push(p);
     }
 
