@@ -783,7 +783,8 @@ fn cylinder_x_cylinder_from_result(
                 });
             }
         }
-        CylinderCylinderResult::General => {
+        CylinderCylinderResult::PerpendicularOffsetCurves { .. }
+        | CylinderCylinderResult::General => {
             return numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2));
         }
     }

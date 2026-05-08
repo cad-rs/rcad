@@ -54,6 +54,17 @@ pub enum CylinderCylinderResult {
     TwoEllipses(Ellipse3, Ellipse3),
     /// Perpendicular intersecting axes, equal radii: two circles.
     TwoCircles(Circle3, Circle3),
+    /// Perpendicular axes with non-zero offset (axes do not intersect),
+    /// but cylinders overlap (dist ≤ r1 + r2). Produces one or two
+    /// space curves parametrized on cyl1's surface:
+    /// `P(θ) = O1 + v*A1 + R1*(cos(θ)*U1 + sin(θ)*V1)`
+    /// where `v = dz ± sqrt(R2² - (dy + R1*sin(θ-α))²)`.
+    PerpendicularOffsetCurves {
+        cyl1: CylindricalSurface,
+        cyl2: CylindricalSurface,
+        /// Distance between axes
+        dist: f64,
+    },
     /// General case (skew axes or oblique angle not handled analytically).
     /// The caller should fall back to numeric marching.
     General,
@@ -253,21 +264,39 @@ fn intersect_perpendicular_cylinders(
     let _a3 = a1.cross(a2).normalize();
 
     if (r1 - r2).abs() < linear_tol {
-        // Equal radii: the Steinmetz intersection is two circles in planes
-        // at ±45° between the two axes (actually the intersection lies in
-        // planes whose normals are a1±a2, but the curves ARE circles for
-        // equal-radius perpendicular cylinders).
+        // Equal radii: the Steinmetz intersection of two perpendicular cylinders
+        // produces two ellipses, each lying in a diagonal plane.
         //
-        // Each circle: normal = (a1 ± a2).normalize(), radius = r, center = origin
+        // Derivation: from Cyl1 eq |P × a1| = r1 and Cyl2 eq |P × a2| = r2,
+        // with a1·a2 = 0 and r1 = r2 = r, we get (P·(a1+a2))(P·(a1-a2)) = 0.
+        // So P lies in plane n1·P = 0 or n2·P = 0 where:
+        //   n1 = (a1 + a2).normalize()
+        //   n2 = (a1 - a2).normalize()
+        //
+        // In each plane, the intersection with Cyl1 is an ellipse with:
+        //   major_radius = r·√2 (along direction (a1∓a2) in the plane)
+        //   minor_radius = r   (along the direction normal×major_dir)
+        let sqrt2 = std::f64::consts::SQRT_2;
         let n1 = (a1 + a2).normalize();
         let n2 = (a1 - a2).normalize();
-        let r = (r1 * r1 + r2 * r2).sqrt() / std::f64::consts::SQRT_2;
-        let _ = r; // radius of the Steinmetz circles
-        // For equal radii r1=r2=r, the Steinmetz circles have radius r*sqrt(2)/sqrt(2)=r
-        // ... actually radius = r1 (same as cylinder radius for equal radii).
-        let circle1 = Circle3 { center: origin, normal: n1, radius: r1 };
-        let circle2 = Circle3 { center: origin, normal: n2, radius: r1 };
-        return CylinderCylinderResult::TwoCircles(circle1, circle2);
+        let u1 = (a1 - a2).normalize();
+        let u2 = (a1 + a2).normalize();
+
+        let ellipse1 = Ellipse3 {
+            center: origin,
+            normal: n1,
+            major_dir: u1,
+            major_radius: r1 * sqrt2,
+            minor_radius: r1,
+        };
+        let ellipse2 = Ellipse3 {
+            center: origin,
+            normal: n2,
+            major_dir: u2,
+            major_radius: r1 * sqrt2,
+            minor_radius: r1,
+        };
+        return CylinderCylinderResult::TwoEllipses(ellipse1, ellipse2);
     }
 
     // Unequal radii: intersection curves are two congruent ellipses.
@@ -368,15 +397,20 @@ mod tests {
 
     #[test]
     fn perpendicular_equal_radii_steinmetz() {
-        // Classic Steinmetz: two unit cylinders along X and Y, intersecting at origin
+        // Classic Steinmetz: two unit cylinders along X and Y, intersecting at origin.
+        // The intersection curves are ellipses in diagonal planes:
+        //   major_radius = r·√2, minor_radius = r
+        let sqrt2 = std::f64::consts::SQRT_2;
         let c1 = cyl(DVec3::ZERO, DVec3::X, 1.0);
         let c2 = cyl(DVec3::ZERO, DVec3::Y, 1.0);
         match intersect_cylinder_cylinder(&c1, &c2) {
-            CylinderCylinderResult::TwoCircles(circ1, circ2) => {
-                assert!((circ1.radius - 1.0).abs() < TOLERANCE_COORD_SUB);
-                assert!((circ2.radius - 1.0).abs() < TOLERANCE_COORD_SUB);
+            CylinderCylinderResult::TwoEllipses(e1, e2) => {
+                assert!((e1.major_radius - sqrt2).abs() < TOLERANCE_COORD_SUB, "e1.major={}", e1.major_radius);
+                assert!((e1.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e1.minor={}", e1.minor_radius);
+                assert!((e2.major_radius - sqrt2).abs() < TOLERANCE_COORD_SUB, "e2.major={}", e2.major_radius);
+                assert!((e2.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e2.minor={}", e2.minor_radius);
             }
-            other => panic!("expected TwoCircles, got {other:?}"),
+            other => panic!("expected TwoEllipses, got {other:?}"),
         }
     }
 

@@ -911,7 +911,8 @@ pub fn intersect_offset_cylinder_cylinder(
         crate::inttools::cylinder_cylinder::CylinderCylinderResult::TwoEllipses(e1, e2) => {
             OffsetIntersectionCurve::TwoEllipses(e1, e2)
         }
-        crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
+        crate::inttools::cylinder_cylinder::CylinderCylinderResult::PerpendicularOffsetCurves { .. }
+        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
             // Fall back to numerical approximation
             intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2, d1, d2)
         }

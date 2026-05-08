@@ -2073,8 +2073,9 @@ impl<'a> PaveFiller<'a> {
         match intersect_cylinder_cylinder(cyl1, cyl2) {
             CylinderCylinderResult::NoIntersection | CylinderCylinderResult::Coaxial => return,
 
-            CylinderCylinderResult::General => {
-                // Fall back to numeric marching for skew/oblique cases.
+            CylinderCylinderResult::PerpendicularOffsetCurves { .. }
+            | CylinderCylinderResult::General => {
+                // Fall back to numeric marching for skew/oblique/offset cases.
                 self.intersect_ff_by_marching(f1, f2);
                 return;
             }
