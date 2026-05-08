@@ -1120,16 +1120,19 @@ impl<'a> BooleanBuilder<'a> {
         let mut result = ResultBuilder::new();
 
         // Process A faces against B solid
+        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
-
                 let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
-
                 if keep {
                     let src = self.ds.faces[fi].source_face_idx;
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
+                    // Track A-face planes for coplanar dedup with B faces
+                    if let Surface3::Plane(p) = &sub.surface {
+                        a_on_planes.push((p.normal, p.origin));
+                    }
                 }
             }
         }
@@ -1139,10 +1142,28 @@ impl<'a> BooleanBuilder<'a> {
             let sub_faces = self.split_face(fi);
             for sub in sub_faces.iter() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &a_faces, self.ds);
-
                 let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
-
                 if keep {
+                    // For Intersection, skip B-side On subfaces that are coplanar with an
+                    // already-emitted A-side face (e.g. cylinder cap ∩ cube face — both produce
+                    // On faces on the same plane; only the A-face should survive).
+                    if self.op == BooleanOpType::Intersection && class == Classification::On {
+                        if let Surface3::Plane(bp) = &sub.surface {
+                            let bn = bp.normal.normalize_or_zero();
+                            let already_covered = a_on_planes.iter().any(|(an, ao)| {
+                                let dot = an.dot(bn);
+                                if dot <= 0.99 { return false; }
+                                // Same plane: normal aligned AND origin projected onto B normal
+                                // is close to B origin projected onto B normal.
+                                let d_a = ao.dot(*an);
+                                let d_b = bp.origin.dot(bn);
+                                (d_a - d_b).abs() < 1e-6
+                            });
+                            if already_covered {
+                                continue;
+                            }
+                        }
+                    }
                     let flip = self.op == BooleanOpType::Difference;
                     let src = self.ds.faces[fi].source_face_idx;
                     result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
@@ -1371,11 +1392,35 @@ impl<'a> BooleanBuilder<'a> {
 
     fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
-        let boundary = face
+        let boundary: Vec<DVec3> = face
             .boundary_verts
             .iter()
             .map(|&vi| self.ds.vertices[vi].point)
             .collect();
+
+        // If boundary has <3 unique vertices, sample from UV boundary instead.
+        // This handles faces whose DS wire has only 2 edges (e.g. cylinder caps),
+        // where emit_face_with_origin would reject the boundary and create 0 triangles.
+        if boundary.len() < 3 {
+            if let Some(uv_bnd) = &face.uv_boundary {
+                if uv_bnd.len() >= 3 {
+                    let sampled: Vec<DVec3> = uv_bnd
+                        .iter()
+                        .map(|uv| face.surface.point_at(uv.x, uv.y))
+                        .collect();
+                    return vec![SubFace {
+                        boundary: sampled,
+                        surface: face.surface.clone(),
+                        normal: face.normal,
+                        uv_centroid: None,
+                        sample_override: None,
+                        uv_domain: None,
+                        inner_wires: vec![],
+                    }];
+                }
+            }
+        }
+
         vec![SubFace {
             boundary,
             surface: face.surface.clone(),
@@ -1395,10 +1440,41 @@ impl<'a> BooleanBuilder<'a> {
 
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            if face_idx < 10 {
+                let boundary_3d: Vec<DVec3> = face
+                    .boundary_verts
+                    .iter()
+                    .map(|&vi| self.ds.vertices[vi].point)
+                    .collect();
+                eprintln!("[split_face] Plane face_idx={} cids={:?} boundary_verts={:?} uv_boundary.len={} n_boundary_3d={} origin={:?}",
+                    face_idx, cids, face.boundary_verts,
+                    face.uv_boundary.as_ref().map(|b| b.len()).unwrap_or(0),
+                    boundary_3d.len(),
+                    face.origin);
+                if let Some(uvb) = &face.uv_boundary {
+                    eprintln!("  uv_boundary first 4 pts: {:.3?} {:.3?} {:.3?} {:.3?}",
+                        uvb[0], uvb[1], uvb[2], uvb[3]);
+                }
+            } // end diagnostic block
             if cids.is_empty() {
-                return self.single_subface_from_whole_face(face_idx);
+                // No intersection curves — return the whole face as one subface.
+                // split_planar_face would only return the unsplit polygon.
+                let subs = self.single_subface_from_whole_face(face_idx);
+                return subs;
             }
-            return self.split_planar_face(face_idx, plane, &cids);
+            // split_planar_face handles circular faces (< 3 boundary verts) internally
+            // by reconstructing the circular boundary from the two diameter endpoints.
+            let subs = self.split_planar_face(face_idx, plane, &cids);
+            if face_idx < 10 {
+                eprintln!("[split_face]  => {} subfaces from split_planar_face", subs.len());
+                for (si, sub) in subs.iter().enumerate() {
+                    eprintln!("  sub[{}]: boundary.len={} surface={:?} normal={:.3?}",
+                        si, sub.boundary.len(),
+                        std::mem::discriminant(&sub.surface),
+                        sub.normal);
+                }
+            }
+            return subs;
         }
 
         if fi.curves_in.is_empty() {
@@ -1406,9 +1482,48 @@ impl<'a> BooleanBuilder<'a> {
             // causing emit_face_with_origin to drop the whole sub-face. Tessellate into
             // UV patches so each sub-face has a valid boundary polygon.
             if matches!(face.surface, Surface3::Sphere(_)) {
-                return self.tessellate_sphere_face(face_idx);
+                let subs = self.tessellate_sphere_face(face_idx);
+                return subs;
             }
-            return self.single_subface_from_whole_face(face_idx);
+            if matches!(face.surface, Surface3::Cylinder(_)) {
+                let subs = self.tessellate_cylinder_face(face_idx);
+                return subs;
+            }
+            let subs = self.single_subface_from_whole_face(face_idx);
+            return subs;
+        }
+
+
+
+        // For Cylinder surfaces with curves_in at the UV boundary, use tessellation
+        // instead of split_curved_face_parametric.  Curves at the cap seam (v=0 or v=h)
+        // are boundary edges, not interior cuts — splitting along them produces zero-area
+        // subfaces (e.g. cylinder wall ∩ containing cube with coplanar caps).
+        if matches!(&face.surface, Surface3::Cylinder(_)) {
+            if let Some(uv_bnd) = &face.uv_boundary {
+                if uv_bnd.len() >= 3 {
+                    let bnd_v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    let bnd_v_span = bnd_v_max - bnd_v_min;
+                    let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
+                    let all_at_boundary = fi.curves_in.iter().all(|&ci| {
+                        self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
+                            let ic = &self.ds.intersection_curves[ci];
+                            let [t0, t1] = ic.t_range;
+                            let pts = [t0, 0.5*(t0+t1), t1].map(|t| pcurve.point_at(t));
+                            let v_min = pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                            let v_max = pts.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                            let at_v_top = (v_max - bnd_v_max).abs() < vb_tol;
+                            let at_v_bot = (v_min - bnd_v_min).abs() < vb_tol;
+                            at_v_top || at_v_bot
+                        })
+                    });
+                    if all_at_boundary {
+                        let subs = self.tessellate_cylinder_face(face_idx);
+                        return subs;
+                    }
+                }
+            }
         }
 
         match &face.surface {
@@ -1497,6 +1612,78 @@ impl<'a> BooleanBuilder<'a> {
         subs
     }
 
+    /// Tessellate a cylinder wall face with no intersection curves into UV patches.
+    ///
+    /// Like the sphere, a cylinder's single face with a seam edge has only 2 boundary
+    /// vertices in the DS (top and bottom along the seam), which [`emit_face_with_origin`]
+    /// rejects (<3 vertices). Split the cylinder wall into azimuthal bands so each patch
+    /// has a valid 3D boundary polygon.
+    fn tessellate_cylinder_face(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let cyl = match &face.surface {
+            Surface3::Cylinder(c) => *c,
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+
+        // Get v-range from UV boundary
+        let uv_boundary = match &face.uv_boundary {
+            Some(b) if b.len() >= 3 => b.clone(),
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        let v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        if !v_min.is_finite() || !v_max.is_finite() || (v_max - v_min).abs() < TOLERANCE_LEN_MIN {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+
+        const N_U: usize = 12;   // azimuth divisions
+        const N_SEG: usize = 16; // samples along each patch edge
+
+        let mut subs = Vec::with_capacity(N_U);
+        for ui in 0..N_U {
+            let u0 = ui as f64 * std::f64::consts::TAU / N_U as f64;
+            let u1 = (ui + 1) as f64 * std::f64::consts::TAU / N_U as f64;
+
+            // Build a fine polygon boundary sampling the patch edges in UV space.
+            let mut boundary = Vec::with_capacity(4 * N_SEG);
+            // Bottom edge (v=v_min, u from u0 to u1)
+            for s in 0..=N_SEG {
+                let u = u0 + (u1 - u0) * s as f64 / N_SEG as f64;
+                boundary.push(cyl.point_at(u, v_min));
+            }
+            // Right edge (u=u1, v from v_min to v_max)
+            for s in 1..=N_SEG {
+                let v = v_min + (v_max - v_min) * s as f64 / N_SEG as f64;
+                boundary.push(cyl.point_at(u1, v));
+            }
+            // Top edge (v=v_max, u from u1 to u0)
+            for s in 1..=N_SEG {
+                let u = u1 - (u1 - u0) * s as f64 / N_SEG as f64;
+                boundary.push(cyl.point_at(u, v_max));
+            }
+            // Left edge (u=u0, v from v_max to v_min)
+            for s in 1..N_SEG {
+                let v = v_max - (v_max - v_min) * s as f64 / N_SEG as f64;
+                boundary.push(cyl.point_at(u0, v));
+            }
+
+            let u_mid = 0.5 * (u0 + u1);
+            let v_mid = 0.5 * (v_min + v_max);
+            let sub_normal = cyl.normal_at(u_mid, v_mid);
+
+            subs.push(SubFace {
+                boundary,
+                surface: face.surface.clone(),
+                normal: sub_normal,
+                uv_centroid: Some(DVec2::new(u_mid, v_mid)),
+                sample_override: None,
+                uv_domain: Some([u0, u1, v_min, v_max]),
+                inner_wires: vec![],
+            });
+        }
+        subs
+    }
+
     /// Split a planar face by intersection line segments.
     ///
     /// Algorithm:
@@ -1515,18 +1702,56 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
 
         // Collect 3D boundary points
-        let boundary_3d: Vec<DVec3> = face
+        let (u_axis, v_axis) = plane_local_basis(plane);
+        let mut boundary_3d: Vec<DVec3> = face
             .boundary_verts
             .iter()
             .map(|&vi| self.ds.vertices[vi].point)
             .collect();
 
         if boundary_3d.len() < 3 {
-            return vec![];
+            if boundary_3d.len() == 2 {
+                // Circular face with only 2 boundary vertices (diameter endpoints).
+                // Reconstruct the circular boundary so we can split it by intersection
+                // curves (cylinder cap cut by a plane).
+                let center = (boundary_3d[0] + boundary_3d[1]) * 0.5;
+                let radius = (boundary_3d[0] - boundary_3d[1]).length() * 0.5;
+                if radius >= TOLERANCE_LEN_MIN {
+                    const N: usize = 32;
+                    boundary_3d = Vec::with_capacity(N);
+                    use std::f64::consts::TAU;
+                    // Offset start angle to avoid vertices landing on the splitting line
+                    // (split_polygon_2d_by_line skips edges with endpoints on the line,
+                    // which prevents splitting a circle by its diameter).
+                    let offset = TAU / (2.0 * N as f64);
+                    for i in 0..N {
+                        let theta = offset + i as f64 * TAU / N as f64;
+                        boundary_3d.push(center
+                            + u_axis * (radius * theta.cos())
+                            + v_axis * (radius * theta.sin()));
+                    }
+                }
+            }
+            // If circular reconstruction didn't produce a valid boundary (e.g. degenerate
+            // cap from a standard cylinder where both boundary_verts point to the same vertex),
+            // fall back to the UV boundary from the DS face, which samples boundary edges
+            // through `compute_uv_boundaries`.
+            if boundary_3d.len() < 3 {
+                if let Some(uv_bnd) = &face.uv_boundary {
+                    if uv_bnd.len() >= 3 {
+                        boundary_3d = uv_bnd.iter()
+                            .map(|uv| plane.point_at(uv.x, uv.y))
+                            .collect();
+                    } else {
+                        return vec![];
+                    }
+                } else {
+                    return vec![];
+                }
+            }
         }
 
         // Project boundary to 2D in the plane
-        let (u_axis, v_axis) = plane_local_basis(plane);
         let project_to_2d = |p: DVec3| -> DVec2 {
             let d = p - plane.origin;
             DVec2::new(d.dot(u_axis), d.dot(v_axis))
@@ -1656,6 +1881,15 @@ impl<'a> BooleanBuilder<'a> {
                                     .dot(v_axis),
                             );
                             let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
+                            if face_idx < 10 && split_curve_ids.len() == 1 {
+                                eprintln!("    [split_planar] line split: poly.len={} halves={} seg_s2d={:.3?} dir={:.3?}",
+                                    poly.len(), halves.len(), seg_s2d, dir);
+                                for (hi, h) in halves.iter().enumerate() {
+                                    eprintln!("      half[{}]: len={} pts=({:.3?})..({:.3?})", hi, h.len(),
+                                        h.first().unwrap_or(&DVec2::ZERO),
+                                        h.last().unwrap_or(&DVec2::ZERO));
+                                }
+                            }
                             next.extend(halves);
                         }
                         Some(next)
@@ -2507,6 +2741,22 @@ impl<'a> BooleanBuilder<'a> {
                 });
             }
         }
+
+        // Extend axis-aligned trims to the UV boundary so endpoints
+        // land on the boundary polygon rather than outside it (the
+        // intersection curve's hardcoded t_range may exceed the face's
+        // actual UV extent). This prevents closest_on_boundary from
+        // mapping out-of-bounds trim endpoints to the wrong polygon edge.
+        let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let bnd_u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let bnd_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        let bnd_u_span = bnd_u_max - bnd_u_min;
+        let bnd_v_span = bnd_v_max - bnd_v_min;
+        trim_polylines = trim_polylines
+            .into_iter()
+            .map(|trim| Self::extend_trim_to_uv_boundary(&trim, &uv_boundary, bnd_u_span, bnd_v_span))
+            .collect();
 
         // Split UV polygon by each trim polyline
         let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
@@ -4480,8 +4730,11 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
     };
 
     let dists: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
-    let all_pos = dists.iter().all(|&d| d >= -tol);
-    let all_neg = dists.iter().all(|&d| d <= tol);
+    // Vertices exactly on the line (|d| < tol) are neutral — they don't count as
+    // "all on one side".  Only strictly positive (> tol) or strictly negative (< -tol)
+    // vertices determine whether the polygon crosses the line.
+    let all_pos = dists.iter().all(|&d| d > tol);
+    let all_neg = dists.iter().all(|&d| d < -tol);
 
     if all_pos || all_neg {
         return vec![poly.to_vec()];
@@ -4492,6 +4745,26 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
         let j = (i + 1) % n;
         let di = dists[i];
         let dj = dists[j];
+
+        // When a vertex lies exactly on the split line (|d| < tol), the original
+        // edge-crossing test would skip the edge entirely, losing the crossing.
+        // This happens when a circular face with few boundary vertices is split
+        // by a line passing through two vertices.
+        //
+        // Fix: when the *current* vertex is on the line and the *next* vertex is
+        // not, search backward for the first non-on-line vertex. If its sign
+        // opposes the next vertex's sign, the line crosses at this vertex.
+        if di.abs() < tol && dj.abs() >= tol {
+            let mut pi = (i + n - 1) % n;
+            while pi != i && dists[pi].abs() < tol {
+                pi = (pi + n - 1) % n;
+            }
+            if pi != i && dists[pi] * dj < 0.0 {
+                crossings.push((i, poly[i]));
+                continue;
+            }
+        }
+
         if di.abs() < tol || dj.abs() < tol {
             continue;
         }

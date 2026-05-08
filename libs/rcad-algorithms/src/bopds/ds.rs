@@ -297,10 +297,6 @@ impl DS {
         const N_SAMPLES: usize = 8;
 
         for fi in 0..self.faces.len() {
-            if matches!(self.faces[fi].surface, Surface3::Plane(_)) {
-                continue; // Planar faces use existing 2D projection logic
-            }
-
             let surface = self.faces[fi].surface.clone();
 
             // For sphere and cylinder, the UV boundary is the full parameter
@@ -327,9 +323,27 @@ impl DS {
                     let mut h_max = f64::NEG_INFINITY;
                     let axis = cyl.axis.normalize();
                     let origin = cyl.origin;
+                    // Seam edges on a cylinder are lines parallel to the axis.  When a face has
+                    // multiple seam edges (e.g. a cylinder with explicit front/back seams), the
+                    // u-range is bounded by them rather than the full [0, 2π].
+                    let u_ax = any_perpendicular(axis);
+                    let v_ax = axis.cross(u_ax).normalize();
+                    let mut seam_u_vals: Vec<f64> = Vec::new();
                     for ei in &boundary_edges {
                         let edge = &self.edges[*ei];
                         let [t0, t1] = edge.t_range;
+                        // Detect seam edges: lines whose direction is parallel to the cylinder axis
+                        if let Curve3::Line(line) = &edge.curve {
+                            let dir = line.direction.normalize();
+                            if dir.dot(axis).abs() > 1.0 - TOLERANCE_ABS {
+                                let mid = edge.curve.point_at(0.5 * (t0 + t1));
+                                let v_comp = (mid - origin).dot(axis);
+                                let radial = mid - origin - v_comp * axis;
+                                let u = radial.dot(v_ax).atan2(radial.dot(u_ax));
+                                seam_u_vals.push(u);
+                            }
+                        }
+                        // v-range sampling (same as before)
                         for k in 0..=N_SAMPLES {
                             let t = t0 + (t1 - t0) * k as f64 / N_SAMPLES as f64;
                             let p = edge.curve.point_at(t);
@@ -342,16 +356,20 @@ impl DS {
                         h_min = -1.0;
                         h_max = 1.0;
                     }
-                    // Add small margin
+                    // Deduplicate seam u-values (same edge may appear fwd+rev in the wire)
+                    seam_u_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    seam_u_vals.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+                    let (u_lo, u_hi) = if seam_u_vals.len() >= 2 {
+                        (seam_u_vals[0], seam_u_vals[seam_u_vals.len() - 1])
+                    } else {
+                        (0.0, 2.0 * PI)
+                    };
                     let margin = (h_max - h_min) * 0.01 + TOLERANCE_COORD_SUB;
-                    // Use [0, 2π] to match CylindricalSurface::point_at parameterisation.
-                    // circle_pcurve_on_cylinder also uses u ∈ [0, 2π], so the trim polyline
-                    // will lie entirely inside this UV boundary.
                     let uv = vec![
-                        DVec2::new(0.0, h_min - margin),
-                        DVec2::new(2.0 * PI, h_min - margin),
-                        DVec2::new(2.0 * PI, h_max + margin),
-                        DVec2::new(0.0, h_max + margin),
+                        DVec2::new(u_lo, h_min - margin),
+                        DVec2::new(u_hi, h_min - margin),
+                        DVec2::new(u_hi, h_max + margin),
+                        DVec2::new(u_lo, h_max + margin),
                     ];
                     self.faces[fi].uv_boundary = Some(uv);
                     continue;
@@ -619,12 +637,29 @@ impl DS {
     }
 
     /// Collect 3D boundary points for a face.
+    ///
+    /// When the topological wire produces a degenerate polygon (< 3 unique points),
+    /// falls back to the UV boundary if available and the face is planar. This ensures
+    /// e.g. cylinder caps (2 boundary vertices on a diameter line) produce a proper
+    /// circular polygon for face-face intersection clipping.
     pub fn face_boundary_points(&self, face_idx: usize) -> Vec<DVec3> {
-        self.faces[face_idx]
+        let face = &self.faces[face_idx];
+        let pts: Vec<DVec3> = face
             .boundary_verts
             .iter()
             .map(|&vi| self.vertices[vi].point)
-            .collect()
+            .collect();
+        if pts.len() < 3 {
+            if let Some(uv_bnd) = &face.uv_boundary {
+                if uv_bnd.len() >= 3 && matches!(face.surface, Surface3::Plane(_)) {
+                    return uv_bnd
+                        .iter()
+                        .map(|uv| face.surface.point_at(uv.x, uv.y))
+                        .collect();
+                }
+            }
+        }
+        pts
     }
 
     /// Detect shared topology between ShapeA and ShapeB.

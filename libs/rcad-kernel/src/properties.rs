@@ -1380,6 +1380,22 @@ fn face_triangles(
     face: &crate::topology::Face,
     face_flat_idx: usize,
 ) -> Vec<[DVec3; 3]> {
+    // Determine whether the face has a curved surface (not Plane).
+    // For curved surfaces, `face.normal` is unreliable — it is typically estimated
+    // from the boundary polygon (Newell method) and can point in a completely wrong
+    // direction for surfaces like the wall of a half-cylinder.  Using it in
+    // `orient_tri` flips the winding of valid triangles, causing the signed volume
+    // contribution to be negative or zero.  When curved, we trust the natural winding
+    // from the topology (wire order) which follows the conventional CCW-outward
+    // convention for properly-built solids.
+    let is_curved = brep
+        .geom
+        .face_surface
+        .get(face_flat_idx)
+        .and_then(|o| *o)
+        .and_then(|sidx| brep.geom.surfaces.get(sidx))
+        .map_or(false, |s| !matches!(s, Surface3::Plane(_)));
+
     // Holed / trimmed faces: the boolean result may cache outer-loop triangles only
     // (see `ResultBuilder`); re-mesh in plane/UV for area / volume.
     if !face.inner_wires.is_empty() {
@@ -1416,7 +1432,13 @@ fn face_triangles(
         }
     }
 
-    if face.inner_wires.is_empty() && !face.triangles.is_empty() {
+    // For planar surfaces, stored triangles from emit_face_with_origin's
+    // triangulate_polygon are correct (the surface IS planar).  For curved
+    // surfaces, those same triangles are ear-clipped chordal triangles that
+    // cut across the interior rather than following the surface — they produce
+    // wrong signed volume.  Always fall through to tessellate_curved_face for
+    // curved surfaces even when face.triangles is non-empty.
+    if !is_curved && face.inner_wires.is_empty() && !face.triangles.is_empty() {
         return face
             .triangles
             .iter()
@@ -1441,9 +1463,15 @@ fn face_triangles(
     }
     // Fan from first sample (convex-ish outer loops only; holed cases handled above).
     let origin = wire_pts[0];
-    (1..wire_pts.len() - 1)
-        .map(|i| orient_tri([origin, wire_pts[i], wire_pts[i + 1]], face.normal))
-        .collect()
+    if is_curved {
+        (1..wire_pts.len() - 1)
+            .map(|i| [origin, wire_pts[i], wire_pts[i + 1]])
+            .collect()
+    } else {
+        (1..wire_pts.len() - 1)
+            .map(|i| orient_tri([origin, wire_pts[i], wire_pts[i + 1]], face.normal))
+            .collect()
+    }
 }
 
 /// Ensure triangle [a,b,c] is oriented so its normal agrees with `face_normal`.

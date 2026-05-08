@@ -147,7 +147,7 @@ pub use brep_lib::{
 };
 pub use brep_tools::{
     BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
-    count_vertices, get_curve, get_edge_range, get_edge_tolerance, get_face_tolerance,
+    count_vertices, count_wires, get_curve, get_edge_range, get_edge_tolerance, get_face_tolerance,
     get_inner_wires, get_outer_wire, get_pcurve, get_shape_type, get_surface, get_vertex_tolerance,
     is_closed, is_edge_degenerate, mirror_shape, read_brep_from_file, read_brep_from_string,
     rotate_shape, scale_shape, transform_shape, write_brep_to_file, write_brep_to_string,
@@ -2492,8 +2492,6 @@ pub(crate) fn boolean_postprocess_pave_result(
 ) -> Result<BRep, BooleanError> {
     geom_populate::recompute_plane_surfaces(&mut result);
     if matches!(op, BooleanOpType::Intersection)
-        && brep_is_pure_plane_solid(a)
-        && brep_is_pure_plane_solid(b)
         && !(brep_is_world_axis_aligned_plane_solid(a) && brep_is_world_axis_aligned_plane_solid(b))
     {
         // Clip overlapping coplanar faces FIRST, before the removal passes below.
@@ -2501,6 +2499,9 @@ pub(crate) fn boolean_postprocess_pave_result(
         // un-split faces survive `build_with_history` and inflate SA.  This pass clips
         // them to their 2D overlap polygon (Sutherland–Hodgman), which the subsequent
         // removal passes can then deduplicate correctly.
+        // Extended from pure-plane-only to all Intersection: the clip functions handle
+        // non-axis-aligned faces by skipping them, so curved-surface cases (e.g. cylinder ∩
+        // cube) benefit from coplanar cleanup without affecting curved faces.
         let (next, _cc) = orthogonal_face_fuse::clip_coplanar_overlap_for_intersection(
             &result, a, b,
             tolerance::TOLERANCE_ABS,
