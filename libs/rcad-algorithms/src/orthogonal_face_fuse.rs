@@ -1249,13 +1249,12 @@ fn replace_shell_faces_and_geom(
     }
     crate::remove_flat_face_geom_slots(&mut brep.geom, insert_at);
     brep.geom.face_surface.insert(insert_at, Some(surf_idx));
-    if brep.geom.face_surface_range.len() < brep.geom.face_surface.len() {
-        brep.geom
-            .face_surface_range
-            .resize(brep.geom.face_surface.len(), None);
-    } else {
-        brep.geom.face_surface_range.insert(insert_at, None);
-    }
+    // Insert at insert_at (not resize) so that entries after the removed index
+    // are pushed right rather than left-shifted and then padded at the end —
+    // the old resize path caused face_surface_range entries to drift by one
+    // position (cylinder wall UV domain → planar face, H8 box ∩ cylinder).
+    brep.geom.face_surface_range.insert(insert_at, None);
+    debug_assert_eq!(brep.geom.face_surface_range.len(), brep.geom.face_surface.len());
     if brep.geom.face_tolerance.len() < brep.geom.face_surface.len() {
         brep.geom
             .face_tolerance
@@ -1674,6 +1673,20 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
                     let (n_c, d_c) = canonicalize_plane_n_d(n, d);
                     let pk = plane_key(n_c, d_c, t);
 
+                    // Skip curved (non-plane) faces — the axis-aligned normal check
+                    // is not sufficient for cylinder walls that get a planar
+                    // classification after boolean face dedup.
+                    let flat = flat_face_index(&out, si, shi, fi);
+                    let sidx = out.geom.face_surface.get(flat).copied().flatten();
+                    if let Some(sidx) = sidx {
+                        if let Some(surf) = out.geom.surfaces.get(sidx) {
+                            if !matches!(surf, Surface3::Plane(_)) {
+                                fi += 1;
+                                continue;
+                            }
+                        }
+                    }
+
                     let [i, j] = axes;
                     let uv: Vec<[f64; 2]> = face_outer_points(&out, f)
                         .iter()
@@ -1829,6 +1842,18 @@ fn clip_one_coplanar_pair(
     fj: usize,
     tol: f64,
 ) -> Option<()> {
+    // Skip curved (non-plane) faces — a cylinder wall classified with an
+    // axis-aligned face normal (e.g. after boolean On‑face dedup) must not
+    // be treated as a planar face.  Clipping its 2D axis projection corrupts
+    // face_surface_range and destroys the curved‑surface sub‑face.
+    for &f in &[fi, fj] {
+        let flat = flat_face_index(brep, si, shi, f);
+        let sidx = brep.geom.face_surface.get(flat).copied().flatten()?;
+        if !matches!(brep.geom.surfaces.get(sidx)?, rcad_kernel::geom::Surface3::Plane(_)) {
+            return None;
+        }
+    }
+
     // ── Read phase (shared borrows only) ──────────────────────────────────
     let (face_i, face_j, n, axes, poly_i_uv, poly_j_uv, plane_origin, normal);
 
@@ -2202,3 +2227,4 @@ mod bcommon_g1_bbox_probe_tests {
     }
 }
 
+ 

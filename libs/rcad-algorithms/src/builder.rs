@@ -1778,7 +1778,15 @@ impl<'a> BooleanBuilder<'a> {
                             let replace = match (fi, li) {
                                 (Some(f), Some(l)) => {
                                     let cnt = on.iter().filter(|&&x| x).count();
+                                    // Replace only when the on-circle block is a contiguous
+                                    // interior segment of the polygon, NOT the entire polygon.
+                                    // When ALL vertices are on the circle (f==0 && l==last), the
+                                    // polygon is entirely on the circle boundary (e.g. the inside
+                                    // sub-face of a plane split by a circle). Replacing the arc
+                                    // would destroy the polygon geometry because the fi/li angular
+                                    // span and direction logic breaks down for a full-circle polygon.
                                     cnt >= 3 && l - f + 1 == cnt
+                                        && !(f == 0 && l == half.len() - 1)
                                 }
                                 _ => false,
                             };
@@ -2730,6 +2738,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+
         // Extend axis-aligned trims to the UV boundary so endpoints
         // land on the boundary polygon rather than outside it (the
         // intersection curve's hardcoded t_range may exceed the face's
@@ -2859,6 +2868,7 @@ impl<'a> BooleanBuilder<'a> {
                 })
                 .collect();
         }
+
 
         // Map each UV sub-polygon back to 3D
         uv_polygons
@@ -4389,6 +4399,28 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
 /// When the circle is fully inside the polygon (all vertices outside),
 /// samples the circle at N_CIRCLE_SAMPLES points and returns both
 /// the approximate circular cap and the annular region.
+/// Find the point where a segment [a, b] crosses a circle boundary.
+/// `a` should be outside (sd > 0) and `b` inside (sd < 0) or vice versa.
+/// Returns Some(crossing_point) or None if no valid crossing is found.
+fn find_circle_segment_crossing(a: DVec2, b: DVec2, center: DVec2, radius: f64, tol: f64) -> Option<DVec2> {
+    let ab = b - a;
+    let ac = a - center;
+    let qa = ab.dot(ab);
+    if qa < 1e-30 { return None; }
+    let qb = 2.0 * ab.dot(ac);
+    let qc = ac.dot(ac) - radius * radius;
+    let disc = qb * qb - 4.0 * qa * qc;
+    if disc < 0.0 { return None; }
+    let sq = disc.sqrt();
+    for &sign in &[-1.0_f64, 1.0_f64] {
+        let t = (-qb + sign * sq) / (2.0 * qa);
+        if t > tol && t < 1.0 - tol {
+            return Some(a + t * ab);
+        }
+    }
+    None
+}
+
 fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec<Vec<DVec2>> {
     const N_CIRCLE_SAMPLES: usize = 24;
     let n = poly.len();
@@ -4458,13 +4490,41 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
             continue;
         }
         // One vertex exactly on circle, adjacent clearly not on circle
-        // → crossing at the on-circle vertex itself
+        // → crossing at the on-circle vertex itself.
+        // BUT: also check if the edge midpoint is inside the circle, which
+        // indicates the edge enters the circle at an interior point before
+        // reaching the on-circle vertex (or exits at an interior point after).
+        // This happens when a polygon vertex lies on the circle AND the edge
+        // passes through the circle interior.
+        // IMPORTANT: when an interior crossing exists on this edge, we skip
+        // adding the vertex crossing here — the neighbor edge (the OTHER
+        // on-circle-vertex case) provides it, keeping crossings on distinct
+        // edges so the two-crossing split logic works correctly.
         if on_i && !on_j {
-            crossings.push((i, poly[i]));
+            let mid = (poly[i] + poly[j]) * 0.5;
+            if signed_dist(mid) < -tol {
+                // Edge goes from on-circle INTO the circle, then back out.
+                // Find the exit crossing between mid (inside) and poly[j] (outside).
+                if let Some(pt) = find_circle_segment_crossing(mid, poly[j], center, radius, tol) {
+                    crossings.push((i, pt));
+                }
+            } else {
+                crossings.push((i, poly[i]));
+            }
             continue;
         }
         if !on_i && on_j {
-            crossings.push((i, poly[j]));
+            let mid = (poly[i] + poly[j]) * 0.5;
+            if signed_dist(mid) < -tol {
+                // Edge goes from outside to inside before reaching the
+                // on-circle vertex. Find the entry crossing between
+                // poly[i] (outside) and mid (inside).
+                if let Some(pt) = find_circle_segment_crossing(poly[i], mid, center, radius, tol) {
+                    crossings.push((i, pt));
+                }
+            } else {
+                crossings.push((i, poly[j]));
+            }
             continue;
         }
 
@@ -4591,7 +4651,11 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
 
     let mut sub_inside: Vec<DVec2> = vec![pt1];
     sub_inside.extend_from_slice(&poly_inside_verts);
-    sub_inside.push(pt2);
+    // Avoid duplicating pt2 when it's already the last element of poly_inside_verts
+    // (happens when pt2 is at a polygon vertex, e.g. an on-circle vertex).
+    if poly_inside_verts.last() != Some(&pt2) {
+        sub_inside.push(pt2);
+    }
     // Add arc back (reversed, so the boundary goes: inside polygon verts, then arc back to pt1)
     for &p in inner_arc.iter().skip(1).rev().skip(1) {
         sub_inside.push(p);
@@ -4602,12 +4666,19 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     let poly_outside_verts_b: Vec<DVec2> = poly[idx2 + 1..].to_vec();
 
     let mut sub_outside: Vec<DVec2> = poly_outside_verts_a;
-    sub_outside.push(pt1);
+    // Avoid duplicating pt1 when it's already the last element of poly_outside_verts_a
+    if sub_outside.last() != Some(&pt1) {
+        sub_outside.push(pt1);
+    }
     // Add inner arc (forward) as the "hole" boundary
     for &p in inner_arc.iter().skip(1).rev().skip(1) {
         sub_outside.push(p);
     }
-    sub_outside.push(pt2);
+    // Avoid duplicating pt2 when it's already the last element added, or when
+    // it would duplicate the first element of poly_outside_verts_b
+    if sub_outside.last() != Some(&pt2) && poly_outside_verts_b.first() != Some(&pt2) {
+        sub_outside.push(pt2);
+    }
     sub_outside.extend(poly_outside_verts_b);
 
     let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {

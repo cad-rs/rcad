@@ -2501,7 +2501,7 @@ pub(crate) fn boolean_postprocess_pave_result(
         // removal passes can then deduplicate correctly.
         // Extended from pure-plane-only to all Intersection: the clip functions handle
         // non-axis-aligned faces by skipping them, so curved-surface cases (e.g. cylinder ∩
-        // cube) benefit from coplanar cleanup without affecting curved faces.
+        // cube) benefit from coplanar cleanup without affecting curved surfaces.
         let (next, _cc) = orthogonal_face_fuse::clip_coplanar_overlap_for_intersection(
             &result, a, b,
             tolerance::TOLERANCE_ABS,
