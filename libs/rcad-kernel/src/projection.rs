@@ -329,6 +329,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
 /// # Examples
 /// ```rust
 /// use glam::DVec3;
+/// use rcad_kernel::any_perpendicular;
 /// use rcad_kernel::geom::{Surface3, SphericalSurface};
 /// use rcad_kernel::projection::closest_point_on_surface;
 ///

@@ -206,7 +206,28 @@ fn try_spherical_earcut_simple(
         return None;
     }
     let mut outer_uv: Vec<DVec2> = outer.iter().map(|p| sphere_point_to_uv(s, *p)).collect();
-    unwrap_sphere_u_in_chain(&mut outer_uv);
+    // Closed-chain-aware unwrapping: `unwrap_u_circle_chain_closed` normalises
+    // the u-range so a seam-crossing boundary stays within a single 2π interval.
+    // Using `unwrap_sphere_u_in_chain` here caused the ear-cut to cover an
+    // extra wrap-around on rotated-sphere faces that cross the seam, producing
+    // triangle areas larger than the entire sphere surface.
+    let u_vals: Vec<f64> = outer_uv.iter().map(|uv| uv.x).collect();
+    let unwrapped_u = unwrap_u_circle_chain_closed(&u_vals);
+    for (uv, u) in outer_uv.iter_mut().zip(unwrapped_u.iter()) {
+        uv.x = *u;
+    }
+    // Decimate the UV chain after unwrapping: keeps the ear-cut O(n²) tractable
+    // while preserving the correct UV range.
+    const MAX_UV_PTS: usize = 8000;
+    if outer_uv.len() > MAX_UV_PTS {
+        let step = (outer_uv.len() - 1) as f64 / (MAX_UV_PTS - 1) as f64;
+        outer_uv = (0..MAX_UV_PTS)
+            .map(|i| {
+                let idx = (i as f64 * step).round() as usize;
+                outer_uv[idx.min(outer_uv.len() - 1)]
+            })
+            .collect();
+    }
     // Remove near-duplicate consecutive UV points (common at sphere poles
     // and seam boundaries where multiple UV coordinates map to the same 3D
     // point). The earcut triangulation breaks on degenerate UV polygons.
