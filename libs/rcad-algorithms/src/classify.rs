@@ -756,14 +756,15 @@ fn classify_analytic_cylinder_solid(
     let local = point - cylinder.origin;
     let along = local.dot(axis);
     let radial = (local - axis * along).length();
+    let r = cylinder.radius;
 
     if along < h_min - on_surface_tol || along > h_max + on_surface_tol {
         return Some(Classification::Out);
     }
-    if radial > cylinder.radius + on_surface_tol {
+    if radial > r + on_surface_tol {
         return Some(Classification::Out);
     }
-    if (radial - cylinder.radius).abs() <= on_surface_tol
+    if (radial - r).abs() <= on_surface_tol
         || (along - h_min).abs() <= on_surface_tol
         || (along - h_max).abs() <= on_surface_tol
     {

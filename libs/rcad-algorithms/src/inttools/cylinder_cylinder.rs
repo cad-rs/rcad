@@ -252,9 +252,17 @@ fn intersect_perpendicular_cylinders(
     }
 
     // For the Steinmetz case the axes must actually cross (dist ≈ 0).
-    // For dist > 0 the analytic form is much harder; fall back to marching.
+    // For larger dist we can still handle overlapping perpendicular cylinders
+    // analytically using a θ-parametrization on cyl1's surface.
     if dist > linear_tol * 10.0 {
-        return CylinderCylinderResult::General;
+        if dist <= r1 + r2 + linear_tol {
+            return CylinderCylinderResult::PerpendicularOffsetCurves {
+                cyl1: *cyl1,
+                cyl2: *cyl2,
+                dist,
+            };
+        }
+        return CylinderCylinderResult::NoIntersection;
     }
 
     // Intersection point of the two axes

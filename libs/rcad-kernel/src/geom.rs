@@ -288,6 +288,77 @@ pub struct BSplineSurface {
     pub weights: Vec<Vec<f64>>,
 }
 
+/// Returns `true` if the BSpline surface is planar (degree ≤ 1 in both directions
+/// and all control points lie within `tol` of a single plane).
+pub fn bspline_is_planar(bsp: &BSplineSurface, tol: f64) -> bool {
+    if bsp.degree_u > 1 || bsp.degree_v > 1 {
+        return false;
+    }
+    if bsp.control_points.is_empty() {
+        return false;
+    }
+
+    // Collect all unique control points
+    let pts: Vec<DVec3> = bsp
+        .control_points
+        .iter()
+        .flat_map(|row| row.iter())
+        .copied()
+        .collect();
+    if pts.len() < 3 {
+        return true; // trivially planar
+    }
+
+    // Find the first 3 non-collinear points to define the plane
+    let origin = pts[0];
+    let mut normal = DVec3::ZERO;
+    for i in 1..pts.len() - 1 {
+        let d1 = pts[i] - origin;
+        let d2 = pts[i + 1] - origin;
+        let n = d1.cross(d2);
+        if n.length_squared() > tol * tol {
+            normal = n.normalize();
+            break;
+        }
+    }
+    if normal.length_squared() < 0.5 {
+        // All points are collinear — any plane containing the line works
+        return true;
+    }
+
+    // Check all points lie within tol of the plane
+    pts.iter().all(|&p| {
+        let d = (p - origin).dot(normal);
+        d.abs() <= tol
+    })
+}
+
+/// Convert a planar BSpline surface to the best-fit `Plane`.
+/// The BSpline must satisfy `bspline_is_planar`. Returns the plane from the
+/// first 3 non-collinear control points (or any plane if all points collinear).
+pub fn bspline_to_plane(bsp: &BSplineSurface) -> Plane {
+    let pts: Vec<DVec3> = bsp
+        .control_points
+        .iter()
+        .flat_map(|row| row.iter())
+        .copied()
+        .collect();
+
+    let origin = pts[0];
+    let mut normal = DVec3::Z;
+    for i in 1..pts.len() - 1 {
+        let d1 = pts[i] - origin;
+        let d2 = pts[i + 1] - origin;
+        let n = d1.cross(d2);
+        if n.length_squared() > 1e-30 {
+            normal = n.normalize();
+            break;
+        }
+    }
+
+    Plane { origin, normal }
+}
+
 /// A rational or non-rational Bezier surface (tensor-product bicubic patch).
 ///
 /// Evaluated by applying de Casteljau in u, then in v. Domain is `[0, 1] × [0, 1]`.

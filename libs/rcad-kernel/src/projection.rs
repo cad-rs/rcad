@@ -402,6 +402,8 @@ pub fn closest_point_on_surface(
             let v_axis = cyl.axis.cross(u_axis);
             let r = (point - cyl.origin - cyl.axis * along).normalize_or_zero();
             let theta = r.dot(v_axis).atan2(r.dot(u_axis));
+            // Map [-π, π] → [0, 2π] to match the canonical cylinder UV domain.
+            let theta = if theta < 0.0 { theta + std::f64::consts::TAU } else { theta };
             SurfaceProjection {
                 point,
                 params: (theta, along),

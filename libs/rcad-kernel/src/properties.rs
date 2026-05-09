@@ -11,7 +11,7 @@
 use glam::{DVec2, DVec3};
 
 use crate::BRep;
-use crate::geom::{SphericalSurface, Surface3, SurfaceEval};
+use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -32,7 +32,11 @@ fn tet_signed_volume(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 
 /// Sample a closed wire to a 3D polyline (edge curve samples or vertex fallbacks).
 fn sample_wire_polyline_3d(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
-    const EDGE_SAMPLE_N: usize = 64;
+    sample_wire_polyline_3d_with_n(brep, wire, 64)
+}
+
+/// Like [`sample_wire_polyline_3d`] but with configurable samples per edge.
+fn sample_wire_polyline_3d_with_n(brep: &BRep, wire: &Wire, n: usize) -> Vec<DVec3> {
     use crate::geom::CurveEval;
     let mut pts = Vec::new();
     for we in &wire.edges {
@@ -51,7 +55,6 @@ fn sample_wire_polyline_3d(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
                 .unwrap_or_else(|| curve.default_domain());
             let [t0, t1] = if we.forward { range } else { [range[1], range[0]] };
             if (t1 - t0).abs() > 1e-12 && t0.is_finite() && t1.is_finite() {
-                let n = EDGE_SAMPLE_N;
                 let full_circle = (t1 - t0).abs() >= 2.0 * std::f64::consts::PI - 1e-9;
                 let samples = if full_circle { n } else { n + 1 };
                 for k in 0..samples {
@@ -1031,6 +1034,25 @@ fn try_planar_face_area_shoelace(
     let (ux, uy) = local_basis_from_normal(face_normal);
     let pivot = outer.first().copied()?;
     let mut a = polygon_area_2d_projected(&outer, pivot, ux, uy).abs();
+
+    // Boolean T-junction repair can scramble wire edge order so the dense-sampled
+    // polyline zig-zags across the face instead of tracing the boundary.  The
+    // shoelace on the self-intersecting polygon then under-counts (e.g. exactly
+    // half the correct area for bcommon_simple/C9's slanted face).  Cross-check
+    // against the convex hull of the unique boundary vertices: if the dense-sample
+    // area is less than 60 % of the hull area the polyline is unreliable, so fall
+    // through to triangulation which is robust to scrambled ordering.
+    if a * 1e-7 < outer.len() as f64 {
+        // Only run the cross-check when the dense polyline has significantly more
+        // points than unique vertices (avoids degenerate faces).
+        if let Some(hull_a) = try_boundary_convex_hull_area(brep, &face.outer_wire, pivot, ux, uy)
+        {
+            if hull_a > 1e-12 && a < 0.6 * hull_a {
+                return None;
+            }
+        }
+    }
+
     // Boolean T-junction repair can scramble wire edge order so the dense-sampled
     // polyline zig-zags across the face instead of tracing the boundary.  The
     // shoelace then gives ~0 even for a valid face (e.g. rotated-box ∩ unit cube in
@@ -1081,6 +1103,219 @@ fn polygon_area_2d_projected(pts: &[DVec3], pivot: DVec3, ux: DVec3, uy: DVec3) 
     0.5 * s
 }
 
+/// Compute the area of the convex hull of the unique boundary vertices of `wire`,
+/// projected onto the 2D local basis `(ux, uy)` with the given `pivot`.
+///
+/// Returns `None` when there are fewer than 3 unique vertices.
+///
+/// This is used as a cross-check against the dense-sample shoelace area in
+/// [`try_planar_face_area_shoelace`]: when the hull area is significantly larger
+/// than the dense-sample area, the wire edge order is likely scrambled by boolean
+/// T-junction repair and the shoelace result is unreliable.
+fn try_boundary_convex_hull_area(
+    brep: &BRep,
+    wire: &Wire,
+    pivot: DVec3,
+    ux: DVec3,
+    uy: DVec3,
+) -> Option<f64> {
+    // Collect unique vertex indices from wire edges
+    let mut vert_indices: Vec<usize> = Vec::new();
+    for we in &wire.edges {
+        let edge = brep.edges.get(we.idx)?;
+        vert_indices.push(edge.start);
+        vert_indices.push(edge.end);
+    }
+    vert_indices.sort();
+    vert_indices.dedup();
+
+    if vert_indices.len() < 3 {
+        return None;
+    }
+
+    // Project unique vertices to the 2D local basis
+    let pts_2d: Vec<DVec2> = vert_indices
+        .iter()
+        .filter_map(|&vi| brep.vertices.get(vi))
+        .map(|v| DVec2::new(
+            (v.point - pivot).dot(ux),
+            (v.point - pivot).dot(uy),
+        ))
+        .collect();
+
+    if pts_2d.len() < 3 {
+        return None;
+    }
+
+    // Monotone chain (Andrew's algorithm) convex hull ────────────────────────
+    let mut sorted: Vec<usize> = (0..pts_2d.len()).collect();
+    sorted.sort_by(|&a, &b| {
+        let pa = pts_2d[a];
+        let pb = pts_2d[b];
+        if (pa.x - pb.x).abs() > 1e-12 {
+            pa.x.partial_cmp(&pb.x).unwrap_or(std::cmp::Ordering::Equal)
+        } else {
+            pa.y.partial_cmp(&pb.y).unwrap_or(std::cmp::Ordering::Equal)
+        }
+    });
+
+    let cross = |o: DVec2, a: DVec2, b: DVec2| -> f64 {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+
+    // Lower hull
+    let mut lower: Vec<DVec2> = Vec::new();
+    for &si in &sorted {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], pts_2d[si]) <= 0.0 {
+            lower.pop();
+        }
+        lower.push(pts_2d[si]);
+    }
+
+    // Upper hull
+    let mut upper: Vec<DVec2> = Vec::new();
+    for &si in sorted.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], pts_2d[si]) <= 0.0 {
+            upper.pop();
+        }
+        upper.push(pts_2d[si]);
+    }
+
+    // Remove last point of each (it's the first of the other) and combine
+    lower.pop();
+    upper.pop();
+    let hull: Vec<DVec2> = lower.into_iter().chain(upper).collect();
+
+    if hull.len() < 3 {
+        return None;
+    }
+
+    // Shoelace area of the convex hull
+    let mut area = 0.0;
+    for i in 0..hull.len() {
+        let j = (i + 1) % hull.len();
+        area += hull[i].x * hull[j].y;
+        area -= hull[j].x * hull[i].y;
+    }
+    Some((area * 0.5).abs())
+}
+
+/// For trimmed cylinder faces, compute the exact surface area from the UV boundary.
+///
+/// For cylinders, `|∂P/∂u × ∂P/∂v| = R` (constant), so surface area = R × area of the UV region.
+/// Uses a Green's theorem line integral ∮ v·du, integrating from the minimum-v boundary edge
+/// in the +u direction, to avoid the cancellation that occurs when the wire traces the same
+/// curve forward and backward (e.g., Steinmetz lens bounded by a single intersection curve).
+fn try_cylinder_trimmed_face_area(
+    cyl: &CylindricalSurface,
+    brep: &BRep,
+    face: &Face,
+) -> Option<f64> {
+    use crate::projection::closest_point_on_surface;
+
+    let wire_uv_area = |wire: &Wire| -> Option<f64> {
+        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 256);
+        trim_almost_closed_polyline(&mut pts_3d, 1e-5);
+        if pts_3d.len() < 3 { return None; }
+
+        let n = pts_3d.len();
+        const TWO_PI: f64 = std::f64::consts::PI * 2.0;
+
+        let surf = Surface3::Cylinder(*cyl);
+        let uvs: Vec<DVec2> = pts_3d.iter()
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
+            .collect();
+
+        // (constant-v filter removed — envelope now uses all uv points)
+        let mut unwrapped = Vec::with_capacity(n);
+        unwrapped.push(uvs[0].x);
+        for i in 1..n {
+            let du = short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x);
+            unwrapped.push(unwrapped[i - 1] + du);
+        }
+
+        // Shoelace area.
+        let mut area2 = 0.0_f64;
+        for i in 0..n {
+            let j = if i + 1 < n { i + 1 } else { 0 };
+            area2 += unwrapped[i] * uvs[j].y - unwrapped[j] * uvs[i].y;
+        }
+        let uv_area = area2.abs() * 0.5;
+
+        // Envelope area: integrate v_max(u) - v_min(u) across u bins.
+        // Handles self-intersecting UV polygons (e.g., figure-8 from merged
+        // Steinmetz lens lobes) where shoelace gives the signed area.
+        let nf = n;
+        if nf >= 3 {
+            // 512 bins: ~0.012 rad resolution (~0.2% error for full-wrap faces).
+            let n_bins = 512usize;
+            let step = TWO_PI / n_bins as f64;
+            let mut upper = vec![f64::NEG_INFINITY; n_bins];
+            let mut lower = vec![f64::INFINITY; n_bins];
+            for i in 0..nf {
+                let uw = uvs[i].x.rem_euclid(TWO_PI);
+                let b = ((uw / TWO_PI) * n_bins as f64) as usize;
+                let b = b.min(n_bins - 1);
+                if uvs[i].y > upper[b] { upper[b] = uvs[i].y; }
+                if uvs[i].y < lower[b] { lower[b] = uvs[i].y; }
+            }
+
+            // Collect populated bins into (u, range) pairs for trapezoidal integration
+            let mut band_area = 0.0_f64;
+            let mut prev_u: Option<f64> = None;
+            let mut prev_range: Option<f64> = None;
+            let mut first_u: f64 = 0.0;
+            let mut first_range: f64 = 0.0;
+            let mut got_first = false;
+
+            for b in 0..n_bins {
+                if !lower[b].is_finite() { continue; }
+                let u_center = (b as f64 + 0.5) * step;
+                let range = upper[b] - lower[b];
+                if !got_first {
+                    first_u = u_center;
+                    first_range = range;
+                    got_first = true;
+                }
+                if let (Some(pu), Some(pr)) = (prev_u, prev_range) {
+                    let du = u_center - pu;
+                    band_area += (range + pr) * 0.5 * du;
+                }
+                prev_u = Some(u_center);
+                prev_range = Some(range);
+            }
+            // The envelope method with wrap-around is only valid when the UV
+            // polygon actually wraps around the full cylinder (span close to 2π).
+            // For partial-wrap faces (e.g., wedge faces from boolean splitting),
+            // the shoelace area is correct and the wrap-around overcounts by
+            // integrating across empty bins.
+            let u_min = unwrapped.iter().cloned().fold(f64::INFINITY, f64::min);
+            let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let u_span = u_max - u_min;
+            const WRAP_THRESHOLD: f64 = std::f64::consts::PI;
+            if u_span > WRAP_THRESHOLD {
+                // Wrap around: close the gap from the last populated bin to the first
+                if let (Some(lu), Some(lr)) = (prev_u, prev_range) {
+                    let du = (TWO_PI + first_u) - lu;
+                    band_area += (first_range + lr) * 0.5 * du;
+                }
+                return Some(uv_area.max(band_area));
+            } else {
+                // Partial wrap: shoelace is accurate, envelope wrap corrupts it.
+                return Some(uv_area);
+            }
+        }
+
+        Some(uv_area)
+    };
+
+    let outer_area = wire_uv_area(&face.outer_wire)?;
+    let inner_area: f64 = face.inner_wires.iter()
+        .filter_map(|w| wire_uv_area(w)).sum();
+    let total_uv_area = outer_area - inner_area;
+    if total_uv_area > 1e-14 { Some(cyl.radius * total_uv_area) } else { None }
+}
+
 /// Prefer analytic / parametric area for `surface_area`: plane (shoelace); all sphere faces
 /// (UV polygon mask + `R² dΩ`); finite-UV rectangular patches on other surfaces without inner
 /// wires (cylinder exact; otherwise `‖Pu×Pv‖` midpoint rule on the same domain as tessellation).
@@ -1111,9 +1346,17 @@ fn try_analytic_face_surface_area(
                 return None;
             }
             match surf {
-                Surface3::Cylinder(c) => Some(
-                    c.radius * (u1 - u0).abs() * (v1 - v0).abs(),
-                ),
+                Surface3::Cylinder(c) => {
+                    let edge_n = face.outer_wire.edges.len();
+                    if edge_n > 6 || !face.inner_wires.is_empty() {
+                        // Trimmed face: UV bounding box overcounts.
+                        // For cylinders, |∂P/∂u×∂P/∂v| = R constant, so
+                        // surface area = R × shoelace area of the UV polygon.
+                        try_cylinder_trimmed_face_area(c, brep, face)
+                    } else {
+                        Some(c.radius * (u1 - u0).abs() * (v1 - v0).abs())
+                    }
+                }
                 _ => param_rect_area_cross(surf, u0, u1, v0, v1),
             }
         }

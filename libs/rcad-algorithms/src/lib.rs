@@ -2482,6 +2482,47 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
     true
 }
 
+/// Check if an intersection result is degenerate: all faces planar and
+/// all vertices co-planar (zero thickness), meaning the solids only touch
+/// at a face without volumetric overlap.
+fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
+    let nf = result.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
+    if nf == 0 { return false; }
+    // All faces must be planar
+    if result.geom.face_surface.len() < nf { return false; }
+    for slot in result.geom.face_surface.iter().take(nf) {
+        let Some(si) = *slot else { return false };
+        match result.geom.surfaces.get(si) {
+            Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
+            _ => return false,
+        }
+    }
+    // Check all vertices are co-planar
+    let verts: Vec<glam::DVec3> = result.vertices.iter().map(|v| v.point).collect();
+    if verts.len() < 3 { return false; }
+    // Find first 3 non-collinear vertices to define a reference plane
+    let mut ref_normal = glam::DVec3::ZERO;
+    'outer: for i in 1..verts.len() {
+        let d1 = verts[i] - verts[0];
+        if d1.length_squared() < 1e-20 { continue; }
+        for j in (i + 1)..verts.len() {
+            let d2 = verts[j] - verts[0];
+            let n = d1.cross(d2);
+            if n.length_squared() > 1e-20 {
+                ref_normal = n.normalize();
+                break 'outer;
+            }
+        }
+    }
+    if ref_normal.length_squared() < 0.5 { return false; }
+    let tol = tolerance::TOLERANCE_ABS;
+    for v in &verts {
+        let d = (*v - verts[0]).dot(ref_normal);
+        if d.abs() > tol { return false; }
+    }
+    true
+}
+
 /// Plane recompute and planar-intersection cleanup after [`builder::BooleanBuilder::build`],
 /// matching [`boolean_op_pave_fill_build`].
 pub(crate) fn boolean_postprocess_pave_result(
@@ -2520,6 +2561,15 @@ pub(crate) fn boolean_postprocess_pave_result(
         && brep_is_pure_plane_solid(a)
         && brep_is_pure_plane_solid(b)
         && intersection_planar_sliver_should_be_empty(&result, a, b)
+    {
+        return Ok(BRep::default());
+    }
+    // Broader check: if the result has only planar faces and all vertices are
+    // co-planar (zero thickness), the solids only touch at a face without
+    // volumetric overlap — return empty.  This catches e.g. coaxial cylinders
+    // or adjoining boxes that just meet at a face (OCCT i2, i5).
+    if matches!(op, BooleanOpType::Intersection)
+        && intersection_result_is_degenerate_sliver(&result)
     {
         return Ok(BRep::default());
     }

@@ -731,10 +731,11 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
         if ic.polyline.len() >= 2 {
             all_polylines.push(ic.polyline.clone());
         } else {
-            // Analytic curve - sample it into a polyline
-            let pts: Vec<DVec3> = (0..=16)
+            // Analytic curve - sample it into a polyline (128 segments ~0.03 chord
+            // error for R=100, giving sub-0.1% surface-area error on trimmed faces).
+            let pts: Vec<DVec3> = (0..=128)
                 .map(|i| {
-                    let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 16.0;
+                    let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 128.0;
                     use rcad_kernel::CurveEval;
                     ic.curve.point_at(t)
                 })
