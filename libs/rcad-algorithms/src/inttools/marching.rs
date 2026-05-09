@@ -1,5 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::*;
+use rcad_kernel::projection::closest_point_on_surface;
 
 use crate::tolerance::*;
 
@@ -197,10 +198,11 @@ pub fn surface_implicit(surface: &Surface3, point: DVec3) -> f64 {
             (d * d + along * along).sqrt() - t.minor_radius
         }
         _ => {
-            // Closest-point signed distance: project onto the nearest surface sample.
-            let (u, v) = closest_uv_coarse(surface, point);
-            let closest = surface.point_at(u, v);
-            let normal = surface.normal_at(u, v);
+            // Closest-point signed distance: use numerical projection (uniform
+            // sampling + Newton refinement) for accurate UV on BSpline surfaces.
+            let proj = closest_point_on_surface(surface, point, 8);
+            let closest = proj.point;
+            let normal = surface.normal_at(proj.params.0, proj.params.1);
             let n_len = normal.length();
             if n_len < TOLERANCE_FLOAT_LOOSE {
                 return (point - closest).length();
@@ -261,8 +263,8 @@ fn surface_gradient(surface: &Surface3, point: DVec3) -> DVec3 {
             tv / tv_len
         }
         _ => {
-            let (u, v) = closest_uv_coarse(surface, point);
-            let normal = surface.normal_at(u, v);
+            let proj = closest_point_on_surface(surface, point, 8);
+            let normal = surface.normal_at(proj.params.0, proj.params.1);
             let n_len = normal.length();
             if n_len < TOLERANCE_FLOAT_LOOSE {
                 return DVec3::ZERO;
