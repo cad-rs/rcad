@@ -168,6 +168,9 @@ pub struct SphericalSurface {
     pub center: Point3,
     pub axis: Vec3,
     pub radius: f64,
+    /// Reference direction for u=0 (perpendicular to axis).
+    /// Preserved through rotation so UV mapping stays consistent.
+    pub ref_dir: Vec3,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -926,6 +929,26 @@ impl SurfaceEval for CylindricalSurface {
 }
 
 impl SphericalSurface {
+    /// Construct a sphere with `ref_dir` derived from [`any_perpendicular(axis)`](any_perpendicular).
+    pub fn new(center: Point3, axis: Vec3, radius: f64) -> Self {
+        Self {
+            center,
+            axis,
+            radius,
+            ref_dir: any_perpendicular(axis),
+        }
+    }
+
+    /// Construct a sphere with an explicit `ref_dir` (used after mirroring / transforming).
+    pub fn new_with_ref_dir(center: Point3, axis: Vec3, radius: f64, ref_dir: Vec3) -> Self {
+        Self {
+            center,
+            axis,
+            radius,
+            ref_dir,
+        }
+    }
+
     /// Spherical coordinates of world point `p`: longitude `u` ∈ (−π, π], colatitude `v` ∈ [0, π],
     /// matching [`SurfaceEval::point_at`] / `properties` sphere helpers (radial projection when `p`
     /// is off the surface).
@@ -941,7 +964,7 @@ impl SphericalSurface {
         }
         let w = w.normalize();
         let v = w.dot(ax).clamp(-1.0, 1.0).acos();
-        let x_ax = any_perpendicular(ax);
+        let x_ax = self.ref_dir.normalize();
         let y_ax = ax.cross(x_ax).normalize();
         let w_t = w - ax * w.dot(ax);
         if w_t.length_squared() < 1e-12 {
@@ -956,7 +979,7 @@ impl SphericalSurface {
 impl SurfaceEval for SphericalSurface {
     /// u = longitude [0, 2π], v = colatitude [0, π] (0 = north pole).
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize();
         let y_ax = self.axis.cross(x_ax).normalize();
         self.center
             + self.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
@@ -2283,6 +2306,7 @@ mod eval_tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         // v=0 is north pole regardless of u
         let p = s.point_at(0.0, 0.0);
@@ -2296,6 +2320,7 @@ mod eval_tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         for u in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
             for v in [0.1, 0.5, 1.0, PI / 2.0, PI - 0.1] {

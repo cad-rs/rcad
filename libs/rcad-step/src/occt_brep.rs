@@ -12,7 +12,7 @@
 //! Trimmed 3D curves (record type 8) are unsupported.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::BRep;
+use rcad_kernel::{any_perpendicular, BRep};
 use rcad_kernel::geom::{
     BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3, Circle2d, Circle3,
     ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse2d, Ellipse3, Hyperbola3, Line2d,
@@ -454,6 +454,7 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
                 center: p,
                 axis: dz,
                 radius: c.parse_f64()?,
+                ref_dir: any_perpendicular(dz),
             }))
         }
         "5" => {

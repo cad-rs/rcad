@@ -175,7 +175,7 @@ mod tests {
     use glam::DVec3;
 
     fn sphere(center: DVec3, radius: f64) -> SphericalSurface {
-        SphericalSurface { center, axis: DVec3::Z, radius }
+        SphericalSurface::new(center, DVec3::Z, radius)
     }
 
     fn cyl(origin: DVec3, radius: f64) -> CylindricalSurface {

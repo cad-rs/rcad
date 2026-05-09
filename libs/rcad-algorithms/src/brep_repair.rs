@@ -21,6 +21,7 @@ use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::Surface3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::brep_check::{check_orientation_consistency, diagnose_same_parameter, diagnose_same_range};
 use crate::tolerance::{
@@ -18284,6 +18285,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let info = detect_periodic_surface_info(&sphere);
@@ -18448,6 +18450,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         }));
         brep.geom.face_surface.push(Some(0));
 
@@ -18533,6 +18536,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let periodic_info = detect_periodic_surface_info(&sphere);
@@ -18555,6 +18559,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let periodic_info = detect_periodic_surface_info(&sphere);
@@ -18577,6 +18582,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let periodic_info = detect_periodic_surface_info(&sphere);

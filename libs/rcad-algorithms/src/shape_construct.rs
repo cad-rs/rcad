@@ -284,11 +284,7 @@ pub fn construct_cone_from_axis(apex: DVec3, axis_dir: DVec3, angle: f64) -> Con
 /// * `center` - Center of the sphere
 /// * `radius` - Radius of the sphere (must be positive)
 pub fn construct_sphere_from_center_radius(center: DVec3, radius: f64) -> SphericalSurface {
-    SphericalSurface {
-        center,
-        axis: DVec3::Z, // Default axis
-        radius: radius.abs().max(TOLERANCE_ABS),
-    }
+    SphericalSurface::new(center, DVec3::Z, radius.abs().max(TOLERANCE_ABS))
 }
 
 /// Construct a toroidal surface from center, axis, and radii.

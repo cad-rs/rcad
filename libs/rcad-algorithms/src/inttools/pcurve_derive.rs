@@ -428,6 +428,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let circle = Circle3 {
             center: DVec3::new(0.0, 0.0, 1.0),
@@ -553,6 +554,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         // A circle on the sphere at the equator (z = 0, r = 2).
         let circle = Circle3 {
@@ -591,7 +593,7 @@ mod tests {
         //   h = (1 + 1 - 1)/(2) = 0.5   (distance from sph1 center to radical plane)
         //   r_circ = sqrt(1 - 0.25) = sqrt(0.75)
         //   circle center = (0.5, 0, 0)
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 1.0);
         let circle = Circle3 {
             center: DVec3::new(0.5, 0.0, 0.0),
             normal: DVec3::X,  // NOT parallel to sphere axis (Z)
@@ -628,8 +630,9 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
         // Equatorial circle at z=0, r=2
         let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
 

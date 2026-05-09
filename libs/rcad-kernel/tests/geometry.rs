@@ -5,7 +5,7 @@
 
 use glam::{DAffine3, DVec3};
 use rcad_kernel::{
-    BRep, PrimitiveSolid,
+    any_perpendicular, BRep, PrimitiveSolid,
     arc_length,
     closest_point_on_curve, closest_point_on_surface,
     extrema_curve_curve,
@@ -55,7 +55,7 @@ fn closest_point_on_circle_known() {
 fn closest_point_on_sphere_surface_known() {
     // Sphere at origin r=2, query at (5, 0, 0).
     // Closest surface point = (2, 0, 0), distance = 3.
-    let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 });
+    let sphere = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: any_perpendicular(DVec3::Z) });
     let result = closest_point_on_surface(&sphere, DVec3::new(5.0, 0.0, 0.0), 16);
     let expected = DVec3::new(2.0, 0.0, 0.0);
     assert!(
@@ -120,7 +120,7 @@ fn arc_length_full_circle() {
 #[test]
 fn gaussian_curvature_sphere_known() {
     // Sphere of radius r: Gaussian curvature K = 1/r².
-    let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+    let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0, ref_dir: any_perpendicular(DVec3::Z) };
     let k = gaussian_curvature(&Surface3::Sphere(sphere), std::f64::consts::PI, std::f64::consts::FRAC_PI_2);
     let expected = 1.0 / (2.0 * 2.0); // 0.25
     assert!(
@@ -143,7 +143,7 @@ fn gaussian_curvature_plane_zero() {
 #[test]
 fn mean_curvature_sphere_known() {
     // Sphere of radius r: mean curvature H = 1/r.
-    let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0 };
+    let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: any_perpendicular(DVec3::Z) };
     let h = mean_curvature(&Surface3::Sphere(sphere), 0.5, 0.5);
     let expected = 1.0 / 3.0;
     assert!(

@@ -614,6 +614,7 @@ mod tests {
             center: DVec3::new(1.0, 2.0, 3.0),
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         for u in [0.0, PI, 2.0 * PI] {
             for v in [0.1, PI / 2.0, PI - 0.1] {
@@ -630,6 +631,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let p = sphere_point_at(&sph, 0.0, 0.0);
         assert!(approx_eq(p, DVec3::new(0.0, 0.0, 2.0), TOLERANCE_LINEAR_ULTRA_STRICT));
@@ -641,6 +643,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let p = sphere_point_at(&sph, 0.0, PI);
         assert!(approx_eq(p, DVec3::new(0.0, 0.0, -2.0), TOLERANCE_LINEAR_ULTRA_STRICT));
@@ -652,6 +655,7 @@ mod tests {
             center: DVec3::new(1.0, -2.0, 3.0),
             axis: DVec3::Z,
             radius: 4.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let u = 1.5;
         let v = 1.0;
@@ -670,6 +674,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let p = sphere_point_at(&sph, 0.5, 0.7);
         let n = sphere_normal(&sph, 0.5, 0.7);
@@ -683,6 +688,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let u = 0.7;
         let v = 1.0;

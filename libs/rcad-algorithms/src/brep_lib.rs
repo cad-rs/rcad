@@ -225,11 +225,9 @@ pub fn find_surface_through_points(
             && sphere.rms_error < best_error && sphere.rms_error < scale_tol {
                 best_error = sphere.rms_error;
                 best_fit = Some(FoundSurface {
-                    surface: Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
-                        center: sphere.center,
-                        axis: DVec3::Z, // Default axis
-                        radius: sphere.radius,
-                    }),
+                    surface: Surface3::Sphere(rcad_kernel::geom::SphericalSurface::new(
+                        sphere.center, DVec3::Z, sphere.radius,
+                    )),
                     rms_error: sphere.rms_error,
                     surface_type: FittedSurfaceType::Sphere,
                 });

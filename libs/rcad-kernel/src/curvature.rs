@@ -193,6 +193,7 @@ fn numerical_curvatures(surface: &Surface3, u: f64, v: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::any_perpendicular;
     use crate::geom::{
         BSplineSurface, ConicalSurface, CylindricalSurface, Plane, SphericalSurface,
         ToroidalSurface,
@@ -244,6 +245,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, std::f64::consts::FRAC_PI_2);
         assert!(approx_eq(k1, 1.0 / r, TOL));
@@ -330,6 +332,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let (k1, k2) = principal_curvatures(&s, 0.5, 0.5);
         assert!(approx_eq(k1, 1.0 / r, TOL), "k1 should be 1/r");
@@ -414,6 +417,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let osr = osculating_radius(&s, 0.5, 0.5);
         assert!(approx_eq(osr, r, TOL), "osculating radius should equal sphere radius");
@@ -427,6 +431,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         let h = mean_curvature(&s, 0.0, 0.0);
@@ -441,6 +446,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let (k1, k2) = principal_curvatures(&s, 0.0, 0.0);
         let k = gaussian_curvature(&s, 0.0, 0.0);

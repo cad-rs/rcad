@@ -7,6 +7,7 @@
 //! Named after OCCT's IntAna package which provides similar functionality.
 
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -1385,6 +1386,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let results = intersect_line_sphere(&line, &sphere);
         assert_eq!(results.len(), 2);
@@ -1402,6 +1404,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let results = intersect_line_sphere(&line, &sphere);
         assert_eq!(results.len(), 1);
@@ -1418,6 +1421,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let results = intersect_line_sphere(&line, &sphere);
         assert!(results.is_empty());
@@ -1619,6 +1623,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         match intersect_plane_sphere_intana(&plane, &sphere) {
             PlnSphResult::Circle(c) => {
@@ -1638,6 +1643,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         assert!(matches!(
             intersect_plane_sphere_intana(&plane, &sphere),

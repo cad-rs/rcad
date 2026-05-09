@@ -242,6 +242,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                 center: mirror_point(s.center),
                 axis: mirror_vec(s.axis),
                 radius: s.radius,
+                ref_dir: mirror_vec(s.ref_dir),
             }),
             Surface3::Cone(c) => Surface3::Cone(rcad_kernel::geom::ConicalSurface {
                 apex: mirror_point(c.apex),

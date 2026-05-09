@@ -32,7 +32,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
-use rcad_kernel::{BRep, Face};
+use rcad_kernel::{any_perpendicular, BRep, Face};
 use crate::bvh::{Aabb, Bvh};
 use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
@@ -1487,6 +1487,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
 
         let hits = intersect_line_sphere_range(&line, [-10.0, 10.0], &sphere);

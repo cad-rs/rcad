@@ -408,7 +408,7 @@ fn add_closing_spherical_triangle(
         axis
     };
 
-    let sphere = SphericalSurface { center, axis, radius };
+    let sphere = SphericalSurface::new(center, axis, radius);
 
     let e01 = add_arc_edge(dst, v0, v1, center, radius)?;
     let e12 = add_arc_edge(dst, v1, v2, center, radius)?;
@@ -1647,7 +1647,7 @@ pub fn corner_blend_with_history(
             axis
         };
 
-        let sphere = SphericalSurface { center: v, axis, radius };
+        let sphere = SphericalSurface::new(v, axis, radius);
 
         let e01 = add_arc_edge(&mut dst, sb_indices[0], sb_indices[1], v, radius)?;
         let e12 = add_arc_edge(&mut dst, sb_indices[1], sb_indices[2], v, radius)?;

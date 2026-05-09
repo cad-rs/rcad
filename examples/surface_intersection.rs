@@ -95,6 +95,7 @@ fn demo_intss() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&p, &s);
         print!("Plane(z=0) ∩ Sphere(r=3): ");
@@ -122,6 +123,7 @@ fn demo_intss() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&p, &s);
         print!("Plane(z=2) ∩ Sphere(r=3): ");
@@ -150,6 +152,7 @@ fn demo_intss() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&p, &s);
         print!("Plane(z=3) ∩ Sphere(r=3) [tangent]: ");
@@ -184,11 +187,13 @@ fn demo_intss() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let s2 = Surface3::Sphere(SphericalSurface {
             center: DVec3::new(1.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&s1, &s2);
         print!("Sphere(r=1,O) ∩ Sphere(r=1,(1,0,0)): ");
@@ -208,11 +213,13 @@ fn demo_intss() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let s2 = Surface3::Sphere(SphericalSurface {
             center: DVec3::new(10.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&s1, &s2);
         print!("Sphere(r=1) ∩ Sphere(r=1, far away): ");
@@ -227,11 +234,13 @@ fn demo_intss() {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(1.5, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&c1, &c2);
         print!("Cylinder(r=1) ∩ Cylinder(r=1, d=1.5 apart): ");
@@ -251,11 +260,13 @@ fn demo_intss() {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(2.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&c1, &c2);
         print!("Cylinder(r=1) ∩ Cylinder(r=1, tangent): ");
@@ -333,6 +344,7 @@ fn demo_trimmed() {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         // Trim to northern hemisphere: v∈[0, π/2]
         let trimmed = TrimmedSurface::new(sph, 0.0, 2.0 * PI, 0.0, PI / 2.0);

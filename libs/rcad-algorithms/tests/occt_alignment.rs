@@ -29,7 +29,7 @@ use rcad_algorithms::{
     brep_check::brep_check_analyze,
     history::{EdgeOrigin as HistEdgeOrigin, VertexOrigin as HistVertexOrigin},
 };
-use rcad_kernel::BRep;
+use rcad_kernel::{any_perpendicular, BRep};
 use rcad_kernel::geom::{Surface3, SphericalSurface, CylindricalSurface, Plane,
                         ToroidalSurface, ConicalSurface};
 use rcad_kernel::properties::volume;
@@ -477,6 +477,7 @@ fn offset_sphere_positive() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let result = offset_surface(&sphere, 0.5);
@@ -494,6 +495,7 @@ fn offset_sphere_negative() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 2.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let result = offset_surface(&sphere, -0.5);

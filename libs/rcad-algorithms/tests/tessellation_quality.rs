@@ -1,4 +1,4 @@
-﻿/// Integration tests for mesh generation and tessellation quality.
+/// Integration tests for mesh generation and tessellation quality.
 ///
 /// These tests verify:
 /// - Quality metrics computation
@@ -12,7 +12,7 @@ use rcad_algorithms::{
     AdaptiveSubdivider, BoundarySensitiveTessellator, IncrementalMesher, MeshDelta,
     MeshSimplifier,
 };
-use rcad_kernel::{BRep, PrimitiveSolid, geom::{Surface3, SphericalSurface, CylindricalSurface, Plane}};
+use rcad_kernel::{any_perpendicular, BRep, PrimitiveSolid, geom::{Surface3, SphericalSurface, CylindricalSurface, Plane}};
 
 fn total_triangle_count(brep: &BRep) -> usize {
     brep.solids
@@ -139,6 +139,7 @@ fn sphere_surface_tessellation() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let params = TessellationParams::standard();
@@ -204,6 +205,7 @@ fn tessellation_params_affect_density() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let coarse = TessellationParams {
@@ -641,6 +643,7 @@ fn tessellation_very_small_surface() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 0.001,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let params = TessellationParams::default();
@@ -656,6 +659,7 @@ fn tessellation_very_large_surface() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 10000.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let params = TessellationParams::preview(); // Use preview for speed

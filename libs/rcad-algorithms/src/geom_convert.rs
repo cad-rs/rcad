@@ -1153,6 +1153,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let bs = sphere_to_bspline(&sphere, 2, 2);
 
@@ -1248,6 +1249,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let bs = surface_to_bspline(&sphere, &params);
         assert_eq!(bs.degree_u, 2);

@@ -11,7 +11,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::BRep;
+use rcad_kernel::{any_perpendicular, BRep};
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::Face;
 use std::collections::HashMap;
@@ -1239,6 +1239,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         })
     }
 

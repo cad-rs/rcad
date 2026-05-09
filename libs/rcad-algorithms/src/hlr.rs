@@ -4258,6 +4258,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         let domain = surface.default_domain();
@@ -4282,6 +4283,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         // For a Y-axis sphere: x_ax = Z (perpendicular to Y), y_ax = X = Y.cross(Z)
@@ -4421,6 +4423,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         let view_dir = DVec3::Z;

@@ -32,6 +32,7 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
 use rcad_kernel::{BRep, Face};
 use rcad_kernel::topology::Wire;
@@ -1261,6 +1262,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let options = ProjectionOptions::default();
         let (proj, _uv) = project_point_on_surface(DVec3::new(3.0, 0.0, 0.0), &sphere, &options);

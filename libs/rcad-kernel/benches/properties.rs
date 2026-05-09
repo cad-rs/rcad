@@ -15,6 +15,7 @@ fn closest_point_sphere(c: &mut Criterion) {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
     let points: Vec<DVec3> = (0..100)
         .map(|i| {

@@ -159,6 +159,7 @@ pub fn is_surface_u_closed(surface: &Surface3, tol: f64) -> bool {
 ///     center: DVec3::ZERO,
 ///     axis: DVec3::Z,
 ///     radius: 1.0,
+///     ref_dir: any_perpendicular(DVec3::Z),
 /// };
 /// // Sphere is closed in U but not in V (has poles)
 /// assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), TOLERANCE_MESH_LEGACY));
@@ -937,6 +938,7 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
                 center: transform.transform_point3(sphere.center),
                 axis: transform.transform_vector3(sphere.axis).normalize(),
                 radius: sphere.radius * scale,
+                ref_dir: any_perpendicular(transform.transform_vector3(sphere.axis).normalize()),
             })
         }
         Surface3::Cone(cone) => {
@@ -1338,6 +1340,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         // Sphere has poles, so not closed in V
         assert!(!is_surface_v_closed(&Surface3::Sphere(sphere), TOLERANCE_MESH_LEGACY));
@@ -1395,6 +1398,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         // At u=0, v=pi/2 (equator), normal should be a unit vector
         let normal = estimate_normal(&Surface3::Sphere(sphere), 0.0, PI / 2.0);

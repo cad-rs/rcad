@@ -20,6 +20,7 @@
 //! We return `General` so the caller falls back to numeric marching.
 
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Circle3, ConicalSurface, SphericalSurface};
 
 use crate::tolerance::*;
@@ -221,11 +222,7 @@ mod tests {
     use glam::DVec3;
 
     fn sphere(center: DVec3, radius: f64) -> SphericalSurface {
-        SphericalSurface {
-            center,
-            axis: DVec3::Z,
-            radius,
-        }
+        SphericalSurface::new(center, DVec3::Z, radius)
     }
 
     fn cone(apex: DVec3, axis: DVec3, half_angle_deg: f64) -> ConicalSurface {

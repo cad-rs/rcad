@@ -912,11 +912,9 @@ fn compute_sphere_plane_fillet(
     let _dist_to_plane = (sphere.center - plane.origin).dot(_plane_normal);
 
     // For a spherical fillet, we just offset the sphere
-    Ok(Surface3::Sphere(SphericalSurface {
-        center: sphere.center,
-        axis: sphere.axis,
-        radius: fillet_sphere_radius,
-    }))
+    Ok(Surface3::Sphere(SphericalSurface::new(
+        sphere.center, sphere.axis, fillet_sphere_radius,
+    )))
 }
 
 /// Compute general fillet surface for arbitrary surface types.
@@ -1559,11 +1557,7 @@ mod tests {
 
     #[test]
     fn test_compute_sphere_plane_fillet() {
-        let sphere = SphericalSurface {
-            center: DVec3::ZERO,
-            axis: DVec3::Z,
-            radius: 1.0,
-        };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 1.0);
         let plane = Plane {
             origin: DVec3::new(0.0, 0.0, 0.5),
             normal: DVec3::Z,

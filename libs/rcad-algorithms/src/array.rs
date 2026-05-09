@@ -14,7 +14,7 @@
 
 use crate::tolerance::*;
 use glam::{DMat4, DVec3};
-use rcad_kernel::BRep;
+use rcad_kernel::{any_perpendicular, BRep};
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
     LinearExtrusionSurface, OffsetSurface, Plane, RevolutionSurface, SphericalSurface, Surface3,
@@ -1059,6 +1059,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
             center: transform_point(s.center),
             axis: transform_direction(s.axis),
             radius: s.radius,
+            ref_dir: any_perpendicular(transform_direction(s.axis)),
         }),
         Surface3::Cone(c) => Surface3::Cone(ConicalSurface {
             apex: transform_point(c.apex),

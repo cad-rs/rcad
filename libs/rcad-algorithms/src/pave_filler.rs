@@ -5944,6 +5944,7 @@ mod tests {
         let sphere = SphericalSurface {
             center: DVec3::ZERO,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
             axis: DVec3::Z,
         };
         let dist = filler.point_to_surface_distance(DVec3::new(0.0, 0.0, 1.5), &Surface3::Sphere(sphere));

@@ -904,6 +904,7 @@ impl BRep {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: r,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         // PCurves for the seam edge on the sphere:
         //   Sphere param: u = longitude [0, 2π], v = colatitude [0, π] (phi from north pole)
@@ -1569,6 +1570,7 @@ impl BRep {
                 Surface3::Sphere(s) => {
                     s.center = mat.transform_point3(s.center);
                     s.axis = mat.transform_vector3(s.axis).normalize_or_zero();
+                    s.ref_dir = mat.transform_vector3(s.ref_dir).normalize_or_zero();
                 }
                 Surface3::Cone(c) => {
                     c.apex = mat.transform_point3(c.apex);

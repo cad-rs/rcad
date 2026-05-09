@@ -1,4 +1,5 @@
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -432,6 +433,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let hits = intersect_line_sphere(&line, [-10.0, 10.0], &sphere);
         assert_eq!(hits.len(), 2);
@@ -451,6 +453,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let hits = intersect_line_sphere(&line, [-10.0, 10.0], &sphere);
         assert_eq!(hits.len(), 1);
@@ -466,6 +469,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         let hits = intersect_line_sphere(&line, [-10.0, 10.0], &sphere);
         assert!(hits.is_empty());

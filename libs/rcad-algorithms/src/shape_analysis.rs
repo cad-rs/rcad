@@ -10,6 +10,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Curve3, Surface3, CurveEval, SurfaceEval, Curve2dEval};
 use rcad_kernel::{BRep, Face, PCurve};
 
@@ -109,6 +110,7 @@ pub enum UvInconsistencyKind {
 ///     center: DVec3::ZERO,
 ///     axis: DVec3::Y,
 ///     radius: 1.0,
+///     ref_dir: any_perpendicular(DVec3::Y),
 /// });
 /// let report = analyze_surface(&sphere);
 /// assert!(report.is_u_periodic);
@@ -5019,6 +5021,7 @@ fn compute_point_surface_deviation(point: DVec3, surface: &Surface3) -> f64 {
 ///     center: DVec3::ZERO,
 ///     axis: DVec3::Y,
 ///     radius: 1.0,
+///     ref_dir: any_perpendicular(DVec3::Y),
 /// });
 /// let has_self_intersection = detect_surface_self_intersection(&sphere);
 /// // Sphere has singularities at poles, but no true self-intersection
@@ -5198,6 +5201,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         let report = analyze_surface(&sphere);
@@ -5523,6 +5527,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         let singular = detect_singular_points(&sphere);
@@ -6223,6 +6228,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         // Sphere has singularities at poles but no self-intersection
@@ -6401,6 +6407,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
 
         // Point on the sphere

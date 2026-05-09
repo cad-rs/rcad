@@ -1,4 +1,5 @@
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -734,6 +735,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         assert!((surface_implicit(&sphere, DVec3::new(2.0, 0.0, 0.0))).abs() < TOLERANCE_ABS);
         assert!((surface_implicit(&sphere, DVec3::new(1.0, 0.0, 0.0)) + 1.0).abs() < TOLERANCE_ABS);
@@ -769,6 +771,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         let p = project_onto_surface(&sphere, DVec3::new(3.0, 0.0, 0.0), 20);
         assert!((p.length() - 2.0).abs() < TOLERANCE_ABS);
@@ -780,6 +783,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(1.0, 0.0, 0.0),

@@ -1,4 +1,5 @@
 use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -55,6 +56,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         match intersect_plane_sphere(&plane, &sphere) {
             PlaneSphereResult::Circle(c) => {
@@ -75,6 +77,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         match intersect_plane_sphere(&plane, &sphere) {
             PlaneSphereResult::Circle(c) => {
@@ -95,6 +98,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         match intersect_plane_sphere(&plane, &sphere) {
             PlaneSphereResult::Circle(c) => {
@@ -115,6 +119,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         };
         assert!(matches!(
             intersect_plane_sphere(&plane, &sphere),

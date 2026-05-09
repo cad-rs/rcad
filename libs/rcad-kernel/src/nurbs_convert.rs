@@ -560,11 +560,13 @@ mod tests {
 
     #[test]
     fn sphere_bspline_on_surface() {
+        use crate::any_perpendicular;
         use crate::geom::SphericalSurface;
         let sph = SphericalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let bs = sphere_to_bspline(&sph);
         // Equator row (v=0.5 maps to colatitude 90°)

@@ -902,7 +902,9 @@ fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
         Surface3::Sphere(s) => {
             let r = s.radius + d;
             if r <= TOLERANCE_ABS { return None; }
-            Some(Surface3::Sphere(SphericalSurface { center: s.center, axis: s.axis, radius: r }))
+            Some(Surface3::Sphere(SphericalSurface::new(
+                s.center, s.axis, r,
+            )))
         }
         Surface3::Cylinder(c) => {
             let r = c.radius + d;
@@ -1558,9 +1560,7 @@ mod tests {
 
     #[test]
     fn offset_sphere_grows() {
-        let s = Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
-        });
+        let s = Surface3::Sphere(rcad_kernel::geom::SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0));
         let off = offset_surface(&s, 0.5).unwrap();
         if let Surface3::Sphere(s) = off {
             assert!((s.radius - 2.5).abs() < TOLERANCE_COORD_SUB);

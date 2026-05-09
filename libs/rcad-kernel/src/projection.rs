@@ -336,6 +336,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
 ///     center: DVec3::ZERO,
 ///     axis: DVec3::Z,
 ///     radius: 1.0,
+///     ref_dir: any_perpendicular(DVec3::Z),
 /// });
 /// let q = DVec3::new(3.0, 0.0, 0.0);
 /// let result = closest_point_on_surface(&sphere, q, 16);
@@ -582,6 +583,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Y),
         });
         let q = DVec3::new(5.0, 0.0, 0.0);
         let r = closest_point_on_surface(&sphere, q, 16);
@@ -848,6 +850,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         // Query inside sphere
         let q = DVec3::new(1.0, 1.0, 1.0);
@@ -898,6 +901,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         // Very distant query
         let q = DVec3::new(1000.0, 1000.0, 1000.0);

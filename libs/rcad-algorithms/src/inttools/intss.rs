@@ -1977,11 +1977,13 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let s2 = Surface3::Sphere(SphericalSurface {
             center: DVec3::new(1.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&s1, &s2);
         assert_eq!(r.curves.len(), 1, "expected one circle");
@@ -1998,11 +2000,13 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let s2 = Surface3::Sphere(SphericalSurface {
             center: DVec3::new(5.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&s1, &s2);
         assert!(r.is_empty(), "disjoint spheres: no intersection");
@@ -2079,6 +2083,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let r = intersect_surfaces(&p, &s);
         assert_eq!(r.curves.len(), 1);
@@ -2347,6 +2352,7 @@ mod tests {
             center: DVec3::new(2.0 * TOLERANCE_RETRY_LADDER_MID, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 3.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
@@ -2404,6 +2410,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let r = intersect_surfaces(&torus, &sphere);

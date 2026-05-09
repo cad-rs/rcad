@@ -33,7 +33,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{BRep, Curve3, Surface3};
+use rcad_kernel::{any_perpendicular, BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 use crate::brep_bnd::BoundingBox;
@@ -1051,6 +1051,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surface = Surface3::Sphere(sphere);
 

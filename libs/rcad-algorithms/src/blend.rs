@@ -40,7 +40,7 @@
 
 use glam::DVec3;
 use rcad_kernel::{
-    BRep,
+    any_perpendicular, BRep,
     SurfaceEval, CurveEval,
     geom::{Curve3, Surface3, Line3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
     topology::{Edge, Face, Shell, Solid, Vertex, Wire},
@@ -1069,6 +1069,7 @@ pub fn blend_vertex(
         center,
         axis: DVec3::Z,
         radius,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     // Compute quality metrics

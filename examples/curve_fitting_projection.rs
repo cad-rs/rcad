@@ -208,6 +208,7 @@ fn demo_projection() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
     let q_sphere = DVec3::new(5.0, 0.0, 0.0);
     let r_sphere = closest_point_on_surface(&sphere, q_sphere, 16);
@@ -416,6 +417,7 @@ fn demo_analytic_booleans() {
         center: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 2.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     };
     let q_on_sphere = DVec3::new(0.0, 0.0, 5.0);
     let r_sp = closest_point_on_surface(&Surface3::Sphere(sp), q_on_sphere, 16);

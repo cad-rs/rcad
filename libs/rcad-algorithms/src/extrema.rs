@@ -10,6 +10,7 @@
 //! Derivatives are computed via finite differences for generality.
 
 use glam::{DVec2, DVec3};
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::BRep;
 
@@ -892,6 +893,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let point = DVec3::new(5.0, 0.0, 0.0);
 
@@ -994,6 +996,7 @@ mod tests {
             center: DVec3::new(0.0, 0.0, 5.0),
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let plane = Surface3::Plane(Plane {
             origin: DVec3::ZERO,

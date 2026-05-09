@@ -27,7 +27,7 @@ use glam::DVec3;
 use rcad_kernel::{
     BRep, Curve3, Surface3,
     geom::{
-        BSplineCurve3, BSplineSurface, CurveEval, SurfaceEval,
+        any_perpendicular, BSplineCurve3, BSplineSurface, CurveEval, SurfaceEval,
         Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface,
     },
     nurbs_convert::{
@@ -1547,11 +1547,7 @@ fn try_detect_sphere(surface: &BSplineSurface, tolerance: f64) -> Option<Spheric
     // Use the surface normal at center to determine the axis
     let axis = surface.normal_at(0.5, 0.5);
 
-    Some(SphericalSurface {
-        center,
-        axis,
-        radius: avg_radius,
-    })
+    Some(SphericalSurface::new(center, axis, avg_radius))
 }
 
 /// Try to detect if a BSpline surface represents a cone.
@@ -2088,6 +2084,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         assert_eq!(surface_degrees(&sphere), (2, 2));
     }
@@ -2278,6 +2275,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         assert_eq!(identify_canonical_form(&sphere, TOLERANCE_MESH_LEGACY), CanonicalForm::SphereOrigin);
 
@@ -2285,6 +2283,7 @@ mod tests {
             center: DVec3::new(1.0, 0.0, 0.0),
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         assert_eq!(identify_canonical_form(&shifted_sphere, TOLERANCE_MESH_LEGACY), CanonicalForm::SphereGeneral);
     }
@@ -2357,6 +2356,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let bspline = sphere_to_bspline(&sphere);
 
@@ -2481,6 +2481,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.5,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
         let result = try_convert_to_analytic(&sphere_bspline, TOLERANCE_ADAPTIVE_MAX);
         if let Some(Surface3::Sphere(s)) = result {

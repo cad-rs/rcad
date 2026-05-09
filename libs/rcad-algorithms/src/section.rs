@@ -1893,6 +1893,7 @@ mod tests {
             center: DVec3::new(2.0, 2.0, 2.0),
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
 
         let cutting_surface = CuttingSurface::Sphere(sphere);

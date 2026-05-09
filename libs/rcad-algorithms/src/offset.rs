@@ -603,11 +603,9 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
             if new_radius <= 0.0 {
                 return None;
             }
-            Some(Surface3::Sphere(SphericalSurface {
-                center: s.center,
-                axis: s.axis,
-                radius: new_radius,
-            }))
+            Some(Surface3::Sphere(SphericalSurface::new(
+                s.center, s.axis, new_radius,
+            )))
         }
 
         Surface3::Cylinder(c) => {
@@ -992,12 +990,7 @@ pub fn intersect_offset_plane_sphere(
     }
 
     // Create offset sphere
-    let offset_sphere = SphericalSurface {
-        center: sphere.center,
-        axis: sphere.axis,
-        radius: r,
-    };
-
+    let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r);
     // Use existing plane-sphere intersection
     match crate::inttools::plane_sphere::intersect_plane_sphere(&offset_plane, &offset_sphere) {
         crate::inttools::plane_sphere::PlaneSphereResult::NoIntersection => {
@@ -1042,11 +1035,7 @@ pub fn intersect_offset_cylinder_sphere(
         axis: cyl.axis,
         radius: r_cyl,
     };
-    let offset_sphere = SphericalSurface {
-        center: sphere.center,
-        axis: sphere.axis,
-        radius: r_sphere,
-    };
+    let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r_sphere);
 
     // Use existing sphere-cylinder intersection
     match crate::inttools::sphere_cylinder::intersect_sphere_cylinder(&offset_sphere, &offset_cyl) {
@@ -3484,6 +3473,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let offset = offset_surface(&sphere, 0.5).unwrap();
@@ -3518,6 +3508,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         // Negative offset larger than radius should return None
@@ -4267,8 +4258,8 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_circle() {
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0 };
-        let s2 = SphericalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, radius: 3.0 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0);
+        let s2 = SphericalSurface::new(DVec3::new(2.0, 0.0, 0.0), DVec3::Z, 3.0);
 
         match intersect_offset_sphere_sphere(&s1, &s2, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
@@ -4285,8 +4276,8 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_with_offset() {
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
-        let s2 = SphericalSurface { center: DVec3::new(5.0, 0.0, 0.0), axis: DVec3::Z, radius: 2.0 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
+        let s2 = SphericalSurface::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 2.0);
 
         // Without offset: no intersection (d=5 > r1+r2=4)
         match intersect_offset_sphere_sphere(&s1, &s2, 0.0, 0.0) {
@@ -4309,8 +4300,8 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_negative_offset() {
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0 };
-        let s2 = SphericalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, radius: 3.0 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0);
+        let s2 = SphericalSurface::new(DVec3::new(2.0, 0.0, 0.0), DVec3::Z, 3.0);
 
         // Reduce both radii
         match intersect_offset_sphere_sphere(&s1, &s2, -1.0, -1.0) {
@@ -4323,8 +4314,8 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_concentric() {
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
-        let s2 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 3.0 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
+        let s2 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 3.0);
 
         match intersect_offset_sphere_sphere(&s1, &s2, 0.0, 0.0) {
             OffsetIntersectionCurve::NoIntersection => {}
@@ -4340,8 +4331,8 @@ mod tests {
 
     #[test]
     fn offset_sphere_sphere_degenerate() {
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 0.5 };
-        let s2 = SphericalSurface { center: DVec3::new(5.0, 0.0, 0.0), axis: DVec3::Z, radius: 0.5 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 0.5);
+        let s2 = SphericalSurface::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 0.5);
 
         // Negative offset larger than radius -> degenerate
         match intersect_offset_sphere_sphere(&s1, &s2, -1.0, 0.0) {
@@ -4423,7 +4414,7 @@ mod tests {
     #[test]
     fn offset_plane_sphere_circle() {
         let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Y };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 3.0);
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
@@ -4436,7 +4427,7 @@ mod tests {
     #[test]
     fn offset_plane_sphere_with_offsets() {
         let plane = Plane { origin: DVec3::new(0.0, 2.0, 0.0), normal: DVec3::Y };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 3.0);
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
@@ -4450,7 +4441,7 @@ mod tests {
     #[test]
     fn offset_plane_sphere_tangent() {
         let plane = Plane { origin: DVec3::new(0.0, 3.0, 0.0), normal: DVec3::Y };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 3.0);
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::TangentPoint(pt) => {
@@ -4467,7 +4458,7 @@ mod tests {
     #[test]
     fn offset_plane_sphere_no_intersection() {
         let plane = Plane { origin: DVec3::new(0.0, 10.0, 0.0), normal: DVec3::Y };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Y, radius: 3.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 3.0);
 
         match intersect_offset_plane_sphere(&plane, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::NoIntersection => {}
@@ -4478,7 +4469,7 @@ mod tests {
     #[test]
     fn offset_cylinder_sphere_axis_aligned_two_circles() {
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
-        let sphere = SphericalSurface { center: DVec3::new(0.0, 0.0, 3.0), axis: DVec3::Z, radius: 5.0 };
+        let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z, 5.0);
 
         match intersect_offset_cylinder_sphere(&cyl, &sphere, 0.0, 0.0) {
             OffsetIntersectionCurve::TwoCircles(c1, c2) => {
@@ -4495,7 +4486,7 @@ mod tests {
     #[test]
     fn offset_cylinder_sphere_with_offsets() {
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
 
         // Without offset: tangent (R=r)
         // A Circle with radius equal to the cylinder radius is a tangent circle
@@ -4515,7 +4506,7 @@ mod tests {
     #[test]
     fn offset_cylinder_sphere_off_axis_general() {
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
-        let sphere = SphericalSurface { center: DVec3::new(5.0, 0.0, 0.0), axis: DVec3::Z, radius: 5.0 };
+        let sphere = SphericalSurface::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 5.0);
 
         // Off-axis cases may return General or fall back to Numerical approximation
         match intersect_offset_cylinder_sphere(&cyl, &sphere, 0.0, 0.0) {
@@ -4528,7 +4519,7 @@ mod tests {
     #[test]
     fn offset_cylinder_sphere_no_intersection() {
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
-        let sphere = SphericalSurface { center: DVec3::new(10.0, 0.0, 0.0), axis: DVec3::Z, radius: 2.0 };
+        let sphere = SphericalSurface::new(DVec3::new(10.0, 0.0, 0.0), DVec3::Z, 2.0);
 
         // Sphere center far off axis
         match intersect_offset_cylinder_sphere(&cyl, &sphere, 0.0, 0.0) {
@@ -4540,7 +4531,7 @@ mod tests {
     #[test]
     fn offset_cylinder_sphere_degenerate() {
         let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 0.5 };
-        let sphere = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 0.5 };
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 0.5);
 
         // Negative offset creates degenerate surfaces
         match intersect_offset_cylinder_sphere(&cyl, &sphere, -1.0, 0.0) {
@@ -4575,8 +4566,8 @@ mod tests {
     #[test]
     fn offset_sphere_sphere_precision() {
         // Test curved surface precision (TOLERANCE_LINEAR_RELAX_8 target)
-        let s1 = SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1000.0 };
-        let s2 = SphericalSurface { center: DVec3::new(100.0, 0.0, 0.0), axis: DVec3::Z, radius: 950.0 };
+        let s1 = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 1000.0);
+        let s2 = SphericalSurface::new(DVec3::new(100.0, 0.0, 0.0), DVec3::Z, 950.0);
 
         match intersect_offset_sphere_sphere(&s1, &s2, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
@@ -4635,6 +4626,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surf = Surface3::Sphere(sphere);
 
@@ -4652,6 +4644,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surf = Surface3::Sphere(sphere);
 
@@ -4669,6 +4662,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surf = Surface3::Sphere(sphere);
 
@@ -4826,6 +4820,7 @@ mod tests {
             center: DVec3::new(1.0, 2.0, 3.0),
             axis: DVec3::Z,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surf = Surface3::Sphere(sphere);
 
@@ -4845,6 +4840,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 100.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         };
         let surf = Surface3::Sphere(sphere);
 
@@ -4930,6 +4926,7 @@ mod tests {
             center: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let offset = offset_surface(&sphere, -0.5).unwrap();
@@ -5107,6 +5104,7 @@ mod tests {
             center: DVec3::new(1.0, 2.0, 3.0),
             axis: DVec3::Z,
             radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Z),
         });
 
         let offset = offset_surface(&sphere, 1.0).unwrap();

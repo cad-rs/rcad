@@ -41,11 +41,9 @@ pub fn make_cylindrical_surface(
 pub fn spherical_surface(center: DVec3, radius: f64) -> Result<Surface3, BuildError> {
     let center = validate_point("center", center)?;
     let radius = validate_positive("radius", radius)?;
-    Ok(Surface3::Sphere(SphericalSurface {
-        center,
-        axis: DVec3::Z,
-        radius,
-    }))
+    Ok(Surface3::Sphere(SphericalSurface::new(
+        center, DVec3::Z, radius,
+    )))
 }
 
 pub fn make_spherical_surface(center: DVec3, radius: f64) -> Result<Surface3, BuildError> {
