@@ -546,10 +546,75 @@ fn spherical_holed_uv_mask_setup(
     if outer3.len() < 3 {
         return None;
     }
-    let b_outer: Vec<f64> = outer3
+    // For faces with very complex outer wires, analytical area is too slow
+    // (point_in_polygon_2d in the grid is O(grid_cells × polygon_vertices)).
+    // Fall back to triangle-based area.
+    if outer3.len() > 1200 {
+        return None;
+    }
+    let mut b_outer: Vec<f64> = outer3
         .iter()
         .map(|p| sphere_point_to_uv(s, *p).x.rem_euclid(2.0 * std::f64::consts::PI))
         .collect();
+    // Fix degenerate u=0 at sphere poles before unwrapping.
+    // sphere_point_to_uv returns u=atan2(0,0)=0 at poles, which is wrong
+    // for faces ending at a pole — it makes the unwrap produce a 4π u-range.
+    // Infer the correct u from adjacent non-pole vertices.
+    {
+        use std::f64::consts::PI;
+        let two_pi = 2.0 * PI;
+        let n = outer3.len();
+        let mut idx = 0;
+        while idx < n {
+            let p = outer3[idx];
+            let v = sphere_point_to_uv(s, p).y;
+            let at_pole = v < 1e-12 || (v - PI).abs() < 1e-12;
+            if at_pole && b_outer[idx].abs() < 1e-12 {
+                // Find extent of consecutive pole vertices
+                let mut run_start = idx;
+                while run_start > 0 {
+                    let p0 = outer3[run_start - 1];
+                    let v0 = sphere_point_to_uv(s, p0).y;
+                    if !(v0 < 1e-12 || (v0 - PI).abs() < 1e-12)
+                        || b_outer[run_start - 1].abs() >= 1e-12
+                    {
+                        break;
+                    }
+                    run_start -= 1;
+                }
+                let mut run_end = idx;
+                while run_end + 1 < n {
+                    let p1 = outer3[run_end + 1];
+                    let v1 = sphere_point_to_uv(s, p1).y;
+                    if !(v1 < 1e-12 || (v1 - PI).abs() < 1e-12)
+                        || b_outer[run_end + 1].abs() >= 1e-12
+                    {
+                        break;
+                    }
+                    run_end += 1;
+                }
+                let u_prev = if run_start > 0 {
+                    b_outer[run_start - 1]
+                } else {
+                    b_outer[n - 1]
+                };
+                let u_next = if run_end + 1 < n {
+                    b_outer[run_end + 1]
+                } else {
+                    b_outer[0]
+                };
+                let delta = short_delta_on_circle_01(u_prev, u_next);
+                let run_len = (run_end - run_start + 1) as f64;
+                for k in 0..=(run_end - run_start) {
+                    let frac = (k as f64 + 1.0) / (run_len + 1.0);
+                    b_outer[run_start + k] = (u_prev + delta * frac).rem_euclid(two_pi);
+                }
+                idx = run_end + 1;
+            } else {
+                idx += 1;
+            }
+        }
+    }
     let o_outer = unwrap_u_circle_chain_closed(&b_outer);
     let (ou0, ou1) = o_outer.iter().fold(
         (f64::INFINITY, f64::NEG_INFINITY),

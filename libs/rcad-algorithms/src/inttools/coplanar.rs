@@ -26,7 +26,14 @@ pub fn analyze_coplanar_faces(poly1: &[DVec3], poly2: &[DVec3], plane: &Plane) -
     };
 
     let p1_2d: Vec<[f64; 2]> = poly1.iter().map(|&p| to_2d(p)).collect();
-    let p2_2d: Vec<[f64; 2]> = poly2.iter().map(|&p| to_2d(p)).collect();
+    let mut p2_2d: Vec<[f64; 2]> = poly2.iter().map(|&p| to_2d(p)).collect();
+
+    // Sutherland-Hodgman requires the clip polygon to be counter-clockwise.
+    // If signed area is negative (clockwise), reverse the vertex order.
+    let signed_area2: f64 = p2_2d.windows(2).map(|w| w[0][0] * w[1][1] - w[1][0] * w[0][1]).sum();
+    if signed_area2 < 0.0 {
+        p2_2d.reverse();
+    }
 
     // Compute intersection using Sutherland-Hodgman
     let overlap_2d = sutherland_hodgman_clip(&p1_2d, &p2_2d);

@@ -1,4 +1,4 @@
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
@@ -1708,24 +1708,30 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             PlaneSphereResult::Circle(circle) => {
-                // Sample the circle and clip to both face boundaries
+                // Great circles through the sphere's poles (plane ⟂ sphere axis)
+                // map to TWO vertical meridians in sphere UV space. We must create
+                // two separate IntersectionCurves — one per UV branch — because
+                // a single BSpline pcurve cannot span the atan2-wrap discontinuity.
+                let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
+                let axis_dot_normal = sphere
+                    .axis
+                    .normalize()
+                    .dot(plane.normal.normalize())
+                    .abs();
+                let passes_poles = is_great && axis_dot_normal < TOLERANCE_ABS;
+
+                if passes_poles {
+                    self.add_great_circle_curves(f1, f2, plane, sphere, &circle, plane_is_f1);
+                    return;
+                }
+
+                // Non-great-circle path (original logic).
                 let pts = sample_circle_arc(&circle, 0.0, std::f64::consts::TAU, 32);
                 if pts.len() < 2 {
                     return;
                 }
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
-                // `circle_pcurve_on_sphere` is only analytically correct when the
-                // sphere axis is parallel to the cutting plane normal (i.e. the
-                // intersection circle is a latitude line in the sphere's UV domain).
-                // When the axis is not aligned with the plane normal, we fall back to
-                // projection-based sampling — exactly as `intersect_sphere_sphere_faces`
-                // already does — to obtain the correct parameter-space curve.
-                let axis_dot_normal = sphere
-                    .axis
-                    .normalize()
-                    .dot(plane.normal.normalize())
-                    .abs();
                 let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < TOLERANCE_MESH_LEGACY {
                     // Axis is parallel to plane normal → latitude line is exact.
                     circle_pcurve_on_sphere(&circle, sphere)
@@ -1772,6 +1778,160 @@ impl<'a> PaveFiller<'a> {
                 });
             }
         }
+    }
+
+    // ── Great-circle helper (Plane × Sphere, plane through sphere center) ─────
+
+    /// Handle a great circle that passes through the sphere's poles.
+    /// Such a circle maps to TWO vertical meridians in sphere UV space; we
+    /// create two `IntersectionCurve` entries, each with a vertical pcurve at
+    /// the appropriate constant-u branch.
+    fn add_great_circle_curves(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        plane: &Plane,
+        sphere: &SphericalSurface,
+        circle: &Circle3,
+        plane_is_f1: bool,
+    ) {
+        use rcad_kernel::interpolate_points_2d;
+        use std::f64::consts::{PI, TAU};
+
+        let axis = sphere.axis.normalize_or_zero();
+        let north_pole = sphere.center + sphere.radius * axis;
+        let south_pole = sphere.center - sphere.radius * axis;
+
+        // Compute the two constant-u branches in sphere UV space.
+        //   n·x_ax · cos(u) + n·y_ax · sin(u) = 0  (n·axis = 0 through poles)
+        //   →  u = atan2(n·y_ax, n·x_ax) ± π/2
+        let x_ax = any_perpendicular(sphere.axis);
+        let y_ax = sphere.axis.cross(x_ax).normalize();
+        let n = plane.normal.normalize();
+        let phi = n.dot(y_ax).atan2(n.dot(x_ax));
+
+        let u_a = (phi + PI / 2.0).rem_euclid(TAU) - PI;
+        let u_b = (phi - PI / 2.0).rem_euclid(TAU) - PI;
+
+        // Parameter t0 where the circle passes through the north pole:
+        //   circle.point_at(t) = center + R·(cos(t)·x_c + sin(t)·y_c) = north
+        let x_c = any_perpendicular(circle.normal);
+        let y_c = circle.normal.cross(x_c);
+        let t0 = axis.dot(y_c).atan2(axis.dot(x_c));
+        let mid_t = t0 + PI / 2.0;
+
+        // Determine which u value maps to which half by sampling the midpoint.
+        let mid_pt = circle.point_at(mid_t);
+        let mid_u = sphere.world_to_uv(mid_pt).x;
+        let u_for_half0 = if (mid_u - u_a).abs() < (mid_u - u_b).abs() {
+            u_a
+        } else {
+            u_b
+        };
+        let u_for_half1 = if u_for_half0 == u_a { u_b } else { u_a };
+
+        let v_north = self.ds.add_vertex(north_pole);
+        let v_south = self.ds.add_vertex(south_pole);
+
+        // Build plane UV basis for the half-circle pcurves
+        let pu_ax = any_perpendicular(plane.normal);
+        let pv_ax = plane.normal.cross(pu_ax);
+
+        // Helper: sample the circle arc and interpolate a BSpline pcurve on the plane.
+        let sample_plane_half = |t_start: f64, t_end: f64| -> Option<Curve2d> {
+            let np = 17;
+            let pts: Vec<DVec2> = (0..np)
+                .map(|i| {
+                    let t = t_start + (t_end - t_start) * i as f64 / (np - 1) as f64;
+                    let p3 = circle.point_at(t);
+                    let d = p3 - plane.origin;
+                    DVec2::new(d.dot(pu_ax), d.dot(pv_ax))
+                })
+                .collect();
+            interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
+        };
+
+        // Seam detection: u at ±π coincides with the sphere's existing seam edge.
+        // Skip the sphere pcurve for these branches to avoid duplicate-edge issues.
+        let seam_tol = TOLERANCE_ANG;
+        let at_seam0 = (u_for_half0.abs() - PI).abs() < seam_tol;
+        let at_seam1 = (u_for_half1.abs() - PI).abs() < seam_tol;
+
+        // Half 0: t0 → t0+π (north → south)
+        // Pcurve maps t → v = t - t0, so v(t0)=0 (north), v(t0+π)=π (south).
+        let t_half0_end = t0 + PI;
+        let half0_plane = sample_plane_half(t0, t_half0_end);
+        let sphere_pc0 = if at_seam0 {
+            None
+        } else {
+            Some(Curve2d::Line(Line2d {
+                origin: DVec2::new(u_for_half0, -t0),
+                direction: DVec2::new(0.0, 1.0),
+            }))
+        };
+        let (pc_a0, pc_b0) = if plane_is_f1 {
+            (half0_plane, sphere_pc0)
+        } else {
+            (sphere_pc0, half0_plane)
+        };
+
+        let ci0 = self.ds.intersection_curves.len();
+        self.ds.intersection_curves.push(IntersectionCurve {
+            curve: Curve3::Circle(*circle),
+            polyline: vec![],
+            start_vertex: v_north,
+            end_vertex: v_south,
+            t_range: [t0, t_half0_end],
+            pcurve_on_a: pc_a0,
+            pcurve_on_b: pc_b0,
+        });
+
+        // Half 1: t0+π → t0+2π (south → north)
+        // Pcurve maps t → v = -(t - (t0+π)) + π = -t + t0 + 2π,
+        // so v(t0+π)=π (south), v(t0+2π)=0 (north).
+        let t_half1_end = t_half0_end + PI;
+        let half1_plane = sample_plane_half(t_half0_end, t_half1_end);
+        let sphere_pc1 = if at_seam1 {
+            None
+        } else {
+            Some(Curve2d::Line(Line2d {
+                origin: DVec2::new(u_for_half1, t0 + TAU),
+                direction: DVec2::new(0.0, -1.0),
+            }))
+        };
+        let (pc_a1, pc_b1) = if plane_is_f1 {
+            (half1_plane, sphere_pc1)
+        } else {
+            (sphere_pc1, half1_plane)
+        };
+
+        let ci1 = self.ds.intersection_curves.len();
+        self.ds.intersection_curves.push(IntersectionCurve {
+            curve: Curve3::Circle(*circle),
+            polyline: vec![],
+            start_vertex: v_south,
+            end_vertex: v_north,
+            t_range: [t_half0_end, t_half1_end],
+            pcurve_on_a: pc_a1,
+            pcurve_on_b: pc_b1,
+        });
+
+        // Register both curves and their vertices on both faces
+        for &ci in &[ci0, ci1] {
+            self.ds.faces[f1].face_info.curves_in.insert(ci);
+            self.ds.faces[f2].face_info.curves_in.insert(ci);
+        }
+        for &v in &[v_north, v_south] {
+            self.ds.faces[f1].face_info.vertices_in.insert(v);
+            self.ds.faces[f2].face_info.vertices_in.insert(v);
+        }
+
+        self.ds.interferences.push(Interference::FaceFace {
+            f1,
+            f2,
+            curves: vec![ci0, ci1],
+            points: vec![],
+        });
     }
 
     // ── Sphere × Sphere analytic face-face intersection ───────────────────────

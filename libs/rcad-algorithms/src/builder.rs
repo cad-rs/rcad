@@ -1044,6 +1044,25 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// For a face with a coplanar FaceFace (empty curves), check if the normals
+    /// of the two faces point in opposite directions.
+    ///
+    /// Same-direction normals mean both solids are on the *same* side of the
+    /// face; opposite-direction normals mean the face *separates* the solids.
+    /// Returns `None` when the face has no coplanar FF.
+    fn coplanar_ff_normals_opposite(&self, face_idx: usize) -> Option<bool> {
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                if curves.is_empty() && (*f1 == face_idx || *f2 == face_idx) {
+                    let other_idx = if *f1 == face_idx { *f2 } else { *f1 };
+                    let dot = self.ds.faces[face_idx].normal.dot(self.ds.faces[other_idx].normal);
+                    return Some(dot < 0.0);
+                }
+            }
+        }
+        None
+    }
+
     fn keep_subface(
         &self,
         source: SourceSide,
@@ -1052,6 +1071,19 @@ impl<'a> BooleanBuilder<'a> {
         other_faces: &[usize],
     ) -> bool {
         let _ = (source, fi, other_faces);
+        // For Difference A-side On faces with a coplanar FaceFace: keep only
+        // when the two face normals point in OPPOSITE directions (the face
+        // separates kept material from removed material).  When normals point
+        // in the SAME direction both solids are on the same side, and the
+        // overlap-region sub-faces should be removed.
+        if self.op == BooleanOpType::Difference
+            && source == SourceSide::A
+            && class == Classification::On
+        {
+            if let Some(opposite) = self.coplanar_ff_normals_opposite(fi) {
+                return opposite;
+            }
+        }
         Self::keep_subface_policy(self.op, source, class)
     }
 
@@ -1123,9 +1155,21 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
+            let face_split = sub_faces.len() > 1;
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
-                let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
+                let keep = if !face_split
+                    && self.op == BooleanOpType::Difference
+                    && class == Classification::On
+                {
+                    // For unsplit coplanar faces: keep only when normals are opposite
+                    // (the face separates kept material from removed material).
+                    // When normals point the same direction, both solids are on the
+                    // same side and the face should be removed.
+                    self.coplanar_ff_normals_opposite(fi).unwrap_or(false)
+                } else {
+                    self.keep_subface(SourceSide::A, fi, class, &b_faces)
+                };
                 if keep {
                     let src = self.ds.faces[fi].source_face_idx;
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
@@ -1230,12 +1274,21 @@ impl<'a> BooleanBuilder<'a> {
             .par_iter()
             .flat_map(|&fi| {
                 let sub_faces = self.split_face(fi);
+                let face_split = sub_faces.len() > 1;
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
                         let class = classify_against_solid_for_boolean(self.op, &sub, &b_faces, self.ds);
 
-                        let keep = self.keep_subface(SourceSide::A, fi, class, &b_faces);
+                        let keep = if !face_split
+                            && self.op == BooleanOpType::Difference
+                            && class == Classification::On
+                        {
+                            // For unsplit coplanar faces: keep only when normals are opposite
+                            self.coplanar_ff_normals_opposite(fi).unwrap_or(false)
+                        } else {
+                            self.keep_subface(SourceSide::A, fi, class, &b_faces)
+                        };
 
                         if keep {
                             let src = self.ds.faces[fi].source_face_idx;
