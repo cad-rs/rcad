@@ -940,7 +940,7 @@ impl SphericalSurface {
             return DVec2::ZERO;
         }
         let w = w.normalize();
-        let v = w.dot(ax).acos().clamp(0.0, PI);
+        let v = w.dot(ax).clamp(-1.0, 1.0).acos();
         let x_ax = any_perpendicular(ax);
         let y_ax = ax.cross(x_ax).normalize();
         let w_t = w - ax * w.dot(ax);

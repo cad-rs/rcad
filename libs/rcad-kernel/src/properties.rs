@@ -620,6 +620,12 @@ fn spherical_holed_uv_mask_setup(
         (f64::INFINITY, f64::NEG_INFINITY),
         |(a, b), u| (a.min(*u), b.max(*u)),
     );
+    // If the UV polygon has near-zero u-range, the outer wire is a seam-edge
+    // (full sphere before boolean) rather than a proper closed boundary.
+    // Fall back to full-sphere tessellation instead of the masked grid.
+    if (ou1 - ou0).abs() < 1e-8 {
+        return None;
+    }
     let outer_uv: Vec<DVec2> = outer3
         .iter()
         .zip(o_outer.iter())
