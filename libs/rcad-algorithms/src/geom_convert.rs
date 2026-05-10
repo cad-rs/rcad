@@ -420,7 +420,7 @@ pub fn cylinder_to_bspline(cyl: &CylindricalSurface, _u_deg: usize, _v_deg: usiz
 /// * `v_deg` - Degree in v direction (minimum 2)
 pub fn sphere_to_bspline(sphere: &SphericalSurface, _u_deg: usize, _v_deg: usize) -> BSplineSurface {
     let r = sphere.radius;
-    let x_ax = any_perpendicular(sphere.axis);
+    let x_ax = sphere.ref_dir.normalize();
     let y_ax = sphere.axis.cross(x_ax).normalize();
     let z_ax = sphere.axis.normalize();
 

@@ -2605,6 +2605,28 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         return Ok(r);
     }
 
+    // Handle empty inputs gracefully instead of returning EmptyInput.
+    // OCCT passes empty shapes through booleans, returning the expected identity.
+    let a_empty = !has_any_face(a);
+    let b_empty = !has_any_face(b);
+    if a_empty && b_empty {
+        return Ok(BRep::default());
+    }
+    if a_empty {
+        return match op {
+            BooleanOpType::Union => Ok(b.clone()),
+            BooleanOpType::Intersection => Ok(BRep::default()),
+            BooleanOpType::Difference => Ok(BRep::default()),
+        };
+    }
+    if b_empty {
+        return match op {
+            BooleanOpType::Union => Ok(a.clone()),
+            BooleanOpType::Intersection => Ok(BRep::default()),
+            BooleanOpType::Difference => Ok(a.clone()),
+        };
+    }
+
     if matches!(op, BooleanOpType::Union) {
         return bop_occt_union::fuse(a, b);
     }
@@ -3491,6 +3513,13 @@ pub fn boolean_op_par(
     filler.perform();
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build_with_history_par()
+}
+
+/// Check if any solid in the BRep has at least one face (deep check across all solids).
+fn has_any_face(brep: &BRep) -> bool {
+    brep.solids
+        .iter()
+        .any(|s| s.shells.iter().any(|sh| !sh.faces.is_empty()))
 }
 
 /// Build BVHs for both BReps if they have faces; returns None for empty BReps.
@@ -4389,8 +4418,22 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
     let a_solids = a.flatten_to_solids();
     let b_solids = b.flatten_to_solids();
 
-    if a_solids.is_empty() || b_solids.is_empty() {
-        return Err(BooleanError::EmptyInput);
+    if a_solids.is_empty() && b_solids.is_empty() {
+        return Ok(BRep::default());
+    }
+    if a_solids.is_empty() {
+        return match op {
+            BooleanOpType::Union => Ok(b.clone()),
+            BooleanOpType::Intersection => Ok(BRep::default()),
+            BooleanOpType::Difference => Ok(BRep::default()),
+        };
+    }
+    if b_solids.is_empty() {
+        return match op {
+            BooleanOpType::Union => Ok(a.clone()),
+            BooleanOpType::Intersection => Ok(BRep::default()),
+            BooleanOpType::Difference => Ok(a.clone()),
+        };
     }
 
     match op {
@@ -4585,8 +4628,22 @@ pub fn boolean_op_compound_with_options(
     let a_solids = a.flatten_to_solids();
     let b_solids = b.flatten_to_solids();
 
-    if a_solids.is_empty() || b_solids.is_empty() {
-        return Err(BooleanError::EmptyInput);
+    if a_solids.is_empty() && b_solids.is_empty() {
+        return Ok((BRep::default(), BooleanExecutionReport::default()));
+    }
+    if a_solids.is_empty() {
+        return Ok((match op {
+            BooleanOpType::Union => b.clone(),
+            BooleanOpType::Intersection => BRep::default(),
+            BooleanOpType::Difference => BRep::default(),
+        }, BooleanExecutionReport::default()));
+    }
+    if b_solids.is_empty() {
+        return Ok((match op {
+            BooleanOpType::Union => a.clone(),
+            BooleanOpType::Intersection => BRep::default(),
+            BooleanOpType::Difference => a.clone(),
+        }, BooleanExecutionReport::default()));
     }
 
     if a_solids.len() <= 1 && b_solids.len() <= 1 {
@@ -5443,6 +5500,18 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
 
                 if !should_merge {
                     continue;
+                }
+
+                // For non-planar faces (sphere, cylinder, etc.), avoid creating
+                // faces with too many outer edges — downstream surface-area
+                // computation (analytic grid or earcut) becomes infeasible.
+                if !is_planar {
+                    let n1 = brep.solids[si].shells[shi].faces[fi1].outer_wire.edges.len();
+                    let n2 = brep.solids[si].shells[shi].faces[fi2].outer_wire.edges.len();
+                    // Merge removes 2 shared edges, net ≈ n1 + n2 - 2
+                    if n1 + n2 > 650 {
+                        continue;
+                    }
                 }
 
                 // Merge wire: splice Face2 edges into Face1 at the position of the shared edge.

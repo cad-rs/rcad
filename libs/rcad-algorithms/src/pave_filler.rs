@@ -1805,7 +1805,7 @@ impl<'a> PaveFiller<'a> {
         // Compute the two constant-u branches in sphere UV space.
         //   n·x_ax · cos(u) + n·y_ax · sin(u) = 0  (n·axis = 0 through poles)
         //   →  u = atan2(n·y_ax, n·x_ax) ± π/2
-        let x_ax = any_perpendicular(sphere.axis);
+        let x_ax = sphere.ref_dir.normalize();
         let y_ax = sphere.axis.cross(x_ax).normalize();
         let n = plane.normal.normalize();
         let phi = n.dot(y_ax).atan2(n.dot(x_ax));

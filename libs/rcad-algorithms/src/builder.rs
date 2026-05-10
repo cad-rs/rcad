@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -363,7 +363,6 @@ impl ResultBuilder {
         if sub.boundary.len() < 3 {
             return;
         }
-
         let mut normal = if flip { -sub.normal } else { sub.normal };
         if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
             normal = Self::estimate_boundary_normal(&sub.boundary);
@@ -1159,6 +1158,14 @@ impl<'a> BooleanBuilder<'a> {
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
                 let keep = if !face_split
+                    && self.op == BooleanOpType::Union
+                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                    && self.is_glued_face(fi, &b_faces)
+                {
+                    // For Union, unsplit planar faces that are fully glued with a
+                    // face from the other operand are internal to the result.
+                    false
+                } else if !face_split
                     && self.op == BooleanOpType::Difference
                     && class == Classification::On
                 {
@@ -1184,9 +1191,20 @@ impl<'a> BooleanBuilder<'a> {
         // Process B faces against A solid
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
+            let face_split = sub_faces.len() > 1;
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &a_faces, self.ds);
-                let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
+                let keep = if !face_split
+                    && self.op == BooleanOpType::Union
+                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                    && self.is_glued_face(fi, &a_faces)
+                {
+                    // For Union, unsplit planar faces that are fully glued with a
+                    // face from the other operand are internal to the result.
+                    false
+                } else {
+                    self.keep_subface(SourceSide::B, fi, class, &a_faces)
+                };
                 if keep {
                     // For Intersection, skip B-side On subfaces that are coplanar with an
                     // already-emitted A-side face (e.g. cylinder cap 鈭?cube face 鈥?both produce
@@ -3236,7 +3254,18 @@ fn curved_subface_boundary_3d(
     // EDGE_SAMPLES must divide evenly into the 3D curve pre-sampling
     // density (128) used in split_planar_face so sphere and plane boundary
     // vertices share the same 3D positions along intersection curves.
-    const EDGE_SAMPLES: usize = 32;
+    // Use fewer samples for high-vertex-count UV polygons (e.g. trims from
+    // sphere_closed_trim_to_open_isolines with 65 vertices per meridian)
+    // since each edge is already short.
+    let edge_samples: usize = if uv_poly.len() > 80 {
+        4
+    } else if uv_poly.len() > 30 {
+        8
+    } else if uv_poly.len() > 15 {
+        16
+    } else {
+        32
+    };
 
     let mut pts: Vec<DVec3> = Vec::new();
 
@@ -3246,8 +3275,8 @@ fn curved_subface_boundary_3d(
         let j = (i + 1) % n;
         let a = uv_poly[i];
         let b = uv_poly[j];
-        for k in 0..EDGE_SAMPLES {
-            let t = k as f64 / EDGE_SAMPLES as f64;
+        for k in 0..edge_samples {
+            let t = k as f64 / edge_samples as f64;
             let uv = DVec2::new(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
             pts.push(surface.point_at(uv.x, uv.y));
         }

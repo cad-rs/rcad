@@ -152,7 +152,7 @@ pub fn cylinder_tangent_v(cyl: &CylindricalSurface, _u: f64, _v: f64) -> DVec3 {
 ///
 /// P(u, v) = center + radius * (sin(v) * (cos(u) * x + sin(u) * y) + cos(v) * axis)
 pub fn sphere_point_at(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(sph.axis);
+    let x_ax = sph.ref_dir.normalize();
     let y_ax = sph.axis.cross(x_ax).normalize();
     sph.center + sph.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * sph.axis)
 }
@@ -163,7 +163,7 @@ pub fn sphere_point_at(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
 /// angles. At the poles, u is set to 0.0.
 pub fn sphere_parameters(sph: &SphericalSurface, point: DVec3) -> DVec2 {
     let axis = sph.axis.normalize_or_zero();
-    let x_ax = any_perpendicular(axis);
+    let x_ax = sph.ref_dir.normalize();
     let y_ax = axis.cross(x_ax).normalize();
 
     // Vector from center to point (normalized)
@@ -190,7 +190,7 @@ pub fn sphere_parameters(sph: &SphericalSurface, point: DVec3) -> DVec2 {
 ///
 /// The normal points outward from the center.
 pub fn sphere_normal(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(sph.axis);
+    let x_ax = sph.ref_dir.normalize();
     let y_ax = sph.axis.cross(x_ax).normalize();
     (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * sph.axis).normalize()
 }
@@ -199,7 +199,7 @@ pub fn sphere_normal(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
 ///
 /// This is the longitude tangent (along lines of latitude).
 pub fn sphere_tangent_u(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(sph.axis);
+    let x_ax = sph.ref_dir.normalize();
     let y_ax = sph.axis.cross(x_ax).normalize();
     v.sin() * (-u.sin() * x_ax + u.cos() * y_ax)
 }
@@ -208,7 +208,7 @@ pub fn sphere_tangent_u(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
 ///
 /// This is the colatitude tangent (along meridians).
 pub fn sphere_tangent_v(sph: &SphericalSurface, u: f64, v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(sph.axis);
+    let x_ax = sph.ref_dir.normalize();
     let y_ax = sph.axis.cross(x_ax).normalize();
     sph.radius * (v.cos() * (u.cos() * x_ax + u.sin() * y_ax) - v.sin() * sph.axis)
 }
@@ -940,3 +940,4 @@ mod tests {
         assert!(approx_eq(n.normalize_or_zero(), DVec3::Z, TOLERANCE_MESH_LEGACY) || approx_eq(n.normalize_or_zero(), DVec3::NEG_Z, TOLERANCE_MESH_LEGACY));
     }
 }
+

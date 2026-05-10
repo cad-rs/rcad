@@ -554,6 +554,10 @@ struct SphereHoledMaskCtx {
     umax: f64,
     vmin: f64,
     vmax: f64,
+    /// False when the UV polygon wraps around u multiple times, making
+    /// winding_number_2d unreliable. When false, the grid test uses only
+    /// point_in_spherical_polygon_3d.
+    use_uv_winding: bool,
 }
 
 fn spherical_holed_uv_mask_setup(
@@ -562,17 +566,28 @@ fn spherical_holed_uv_mask_setup(
     face: &Face,
 ) -> Option<SphereHoledMaskCtx> {
     let tol = 1e-5_f64;
-    let mut outer3 = sample_wire_polyline_3d(brep, &face.outer_wire);
+    // Use moderate per-edge sampling: for faces with many edges (e.g. after
+    // unify_same_domain_faces merges sphere sub-faces), avoid the O(64×E)
+    // blow-up that makes the O(grid×verts) point-in-polygon test infeasible.
+    let n_edges = face.outer_wire.edges.len();
+    let per_edge = if n_edges > 600 {
+        2
+    } else if n_edges > 150 {
+        2
+    } else if n_edges > 75 {
+        4
+    } else if n_edges > 30 {
+        8
+    } else {
+        32
+    };
+    let mut outer3 = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, per_edge);
     trim_almost_closed_polyline(&mut outer3, tol);
     if outer3.len() < 3 {
         return None;
     }
-    // For faces with very complex outer wires, analytical area is too slow
-    // (point_in_polygon_2d in the grid is O(grid_cells × polygon_vertices)).
-    // Fall back to triangle-based area.
-    if outer3.len() > 1200 {
-        return None;
-    }
+    // Decimate after UV mapping so the UV polygon covers parameter space
+    // uniformly, avoiding pole-clustering from uniform 3D decimation.
     let mut b_outer: Vec<f64> = outer3
         .iter()
         .map(|p| sphere_point_to_uv(s, *p).x.rem_euclid(2.0 * std::f64::consts::PI))
@@ -708,8 +723,32 @@ fn spherical_holed_uv_mask_setup(
         }
     }
 
-    let outer_uv = fixed_uv;
-    let outer_3d = fixed_3d;
+    let mut outer_uv = fixed_uv;
+    let mut outer_3d = fixed_3d;
+
+    // Dedup consecutive near-duplicate UV points (from shared edge vertices in
+    // the outer wire sampling) to keep the polygon small for the grid test.
+    {
+        let mut dedup_uv: Vec<DVec2> = Vec::with_capacity(outer_uv.len());
+        let mut dedup_3d: Vec<DVec3> = Vec::with_capacity(outer_3d.len());
+        dedup_uv.push(outer_uv[0]);
+        dedup_3d.push(outer_3d[0]);
+        for i in 1..outer_uv.len() {
+            if (outer_uv[i] - *dedup_uv.last().unwrap()).length_squared() > 1e-16 {
+                dedup_uv.push(outer_uv[i]);
+                dedup_3d.push(outer_3d[i]);
+            }
+        }
+        // Keep the polygon closed
+        if dedup_uv.len() >= 2
+            && (dedup_uv[0] - *dedup_uv.last().unwrap()).length_squared() < 1e-16
+        {
+            dedup_uv.pop();
+            dedup_3d.pop();
+        }
+        outer_uv = dedup_uv;
+        outer_3d = dedup_3d;
+    }
 
     let mut umin = f64::INFINITY;
     let mut umax = f64::NEG_INFINITY;
@@ -729,7 +768,10 @@ fn spherical_holed_uv_mask_setup(
             vmax = vmax.max(p.y);
         }
     }
-    let margin_u = (umax - umin) * 0.02 + 1e-4;
+    // Snapshot raw u-range before margins to detect UV wrapping (merged faces
+    // can produce u-ranges > 2π from multiple seam crossings).
+    let raw_u_range = umax - umin;
+    let margin_u = raw_u_range * 0.02 + 1e-4;
     let margin_v = (vmax - vmin) * 0.02 + 1e-4;
     umin -= margin_u;
     umax += margin_u;
@@ -747,6 +789,11 @@ fn spherical_holed_uv_mask_setup(
     {
         return None;
     }
+    // Disable UV winding-number when the polygon wraps u multiple times
+    // (raw range >> 2π). Winding number in a non-periodic 2D domain gives
+    // wrong results for wrapped polygons.
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let use_uv_winding = raw_u_range <= two_pi + 0.5;
     Some(SphereHoledMaskCtx {
         outer_uv,
         outer_3d,
@@ -755,13 +802,18 @@ fn spherical_holed_uv_mask_setup(
         umax,
         vmin,
         vmax,
+        use_uv_winding,
     })
 }
 
 /// Sum `∫ R² sin v dudv` over the same masked grid (no triangulation), for GProp-style area.
 fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
-    let nu = SPHERE_UV_MASK_N;
-    let nv = SPHERE_UV_MASK_N;
+    // Use a coarser grid when relying on expensive 3D angular-sum tests.
+    let (nu, nv) = if ctx.use_uv_winding {
+        (SPHERE_UV_MASK_N, SPHERE_UV_MASK_N)
+    } else {
+        (80, 80)
+    };
     let umin = ctx.umin;
     let umax = ctx.umax;
     let vmin = ctx.vmin;
@@ -770,6 +822,8 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
     let dv = (vmax - vmin) / nv as f64;
     let r2 = s.radius * s.radius;
     let inner = &ctx.inner_polys;
+    let outer_3d = &ctx.outer_3d;
+    let use_uv = ctx.use_uv_winding;
     let emit = |outer_poly: &[DVec2], use_inner: bool| -> f64 {
         let mut a = 0.0f64;
         for i in 0..nu {
@@ -778,21 +832,27 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
                 let u1 = u0 + du;
                 let v0 = vmin + j as f64 * dv;
                 let v1 = v0 + dv;
-                let corners = [
+                let corners_uv = [
                     DVec2::new(u0, v0),
                     DVec2::new(u1, v0),
                     DVec2::new(u1, v1),
                     DVec2::new(u0, v1),
                 ];
-                if !corners
-                    .iter()
-                    .all(|q| point_in_polygon_2d(outer_poly, *q))
-                {
+                let all_corners_in = if use_uv {
+                    corners_uv
+                        .iter()
+                        .all(|q| point_in_polygon_2d(outer_poly, *q))
+                } else {
+                    corners_uv
+                        .iter()
+                        .all(|q| point_in_spherical_polygon_3d(outer_3d, s.point_at(q.x, q.y)))
+                };
+                if !all_corners_in {
                     continue;
                 }
                 if use_inner
                     && inner.iter().any(|h| {
-                        corners
+                        corners_uv
                             .iter()
                             .any(|q| point_in_polygon_2d(h, *q))
                     })
@@ -1422,8 +1482,13 @@ fn try_analytic_face_surface_area(
         Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal),
         Surface3::Sphere(s) => {
             let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
-            let v = sphere_holed_mask_param_area_sum(s, &ctx);
-            if v > 0.0 { Some(v) } else { None }
+            if ctx.use_uv_winding {
+                let v = sphere_holed_mask_param_area_sum(s, &ctx);
+                if v > 0.0 { return Some(v); }
+            }
+            // UV polygon wraps u multiple times — analytic area integral
+            // over-counts because du spans >2π. Fall through to tessellation.
+            None
         }
         _ if !face.inner_wires.is_empty() => None,
         _ => {
@@ -1473,9 +1538,20 @@ fn try_spherical_uv_masked_raster(
     let outer_uv = &ctx.outer_uv;
     let outer_3d = &ctx.outer_3d;
     let inner_polys = &ctx.inner_polys;
+    let use_uv_winding = ctx.use_uv_winding;
 
-    let nu = SPHERE_UV_MASK_N;
-    let nv = SPHERE_UV_MASK_N;
+    // When the UV polygon wraps around u (use_uv_winding=false), use the
+    // full sphere domain [−π, π] × [0, π] so every physical point is
+    // tested exactly once. The 3D angular-sum test is insensitive to the
+    // UV wrapping.
+    let (umin_eff, umax_eff, nu, nv) = if use_uv_winding {
+        (umin, umax, SPHERE_UV_MASK_N, SPHERE_UV_MASK_N)
+    } else {
+        let pi = std::f64::consts::PI;
+        (-pi, pi, 120usize, 120usize)
+    };
+    let umin = umin_eff;
+    let umax = umax_eff;
     let du = (umax - umin) / nu as f64;
     let dv = (vmax - vmin) / nv as f64;
     let radius = s.radius;
@@ -1493,12 +1569,18 @@ fn try_spherical_uv_masked_raster(
                 let pc = s.point_at(uc, vc);
                 // 5-point OR test: accept if center is inside (UV winding + 3D
                 // angular-sum), OR if any corner is inside (3D angular-sum).
+                // When the UV polygon wraps u multiple times (merged sphere
+                // faces), skip the unreliable winding-number test.
                 let p00 = s.point_at(u0, v0);
                 let p10 = s.point_at(u1, v0);
                 let p11 = s.point_at(u1, v1);
                 let p01 = s.point_at(u0, v1);
-                let center_in = winding_number_2d(outer_uv, DVec2::new(uc, vc)) > 0
-                    || point_in_spherical_polygon_3d(outer_3d, pc);
+                let center_in = if use_uv_winding {
+                    winding_number_2d(outer_uv, DVec2::new(uc, vc)) > 0
+                        || point_in_spherical_polygon_3d(outer_3d, pc)
+                } else {
+                    point_in_spherical_polygon_3d(outer_3d, pc)
+                };
                 let any_corner_in = point_in_spherical_polygon_3d(outer_3d, p00)
                     || point_in_spherical_polygon_3d(outer_3d, p10)
                     || point_in_spherical_polygon_3d(outer_3d, p11)
@@ -1769,12 +1851,14 @@ fn face_triangles(
             .and_then(|o| *o)
         {
             if let Some(Surface3::Sphere(s)) = brep.geom.surfaces.get(sidx) {
-                let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
+                let n_edges = face.outer_wire.edges.len();
+                let per_edge = if n_edges > 600 { 2 } else if n_edges > 150 { 2 } else if n_edges > 30 { 4 } else { 32 };
+                let mut outer = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, per_edge);
                 trim_almost_closed_polyline(&mut outer, 1e-5);
                 if outer.len() >= 3 {
-                    // UV grid raster first: handles non-convex trimmed patches
-                    // robustly, unlike ear-cut which can produce degenerate tris
-                    // for boundaries near sphere poles or with UV seam crossings.
+                    // UV grid raster: for large merged faces the UV polygon wraps
+                    // around u multiple times; the grid now detects this and falls
+                    // back to 3D-only point-in-spherical-polygon tests.
                     if let Some(tris) = try_spherical_uv_masked_raster(s, brep, face, face_flat_idx, face.normal) {
                         return tris;
                     }
@@ -1885,7 +1969,8 @@ pub fn face_surface_area(brep: &BRep, face: &Face, face_flat_idx: usize) -> f64 
     if let Some(a) = try_analytic_face_surface_area(brep, face, face_flat_idx) {
         a
     } else {
-        face_triangles(brep, face, face_flat_idx)
+        let tris = face_triangles(brep, face, face_flat_idx);
+        tris
             .iter()
             .map(|&[a, b, c]| tri_area(a, b, c))
             .sum()
