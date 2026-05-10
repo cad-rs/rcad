@@ -1480,6 +1480,29 @@ fn try_analytic_face_surface_area(
     let surf = brep.geom.surfaces.get(surf_idx)?;
     match surf {
         Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal),
+        // Planar BSpline/Bezier (e.g. from nurbsconvert): use shoelace.
+        Surface3::BSpline(bsp) if bsp.control_points.iter().all(|r| r.len() >= 2) && crate::geom::bspline_is_planar(bsp, 1e-12) => {
+            let plane = crate::geom::bspline_to_plane(bsp);
+            try_planar_face_area_shoelace(brep, face, plane.normal)
+        }
+        Surface3::Bezier(bez) if bez.control_points.len() >= 2 && bez.control_points.iter().all(|r| r.len() >= 2) => {
+            let degree_u = bez.control_points.len().saturating_sub(1);
+            let degree_v = bez.control_points.first().map_or(0, |r| r.len().saturating_sub(1));
+            let bsp = crate::geom::BSplineSurface {
+                degree_u,
+                degree_v,
+                control_points: bez.control_points.clone(),
+                knots_u: vec![],
+                knots_v: vec![],
+                weights: bez.weights.clone(),
+            };
+            if crate::geom::bspline_is_planar(&bsp, 1e-12) {
+                let plane = crate::geom::bspline_to_plane(&bsp);
+                try_planar_face_area_shoelace(brep, face, plane.normal)
+            } else {
+                None
+            }
+        }
         Surface3::Sphere(s) => {
             let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
             if ctx.use_uv_winding {
