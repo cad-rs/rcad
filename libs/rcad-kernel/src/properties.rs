@@ -381,7 +381,7 @@ fn try_face_with_holes(
         // Spheres: masked UV raster (hole subtraction) is more reliable than ear-cut on
         // non-convex (u,v) annuli; then ear-cut and planar fallbacks.
         Surface3::Sphere(s) => try_spherical_uv_masked_raster(s, brep, face, face_flat_idx, face.normal)
-            .or_else(|| try_spherical_earcut_holes(s, &outer, &holes_3d, face.normal))
+        .or_else(|| try_spherical_earcut_holes(s, &outer, &holes_3d, face.normal))
             .or_else(|| try_spherical_earcut_holes(s, &outer, &rev_holes, face.normal))
             .or_else(|| try_planar_earcut_holes(&outer, &holes_3d, face.normal))
             .or_else(|| try_planar_earcut_holes(&outer, &rev_holes, face.normal)),
@@ -550,6 +550,7 @@ struct SphereHoledMaskCtx {
     outer_uv: Vec<DVec2>,
     outer_3d: Vec<DVec3>,
     inner_polys: Vec<Vec<DVec2>>,
+    inner_3d: Vec<Vec<DVec3>>,
     umin: f64,
     umax: f64,
     vmin: f64,
@@ -566,20 +567,19 @@ fn spherical_holed_uv_mask_setup(
     face: &Face,
 ) -> Option<SphereHoledMaskCtx> {
     let tol = 1e-5_f64;
-    // Use moderate per-edge sampling: for faces with many edges (e.g. after
-    // unify_same_domain_faces merges sphere sub-faces), avoid the O(64×E)
-    // blow-up that makes the O(grid×verts) point-in-polygon test infeasible.
     let n_edges = face.outer_wire.edges.len();
     let per_edge = if n_edges > 600 {
-        2
-    } else if n_edges > 150 {
-        2
-    } else if n_edges > 75 {
         4
-    } else if n_edges > 30 {
+    } else if n_edges > 300 {
         8
-    } else {
+    } else if n_edges > 150 {
+        16
+    } else if n_edges > 75 {
         32
+    } else if n_edges > 30 {
+        48
+    } else {
+        64
     };
     let mut outer3 = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, per_edge);
     trim_almost_closed_polyline(&mut outer3, tol);
@@ -669,6 +669,7 @@ fn spherical_holed_uv_mask_setup(
         .collect();
 
     let mut inner_polys: Vec<Vec<DVec2>> = Vec::new();
+    let mut inner_3d: Vec<Vec<DVec3>> = Vec::new();
     for w in &face.inner_wires {
         let mut h3 = sample_wire_polyline_3d(brep, w);
         trim_almost_closed_polyline(&mut h3, tol);
@@ -686,7 +687,9 @@ fn spherical_holed_uv_mask_setup(
             .zip(o_in.iter())
             .map(|(p, u)| DVec2::new(*u, sphere_point_to_uv(s, *p).y))
             .collect();
+        let h3d: Vec<DVec3> = huv.iter().map(|uv| s.point_at(uv.x, uv.y)).collect();
         inner_polys.push(huv);
+        inner_3d.push(h3d);
     }
 
     // Fix degenerate pole-boundary closing edges in UV polygon.
@@ -793,11 +796,22 @@ fn spherical_holed_uv_mask_setup(
     // (raw range >> 2π). Winding number in a non-periodic 2D domain gives
     // wrong results for wrapped polygons.
     let two_pi = 2.0 * std::f64::consts::PI;
-    let use_uv_winding = raw_u_range <= two_pi + 0.5;
+    let outer_u_min = outer_uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let outer_u_max = outer_uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let outer_u_span = outer_u_max - outer_u_min;
+    // Also check that the outer UV polygon's own u-span doesn't exceed π.
+    // When a polygon spans > π in u (e.g. nearly 2π from seam wrapping),
+    // the 2D winding number gives wrong inside/outside classification
+    // because the boundary goes the "long way" around the sphere.
+    // Such polygons must be tested with 3D-only point-in-spherical-polygon.
+    let use_uv_winding = raw_u_range <= two_pi + 0.5
+        && outer_u_span.abs() <= std::f64::consts::PI + 0.1;
+
     Some(SphereHoledMaskCtx {
         outer_uv,
         outer_3d,
         inner_polys,
+        inner_3d,
         umin,
         umax,
         vmin,
@@ -822,6 +836,7 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
     let dv = (vmax - vmin) / nv as f64;
     let r2 = s.radius * s.radius;
     let inner = &ctx.inner_polys;
+    let inner_3d = &ctx.inner_3d;
     let outer_3d = &ctx.outer_3d;
     let use_uv = ctx.use_uv_winding;
     let emit = |outer_poly: &[DVec2], use_inner: bool| -> f64 {
@@ -850,14 +865,22 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
                 if !all_corners_in {
                     continue;
                 }
-                if use_inner
-                    && inner.iter().any(|h| {
-                        corners_uv
-                            .iter()
-                            .any(|q| point_in_polygon_2d(h, *q))
-                    })
-                {
-                    continue;
+                if use_inner {
+                    let in_hole = if use_uv {
+                        inner.iter().any(|h| {
+                            corners_uv
+                                .iter()
+                                .any(|q| point_in_polygon_2d(h, *q))
+                        })
+                    } else {
+                        let corners_3d: [DVec3; 4] = corners_uv.map(|q| s.point_at(q.x, q.y));
+                        inner_3d.iter().any(|h3d| {
+                            corners_3d.iter().any(|q3d| point_in_spherical_polygon_3d(h3d, *q3d))
+                        })
+                    };
+                    if in_hole {
+                        continue;
+                    }
                 }
                 a += r2 * du * (v0.cos() - v1.cos());
             }
@@ -1611,10 +1634,16 @@ fn try_spherical_uv_masked_raster(
                 if !center_in && !any_corner_in {
                     continue;
                 }
-                if use_inner_mask
-                    && inner_polys.iter().any(|h| point_in_polygon_2d(h, DVec2::new(uc, vc)))
-                {
-                    continue;
+                if use_inner_mask {
+                    // Use UV-space winding number for inner-hole test regardless of
+                    // use_uv_winding.  Inner wires bound small regions (area < π), but
+                    // point_in_spherical_polygon_3d's `|total| > π` threshold cannot
+                    // detect points inside patches smaller than a hemisphere — it returns
+                    // false for *all* points.  UV-space handles small holes correctly.
+                    let in_hole = inner_polys.iter().any(|h| winding_number_2d(h, DVec2::new(uc, vc)) != 0);
+                    if in_hole {
+                        continue;
+                    }
                 }
                 let nref = s.normal_at(uc, vc);
                 // Exact area in (u, v) for a sphere: R² · du · (cos v0 − cos v1); isotropic
@@ -1875,7 +1904,7 @@ fn face_triangles(
         {
             if let Some(Surface3::Sphere(s)) = brep.geom.surfaces.get(sidx) {
                 let n_edges = face.outer_wire.edges.len();
-                let per_edge = if n_edges > 600 { 2 } else if n_edges > 150 { 2 } else if n_edges > 30 { 4 } else { 32 };
+                let per_edge = if n_edges > 600 { 4 } else if n_edges > 300 { 8 } else if n_edges > 150 { 16 } else if n_edges > 30 { 24 } else { 48 };
                 let mut outer = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, per_edge);
                 trim_almost_closed_polyline(&mut outer, 1e-5);
                 if outer.len() >= 3 {
@@ -1981,7 +2010,8 @@ pub fn face_triangles_pub(
 pub fn surface_area(brep: &BRep) -> f64 {
     let mut total = 0.0f64;
     for (fi, f) in face_flat_iter(brep) {
-        total += face_surface_area(brep, f, fi);
+        let a = face_surface_area(brep, f, fi);
+        total += a;
     }
     total
 }
@@ -2019,6 +2049,8 @@ fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMas
     let dv = (vmax - vmin) / N as f64;
     let r3 = s.radius * s.radius * s.radius;
     let inner = &ctx.inner_polys;
+    let inner_3d = &ctx.inner_3d;
+    let use_uv = ctx.use_uv_winding;
 
     let emit = |poly_uv: &[DVec2], poly_3d: &[DVec3], use_inner_mask: bool| -> f64 {
         let mut v = 0.0_f64;
@@ -2050,10 +2082,15 @@ fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMas
                 if !center_in && !any_corner_in {
                     continue;
                 }
-                if use_inner_mask
-                    && inner.iter().any(|h| point_in_polygon_2d(h, DVec2::new(uc, vc)))
-                {
-                    continue;
+                if use_inner_mask {
+                    let in_hole = if use_uv {
+                        inner.iter().any(|h| point_in_polygon_2d(h, DVec2::new(uc, vc)))
+                    } else {
+                        inner_3d.iter().any(|h3d| point_in_spherical_polygon_3d(h3d, pc))
+                    };
+                    if in_hole {
+                        continue;
+                    }
                 }
 
                 // Analytic dV = (R/3) * R² * du * (cos(v₀) - cos(v₁))

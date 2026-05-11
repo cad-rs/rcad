@@ -2828,8 +2828,8 @@ impl<'a> BooleanBuilder<'a> {
             .collect();
 
         // Split UV polygon by each trim polyline
-        let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary];
-        for (ti, trim) in trim_polylines.iter().enumerate() {
+        let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary.clone()];
+        for trim in trim_polylines.iter() {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
                 // Skip invalid polygons
@@ -2901,11 +2901,13 @@ impl<'a> BooleanBuilder<'a> {
                 0.0 // Standard seam at u=0 for cylinder/cone
             };
 
+            let pre_seam_count = uv_polygons.len();
             uv_polygons = uv_polygons
                 .into_iter()
                 .flat_map(|poly| {
                     if is_valid_uv_polygon(&poly) {
-                        handle_periodic_seam_crossing(&poly, u_period, seam_u)
+                        let result = handle_periodic_seam_crossing(&poly, u_period, seam_u);
+                        result
                     } else {
                         vec![]
                     }
@@ -2938,6 +2940,75 @@ impl<'a> BooleanBuilder<'a> {
                         .collect::<Vec<_>>()
                 })
                 .collect();
+            // Split wide polygons that span more than pi in u (inflated by winding trims).
+            {
+                let uspan_limit = std::f64::consts::PI + 0.5;
+                uv_polygons = uv_polygons
+                    .into_iter()
+                    .flat_map(|poly| {
+                        let pu_min = poly.iter().map(|p|p.x).fold(f64::INFINITY, f64::min);
+                        let pu_max = poly.iter().map(|p|p.x).fold(f64::NEG_INFINITY, f64::max);
+                        if pu_max - pu_min > uspan_limit {
+                            split_polygon_at_u_isoline(&poly, 0.0)
+                        } else {
+                            vec![poly]
+                        }
+                    })
+                    .collect();
+            }
+
+            {
+                // Deduplicate overlapping polygons. Sequential trim splitting on
+                // periodic domains can produce near-duplicate polygons (same u/v
+                // range).  Sample interior points and remove polygons that are
+                // subsets of larger ones.
+                let n_before = uv_polygons.len();
+                let mut to_remove: Vec<bool> = vec![false; n_before];
+                for i in 0..n_before {
+                    if to_remove[i] { continue; }
+                    for j in 0..n_before {
+                        if i == j || to_remove[j] { continue; }
+                        // Quick bbox containment check
+                        let bi = bbox_of_poly(&uv_polygons[i]);
+                        let bj = bbox_of_poly(&uv_polygons[j]);
+                        // Check if bbox_j is mostly inside bbox_i
+                        let overlap_u = bi.u_max.min(bj.u_max) - bi.u_min.max(bj.u_min);
+                        let overlap_v = bi.v_max.min(bj.v_max) - bi.v_min.max(bj.v_min);
+                        if overlap_u <= 0.0 || overlap_v <= 0.0 { continue; }
+                        let area_i = (bi.u_max - bi.u_min) * (bi.v_max - bi.v_min);
+                        let area_j = (bj.u_max - bj.u_min) * (bj.v_max - bj.v_min);
+                        if area_j >= area_i * 0.95 { continue; } // only remove if j is clearly smaller
+                        // Sample points in the overlap region and check if j's points are inside i
+                        let n_test = 9usize;
+                        let du = overlap_u / (n_test as f64 + 1.0);
+                        let dv = overlap_v / (n_test as f64 + 1.0);
+                        let mut j_in_i = 0usize;
+                        let mut total = 0usize;
+                        for iu in 1..=n_test {
+                            for iv in 1..=n_test {
+                                let p = DVec2::new(
+                                    bi.u_min.max(bj.u_min) + du * iu as f64,
+                                    bi.v_min.max(bj.v_min) + dv * iv as f64,
+                                );
+                                total += 1;
+                                if point_in_polygon_2d(&uv_polygons[i], p) && point_in_polygon_2d(&uv_polygons[j], p) {
+                                    j_in_i += 1;
+                                }
+                            }
+                        }
+                        if total > 0 && j_in_i >= total * 3 / 4 {
+                            to_remove[j] = true;
+                        }
+                    }
+                }
+                let mut kept = Vec::new();
+                for (i, poly) in uv_polygons.into_iter().enumerate() {
+                    if !to_remove[i] {
+                        kept.push(poly);
+                    }
+                }
+                uv_polygons = kept;
+            }
         }
 
 
@@ -2951,10 +3022,15 @@ impl<'a> BooleanBuilder<'a> {
 
                 // Compute the UV bounding box of this sub-polygon so that
                 // tessellate_curved_face samples only the correct sub-domain.
-                let u_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                let u_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-                let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let bnd_u_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let bnd_u_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let bnd_v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let bnd_v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                // Use boundary bbox directly.
+                let u_min = bnd_u_min;
+                let u_max = bnd_u_max;
+                let v_min = bnd_v_min;
+                let v_max = bnd_v_max;
                 let uv_domain = if u_min.is_finite() && u_max.is_finite()
                     && v_min.is_finite() && v_max.is_finite()
                     && (u_max - u_min) > TOLERANCE_FLOAT_LOOSE && (v_max - v_min) > TOLERANCE_FLOAT_LOOSE
@@ -3271,14 +3347,35 @@ fn curved_subface_boundary_3d(
 
     // 1. Sample each UV edge and evaluate 3D positions
     let n = uv_poly.len();
+    // Compute the u-span to detect winding polygons. When the UV polygon
+    // spans > π in u, edges near the seam wrap the "long way" around the
+    // sphere in 3D. We redirect such edges to go through the seam instead,
+    // producing a compact 3D boundary.
+    let pu_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let pu_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let is_winding = pu_max - pu_min > std::f64::consts::PI;
     for i in 0..n {
         let j = (i + 1) % n;
         let a = uv_poly[i];
         let b = uv_poly[j];
-        for k in 0..edge_samples {
-            let t = k as f64 / edge_samples as f64;
-            let uv = DVec2::new(a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
-            pts.push(surface.point_at(uv.x, uv.y));
+        let du = b.x - a.x;
+        if is_winding && du.abs() > std::f64::consts::PI {
+            // Edge crosses the seam in a winding polygon.  Sample through
+            // the seam (wrapping around) instead of the direct line, so the
+            // 3D boundary goes the SHORT way around the sphere.
+            let delta = if du > 0.0 { du - std::f64::consts::TAU } else { du + std::f64::consts::TAU };
+            for k in 0..edge_samples {
+                let t = k as f64 / edge_samples as f64;
+                let u = a.x + t * delta;
+                let v = a.y + t * (b.y - a.y);
+                pts.push(surface.point_at(u, v));
+            }
+        } else {
+            for k in 0..edge_samples {
+                let t = k as f64 / edge_samples as f64;
+                let uv = DVec2::new(a.x + t * du, a.y + t * (b.y - a.y));
+                pts.push(surface.point_at(uv.x, uv.y));
+            }
         }
     }
 
@@ -3436,6 +3533,143 @@ fn handle_periodic_seam_crossing(
     }
 }
 
+/// Split a polygon along a vertical u-isoline.
+///
+/// Used for sphere UV polygons whose u-span exceeds pi after normalisation.
+/// Finds where the polygon crosses u=u_split and splits it into left and right
+/// pieces, each bounded by the original polygon boundary on one side and the
+/// isoline on the other.
+fn split_polygon_at_u_isoline(poly: &[DVec2], u_split: f64) -> Vec<Vec<DVec2>> {
+    let n = poly.len();
+    if n < 3 {
+        return vec![poly.to_vec()];
+    }
+
+    // Find all edges crossing u=u_split
+    let mut crossings: Vec<(usize, DVec2)> = Vec::new();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let u0 = poly[i].x;
+        let u1 = poly[j].x;
+        // Check if this edge crosses u_split
+        if (u0 - u_split).abs() < TOLERANCE_COORD_SUB {
+            // Vertex is on the isoline — use it directly
+            if crossings.is_empty() || crossings.last().unwrap().0 != i {
+                crossings.push((i, poly[i]));
+            }
+        } else if (u0 < u_split && u1 > u_split) || (u0 > u_split && u1 < u_split) {
+            let t = (u_split - u0) / (u1 - u0);
+            let v = poly[i].y + t * (poly[j].y - poly[i].y);
+            crossings.push((i, DVec2::new(u_split, v)));
+        }
+    }
+
+    if crossings.len() != 2 {
+        return vec![poly.to_vec()];
+    }
+
+    let (idx1, pt1) = crossings[0];
+    let (idx2, pt2) = crossings[1];
+
+    // Build left polygon: edges from idx1+1 to idx2, plus pt1 and pt2
+    let mut left: Vec<DVec2> = vec![pt1];
+    for i in (idx1 + 1)..=idx2 {
+        if i < n {
+            left.push(poly[i]);
+        }
+    }
+    left.push(pt2);
+
+    // Build right polygon: edges from idx2+1 to n, then 0 to idx1, plus pt1 and pt2
+    let mut right: Vec<DVec2> = vec![pt2];
+    for i in (idx2 + 1)..n {
+        right.push(poly[i]);
+    }
+    for i in 0..=idx1 {
+        right.push(poly[i]);
+    }
+    right.push(pt1);
+
+    let mut result = Vec::new();
+    if left.len() >= 3 {
+        result.push(left);
+    }
+    if right.len() >= 3 {
+        result.push(right);
+    }
+    if result.is_empty() {
+        vec![poly.to_vec()]
+    } else {
+        result
+    }
+}
+
+struct BBox2 { u_min: f64, u_max: f64, v_min: f64, v_max: f64 }
+
+fn bbox_of_poly(poly: &[DVec2]) -> BBox2 {
+    let u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let v_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let v_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    BBox2 { u_min, u_max, v_min, v_max }
+}
+
+/// Compute a tighter UV bounding box by sampling interior points of the polygon.
+///
+/// The polygon's boundary vertices may include trim curves that inflate the
+/// bounding box far beyond the actual interior region (e.g. a trim curve that
+/// wanders from u=-pi to u=pi but bounds a region that only occupies u=[0,pi]).
+/// Sampling interior points and taking their min/max gives the true extent.
+fn compute_interior_uv_bounds(
+    poly: &[DVec2],
+    bnd_u_min: f64,
+    bnd_u_max: f64,
+    bnd_v_min: f64,
+    bnd_v_max: f64,
+) -> (f64, f64, f64, f64) {
+    const N_U: usize = 11;
+    const N_V: usize = 11;
+    let du = (bnd_u_max - bnd_u_min) / (N_U as f64 + 1.0);
+    let dv = (bnd_v_max - bnd_v_min) / (N_V as f64 + 1.0);
+    if du <= 0.0 || dv <= 0.0 {
+        return (bnd_u_min, bnd_u_max, bnd_v_min, bnd_v_max);
+    }
+
+    let mut in_u_min = f64::INFINITY;
+    let mut in_u_max = f64::NEG_INFINITY;
+    let mut in_v_min = f64::INFINITY;
+    let mut in_v_max = f64::NEG_INFINITY;
+    let mut found = false;
+
+    for iu in 1..=N_U {
+        let u = bnd_u_min + du * iu as f64;
+        for iv in 1..=N_V {
+            let v = bnd_v_min + dv * iv as f64;
+            if point_in_polygon_2d(poly, DVec2::new(u, v)) {
+                in_u_min = in_u_min.min(u);
+                in_u_max = in_u_max.max(u);
+                in_v_min = in_v_min.min(v);
+                in_v_max = in_v_max.max(v);
+                found = true;
+            }
+        }
+    }
+
+    if found {
+        // Expand slightly to account for sampling grid granularity
+        let pad_u = du * 0.6;
+        let pad_v = dv * 0.6;
+        (
+            (in_u_min - pad_u).max(bnd_u_min),
+            (in_u_max + pad_u).min(bnd_u_max),
+            (in_v_min - pad_v).max(bnd_v_min),
+            (in_v_max + pad_v).min(bnd_v_max),
+        )
+    } else {
+        (bnd_u_min, bnd_u_max, bnd_v_min, bnd_v_max)
+    }
+}
+
 /// Detect degenerate points (poles, apex) and handle them in UV polygon.
 /// Returns a modified 3D boundary that correctly handles surface singularities.
 fn handle_degenerate_points(
@@ -3464,6 +3698,12 @@ fn handle_degenerate_points(
                     s.center - s.axis * s.radius // South pole
                 };
 
+                // Detect winding polygon (UV spans > pi in u) so edges that
+                // cross the seam go the SHORT way around the sphere in 3D.
+                let pu_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let pu_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let is_winding = pu_max - pu_min > std::f64::consts::PI;
+
                 // Sample UV edges
                 let n = uv_poly.len();
                 for i in 0..n {
@@ -3471,25 +3711,44 @@ fn handle_degenerate_points(
                     let a = uv_poly[i];
                     let b = uv_poly[j];
 
+                    let du = b.x - a.x;
+
                     // More samples if edge is near pole
                     let near_pole = (a.y < pole_tol || a.y > std::f64::consts::PI - pole_tol)
                         || (b.y < pole_tol || b.y > std::f64::consts::PI - pole_tol);
                     let n_samples = if near_pole { 16 } else { 4 };
 
-                    for k in 0..n_samples {
-                        let t = k as f64 / n_samples as f64;
-                        let uv = DVec2::new(
-                            a.x + t * (b.x - a.x),
-                            a.y + t * (b.y - a.y),
-                        );
+                    if is_winding && du.abs() > std::f64::consts::PI {
+                        // Edge crosses the seam in a winding polygon. Sample
+                        // through the seam (wrapping around) instead of the
+                        // direct line, so the 3D boundary goes the SHORT way.
+                        let delta = if du > 0.0 { du - std::f64::consts::TAU } else { du + std::f64::consts::TAU };
+                        for k in 0..n_samples {
+                            let t = k as f64 / n_samples as f64;
+                            let u = a.x + t * delta;
+                            let v = a.y + t * (b.y - a.y);
+                            let v_clamped = v.clamp(0.001, std::f64::consts::PI - 0.001);
+                            let pt = s.point_at(u, v_clamped);
+                            if (pt - pole_point).length() > s.radius * 0.1 {
+                                boundary_3d.push(pt);
+                            }
+                        }
+                    } else {
+                        for k in 0..n_samples {
+                            let t = k as f64 / n_samples as f64;
+                            let uv = DVec2::new(
+                                a.x + t * du,
+                                a.y + t * (b.y - a.y),
+                            );
 
-                        // Clamp v to avoid pole singularity
-                        let v_clamped = uv.y.clamp(0.001, std::f64::consts::PI - 0.001);
-                        let pt = s.point_at(uv.x, v_clamped);
+                            // Clamp v to avoid pole singularity
+                            let v_clamped = uv.y.clamp(0.001, std::f64::consts::PI - 0.001);
+                            let pt = s.point_at(uv.x, v_clamped);
 
-                        // Skip points very close to pole (will add pole point separately)
-                        if (pt - pole_point).length() > s.radius * 0.1 {
-                            boundary_3d.push(pt);
+                            // Skip points very close to pole (will add pole point separately)
+                            if (pt - pole_point).length() > s.radius * 0.1 {
+                                boundary_3d.push(pt);
+                            }
                         }
                     }
                 }
@@ -4418,23 +4677,70 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         trim.iter().copied().rev().collect()
     };
 
-    // Sub-polygon A: poly[0..=ia] + p_a + trim_pts (interior only) + p_b + poly[ib+1..]
+    // Detect wrap-around: trim u-span significantly exceeds polygon u-span.
+    // When a trim wraps around the periodic domain, including the full interior
+    // in both sub-polygons makes them overlap.  We split the trim at the polygon's
+    // u-midpoint (u=0 for [-Pi,Pi]) so Sub A gets the left portion and Sub B
+    // gets the right portion, matching the boundary paths they already use.
+    let poly_u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let poly_u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let poly_u_span = poly_u_max - poly_u_min;
+    let trim_u_min = trim_pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let trim_u_max = trim_pts.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let is_wrap_around = poly_u_span > 0.0 && (trim_u_max - trim_u_min) > poly_u_span * 0.8;
+
+    // Find the index where the trim crosses the polygon's u-midpoint.
+    // For a monotonic wrap-around trim, there is exactly one crossing.
+    let u_mid = (poly_u_min + poly_u_max) / 2.0;
+    let mut split_idx: Option<usize> = None;
+    if is_wrap_around {
+        for i in 0..trim_pts.len().saturating_sub(1) {
+            let u0 = trim_pts[i].x;
+            let u1 = trim_pts[i + 1].x;
+            if (u0 - u_mid).abs() <= TOLERANCE_COORD_SUB {
+                split_idx = Some(i);
+                break;
+            }
+            if (u0 < u_mid && u1 > u_mid) || (u0 > u_mid && u1 < u_mid) {
+                // The crossing is between points i and i+1; use i+1 as the split
+                split_idx = Some(i + 1);
+                break;
+            }
+        }
+    }
+
+    // Sub-polygon A: poly[0..=ia] + p_a + (left portion of interior) + p_b + poly[ib+1..]
     let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
     sub_a.push(p_a);
-    // Interior trim points in FORWARD order (p_a 鈫?p_b)
-    for &p in trim_pts.iter().skip(1).take(trim_pts.len().saturating_sub(2)) {
-        sub_a.push(p);
+    if let Some(si) = split_idx {
+        // Left portion: trim points from index 1 up to si (all have u <= u_mid)
+        for &p in trim_pts.iter().skip(1).take(si.saturating_sub(1)) {
+            sub_a.push(p);
+        }
+        if si > 0 && si < trim_pts.len() {
+            sub_a.push(trim_pts[si]); // split point shared with Sub B
+        }
+    } else {
+        for &p in trim_pts.iter().skip(1).take(trim_pts.len().saturating_sub(2)) {
+            sub_a.push(p);
+        }
     }
     sub_a.push(p_b);
     sub_a.extend_from_slice(&poly[ib + 1..]);
 
-    // Sub-polygon B: p_a + poly[ia+1..=ib] + p_b + trim_pts reversed (interior only)
+    // Sub-polygon B: p_a + poly[ia+1..=ib] + p_b + (right portion of interior, reversed)
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
     sub_b.push(p_b);
-    // Interior trim points in REVERSED order (p_b 鈫?p_a)
-    for &p in trim_pts.iter().skip(1).rev().skip(1) {
-        sub_b.push(p);
+    if let Some(si) = split_idx {
+        // Right portion: trim points from si to N-2, in reverse order
+        for i in (si..trim_pts.len().saturating_sub(1)).rev() {
+            sub_b.push(trim_pts[i]);
+        }
+    } else {
+        for &p in trim_pts.iter().skip(1).rev().skip(1) {
+            sub_b.push(p);
+        }
     }
 
     // Deduplicate consecutive near-equal points
