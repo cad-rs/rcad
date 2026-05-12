@@ -476,6 +476,10 @@ fn point_in_spherical_polygon_3d(boundary: &[DVec3], point: DVec3) -> bool {
     total.abs() > std::f64::consts::PI
 }
 
+pub fn point_in_spherical_polygon_3d_pub(boundary: &[DVec3], point: DVec3) -> bool {
+    point_in_spherical_polygon_3d(boundary, point)
+}
+
 /// Shortest signed step from `a` to `b` on the circle, with `a, b` reduced mod 2π to [0,2π).
 #[inline]
 fn short_delta_on_circle_01(a: f64, b: f64) -> f64 {
@@ -1564,6 +1568,14 @@ fn try_analytic_face_surface_area(
             }
         }
     }
+}
+
+pub fn try_analytic_face_surface_area_pub(
+    brep: &BRep,
+    face: &Face,
+    face_flat_idx: usize,
+) -> Option<f64> {
+    try_analytic_face_surface_area(brep, face, face_flat_idx)
 }
 
 /// When ear-clipping fails in (u,v), approximate the trimmed patch by a regular

@@ -176,7 +176,15 @@ impl SubFace {
                 surface_pt + inward * (TOLERANCE_ABS * 10.0)
             }
             _ => {
-                let centroid = if self.boundary.is_empty() {
+                // Use the true area centroid (shoelace formula) instead of the vertex
+                // average. The vertex average is biased by uneven vertex distribution —
+                // for planar faces split by a sphere-plane intersection circle, the arc
+                // points cluster near the circle boundary, pulling the vertex centroid
+                // inside the sphere even when the sub-face is geometrically outside.
+                // The area centroid always lies in the correct geometric interior.
+                let centroid = if self.boundary.len() >= 3 {
+                    planar_polygon_centroid(&self.boundary, self.normal)
+                } else if self.boundary.is_empty() {
                     DVec3::ZERO
                 } else {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
@@ -1150,6 +1158,9 @@ impl<'a> BooleanBuilder<'a> {
 
         let mut result = ResultBuilder::new();
 
+        // Debug tracing: set to true to print sub-face classification for debugging
+        let debug_trace = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
+
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
@@ -1177,6 +1188,19 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     self.keep_subface(SourceSide::A, fi, class, &b_faces)
                 };
+                if debug_trace {
+                    let sp = sub.sample_point();
+                    eprintln!(
+                        "DEBUG A face[{fi}] sub[{si}] nverts={} class={:?} keep={} sample=({:.4},{:.4},{:.4}) normal=({:.3},{:.3},{:.3}) surf={} face_split={}",
+                        sub.boundary.len(),
+                        class,
+                        keep,
+                        sp.x, sp.y, sp.z,
+                        sub.normal.x, sub.normal.y, sub.normal.z,
+                        match &sub.surface { rcad_kernel::geom::Surface3::Plane(_) => "Plane", rcad_kernel::geom::Surface3::Sphere(_) => "Sphere", _ => "Other" },
+                        face_split,
+                    );
+                }
                 if keep {
                     let src = self.ds.faces[fi].source_face_idx;
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
@@ -1205,6 +1229,19 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     self.keep_subface(SourceSide::B, fi, class, &a_faces)
                 };
+                if debug_trace {
+                    let sp = sub.sample_point();
+                    eprintln!(
+                        "DEBUG B face[{fi}] sub[{si}] nverts={} class={:?} keep={} sample=({:.4},{:.4},{:.4}) normal=({:.3},{:.3},{:.3}) surf={} face_split={}",
+                        sub.boundary.len(),
+                        class,
+                        keep,
+                        sp.x, sp.y, sp.z,
+                        sub.normal.x, sub.normal.y, sub.normal.z,
+                        match &sub.surface { rcad_kernel::geom::Surface3::Plane(_) => "Plane", rcad_kernel::geom::Surface3::Sphere(_) => "Sphere", _ => "Other" },
+                        face_split,
+                    );
+                }
                 if keep {
                     // For Intersection, skip B-side On subfaces that are coplanar with an
                     // already-emitted A-side face (e.g. cylinder cap 鈭?cube face 鈥?both produce
@@ -1543,11 +1580,14 @@ impl<'a> BooleanBuilder<'a> {
 
         // For Cylinder surfaces with curves_in at the UV boundary, use tessellation
         // instead of split_curved_face_parametric.  Curves at the cap seam (v=0 or v=h)
-        // are boundary edges, not interior cuts 鈥?splitting along them produces zero-area
-        // subfaces (e.g. cylinder wall 鈭?containing cube with coplanar caps).
+        // are boundary edges, not interior cuts — splitting along them produces zero-area
+        // subfaces (e.g. cylinder wall ⋃ containing cube with coplanar caps).
         if matches!(&face.surface, Surface3::Cylinder(_)) {
             if let Some(uv_bnd) = &face.uv_boundary {
                 if uv_bnd.len() >= 3 {
+                    let bnd_u_min = uv_bnd.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let bnd_u_max = uv_bnd.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                    let bnd_u_span = bnd_u_max - bnd_u_min;
                     let bnd_v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
@@ -1567,6 +1607,36 @@ impl<'a> BooleanBuilder<'a> {
                     if all_at_boundary {
                         let subs = self.tessellate_cylinder_face(face_idx);
                         return subs;
+                    }
+
+                    // Detect full-wrap curves (u-span ≥ 85 % of cylinder azimuth range):
+                    // these are Steinmetz-style curves that loop all the way around the
+                    // cylinder in the u direction.  The parametric UV-polygon splitter
+                    // cannot handle two crossing full-wrap sinusoidal trims, so fall back
+                    // to a 2D tessellation (N_U × N_V grid).  Each patch's boundary
+                    // centroid gives a correct sample point for classification.
+                    //
+                    // N_V=32 bounds SA error to ≤ R·π·H/N_V ≈ 40000π/32 ≈ 3930 per
+                    // cylinder, well inside the 7.5 % tolerance used by bcommon_simple/I9.
+                    let has_full_wrap = bnd_u_span > TOLERANCE_LEN_MIN
+                        && fi.curves_in.iter().any(|&ci| {
+                            self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
+                                let ic = &self.ds.intersection_curves[ci];
+                                let [t0, t1] = ic.t_range;
+                                const N: usize = 8;
+                                let pts: Vec<f64> = (0..=N)
+                                    .map(|i| {
+                                        let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                                        pcurve.point_at(t).x
+                                    })
+                                    .collect();
+                                let u_min = pts.iter().cloned().fold(f64::INFINITY, f64::min);
+                                let u_max = pts.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                                (u_max - u_min) >= bnd_u_span * 0.85
+                            })
+                        });
+                    if has_full_wrap {
+                        return self.tessellate_cylinder_face_2d(face_idx, 32, 32);
                     }
                 }
             }
@@ -1726,6 +1796,103 @@ impl<'a> BooleanBuilder<'a> {
                 uv_domain: Some([u0, u1, v_min, v_max]),
                 inner_wires: vec![],
             });
+        }
+        subs
+    }
+
+    /// Tessellate a cylinder face into an N_U × N_V 2D grid of rectangular patches.
+    ///
+    /// Used for cylinder–cylinder intersections (e.g. Steinmetz) where full-wrap
+    /// intersection curves prevent the parametric UV-polygon splitting from working.
+    /// Each patch's sample point (boundary centroid ≈ surface center) is classified
+    /// independently against the other solid, correctly selecting the Steinmetz lobes.
+    fn tessellate_cylinder_face_2d(
+        &self,
+        face_idx: usize,
+        n_u: usize,
+        n_v: usize,
+    ) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let cyl = match &face.surface {
+            Surface3::Cylinder(c) => *c,
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        let uv_boundary = match &face.uv_boundary {
+            Some(b) if b.len() >= 3 => b.clone(),
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        let u_lo = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_hi = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        if !u_lo.is_finite() || !u_hi.is_finite() || !v_min.is_finite() || !v_max.is_finite() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+        let u_span = u_hi - u_lo;
+        let v_span = v_max - v_min;
+        if u_span < TOLERANCE_LEN_MIN || v_span < TOLERANCE_LEN_MIN {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+
+        // Fewer edge samples per patch: fine subdivision reduces chord-arc error.
+        const N_SEG: usize = 4;
+
+        let mut subs = Vec::with_capacity(n_u * n_v);
+        for ui in 0..n_u {
+            let u0 = u_lo + u_span * ui as f64 / n_u as f64;
+            let u1 = u_lo + u_span * (ui + 1) as f64 / n_u as f64;
+            for vi in 0..n_v {
+                let v0 = v_min + v_span * vi as f64 / n_v as f64;
+                let v1 = v_min + v_span * (vi + 1) as f64 / n_v as f64;
+
+                let mut boundary = Vec::with_capacity(4 * N_SEG);
+                // Bottom edge (v=v0, u from u0 to u1)
+                for s in 0..=N_SEG {
+                    let u = u0 + (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(cyl.point_at(u, v0));
+                }
+                // Right edge (u=u1, v from v0 to v1)
+                for s in 1..=N_SEG {
+                    let v = v0 + (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(cyl.point_at(u1, v));
+                }
+                // Top edge (v=v1, u from u1 to u0)
+                for s in 1..=N_SEG {
+                    let u = u1 - (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(cyl.point_at(u, v1));
+                }
+                // Left edge (u=u0, v from v1 to v0)
+                for s in 1..N_SEG {
+                    let v = v1 - (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(cyl.point_at(u0, v));
+                }
+
+                let u_mid = 0.5 * (u0 + u1);
+                let v_mid = 0.5 * (v0 + v1);
+                let sub_normal = cyl.normal_at(u_mid, v_mid);
+
+                subs.push(SubFace {
+                    boundary,
+                    surface: face.surface.clone(),
+                    normal: sub_normal,
+                    uv_centroid: Some(DVec2::new(u_mid, v_mid)),
+                    // Use the exact surface center as the sample point so
+                    // classify_analytic_cylinder_solid uses the Steinmetz formula
+                    // directly, avoiding the boundary-centroid undershoot that lets
+                    // the UV-probe Case-2 in classify_against_solid_for_boolean
+                    // pick up spurious "inside" points on boundary patches.
+                    sample_override: Some(cyl.point_at(u_mid, v_mid)),
+                    // Tiny UV domain: keeps try_cylinder_trimmed_face_area (wire
+                    // shoelace) as the SA answer while making tessellate_curved_face
+                    // emit near-zero-area triangles (< 1e-12) so the 25 % SA guard
+                    // does not override the correct shoelace value.  Also restricts
+                    // the Case-2 UV probe to a neighbourhood of the center so that
+                    // out-of-centre probe points on boundary patches cannot falsely
+                    // classify the patch as "In".
+                    uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
+                    inner_wires: vec![],
+                });
+            }
         }
         subs
     }
@@ -2026,6 +2193,7 @@ impl<'a> BooleanBuilder<'a> {
             *poly = insert_points_on_polygon_edges(poly, &imprint_uv, edge_tol);
         }
 
+        let debug_split = std::env::var("RCAD_DEBUG_SPLIT").is_ok();
         polygons_2d
             .into_iter()
             .filter(|p| p.len() >= 3)
@@ -2044,14 +2212,51 @@ impl<'a> BooleanBuilder<'a> {
                         (centroid_2d - c).length() < r
                     });
                     if centroid_in_circle && !boundary.is_empty() {
-                        // Pick first vertex (outside the circle) + normal offset
-                        Some(boundary[0] + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0)
+                        // The polygon centroid may be inside an embedded circle (e.g. the outer
+                        // piece of a square split by a corner-centred circle: the vertex average
+                        // is pulled toward the arc samples which all lie ON the circle boundary).
+                        // boundary[0] can itself be on the circle (crossing point) — using it as
+                        // sample_override would place the sample ON the sphere and cause incorrect
+                        // "inside" classification.  Instead, find the first vertex that is
+                        // genuinely outside every embedded circle.
+                        // Must exceed the maximum distance an on-circle vertex can be from
+                        // the true circle boundary after the center nudge in
+                        // split_polygon_by_circle_2d. The nudge is max(tol*200, TOLERANCE_MESH_LEGACY)
+                        // = max(2e-5, 1e-6) = 2e-5, so on-circle vertices can be up to
+                        // ~2e-5 outside the original circle radius. Use 1000× TOLERANCE_ABS
+                        // (1e-4) to safely exclude them — genuine outside vertices like
+                        // far corners (dist ~√2 ≈ 0.414 beyond the circle) are well above
+                        // this threshold.
+                        const OUTSIDE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                        let outside_pt = poly_2d.iter().zip(boundary.iter()).find(|(uv, _)| {
+                            embedded_circles.iter().all(|&(c, r)| {
+                                (*uv - c).length() > r + OUTSIDE_TOL
+                            })
+                        }).map(|(_, p3d)| *p3d);
+                        outside_pt.map(|p| p + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0)
                     } else {
                         None
                     }
                 } else {
                     None
                 };
+                if debug_split {
+                    let centroid_2d = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p) / poly_2d.len() as f64;
+                    let samp = sample_override.unwrap_or_else(|| {
+                        let c3d = if boundary.len() >= 3 {
+                            planar_polygon_centroid(&boundary, face.normal)
+                        } else { boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64 };
+                        c3d + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0
+                    });
+                    eprintln!("SPLIT_POLY nverts={} centroid2d=({:.4},{:.4}) sample_override={} sample=({:.4},{:.4},{:.4})",
+                        poly_2d.len(), centroid_2d.x, centroid_2d.y,
+                        sample_override.is_some(), samp.x, samp.y, samp.z);
+                    if poly_2d.len() <= 15 {
+                        for (i,v) in poly_2d.iter().enumerate() {
+                            eprintln!("  v[{i}]=({:.4},{:.4}) dist={:.4}", v.x, v.y, (*v - embedded_circles.first().map(|&(c,_)| c).unwrap_or(DVec2::ZERO)).length());
+                        }
+                    }
+                }
                 SubFace {
                     boundary,
                     surface: face.surface.clone(),
@@ -5055,8 +5260,15 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
     if sub_outside.last() != Some(&pt1) {
         sub_outside.push(pt1);
     }
-    // Add inner arc (forward) as the "hole" boundary
-    for &p in inner_arc.iter().skip(1).rev().skip(1) {
+    // Add inner arc forward (pt1 → pt2) as the closing boundary.
+    // The sub_inside polygon uses the arc REVERSED (pt2 → pt1), so sub_outside
+    // must use the FORWARD direction (pt1 → pt2) to create a non-self-intersecting
+    // boundary that correctly encloses the non-circle-side region.
+    // Using the reversed arc here would cause self-intersecting sub_outside polygons
+    // when the circle crossings are at corner vertices (e.g. sphere-plane cut at origin
+    // corner of a box where the arc passes through two corners of the face).
+    let n_arc = inner_arc.len();
+    for &p in inner_arc.iter().skip(1).take(n_arc.saturating_sub(2)) {
         sub_outside.push(p);
     }
     // Avoid duplicating pt2 when it's already the last element added, or when

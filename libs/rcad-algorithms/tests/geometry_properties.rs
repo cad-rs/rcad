@@ -5,7 +5,7 @@
 use rcad_algorithms::tolerance::*;
 use glam::DVec3;
 use rcad_algorithms::{boolean_op, total_surface_area, total_volume, BooleanOpType};
-use rcad_kernel::face_surface_area;
+use rcad_kernel::{face_surface_area, Surface3};
 use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep};
 
 #[test]
@@ -334,5 +334,87 @@ fn occt_style_bfuse_simple_e5_box_union_offset_prism_surface_area() {
     assert!(
         (a - 170.0).abs() <= tol,
         "surface area: expected ~170 (OCCT checkprops -s), got {a}"
+    );
+}
+
+/// OCCT `bcommon_simple/I9`: perpendicular equal-radius cylinders (Steinmetz).
+///
+/// DRAW script expectation: `checkprops result -s 160000` for `r = 100`.
+#[test]
+fn occt_style_bcommon_simple_i9_perpendicular_cylinders_surface_area() {
+    let cyla = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, 200.0),
+        DVec3::Z,
+        DVec3::X,
+        100.0,
+        400.0,
+    )
+    .expect("cyla");
+    let cylb = make_cylinder_brep(
+        DVec3::new(0.0, 0.0, 200.0),
+        DVec3::new(-1.0, 0.0, 0.0).normalize_or(DVec3::Z),
+        DVec3::new(0.0, 0.0, -1.0).normalize_or(DVec3::X),
+        100.0,
+        300.0,
+    )
+    .expect("cylb");
+    let r = boolean_op(BooleanOpType::Intersection, &cyla, &cylb).expect("intersection");
+
+    let total = total_surface_area(&r);
+    eprintln!("[i9] total surface area = {total}");
+
+    let tri_face_area = |face: &rcad_kernel::Face| -> f64 {
+        let mut a = 0.0_f64;
+        for tri in &face.triangles {
+            let p0 = r.vertices[tri[0]].point;
+            let p1 = r.vertices[tri[1]].point;
+            let p2 = r.vertices[tri[2]].point;
+            a += 0.5 * (p1 - p0).cross(p2 - p0).length();
+        }
+        a
+    };
+
+    let mut fi = 0usize;
+    let mut tri_total = 0.0_f64;
+    for solid in &r.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let a = face_surface_area(&r, face, fi);
+                let at = tri_face_area(face);
+                tri_total += at;
+                let sname = r
+                    .geom
+                    .face_surface
+                    .get(fi)
+                    .and_then(|o| *o)
+                    .and_then(|si| r.geom.surfaces.get(si))
+                    .map(|s| match s {
+                        Surface3::Plane(_) => "Plane",
+                        Surface3::Cylinder(_) => "Cylinder",
+                        Surface3::Cone(_) => "Cone",
+                        Surface3::Sphere(_) => "Sphere",
+                        Surface3::Torus(_) => "Torus",
+                        Surface3::BSpline(_) => "BSpline",
+                        Surface3::Bezier(_) => "Bezier",
+                        Surface3::Offset(_) => "Offset",
+                        Surface3::Trimmed(_) => "Trimmed",
+                        _ => "Other",
+                    })
+                    .unwrap_or("None");
+                eprintln!(
+                    "[i9] face[{fi}] surf={sname} wire_edges={} inner_wires={} area={a} tri_area={at}",
+                    face.outer_wire.edges.len(),
+                    face.inner_wires.len()
+                );
+                fi += 1;
+            }
+        }
+    }
+    eprintln!("[i9] total triangle area = {tri_total}");
+
+    let tol = (50.0 * TOLERANCE_RETRY_LADDER_COARSE).max(0.0625 * 160000.0_f64);
+    assert!(
+        (total - 160000.0).abs() <= tol,
+        "surface area: expected ~160000 (OCCT I9), got {total}"
     );
 }
