@@ -2812,6 +2812,20 @@ impl<'a> BooleanBuilder<'a> {
     /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
 
+        let _debug_sphere_polygons = |checkpoint: usize, polys: &[Vec<DVec2>]| {
+            if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+                eprintln!("[SPHERE_SPLIT] checkpoint={} polys={}", checkpoint, polys.len());
+                for (i, poly) in polys.iter().enumerate() {
+                    let u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                    let v_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let v_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    eprintln!("[SPHERE_SPLIT]   poly[{}]: u=[{:.4},{:.4}] v=[{:.4},{:.4}] nverts={}", i, u_min, u_max, v_min, v_max, poly.len());
+                }
+            }
+        };
+
+
         let face = &self.ds.faces[face_idx];
 
         // Need UV boundary to operate in parameter space
@@ -3120,6 +3134,11 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
         }
 
+        // CHECKPOINT 1: after initial trim collection (before sphere u-normalization)
+        if is_sphere {
+            _debug_sphere_polygons(1, &uv_polygons);
+        }
+
         // Normalise UV u-values to the sphere's [-蟺, 蟺] domain.
         // Periodic unwrapping + seam splitting can produce u outside [-蟺, 蟺] for
         // trims that cross the seam, causing the 3D boundary / tessellation to
@@ -3161,6 +3180,9 @@ impl<'a> BooleanBuilder<'a> {
                     })
                     .collect();
             }
+
+            // CHECKPOINT 2: after wide-polygon splitting
+            _debug_sphere_polygons(2, &uv_polygons);
 
             {
                 // Deduplicate overlapping polygons. Sequential trim splitting on
@@ -3214,6 +3236,9 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 uv_polygons = kept;
             }
+
+            // CHECKPOINT 3: after deduplication
+            _debug_sphere_polygons(3, &uv_polygons);
         }
 
 
@@ -3584,6 +3609,14 @@ fn curved_subface_boundary_3d(
         }
     }
 
+    // CHECKPOINT 5: after 3D point sampling
+    if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+        let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        eprintln!("[SPHERE_SPLIT] checkpoint=5 uv_poly_nverts={} sampled_pts={} is_winding={} u_range=[{:.4},{:.4}] v_range=[{:.4},{:.4}]",
+            uv_poly.len(), pts.len(), pu_max - pu_min > std::f64::consts::PI, pu_min, pu_max, v_min, v_max);
+    }
+
     // 2. Consecutive deduplication 鈥?collapse runs of pole/apex samples
     let mut deduped: Vec<DVec3> = Vec::new();
     for p in &pts {
@@ -3897,11 +3930,6 @@ fn handle_degenerate_points(
 
             if touches_north_pole || touches_south_pole {
                 // Sample the UV polygon edges more densely near poles
-                let pole_point = if touches_north_pole {
-                    s.center + s.axis * s.radius // North pole
-                } else {
-                    s.center - s.axis * s.radius // South pole
-                };
 
                 // Detect winding polygon (UV spans > pi in u) so edges that
                 // cross the seam go the SHORT way around the sphere in 3D.
@@ -3932,11 +3960,13 @@ fn handle_degenerate_points(
                             let t = k as f64 / n_samples as f64;
                             let u = a.x + t * delta;
                             let v = a.y + t * (b.y - a.y);
+                            // CHECKPOINT 4A: before v-clamp in winding path
+                            if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+                                eprintln!("[SPHERE_SPLIT] checkpoint=4a v_before_clamp={:.6}", v);
+                            }
                             let v_clamped = v.clamp(0.001, std::f64::consts::PI - 0.001);
                             let pt = s.point_at(u, v_clamped);
-                            if (pt - pole_point).length() > s.radius * 0.1 {
-                                boundary_3d.push(pt);
-                            }
+                            boundary_3d.push(pt);
                         }
                     } else {
                         for k in 0..n_samples {
@@ -3947,29 +3977,23 @@ fn handle_degenerate_points(
                             );
 
                             // Clamp v to avoid pole singularity
+                            // CHECKPOINT 4B: before v-clamp in non-winding path
+                            if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+                                eprintln!("[SPHERE_SPLIT] checkpoint=4b v_before_clamp={:.6}", uv.y);
+                            }
                             let v_clamped = uv.y.clamp(0.001, std::f64::consts::PI - 0.001);
                             let pt = s.point_at(uv.x, v_clamped);
 
-                            // Skip points very close to pole (will add pole point separately)
-                            if (pt - pole_point).length() > s.radius * 0.1 {
-                                boundary_3d.push(pt);
-                            }
+                            boundary_3d.push(pt);
                         }
                     }
                 }
 
-                // Add pole point if polygon contains it
-                if touches_north_pole || touches_south_pole {
-                    // Check if pole is inside the UV polygon
-                    let _pole_uv = if touches_north_pole {
-                        DVec2::new(0.0, 0.0)
-                    } else {
-                        DVec2::new(0.0, std::f64::consts::PI)
-                    };
-
-                    // Add pole point at appropriate location
-                    boundary_3d.push(pole_point);
-                }
+                // NOTE: we do NOT add a separate pole-point vertex here.  The
+                // clamped-v edge samples (v clamped to 0.001 / PI-0.001) already
+                // span the full u-range of the face.  Adding a pole point at
+                // (0.0, v=0|PI) creates a diagonal closing edge for faces whose
+                // u-range doesn't include 0, deforming the UV polygon.
             } else {
                 // No pole involvement - standard sampling
                 for &uv in uv_poly {

@@ -811,6 +811,32 @@ fn spherical_holed_uv_mask_setup(
     let use_uv_winding = raw_u_range <= two_pi + 0.5
         && outer_u_span.abs() <= std::f64::consts::PI + 0.1;
 
+    if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+        // Compute shoelace area of UV polygon (in UV^2 units, not physical area)
+        let mut uv_area = 0.0;
+        let n = outer_uv.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            uv_area += outer_uv[i].x * outer_uv[j].y;
+            uv_area -= outer_uv[j].x * outer_uv[i].y;
+        }
+        uv_area = (uv_area * 0.5).abs();
+        let expected_uv_area = (umax - umin) * (vmax - vmin);
+        eprintln!("[SPHERE_AREA] use_uv_winding={} u_range=[{:.6},{:.6}] v_range=[{:.6},{:.6}] outer_uv_nverts={} outer_u_span={:.6} raw_u_range={:.6} uv_shoelace_area={:.6} expected_bbox_area={:.6} ratio={:.6}",
+            use_uv_winding, umin, umax, vmin, vmax, outer_uv.len(), outer_u_span, raw_u_range, uv_area, expected_uv_area, uv_area / expected_uv_area);
+        // Print first 5 and last 5 vertices only
+        let n = outer_uv.len();
+        for i in 0..n.min(5) {
+            eprintln!("[SPHERE_AREA]   outer_uv[{}]: u={:.6} v={:.6}", i, outer_uv[i].x, outer_uv[i].y);
+        }
+        if n > 10 {
+            eprintln!("[SPHERE_AREA]   ... ({} vertices omitted)", n - 10);
+        }
+        for i in n.saturating_sub(5)..n {
+            eprintln!("[SPHERE_AREA]   outer_uv[{}]: u={:.6} v={:.6}", i, outer_uv[i].x, outer_uv[i].y);
+        }
+    }
+
     Some(SphereHoledMaskCtx {
         outer_uv,
         outer_3d,
@@ -845,8 +871,11 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
     let use_uv = ctx.use_uv_winding;
     let emit = |outer_poly: &[DVec2], use_inner: bool| -> f64 {
         let mut a = 0.0f64;
+        let mut n_inside = 0u64;
+        let mut n_total = 0u64;
         for i in 0..nu {
             for j in 0..nv {
+                n_total += 1;
                 let u0 = umin + i as f64 * du;
                 let u1 = u0 + du;
                 let v0 = vmin + j as f64 * dv;
@@ -869,6 +898,7 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
                 if !all_corners_in {
                     continue;
                 }
+                n_inside += 1;
                 if use_inner {
                     let in_hole = if use_uv {
                         inner.iter().any(|h| {
@@ -888,6 +918,9 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
                 }
                 a += r2 * du * (v0.cos() - v1.cos());
             }
+        }
+        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+            eprintln!("[SPHERE_GRID] nu={} nv={} n_inside={} n_total={} ratio={:.6}", nu, nv, n_inside, n_total, n_inside as f64 / n_total as f64);
         }
         a
     };
