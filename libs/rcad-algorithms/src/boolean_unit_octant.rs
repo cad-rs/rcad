@@ -32,6 +32,7 @@ use rcad_modeling::builder::ops::LoftHistory;
 use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
 use crate::BooleanOpType;
 
+use crate::brep_int_curve_surface::is_point_inside_by_ray;
 use crate::tolerance::*;
 
 const TOL: f64 = TOLERANCE_RETRY_LADDER_COARSE;
@@ -126,6 +127,57 @@ pub fn try_identical_operands(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<B
         BooleanOpType::Union | BooleanOpType::Intersection => Some(a.clone()),
         BooleanOpType::Difference => Some(BRep::default()),
     }
+}
+
+/// Fast-path when one solid fully contains the other.
+///
+/// For Union: B inside A → return A. For Intersection: B inside A → return B.
+/// For Difference: A inside B → return empty (result has no volume).
+/// For Difference B inside A: not handled (falls through to generic Pave-Filler).
+pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
+    for (outer, inner, swapped) in [(a, b, false), (b, a, true)] {
+        let Some([omin, omax]) = outer.bounding_box() else { continue };
+        let Some([imin, imax]) = inner.bounding_box() else { continue };
+        // Bbox of inner must be within bbox of outer (inclusive with tolerance).
+        let tol = TOLERANCE_ABS;
+        if imin.x < omin.x - tol || imax.x > omax.x + tol { continue; }
+        if imin.y < omin.y - tol || imax.y > omax.y + tol { continue; }
+        if imin.z < omin.z - tol || imax.z > omax.z + tol { continue; }
+        // All inner vertices must be inside the outer solid (not just its bbox).
+        // This is critical for curved solids (e.g. sphere bbox contains box corners
+        // that are outside the sphere surface).
+        let all_inside = inner.vertices.iter().all(|v| is_point_inside_by_ray(v.point, outer));
+        if !all_inside { continue; }
+        return match (op, swapped) {
+            (BooleanOpType::Union, _) => Some(outer.clone()),
+            (BooleanOpType::Intersection, false) => Some(inner.clone()),
+            (BooleanOpType::Intersection, true) => Some(outer.clone()),
+            (BooleanOpType::Difference, true) => Some(BRep::default()),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Fast-path for Union when shapes are bbox-disjoint (no overlap at all).
+///
+/// When the bounding boxes have a gap on at least one axis, the shapes are
+/// truly disjoint — no intersection computation is needed and [`BRep::compound_from_shapes`]
+/// produces a correct combined BRep.
+///
+/// Returns `None` for touching or overlapping shapes (bboxes meet or intersect
+/// on every axis), letting the caller fall through to the generic Pave/Builder path.
+pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
+    let Some([amin, amax]) = a.bounding_box() else { return None; };
+    let Some([bmin, bmax]) = b.bounding_box() else { return None; };
+    // Gap on ANY axis → bboxes are disjoint (no contact, no volume overlap).
+    if amax.x < bmin.x || amin.x > bmax.x
+        || amax.y < bmin.y || amin.y > bmax.y
+        || amax.z < bmin.z || amin.z > bmax.z
+    {
+        return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
+    }
+    None
 }
 
 /// Intersection: unit sphere (kernel primitive) ∩ axis box [0,1]³.

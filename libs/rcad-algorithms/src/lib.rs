@@ -2627,7 +2627,16 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         };
     }
 
+    // Fast-path: containment (one solid fully inside another).
+    if let Some(r) = boolean_unit_octant::try_containment(a, b, op) {
+        return Ok(r);
+    }
+
     if matches!(op, BooleanOpType::Union) {
+        // Fast-path: bbox-disjoint → just combine without Pave-Filler.
+        if let Some(r) = boolean_unit_octant::try_union_disjoint(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 
