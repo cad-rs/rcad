@@ -5408,7 +5408,10 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
             }
 
             // Find the first internal edge shared by exactly 2 same-domain faces.
-            for (edge_idx, face_refs) in &edge_to_faces {
+            // Sort by edge index for deterministic iteration (HashMap order varies between runs).
+            let mut edge_faces_sorted: Vec<(usize, &Vec<usize>)> = edge_to_faces.iter().map(|(&k, v)| (k, v)).collect();
+            edge_faces_sorted.sort_by_key(|(k, _)| *k);
+            for (edge_idx, face_refs) in &edge_faces_sorted {
                 if face_refs.len() != 2 {
                     continue;
                 }

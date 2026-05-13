@@ -1642,6 +1642,16 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+        // For sphere faces, use UV tessellation into patches even when there are
+        // intersection curves. The sphere's great-circle trim curves in UV space
+        // are sinusoidal and don't reliably split the face into proper sub-regions;
+        // tessellating gives each patch an independent sample point for correct
+        // In/Out classification against the other solid.
+        if matches!(&face.surface, Surface3::Sphere(_)) {
+            let subs = self.tessellate_sphere_face(face_idx);
+            return subs;
+        }
+
         match &face.surface {
             Surface3::Cylinder(_)
             | Surface3::Sphere(_)
@@ -1671,8 +1681,8 @@ impl<'a> BooleanBuilder<'a> {
         };
         use std::f64::consts::PI;
 
-        const N_U: usize = 12;  // longitude divisions
-        const N_V: usize = 6;   // latitude divisions
+        const N_U: usize = 18;  // longitude divisions
+        const N_V: usize = 9;   // latitude divisions
         const N_SEG: usize = 16; // samples along each patch edge
 
         let mut subs = Vec::with_capacity(N_U * N_V);
