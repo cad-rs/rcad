@@ -803,7 +803,7 @@ fn try_fuse_orthogonal_group(
         let orth = polygon_is_orthogonal(&poly, &project_uv, tol);
         let ok_rect = orth
             || (poly.len() == 4 && four_uv_points_on_rectangle_corners(&uv, t))
-            || (world_axes.is_some() && poly.len() == 4);
+            || (world_axes.is_some() && poly.len() == 4 && orth);
         if !ok_rect {
             return false;
         }
