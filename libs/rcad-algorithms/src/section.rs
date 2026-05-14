@@ -20,6 +20,7 @@
 //! - Multiple section support: parallel planes, cross-sections along a path
 
 use glam::DVec3;
+use glam::DVec2;
 use rcad_kernel::{face_tolerance, BRep};
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
@@ -31,6 +32,10 @@ use std::f64::consts::PI;
 use crate::inttools::{
     intersect_surfaces_with_density_tol, SurfaceCurve, SurfaceIntersectionResult,
 };
+use crate::inttools::plane_cone::PlaneConicalResult;
+use crate::inttools::plane_cylinder::PlaneCylinderResult;
+use crate::inttools::plane_plane::PlanePlaneResult;
+use crate::inttools::plane_sphere::PlaneSphereResult;
 use crate::tolerance::{
     intss_geom_tol_floor,
     max_face_tolerance_or_abs_pair,
@@ -38,7 +43,7 @@ use crate::tolerance::{
     TOLERANCE_AREA_REL, TOLERANCE_CLAMP_MIN, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
     TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_MID,
 };
-use crate::triangulate::triangulate_polygon;
+use crate::triangulate::{mesh_brep, triangulate_polygon, TessellationParams};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -397,6 +402,663 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
     }
 
     result
+}
+
+/// Pre-computed planar face info for fast 2D point-in-polygon.
+struct PlanarFaceInfo {
+    plane: Plane,
+    x_axis: DVec3,
+    y_axis: DVec3,
+    wire_2d: Vec<DVec2>,
+}
+
+/// Extract planar face info if the face at `flat_idx` is a Plane surface.
+fn extract_planar_face_info(brep: &BRep, flat_idx: usize) -> Option<PlanarFaceInfo> {
+    let surf = brep
+        .geom
+        .face_surface
+        .get(flat_idx)
+        .and_then(|o| *o)
+        .and_then(|si| brep.geom.surfaces.get(si))?;
+    let plane = match surf {
+        Surface3::Plane(p) => *p,
+        _ => return None,
+    };
+    let x_axis = any_perpendicular(plane.normal);
+    let y_axis = plane.normal.cross(x_axis);
+
+    // Walk faces to find the face at flat_idx.
+    let mut count = 0usize;
+    let mut wire_2d = Vec::new();
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                if count == flat_idx {
+                    for we in &face.outer_wire.edges {
+                        if let Some(edge) = brep.edges.get(we.idx) {
+                            let vidx = if we.forward {
+                                edge.start
+                            } else {
+                                edge.end
+                            };
+                            if let Some(v) = brep.vertices.get(vidx) {
+                                let p = v.point - plane.origin;
+                                wire_2d.push(DVec2::new(p.dot(x_axis), p.dot(y_axis)));
+                            }
+                        }
+                    }
+                    if wire_2d.len() >= 3 {
+                        return Some(PlanarFaceInfo {
+                            plane,
+                            x_axis,
+                            y_axis,
+                            wire_2d,
+                        });
+                    }
+                    return None;
+                }
+                count += 1;
+            }
+        }
+    }
+    None
+}
+
+/// 2D ray-casting point-in-polygon test with tolerance margin.
+fn point_in_polygon_2d(p: DVec2, poly: &[DVec2], tol: f64) -> bool {
+    let mut inside = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let yi = poly[i].y;
+        let yj = poly[j].y;
+        if ((yi + tol > p.y) != (yj + tol > p.y))
+            || ((yi - tol > p.y) != (yj - tol > p.y))
+        {
+            let x_intersect = poly[j].x
+                + (poly[i].x - poly[j].x) * (p.y - yj) / (yi - yj);
+            if p.x < x_intersect + tol {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Check whether `point` (which lies in the plane of the planar face) is
+/// inside the face's boundary polygon.
+fn point_in_planar_face(
+    point: DVec3,
+    info: &PlanarFaceInfo,
+    tol: f64,
+) -> bool {
+    let v = point - info.plane.origin;
+    let p2 = DVec2::new(v.dot(info.x_axis), v.dot(info.y_axis));
+    point_in_polygon_2d(p2, &info.wire_2d, tol)
+}
+
+/// Sample an infinite Line3 and keep the portion(s) within both planar faces.
+/// Returns polylines (possibly multiple segments if the line re-enters).
+fn sample_line_trimmed_to_planar_faces(
+    line: &Line3,
+    info_a: Option<&PlanarFaceInfo>,
+    info_b: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+) -> Vec<Vec<DVec3>> {
+    // Sample over a generous range based on the line direction.
+    // Use 2000 points from -100 to +100 in parameter space.
+    let n = 2000usize;
+    let t_range = 100.0;
+    let pts: Vec<DVec3> = (0..n)
+        .map(|i| line.point_at(-t_range + 2.0 * t_range * i as f64 / (n - 1) as f64))
+        .collect();
+
+    // Classify each point.
+    let in_both: Vec<bool> = pts
+        .iter()
+        .map(|p| {
+            info_a.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
+                && info_b.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
+        })
+        .collect();
+
+    // Extract contiguous runs.
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < pts.len() {
+        if in_both[i] {
+            let start = i;
+            while i < pts.len() && in_both[i] {
+                i += 1;
+            }
+            if i - start >= 2 {
+                result.push(pts[start..i].to_vec());
+            }
+        } else {
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Sample a closed Curve3 and keep the portion(s) within a planar face.
+fn sample_closed_curve_trimmed_to_planar_faces<C>(
+    curve: &C,
+    sample_fn: &dyn Fn(&C, usize) -> Vec<DVec3>,
+    info_a: Option<&PlanarFaceInfo>,
+    info_b: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+) -> Vec<Vec<DVec3>> {
+    let n = 128usize;
+    let pts = sample_fn(curve, n);
+
+    let in_both: Vec<bool> = pts
+        .iter()
+        .map(|p| {
+            info_a.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
+                && info_b.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
+        })
+        .collect();
+
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < pts.len() {
+        if in_both[i] {
+            let start = i;
+            while i < pts.len() && in_both[i] {
+                i += 1;
+            }
+            if i - start >= 2 {
+                result.push(pts[start..i].to_vec());
+            }
+        } else {
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Helper to sample a Circle3.
+fn sample_circle(c: &Circle3, n: usize) -> Vec<DVec3> {
+    (0..n)
+        .map(|i| c.point_at(2.0 * PI * i as f64 / (n - 1) as f64))
+        .collect()
+}
+
+/// Helper to sample an Ellipse3.
+fn sample_ellipse(e: &Ellipse3, n: usize) -> Vec<DVec3> {
+    (0..n)
+        .map(|i| e.point_at(2.0 * PI * i as f64 / (n - 1) as f64))
+        .collect()
+}
+
+/// Push segments from a polyline into the segment list.
+fn push_polyline_segments(polyline: &[DVec3], segments: &mut Vec<[DVec3; 2]>) {
+    for w in polyline.windows(2) {
+        segments.push([w[0], w[1]]);
+    }
+}
+
+/// Try analytic intersection for a face pair, returning true if any segments
+/// were produced.
+fn try_analytic_face_pair(
+    brep_a: &BRep,
+    flat_a: usize,
+    a_info: Option<&PlanarFaceInfo>,
+    brep_b: &BRep,
+    flat_b: usize,
+    b_info: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+    segments: &mut Vec<[DVec3; 2]>,
+) -> bool {
+    use Surface3::*;
+
+    let a_surf = brep_a
+        .geom
+        .face_surface
+        .get(flat_a)
+        .and_then(|o| *o)
+        .and_then(|si| brep_a.geom.surfaces.get(si));
+    let b_surf = brep_b
+        .geom
+        .face_surface
+        .get(flat_b)
+        .and_then(|o| *o)
+        .and_then(|si| brep_b.geom.surfaces.get(si));
+
+    let (sa, sb) = match (a_surf, b_surf) {
+        (Some(sa), Some(sb)) => (sa, sb),
+        _ => return false,
+    };
+
+    match (sa, sb) {
+        // ── Plane × Plane ──────────────────────────────────────────────
+        (Plane(pa), Plane(pb)) => {
+            let result = crate::inttools::plane_plane::intersect_plane_plane(pa, pb);
+            match result {
+                PlanePlaneResult::Line(line) => {
+                    let polylines = sample_line_trimmed_to_planar_faces(
+                        &line,
+                        a_info,
+                        b_info,
+                        point_tol,
+                    );
+                    for pl in &polylines {
+                        push_polyline_segments(pl, segments);
+                    }
+                    !polylines.is_empty()
+                }
+                _ => false,
+            }
+        }
+
+        // ── Plane × Cylinder ───────────────────────────────────────────
+        (Plane(pa), Cylinder(cb)) => {
+            intersect_plane_cylinder_pair(pa, cb, a_info, b_info, point_tol, segments)
+        }
+        (Cylinder(ca), Plane(pb)) => {
+            intersect_plane_cylinder_pair(pb, ca, b_info, a_info, point_tol, segments)
+        }
+
+        // ── Plane × Sphere ─────────────────────────────────────────────
+        (Plane(pa), Sphere(sb)) => {
+            intersect_plane_sphere_pair(pa, sb, a_info, b_info, point_tol, segments)
+        }
+        (Sphere(sa), Plane(pb)) => {
+            intersect_plane_sphere_pair(pb, sa, b_info, a_info, point_tol, segments)
+        }
+
+        // ── Plane × Cone ───────────────────────────────────────────────
+        (Plane(pa), Cone(cb)) => {
+            intersect_plane_cone_pair(pa, cb, a_info, b_info, point_tol, segments)
+        }
+        (Cone(ca), Plane(pb)) => {
+            intersect_plane_cone_pair(pb, ca, b_info, a_info, point_tol, segments)
+        }
+
+        _ => false,
+    }
+}
+
+fn intersect_plane_cylinder_pair(
+    plane: &Plane,
+    cyl: &CylindricalSurface,
+    plane_info: Option<&PlanarFaceInfo>,
+    cyl_info: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+    segments: &mut Vec<[DVec3; 2]>,
+) -> bool {
+    let result = crate::inttools::plane_cylinder::intersect_plane_cylinder(plane, cyl);
+    let mut found = false;
+    match result {
+        PlaneCylinderResult::TangentLine(line) => {
+            let polylines =
+                sample_line_trimmed_to_planar_faces(&line, plane_info, cyl_info, point_tol);
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneCylinderResult::TwoLines(l1, l2) => {
+            for line in [l1, l2] {
+                let polylines =
+                    sample_line_trimmed_to_planar_faces(&line, plane_info, cyl_info, point_tol);
+                for pl in &polylines {
+                    push_polyline_segments(pl, segments);
+                    found = true;
+                }
+            }
+        }
+        PlaneCylinderResult::Circle(c) => {
+            let polylines = sample_closed_curve_trimmed_to_planar_faces(
+                &c,
+                &sample_circle,
+                plane_info,
+                cyl_info,
+                point_tol,
+            );
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneCylinderResult::Ellipse(e) => {
+            let polylines = sample_closed_curve_trimmed_to_planar_faces(
+                &e,
+                &sample_ellipse,
+                plane_info,
+                cyl_info,
+                point_tol,
+            );
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneCylinderResult::NoIntersection => {}
+    }
+    found
+}
+
+fn intersect_plane_sphere_pair(
+    plane: &Plane,
+    sphere: &SphericalSurface,
+    plane_info: Option<&PlanarFaceInfo>,
+    sphere_info: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+    segments: &mut Vec<[DVec3; 2]>,
+) -> bool {
+    let result = crate::inttools::plane_sphere::intersect_plane_sphere(plane, sphere);
+    match result {
+        PlaneSphereResult::Circle(c) => {
+            let polylines = sample_closed_curve_trimmed_to_planar_faces(
+                &c,
+                &sample_circle,
+                plane_info,
+                sphere_info,
+                point_tol,
+            );
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+            }
+            !polylines.is_empty()
+        }
+        _ => false,
+    }
+}
+
+fn intersect_plane_cone_pair(
+    plane: &Plane,
+    cone: &ConicalSurface,
+    plane_info: Option<&PlanarFaceInfo>,
+    cone_info: Option<&PlanarFaceInfo>,
+    point_tol: f64,
+    segments: &mut Vec<[DVec3; 2]>,
+) -> bool {
+    let result = crate::inttools::plane_cone::intersect_plane_cone(plane, cone);
+    let mut found = false;
+    match result {
+        PlaneConicalResult::Circle(c) => {
+            let polylines = sample_closed_curve_trimmed_to_planar_faces(
+                &c, &sample_circle, plane_info, cone_info, point_tol,
+            );
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneConicalResult::Ellipse(e) => {
+            let polylines = sample_closed_curve_trimmed_to_planar_faces(
+                &e, &sample_ellipse, plane_info, cone_info, point_tol,
+            );
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneConicalResult::Parabola(p) => {
+            // Parabola: sample over a range
+            let pts: Vec<DVec3> = (0..128)
+                .map(|i| p.point_at(-20.0 + 40.0 * i as f64 / 127.0))
+                .collect();
+            let in_both: Vec<bool> = pts.iter()
+                .map(|p| {
+                    plane_info.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
+                        && cone_info.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
+                })
+                .collect();
+            let mut i = 0;
+            while i < pts.len() {
+                if in_both[i] {
+                    let start = i;
+                    while i < pts.len() && in_both[i] { i += 1; }
+                    if i - start >= 2 {
+                        push_polyline_segments(&pts[start..i], segments);
+                        found = true;
+                    }
+                } else { i += 1; }
+            }
+        }
+        PlaneConicalResult::Hyperbola(h) => {
+            let pts: Vec<DVec3> = (0..128)
+                .map(|i| h.point_at(-10.0 + 20.0 * i as f64 / 127.0))
+                .collect();
+            let in_both: Vec<bool> = pts.iter()
+                .map(|p| {
+                    plane_info.map_or(true, |ia| point_in_planar_face(*p, ia, point_tol))
+                        && cone_info.map_or(true, |ib| point_in_planar_face(*p, ib, point_tol))
+                })
+                .collect();
+            let mut i = 0;
+            while i < pts.len() {
+                if in_both[i] {
+                    let start = i;
+                    while i < pts.len() && in_both[i] { i += 1; }
+                    if i - start >= 2 {
+                        push_polyline_segments(&pts[start..i], segments);
+                        found = true;
+                    }
+                } else { i += 1; }
+            }
+        }
+        PlaneConicalResult::SingleLine(l) | PlaneConicalResult::TwoLines(l, _) => {
+            let polylines =
+                sample_line_trimmed_to_planar_faces(&l, plane_info, cone_info, point_tol);
+            for pl in &polylines {
+                push_polyline_segments(pl, segments);
+                found = true;
+            }
+        }
+        PlaneConicalResult::Point(_) | PlaneConicalResult::NoIntersection => {}
+    }
+    found
+}
+
+/// Section curves between two BReps (all face-pair intersections).
+///
+/// Uses fast closed-form analytic intersection for analytic surface pairs
+/// (plane-plane, plane-cylinder, plane-sphere, plane-cone) with 2D
+/// point-in-polygon trimming to face boundaries. Falls back to triangle-soup
+/// intersection for other surface types.
+///
+/// Like OCCT `BRepAlgoAPI_Section` applied to two whole shapes.
+pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
+    // Tessellate both BReps so curved surfaces produce triangles for fallback.
+    let mut a_tess = a.clone();
+    let mut b_tess = b.clone();
+    mesh_brep(&mut a_tess, &TessellationParams::standard());
+    mesh_brep(&mut b_tess, &TessellationParams::analysis());
+
+    let pair_eps = crate::tolerance::tessellation_merge_linear_from_two_breps(a, b)
+        .max(TOLERANCE_ABS);
+    let merge_eps = pair_eps;
+    let point_tol = pair_eps.max(TOLERANCE_ABS);
+
+    // Pre-compute planar face info for fast trimming.
+    let a_face_cache: Vec<Option<PlanarFaceInfo>> = {
+        let mut c = Vec::new();
+        let mut flat = 0usize;
+        for solid in &a_tess.solids {
+            for shell in &solid.shells {
+                for _face in &shell.faces {
+                    c.push(extract_planar_face_info(&a_tess, flat));
+                    flat += 1;
+                }
+            }
+        }
+        c
+    };
+    let b_face_cache: Vec<Option<PlanarFaceInfo>> = {
+        let mut c = Vec::new();
+        let mut flat = 0usize;
+        for solid in &b_tess.solids {
+            for shell in &solid.shells {
+                for _face in &shell.faces {
+                    c.push(extract_planar_face_info(&b_tess, flat));
+                    flat += 1;
+                }
+            }
+        }
+        c
+    };
+
+    // Collect segments from all non-coplanar face pairs.
+    let mut segments: Vec<[DVec3; 2]> = Vec::new();
+    {
+        let mut a_flat = 0usize;
+        for a_solid in &a_tess.solids {
+            for a_shell in &a_solid.shells {
+                for a_face in &a_shell.faces {
+                    let mut b_flat = 0usize;
+                    for b_solid in &b_tess.solids {
+                        for b_shell in &b_solid.shells {
+                            for b_face in &b_shell.faces {
+                                if !is_coplanar_face_pair(
+                                    &a_tess, a_flat, &b_tess, b_flat,
+                                ) {
+                                    let used_analytic = try_analytic_face_pair(
+                                        &a_tess,
+                                        a_flat,
+                                        a_face_cache[a_flat].as_ref(),
+                                        &b_tess,
+                                        b_flat,
+                                        b_face_cache[b_flat].as_ref(),
+                                        point_tol,
+                                        &mut segments,
+                                    );
+
+                                    if !used_analytic {
+                                        // Fall back to triangle-triangle intersection.
+                                        let a_tris = face_triangles(&a_tess, a_face);
+                                        let b_tris = face_triangles(&b_tess, b_face);
+                                        for ta in &a_tris {
+                                            for tb in &b_tris {
+                                                if let Some(seg) =
+                                                    triangle_triangle_intersect_eps(
+                                                        ta, tb, pair_eps,
+                                                    )
+                                                {
+                                                    segments.push(seg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                b_flat += 1;
+                            }
+                        }
+                    }
+                    a_flat += 1;
+                }
+            }
+        }
+    }
+
+    if segments.is_empty() {
+        return BRep::new();
+    }
+
+    // Deduplicate colinear overlapping segments.
+    let same_line_eps = merge_eps.max(0.01);
+    dedup_colinear_segments(&mut segments, same_line_eps);
+
+    let polylines = chain_segments_eps(segments, merge_eps);
+    build_brep_from_polylines(&polylines)
+}
+
+/// Remove colinear overlapping segments, merging them so the chainer produces
+/// clean non-oscillating polylines.
+fn dedup_colinear_segments(segs: &mut Vec<[DVec3; 2]>, eps: f64) {
+    let eps = eps.max(TOLERANCE_CLAMP_MIN);
+    let mut i = 0;
+    while i < segs.len() {
+        let [a, b] = segs[i];
+        let dir = (b - a).normalize();
+        let len = (b - a).length();
+
+        if len < eps {
+            segs.swap_remove(i);
+            continue;
+        }
+
+        let mut merged = false;
+        let mut j = i + 1;
+        while j < segs.len() {
+            let [c, d] = segs[j];
+            let c_dir = (d - c).normalize();
+            let c_len = (d - c).length();
+
+            if c_len < eps {
+                segs.swap_remove(j);
+                continue;
+            }
+
+            // Check colinearity and same offset
+            if dir.dot(c_dir).abs() > 1.0 - eps {
+                // Same line check: perpendicular distance from c (and d) to the
+                // line through a in direction dir must be within eps.
+                let perp_dist = ((c - a) - (c - a).dot(dir) * dir).length();
+                if perp_dist > eps {
+                    j += 1;
+                    continue;
+                }
+                // Project [c, d] onto the line defined by [a, b]
+                let t_c = (c - a).dot(dir);
+                let t_d = (d - a).dot(dir);
+                let c_t0 = t_c.min(t_d);
+                let c_t1 = t_c.max(t_d);
+
+                // Check overlap: intervals [0, len] and [c_t0, c_t1] overlap
+                if c_t1 >= -eps && c_t0 <= len + eps {
+                    let new_t0 = 0.0f64.min(c_t0);
+                    let new_t1 = len.max(c_t1);
+                    segs[i] = [a + dir * new_t0, a + dir * new_t1];
+                    segs.swap_remove(j);
+                    merged = true;
+                    break; // segs[i] changed — restart inner loop
+                }
+            }
+            j += 1;
+        }
+
+        if merged {
+            continue; // re-check same i with new segs[i]
+        }
+        i += 1;
+    }
+}
+
+/// Check whether the two faces (identified by their flat indices) are coplanar
+/// planes — i.e. both are [`Surface3::Plane`] with the same normal and origin
+/// offset.  Triangle soup intersection of coplanar faces produces spurious
+/// area-boundary segments instead of clean section curves, so callers should
+/// skip those face pairs.
+fn is_coplanar_face_pair(brep_a: &BRep, flat_a: usize, brep_b: &BRep, flat_b: usize) -> bool {
+    let surf_a = brep_a
+        .geom
+        .face_surface
+        .get(flat_a)
+        .and_then(|o| *o)
+        .and_then(|si| brep_a.geom.surfaces.get(si));
+    let surf_b = brep_b
+        .geom
+        .face_surface
+        .get(flat_b)
+        .and_then(|o| *o)
+        .and_then(|si| brep_b.geom.surfaces.get(si));
+
+    match (surf_a, surf_b) {
+        (Some(Surface3::Plane(pa)), Some(Surface3::Plane(pb))) => {
+            // Same normal direction
+            if (pa.normal.dot(pb.normal).abs() - 1.0).abs() > TOLERANCE_ABS {
+                return false;
+            }
+            // Same distance from origin — project the origin offset onto either normal
+            let dist = (pa.origin - pb.origin).dot(pa.normal).abs();
+            dist < TOLERANCE_ABS
+        }
+        _ => false,
+    }
 }
 
 /// Convenience: extract all section polylines as ordered lists of 3D points.

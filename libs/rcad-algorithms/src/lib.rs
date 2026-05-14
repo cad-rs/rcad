@@ -703,9 +703,9 @@ pub use projection::{
     project_wire_on_surface,
 };
 pub use section::{
-    SectionCurve, brep_triangle_soup, intersect_triangle_soups, intersect_triangle_soups_adaptive,
-    intersect_triangle_soups_eps, intersect_triangle_soups_for_brep_tolerance, section,
-    section_curves, section_polylines,
+    SectionCurve, brep_section, brep_triangle_soup, intersect_triangle_soups,
+    intersect_triangle_soups_adaptive, intersect_triangle_soups_eps,
+    intersect_triangle_soups_for_brep_tolerance, section, section_curves, section_polylines,
 };
 pub use shape_algo::{
     // Algorithm container
