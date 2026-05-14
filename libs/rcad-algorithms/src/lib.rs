@@ -2444,7 +2444,19 @@ fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
     };
     let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
     let tol = tolerance::TOLERANCE_ABS.max(tolerance::TOLERANCE_LEN_MIN * scale);
-    (amin - bmin).length() <= tol && (amax - bmax).length() <= tol
+    if (amin - bmin).length() > tol || (amax - bmax).length() > tol {
+        return false;
+    }
+    // Bbox + face count is not sufficient — an inscribed rotated box shares
+    // the same bbox as its container (e.g. bopcut_simple/F5).
+    // Also check that vertex sets match (identical shapes have identical vertices).
+    if a.vertices.len() != b.vertices.len() {
+        return false;
+    }
+    let a_pts: Vec<glam::DVec3> = a.vertices.iter().map(|v| v.point).collect();
+    let b_pts: Vec<glam::DVec3> = b.vertices.iter().map(|v| v.point).collect();
+    a_pts.iter().all(|pa| b_pts.iter().any(|pb| (pa - pb).length() <= tol))
+        && b_pts.iter().all(|pb| a_pts.iter().any(|pa| (pa - pb).length() <= tol))
 }
 
 fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep) -> bool {
