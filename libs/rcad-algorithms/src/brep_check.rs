@@ -1,11 +1,11 @@
-//! BRep validity checker.
+﻿//! BRep validity checker.
 //!
 //! Analogous to OCCT `BRepCheck_Analyzer`. Checks structural and geometric
 //! consistency of a BRep without modifying it.
 //!
 //! # Checks performed
 //!
-//! - **C1 Wire closure**: every wire must form a closed chain — the end vertex of
+//! - **C1 Wire closure**: every wire must form a closed chain 鈥?the end vertex of
 //!   each edge must equal the start vertex of the next edge.
 //! - **C2 Face normal consistency**: each face's stored normal must not be a zero
 //!   vector.
@@ -100,7 +100,7 @@ pub enum CheckIssue {
         /// Index of the other crossing edge within the outer wire.
         edge_b: usize,
     },
-    // ── Geometry validation issues ─────────────────────────────────────────────
+    // 鈹€鈹€ Geometry validation issues 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Surface continuity violation between adjacent faces.
     SurfaceContinuityViolation {
         solid: usize,
@@ -135,7 +135,7 @@ pub enum CheckIssue {
         stored_tolerance: f64,
         required_tolerance: f64,
     },
-    // ── Topology validation issues ─────────────────────────────────────────────
+    // 鈹€鈹€ Topology validation issues 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Shell has inconsistent orientation (mixed inward/outward normals).
     ShellOrientationInconsistent {
         solid: usize,
@@ -166,7 +166,7 @@ pub enum CheckIssue {
         /// Number of inner wire vertices outside outer wire boundary
         vertices_outside: usize,
     },
-    // ── Tolerance issues ───────────────────────────────────────────────────────
+    // 鈹€鈹€ Tolerance issues 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Adjacent faces have inconsistent tolerances.
     ToleranceInconsistency {
         edge: usize,
@@ -182,7 +182,7 @@ pub enum CheckIssue {
         stored_tolerance: f64,
         required_tolerance: f64,
     },
-    // ── Quality metric issues ─────────────────────────────────────────────────
+    // 鈹€鈹€ Quality metric issues 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Face has poor aspect ratio.
     PoorAspectRatio {
         solid: usize,
@@ -378,7 +378,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
         }
     }
 
-    // C6: manifold check — each edge must be shared by exactly 2 faces.
+    // C6: manifold check 鈥?each edge must be shared by exactly 2 faces.
     // Count how many faces reference each edge across all solids/shells/faces.
     let mut edge_face_count: Vec<usize> = vec![0; n_edges];
     for solid in &brep.solids {
@@ -462,7 +462,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                     continue;
                 }
 
-                // C1: wire closure — end of edge[i] must match start of edge[i+1]
+                // C1: wire closure 鈥?end of edge[i] must match start of edge[i+1]
                 let n = wire_verts.len();
                 for i in 0..n {
                     let next = (i + 1) % n;
@@ -483,7 +483,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                     }
                 }
 
-                // C7: wire self-intersection — each vertex should appear at most
+                // C7: wire self-intersection 鈥?each vertex should appear at most
                 // twice in the wire (once as start of an edge, once as end of another).
                 check_wire_self_intersection(
                     &wire_verts,
@@ -492,7 +492,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                     &mut issues,
                 );
 
-                // C8: geometric self-intersection — check if non-adjacent edges of
+                // C8: geometric self-intersection 鈥?check if non-adjacent edges of
                 // the outer wire cross each other in 3D space (projects to 2D via
                 // the face plane for planar faces).
                 check_geometric_self_intersection(
@@ -616,7 +616,7 @@ fn check_wire_self_intersection(
 /// Projects the wire edge endpoints onto the face's 2D plane (using any two
 /// non-collinear edges to form a local basis) and runs 2D segment intersection
 /// tests on all non-adjacent edge pairs. Adjacent edges share an endpoint and
-/// therefore trivially "intersect" at that endpoint — they are excluded.
+/// therefore trivially "intersect" at that endpoint 鈥?they are excluded.
 ///
 /// This check only tests the start/end vertices; curved edges (circles, BSplines)
 /// are approximated by their chord.
@@ -693,7 +693,7 @@ fn check_geometric_self_intersection(
     }
 }
 
-/// Returns `true` if the open segment p1→p2 properly intersects segment p3→p4.
+/// Returns `true` if the open segment p1鈫抪2 properly intersects segment p3鈫抪4.
 /// Returns `false` if they only share an endpoint (T-intersection) or don't cross.
 fn segments_2d_properly_intersect(
     p1: [f64; 2],
@@ -778,7 +778,7 @@ fn count_geometric_self_intersections(
     count
 }
 
-// ── SameParameter diagnosis ───────────────────────────────────────────────────
+// 鈹€鈹€ SameParameter diagnosis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A single edge whose 3D curve endpoints deviate from the vertex positions.
 ///
@@ -1171,7 +1171,7 @@ pub fn diagnose_same_range(brep: &BRep, tolerance: f64) -> SameRangeDiagnosis {
     SameRangeDiagnosis { suspect_edges: suspects }
 }
 
-// ── Shell topology analysis ───────────────────────────────────────────────────
+// 鈹€鈹€ Shell topology analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Topology analysis report for a BRep's shell structure.
 ///
@@ -1253,13 +1253,13 @@ pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
     }
 }
 
-// ── Euler characteristic analysis ────────────────────────────────────────────
+// 鈹€鈹€ Euler characteristic analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Euler characteristic and topological genus for a single solid.
 ///
-/// For a closed orientable 2-manifold of genus *g*: χ = V − E + F = 2 − 2g.
+/// For a closed orientable 2-manifold of genus *g*: 蠂 = V 鈭?E + F = 2 鈭?2g.
 ///
-/// | Shape   | χ  | genus |
+/// | Shape   | 蠂  | genus |
 /// | sphere  | 2  | 0     |
 /// | torus   | 0  | 1     |
 /// | 2-torus | -2 | 2     |
@@ -1272,12 +1272,12 @@ pub struct EulerAnalysis {
     pub edges: usize,
     /// Total faces across all shells of this solid.
     pub faces: usize,
-    /// Euler characteristic: V − E + F.
+    /// Euler characteristic: V 鈭?E + F.
     pub euler_number: i64,
     /// `true` if every edge of this solid is referenced by exactly 2 faces
-    /// (no free boundary edges → closed shell).
+    /// (no free boundary edges 鈫?closed shell).
     pub is_closed: bool,
-    /// Topological genus, computed as `(2 − euler_number) / 2`.
+    /// Topological genus, computed as `(2 鈭?euler_number) / 2`.
     /// `None` when `!is_closed` or when the result is not a non-negative integer.
     pub genus: Option<i64>,
 }
@@ -1340,7 +1340,7 @@ pub fn euler_analysis(brep: &BRep) -> Vec<EulerAnalysis> {
         // Genus only makes sense on a closed manifold.
         let genus = if is_closed {
             let g = (2 - euler_number) / 2;
-            // Valid genus: (2 − χ) must be even and non-negative.
+            // Valid genus: (2 鈭?蠂) must be even and non-negative.
             if (2 - euler_number) % 2 == 0 && g >= 0 {
                 Some(g)
             } else {
@@ -1364,7 +1364,7 @@ pub fn euler_analysis(brep: &BRep) -> Vec<EulerAnalysis> {
     results
 }
 
-// ── Orientation consistency analysis ─────────────────────────────────────────
+// 鈹€鈹€ Orientation consistency analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A face whose stored normal appears to point inward rather than outward.
 ///
@@ -1399,12 +1399,12 @@ pub struct OrientationReport {
 /// Uses a geometric heuristic: the solid's interior centroid is approximated as
 /// the average of all its vertices.  For each face the face centroid is computed
 /// from the outer-wire corner vertices.  A face normal is considered outward when
-/// `face.normal · (face_centroid − solid_centroid) > 0`.
+/// `face.normal 路 (face_centroid 鈭?solid_centroid) > 0`.
 ///
 /// This correctly handles all primitives (box, sphere, cylinder, cone, torus)
 /// whose normals are computed analytically during construction.  For shapes
 /// produced by Boolean operations or user-constructed BReps, the heuristic may
-/// give false positives on highly non-convex solids — treat the report as an
+/// give false positives on highly non-convex solids 鈥?treat the report as an
 /// advisory rather than a hard constraint.
 ///
 /// Analogous to `BRepCheck_Shell::Orientation()` in OCCT.
@@ -1431,7 +1431,7 @@ pub fn check_orientation_consistency(brep: &BRep) -> OrientationReport {
             }
         }
         if solid_verts.is_empty() {
-            // No geometry — skip.
+            // No geometry 鈥?skip.
             for shell in &solid.shells {
                 flat_face_idx += shell.faces.len();
             }
@@ -1495,7 +1495,7 @@ pub fn check_orientation_consistency(brep: &BRep) -> OrientationReport {
     }
 }
 
-// ── Comprehensive richer validity analysis ────────────────────────────────────
+// 鈹€鈹€ Comprehensive richer validity analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Aggregated validity report combining all available checks.
 ///
@@ -1559,7 +1559,7 @@ pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
     }
 }
 
-// ── Surface UV Analysis (ShapeAnalysis_Surface equivalent) ───────────────────────
+// 鈹€鈹€ Surface UV Analysis (ShapeAnalysis_Surface equivalent) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from surface UV domain analysis.
 ///
@@ -1653,25 +1653,25 @@ pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAna
                 // Get expected UV bounds for the surface type
                 let expected_bounds = match surface {
                     Surface3::Plane(_) => {
-                        // Plane has unbounded UV: [-∞, ∞, -∞, ∞]
+                        // Plane has unbounded UV: [-鈭? 鈭? -鈭? 鈭瀅
                         // No bounds check needed
                         continue;
                     }
                     Surface3::Cylinder(_) => {
-                        // Cylinder: U ∈ [-π, π] (periodic), V ∈ [-∞, ∞]
+                        // Cylinder: U 鈭?[-蟺, 蟺] (periodic), V 鈭?[-鈭? 鈭瀅
                         // Only check U bounds
                         [-std::f64::consts::PI, std::f64::consts::PI, f64::NEG_INFINITY, f64::INFINITY]
                     }
                     Surface3::Sphere(_) => {
-                        // Sphere: U ∈ [-π, π], V ∈ [0, π]
+                        // Sphere: U 鈭?[-蟺, 蟺], V 鈭?[0, 蟺]
                         [-std::f64::consts::PI, std::f64::consts::PI, 0.0, std::f64::consts::PI]
                     }
                     Surface3::Cone(_) => {
-                        // Cone: U ∈ [-π, π] (periodic), V ∈ [0, ∞]
+                        // Cone: U 鈭?[-蟺, 蟺] (periodic), V 鈭?[0, 鈭瀅
                         [-std::f64::consts::PI, std::f64::consts::PI, 0.0, f64::INFINITY]
                     }
                     Surface3::Torus(_) => {
-                        // Torus: U ∈ [-π, π], V ∈ [-π, π] (both periodic)
+                        // Torus: U 鈭?[-蟺, 蟺], V 鈭?[-蟺, 蟺] (both periodic)
                         [-std::f64::consts::PI, std::f64::consts::PI, -std::f64::consts::PI, std::f64::consts::PI]
                     }
                     _ => continue, // BSpline and others: no simple bounds check
@@ -1758,7 +1758,7 @@ pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAna
     report
 }
 
-// ── Wire Quality Metrics (ShapeAnalysis_Wire enhancement) ───────────────────────
+// 鈹€鈹€ Wire Quality Metrics (ShapeAnalysis_Wire enhancement) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Extended wire quality metrics for a single wire.
 ///
@@ -1993,9 +1993,9 @@ fn analyze_single_wire_quality(
     metrics
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // GEOMETRY VALIDATION (Surface Continuity, Curve-Surface Consistency)
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Report from geometry validation checks.
 ///
@@ -2245,9 +2245,9 @@ fn get_edge_uv_at(brep: &BRep, edge_idx: usize, alpha: f64, surface_idx: usize) 
     default_uv
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // TOPOLOGY VALIDATION (Shell Orientation, Solid Closure, Wire Orientation)
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Report from topology validation checks.
 #[derive(Debug, Clone, Default)]
@@ -2616,9 +2616,9 @@ fn is_point_inside_polygon(point: DVec3, polygon: &[DVec3], centroid: DVec3, nor
     inside
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // TOLERANCE CHECKING (Adjacent Faces, Vertex Propagation, Edge Tolerance)
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Report from tolerance validation checks.
 #[derive(Debug, Clone, Default)]
@@ -2823,9 +2823,9 @@ pub fn check_edge_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceVal
     report
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // QUALITY METRICS (Aspect Ratio, Degenerate Geometry, Sliver Face, Small Feature)
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Report from quality metrics analysis.
 #[derive(Debug, Clone, Default)]
@@ -3020,9 +3020,9 @@ fn compute_face_metrics(brep: &BRep, face: &rcad_kernel::topology::Face) -> (f64
     (area, min_dimension, aspect_ratio)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // COMPREHENSIVE BREP CHECK
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Comprehensive BRep check result combining all validation types.
 #[derive(Debug, Clone)]
@@ -3136,7 +3136,7 @@ pub fn check_comprehensive(brep: &BRep, tolerance: f64) -> ComprehensiveCheckRes
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -3188,7 +3188,7 @@ mod tests {
         brep.edges.push(rcad_kernel::topology::Edge { start: 1, end: 2 });
         brep.edges.push(rcad_kernel::topology::Edge { start: 2, end: 0 });
 
-        // Edge 0: line from (0,0,0) toward (1,0,0), but with range [0, 999] — huge mismatch
+        // Edge 0: line from (0,0,0) toward (1,0,0), but with range [0, 999] 鈥?huge mismatch
         let ci = brep.geom.curves.len();
         brep.geom.curves.push(Curve3::Line(Line3 {
             origin: glam::DVec3::ZERO,
@@ -3208,6 +3208,7 @@ mod tests {
             inner_wires: vec![],
             normal: glam::DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -3307,9 +3308,9 @@ mod tests {
         }); // 2
         brep.vertices.push(Vertex {
             point: DVec3::new(0.0, 1.0, 0.0),
-        }); // 3 (gap: wire goes 0→1→2 then 2→0 skips 3)
+        }); // 3 (gap: wire goes 0鈫?鈫? then 2鈫? skips 3)
 
-        // Edge 0: v0 → v1; Edge 1: v1 → v2; Edge 2: v2 → v0 (skips v3 — would close)
+        // Edge 0: v0 鈫?v1; Edge 1: v1 鈫?v2; Edge 2: v2 鈫?v0 (skips v3 鈥?would close)
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
         brep.edges.push(Edge { start: 3, end: 0 }); // intentional gap: starts at v3 not v2
@@ -3319,12 +3320,13 @@ mod tests {
                 edges: vec![
                     WireEdge::fwd(0),
                     WireEdge::fwd(1),
-                    WireEdge::fwd(2), // e2 starts at v3, but e1 ends at v2 → open
+                    WireEdge::fwd(2), // e2 starts at v3, but e1 ends at v2 鈫?open
                 ],
             },
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3352,7 +3354,7 @@ mod tests {
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 0 });
 
-        // Face with only 2 edges — degenerate
+        // Face with only 2 edges 鈥?degenerate
         let face = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
@@ -3360,6 +3362,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3393,8 +3396,9 @@ mod tests {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
             },
             inner_wires: vec![],
-            normal: DVec3::ZERO, // zero normal — invalid
+            normal: DVec3::ZERO, // zero normal 鈥?invalid
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3433,6 +3437,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3489,7 +3494,7 @@ mod tests {
         brep.edges.push(Edge { start: 3, end: 0 }); // e3: left
         brep.edges.push(Edge { start: 0, end: 4 }); // e4: vertical
 
-        // 3 faces sharing edge e4 (vertical edge) — non-manifold
+        // 3 faces sharing edge e4 (vertical edge) 鈥?non-manifold
         // Face 1: uses e4
         let face1 = Face {
             outer_wire: Wire {
@@ -3498,6 +3503,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         // Face 2: uses e4
@@ -3508,9 +3514,10 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
-        // Face 3: uses e4 again — this makes e4 shared by 3 faces
+        // Face 3: uses e4 again 鈥?this makes e4 shared by 3 faces
         let face3 = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(4), WireEdge::fwd(3), WireEdge::rev(0)],
@@ -3518,6 +3525,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -3543,19 +3551,19 @@ mod tests {
 
         // Build a BRep with a figure-8 wire: vertex 0 appears 3 times
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // v0 — center, appears 3x
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // v0 鈥?center, appears 3x
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // v1
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // v2
         brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // v3
         brep.vertices.push(Vertex { point: DVec3::new(0.0, -1.0, 0.0) }); // v4
 
-        // Figure-8: v0→v1→v2→v0→v3→v4→v0 (v0 appears 3 times as start/end)
-        brep.edges.push(Edge { start: 0, end: 1 }); // e0: v0→v1
-        brep.edges.push(Edge { start: 1, end: 2 }); // e1: v1→v2
-        brep.edges.push(Edge { start: 2, end: 0 }); // e2: v2→v0
-        brep.edges.push(Edge { start: 0, end: 3 }); // e3: v0→v3
-        brep.edges.push(Edge { start: 3, end: 4 }); // e4: v3→v4
-        brep.edges.push(Edge { start: 4, end: 0 }); // e5: v4→v0
+        // Figure-8: v0鈫抳1鈫抳2鈫抳0鈫抳3鈫抳4鈫抳0 (v0 appears 3 times as start/end)
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0: v0鈫抳1
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1: v1鈫抳2
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2: v2鈫抳0
+        brep.edges.push(Edge { start: 0, end: 3 }); // e3: v0鈫抳3
+        brep.edges.push(Edge { start: 3, end: 4 }); // e4: v3鈫抳4
+        brep.edges.push(Edge { start: 4, end: 0 }); // e5: v4鈫抳0
 
         let face = Face {
             outer_wire: Wire {
@@ -3571,6 +3579,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3625,6 +3634,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3647,7 +3657,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(3.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.5, 3.0, 0.0) });
-        // Inner wire vertices (don't close: v3→v4→v5, but v5≠v3)
+        // Inner wire vertices (don't close: v3鈫抳4鈫抳5, but v5鈮爒3)
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(2.0, 1.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.5, 0.5, 0.0) });
@@ -3655,7 +3665,7 @@ mod tests {
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
         brep.edges.push(Edge { start: 2, end: 0 }); // e2
-        // Inner wire edges (open: e3: v3→v4, e4: v4→v5, e5: v5→v3 would close but we skip)
+        // Inner wire edges (open: e3: v3鈫抳4, e4: v4鈫抳5, e5: v5鈫抳3 would close but we skip)
         brep.edges.push(Edge { start: 3, end: 4 }); // e3
         brep.edges.push(Edge { start: 4, end: 5 }); // e4
         // Intentionally missing: edge from v5 back to v3
@@ -3665,10 +3675,11 @@ mod tests {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
             },
             inner_wires: vec![Wire {
-                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)], // open: v5≠v3
+                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)], // open: v5鈮爒3
             }],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3703,7 +3714,7 @@ mod tests {
 
     #[test]
     fn euler_analysis_box_has_euler_2_and_genus_0() {
-        // A box is topologically a sphere: V=8, E=12, F=6 → χ = 8-12+6 = 2.
+        // A box is topologically a sphere: V=8, E=12, F=6 鈫?蠂 = 8-12+6 = 2.
         let brep = BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
@@ -3728,7 +3739,7 @@ mod tests {
         let analyses = euler_analysis(&brep);
         assert_eq!(analyses.len(), 1);
         let a = &analyses[0];
-        // Sphere topology: χ = V - E + F, should equal 2.
+        // Sphere topology: 蠂 = V - E + F, should equal 2.
         assert_eq!(a.euler_number, 2, "Euler characteristic of sphere = 2");
         assert!(a.is_closed);
         assert_eq!(a.genus, Some(0), "genus of a sphere is 0");
@@ -3771,7 +3782,7 @@ mod tests {
         assert_eq!(report.consistent_face_count, 6, "box has 6 faces, all outward");
     }
 
-    // ── Geometry Validation Tests ─────────────────────────────────────────────────
+    // 鈹€鈹€ Geometry Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn check_surface_continuity_box_passes() {
@@ -3803,7 +3814,7 @@ mod tests {
         assert!(report.is_clean(), "box should pass curve-surface consistency check");
     }
 
-    // ── Topology Validation Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ Topology Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn validate_shell_orientation_box_is_consistent() {
@@ -3850,6 +3861,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3924,6 +3936,7 @@ mod tests {
             }],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -3935,7 +3948,7 @@ mod tests {
         assert!(report.issues.iter().any(|i| matches!(i, CheckIssue::NestedWireViolation { .. })));
     }
 
-    // ── Tolerance Validation Tests ───────────────────────────────────────────────
+    // 鈹€鈹€ Tolerance Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn check_tolerance_consistency_box_passes() {
@@ -3971,7 +3984,7 @@ mod tests {
         assert!(report.is_clean(), "box edge tolerances should be adequate");
     }
 
-    // ── Quality Metrics Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Quality Metrics Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn analyze_quality_metrics_box_passes() {
@@ -4011,6 +4024,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -4048,6 +4062,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -4062,7 +4077,7 @@ mod tests {
         assert!(report.sliver_face_count > 0, "sliver face should be detected");
     }
 
-    // ── Comprehensive Check Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ Comprehensive Check Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn check_comprehensive_box_passes() {
@@ -4153,6 +4168,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -4169,7 +4185,7 @@ mod tests {
             "should have detected degenerate edge");
     }
 
-    // ── Helper Function Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Helper Function Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn compute_polygon_normal_works_for_xy_plane() {
@@ -4227,7 +4243,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
 
-        // CCW square: 0→1→2→3→0
+        // CCW square: 0鈫?鈫?鈫?鈫?
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
         brep.edges.push(Edge { start: 2, end: 3 });
@@ -4251,7 +4267,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
 
-        // CW square: 0→3→2→1→0 (clockwise when viewed from +Z)
+        // CW square: 0鈫?鈫?鈫?鈫? (clockwise when viewed from +Z)
         brep.edges.push(Edge { start: 0, end: 3 });
         brep.edges.push(Edge { start: 3, end: 2 });
         brep.edges.push(Edge { start: 2, end: 1 });

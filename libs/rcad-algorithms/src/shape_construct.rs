@@ -1,4 +1,4 @@
-//! ShapeConstruct-style low-level shape construction utilities.
+﻿//! ShapeConstruct-style low-level shape construction utilities.
 //!
 //! This module provides low-level construction functions for geometric primitives
 //! and topological shapes. Analogous to OCCT's `ShapeConstruct` package.
@@ -594,6 +594,7 @@ pub fn construct_planar_face_from_wire(wire: &Wire, surface: &Surface3) -> Face 
         inner_wires: vec![],
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     }
 }
@@ -643,6 +644,7 @@ pub fn construct_face_from_boundary(outer_wire: Wire, inner_wires: Vec<Wire>, su
         inner_wires,
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     }
 }

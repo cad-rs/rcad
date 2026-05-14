@@ -1,4 +1,4 @@
-use rcad_kernel::appearance::{Color, StepColor};
+﻿use rcad_kernel::appearance::{Color, StepColor};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
@@ -5833,6 +5833,7 @@ fn build_face(
                 inner_wires: Vec::new(),
                 normal: glam::DVec3::new(0.0, 0.0, 1.0),
                 triangles,
+                sample_point: None,
                 mesh_dirty: false,
             },
             face_surface,
@@ -6048,6 +6049,7 @@ fn build_face(
             // Stable transitional mode:
             // - keep parser triangles for curved faces that already tessellate correctly
             // - force rebuild for planar faces and hole faces
+            sample_point: None,
             mesh_dirty: force_rebuild,
         },
         bound_ids.surface,

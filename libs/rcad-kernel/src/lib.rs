@@ -521,6 +521,7 @@ impl BRep {
                     .map(|[a, b, c]| [a + v0, b + v0, c + v0])
                     .collect(),
                 mesh_dirty: face.mesh_dirty,
+                sample_point: face.sample_point,
             }
         };
 
@@ -727,7 +728,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 0.0, -1.0),
                 triangles: vec![[0, 1, 2], [0, 2, 3]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
             // Back   (z=d, normal +Z)
             Face {
@@ -742,7 +744,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 0.0, 1.0),
                 triangles: vec![[5, 4, 7], [5, 7, 6]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
             // Bottom (y=0, normal -Y)
             Face {
@@ -757,7 +760,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, -1.0, 0.0),
                 triangles: vec![[0, 1, 5], [0, 5, 4]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
             // Top    (y=h, normal +Y)
             Face {
@@ -772,7 +776,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(0.0, 1.0, 0.0),
                 triangles: vec![[3, 2, 6], [3, 6, 7]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
             // Left   (x=0, normal -X)
             Face {
@@ -787,7 +792,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(-1.0, 0.0, 0.0),
                 triangles: vec![[0, 3, 7], [0, 7, 4]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
             // Right  (x=w, normal +X)
             Face {
@@ -802,7 +808,8 @@ impl BRep {
                 inner_wires: vec![],
                 normal: DVec3::new(1.0, 0.0, 0.0),
                 triangles: vec![[1, 2, 6], [1, 6, 5]],
-                mesh_dirty: false,
+                sample_point: None,
+            mesh_dirty: false,
             },
         ];
 
@@ -887,6 +894,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X, // outward, approximate
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let shell = Shell { faces: vec![face] };
@@ -999,6 +1007,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -1008,6 +1017,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::Y,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f2 = Face {
@@ -1017,6 +1027,7 @@ impl BRep {
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let shell = Shell {
@@ -1167,6 +1178,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         // F1 base cap: E0 reversed (base circle CW from -Y view)
@@ -1177,6 +1189,7 @@ impl BRep {
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let shell = Shell {
@@ -1322,6 +1335,7 @@ impl BRep {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let shell = Shell { faces: vec![face] };

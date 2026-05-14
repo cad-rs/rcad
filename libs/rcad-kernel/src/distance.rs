@@ -1,25 +1,25 @@
-//! Shape-to-shape and point-to-shape minimum distance.
+﻿//! Shape-to-shape and point-to-shape minimum distance.
 //!
 //! Analogous to OCCT `BRepExtrema_DistShapeShape`.
 //!
 //! # Strategy
-//! 1. Sample each face on an 8×8 UV grid + wire vertices.
+//! 1. Sample each face on an 8脳8 UV grid + wire vertices.
 //! 2. For each sample on A, project onto every analytic surface of B via
 //!    [`closest_point_on_surface`] (Newton-converged).
-//! 3. Symmetric pass B → A.
+//! 3. Symmetric pass B 鈫?A.
 //! 4. Refine the best candidate pair with alternating projection until
-//!    convergence (typically 3–5 iterations, tolerance 1e-9).
+//!    convergence (typically 3鈥? iterations, tolerance 1e-9).
 //!
-//! Complexity is O(F_A · F_B · S²) for the sampling phase, but the
+//! Complexity is O(F_A 路 F_B 路 S虏) for the sampling phase, but the
 //! refinement step is O(1) and brings the result to near-machine precision.
 
 use glam::{DVec2, DVec3};
 
 use crate::{BRep, Surface3, closest_point_on_surface, geom::SurfaceEval};
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Result type
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Result of a shape-to-shape or point-to-shape distance query.
 #[derive(Debug, Clone)]
@@ -32,9 +32,9 @@ pub struct ShapeDistance {
     pub point_on_b: DVec3,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Public API
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the minimum distance between two BReps.
 ///
@@ -49,8 +49,8 @@ pub struct ShapeDistance {
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let sphere_brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 /// let d = min_distance(&box_brep, &sphere_brep);
-/// // The box spans [-1,1]³ centered at origin (from_primitive centers it) and
-/// // sphere is also at origin — they overlap, so distance = 0.
+/// // The box spans [-1,1]鲁 centered at origin (from_primitive centers it) and
+/// // sphere is also at origin 鈥?they overlap, so distance = 0.
 /// assert!(d.distance >= 0.0);
 /// ```
 pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
@@ -114,7 +114,7 @@ pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
 /// use rcad_kernel::distance::point_to_shape_distance;
 ///
 /// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-/// // `from_primitive` box spans `[0,w]×[0,h]×[0,d]`. Use a point off the
+/// // `from_primitive` box spans `[0,w]脳[0,h]脳[0,d]`. Use a point off the
 /// // coordinate planes so infinite-plane face projections are not ambiguous.
 /// let d = point_to_shape_distance(DVec3::new(10.0, 10.0, 10.0), &box_brep);
 /// assert!(d.distance > 7.5 && d.distance < 20.0);
@@ -134,9 +134,9 @@ pub fn point_to_shape_distance(query: DVec3, brep: &BRep) -> ShapeDistance {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Internal helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Lightweight result used internally (just point + distance).
 struct ClosestResult {
@@ -147,8 +147,8 @@ struct ClosestResult {
 /// Refine a candidate closest-point pair using alternating projection.
 ///
 /// Starting from an initial guess `(pa, pb)`, alternately projects each point
-/// onto the other shape until the pair converges (Δ < 1e-9) or 30 iterations
-/// are exhausted.  Converges in 3–5 iterations for smooth surfaces.
+/// onto the other shape until the pair converges (螖 < 1e-9) or 30 iterations
+/// are exhausted.  Converges in 3鈥? iterations for smooth surfaces.
 fn refine_pair(
     mut pa: DVec3,
     mut pb: DVec3,
@@ -422,7 +422,7 @@ fn closest_on_brep(query: DVec3, brep: &BRep) -> Option<ClosestResult> {
     best
 }
 
-/// Collect sample points from the surface of a BRep: 8×8 grid per face + vertices.
+/// Collect sample points from the surface of a BRep: 8脳8 grid per face + vertices.
 fn sample_brep_points(brep: &BRep) -> Vec<DVec3> {
     const GRID: usize = 8;
     let mut pts = Vec::new();
@@ -464,9 +464,9 @@ fn sample_brep_points(brep: &BRep) -> Vec<DVec3> {
     pts
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -505,6 +505,7 @@ mod tests {
             inner_wires: vec![],
             normal: n,
             triangles: vec![[0, 1, 2], [0, 2, 3]],
+            sample_point: None,
             mesh_dirty: false,
         };
         BRep {
@@ -540,7 +541,7 @@ mod tests {
         // BRep::from_primitive(Box) has no analytic surfaces (needs populate_box_geom).
         // Use Sphere which has a single analytic surface entry.
         // Sphere radius=1 centered at origin; point at (0.5, 0.5, 5) should
-        // be close to distance ≈ 4 (z - 1).
+        // be close to distance 鈮?4 (z - 1).
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let d = point_to_shape_distance(DVec3::new(0.0, 0.0, 5.0), &brep);
         println!("point_to_sphere_distance (vertical): {}", d.distance);
@@ -553,7 +554,7 @@ mod tests {
 
     #[test]
     fn point_to_sphere_distance() {
-        // Sphere radius 1.0 at origin; point at (5, 0, 0) → distance ≈ 4.0
+        // Sphere radius 1.0 at origin; point at (5, 0, 0) 鈫?distance 鈮?4.0
         let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let d = point_to_shape_distance(DVec3::new(5.0, 0.0, 0.0), &brep);
         println!("point_to_sphere_distance: {}", d.distance);
@@ -587,16 +588,16 @@ mod tests {
     fn disjoint_spheres_distance_is_correct() {
         use crate::geom::PrimitiveSolid;
         // Two unit spheres: one at origin, one translated to (5,0,0) via vertices.
-        // They are disjoint → distance = 5 - 1 - 1 = 3.
+        // They are disjoint 鈫?distance = 5 - 1 - 1 = 3.
         // We can't easily translate a BRep from_primitive, so we test with
-        // two identical spheres (overlapping at origin → distance ≈ 0).
+        // two identical spheres (overlapping at origin 鈫?distance 鈮?0).
         let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
         let d = min_distance(&a, &b);
-        // Same sphere → distance ≈ 0
+        // Same sphere 鈫?distance 鈮?0
         assert!(
             d.distance < 0.5,
-            "identical spheres should have distance ≈ 0, got {}",
+            "identical spheres should have distance 鈮?0, got {}",
             d.distance
         );
     }

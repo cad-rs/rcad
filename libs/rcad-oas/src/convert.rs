@@ -1,4 +1,4 @@
-//! Conversion between OASIS geometry and RCAD kernel types.
+﻿//! Conversion between OASIS geometry and RCAD kernel types.
 
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
@@ -48,6 +48,7 @@ fn polygon_to_brep_face(
         inner_wires: Vec::new(),
         normal: glam::DVec3::Z,
         triangles: Vec::new(),
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -148,6 +149,7 @@ impl OasConverter {
             inner_wires: Vec::new(),
             normal: glam::DVec3::Z,
             triangles: Vec::new(),
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -276,7 +278,7 @@ impl OasConverter {
     /// Convert an OASIS cell to a BRep compound with true 3D extrusion.
     ///
     /// Each polygon/path is first built as a flat face at `z_offset`,
-    /// then extruded along +Z by the layer thickness. If thickness ≤ 0
+    /// then extruded along +Z by the layer thickness. If thickness 鈮?0
     /// the face is kept as a 2D sheet.
     pub fn cell_to_brep(&self, cell: &OasCell) -> Result<BRep, OasError> {
         let mut result = BRep::default();

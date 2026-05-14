@@ -102,6 +102,7 @@ pub fn make_face(
         inner_wires,
         normal,
         triangles: Vec::new(),
+        sample_point: None,
         mesh_dirty: true,
     });
 

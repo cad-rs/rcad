@@ -4335,6 +4335,7 @@ fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
                 .iter()
                 .map(|&[a, b, c]| [v_map[a], v_map[b], v_map[c]])
                 .collect(),
+            sample_point: face.sample_point,
             mesh_dirty: face.mesh_dirty,
         }
     };
@@ -5576,6 +5577,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                         inner_wires: all_inner,
                         normal: face1_normal,
                         triangles: vec![],
+                        sample_point: None,
                         mesh_dirty: true,
                     };
 

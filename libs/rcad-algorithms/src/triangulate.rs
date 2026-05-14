@@ -1,8 +1,8 @@
-//! Surface tessellation (adaptive chord error in UV / world space).
+﻿//! Surface tessellation (adaptive chord error in UV / world space).
 //!
 //! **Phase C note:** several internal checks use [`TOLERANCE_MESH_LEGACY`] and related constants as
 //! **dimensionless UV / angle slacks** (parameter-domain noise, multi-turn heuristics), not as a
-//! substitute for world-space BRep pairing. For mesh–mesh segment chaining tied to operand
+//! substitute for world-space BRep pairing. For mesh鈥搈esh segment chaining tied to operand
 //! topology, use [`crate::tolerance::tessellation_merge_linear_from_brep`] /
 //! [`crate::tolerance::tessellation_merge_linear_from_two_breps`] and
 //! [`crate::section::intersect_triangle_soups_adaptive`].
@@ -50,7 +50,7 @@ impl SurfaceMesh {
 pub struct TessellationParams {
     // --- Basic controls ---
     /// Maximum chordal deviation (midpoint of a triangle edge to the true surface).
-    /// Smaller values yield finer meshes; typical range `0.001`鈥揱0.1`.
+    /// Smaller values yield finer meshes; typical range `0.001`閳ユ彵0.1`.
     pub chord_tolerance: f64,
     /// Maximum angle error (radians) between adjacent triangle normals before splitting.
     pub angle_tolerance: f64,
@@ -226,7 +226,7 @@ impl TessellationParams {
 /// Adaptive chord-error tessellation of a parametric surface.
 ///
 /// Algorithm (UV domain):
-/// 1. Start from a uniform quad grid over `[u_min, u_max] 脳 [v_min, v_max]`.
+/// 1. Start from a uniform quad grid over `[u_min, u_max] 鑴?[v_min, v_max]`.
 /// 2. For each quad, measure chord error (linear patch vs true surface).
 /// 3. Recursively split quads that exceed `params.chord_tolerance` (and related checks).
 /// 4. Emit two triangles per leaf quad.
@@ -246,7 +246,7 @@ pub fn triangulate_surface(
     let mut normals: Vec<DVec3> = Vec::new();
     let mut triangles: Vec<[usize; 3]> = Vec::new();
 
-    // Initial UV grid resolution (at least 2脳2 quads)
+    // Initial UV grid resolution (at least 2鑴? quads)
     let initial_steps = 4usize;
     let [u0, u1] = u_range;
     let [v0, v1] = v_range;
@@ -448,11 +448,11 @@ fn subdivide_quad(
         let d0 = (p11 - p00).length_squared();
         let d1 = (p10 - p01).length_squared();
         if d0 <= d1 {
-            // Diagonal p00鈥損11
+            // Diagonal p00閳ユ悕11
             triangles.push([n, n + 1, n + 2]);
             triangles.push([n, n + 2, n + 3]);
         } else {
-            // Diagonal p10鈥損01
+            // Diagonal p10閳ユ悕01
             triangles.push([n, n + 1, n + 3]);
             triangles.push([n + 1, n + 2, n + 3]);
         }
@@ -797,7 +797,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                     t0 = a0;
                                     t1 = a0 + dt;
                                 } else if multi_turn {
-                                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                                    // Non-closed edges with >2蟺 span are usually unit/trim artifacts.
                                     // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
                                     let x_ax = rcad_kernel::geom::any_perpendicular(c.normal);
                                     let y_ax = c.normal.cross(x_ax);
@@ -855,7 +855,7 @@ fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -
                                     t0 = a0;
                                     t1 = a0 + dt;
                                 } else if multi_turn {
-                                    // Non-closed edges with >2π span are usually unit/trim artifacts.
+                                    // Non-closed edges with >2蟺 span are usually unit/trim artifacts.
                                     // Rebuild a single-turn arc from endpoints to avoid rosette sampling.
                                     let x_ax = e.major_dir.normalize();
                                     let y_ax = e.normal.cross(x_ax).normalize();
@@ -964,7 +964,7 @@ fn ear_clip(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
         }
 
         if !ear_found {
-            // Degenerate polygon 鈥?emit remaining as fan
+            // Degenerate polygon 閳?emit remaining as fan
             for i in 1..remaining.len() - 1 {
                 triangles.push([remaining[0], remaining[i], remaining[i + 1]]);
             }
@@ -1021,7 +1021,7 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
 ///   outer wire vertices (same as the existing rendering path).
 ///
 /// Faces whose [`Face::mesh_dirty`] flag is `false` (clean) are **skipped**
-/// unless their `triangles` is empty 鈥?allowing incremental updates when only
+/// unless their `triangles` is empty 閳?allowing incremental updates when only
 /// part of the model changes.  To force a full retessellation call
 /// [`BRep::invalidate_mesh`] first.
 ///
@@ -1112,7 +1112,7 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
 
                 if !filled {
                     // Faces without a surface, degenerate UV trim, or analytic tessellation that
-                    // collapsed (e.g. plane caps bounded by a single circle edge 鈥?hull from corner
+                    // collapsed (e.g. plane caps bounded by a single circle edge 閳?hull from corner
                     // vertices is a sliver; weld removes all triangles): sample the full outer
                     // wire (including curved edges) and ear-clip.
                     let face_ref = &brep.solids[solid_idx].shells[shell_idx].faces[face_idx];
@@ -1171,7 +1171,7 @@ pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
 }
 
 /// Absolute span (radians on periodic axes) below which a finite stored trim is treated
-/// as degenerate (STEP often ships near-zero boxes 鈫?one-strip tessellation).
+/// as degenerate (STEP often ships near-zero boxes 閳?one-strip tessellation).
 const DEGENERATE_TRIM_ABS_MIN: f64 = 0.08;
 /// Minimum span as a fraction of a full period / natural range before we prefer a hull from wire vertices.
 const DEGENERATE_TRIM_REL: f64 = 1.0 / 64.0;
@@ -1183,7 +1183,7 @@ struct CanonicalUvAxes {
     u_period: Option<f64>,
     /// Period in `v` when `v` is periodic (torus minor angle), else `None`.
     v_period: Option<f64>,
-    /// Natural finite bounds for a non-periodic `v` (e.g. sphere colatitude in `[0, 蟺]`).
+    /// Natural finite bounds for a non-periodic `v` (e.g. sphere colatitude in `[0, 锜篯`).
     v_natural: Option<(f64, f64)>,
 }
 
@@ -1444,7 +1444,7 @@ pub struct MeshQualityMetrics {
 }
 
 impl MeshQualityMetrics {
-    /// Heuristic 鈥済ood mesh鈥?check against a maximum allowed aspect ratio.
+    /// Heuristic 閳ユ笀ood mesh閳?check against a maximum allowed aspect ratio.
     pub fn is_good(&self, max_aspect_ratio: f64) -> bool {
         self.degenerate_count == 0
             && self.max_aspect_ratio <= max_aspect_ratio
@@ -1757,7 +1757,7 @@ impl AdaptiveSubdivider {
         let m12 = self.get_or_create_midpoint(i1, i2, p1, p2, n1, n2, nodes, normals, edge_midpoints);
         let m20 = self.get_or_create_midpoint(i2, i0, p2, p0, n2, n0, nodes, normals, edge_midpoints);
 
-        // Four-way split 鈫?four triangles
+        // Four-way split 閳?four triangles
         triangles.push([i0, m01, m20]);
         triangles.push([m01, i1, m12]);
         triangles.push([m20, m12, i2]);
@@ -1830,7 +1830,7 @@ impl Default for BoundarySensitiveTessellator {
 }
 
 impl BoundarySensitiveTessellator {
-    /// Default tessellator with ~30掳 crease threshold.
+    /// Default tessellator with ~30鎺?crease threshold.
     pub fn new() -> Self {
         Self::default()
     }
@@ -2221,7 +2221,7 @@ struct EdgeCollapseInfo {
 /// Very small edge-collapse helper for decimating `SurfaceMesh` data.
 #[derive(Debug, Clone)]
 pub struct MeshSimplifier {
-    /// Fraction of triangles to keep (`0.0`鈥揱1.0`).
+    /// Fraction of triangles to keep (`0.0`閳ユ彵1.0`).
     pub target_ratio: f64,
     /// Skip collapses longer than this edge length.
     pub max_error: f64,
@@ -2639,6 +2639,7 @@ mod tests {
                         inner_wires: vec![],
                         normal: DVec3::Z,
                         triangles: vec![],
+                        sample_point: None,
                         mesh_dirty: true,
                     }],
                 }],
@@ -2701,7 +2702,7 @@ mod tests {
         let params = TessellationParams::standard();
         // Higher target count means more triangles -> finer tolerance
         let adjusted = params.with_target_triangle_count(10000);
-        // Factor = (10000/1000)^(1/3) 鈮?2.15, so tolerance increases (coarser mesh)
+        // Factor = (10000/1000)^(1/3) 閳?2.15, so tolerance increases (coarser mesh)
         // For more triangles, we'd actually want lower tolerance, so this adjusts accordingly
         assert!(adjusted.chord_tolerance != params.chord_tolerance);
     }
@@ -2745,7 +2746,7 @@ mod tests {
         let nodes = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
-            DVec3::new(0.5, 0.866, 0.0), // ~60掳 internal angles
+            DVec3::new(0.5, 0.866, 0.0), // ~60鎺?internal angles
         ];
         let triangles = vec![[0, 1, 2]];
 
@@ -2821,7 +2822,7 @@ mod tests {
 
     #[test]
     fn boundary_sensitive_tessellator_detect_features() {
-        // Two triangles sharing an edge with ~90掳 dihedral
+        // Two triangles sharing an edge with ~90鎺?dihedral
         let nodes = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),

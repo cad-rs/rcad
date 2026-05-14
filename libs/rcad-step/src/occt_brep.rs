@@ -1100,6 +1100,7 @@ fn build_brep(
                 inner_wires,
                 normal: nml,
                 triangles: tris_out,
+                sample_point: None,
                 mesh_dirty,
             });
             vertices = v_local;

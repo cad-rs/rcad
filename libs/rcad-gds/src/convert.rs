@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+﻿use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::error::{GdsError, Result};
 use crate::types::*;
@@ -81,6 +81,7 @@ fn polygon_to_brep_face(
         inner_wires: Vec::new(),
         normal: glam::DVec3::Z,
         triangles: Vec::new(),
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -94,7 +95,7 @@ fn polygon_to_brep_face(
 ///
 /// Each GDS boundary is first built as a flat face at `z_offset`,
 /// then extruded along +Z by the layer thickness (from [`LayerConfig`]).
-/// If thickness ≤ 0 the face is kept as-is (2D sheet).
+/// If thickness 鈮?0 the face is kept as-is (2D sheet).
 pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) -> Result<BRep> {
     let structure = library.structures.get(cell_name)
         .ok_or_else(|| GdsError::CellNotFound(cell_name.to_string()))?;

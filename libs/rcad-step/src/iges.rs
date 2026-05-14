@@ -1,4 +1,4 @@
-//! Minimal IGES mesh exchange (Type 106 copious-data polyline records).
+﻿//! Minimal IGES mesh exchange (Type 106 copious-data polyline records).
 //!
 //! This module provides a pragmatic IGES bridge:
 //! - Export: each triangle is written as a closed 3D polyline entity.
@@ -219,6 +219,7 @@ impl IgesReader {
                 inner_wires: vec![],
                 normal,
                 triangles: tris,
+                sample_point: None,
                 mesh_dirty: false,
             });
         }
@@ -309,6 +310,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![[0, 1, 2]],
+                    sample_point: None,
                     mesh_dirty: false,
                 }],
             }],

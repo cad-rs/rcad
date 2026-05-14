@@ -1,4 +1,4 @@
-//! BRepMesh-style mesh generation for BRep shapes.
+﻿//! BRepMesh-style mesh generation for BRep shapes.
 //!
 //! This module provides mesh generation capabilities similar to OCCT's BRepMesh.
 //! It includes:
@@ -1257,6 +1257,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         }
     }

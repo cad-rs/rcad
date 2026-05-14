@@ -1,4 +1,4 @@
-//! Section: surface-solid intersection returning curves and wires.
+﻿//! Section: surface-solid intersection returning curves and wires.
 //!
 //! Analogous to OCCT `BRepAlgoAPI_Section`. Computes the intersection of a
 //! cutting surface with the faces of a BRep, returning curves and wires.
@@ -45,9 +45,9 @@ use crate::tolerance::{
 };
 use crate::triangulate::{mesh_brep, triangulate_polygon, TessellationParams};
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Flat BRep face index → geometric floor for numerical IntSS (phase C).
+/// Flat BRep face index 鈫?geometric floor for numerical IntSS (phase C).
 #[inline]
 fn face_geom_floor(brep: &BRep, flat_face_idx: usize) -> f64 {
     intss_geom_tol_floor(TOLERANCE_ABS, face_tolerance(brep, flat_face_idx))
@@ -129,7 +129,7 @@ fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
 
 /// Collect all face triangles from a BRep (pre-triangulated or fan-triangulated).
 ///
-/// Used for mesh–mesh intersection approximations (e.g. OCCT-style section).
+/// Used for mesh鈥搈esh intersection approximations (e.g. OCCT-style section).
 pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
     let mut out = Vec::new();
     for solid in &brep.solids {
@@ -150,7 +150,7 @@ pub fn intersect_triangle_soups(tris_a: &[[DVec3; 3]], tris_b: &[[DVec3; 3]]) ->
     intersect_triangle_soups_eps(tris_a, tris_b, TOLERANCE_MESH_LEGACY, TOLERANCE_MESH_LEGACY)
 }
 
-/// Triangle–triangle chaining with pair/merge epsilon from [`crate::tolerance::tessellation_merge_linear_from_two_breps`]
+/// Triangle鈥搕riangle chaining with pair/merge epsilon from [`crate::tolerance::tessellation_merge_linear_from_two_breps`]
 /// (**Relaxed adaptive** + **`TOLERANCE_MESH_LEGACY`** minimum + pairwise **`model_tolerance`**).
 pub fn intersect_triangle_soups_adaptive(
     tris_a: &[[DVec3; 3]],
@@ -288,7 +288,7 @@ fn chain_segments_eps(segments: Vec<[DVec3; 2]>, merge_eps: f64) -> Vec<Vec<DVec
     chains
 }
 
-// ── Public API: Plane Section ─────────────────────────────────────────────────
+// 鈹€鈹€ Public API: Plane Section 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the section of a BRep with a cutting plane.
 ///
@@ -393,6 +393,7 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
                 inner_wires: vec![],
                 normal: DVec3::Z, // Default normal
                 triangles: vec![],
+                sample_point: None,
                 mesh_dirty: true,
             })
             .collect();
@@ -632,7 +633,7 @@ fn try_analytic_face_pair(
     };
 
     match (sa, sb) {
-        // ── Plane × Plane ──────────────────────────────────────────────
+        // 鈹€鈹€ Plane 脳 Plane 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         (Plane(pa), Plane(pb)) => {
             let result = crate::inttools::plane_plane::intersect_plane_plane(pa, pb);
             match result {
@@ -652,7 +653,7 @@ fn try_analytic_face_pair(
             }
         }
 
-        // ── Plane × Cylinder ───────────────────────────────────────────
+        // 鈹€鈹€ Plane 脳 Cylinder 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         (Plane(pa), Cylinder(cb)) => {
             intersect_plane_cylinder_pair(pa, cb, a_info, b_info, point_tol, segments)
         }
@@ -660,7 +661,7 @@ fn try_analytic_face_pair(
             intersect_plane_cylinder_pair(pb, ca, b_info, a_info, point_tol, segments)
         }
 
-        // ── Plane × Sphere ─────────────────────────────────────────────
+        // 鈹€鈹€ Plane 脳 Sphere 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         (Plane(pa), Sphere(sb)) => {
             intersect_plane_sphere_pair(pa, sb, a_info, b_info, point_tol, segments)
         }
@@ -668,7 +669,7 @@ fn try_analytic_face_pair(
             intersect_plane_sphere_pair(pb, sa, b_info, a_info, point_tol, segments)
         }
 
-        // ── Plane × Cone ───────────────────────────────────────────────
+        // 鈹€鈹€ Plane 脳 Cone 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         (Plane(pa), Cone(cb)) => {
             intersect_plane_cone_pair(pa, cb, a_info, b_info, point_tol, segments)
         }
@@ -1015,7 +1016,7 @@ fn dedup_colinear_segments(segs: &mut Vec<[DVec3; 2]>, eps: f64) {
                     segs[i] = [a + dir * new_t0, a + dir * new_t1];
                     segs.swap_remove(j);
                     merged = true;
-                    break; // segs[i] changed — restart inner loop
+                    break; // segs[i] changed 鈥?restart inner loop
                 }
             }
             j += 1;
@@ -1029,7 +1030,7 @@ fn dedup_colinear_segments(segs: &mut Vec<[DVec3; 2]>, eps: f64) {
 }
 
 /// Check whether the two faces (identified by their flat indices) are coplanar
-/// planes — i.e. both are [`Surface3::Plane`] with the same normal and origin
+/// planes 鈥?i.e. both are [`Surface3::Plane`] with the same normal and origin
 /// offset.  Triangle soup intersection of coplanar faces produces spurious
 /// area-boundary segments instead of clean section curves, so callers should
 /// skip those face pairs.
@@ -1053,7 +1054,7 @@ fn is_coplanar_face_pair(brep_a: &BRep, flat_a: usize, brep_b: &BRep, flat_b: us
             if (pa.normal.dot(pb.normal).abs() - 1.0).abs() > TOLERANCE_ABS {
                 return false;
             }
-            // Same distance from origin — project the origin offset onto either normal
+            // Same distance from origin 鈥?project the origin offset onto either normal
             let dist = (pa.origin - pb.origin).dot(pa.normal).abs();
             dist < TOLERANCE_ABS
         }
@@ -1085,7 +1086,7 @@ pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
     chain_segments_eps(segments, merge_eps)
 }
 
-// ── Public API: Curved Surface Section ────────────────────────────────────────
+// 鈹€鈹€ Public API: Curved Surface Section 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Cutting surface for section operations.
 ///
@@ -1881,6 +1882,7 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
                         inner_wires: vec![],
                         normal: DVec3::Z,
                         triangles: vec![],
+                        sample_point: None,
                         mesh_dirty: true,
                     }],
                 }],
@@ -1891,7 +1893,7 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
     result
 }
 
-// ── Section Properties Computation ────────────────────────────────────────────
+// 鈹€鈹€ Section Properties Computation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute properties of a planar section.
 ///
@@ -2025,7 +2027,7 @@ fn compute_polygon_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> (f64, 
     (total_area.abs(), centroid, ixx.abs(), iyy.abs(), ixy)
 }
 
-// ── Multiple Section Support ──────────────────────────────────────────────────
+// 鈹€鈹€ Multiple Section Support 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Generate multiple sections at evenly spaced planes along an axis.
 ///
@@ -2251,6 +2253,7 @@ fn create_ruled_face(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<
         inner_wires: vec![],
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     })
 }
@@ -2300,9 +2303,9 @@ fn resample_polyline(pts: &[DVec3], n: usize) -> Vec<DVec3> {
     result
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-// ── Analytic section curves ───────────────────────────────────────────────────
+// 鈹€鈹€ Analytic section curves 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// One result curve from [`section_curves`].
 #[derive(Debug, Clone)]
@@ -2441,7 +2444,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
     results
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -2518,7 +2521,7 @@ mod tests {
         }
     }
 
-    // ── Curved Surface Section Tests ────────────────────────────────────────────
+    // 鈹€鈹€ Curved Surface Section Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn section_by_cylinder_through_box() {
@@ -2587,7 +2590,7 @@ mod tests {
         assert!(!result.curves.is_empty(), "cone section should yield curves");
     }
 
-    // ── Section Properties Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ Section Properties Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn section_properties_unit_square() {
@@ -2695,7 +2698,7 @@ mod tests {
         assert!(i1 > i2); // I1 is the larger principal moment
     }
 
-    // ── Multiple Section Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Multiple Section Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn parallel_planes_section() {
@@ -2764,7 +2767,7 @@ mod tests {
         assert_eq!(sections.len(), 5);
     }
 
-    // ── Section Stitching Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Section Stitching Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn stitch_circular_sections() {
@@ -2803,7 +2806,7 @@ mod tests {
         assert!(!lofted.solids.is_empty());
     }
 
-    // ── Section Curve Sampling Tests ─────────────────────────────────────────────
+    // 鈹€鈹€ Section Curve Sampling Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn sample_circle_points() {
@@ -2845,7 +2848,7 @@ mod tests {
         assert!(pts[0].y.abs() < TOLERANCE_MESH_LEGACY);
     }
 
-    // ── Integration Tests ────────────────────────────────────────────────────────
+    // 鈹€鈹€ Integration Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn full_section_workflow() {

@@ -1,4 +1,4 @@
-//! Fuse coplanar **axis-aligned** rectangular patches into one [`Face`] using a 2D
+﻿//! Fuse coplanar **axis-aligned** rectangular patches into one [`Face`] using a 2D
 //! axis-aligned rectangle union on a grid, producing one outer boundary and optional
 //! inner wires (holes). Complements [`unify_same_domain_faces`](crate::unify_same_domain_faces),
 //! which only merges along shared **edges** and leaves corner-only adjacency split.
@@ -20,7 +20,7 @@ use crate::tolerance::{
 type Pt = (i64, i64);
 
 /// Minimum [`face_surface_area`] / axis-aligned UV bbox area before treating strict bbox containment
-/// as “inner duplicate rectangle vs outer trimmed cap” (`bcommon_simple/C8`). Trimmed intersection
+/// as 鈥渋nner duplicate rectangle vs outer trimmed cap鈥?(`bcommon_simple/C8`). Trimmed intersection
 /// patches (`bcommon_simple/G5`) often occupy much less than their axis UV bbox when the boundary is
 /// skewed.
 const MIN_REDUNDANT_AXIS_UV_FILL: f64 = 0.97;
@@ -36,11 +36,11 @@ fn qpt(x: f64, y: f64, scale: f64) -> Pt {
 
 /// Remove redundant axis-aligned faces on the same infinite plane when one face's **world-UV
 /// axis-aligned bounding box** is strictly contained in another's (OCCT `bcommon_simple/C8`:
-/// an untrimmed `1×1` top patch is kept alongside the true trimmed cap; they do not pass
+/// an untrimmed `1脳1` top patch is kept alongside the true trimmed cap; they do not pass
 /// [`rects_2d_bbox_positive_area_overlap`] for orthogonal fuse, but the smaller bbox lies inside
 /// the larger).
 ///
-/// Only considers faces with **no inner wires** and normals snapped to ±X/±Y/±Z. Returns the
+/// Only considers faces with **no inner wires** and normals snapped to 卤X/卤Y/卤Z. Returns the
 /// cleaned BRep and how many faces were removed.
 pub fn remove_axis_coplanar_redundant_child_faces(brep: &BRep, tol: f64) -> (BRep, usize) {
     let mut out = brep.clone();
@@ -113,9 +113,9 @@ fn try_pick_redundant_axis_coplanar_face(
     if !face_i.inner_wires.is_empty() || !face_j.inner_wires.is_empty() {
         return None;
     }
-    // Both faces must be on planar surfaces — a cylindrical wall whose normal happens
-    // to snap to an axis (e.g. (-0,-1,0) → -Y) would be falsely matched with a planar
-    // face on the same axis, causing incorrect removal of valid geometry (H8 box∩cyl).
+    // Both faces must be on planar surfaces 鈥?a cylindrical wall whose normal happens
+    // to snap to an axis (e.g. (-0,-1,0) 鈫?-Y) would be falsely matched with a planar
+    // face on the same axis, causing incorrect removal of valid geometry (H8 box鈭ヽyl).
     if !face_is_plane(brep, fi_flat) || !face_is_plane(brep, fj_flat) {
         return None;
     }
@@ -220,12 +220,12 @@ fn try_pick_redundant_axis_coplanar_face(
 /// it (OCCT `bcommon_simple/C8`: one axis patch is redundant while the diagonal patch carries the
 /// same material boundary).
 ///
-/// Only considers faces whose normals snap to ±X/±Y/±Z and whose [`face_surface_area`] fills their
+/// Only considers faces whose normals snap to 卤X/卤Y/卤Z and whose [`face_surface_area`] fills their
 /// axis-aligned UV bbox enough ([`MIN_REDUNDANT_AXIS_UV_FILL`]); other faces are skipped so trimmed
 /// intersections (`bcommon_simple/G5`) are not peeled incorrectly.
 ///
 /// Scans faces in **flat index order** and returns on the **first** match so behaviour stays
-/// deterministic. Intended only for post-processing **plane–plane intersections** (callers gate).
+/// deterministic. Intended only for post-processing **plane鈥損lane intersections** (callers gate).
 pub fn remove_spurious_intersection_face_preserving_volume(
     brep: &BRep,
     vol_abs_tol: f64,
@@ -266,11 +266,11 @@ pub fn remove_spurious_intersection_face_preserving_volume(
         let (n_i_c, d_i_c) = canonicalize_plane_n_d(n_axis, d);
         let pk = plane_key(n_i_c, d_i_c, vol_abs_tol.max(TOLERANCE_COORD_SUB));
         // Count faces on the same infinite plane in this shell.  If this is the only one,
-        // removing it would leave a hole — it is structurally necessary even if the
+        // removing it would leave a hole 鈥?it is structurally necessary even if the
         // divergence-theorem volume contribution happens to be zero (e.g. a face at x=0
-        // with normal (-1,0,0) where r·n = 0 for all points).
-        // Only planar faces are counted — curved faces (e.g. cylinder wall) whose normals
-        // happen to snap to an axis are excluded to prevent false plane matches (H8 box∩cyl).
+        // with normal (-1,0,0) where r路n = 0 for all points).
+        // Only planar faces are counted 鈥?curved faces (e.g. cylinder wall) whose normals
+        // happen to snap to an axis are excluded to prevent false plane matches (H8 box鈭ヽyl).
         let same_plane_count = (0..brep.solids[si].shells[shi].faces.len())
             .filter(|&local_fi| {
                 let of_flat = flat_face_index(brep, si, shi, local_fi);
@@ -354,7 +354,7 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
         }
 
         // Same infinite plane key can include disjoint UV islands. Only merge 2D bbox
-        // components that overlap with *positive* area. A second “edge only” pass was tried and
+        // components that overlap with *positive* area. A second 鈥渆dge only鈥?pass was tried and
         // breaks `boolean_op_healed` on partial 0.5-overlap unions; `unify_same_domain_faces` can
         // still coalesce some edge-coincident fragments afterward.
         let mut group_list: Vec<Vec<usize>> = Vec::new();
@@ -402,7 +402,7 @@ fn rects_2d_bbox_positive_area_overlap(
 }
 
 /// Two axis-aligned UV rectangles share a full edge: one overlap dimension is ~0, the other > `tt`.
-/// Corner-only (`wu`≈0 and `wv`≈0) and separated rectangles are excluded.
+/// Corner-only (`wu`鈮? and `wv`鈮?) and separated rectangles are excluded.
 fn rects_2d_bbox_share_full_edge(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64), tt: f64) -> bool {
     let wu = a.1.min(b.1) - a.0.max(b.0);
     let wv = a.3.min(b.3) - a.2.max(b.2);
@@ -456,8 +456,8 @@ fn segment_coincident(a0: DVec3, a1: DVec3, b0: DVec3, b1: DVec3, tol: f64) -> b
     (same(a0, b0) && same(a1, b1)) || (same(a0, b1) && same(a1, b0))
 }
 
-/// True when the two faces share a full edge (≥2 coincident vertex indices, or the same segment
-/// within `geom_tol` — booleans often duplicate vertex indices on seams).
+/// True when the two faces share a full edge (鈮? coincident vertex indices, or the same segment
+/// within `geom_tol` 鈥?booleans often duplicate vertex indices on seams).
 fn faces_share_full_edge_geom(
     brep: &BRep,
     face_i: &Face,
@@ -604,8 +604,8 @@ fn axis_uv_bbox_rect_area(b: (f64, f64, f64, f64)) -> f64 {
     (u1 - u0).abs() * (v1 - v0).abs()
 }
 
-/// Physical face area divided by axis-aligned UV bbox area for ±axis planes (same projection as
-/// [`face_axis_world_bbox`]). Near 1 ⇒ patch fills its bbox rectangle (typical redundant caps).
+/// Physical face area divided by axis-aligned UV bbox area for 卤axis planes (same projection as
+/// [`face_axis_world_bbox`]). Near 1 鈬?patch fills its bbox rectangle (typical redundant caps).
 fn redundant_axis_uv_bbox_fill_ratio(
     brep: &BRep,
     face: &Face,
@@ -625,7 +625,7 @@ fn redundant_axis_uv_bbox_fill_ratio(
 }
 
 /// Split coplanar face indices into groups that are each connected in 2D world UV.
-/// Non–axis-aligned planes keep a single bucket (previous behavior).
+/// Non鈥揳xis-aligned planes keep a single bucket (previous behavior).
 fn split_fis_by_plane_uv_connectivity(
     brep: &BRep,
     si: usize,
@@ -684,8 +684,8 @@ fn plane_key(n: DVec3, d: f64, tol: f64) -> (i64, i64, i64, i64) {
     )
 }
 
-/// If `n` is within `tol_dir` of an axis, snap to exact ±X/±Y/±Z.
-/// When `n` is ±X/±Y/±Z, return the two world axis indices that span the plane (e.g. Ẑ → (x,y)).
+/// If `n` is within `tol_dir` of an axis, snap to exact 卤X/卤Y/卤Z.
+/// When `n` is 卤X/卤Y/卤Z, return the two world axis indices that span the plane (e.g. Z虃 鈫?(x,y)).
 fn axis_aligned_world_plane_uv_axes(n: DVec3) -> Option<[usize; 2]> {
     let a = n.abs();
     if a.x > 1.0 - 2.0 * TOLERANCE_ADAPTIVE_MAX {
@@ -723,7 +723,7 @@ fn snap_almost_axis(n: DVec3) -> DVec3 {
     n
 }
 
-/// Map `n·x = d` to a canonical `n` so that `(n, d)` and `(-n, -d)` (same
+/// Map `n路x = d` to a canonical `n` so that `(n, d)` and `(-n, -d)` (same
 /// infinite plane) share the same key when bucketing.
 fn canonicalize_plane_n_d(n: DVec3, d: f64) -> (DVec3, f64) {
     const E: f64 = TOLERANCE_LEN_MIN;
@@ -905,6 +905,7 @@ fn try_fuse_orthogonal_group(
         inner_wires,
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -927,7 +928,7 @@ fn try_fuse_orthogonal_group(
     true
 }
 
-/// Union of axis-aligned rectangles → outer ring first, then hole rings (UV coords).
+/// Union of axis-aligned rectangles 鈫?outer ring first, then hole rings (UV coords).
 fn union_rects_to_rings_grid(rects: &[(f64, f64, f64, f64)], tol: f64) -> Option<Vec<Vec<(f64, f64)>>> {
     let t = tol.max(TOLERANCE_ABS);
     let (occ_ext, xs, ys) = build_padded_occ_grid(rects, t)?;
@@ -1250,9 +1251,9 @@ fn replace_shell_faces_and_geom(
     crate::remove_flat_face_geom_slots(&mut brep.geom, insert_at);
     brep.geom.face_surface.insert(insert_at, Some(surf_idx));
     // Insert at insert_at (not resize) so that entries after the removed index
-    // are pushed right rather than left-shifted and then padded at the end —
+    // are pushed right rather than left-shifted and then padded at the end 鈥?
     // the old resize path caused face_surface_range entries to drift by one
-    // position (cylinder wall UV domain → planar face, H8 box ∩ cylinder).
+    // position (cylinder wall UV domain 鈫?planar face, H8 box 鈭?cylinder).
     brep.geom.face_surface_range.insert(insert_at, None);
     debug_assert_eq!(brep.geom.face_surface_range.len(), brep.geom.face_surface.len());
     if brep.geom.face_tolerance.len() < brep.geom.face_surface.len() {
@@ -1463,7 +1464,7 @@ fn bbox2d(uv: &[(f64, f64)]) -> (f64, f64, f64, f64) {
     (umin, umax, vmin, vmax)
 }
 
-/// Collapse 180° vertices on a closed UV ring from [`union_rects_to_rings_grid`].
+/// Collapse 180掳 vertices on a closed UV ring from [`union_rects_to_rings_grid`].
 fn simplify_ring_collinear_uv_closed(ring: &[(f64, f64)], tol: f64) -> Vec<(f64, f64)> {
     if ring.len() < 3 {
         return ring.to_vec();
@@ -1530,17 +1531,17 @@ fn ring_is_axis_aligned_orthogonal_uv(compact: &[(f64, f64)], tol: f64) -> bool 
 }
 
 /// Vertices of a closed ring from [`union_rects_to_rings_grid`] include many collinear samples.
-/// This removes 180° vertices until only corners remain. A true merged rectangle has 4; an L
+/// This removes 180掳 vertices until only corners remain. A true merged rectangle has 4; an L
 /// (two edge-adjacent quads) keeps 6+.
 fn ring_corner_count_after_collinear_removal(ring: &[(f64, f64)], tol: f64) -> usize {
     simplify_ring_collinear_uv_closed(ring, tol).len()
 }
 
-// ── Coplanar overlap clipping for Intersection results ──────────────────────
+// 鈹€鈹€ Coplanar overlap clipping for Intersection results 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Ensure a 2D polygon has counter‑clockwise winding (SH expects CCW for the clip polygon).
-/// Sutherland‑Hodgman's `is_inside` uses left‑of‑edge as "inside", which requires the clip
-/// polygon to be CCW.  Faces with negative normals (e.g. −Z) produce CW UV projections, so
+/// Ensure a 2D polygon has counter鈥慶lockwise winding (SH expects CCW for the clip polygon).
+/// Sutherland鈥慔odgman's `is_inside` uses left鈥憃f鈥慹dge as "inside", which requires the clip
+/// polygon to be CCW.  Faces with negative normals (e.g. 鈭抁) produce CW UV projections, so
 /// we reverse them here.
 fn ensure_ccw(poly: &[[f64; 2]]) -> Vec<[f64; 2]> {
     if poly.len() < 3 {
@@ -1567,14 +1568,14 @@ fn ensure_ccw(poly: &[[f64; 2]]) -> Vec<[f64; 2]> {
 /// [`remove_axis_coplanar_redundant_child_faces`] already handles), both are kept in the
 /// shell and the surface area is inflated by the duplicate region.
 ///
-/// This pass finds such pairs, computes the 2D polygon intersection via Sutherland–Hodgman,
+/// This pass finds such pairs, computes the 2D polygon intersection via Sutherland鈥揌odgman,
 /// and replaces both faces with a single face covering only the overlap.
 pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, tol: f64) -> (BRep, usize) {
     let mut out = brep.clone();
     let mut total = 0usize;
     let t = tol.max(TOLERANCE_ABS);
 
-    // Phase 1: pair-based clipping — find coplanar face pairs in the result and
+    // Phase 1: pair-based clipping 鈥?find coplanar face pairs in the result and
     // replace each pair with a single face covering their 2D polygon overlap.
     for si in 0..out.solids.len() {
         for shi in 0..out.solids[si].shells.len() {
@@ -1602,7 +1603,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
 
     // Phase 2: clip remaining faces against input solids.
     // When the boolean classifier removes one of a coplanar pair (e.g. classifying it
-    // as "Out"), that pair is invisible to Phase 1 — the surviving face is too large.
+    // as "Out"), that pair is invisible to Phase 1 鈥?the surviving face is too large.
     // We build a map of axis-aligned faces from the input solids by plane, then clip
     // each surviving result face against every input face on the same plane.
     let mut input_map: HashMap<(i64, i64, i64, i64), Vec<Vec<[f64; 2]>>> = HashMap::new();
@@ -1639,7 +1640,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
         }
     }
 
-    // Pre-scan is no longer needed — the area check (sa_before / max_input_area < 0.97)
+    // Pre-scan is no longer needed 鈥?the area check (sa_before / max_input_area < 0.97)
     // correctly distinguishes already-trimmed faces from full coplanar faces.
 
     for si in 0..out.solids.len() {
@@ -1673,7 +1674,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
                     let (n_c, d_c) = canonicalize_plane_n_d(n, d);
                     let pk = plane_key(n_c, d_c, t);
 
-                    // Skip curved (non-plane) faces — the axis-aligned normal check
+                    // Skip curved (non-plane) faces 鈥?the axis-aligned normal check
                     // is not sufficient for cylinder walls that get a planar
                     // classification after boolean face dedup.
                     let flat = flat_face_index(&out, si, shi, fi);
@@ -1786,6 +1787,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
                                         inner_wires: vec![],
                                         normal: face.normal,
                                         triangles: vec![],
+                                        sample_point: None,
                                         mesh_dirty: true,
                                     };
 
@@ -1833,7 +1835,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
 ///
 /// 1. Read everything from `brep` into local variables while holding only shared references.
 /// 2. Compute the SH intersection.
-/// 3. Mutate `brep` — no borrow conflicts because the "read" borrows are dropped.
+/// 3. Mutate `brep` 鈥?no borrow conflicts because the "read" borrows are dropped.
 fn clip_one_coplanar_pair(
     brep: &mut BRep,
     si: usize,
@@ -1842,10 +1844,10 @@ fn clip_one_coplanar_pair(
     fj: usize,
     tol: f64,
 ) -> Option<()> {
-    // Skip curved (non-plane) faces — a cylinder wall classified with an
-    // axis-aligned face normal (e.g. after boolean On‑face dedup) must not
+    // Skip curved (non-plane) faces 鈥?a cylinder wall classified with an
+    // axis-aligned face normal (e.g. after boolean On鈥慺ace dedup) must not
     // be treated as a planar face.  Clipping its 2D axis projection corrupts
-    // face_surface_range and destroys the curved‑surface sub‑face.
+    // face_surface_range and destroys the curved鈥憇urface sub鈥慺ace.
     for &f in &[fi, fj] {
         let flat = flat_face_index(brep, si, shi, f);
         let sidx = brep.geom.face_surface.get(flat).copied().flatten()?;
@@ -1854,7 +1856,7 @@ fn clip_one_coplanar_pair(
         }
     }
 
-    // ── Read phase (shared borrows only) ──────────────────────────────────
+    // 鈹€鈹€ Read phase (shared borrows only) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let (face_i, face_j, n, axes, poly_i_uv, poly_j_uv, plane_origin, normal);
 
     {
@@ -1870,7 +1872,7 @@ fn clip_one_coplanar_pair(
             return None;
         }
 
-        // Both must snap to ±axis
+        // Both must snap to 卤axis
         let n_i = snap_almost_axis(face_i.normal.normalize_or_zero());
         let n_j = snap_almost_axis(face_j.normal.normalize_or_zero());
         let axes_i = axis_aligned_world_plane_uv_axes(n_i)?;
@@ -1900,7 +1902,7 @@ fn clip_one_coplanar_pair(
             return None;
         }
 
-        // Skip strict bbox subset — already handled by remove_axis_coplanar_redundant_child_faces.
+        // Skip strict bbox subset 鈥?already handled by remove_axis_coplanar_redundant_child_faces.
         let scale = (bi.1 - bi.0)
             .abs()
             .max(bi.3 - bi.2)
@@ -1920,7 +1922,7 @@ fn clip_one_coplanar_pair(
             return None;
         }
         if subset(bi, bj) && subset(bj, bi) {
-            // Equal bboxes — also handled by the subset pass.
+            // Equal bboxes 鈥?also handled by the subset pass.
             return None;
         }
 
@@ -1945,9 +1947,9 @@ fn clip_one_coplanar_pair(
         normal = face_i.normal;
     }
 
-    // ── Compute 2D polygon intersection ───────────────────────────────────
+    // 鈹€鈹€ Compute 2D polygon intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // SH expects the clip polygon to be CCW (left-of-edge = inside).  Faces with negative
-    // normals (e.g. −Z) project to CW in world-axis UV, so we normalise the clip polygon.
+    // normals (e.g. 鈭抁) project to CW in world-axis UV, so we normalise the clip polygon.
     let poly_j_uv = ensure_ccw(&poly_j_uv);
     let overlap =
         crate::inttools::coplanar::sutherland_hodgman_clip(&poly_i_uv, &poly_j_uv);
@@ -1970,7 +1972,7 @@ fn clip_one_coplanar_pair(
         }
     }
 
-    // ── Write phase: create face from overlap polygon ─────────────────────
+    // 鈹€鈹€ Write phase: create face from overlap polygon 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     let [i_ax, j_ax] = axes;
 
     // Convert to (f64, f64) rings for add_vertices_for_rings_with_eval
@@ -2008,6 +2010,7 @@ fn clip_one_coplanar_pair(
         inner_wires: vec![],
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -2065,7 +2068,7 @@ mod orth_union_tests {
         assert!(rects_2d_bbox_positive_area_overlap(a, c_overlap, gap));
     }
 
-    /// L-shaped outline keeps >4 corners; a 3×1 rectangle of samples collapses to 4 corners.
+    /// L-shaped outline keeps >4 corners; a 3脳1 rectangle of samples collapses to 4 corners.
     #[test]
     fn ring_collinear_simplify_rect_vs_l() {
         let tol = TOLERANCE_MESH_LEGACY;
@@ -2084,7 +2087,7 @@ mod orth_union_tests {
     }
 }
 
-/// OCCT `bcommon_simple/G1` intersection: document axis-UV bbox overlap vs strict containment between coplanar ±axis faces.
+/// OCCT `bcommon_simple/G1` intersection: document axis-UV bbox overlap vs strict containment between coplanar 卤axis faces.
 ///
 /// Run with `cargo test -p rcad-algorithms g1_intersection_axis_bbox_relationship_probe -- --nocapture` to print counts.
 /// Intended for diagnosing +1 `checkprops -s` gaps when duplicate caps do **not** satisfy strict bbox subset.

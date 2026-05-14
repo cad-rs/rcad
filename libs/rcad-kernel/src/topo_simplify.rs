@@ -1,4 +1,4 @@
-use crate::{BRep, Edge, WireEdge};
+﻿use crate::{BRep, Edge, WireEdge};
 
 fn oriented_edge_vertices(brep: &BRep, we: WireEdge) -> Option<(usize, usize)> {
     let e = brep.edges.get(we.idx)?;
@@ -201,6 +201,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: glam::DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 }],
             }],

@@ -1,4 +1,4 @@
-//! Shape customization tools analogous to OCCT ShapeCustom package.
+﻿//! Shape customization tools analogous to OCCT ShapeCustom package.
 //!
 //! This module provides utilities for:
 //! - BSpline degree reduction and simplification
@@ -2170,6 +2170,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 

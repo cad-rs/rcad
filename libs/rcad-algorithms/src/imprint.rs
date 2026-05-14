@@ -1,8 +1,8 @@
-//! Face imprinting and gap/overlap detection.
+﻿//! Face imprinting and gap/overlap detection.
 //!
 //! **Face imprinting** (`imprint_shape`): splits each face of `target` wherever
 //! the boundary of `tool` crosses it, without performing a boolean classification.
-//! The result is a new BRep whose faces share edges with the tool boundary — a
+//! The result is a new BRep whose faces share edges with the tool boundary 鈥?a
 //! prerequisite for conformal meshing (FEM/FDTD).
 //!
 //! **Gap/overlap detection** (`detect_gaps_overlaps`): reports pairs of faces
@@ -23,9 +23,9 @@ use crate::builder::SubFace;
 use crate::pave_filler::PaveFiller;
 use crate::triangulate::triangulate_polygon;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Public types
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Result of imprinting `tool` geometry onto `target`.
 #[derive(Debug)]
@@ -70,18 +70,18 @@ pub struct GapOverlapReport {
     pub shared_faces: Vec<(usize, usize)>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Face imprinting
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Imprint the boundary of `tool` onto the faces of `target`.
 ///
 /// This runs the PaveFiller intersection pass between the two BReps, then splits
 /// each target face by the intersection curves recorded in its `FaceInfo`.
-/// No boolean classification is performed — all faces of `target` are preserved,
+/// No boolean classification is performed 鈥?all faces of `target` are preserved,
 /// but split where the tool boundary crosses them.
 ///
-/// Analogy: OCCT `BRepAlgoAPI_Splitter` (lightweight variant — keeps all target faces).
+/// Analogy: OCCT `BRepAlgoAPI_Splitter` (lightweight variant 鈥?keeps all target faces).
 pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
     // Run PaveFiller to compute intersections
     let mut ds = DS::new(target, tool);
@@ -117,6 +117,13 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
 
         for sf in sub_faces {
             let triangles = triangulate_polygon(&sf.boundary, sf.normal);
+            // Compute sample point as boundary centroid (for planar faces).
+            let sample_point = if sf.boundary.is_empty() {
+                None
+            } else {
+                let centroid = sf.boundary.iter().sum::<DVec3>() / sf.boundary.len() as f64;
+                Some(centroid)
+            };
             result_faces.push(Face {
                 outer_wire: Wire {
                     edges: sf
@@ -132,7 +139,8 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
                 inner_wires: vec![],
                 normal: sf.normal,
                 triangles,
-                    mesh_dirty: false,
+                sample_point,
+                mesh_dirty: false,
             });
         }
 
@@ -175,7 +183,7 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
 }
 
 /// Split a single DS face by its intersection curves.
-/// Shared with builder logic — produces a list of SubFace.
+/// Shared with builder logic 鈥?produces a list of SubFace.
 fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     let face = &ds.faces[face_idx];
     let fi = &face.face_info;
@@ -359,17 +367,17 @@ fn split_poly_2d(poly: &[[f64; 2]], sa: [f64; 2], sb: [f64; 2]) -> Vec<Vec<[f64;
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Gap / overlap detection
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Detect gaps and overlaps between two BReps.
 ///
 /// For each pair of faces (one from each BRep) that are within `tolerance` of
 /// each other, samples points on face A and measures the distance to surface B.
 ///
-/// - Distance ∈ (0, tolerance]: **Gap**
-/// - Distance ≈ 0 and normals anti-parallel: **SharedFace**
+/// - Distance 鈭?(0, tolerance]: **Gap**
+/// - Distance 鈮?0 and normals anti-parallel: **SharedFace**
 /// - Distance < 0 (interpenetration, estimated): **Overlap**
 pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapReport {
     let mut report = GapOverlapReport::default();
@@ -437,9 +445,9 @@ pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapRep
     report
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Minimum distance
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Minimum distance between two `BRep`s.
 ///
@@ -467,7 +475,7 @@ pub fn min_distance(a: &BRep, b: &BRep) -> f64 {
         if fa_pts.is_empty() {
             continue;
         }
-        // Query BVH B for candidate faces using face A’s AABB.
+        // Query BVH B for candidate faces using face A鈥檚 AABB.
         let (a_min, a_max) = aabb(fa_pts);
         let query = Aabb { min: a_min, max: a_max };
         let candidate_b_faces = bvh_b.query_aabb(&query);
@@ -488,7 +496,7 @@ pub fn min_distance(a: &BRep, b: &BRep) -> f64 {
             }
             let (_, _fb_pts, fb_surf, _) = &faces_b[fb_idx];
 
-            // Sample face A and measure distance to face B’s underlying surface.
+            // Sample face A and measure distance to face B鈥檚 underlying surface.
             let samples = sample_face_points(fa_pts, 8);
             for &sp in &samples {
                 let proj = closest_point_on_surface(fb_surf, sp, 8);
@@ -504,9 +512,9 @@ pub fn min_distance(a: &BRep, b: &BRep) -> f64 {
     global_min
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Collect (flat_face_idx, vertex_points, surface, normal) for every face in brep.
 fn collect_faces_with_surfaces(brep: &BRep) -> Vec<(usize, Vec<DVec3>, Surface3, DVec3)> {
@@ -921,7 +929,7 @@ fn curved_subface_boundary_3d(
         }
     }
 
-    // 2. Consecutive deduplication — collapse runs of pole/apex samples
+    // 2. Consecutive deduplication 鈥?collapse runs of pole/apex samples
     let mut deduped: Vec<DVec3> = Vec::new();
     for p in &pts {
         if deduped.is_empty() || (*p - deduped[deduped.len() - 1]).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS {

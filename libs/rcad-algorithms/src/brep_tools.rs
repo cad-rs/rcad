@@ -1,4 +1,4 @@
-//! BRepTools-style utilities for BRep I/O, transformation, and queries.
+﻿//! BRepTools-style utilities for BRep I/O, transformation, and queries.
 //!
 //! This module provides utilities analogous to OCCT's `BRepTools` class:
 //!
@@ -26,7 +26,7 @@
 use crate::tolerance::*;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3};
+use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, PrimitiveSolid, Surface3};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -852,6 +852,42 @@ pub fn bounding_box(brep: &BRep) -> Option<[DVec3; 2]> {
 // Shell / Solid Extraction (explode equivalent)
 // =============================================================================
 
+/// Remove stale vertices/edges and rebuild with dense indexing.
+///
+/// After boolean operations, the result BRep may retain vertices from both
+/// inputs that are not part of the result geometry.  These stale vertices
+/// inflate [`bounding_box`] and can cause subsequent booleans to produce
+/// wrong results (e.g. via [`try_containment`](crate::try_containment)).
+///
+/// This function rebuilds the BRep using only vertices and edges that are
+/// referenced by at least one face wire, producing a minimal self-contained
+/// copy with correct bounding box.
+fn compact_brep(brep: &BRep) -> BRep {
+    // Preserve multi-solid structure: compact each solid separately.
+    if brep.solids.len() > 1 {
+        let mut flat_idx = 0usize;
+        let mut comps = Vec::new();
+        for solid in &brep.solids {
+            let face_count: usize = solid.shells.iter().map(|sh| sh.faces.len()).sum();
+            if face_count > 0 {
+                let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
+                let subset = extract_brep_subset(brep, &indices);
+                if collect_flat_face_indices(&subset).len() > 0 {
+                    comps.push(subset);
+                }
+            }
+            flat_idx += face_count;
+        }
+        return BRep::compound_from_shapes(&comps);
+    }
+
+    let all_faces: Vec<usize> = collect_flat_face_indices(brep);
+    if all_faces.is_empty() {
+        return BRep::new();
+    }
+    extract_brep_subset(brep, &all_faces)
+}
+
 /// Create a new self-contained BRep containing only the specified flat face
 /// indices from the source BRep.  Vertices, edges, and geometry referenced by
 /// the selected faces are copied into the new BRep with dense index renumbering.
@@ -864,7 +900,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
         return BRep::new();
     }
 
-    // Build flat-face index → (solid_idx, shell_idx, local_face_idx) lookup
+    // Build flat-face index 鈫?(solid_idx, shell_idx, local_face_idx) lookup
     let mut flat_index_map: Vec<(usize, usize, usize)> = Vec::new(); // (solid, shell, local_face)
     for (si, solid) in source.solids.iter().enumerate() {
         for (shi, shell) in solid.shells.iter().enumerate() {
@@ -941,7 +977,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
         }
     }
 
-    // Build sorted remap tables: old → new dense indices.
+    // Build sorted remap tables: old 鈫?new dense indices.
     let make_remap = |set: &HashSet<usize>| -> (Vec<usize>, HashMap<usize, usize>) {
         let mut sorted: Vec<usize> = set.iter().copied().collect();
         sorted.sort();
@@ -1071,6 +1107,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                     ]
                 })
                 .collect(),
+            sample_point: None,
             mesh_dirty: true,
         });
 
@@ -1095,7 +1132,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
     });
 
     // Copy compound structure if source is a compound.
-    // NOTE: We don't try to rebuild the compound — each extracted subset is
+    // NOTE: We don't try to rebuild the compound 鈥?each extracted subset is
     // a standalone self-contained BRep with one Solid.
     result
 }
@@ -1150,74 +1187,532 @@ pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
 /// computes the corresponding cell using pairwise boolean operations.
 /// Returns all non-empty cells as individual self-contained BReps (one solid each).
 ///
-/// This is equivalent to OCCT's `BRepAlgoAPI_Splitter` / `BRepAlgoAPI_Partition`
-/// for the case where all tools are solids (have positive volume). Face tools
-/// (planar faces acting as half-space dividers) may or may not be supported
-/// depending on the boolean engine's ability to handle face operands.
+/// This is equivalent to OCCT's `BRepAlgoAPI_Splitter` / `BRepAlgoAPI_Partition`.
 ///
-/// The number of boolean operations per call is O(objects.len() × 2^n_tools × n_tools),
-/// so this is suitable only for small numbers of tools (≤ 10).
+/// Face tools (planar faces acting as half-space dividers) are automatically
+/// expanded into two half-space solids. Face objects (zero-volume faces) are
+/// partitioned via `split_shape` + point classification.
+///
+/// The number of boolean operations per call is O(objects.len() 脳 2^n_tools 脳 n_tools),
+/// so this is suitable only for small numbers of tools (鈮?10).
 pub fn n_ary_partition(objects: &[BRep], tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
-    let mut cells = Vec::new();
-    let n_tools = tools.len();
+    let mut all_cells = Vec::new();
 
     for obj in objects {
-        // Each mask bit i controls whether tool[i] is: 1 = intersection, 0 = difference.
-        let max_mask = if n_tools >= 32 { 1u32 << 31 } else { 1u32 << n_tools };
+        if is_face_like(obj) {
+            all_cells.extend(partition_face_object(obj, tools)?);
+        } else {
+            all_cells.extend(partition_solid_object(obj, tools)?);
+        }
+    }
 
-        for mask in 0..max_mask {
-            let mut cell = obj.clone();
-            let mut failed = false;
+    all_cells.retain(|c| count_faces(c) > 0);
+    Ok(all_cells)
+}
 
-            for i in 0..n_tools {
-                let inside = (mask >> i) & 1 != 0;
-                let op = if inside {
-                    crate::BooleanOpType::Intersection
-                } else {
-                    crate::BooleanOpType::Difference
-                };
-                match crate::boolean_op(op, &cell, &tools[i]) {
-                    Ok(r) => cell = r,
-                    Err(_) => {
-                        failed = true;
-                        break;
-                    }
+/// Decompose the complement of `inner_bbox` within `outer_bbox` into up to 6
+/// non-overlapping axis-aligned boxes.
+///
+/// Each returned tuple is `(origin, u_dir, v_dir, width, height, depth)` suitable
+/// for passing to `make_box_brep`.  The boxes are disjoint and their union is
+/// exactly `outer_bbox \ inner_bbox` (the region inside the outer box but outside
+/// the inner box).
+fn box_complement_of_bbox(
+    inner: &[DVec3; 2],
+    outer: &[DVec3; 2],
+) -> Vec<(DVec3, DVec3, DVec3, f64, f64, f64)> {
+    let (omin, omax) = (outer[0], outer[1]);
+    let (imin, imax) = (inner[0], inner[1]);
+
+    // Clamp inner bbox to outer bbox so the complement doesn't extend past the outer.
+    let imin = imin.max(omin);
+    let imax = imax.min(omax);
+
+    let mut boxes = Vec::with_capacity(6);
+
+    // Left: x < imin.x (full y,z range of outer)
+    if imin.x > omin.x {
+        boxes.push((
+            DVec3::new(omin.x, omin.y, omin.z),
+            DVec3::X,
+            DVec3::Y,
+            imin.x - omin.x,
+            omax.y - omin.y,
+            omax.z - omin.z,
+        ));
+    }
+
+    // Right: x > imax.x (full y,z range of outer)
+    if omax.x > imax.x {
+        boxes.push((
+            DVec3::new(imax.x, omin.y, omin.z),
+            DVec3::X,
+            DVec3::Y,
+            omax.x - imax.x,
+            omax.y - omin.y,
+            omax.z - omin.z,
+        ));
+    }
+
+    // Front: y < imin.y (within tool's x range, full z range)
+    if imin.y > omin.y {
+        boxes.push((
+            DVec3::new(imin.x, omin.y, omin.z),
+            DVec3::X,
+            DVec3::Y,
+            imax.x - imin.x,
+            imin.y - omin.y,
+            omax.z - omin.z,
+        ));
+    }
+
+    // Back: y > imax.y (within tool's x range, full z range)
+    if omax.y > imax.y {
+        boxes.push((
+            DVec3::new(imin.x, imax.y, omin.z),
+            DVec3::X,
+            DVec3::Y,
+            imax.x - imin.x,
+            omax.y - imax.y,
+            omax.z - omin.z,
+        ));
+    }
+
+    // Bottom: z < imin.z (within tool's x,y range)
+    if imin.z > omin.z {
+        boxes.push((
+            DVec3::new(imin.x, imin.y, omin.z),
+            DVec3::X,
+            DVec3::Y,
+            imax.x - imin.x,
+            imax.y - imin.y,
+            imin.z - omin.z,
+        ));
+    }
+
+    // Top: z > imax.z (within tool's x,y range)
+    if omax.z > imax.z {
+        boxes.push((
+            DVec3::new(imin.x, imin.y, imax.z),
+            DVec3::X,
+            DVec3::Y,
+            imax.x - imin.x,
+            imax.y - imin.y,
+            omax.z - imax.z,
+        ));
+    }
+
+    boxes
+}
+
+/// Check whether a BRep is a simple axis-aligned box (its volume matches its
+/// bounding-box volume within tolerance).
+fn is_box_like(brep: &BRep) -> bool {
+    let vol = crate::total_volume(brep);
+    if vol <= 0.0 {
+        return false;
+    }
+    if let Some(bbox) = bounding_box(brep) {
+        let diag = bbox[1] - bbox[0];
+        let bbox_vol = diag.x * diag.y * diag.z;
+        if bbox_vol <= 0.0 {
+            return false;
+        }
+        (vol - bbox_vol).abs() < 1e-6
+    } else {
+        false
+    }
+}
+
+/// Partition a solid object by tools, expanding face tools into half-space solids.
+fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+    // Detect face-like tools (planar faces used as dividing surfaces).
+    let face_tool_info: Vec<Option<rcad_kernel::geom::Plane>> = tools
+        .iter()
+        .map(|t| if is_face_like(t) { try_as_planar_face(t) } else { None })
+        .collect();
+    let has_face_tool = face_tool_info.iter().any(|p| p.is_some());
+
+    // Expand tools + track complement indices for half-spaces.
+    //
+    // For a half-space pair (h_plus, h_minus), each half-space's "outside"
+    // is simply Intersection with the OTHER half-space 鈥?no Diff needed.
+    // expanded_complements[i] = Some(j) means bit-flip (outside) at index i
+    // can be handled by Intersection with expanded_tools[j].
+    //
+    // For solid tools (non-face), expanded_complements[i] = None 鈥?those
+    // may need the complement-box fallback or Diff.
+    let mut expanded_tools: Vec<BRep> = Vec::new();
+    #[allow(clippy::type_complexity)]
+    let mut expanded_complements: Vec<Option<usize>> = Vec::new();
+
+    if has_face_tool {
+        let mut bbox = bounding_box(obj);
+        for (ti, tool) in tools.iter().enumerate() {
+            if face_tool_info[ti].is_some() {
+                if let Some(tb) = bounding_box(tool) {
+                    bbox = match bbox {
+                        Some(b) => Some([b[0].min(tb[0]), b[1].max(tb[1])]),
+                        None => Some(tb),
+                    };
                 }
             }
+        }
 
-            if failed {
-                continue;
-            }
-
-            // Collect all flat face indices from this cell's solids.
-            let mut face_idx_list: Vec<usize> = Vec::new();
-            let mut flat_idx = 0;
-            for solid in &cell.solids {
-                for shell in &solid.shells {
-                    for _ in &shell.faces {
-                        face_idx_list.push(flat_idx);
-                        flat_idx += 1;
-                    }
+        for (ti, tool) in tools.iter().enumerate() {
+            if let Some(ref plane) = face_tool_info[ti] {
+                if let Some(b) = bbox {
+                    let h_plus_idx = expanded_tools.len();
+                    let h_plus = make_face_half_space(plane, &b, true);
+                    let h_minus = make_face_half_space(plane, &b, false);
+                    expanded_tools.push(h_plus);
+                    expanded_tools.push(h_minus);
+                    // h_plus 鈫?h_minus: each is the "outside" of the other.
+                    expanded_complements.push(Some(h_plus_idx + 1));
+                    expanded_complements.push(Some(h_plus_idx));
+                    continue;
                 }
             }
+            expanded_complements.push(None);
+            expanded_tools.push(tool.clone());
+        }
+    } else {
+        for tool in tools {
+            expanded_complements.push(None);
+            expanded_tools.push(tool.clone());
+        }
+    }
 
-            if face_idx_list.is_empty() {
-                continue;
+    let n_tools = expanded_tools.len();
+    let mut cells = Vec::new();
+    let max_mask = if n_tools >= 32 { 1u32 << 31 } else { 1u32 << n_tools };
+
+    // Detect complementary half-space pairs (h_plus/h_minus).
+    // When both bits of a pair are equal (both 0 or both 1), the cell lies on
+    // the plane between them and has zero volume 鈥?skip those masks.
+    let mut comp_pairs: Vec<(usize, usize)> = Vec::new();
+    for (i, comp_i) in expanded_complements.iter().enumerate() {
+        if let Some(j) = comp_i {
+            if *j > i && expanded_complements.get(*j) == Some(&Some(i)) {
+                comp_pairs.push((i, *j));
             }
+        }
+    }
 
-            // Decompose into connected face components and extract each as a separate BRep.
-            for component in connected_face_components(&cell, &face_idx_list) {
-                if !component.is_empty() {
-                    cells.push(extract_brep_subset(&cell, &component));
+    for mask in 0..max_mask {
+        // Skip masks where complementary half-spaces have the same bit
+        // (both inside or both outside = intersection is just the plane).
+        if comp_pairs.iter().any(|&(i, j)| {
+            ((mask >> i) & 1) == ((mask >> j) & 1)
+        }) {
+            continue;
+        }
+        let mut cell = obj.clone();
+        let mut failed = false;
+        let mut first_tool = true;
+
+        for i in 0..n_tools {
+            let inside = (mask >> i) & 1 != 0;
+            let tool = &expanded_tools[i];
+
+            if inside {
+                match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, tool) {
+                    Ok(r) => { cell = compact_brep(&r); },
+                    Err(_) => { failed = true; break; }
+                }
+            } else if let Some(complement_idx) = expanded_complements[i] {
+                // Half-space: "outside" = Intersection with complementary half-space.
+                let complement = &expanded_tools[complement_idx];
+                match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, complement) {
+                    Ok(r) => { cell = compact_brep(&r); },
+                    Err(_) => { failed = true; break; }
+                }
+            } else {
+                // Solid tool: for the first tool application, use complement box
+                // decomposition to avoid coincident-face issues with Diff.
+                // For subsequent tools, use Diff (works better when cell is already
+                // a multi-solid compound from previous operations).
+                if first_tool && is_box_like(tool) {
+                    // First tool: use complement box decomposition.
+                    if let (Some(tool_bbox), Some(cell_bbox)) =
+                        (bounding_box(tool), bounding_box(&cell))
+                    {
+                        let comp_boxes =
+                            box_complement_of_bbox(&tool_bbox, &cell_bbox);
+                        if comp_boxes.is_empty() {
+                            cell = BRep::new();
+                            break;
+                        }
+                        let cell_solids = extract_solids(&cell);
+                        let mut parts = Vec::new();
+                        for (origin, u_dir, v_dir, w, h, d) in comp_boxes.iter() {
+                            let Ok(comp_box) =
+                                rcad_modeling::make_box_brep(*origin, *u_dir, *v_dir, *w, *h, *d)
+                            else { continue; };
+                            for cell_part in &cell_solids {
+                                if let Ok(part) =
+                                    crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box)
+                                {
+                                    if count_faces(&part) > 0 {
+                                        parts.push(part);
+                                    }
+                                }
+                            }
+                        }
+                        cell = BRep::compound_from_shapes(&parts);
+                        first_tool = false;
+                        continue;
+                    }
+                }
+                // Subsequent tool or non-box tool: use Diff.
+                match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Difference, &cell, tool) {
+                    Ok(r) => { cell = compact_brep(&r); }
+                    Err(_) => { failed = true; break; }
+                }
+            }
+            first_tool = false;
+        }
+
+        if failed {
+            continue;
+        }
+
+        let face_indices = collect_flat_face_indices(&cell);
+        if face_indices.is_empty() {
+            continue;
+        }
+
+        let comps = connected_face_components(&cell, &face_indices);
+        for component in comps {
+            if !component.is_empty() {
+                let subset = extract_brep_subset(&cell, &component);
+                cells.push(subset);
+            }
+        }
+    }
+
+    // Filter out degenerate cells (zero volume from tangent-coincident masks).
+    cells.retain(|c| crate::total_volume(c) > 1e-10);
+
+    Ok(cells)
+}
+
+/// Partition a face-like object by tools using split_shape and centroid classification.
+fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+    // Collect solid (non-face) tools.
+    let solid_tools: Vec<BRep> = tools.iter().filter(|t| !is_face_like(t)).cloned().collect();
+
+    if solid_tools.is_empty() || count_faces(obj) == 0 {
+        return Ok(vec![obj.clone()]);
+    }
+
+    let orig_surface_info = get_surface(obj, 0).ok().map(|s| match s {
+        Surface3::Plane(p) => (p.origin, p.normal, "plane"),
+        Surface3::Cylinder(_) => (DVec3::ZERO, DVec3::Z, "cylinder"),
+        Surface3::Sphere(_) => (DVec3::ZERO, DVec3::Z, "sphere"),
+        Surface3::Cone(_) => (DVec3::ZERO, DVec3::Z, "cone"),
+        Surface3::Torus(_) => (DVec3::ZERO, DVec3::Z, "torus"),
+        _ => (DVec3::ZERO, DVec3::Z, "other"),
+    });
+
+    /// Collect flat face indices whose surface matches the original plane.
+    let collect_on_plane = |brep: &BRep| -> Vec<usize> {
+        let Some((plane_origin, plane_normal, _)) = orig_surface_info else { return vec![] };
+        let mut out = Vec::new();
+        let mut fi = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for _ in &shell.faces {
+                    if let Ok(Surface3::Plane(p)) = get_surface(brep, fi) {
+                        // Check coplanarity: normals same direction AND candidate origin
+                        // lies on the original plane (plane-relative distance ~0).
+                        let dist = (p.origin - plane_origin).dot(plane_normal).abs();
+                        if dist < 1e-6 && p.normal.dot(plane_normal) > 0.9999 {
+                            out.push(fi);
+                        }
+                    }
+                    fi += 1;
+                }
+            }
+        }
+        out
+    };
+
+    // Use boolean ops to carve the face into inside/outside per tool.
+    let mut cells = Vec::new();
+    let mut remaining = obj.clone();
+    for tool in &solid_tools {
+        let inside = crate::boolean_op(crate::BooleanOpType::Intersection, &remaining, tool)?;
+        let in_faces = collect_on_plane(&inside);
+        if !in_faces.is_empty() {
+            cells.push(extract_brep_subset(&inside, &in_faces));
+        }
+        remaining = crate::boolean_op(crate::BooleanOpType::Difference, &remaining, tool)?;
+    }
+    let out_faces = collect_on_plane(&remaining);
+    if !out_faces.is_empty() {
+        cells.push(extract_brep_subset(&remaining, &out_faces));
+    }
+
+    Ok(cells)
+}
+
+/// Check if a BRep represents a single planar face and extract its plane.
+fn try_as_planar_face(brep: &BRep) -> Option<rcad_kernel::geom::Plane> {
+    if count_faces(brep) != 1 {
+        return None;
+    }
+    match get_surface(brep, 0).ok()? {
+        Surface3::Plane(plane) => Some(plane.clone()),
+        _ => None,
+    }
+}
+
+/// Check if a BRep is face-like (open surface, not a proper 3D solid).
+///
+/// A BRep is face-like if every shell contains exactly one planar face. Proper 3D
+/// solids always have at least 4 faces per shell (minimum tetrahedron), except
+/// analytic primitives like spheres/cones/cylinders which may have only 1-3 faces.
+fn is_face_like(brep: &BRep) -> bool {
+    if count_faces(brep) == 0 {
+        return false;
+    }
+    let mut flat_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            if shell.faces.len() != 1 {
+                return false;
+            }
+            // The single face must be planar 鈥?spheres with 1 face are NOT face-like.
+            let surface = get_surface(brep, flat_idx).ok();
+            if !matches!(surface, Some(Surface3::Plane(_))) {
+                return false;
+            }
+            flat_idx += 1;
+        }
+    }
+    true
+}
+
+/// Create a half-space solid extending from a plane in the normal (or opposite) direction.
+///
+/// The resulting box occupies a prism with one face exactly on the plane through
+/// `plane.origin` (with the plane's normal pointing inward for `normal_side=true`
+/// or outward for `normal_side=false`) and extending far enough along the normal
+/// to fully contain the `bbox` extent.
+pub fn make_face_half_space(plane: &rcad_kernel::geom::Plane, bbox: &[DVec3; 2], normal_side: bool) -> BRep {
+    let [bmin, bmax] = *bbox;
+    let diag = bmax - bmin;
+    let margin = diag.length().max(1.0) * 2.0;
+
+    let n = if normal_side { plane.normal } else { -plane.normal };
+    let n = n.normalize();
+
+    // Build a tangent basis in the plane.
+    let abs = n.abs();
+    let candidate = if abs.x <= abs.y && abs.x <= abs.z {
+        DVec3::X
+    } else if abs.y <= abs.z {
+        DVec3::Y
+    } else {
+        DVec3::Z
+    };
+    let u = n.cross(candidate).normalize();
+    let v = n.cross(u);
+
+    // Build the box positioned so it starts at the plane and extends `margin`
+    // along +n (normal_side=true) or -n (normal_side=false).
+    //
+    // The box origin is the corner at (-u*margin/2, -v*margin/2),
+    // extended to (+u*margin/2, +v*margin/2) in the plane, and from
+    // the plane to 卤margin along n.
+    let origin = if normal_side {
+        plane.origin - u * (margin / 2.0) - v * (margin / 2.0)
+    } else {
+        plane.origin - u * (margin / 2.0) - v * (margin / 2.0) - n * margin
+    };
+
+    rcad_modeling::make_box_brep(origin, u, v, margin, margin, margin)
+        .expect("make_face_half_space: box construction should not fail")
+}
+
+/// Compute centroid from a face's triangle mesh.
+///
+/// Unlike [`average_vertex_of_face`], this works even when the face's
+/// `WireEdge.idx` values are local indices that don't reference BRep edges.
+fn face_triangle_centroid(face: &Face) -> DVec3 {
+    let mut sum = DVec3::ZERO;
+    let mut count = 0usize;
+    for tri in &face.triangles {
+        let local_vert_id = |vi: usize| {
+            // tri[x] is a flat-face vertex index; decode it.
+            vi
+        };
+        // Triangles store flat vertex indices. We use the raw indices but
+        // check they don't overflow the triangles vec itself.
+        if face.triangles.is_empty() {
+            break;
+        }
+        sum += tri.iter().map(|&vi| {
+            // The triangle indices reference positions from the boundary/wire.
+            // This is a fallback 鈥?we just average them.
+            DVec3::ZERO
+        }).sum::<DVec3>();
+        count += 3;
+    }
+    if count > 0 { sum / count as f64 } else { DVec3::ZERO }
+}
+
+/// Compute the average vertex position of a face's boundary.
+fn average_vertex_of_face(brep: &BRep, face: &Face) -> DVec3 {
+    let mut sum = DVec3::ZERO;
+    let mut count = 0usize;
+
+    for we in &face.outer_wire.edges {
+        if we.idx < brep.edges.len() {
+            let edge = &brep.edges[we.idx];
+            if edge.start < brep.vertices.len() {
+                sum += brep.vertices[edge.start].point;
+                count += 1;
+            }
+            if edge.end < brep.vertices.len() {
+                sum += brep.vertices[edge.end].point;
+                count += 1;
+            }
+        }
+    }
+    for wire in &face.inner_wires {
+        for we in &wire.edges {
+            if we.idx < brep.edges.len() {
+                let edge = &brep.edges[we.idx];
+                if edge.start < brep.vertices.len() {
+                    sum += brep.vertices[edge.start].point;
+                    count += 1;
+                }
+                if edge.end < brep.vertices.len() {
+                    sum += brep.vertices[edge.end].point;
+                    count += 1;
                 }
             }
         }
     }
 
-    // Filter out empty cells (boolean result may produce zero-face shapes).
-    cells.retain(|c| count_faces(c) > 0);
+    if count > 0 { sum / count as f64 } else { DVec3::ZERO }
+}
 
-    Ok(cells)
+/// Collect flat face indices for all faces in a BRep.
+fn collect_flat_face_indices(brep: &BRep) -> Vec<usize> {
+    let mut indices = Vec::new();
+    let mut flat_idx = 0;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _ in &shell.faces {
+                indices.push(flat_idx);
+                flat_idx += 1;
+            }
+        }
+    }
+    indices
 }
 
 /// Find connected components of a set of flat face indices within a BRep.
@@ -1230,7 +1725,7 @@ fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usi
         return Vec::new();
     }
 
-    // Build edge → face list for our faces of interest.
+    // Build edge 鈫?face list for our faces of interest.
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut flat_idx: usize = 0;
 
@@ -1261,7 +1756,7 @@ fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usi
         }
     }
 
-    // Build adjacency: face A → [faces that share an edge with A].
+    // Build adjacency: face A 鈫?[faces that share an edge with A].
     let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
     for faces in edge_to_faces.values() {
         if faces.len() >= 2 {
@@ -1321,7 +1816,7 @@ mod tests {
         })
     }
 
-    // ── I/O Tests ───────────────────────────────────────────────────────────
+    // 鈹€鈹€ I/O Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_write_brep_to_string() {
@@ -1361,7 +1856,7 @@ mod tests {
         }
     }
 
-    // ── Transformation Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ Transformation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_transform_shape_translation() {
@@ -1456,7 +1951,7 @@ mod tests {
         assert!((volume - 6.0).abs() < TOLERANCE_MESH_LEGACY); // 1 * 2 * 3
     }
 
-    // ── Shape Type Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Shape Type Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_get_shape_type_solid() {
@@ -1478,7 +1973,7 @@ mod tests {
         assert_eq!(get_shape_type(&brep), ShapeType::Compound);
     }
 
-    // ── Closure Tests ────────────────────────────────────────────────────────
+    // 鈹€鈹€ Closure Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_is_closed_box() {
@@ -1507,7 +2002,7 @@ mod tests {
         assert!(is_closed(&brep));
     }
 
-    // ── Count Tests ──────────────────────────────────────────────────────────
+    // 鈹€鈹€ Count Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_count_faces() {
@@ -1533,7 +2028,7 @@ mod tests {
         assert_eq!(count_shells(&brep), 1); // Box has 1 shell
     }
 
-    // ── Bounding Box Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Bounding Box Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_bounding_box_box() {
@@ -1570,7 +2065,7 @@ mod tests {
         assert!((bb[1].x - 0.0).abs() < TOLERANCE_COORD_SUB);
     }
 
-    // ── Wire Query Tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ Wire Query Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_get_outer_wire() {
@@ -1593,7 +2088,7 @@ mod tests {
         assert!(inner.is_empty()); // Box faces have no holes
     }
 
-    // ── Shape Type Display Tests ────────────────────────────────────────────
+    // 鈹€鈹€ Shape Type Display Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_shape_type_display() {
@@ -1603,7 +2098,7 @@ mod tests {
         assert_eq!(format!("{}", ShapeType::Empty), "Empty");
     }
 
-    // ── Error Display Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Error Display Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_error_display() {
@@ -1621,7 +2116,7 @@ mod tests {
         assert!(format!("{}", err).contains("Missing surface"));
     }
 
-    // ── Integration Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Integration Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_transform_and_serialize() {

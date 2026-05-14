@@ -1,4 +1,4 @@
-//! BRepLib-style utilities for low-level BRep operations.
+﻿//! BRepLib-style utilities for low-level BRep operations.
 //!
 //! This module provides utilities analogous to OCCT's `BRepLib` class:
 //!
@@ -1078,6 +1078,7 @@ pub fn add_face_with_surface(
         inner_wires: Vec::new(),
         normal,
         triangles: Vec::new(),
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -1381,7 +1382,7 @@ mod tests {
         })
     }
 
-    // ── FindSurface Tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ FindSurface Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_find_surface_through_points_plane() {
@@ -1445,7 +1446,7 @@ mod tests {
         assert!(matches!(result, Err(BRepLibError::EmptyInput)));
     }
 
-    // ── SortFaces Tests ────────────────────────────────────────────────────────
+    // 鈹€鈹€ SortFaces Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_sort_faces_by_area() {
@@ -1492,7 +1493,7 @@ mod tests {
         assert!(sorted.is_empty());
     }
 
-    // ── CheckSameDomain Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ CheckSameDomain Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_faces_share_surface_same() {
@@ -1524,7 +1525,7 @@ mod tests {
         assert!(matches!(result, Err(BRepLibError::InvalidIndex { .. })));
     }
 
-    // ── Add Tests ──────────────────────────────────────────────────────────────
+    // 鈹€鈹€ Add Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_add_edge_with_curve() {
@@ -1610,7 +1611,7 @@ mod tests {
         assert!(matches!(result, Err(BRepLibError::InvalidWire { .. })));
     }
 
-    // ── Make Tests ─────────────────────────────────────────────────────────────
+    // 鈹€鈹€ Make Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_make_edge_from_curve() {
@@ -1642,7 +1643,7 @@ mod tests {
         assert!(!wire.edges[1].forward);
     }
 
-    // ── Bounds Tests ───────────────────────────────────────────────────────────
+    // 鈹€鈹€ Bounds Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_compute_edge_bounds() {
@@ -1689,7 +1690,7 @@ mod tests {
         assert!(matches!(result, Err(BRepLibError::InvalidIndex { .. })));
     }
 
-    // ── Error Display Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Error Display Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_error_display() {
@@ -1713,7 +1714,7 @@ mod tests {
         assert!(format!("{}", err).contains("Empty input"));
     }
 
-    // ── Integration Tests ──────────────────────────────────────────────────────
+    // 鈹€鈹€ Integration Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_complete_workflow() {

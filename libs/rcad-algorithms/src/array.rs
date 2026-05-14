@@ -1,4 +1,4 @@
-//! Array (pattern) operations — linear and circular repetition of BRep solids.
+﻿//! Array (pattern) operations 鈥?linear and circular repetition of BRep solids.
 //!
 //! Analogous to OCCT `BRepOffsetAPI_MakeThickSolid`-style patterns and
 //! `BRepFeat_MakeLinearForm` / `BRepFeat_MakeRevol` for feature repetition.
@@ -214,7 +214,7 @@ impl std::fmt::Display for PatternError {
     }
 }
 
-/// Apply a linear pattern to a BRep — repeat copies along a direction.
+/// Apply a linear pattern to a BRep 鈥?repeat copies along a direction.
 ///
 /// Returns a new BRep containing all copies merged into a single solid.
 /// The original is included as the first copy (offset 0).
@@ -247,7 +247,7 @@ pub fn linear_pattern(
     Ok(out)
 }
 
-/// Apply a circular pattern to a BRep — rotate copies around an axis.
+/// Apply a circular pattern to a BRep 鈥?rotate copies around an axis.
 ///
 /// Returns a new BRep containing all copies merged into a single solid.
 /// The original is included as the first copy (angle 0).
@@ -282,9 +282,9 @@ pub fn circular_pattern(
     Ok(out)
 }
 
-// ── Mirror Pattern ─────────────────────────────────────────────────────────────
+// 鈹€鈹€ Mirror Pattern 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Apply a mirror pattern to a BRep — mirror across a plane.
+/// Apply a mirror pattern to a BRep 鈥?mirror across a plane.
 ///
 /// Returns a new BRep containing the mirrored copy and optionally the original.
 pub fn mirror_pattern(
@@ -314,7 +314,7 @@ pub fn mirror_pattern(
     Ok(out)
 }
 
-/// Apply a compound mirror pattern — mirror and linear pattern combined.
+/// Apply a compound mirror pattern 鈥?mirror and linear pattern combined.
 ///
 /// Mirrors the shape across a plane, then applies a linear pattern to both
 /// the original and mirrored copies.
@@ -342,7 +342,7 @@ pub fn mirror_circular_pattern(
     circular_pattern(&mirrored, circular_params)
 }
 
-// ── Rectangular Grid Pattern ───────────────────────────────────────────────────
+// 鈹€鈹€ Rectangular Grid Pattern 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a rectangular grid pattern to a BRep.
 ///
@@ -427,7 +427,7 @@ pub fn rectangular_pattern_transform(
     Ok(translation_matrix(total_offset))
 }
 
-// ── Variable Spacing Pattern ───────────────────────────────────────────────────
+// 鈹€鈹€ Variable Spacing Pattern 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a pattern with non-uniform spacing.
 ///
@@ -508,7 +508,7 @@ pub fn distance_spacing_pattern(
     Ok(out)
 }
 
-// ── Path Pattern ───────────────────────────────────────────────────────────────
+// 鈹€鈹€ Path Pattern 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Trait for path evaluation used in path patterns.
 pub trait PathEvaluator {
@@ -591,7 +591,7 @@ pub fn path_pattern_equal_spacing(
     path_pattern(brep, &params, path)
 }
 
-// ── Pattern with Suppression ───────────────────────────────────────────────────
+// 鈹€鈹€ Pattern with Suppression 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a pattern with instance suppression.
 ///
@@ -686,7 +686,7 @@ pub fn circular_pattern_with_suppression(
     pattern_with_suppression(brep, &transforms, suppressed_indices)
 }
 
-// ── Pattern with Instance Transforms ───────────────────────────────────────────
+// 鈹€鈹€ Pattern with Instance Transforms 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a pattern with instance-specific additional transformations.
 ///
@@ -725,7 +725,7 @@ pub fn pattern_with_instance_transforms(
     Ok(out)
 }
 
-// ── Pattern within Boundary ────────────────────────────────────────────────────
+// 鈹€鈹€ Pattern within Boundary 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a rectangular grid pattern constrained within a boundary.
 ///
@@ -790,7 +790,7 @@ pub fn pattern_within_boundary(
     Ok(out)
 }
 
-// ── Utility Functions ──────────────────────────────────────────────────────────
+// 鈹€鈹€ Utility Functions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Create a mirror transformation matrix across a plane.
 fn mirror_matrix(plane_origin: DVec3, plane_normal: DVec3) -> DMat4 {
@@ -864,7 +864,7 @@ pub fn scale_rectangular_params(params: &RectangularPatternParams, scale: f64) -
     }
 }
 
-// ── Internal helpers ─────────────────────────────────────────────────────────
+// 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn translation_matrix(offset: DVec3) -> DMat4 {
     DMat4::from_translation(offset)
@@ -964,6 +964,7 @@ fn append_transformed_brep(
                     DVec3::new(rotated.x, rotated.y, rotated.z).normalize_or(face.normal)
                 },
                 triangles: face.triangles.iter().map(|[i, j, k]| [i + v_offset, j + v_offset, k + v_offset]).collect(),
+                sample_point: face.sample_point,
                 mesh_dirty: face.mesh_dirty,
             });
         }
@@ -1103,7 +1104,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
     }
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -1122,7 +1123,7 @@ mod tests {
         brep
     }
 
-    // ── Linear Pattern Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Linear Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn linear_pattern_count_1_returns_original() {
@@ -1202,7 +1203,7 @@ mod tests {
         ));
     }
 
-    // ── Circular Pattern Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Circular Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn circular_pattern_count_4_produces_4x_volume() {
@@ -1280,7 +1281,7 @@ mod tests {
         ));
     }
 
-    // ── Mirror Pattern Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Mirror Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn mirror_pattern_without_original_produces_1_solid() {
@@ -1372,7 +1373,7 @@ mod tests {
         assert!((v_result - 4.0 * v_orig).abs() < 0.01);
     }
 
-    // ── Rectangular Pattern Tests ───────────────────────────────────────────────
+    // 鈹€鈹€ Rectangular Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn rectangular_pattern_2x3_produces_6_solids() {
@@ -1508,7 +1509,7 @@ mod tests {
         assert!((offset.z - 0.0).abs() < TOLERANCE_COORD_SUB, "expected z=0.0, got {}", offset.z);
     }
 
-    // ── Variable Spacing Pattern Tests ──────────────────────────────────────────
+    // 鈹€鈹€ Variable Spacing Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn variable_spacing_pattern_produces_correct_count() {
@@ -1566,7 +1567,7 @@ mod tests {
         ));
     }
 
-    // ── Distance Spacing Pattern Tests ──────────────────────────────────────────
+    // 鈹€鈹€ Distance Spacing Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn distance_spacing_pattern_distributes_evenly() {
@@ -1613,7 +1614,7 @@ mod tests {
         ));
     }
 
-    // ── Path Pattern Tests ──────────────────────────────────────────────────────
+    // 鈹€鈹€ Path Pattern Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     struct LinePath {
         start: DVec3,
@@ -1716,7 +1717,7 @@ mod tests {
         assert_eq!(result.solids.len(), 5);
     }
 
-    // ── Pattern with Suppression Tests ──────────────────────────────────────────
+    // 鈹€鈹€ Pattern with Suppression Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn pattern_with_suppression_excludes_indices() {
@@ -1789,7 +1790,7 @@ mod tests {
         assert!(matches!(result, Err(PatternError::SuppressedIndexOutOfRange)));
     }
 
-    // ── Pattern with Instance Transforms Tests ───────────────────────────────────
+    // 鈹€鈹€ Pattern with Instance Transforms Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn pattern_with_instance_transforms_applies_additional_transform() {
@@ -1814,7 +1815,7 @@ mod tests {
         assert!(v_result > 2.0, "scaled instance should increase total volume");
     }
 
-    // ── Pattern within Boundary Tests ────────────────────────────────────────────
+    // 鈹€鈹€ Pattern within Boundary Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn pattern_within_boundary_respects_boundary() {
@@ -1865,7 +1866,7 @@ mod tests {
         assert_eq!(result.solids.len(), 0);
     }
 
-    // ── Utility Function Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ Utility Function Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn generate_linear_transforms_produces_correct_count() {
@@ -1922,7 +1923,7 @@ mod tests {
         assert!((scaled.spacing2 - 1.5).abs() < TOLERANCE_COORD_SUB);
     }
 
-    // ── Error Display Tests ──────────────────────────────────────────────────────
+    // 鈹€鈹€ Error Display Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn pattern_error_display_works() {

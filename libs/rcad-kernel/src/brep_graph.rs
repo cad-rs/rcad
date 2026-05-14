@@ -1,4 +1,4 @@
-//! Graph-topology wrapper for `BRep`, analogous to OCCT's `BRepGraph` module.
+﻿//! Graph-topology wrapper for `BRep`, analogous to OCCT's `BRepGraph` module.
 //!
 //! `BRepGraph` pre-computes and caches all adjacency relations so that repeated
 //! topology queries run in O(1) instead of the O(n) scans performed by the
@@ -8,11 +8,11 @@
 //!
 //! | Query | OCCT equivalent |
 //! |---|---|
-//! | edge → adjacent face indices | `TopExp::MapShapesAndAncestors` |
-//! | face → edge indices | `TopExp::MapShapes` |
-//! | vertex → adjacent edge indices | `TopExp::MapShapesAndAncestors` |
-//! | vertex → adjacent face indices | derived from above |
-//! | edge → (start_vertex, end_vertex) | `BRep_Tool::Vertices` |
+//! | edge 鈫?adjacent face indices | `TopExp::MapShapesAndAncestors` |
+//! | face 鈫?edge indices | `TopExp::MapShapes` |
+//! | vertex 鈫?adjacent edge indices | `TopExp::MapShapesAndAncestors` |
+//! | vertex 鈫?adjacent face indices | derived from above |
+//! | edge 鈫?(start_vertex, end_vertex) | `BRep_Tool::Vertices` |
 //!
 //! # Mutation tracking
 //!
@@ -25,9 +25,9 @@
 //! # Traversal
 //!
 //! `BRepGraph` provides DFS and BFS iterators over face/edge/vertex connectivity:
-//! - [`BRepGraph::dfs_faces`] — visits all faces reachable (via shared edges) from a seed face.
-//! - [`BRepGraph::bfs_faces`] — same graph, breadth-first order.
-//! - [`BRepGraph::dfs_edges_from_vertex`] — walks edge-adjacency from a seed vertex DFS.
+//! - [`BRepGraph::dfs_faces`] 鈥?visits all faces reachable (via shared edges) from a seed face.
+//! - [`BRepGraph::bfs_faces`] 鈥?same graph, breadth-first order.
+//! - [`BRepGraph::dfs_edges_from_vertex`] 鈥?walks edge-adjacency from a seed vertex DFS.
 //!
 //! # Examples
 //!
@@ -55,23 +55,23 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // BRepGraph
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Cached graph-topology view of a [`BRep`].
 ///
-/// Build with [`BRepGraph::from_brep`].  The graph is a **snapshot** — it does
+/// Build with [`BRepGraph::from_brep`].  The graph is a **snapshot** 鈥?it does
 /// not update automatically when the source `BRep` is mutated.  Call
 /// `from_brep` again to refresh.
 #[derive(Debug, Clone)]
 pub struct BRepGraph {
-    // ── Counts ────────────────────────────────────────────────────────────────
+    // 鈹€鈹€ Counts 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     pub vertex_count: usize,
     pub edge_count: usize,
     pub face_count: usize,
 
-    // ── Adjacency tables (indexed by the corresponding entity index) ──────────
+    // 鈹€鈹€ Adjacency tables (indexed by the corresponding entity index) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// `edge_to_faces[edge_idx]` = list of flat face indices that include this edge
     /// in their outer wire.
     edge_to_faces: Vec<Vec<usize>>,
@@ -90,7 +90,7 @@ pub struct BRepGraph {
     /// `edge_endpoints[edge_idx]` = (start_vertex_idx, end_vertex_idx).
     edge_endpoints: Vec<(usize, usize)>,
 
-    // ── Dirty / modified bits ─────────────────────────────────────────────────
+    // 鈹€鈹€ Dirty / modified bits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Dirty flags for vertices (by vertex index).
     vertex_dirty: Vec<bool>,
     /// Dirty flags for edges (by edge index).
@@ -153,21 +153,21 @@ impl NonManifoldSummary {
 /// Analogous to OCCT `BRepCheck_Analyzer` diagnostic entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepairHint {
-    /// Two boundary edges share both endpoints — they can be stitched together.
+    /// Two boundary edges share both endpoints 鈥?they can be stitched together.
     StitchablePair {
         edge_a: usize,
         edge_b: usize,
         face_a: usize,
         face_b: usize,
     },
-    /// A boundary edge has no stitch candidate — the hole must be capped.
+    /// A boundary edge has no stitch candidate 鈥?the hole must be capped.
     UnmatchedBoundaryEdge { edge_idx: usize, face_idx: usize },
-    /// An orphan edge is attached to no face — it should be removed.
+    /// An orphan edge is attached to no face 鈥?it should be removed.
     OrphanEdge { edge_idx: usize },
-    /// An edge is shared by more than two faces — it must be split into
+    /// An edge is shared by more than two faces 鈥?it must be split into
     /// separate copies, one per face pair.
     MultiManifoldEdge { edge_idx: usize, face_count: usize },
-    /// A vertex lies on a multi-face edge — it may require duplication when
+    /// A vertex lies on a multi-face edge 鈥?it may require duplication when
     /// the surrounding edge is split.
     NonManifoldVertex { vertex_idx: usize, connected_multi_edges: Vec<usize> },
 }
@@ -198,7 +198,7 @@ impl ManifoldRepairHints {
 }
 
 impl BRepGraph {
-    // ── Construction ──────────────────────────────────────────────────────────
+    // 鈹€鈹€ Construction 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Build a `BRepGraph` from the current state of `brep`.
     ///
@@ -208,14 +208,14 @@ impl BRepGraph {
         let vc = brep.vertices.len();
         let ec = brep.edges.len();
 
-        // ── Pre-fill edge endpoints ───────────────────────────────────────────
+        // 鈹€鈹€ Pre-fill edge endpoints 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let edge_endpoints: Vec<(usize, usize)> = brep
             .edges
             .iter()
             .map(|e| (e.start, e.end))
             .collect();
 
-        // ── vertex → edges ────────────────────────────────────────────────────
+        // 鈹€鈹€ vertex 鈫?edges 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let mut vertex_to_edges: Vec<Vec<usize>> = vec![Vec::new(); vc];
         for (ei, ep) in edge_endpoints.iter().enumerate() {
             if ep.0 < vc {
@@ -226,7 +226,7 @@ impl BRepGraph {
             }
         }
 
-        // ── Build flat face list and face/edge/vertex adjacency ───────────────
+        // 鈹€鈹€ Build flat face list and face/edge/vertex adjacency 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         // Count faces first.
         let fc: usize = brep
             .solids
@@ -247,11 +247,11 @@ impl BRepGraph {
                     let mut face_vert_set = HashSet::new();
                     for we in &face.outer_wire.edges {
                         if we.idx < ec {
-                            // edge → face
+                            // edge 鈫?face
                             if !edge_to_faces[we.idx].contains(&flat_fi) {
                                 edge_to_faces[we.idx].push(flat_fi);
                             }
-                            // face → edge
+                            // face 鈫?edge
                             if !face_edge_set.contains(&we.idx) {
                                 face_edge_set.push(we.idx);
                             }
@@ -286,7 +286,7 @@ impl BRepGraph {
                         }
                     }
                     face_to_edges[flat_fi] = face_edge_set;
-                    // vertex → faces
+                    // vertex 鈫?faces
                     for vi in face_vert_set {
                         if !vertex_to_faces[vi].contains(&flat_fi) {
                             vertex_to_faces[vi].push(flat_fi);
@@ -326,7 +326,7 @@ impl BRepGraph {
         BRepGraphTool::new(self, brep)
     }
 
-    // ── O(1) adjacency queries ────────────────────────────────────────────────
+    // 鈹€鈹€ O(1) adjacency queries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Faces that share `edge_idx` in their wire.  Expected length 2 for a
     /// manifold edge, 1 for a boundary edge, 0 if the index is out of range.
@@ -371,7 +371,7 @@ impl BRepGraph {
         self.edge_endpoints.get(edge_idx).copied()
     }
 
-    // ── Manifold / closed inspection ──────────────────────────────────────────
+    // 鈹€鈹€ Manifold / closed inspection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Returns `true` if every edge is shared by exactly 2 faces (no boundary
     /// or non-manifold edges).
@@ -389,9 +389,9 @@ impl BRepGraph {
 
     /// Returns edge indices where the number of adjacent faces is not exactly 2.
     ///
-    /// - `adj.len() == 1` → free (boundary) edge
-    /// - `adj.len() > 2`  → non-manifold edge
-    /// - `adj.len() == 0` → orphan edge (not used in any face wire)
+    /// - `adj.len() == 1` 鈫?free (boundary) edge
+    /// - `adj.len() > 2`  鈫?non-manifold edge
+    /// - `adj.len() == 0` 鈫?orphan edge (not used in any face wire)
     pub fn non_manifold_edges(&self) -> Vec<usize> {
         self.edge_to_faces
             .iter()
@@ -457,10 +457,10 @@ impl BRepGraph {
 
     /// The number of faces sharing `edge_idx` (the edge "valence").
     ///
-    /// - 0 → orphan edge
-    /// - 1 → boundary / free edge
-    /// - 2 → manifold edge (expected)
-    /// - >2 → non-manifold / T-junction edge
+    /// - 0 鈫?orphan edge
+    /// - 1 鈫?boundary / free edge
+    /// - 2 鈫?manifold edge (expected)
+    /// - >2 鈫?non-manifold / T-junction edge
     #[inline]
     pub fn edge_valence(&self, edge_idx: usize) -> usize {
         self.edge_to_faces
@@ -481,13 +481,13 @@ impl BRepGraph {
     /// Generate actionable [`ManifoldRepairHints`] for this graph.
     ///
     /// The algorithm classifies each problem edge and groups compatible
-    /// boundary edges as stitchable pairs (same orientation·length within 1e-6).
+    /// boundary edges as stitchable pairs (same orientation路length within 1e-6).
     ///
     /// Analogous to OCCT `BRepCheck_Analyzer` hint emission.
     pub fn repair_hints(&self, brep: &crate::BRep) -> ManifoldRepairHints {
         let mut hints = Vec::new();
 
-        // ── Multi-face (non-manifold) edges ───────────────────────────────────
+        // 鈹€鈹€ Multi-face (non-manifold) edges 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let multi = self.multi_face_edges();
         for ei in &multi {
             hints.push(RepairHint::MultiManifoldEdge {
@@ -496,7 +496,7 @@ impl BRepGraph {
             });
         }
 
-        // ── Non-manifold vertices ─────────────────────────────────────────────
+        // 鈹€鈹€ Non-manifold vertices 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         for vi in self.non_manifold_vertices() {
             let connected: Vec<usize> = self
                 .vertex_adjacent_edges(vi)
@@ -512,12 +512,12 @@ impl BRepGraph {
             }
         }
 
-        // ── Orphan edges ──────────────────────────────────────────────────────
+        // 鈹€鈹€ Orphan edges 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         for ei in self.orphan_edges() {
             hints.push(RepairHint::OrphanEdge { edge_idx: ei });
         }
 
-        // ── Boundary edges: find stitchable pairs ─────────────────────────────
+        // 鈹€鈹€ Boundary edges: find stitchable pairs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let boundary = self.boundary_edges();
         let mut paired: HashSet<usize> = HashSet::new();
 
@@ -581,7 +581,7 @@ impl BRepGraph {
 
     /// Returns vertex indices that are referenced by a number of edges other
     /// than the expected valence.  For a closed manifold each vertex has
-    /// valence ≥ 2 (connected by at least 2 edges).
+    /// valence 鈮?2 (connected by at least 2 edges).
     pub fn low_valence_vertices(&self) -> Vec<usize> {
         self.vertex_to_edges
             .iter()
@@ -591,7 +591,7 @@ impl BRepGraph {
             .collect()
     }
 
-    // ── Dirty / modification tracking ─────────────────────────────────────────
+    // 鈹€鈹€ Dirty / modification tracking 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Mark vertex `vertex_idx` as having been modified.
     pub fn mark_vertex_modified(&mut self, vertex_idx: usize) {
@@ -658,7 +658,7 @@ impl BRepGraph {
             || self.face_dirty.iter().any(|&d| d)
     }
 
-    // ── Accessor methods for checkpoint/rollback (used by rcad-advanced-modeling) ─
+    // 鈹€鈹€ Accessor methods for checkpoint/rollback (used by rcad-advanced-modeling) 鈹€
 
     /// Get a reference to the edge-to-faces adjacency table.
     pub fn edge_to_faces_table(&self) -> &[Vec<usize>] {
@@ -700,7 +700,7 @@ impl BRepGraph {
         &self.face_dirty
     }
 
-    // ── Graph traversal ───────────────────────────────────────────────────────
+    // 鈹€鈹€ Graph traversal 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Depth-first traversal of faces, starting from `seed_face_idx`.
     ///
@@ -759,7 +759,7 @@ impl BRepGraphBuilder {
         self
     }
 
-    /// Add an edge→face incidence entry.
+    /// Add an edge鈫抐ace incidence entry.
     pub fn add_edge_face(&mut self, edge_idx: usize, face_idx: usize) -> &mut Self {
         if let Some(adj) = self.edge_to_faces.get_mut(edge_idx)
             && !adj.contains(&face_idx) {
@@ -768,7 +768,7 @@ impl BRepGraphBuilder {
         self
     }
 
-    /// Add a face→edge incidence entry.
+    /// Add a face鈫抏dge incidence entry.
     pub fn add_face_edge(&mut self, face_idx: usize, edge_idx: usize) -> &mut Self {
         if let Some(adj) = self.face_to_edges.get_mut(face_idx)
             && !adj.contains(&edge_idx) {
@@ -948,9 +948,9 @@ impl<'a> BRepGraphTool<'a> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Iterators
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// DFS iterator over faces reachable from a seed face via shared edges.
 pub struct DfsFaces<'g> {
@@ -1083,9 +1083,9 @@ impl Iterator for DfsEdgesFromVertex<'_> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Checkpoint Data (for external checkpoint/rollback implementations)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Public checkpoint data for external checkpoint/rollback implementations.
 ///
@@ -1110,7 +1110,7 @@ pub struct BRepGraphCheckpointData {
 }
 
 impl BRepGraph {
-    // ── Checkpoint data methods (for external checkpoint/rollback implementations) ──
+    // 鈹€鈹€ Checkpoint data methods (for external checkpoint/rollback implementations) 鈹€鈹€
 
     /// Create a public checkpoint data snapshot.
     ///
@@ -1150,7 +1150,7 @@ impl BRepGraph {
         self.face_dirty = data.face_dirty.clone();
     }
 
-    // ── Invariant validation ──────────────────────────────────────────────────
+    // 鈹€鈹€ Invariant validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Validate internal topology invariants and return a list of error strings.
     ///
@@ -1166,56 +1166,56 @@ impl BRepGraph {
 
         if self.edge_to_faces.len() != self.edge_count {
             errors.push(format!(
-                "edge_to_faces length {} ≠ edge_count {}",
+                "edge_to_faces length {} 鈮?edge_count {}",
                 self.edge_to_faces.len(),
                 self.edge_count
             ));
         }
         if self.face_to_edges.len() != self.face_count {
             errors.push(format!(
-                "face_to_edges length {} ≠ face_count {}",
+                "face_to_edges length {} 鈮?face_count {}",
                 self.face_to_edges.len(),
                 self.face_count
             ));
         }
         if self.vertex_to_edges.len() != self.vertex_count {
             errors.push(format!(
-                "vertex_to_edges length {} ≠ vertex_count {}",
+                "vertex_to_edges length {} 鈮?vertex_count {}",
                 self.vertex_to_edges.len(),
                 self.vertex_count
             ));
         }
         if self.vertex_to_faces.len() != self.vertex_count {
             errors.push(format!(
-                "vertex_to_faces length {} ≠ vertex_count {}",
+                "vertex_to_faces length {} 鈮?vertex_count {}",
                 self.vertex_to_faces.len(),
                 self.vertex_count
             ));
         }
         if self.edge_endpoints.len() != self.edge_count {
             errors.push(format!(
-                "edge_endpoints length {} ≠ edge_count {}",
+                "edge_endpoints length {} 鈮?edge_count {}",
                 self.edge_endpoints.len(),
                 self.edge_count
             ));
         }
         if self.vertex_dirty.len() != self.vertex_count {
             errors.push(format!(
-                "vertex_dirty length {} ≠ vertex_count {}",
+                "vertex_dirty length {} 鈮?vertex_count {}",
                 self.vertex_dirty.len(),
                 self.vertex_count
             ));
         }
         if self.edge_dirty.len() != self.edge_count {
             errors.push(format!(
-                "edge_dirty length {} ≠ edge_count {}",
+                "edge_dirty length {} 鈮?edge_count {}",
                 self.edge_dirty.len(),
                 self.edge_count
             ));
         }
         if self.face_dirty.len() != self.face_count {
             errors.push(format!(
-                "face_dirty length {} ≠ face_count {}",
+                "face_dirty length {} 鈮?face_count {}",
                 self.face_dirty.len(),
                 self.face_count
             ));
@@ -1265,9 +1265,9 @@ impl BRepGraph {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -1317,6 +1317,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -1330,6 +1331,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Y,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f2 = Face {
@@ -1343,6 +1345,7 @@ mod tests {
             inner_wires: vec![],
             normal: -DVec3::Y,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -1360,7 +1363,7 @@ mod tests {
         }
     }
 
-    // ── Construction & counts ─────────────────────────────────────────────────
+    // 鈹€鈹€ Construction & counts 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn box_entity_counts_correct() {
@@ -1382,7 +1385,7 @@ mod tests {
         assert!(!g.has_modifications());
     }
 
-    // ── O(1) adjacency ────────────────────────────────────────────────────────
+    // 鈹€鈹€ O(1) adjacency 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn box_every_edge_has_two_adjacent_faces() {
@@ -1435,7 +1438,7 @@ mod tests {
         }
     }
 
-    // ── Manifold / closed inspection ──────────────────────────────────────────
+    // 鈹€鈹€ Manifold / closed inspection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn box_is_manifold_and_closed() {
@@ -1476,7 +1479,7 @@ mod tests {
         assert_eq!(summary.non_manifold_vertices, vec![0, 1]);
     }
 
-    // ── Dirty / modification tracking ─────────────────────────────────────────
+    // 鈹€鈹€ Dirty / modification tracking 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn dirty_marking_and_query() {
@@ -1511,7 +1514,7 @@ mod tests {
         assert!(!g.has_modifications());
     }
 
-    // ── DFS / BFS face traversal ──────────────────────────────────────────────
+    // 鈹€鈹€ DFS / BFS face traversal 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn bfs_faces_visits_all_box_faces() {
@@ -1552,7 +1555,7 @@ mod tests {
         assert!(g.dfs_faces(999).next().is_none());
     }
 
-    // ── DFS edge traversal ────────────────────────────────────────────────────
+    // 鈹€鈹€ DFS edge traversal 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn dfs_edges_from_vertex_visits_all_box_edges() {
@@ -1564,7 +1567,7 @@ mod tests {
         assert_eq!(visited, (0..12).collect::<Vec<_>>());
     }
 
-    // ── Edge valence and vertex degree ────────────────────────────────────────
+    // 鈹€鈹€ Edge valence and vertex degree 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn edge_valence_manifold_box() {
@@ -1594,7 +1597,7 @@ mod tests {
         }
     }
 
-    // ── repair_hints ──────────────────────────────────────────────────────────
+    // 鈹€鈹€ repair_hints 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn repair_hints_empty_for_manifold_box() {
@@ -1644,7 +1647,7 @@ mod tests {
         assert!(has_unmatched, "tripod must have unmatched boundary edges");
     }
 
-    // ── Checkpoint data (public API for external checkpoint/rollback) ───────────
+    // 鈹€鈹€ Checkpoint data (public API for external checkpoint/rollback) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn checkpoint_data_captures_clean_state() {
@@ -1684,7 +1687,7 @@ mod tests {
         assert!(g.modified_faces().is_empty());
     }
 
-    // ── validate_invariants ───────────────────────────────────────────────────
+    // 鈹€鈹€ validate_invariants 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn validate_invariants_passes_for_unit_box() {
@@ -1704,7 +1707,7 @@ mod tests {
         assert!(errors.is_empty(), "tripod graph should have no index invariant violations: {errors:?}");
     }
 
-    // ── BRepGraphBuilder / BRepGraphTool ────────────────────────────────────
+    // 鈹€鈹€ BRepGraphBuilder / BRepGraphTool 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn builder_constructs_same_adjacency_as_box() {

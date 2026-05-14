@@ -293,6 +293,7 @@ pub fn make_conical_frustum_brep(
         inner_wires: vec![],
         normal: DVec3::X,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
     // F1 bottom cap (plane): E0 rev (CCW when viewed from -Y)
@@ -303,6 +304,7 @@ pub fn make_conical_frustum_brep(
         inner_wires: vec![],
         normal: -DVec3::Y,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
     // F2 top cap (plane): E1 fwd (CCW when viewed from +Y)
@@ -313,6 +315,7 @@ pub fn make_conical_frustum_brep(
         inner_wires: vec![],
         normal: DVec3::Y,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 

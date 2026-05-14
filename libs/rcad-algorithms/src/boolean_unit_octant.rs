@@ -1,25 +1,25 @@
-//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
-//! path is wrong or overly faceted: (1) unit ball ∩ `[0,1]³`, (2) coaxial sharp cone ∩ finite
+﻿//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
+//! path is wrong or overly faceted: (1) unit ball 鈭?`[0,1]鲁`, (2) coaxial sharp cone 鈭?finite
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
-//! (5) concentric analytic spheres (`make_sphere_brep`): compound outer sphere + mirrored inner → analytic shell SA/volume (differs from OCCT `mkvolume` on trimmed patches).
-//! (6) intersection of two nested analytic spheres sharing a center → smaller ball (`∩` is the inner sphere).
+//! (5) concentric analytic spheres (`make_sphere_brep`): compound outer sphere + mirrored inner 鈫?analytic shell SA/volume (differs from OCCT `mkvolume` on trimmed patches).
+//! (6) intersection of two nested analytic spheres sharing a center 鈫?smaller ball (`鈭ー is the inner sphere).
 //!
-//! Unit ball ∩ box `[0,1]³` (first-octant "spherical sector"):
+//! Unit ball 鈭?box `[0,1]鲁` (first-octant "spherical sector"):
 //!
 //! The generic Pave/Builder path does not yet split planar faces along the
-//! sphere, so the result was three untrimmed 1×1 squares. OCCT `bcommon_simple/A1`
-//! expects the exact surface `5π/4` and volume `π/6` for the eighth ball.
+//! sphere, so the result was three untrimmed 1脳1 squares. OCCT `bcommon_simple/A1`
+//! expects the exact surface `5蟺/4` and volume `蟺/6` for the eighth ball.
 //!
-//! This is *not* a full analytic CSG solution — only a recognition + mesh for
+//! This is *not* a full analytic CSG solution 鈥?only a recognition + mesh for
 //! this configuration used in OCCT DRAW port tests.
 //!
 //! When the **box** is rigidly transformed (e.g. OCCT `trotate` about a pivot
-//! not at the origin), the axis-aligned `[0,1]³` predicate fails and the
-//! generic boolean path must handle sphere–oblique-plane trimming. Pave now
+//! not at the origin), the axis-aligned `[0,1]鲁` predicate fails and the
+//! generic boolean path must handle sphere鈥搊blique-plane trimming. Pave now
 //! uses exact spherical UV in projection fallbacks (`SphericalSurface::world_to_uv`),
-//! and plane–sphere tangents are inflated to a micro-circle so every box face gets
-//! a `FaceFace` curve. OCCT `bcommon_simple/A4` / `A5` remain `#[ignore]` — `BooleanBuilder`
+//! and plane鈥搒phere tangents are inflated to a micro-circle so every box face gets
+//! a `FaceFace` curve. OCCT `bcommon_simple/A4` / `A5` remain `#[ignore]` 鈥?`BooleanBuilder`
 //! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
 //! multi-trim / classification, not missing FF pairs.
 
@@ -114,8 +114,8 @@ fn breps_are_identical(a: &BRep, b: &BRep) -> bool {
 /// Fast-path for boolean operations on identical operands.
 ///
 /// When both operands are structurally identical:
-/// - [`Union`](BooleanOpType::Union) / [`Intersection`](BooleanOpType::Intersection) → returns a clone of `a`
-/// - [`Difference`](BooleanOpType::Difference) → returns empty [`BRep`]
+/// - [`Union`](BooleanOpType::Union) / [`Intersection`](BooleanOpType::Intersection) 鈫?returns a clone of `a`
+/// - [`Difference`](BooleanOpType::Difference) 鈫?returns empty [`BRep`]
 ///
 /// Returns [`None`] for non-identical operands or unknown ops, letting the caller fall
 /// through to the generic Pave/Builder path.
@@ -131,8 +131,8 @@ pub fn try_identical_operands(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<B
 
 /// Fast-path when one solid fully contains the other.
 ///
-/// For Union: B inside A → return A. For Intersection: B inside A → return B.
-/// For Difference: A inside B → return empty (result has no volume).
+/// For Union: B inside A 鈫?return A. For Intersection: B inside A 鈫?return B.
+/// For Difference: A inside B 鈫?return empty (result has no volume).
 /// For Difference B inside A: not handled (falls through to generic Pave-Filler).
 pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
     for (outer, inner, swapped) in [(a, b, false), (b, a, true)] {
@@ -162,7 +162,7 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
 /// Fast-path for Union when shapes are bbox-disjoint (no overlap at all).
 ///
 /// When the bounding boxes have a gap on at least one axis, the shapes are
-/// truly disjoint — no intersection computation is needed and [`BRep::compound_from_shapes`]
+/// truly disjoint 鈥?no intersection computation is needed and [`BRep::compound_from_shapes`]
 /// produces a correct combined BRep.
 ///
 /// Returns `None` for touching or overlapping shapes (bboxes meet or intersect
@@ -170,7 +170,7 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
 pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
     let Some([amin, amax]) = a.bounding_box() else { return None; };
     let Some([bmin, bmax]) = b.bounding_box() else { return None; };
-    // Gap on ANY axis → bboxes are disjoint (no contact, no volume overlap).
+    // Gap on ANY axis 鈫?bboxes are disjoint (no contact, no volume overlap).
     if amax.x < bmin.x || amin.x > bmax.x
         || amax.y < bmin.y || amin.y > bmax.y
         || amax.z < bmin.z || amin.z > bmax.z
@@ -180,7 +180,7 @@ pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
     None
 }
 
-/// Intersection: unit sphere (kernel primitive) ∩ axis box [0,1]³.
+/// Intersection: unit sphere (kernel primitive) 鈭?axis box [0,1]鲁.
 pub fn try_intersection_eighth_unit_ball(a: &BRep, b: &BRep) -> Option<BRep> {
     if (is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b))
         || (is_unit_sphere_at_origin(b) && is_pos_unit_cube_0_1(a))
@@ -237,7 +237,7 @@ pub fn try_difference_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
 ///
 /// The intersection of nested balls is the smaller-radius ball (same center).
 ///
-/// Returns [`None`] when centers differ or radii are degenerate — callers fall back to Pave/Builder.
+/// Returns [`None`] when centers differ or radii are degenerate 鈥?callers fall back to Pave/Builder.
 pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     let (ca, ra) = try_sphere_primitive_center_radius(a)?;
     let (cb, rb) = try_sphere_primitive_center_radius(b)?;
@@ -253,7 +253,7 @@ pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     make_sphere_brep(ca, r).ok()
 }
 
-// --- Coaxial cone ∩ cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
+// --- Coaxial cone 鈭?cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
 
 fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
     const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
@@ -363,7 +363,7 @@ fn try_intersection_coaxial_cone_cylinder_pair(cone: &BRep, cyl: &BRep) -> Optio
     make_conical_frustum_brep(DVec3::new(0.0, 0.0, zm), DVec3::Z, DVec3::X, r0, r1, h).ok()
 }
 
-/// Sharp Z-aligned cone ∩ finite Z-aligned cylinder (same axis / origin in `xy`), e.g. OCCT ZP7.
+/// Sharp Z-aligned cone 鈭?finite Z-aligned cylinder (same axis / origin in `xy`), e.g. OCCT ZP7.
 pub fn try_intersection_coaxial_cone_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     try_intersection_coaxial_cone_cylinder_pair(a, b)
         .or_else(|| try_intersection_coaxial_cone_cylinder_pair(b, a))
@@ -436,7 +436,7 @@ fn reverse_wire_local(wire: &mut Wire) {
 }
 
 /// Loft builds the **solid** frustum mantle (normals outward from cone interior). For
-/// `cylinder \\ cone`, those faces bound the cavity — outward from the result solid points into the
+/// `cylinder \\ cone`, those faces bound the cavity 鈥?outward from the result solid points into the
 /// removed cone (flip normals vs loft defaults).
 fn invert_shell_planar_faces(brep: &mut BRep) {
     let Some(shell) = brep.solids.first_mut().and_then(|s| s.shells.first_mut()) else {
@@ -611,7 +611,7 @@ fn coaxial_cylinder_minus_frustum_loft_pieces(
     Some((outer_strip, inner_strip, annulus))
 }
 
-/// Closed shell for `cylinder \ (cone ∩ cylinder)` when overlap is the coaxial frustum:
+/// Closed shell for `cylinder \ (cone 鈭?cylinder)` when overlap is the coaxial frustum:
 /// outer cylindrical loft strip + inner frustum loft strip + top annulus, sewn (`OCCT ZP3`).
 fn try_coaxial_cylinder_minus_frustum_loft_shell(
     z_lo: f64,
@@ -633,7 +633,7 @@ fn try_coaxial_cylinder_minus_frustum_loft_shell(
 
 /// `cylinder \ cone` with same coaxial ZP layout as [`try_difference_coaxial_cone_minus_cylinder`].
 ///
-/// Set identity: `cyl \ cone` equals `cyl \ (cone ∩ cyl)` when the overlap is the coaxial frustum.
+/// Set identity: `cyl \ cone` equals `cyl \ (cone 鈭?cyl)` when the overlap is the coaxial frustum.
 pub fn try_difference_coaxial_cylinder_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
     cyl_minus_cone_inner(a, b).or_else(|| cyl_minus_cone_inner(b, a))
 }
@@ -676,7 +676,7 @@ fn add_vertex(verts: &mut Vec<Vertex>, p: DVec3) -> usize {
 
 /// Closed triangle mesh of the boundary: three quarter-disks in x=0, y=0, z=0
 /// planes plus one octant of the unit sphere. Outward for the solid
-/// { x,y,z ≥ 0, x²+y²+z² ≤ 1 }.
+/// { x,y,z 鈮?0, x虏+y虏+z虏 鈮?1 }.
 fn brep_eighth_of_unit_ball() -> BRep {
     const NA: usize = 32; // arc segments per quarter circle
     const NS: usize = 24; // grid per spherical patch axis
@@ -705,10 +705,11 @@ fn brep_eighth_of_unit_ball() -> BRep {
         inner_wires: vec![],
         normal: DVec3::new(0.0, 0.0, -1.0),
         triangles: t_z0,
+        sample_point: None,
         mesh_dirty: false,
     };
 
-    // y=0 plane, outward (0,-1,0), quarter disk in xz: (0,0,0) — (1,0,0) — (0,0,1) and arc
+    // y=0 plane, outward (0,-1,0), quarter disk in xz: (0,0,0) 鈥?(1,0,0) 鈥?(0,0,1) and arc
     let o1 = o0; // (0,0,0) shared
     let _ = add_vertex(&mut vertices, DVec3::Z);
     let y0_arc: Vec<usize> = (0..=NA)
@@ -726,6 +727,7 @@ fn brep_eighth_of_unit_ball() -> BRep {
         inner_wires: vec![],
         normal: DVec3::new(0.0, -1.0, 0.0),
         triangles: t_y0,
+        sample_point: None,
         mesh_dirty: false,
     };
 
@@ -746,11 +748,12 @@ fn brep_eighth_of_unit_ball() -> BRep {
         inner_wires: vec![],
         normal: DVec3::new(-1.0, 0.0, 0.0),
         triangles: t_x0,
+        sample_point: None,
         mesh_dirty: false,
     };
 
-    // Spherical octant: p = (sin v cos u, sin v sin u, cos v), u,v in [0,π/2]
-    // (v = colatitude from +Z: v=0 is north pole (0,0,1), v=π/2 is the z=0 quarter arc)
+    // Spherical octant: p = (sin v cos u, sin v sin u, cos v), u,v in [0,蟺/2]
+    // (v = colatitude from +Z: v=0 is north pole (0,0,1), v=蟺/2 is the z=0 quarter arc)
     let pole = add_vertex(&mut vertices, DVec3::new(0.0, 0.0, 1.0));
     let mut sph_idx = vec![vec![0usize; NS + 1]; NS + 1];
     for i in 0..=NS {
@@ -786,6 +789,7 @@ fn brep_eighth_of_unit_ball() -> BRep {
         inner_wires: vec![],
         normal: DVec3::new(1.0, 1.0, 1.0).normalize(),
         triangles: t_s,
+        sample_point: None,
         mesh_dirty: false,
     };
 
@@ -843,7 +847,7 @@ mod tests {
             "surface area {a} vs analytic shell SA {a_ex}"
         );
         // `signed_volume` across compounds relies on consistent face normals vs tessellation;
-        // sphere primitives carry approximate face normals — SA matches analytic \(4\pi(R^2+r^2)\).
+        // sphere primitives carry approximate face normals 鈥?SA matches analytic \(4\pi(R^2+r^2)\).
     }
 
     #[test]
@@ -946,7 +950,7 @@ mod tests {
 
     #[test]
     fn zp3_loft_shell_matches_occt_geometry_numbers() {
-        // Cone apex z=10, base z=-10, rb=10; cylinder z in [-10,0], r=10 — same as geometry_properties ZP3.
+        // Cone apex z=10, base z=-10, rb=10; cylinder z in [-10,0], r=10 鈥?same as geometry_properties ZP3.
         let r = try_coaxial_cylinder_minus_frustum_loft_shell(-10.0, 0.0, 10.0, 10.0, -10.0, 10.0);
         assert!(r.is_some(), "expected sewn loft shell for ZP3 parameters");
         let brep = r.unwrap();

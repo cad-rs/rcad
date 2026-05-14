@@ -1,4 +1,4 @@
-//! B-Rep repair / clean-up utilities.
+﻿//! B-Rep repair / clean-up utilities.
 //!
 //! Analogous to OCCT `ShapeFix_Shape` / `ShapeFix_Wire` / `ShapeFix_Face`.
 //!
@@ -50,9 +50,9 @@ fn make_connected_has_future_tolerance_increase(
     next_tolerance > current_tolerance + TOLERANCE_FLOAT_DEDUP
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Public API
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Summary of all changes made during repair.
 #[derive(Debug, Clone, Default)]
@@ -345,9 +345,9 @@ impl MakeConnectedStrategy {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Scoped Seed Detection Strategies
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Strategy for detecting seed entities for scoped make-connected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -657,7 +657,7 @@ pub fn detect_seeds_for_scoped_cleanup(
                         get_face_normal(brep, adj_faces[1]),
                     ) {
                         let dot = n1.dot(n2);
-                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        // Angle > 45 degrees means dot < cos(45掳) 鈮?0.707
                         // Use abs to handle both same-side and opposite-side normals
                         if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
                             vertex_set.insert(edge.start);
@@ -743,7 +743,7 @@ pub fn detect_seeds_for_scoped_cleanup(
                         get_face_normal(brep, adj_faces[1]),
                     ) {
                         let dot = n1.dot(n2);
-                        // Angle > 45 degrees means dot < cos(45°) ≈ 0.707
+                        // Angle > 45 degrees means dot < cos(45掳) 鈮?0.707
                         if dot.abs() < std::f64::consts::FRAC_PI_4.cos() {
                             combined.insert(edge.start);
                             combined.insert(edge.end);
@@ -1239,6 +1239,7 @@ fn merge_close_vertices_scoped(
                             inner_wires: face.inner_wires.clone(),
                             normal: face.normal,
                             triangles: face.triangles.clone(),
+                            sample_point: None,
                             mesh_dirty: true,
                         })
                         .collect(),
@@ -1379,9 +1380,9 @@ fn remove_small_edges_scoped(
     (out, total_removed, remap_map)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Edge Sewing (MakeConnected enhancement)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from edge sewing operations.
 #[derive(Debug, Clone, Default)]
@@ -1669,9 +1670,9 @@ pub fn make_connected_enhanced_with_mode(
     (out, report)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Advanced Shared Topology Detection
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Detect shared topology between faces with advanced classification.
 ///
@@ -2152,9 +2153,9 @@ fn merge_shared_faces(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     (brep.clone(), merged_count)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Connectivity Graph Analysis
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A graph representing topological connectivity in a BRep.
 ///
@@ -2419,9 +2420,9 @@ pub fn disconnected_component_count(brep: &BRep) -> usize {
     graph.face_components.len()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Connectivity Gap Detection
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// A gap between disconnected regions in a BRep.
 #[derive(Debug, Clone)]
@@ -2625,9 +2626,9 @@ fn classify_gap_type(brep: &BRep, fa: usize, fb: usize, distance: f64, tolerance
     GapType::Complex
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Component Merging Strategies
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Strategy for merging disconnected components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2941,9 +2942,9 @@ fn merge_specific_vertices(brep: &BRep, drop_vi: usize, keep_vi: usize) -> BRep 
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Bridge Creation
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Create bridge faces to connect disconnected regions.
 ///
@@ -3080,6 +3081,7 @@ fn create_single_bridge(brep: &BRep, gap: &ConnectivityGap) -> (BRep, bool) {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         result.solids.push(Solid {
@@ -3099,9 +3101,9 @@ pub fn create_bridges_with_config(
     create_bridges(brep, gaps)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Connectivity Validation
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from connectivity validation.
 #[derive(Debug, Clone, Default)]
@@ -3256,9 +3258,9 @@ pub fn get_face_connectivity_strength(brep: &BRep, face_a: usize, face_b: usize)
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Enhanced Make-Connected with Connectivity Analysis
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Configuration for enhanced make-connected with connectivity analysis.
 #[derive(Debug, Clone)]
@@ -3547,7 +3549,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
             grid.entry(cell).or_default().push(i);
         }
     } else {
-        // Brute-force O(n²) — fast enough for small models
+        // Brute-force O(n虏) 鈥?fast enough for small models
         for i in 0..n {
             for j in (i + 1)..n {
                 let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
@@ -3569,7 +3571,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
         return (brep.clone(), 0);
     }
 
-    // Build a compact vertex list and a remap table old_idx → new_idx
+    // Build a compact vertex list and a remap table old_idx 鈫?new_idx
     let mut new_vertices: Vec<Vertex> = Vec::new();
     let mut remap = vec![0usize; n];
     let mut seen: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -3617,6 +3619,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
                                 normal: face.normal,
                                 triangles: face.triangles.clone(),
+                                sample_point: None,
                                 mesh_dirty: true,
                             }
                         })
@@ -3704,7 +3707,7 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
 /// using Newell's method for robustness with non-planar polygons.
 ///
 /// Returns the updated BRep and the number of faces whose normals changed by
-/// more than 1° (indicating they were stale or flipped).
+/// more than 1掳 (indicating they were stale or flipped).
 ///
 /// Analogous to `BRepLib` normal re-computation after topology repair.
 pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
@@ -3746,7 +3749,7 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
                             };
 
                             let dot = face.normal.dot(new_normal);
-                            // dot < cos(1°) ≈ 0.9998 means the normal changed significantly
+                            // dot < cos(1掳) 鈮?0.9998 means the normal changed significantly
                             if dot < 0.9998 {
                                 changed += 1;
                             }
@@ -3756,6 +3759,7 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
                                 inner_wires: face.inner_wires.clone(),
                                 normal: new_normal,
                                 triangles: face.triangles.clone(),
+                                sample_point: None,
                                 mesh_dirty: true,
                             }
                         })
@@ -3772,7 +3776,7 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
 
 /// Ensure that each wire in the BRep forms a properly closed chain.
 ///
-/// For each open wire (end of edge i ≠ start of edge i+1 within `tolerance`),
+/// For each open wire (end of edge i 鈮?start of edge i+1 within `tolerance`),
 /// attempts to close it by reversing individual edges whose orientation appears
 /// flipped relative to the chain direction.
 ///
@@ -3811,6 +3815,7 @@ pub fn fix_wire_orientation(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 inner_wires: new_inners,
                                 normal: face.normal,
                                 triangles: face.triangles.clone(),
+                                sample_point: None,
                                 mesh_dirty: true,
                             }
                         })
@@ -3865,6 +3870,7 @@ pub fn fix_face_orientation(brep: &BRep) -> (BRep, usize) {
                                     inner_wires: face.inner_wires.iter().map(reverse_wire).collect(),
                                     normal: -face.normal,
                                     triangles: face.triangles.clone(),
+                                    sample_point: None,
                                     mesh_dirty: true,
                                 }
                             } else {
@@ -3882,9 +3888,9 @@ pub fn fix_face_orientation(brep: &BRep) -> (BRep, usize) {
     (result, changed)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Internal helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Attempt to fix one wire, returning (fixed_wire, number_of_edges_flipped).
 fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
@@ -3929,7 +3935,7 @@ fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
             brep.vertices.get(start_v).map(|v| v.point),
         ) && (ep - sp).length_squared() <= tol2
         {
-            continue; // close enough — OK
+            continue; // close enough 鈥?OK
         }
 
         // Try flipping the *next* edge to see if that connects the chain
@@ -3976,9 +3982,9 @@ fn newell_area(pts: &[DVec3]) -> f64 {
     newell_normal(pts).length_squared()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Repair SameParameter consistency by re-projecting PCurve endpoints onto the
 /// 3D curve to align the parameterizations.
@@ -4033,7 +4039,7 @@ pub fn fix_same_parameter(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
         }
 
         // For each PCurve, align its range to match the 3D curve range.
-        // Linear reparameterization: [pc_t0, pc_t1] → [range3d[0], range3d[1]].
+        // Linear reparameterization: [pc_t0, pc_t1] 鈫?[range3d[0], range3d[1]].
         let mut changed = false;
         for pc in &pcurves {
             if pc.curve2d_idx >= out.geom.curve2d_range.len() {
@@ -4143,7 +4149,7 @@ pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
         let keep_vi = edge.start.min(edge.end);
         let drop_vi = edge.start.max(edge.end);
 
-        // Remap vertex references: drop_vi → keep_vi, shift higher indices down.
+        // Remap vertex references: drop_vi 鈫?keep_vi, shift higher indices down.
         let remap_vertex = |vi: usize| -> usize {
             if vi == drop_vi {
                 keep_vi
@@ -4219,16 +4225,16 @@ pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
     (out, total_removed)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tolerance propagation
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Propagation direction for per-entity tolerance in a post-operation BRep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToleranceFlowDirection {
-    /// Vertex → edge → face (bottom-up, for newly assembled results).
+    /// Vertex 鈫?edge 鈫?face (bottom-up, for newly assembled results).
     BottomUp,
-    /// Face → edge → vertex (top-down, for degraded imports).
+    /// Face 鈫?edge 鈫?vertex (top-down, for degraded imports).
     TopDown,
 }
 
@@ -4290,7 +4296,7 @@ pub fn propagate_tolerances(
                     *vtol = floor;
                 }
             }
-            // Step 2: propagate vertex → edge.
+            // Step 2: propagate vertex 鈫?edge.
             for ei in 0..n_edges {
                 let st = out.edges[ei].start;
                 let en = out.edges[ei].end;
@@ -4299,7 +4305,7 @@ pub fn propagate_tolerances(
                 let cur = out.geom.edge_tolerance[ei];
                 out.geom.edge_tolerance[ei] = cur.max(vtol_s).max(vtol_e).max(floor);
             }
-            // Step 3: propagate edge → face.
+            // Step 3: propagate edge 鈫?face.
             let mut flat_fi = 0usize;
             for si in 0..out.solids.len() {
                 for shi in 0..out.solids[si].shells.len() {
@@ -4329,7 +4335,7 @@ pub fn propagate_tolerances(
                     *ftol = floor;
                 }
             }
-            // Step 2: propagate face → edge.
+            // Step 2: propagate face 鈫?edge.
             let mut flat_fi = 0usize;
             for si in 0..out.solids.len() {
                 for shi in 0..out.solids[si].shells.len() {
@@ -4352,7 +4358,7 @@ pub fn propagate_tolerances(
                     }
                 }
             }
-            // Step 3: propagate edge → vertex.
+            // Step 3: propagate edge 鈫?vertex.
             for ei in 0..n_edges {
                 let etol = out.geom.edge_tolerance[ei];
                 let st = out.edges[ei].start;
@@ -4905,9 +4911,9 @@ fn wrap_curve2d(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Enhanced Edge Sewing with Adaptive Tolerance
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Configuration for enhanced edge sewing operations.
 #[derive(Debug, Clone)]
@@ -5148,9 +5154,9 @@ pub struct PeriodicSeamReport {
 /// Information about a periodic surface's periodicity.
 #[derive(Debug, Clone, Copy)]
 pub struct PeriodicSurfaceInfo {
-    /// U-period (e.g., 2π for cylinder, sphere, cone, torus).
+    /// U-period (e.g., 2蟺 for cylinder, sphere, cone, torus).
     pub u_period: Option<f64>,
-    /// V-period (e.g., 2π for torus, None for others).
+    /// V-period (e.g., 2蟺 for torus, None for others).
     pub v_period: Option<f64>,
     /// Whether the surface has a degenerate point at V=0 (sphere north pole).
     pub degenerate_at_v_min: bool,
@@ -5158,7 +5164,7 @@ pub struct PeriodicSurfaceInfo {
     pub degenerate_at_v_max: bool,
     /// Whether the surface has an apex degeneracy (cone).
     pub has_apex: bool,
-    /// V value at the apex for cones (typically 0 or π).
+    /// V value at the apex for cones (typically 0 or 蟺).
     pub apex_v: Option<f64>,
 }
 
@@ -5194,7 +5200,7 @@ pub fn detect_periodic_surface_info(surface: &Surface3) -> PeriodicSurfaceInfo {
             u_period: Some(std::f64::consts::TAU),
             v_period: None,
             degenerate_at_v_min: true,  // V=0 is north pole
-            degenerate_at_v_max: true,  // V=π is south pole
+            degenerate_at_v_max: true,  // V=蟺 is south pole
             has_apex: false,
             apex_v: None,
         },
@@ -5204,7 +5210,7 @@ pub fn detect_periodic_surface_info(surface: &Surface3) -> PeriodicSurfaceInfo {
             degenerate_at_v_min: false,
             degenerate_at_v_max: false,
             has_apex: true,
-            apex_v: Some(0.0), // Apex is at V=0 (or can be at V=π depending on half_angle)
+            apex_v: Some(0.0), // Apex is at V=0 (or can be at V=蟺 depending on half_angle)
         },
         Surface3::Torus(_) => PeriodicSurfaceInfo {
             u_period: Some(std::f64::consts::TAU),
@@ -5558,7 +5564,7 @@ pub fn split_edge_at_seam(
 /// Handle degenerate points on periodic surfaces.
 ///
 /// This function identifies and handles degenerate points such as:
-/// - Sphere poles (V=0 and V=π)
+/// - Sphere poles (V=0 and V=蟺)
 /// - Cone apex
 pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
     let mut result = brep.clone();
@@ -5650,7 +5656,7 @@ fn is_vertex_at_degenerate_point(
             let _along_axis = to_vertex.dot(sphere.axis.normalize_or_zero());
 
             // At north pole (V=0): vertex is at center + radius * axis
-            // At south pole (V=π): vertex is at center - radius * axis
+            // At south pole (V=蟺): vertex is at center - radius * axis
             let north_pole = sphere.center + sphere.axis.normalize_or_zero() * sphere.radius;
             let south_pole = sphere.center - sphere.axis.normalize_or_zero() * sphere.radius;
 
@@ -5681,7 +5687,7 @@ pub fn merge_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> (BRep, usiz
     // This is done by looking for edges that:
     // 1. Share a vertex
     // 2. Are on the same periodic surface
-    // 3. Have endpoints near the seam (one at U≈0, one at U≈2π)
+    // 3. Have endpoints near the seam (one at U鈮?, one at U鈮?蟺)
 
     let mut flat_face_idx = 0usize;
     for solid in &brep.solids {
@@ -5844,9 +5850,9 @@ fn compute_flat_face_idx(brep: &BRep, solid_idx: usize, shell_idx: usize, face_i
     idx + face_idx
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Adaptive Tolerance Merging
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Configuration for adaptive tolerance merging.
 #[derive(Debug, Clone)]
@@ -6003,9 +6009,9 @@ fn compute_face_area(brep: &BRep, face: &Face) -> f64 {
     area
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // B-Spline Surface Same-Domain Detection
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Result of checking if two B-spline surfaces are the same domain.
 #[derive(Debug, Clone)]
@@ -6569,6 +6575,7 @@ pub fn merge_bspline_faces(
         inner_wires: all_inner,
         normal: face1.normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -6693,9 +6700,9 @@ fn splice_wires_for_merge(
     Some(merged)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Shell Repair (ShapeFix_Shell equivalent)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from shell-level repair operations.
 ///
@@ -6770,13 +6777,13 @@ impl ClosureReport {
         if self.is_closed {
             let genus_str = self.genus.map_or("?".to_string(), |g| g.to_string());
             format!(
-                "Closed shell: V={}, E={}, F={}, χ={}, genus={}",
+                "Closed shell: V={}, E={}, F={}, 蠂={}, genus={}",
                 self.vertex_count, self.edge_count, self.face_count,
                 self.euler_characteristic, genus_str
             )
         } else {
             format!(
-                "Open shell: {} open edges, V={}, E={}, F={}, χ={}",
+                "Open shell: {} open edges, V={}, E={}, F={}, 蠂={}",
                 self.open_edge_count, self.vertex_count, self.edge_count,
                 self.face_count, self.euler_characteristic
             )
@@ -7134,9 +7141,9 @@ pub fn fix_non_manifold_shell(shell: &Shell, brep: &BRep) -> (Shell, ShellFixRep
     (shell.clone(), report)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Enhanced Shell Repair (ShapeFix_Shell extensions)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Detailed report from shell orientation analysis and repair.
 #[derive(Debug, Clone, Default)]
@@ -7262,7 +7269,7 @@ impl ShellValidationReport {
 
     pub fn summary(&self) -> String {
         let status = if self.is_valid { "VALID" } else { "INVALID" };
-        format!("ShellValidation: {} | V={}, E={}, F={}, χ={}", status, self.vertex_count, self.edge_count, self.face_count, self.euler_characteristic)
+        format!("ShellValidation: {} | V={}, E={}, F={}, 蠂={}", status, self.vertex_count, self.edge_count, self.face_count, self.euler_characteristic)
     }
 }
 
@@ -7513,7 +7520,7 @@ fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> O
     }
     let len = normal.length();
     if len > TOLERANCE_LINEAR_ULTRA_STRICT { normal /= len; } else { normal = DVec3::Z; }
-    Some(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![], normal, triangles: vec![], mesh_dirty: true })
+    Some(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![], normal, triangles: vec![], sample_point: None, mesh_dirty: true })
 }
 
 /// Repair non-manifold edges in a shell.
@@ -7647,9 +7654,9 @@ pub fn validate_shell_topology(shell: &Shell, brep: &BRep) -> ShellValidationRep
     report
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Solid Repair (ShapeFix_Solid equivalent)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from solid-level closure checking.
 #[derive(Debug, Clone, Default)]
@@ -8048,9 +8055,9 @@ pub fn fix_solid(solid: &Solid, brep: &BRep) -> (Solid, SolidFixReport) {
     (current_solid, report)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Enhanced Solid Validation and Repair (ShapeFix_Solid extended)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Volume sign classification for a shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8412,9 +8419,9 @@ fn analyze_shell_containment(
     containment
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Shell Orientation in Solids
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from shell orientation in solids.
 #[derive(Debug, Clone, Default)]
@@ -8590,9 +8597,9 @@ pub fn orient_solid_shells(solid: &Solid, brep: &BRep) -> (Solid, SolidOrientati
     (oriented_solid, report)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Solid Validation
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from solid topology validation.
 #[derive(Debug, Clone, Default)]
@@ -8905,9 +8912,9 @@ fn verify_material_side_consistency(
     consistent
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Solid Repair
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Result of solid repair operation.
 #[derive(Debug, Clone)]
@@ -9070,9 +9077,9 @@ pub fn repair_solid(solid: &Solid, brep: &BRep, tolerance: f64) -> SolidRepairRe
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // UV Bounds Repair (ShapeFix_Surface UV bounds fixing)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Report from UV gap repair operations.
 #[derive(Debug, Clone, Default)]
@@ -9685,9 +9692,9 @@ fn wrap_pcurve_to_domain(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Internal Face Detection and Removal (Post-Boolean Cleanup)
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Classification of duplicate face types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10244,7 +10251,7 @@ fn ray_intersects_face(
         return false;
     }
 
-    // Use Möller–Trumbore algorithm for ray-triangle intersection
+    // Use M枚ller鈥揟rumbore algorithm for ray-triangle intersection
     // Triangulate the face using fan triangulation
     for i in 1..pts.len() - 1 {
         let v0 = pts[0];
@@ -10259,7 +10266,7 @@ fn ray_intersects_face(
     false
 }
 
-/// Möller–Trumbore ray-triangle intersection.
+/// M枚ller鈥揟rumbore ray-triangle intersection.
 fn ray_triangle_intersection(
     origin: DVec3,
     dir: DVec3,
@@ -10736,9 +10743,9 @@ pub fn cleanup_boolean_result(brep: &BRep, tolerance: f64) -> (BRep, BooleanClea
     (brep, report)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Boolean Operation Type for Tolerance Propagation
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Type of boolean operation that was performed.
 ///
@@ -11094,9 +11101,9 @@ fn detect_and_resolve_tolerance_conflicts(brep: &mut BRep, floor: f64) -> (usize
     (conflicts, resolved)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Post-Sew Tolerance Propagation
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Configuration for post-sew tolerance propagation.
 #[derive(Debug, Clone)]
@@ -11300,9 +11307,9 @@ pub fn propagate_tolerances_post_sew_with_config(
     (result, report)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Tolerance Rules Engine
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Rules for tolerance propagation.
 ///
@@ -11310,7 +11317,7 @@ pub fn propagate_tolerances_post_sew_with_config(
 /// and how conflicts are resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToleranceRule {
-    /// OCCT standard: vertex → edge → face propagation.
+    /// OCCT standard: vertex 鈫?edge 鈫?face propagation.
     /// Edge tolerance >= max(vertex tolerances at endpoints).
     /// Face tolerance >= max(edge tolerances on boundary).
     #[default]
@@ -11987,9 +11994,9 @@ pub struct TolerancePropagationReport {
     pub rule_applied: ToleranceRule,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Tolerance Consistency Analysis
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// A specific tolerance violation found during analysis.
 #[derive(Debug, Clone)]
@@ -12306,13 +12313,13 @@ pub fn analyze_tolerance_consistency(
 
         if vertex_edge_violations > 0 {
             report.suggested_global_fixes.push(format!(
-                "Run tolerance propagation (vertex→edge) to fix {} vertex>edge violations",
+                "Run tolerance propagation (vertex鈫抏dge) to fix {} vertex>edge violations",
                 vertex_edge_violations
             ));
         }
         if edge_face_violations > 0 {
             report.suggested_global_fixes.push(format!(
-                "Run tolerance propagation (edge→face) to fix {} edge>face violations",
+                "Run tolerance propagation (edge鈫抐ace) to fix {} edge>face violations",
                 edge_face_violations
             ));
         }
@@ -12428,9 +12435,9 @@ pub fn apply_tolerance_fixes(
     (result, fixes_applied)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Enhanced Internal Face Detection and Removal
-// ═══════════════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 /// Configuration for internal face detection.
 #[derive(Debug, Clone)]
@@ -13453,6 +13460,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -13496,6 +13504,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13532,6 +13541,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13568,6 +13578,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13601,6 +13612,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13641,6 +13653,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13683,6 +13696,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13731,6 +13745,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13804,6 +13819,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13842,6 +13858,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::ZERO, // intentionally wrong
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -13902,7 +13919,7 @@ mod tests {
         });
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 0 });
-        // Only 2 edges — degenerate
+        // Only 2 edges 鈥?degenerate
         let face = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
@@ -13910,6 +13927,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -14011,6 +14029,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 }],
             }],
@@ -14025,9 +14044,9 @@ mod tests {
         assert_eq!(out.geom.vertex_tolerance.len(), 3);
         // Edge tolerances should be at least floor.
         assert!(out.geom.edge_tolerance.len() >= 3);
-        // Edge 0 connects v0 (tol=TOLERANCE_ADAPTIVE_MAX) and v1 (tol=floor); must ≥ TOLERANCE_ADAPTIVE_MAX.
+        // Edge 0 connects v0 (tol=TOLERANCE_ADAPTIVE_MAX) and v1 (tol=floor); must 鈮?TOLERANCE_ADAPTIVE_MAX.
         assert!(out.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
-        // Face tolerance should be ≥ max edge tolerance.
+        // Face tolerance should be 鈮?max edge tolerance.
         assert!(out.geom.face_tolerance[0] >= out.geom.edge_tolerance[0]);
     }
 
@@ -14051,6 +14070,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 }],
             }],
@@ -14060,11 +14080,11 @@ mod tests {
 
         let out = propagate_tolerances(&brep, TOLERANCE_ABS, ToleranceFlowDirection::TopDown);
 
-        // All edge tolerances should be ≥ face tolerance.
+        // All edge tolerances should be 鈮?face tolerance.
         for etol in &out.geom.edge_tolerance {
             assert!(*etol >= 0.5 * TOLERANCE_RETRY_LADDER_COARSE);
         }
-        // All vertex tolerances should be ≥ face tolerance after propagation.
+        // All vertex tolerances should be 鈮?face tolerance after propagation.
         for vtol in &out.geom.vertex_tolerance {
             assert!(*vtol >= 0.5 * TOLERANCE_RETRY_LADDER_COARSE);
         }
@@ -14091,6 +14111,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -14142,6 +14163,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -14186,6 +14208,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -14228,6 +14251,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -14355,6 +14379,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -14385,6 +14410,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -14414,9 +14440,9 @@ mod tests {
         assert!(!report.converged);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // B-Spline Same-Domain Tests
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn bspline_same_domain_identical_surfaces() {
@@ -14775,9 +14801,9 @@ mod tests {
         assert!(match_result.max_weight_deviation > 0.5);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Shell and Solid Repair Tests
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn check_shell_closure_unit_box() {
@@ -14844,6 +14870,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15084,9 +15111,9 @@ mod tests {
         // which may vary based on how the primitive is constructed
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Tests for Enhanced Shell Repair Functions
-    // ─────────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn fix_shell_orientation_advanced_unit_box() {
@@ -15166,6 +15193,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15258,6 +15286,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15427,9 +15456,9 @@ mod tests {
         assert!(!boundary_vertex.is_non_manifold);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Tests for UV Gap Repair
-    // ─────────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn uv_gap_repair_config_default() {
@@ -15589,9 +15618,9 @@ mod tests {
         assert!(!repaired);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Internal Face Detection and Removal Tests
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn detect_duplicate_faces_clean_box() {
@@ -15634,6 +15663,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15644,6 +15674,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z, // Opposite normal
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15704,6 +15735,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15715,6 +15747,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z, // Opposite normal
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15755,6 +15788,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15765,6 +15799,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15845,6 +15880,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15855,6 +15891,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15983,6 +16020,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -15994,9 +16032,9 @@ mod tests {
         assert!((centroid.z - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Enhanced Solid Validation and Repair Tests
-    // ─────────────────────────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn verify_solid_closure_unit_box() {
@@ -16439,9 +16477,9 @@ mod tests {
         assert!(report.orientation_issues.is_empty());
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Post-Boolean Tolerance Propagation
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn propagate_tolerances_post_boolean_basic() {
@@ -16554,6 +16592,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16572,9 +16611,9 @@ mod tests {
         assert!(cloned.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Post-Sew Tolerance Propagation
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn propagate_tolerances_post_sew_basic() {
@@ -16599,6 +16638,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16630,6 +16670,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16665,9 +16706,9 @@ mod tests {
         assert!(config.ensure_seam_consistency);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Tolerance Rules Engine
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn tolerance_rule_variants() {
@@ -16745,6 +16786,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16795,6 +16837,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16824,6 +16867,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16856,6 +16900,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16874,9 +16919,9 @@ mod tests {
         assert!(result.geom.vertex_tolerance[0] > TOLERANCE_ABS);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Tolerance Consistency Analysis
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn analyze_tolerance_consistency_unit_box() {
@@ -16906,6 +16951,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16938,6 +16984,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -16967,6 +17014,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -17057,6 +17105,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -17106,6 +17155,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
@@ -17145,9 +17195,9 @@ mod tests {
         assert!(report.max_edge_tolerance > 0.0);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Connectivity Graph Analysis
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn build_connectivity_graph_unit_box() {
@@ -17186,6 +17236,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17203,6 +17254,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17245,6 +17297,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17306,6 +17359,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17323,6 +17377,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17463,6 +17518,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17520,9 +17576,9 @@ mod tests {
         assert!(!report.is_fully_connected);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
     // Tests for Enhanced Internal Face Detection and Removal
-    // ═══════════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
     #[test]
     fn detect_internal_faces_empty_brep() {
@@ -17741,6 +17797,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -17803,6 +17860,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17813,6 +17871,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_Z, // Opposite normal (void shell)
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -17932,6 +17991,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -18041,6 +18101,7 @@ mod tests {
                 inner_wires: vec![],
                 normal: DVec3::Z,
                 triangles: vec![],
+                sample_point: None,
                 mesh_dirty: true,
             }
         };
@@ -18099,6 +18160,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z, // pointing up
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -18112,6 +18174,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Y, // perpendicular (90 degrees to Z)
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -18187,6 +18250,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -18230,6 +18294,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -18372,7 +18437,7 @@ mod tests {
         });
         let (repaired, report) = handle_periodic_surface_seams(&brep, TOLERANCE_MESH_LEGACY);
 
-        // Cylinder has a seam edge (the line where U=0 and U=2π meet)
+        // Cylinder has a seam edge (the line where U=0 and U=2蟺 meet)
         assert_eq!(repaired.vertices.len(), brep.vertices.len(), "Vertex count should be preserved");
     }
 
@@ -18438,6 +18503,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -18486,6 +18552,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -18667,6 +18734,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -18681,6 +18749,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 

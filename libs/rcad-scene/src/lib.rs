@@ -1,4 +1,4 @@
-pub mod assembly;
+﻿pub mod assembly;
 pub use assembly::{Assembly, AssemblyMetadata, AssemblyNode, NodeContent, assembly_from_parts};
 
 use glam::DVec3;
@@ -890,7 +890,7 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
             .iter()
             .map(|curve| curve.map(|idx| idx + curve_offset)),
     );
-    // edge_curve_range has no index offset — parameters are curve-local values
+    // edge_curve_range has no index offset 鈥?parameters are curve-local values
     dst.geom
         .edge_curve_range
         .extend(src.geom.edge_curve_range.iter().cloned());
@@ -950,6 +950,7 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
                             ]
                         })
                         .collect(),
+                    sample_point: face.sample_point,
                     mesh_dirty: face.mesh_dirty,
                 });
             }

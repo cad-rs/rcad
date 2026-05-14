@@ -314,6 +314,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError
         inner_wires: vec![],
         normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -383,7 +384,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             .map(|i| WireEdge { idx: bot_edges[n - 1 - i], forward: false })
             .collect();
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: -dir, triangles: vec![], mesh_dirty: true });
+            normal: -dir, triangles: vec![], sample_point: None, mesh_dirty: true });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot[0], normal: -dir }));
         brep.geom.face_surface.push(Some(si));
@@ -395,7 +396,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             .map(|i| WireEdge { idx: top_edges[i], forward: true })
             .collect();
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: dir, triangles: vec![], mesh_dirty: true });
+            normal: dir, triangles: vec![], sample_point: None, mesh_dirty: true });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top[0], normal: dir }));
         brep.geom.face_surface.push(Some(si));
@@ -421,7 +422,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             WireEdge { idx: vert_edges[i], forward: false },
         ];
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: face_normal, triangles: vec![], mesh_dirty: true });
+            normal: face_normal, triangles: vec![], sample_point: None, mesh_dirty: true });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: a, normal: face_normal }));
         brep.geom.face_surface.push(Some(si));
@@ -738,6 +739,7 @@ pub fn split_face_by_wire(
         inner_wires: orig_inner.clone(),
         normal: orig_normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
     let face_b = Face {
@@ -745,6 +747,7 @@ pub fn split_face_by_wire(
         inner_wires: orig_inner,
         normal: orig_normal,
         triangles: vec![],
+        sample_point: None,
         mesh_dirty: true,
     };
 
@@ -825,6 +828,7 @@ mod split_tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 }],
             }],

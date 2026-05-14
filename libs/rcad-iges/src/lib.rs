@@ -1,4 +1,4 @@
-//! IGES B-Rep parsing and writing support for RCAD.
+﻿//! IGES B-Rep parsing and writing support for RCAD.
 //!
 //! This module provides full IGES (Initial Graphics Exchange Specification) support:
 //! - Parsing IGES files into RCAD BRep structures
@@ -1154,6 +1154,7 @@ impl IgesBrepBuilder {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 

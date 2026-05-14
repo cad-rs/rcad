@@ -1,4 +1,4 @@
-//! OBJ mesh exporter for BRep solids.
+﻿//! OBJ mesh exporter for BRep solids.
 //!
 //! Writes the triangulated faces of a `BRep` as a Wavefront OBJ file.
 //! Each face must already be triangulated (`Face.triangles` non-empty); faces
@@ -110,6 +110,7 @@ impl ObjReader {
                 inner_wires: vec![],
                 normal,
                 triangles: vec![tri],
+                sample_point: None,
                 mesh_dirty: false,
             });
         }
@@ -226,7 +227,7 @@ mod tests {
     /// two triangles (a square split diagonally).
     fn make_triangulated_brep() -> BRep {
         let mut brep = BRep::new();
-        // 4 vertices of a 1×1 square in XY plane
+        // 4 vertices of a 1脳1 square in XY plane
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
@@ -237,6 +238,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![[0, 1, 2], [0, 2, 3]],
+            sample_point: None,
             mesh_dirty: false,
         };
         brep.solids.push(Solid {
@@ -281,6 +283,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![], // no triangles
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {

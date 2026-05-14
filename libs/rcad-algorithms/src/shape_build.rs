@@ -470,6 +470,7 @@ impl BuildFace {
             inner_wires: Vec::new(),
             normal,
             triangles: Vec::new(),
+            sample_point: None,
             mesh_dirty: true,
         })
     }
@@ -546,6 +547,7 @@ impl BuildFace {
             inner_wires: Vec::new(),
             normal,
             triangles: Vec::new(),
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -843,6 +845,7 @@ impl Rebuild {
             inner_wires,
             normal,
             triangles: Vec::new(),
+            sample_point: None,
             mesh_dirty: true,
         }
     }
@@ -1229,6 +1232,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -1256,6 +1260,7 @@ mod tests {
                 inner_wires: vec![],
                 normal: DVec3::Z,
                 triangles: vec![],
+                sample_point: None,
                 mesh_dirty: true,
             }],
         };
@@ -1322,6 +1327,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 },
                 Face {
@@ -1329,6 +1335,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::NEG_Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 },
             ],
@@ -1347,6 +1354,7 @@ mod tests {
                     inner_wires: vec![],
                     normal: DVec3::Z,
                     triangles: vec![],
+                    sample_point: None,
                     mesh_dirty: true,
                 }],
             }],
@@ -1396,6 +1404,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -1433,6 +1442,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f0 = builder.add_face(face);
@@ -1447,6 +1457,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         }]};
         builder.add_shell(shell);

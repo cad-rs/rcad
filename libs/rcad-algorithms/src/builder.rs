@@ -640,6 +640,7 @@ impl ResultBuilder {
                 inner_wires,
                 normal,
                 triangles,
+                sample_point: None,
                 mesh_dirty,
             });
 
