@@ -282,6 +282,88 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
 }
 
+/// Difference of two axis-aligned boxes computed analytically.
+///
+/// Handles the common case where A extends beyond B on at most one face
+/// (single-axis, single-side), producing a simple box result. Falls through
+/// to the generic Pave-Filler for notch/L-shaped remainders.
+pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    let [amin, amax] = try_as_axis_aligned_box(a)?;
+    let [bmin, bmax] = try_as_axis_aligned_box(b)?;
+
+    // Overlap region
+    let rmin = DVec3::new(amin.x.max(bmin.x), amin.y.max(bmin.y), amin.z.max(bmin.z));
+    let rmax = DVec3::new(amax.x.min(bmax.x), amax.y.min(bmax.y), amax.z.min(bmax.z));
+
+    let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
+    let zero_tol = TOLERANCE_LEN_MIN * scale;
+
+    // No overlap → A is unchanged.
+    if rmin.x >= rmax.x || rmin.y >= rmax.y || rmin.z >= rmax.z {
+        return Some(a.clone());
+    }
+
+    // A entirely inside B → empty.
+    let vol = (rmax.x - rmin.x) * (rmax.y - rmin.y) * (rmax.z - rmin.z);
+    let a_vol = (amax.x - amin.x) * (amax.y - amin.y) * (amax.z - amin.z);
+    if (vol - a_vol).abs() < zero_tol {
+        return Some(BRep::default());
+    }
+
+    // Count which faces of A extend beyond B. Each axis-side pair is a face.
+    // lo_faces: set of axes where A extends beyond B on the lo side.
+    // hi_faces: set of axes where A extends beyond B on the hi side.
+    let lo_faces: u8 = (if amin.x < bmin.x - zero_tol { 1 } else { 0 })
+        | (if amin.y < bmin.y - zero_tol { 2 } else { 0 })
+        | (if amin.z < bmin.z - zero_tol { 4 } else { 0 });
+    let hi_faces: u8 = (if amax.x > bmax.x + zero_tol { 1 } else { 0 })
+        | (if amax.y > bmax.y + zero_tol { 2 } else { 0 })
+        | (if amax.z > bmax.z + zero_tol { 4 } else { 0 });
+
+    let n_lo = lo_faces.count_ones();
+    let n_hi = hi_faces.count_ones();
+    let total = n_lo + n_hi;
+
+    // If A extends beyond B on exactly one face, the result is a simple box:
+    // the "excess slab" on that face.
+    if total == 1 {
+        // For single-face excess:
+        // - On the excess axis: A's bound on the excess side → B's bound on that side
+        //   (lo: [amin, bmin], hi: [bmax, amax])
+        // - On all other axes: A's full range [amin, amax]
+        let result_min = DVec3::new(
+            if lo_faces & 1 != 0 { amin.x }          // x-lo: excess starts at A's min
+            else if hi_faces & 1 != 0 { bmax.x }     // x-hi: excess starts at B's max
+            else { amin.x },                          // other axes: A's full range
+            if lo_faces & 2 != 0 { amin.y }
+            else if hi_faces & 2 != 0 { bmax.y }
+            else { amin.y },
+            if lo_faces & 4 != 0 { amin.z }
+            else if hi_faces & 4 != 0 { bmax.z }
+            else { amin.z },
+        );
+        let result_max = DVec3::new(
+            if hi_faces & 1 != 0 { amax.x }          // x-hi: excess ends at A's max
+            else if lo_faces & 1 != 0 { bmin.x }     // x-lo: excess ends at B's min
+            else { amax.x },                          // other axes: A's full range
+            if hi_faces & 2 != 0 { amax.y }
+            else if lo_faces & 2 != 0 { bmin.y }
+            else { amax.y },
+            if hi_faces & 4 != 0 { amax.z }
+            else if lo_faces & 4 != 0 { bmin.z }
+            else { amax.z },
+        );
+        return make_box_brep(result_min, DVec3::X, DVec3::Y,
+            result_max.x - result_min.x,
+            result_max.y - result_min.y,
+            result_max.z - result_min.z,
+        ).ok();
+    }
+
+    // More than one excess face → result is not a simple box; fall through.
+    None
+}
+
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
 fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
     let sh = brep.solids.get(0)?.shells.get(0)?;
@@ -1152,5 +1234,40 @@ mod tests {
         let r = boolean_op(BooleanOpType::Intersection, &sphere, &b).expect("sphere-box");
         // Some result — specific value doesn't matter.
         assert!(r.solids.len() >= 1 || r.vertices.is_empty());
+    }
+
+    // ── box-box difference fast path ───────────────────────────────────────
+
+    #[test]
+    fn box_box_difference_single_slab() {
+        // bcut_simple_c1: 0.5×1.5×1 at (0,-0.5,0) minus 1×1×1 at origin.
+        // Excess only on y-lo [-0.5, 0]. Result: 0.5×0.5×1 box, SA=2.5.
+        let a = make_box_brep(DVec3::new(0.0, -0.5, 0.0), DVec3::X, DVec3::Y, 0.5, 1.5, 1.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Difference, &a, &b).expect("box-box difference");
+        let sa = surface_area(&r);
+        let vol = volume(&r);
+        assert!((sa - 2.5).abs() < 1e-7, "SA={sa} expected 2.5");
+        assert!((vol - 0.25).abs() < 1e-7, "vol={vol} expected 0.25");
+    }
+
+    #[test]
+    fn box_box_difference_no_overlap() {
+        // Disjoint boxes → difference is just A.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Difference, &a, &b).expect("no-overlap");
+        let sa = surface_area(&r);
+        assert!((sa - 6.0).abs() < 1e-7, "SA={sa} expected 6.0 (unchanged A)");
+    }
+
+    #[test]
+    fn box_box_difference_a_inside_b() {
+        // A fully inside B → empty.
+        let a = make_box_brep(DVec3::new(0.25, 0.25, 0.25), DVec3::X, DVec3::Y, 0.5, 0.5, 0.5).unwrap();
+        let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let r = boolean_op(BooleanOpType::Difference, &a, &outer).expect("A-in-B");
+        let n_faces: usize = r.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        assert_eq!(n_faces, 0, "expected empty difference");
     }
 }
