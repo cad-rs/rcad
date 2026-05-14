@@ -284,9 +284,11 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
 
 /// Difference of two axis-aligned boxes computed analytically.
 ///
-/// Handles the common case where A extends beyond B on at most one face
-/// (single-axis, single-side), producing a simple box result. Falls through
-/// to the generic Pave-Filler for notch/L-shaped remainders.
+/// Slab decomposition: subtracts the overlap region from A and returns the
+/// remaining region(s). Single-slab results (one excess face) return a simple box.
+/// Two-slab results on opposite sides of the same axis return a compound of two
+/// disjoint boxes (SA-correct). All other multi-face configurations fall through
+/// to the Pave-Filler since a compound of touching slabs inflates surface area.
 pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     let [amin, amax] = try_as_axis_aligned_box(a)?;
     let [bmin, bmax] = try_as_axis_aligned_box(b)?;
@@ -310,9 +312,7 @@ pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(BRep::default());
     }
 
-    // Count which faces of A extend beyond B. Each axis-side pair is a face.
-    // lo_faces: set of axes where A extends beyond B on the lo side.
-    // hi_faces: set of axes where A extends beyond B on the hi side.
+    // Count which faces of A extend beyond B.
     let lo_faces: u8 = (if amin.x < bmin.x - zero_tol { 1 } else { 0 })
         | (if amin.y < bmin.y - zero_tol { 2 } else { 0 })
         | (if amin.z < bmin.z - zero_tol { 4 } else { 0 });
@@ -324,33 +324,28 @@ pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     let n_hi = hi_faces.count_ones();
     let total = n_lo + n_hi;
 
-    // If A extends beyond B on exactly one face, the result is a simple box:
-    // the "excess slab" on that face.
+    // Single-face excess → a single slab box (SA correct).
     if total == 1 {
-        // For single-face excess:
-        // - On the excess axis: A's bound on the excess side → B's bound on that side
-        //   (lo: [amin, bmin], hi: [bmax, amax])
-        // - On all other axes: A's full range [amin, amax]
         let result_min = DVec3::new(
-            if lo_faces & 1 != 0 { amin.x }          // x-lo: excess starts at A's min
-            else if hi_faces & 1 != 0 { bmax.x }     // x-hi: excess starts at B's max
-            else { amin.x },                          // other axes: A's full range
+            if lo_faces & 1 != 0 { amin.x }
+            else if hi_faces & 1 != 0 { rmax.x }
+            else { amin.x },
             if lo_faces & 2 != 0 { amin.y }
-            else if hi_faces & 2 != 0 { bmax.y }
+            else if hi_faces & 2 != 0 { rmax.y }
             else { amin.y },
             if lo_faces & 4 != 0 { amin.z }
-            else if hi_faces & 4 != 0 { bmax.z }
+            else if hi_faces & 4 != 0 { rmax.z }
             else { amin.z },
         );
         let result_max = DVec3::new(
-            if hi_faces & 1 != 0 { amax.x }          // x-hi: excess ends at A's max
-            else if lo_faces & 1 != 0 { bmin.x }     // x-lo: excess ends at B's min
-            else { amax.x },                          // other axes: A's full range
+            if hi_faces & 1 != 0 { amax.x }
+            else if lo_faces & 1 != 0 { rmin.x }
+            else { amax.x },
             if hi_faces & 2 != 0 { amax.y }
-            else if lo_faces & 2 != 0 { bmin.y }
+            else if lo_faces & 2 != 0 { rmin.y }
             else { amax.y },
             if hi_faces & 4 != 0 { amax.z }
-            else if lo_faces & 4 != 0 { bmin.z }
+            else if lo_faces & 4 != 0 { rmin.z }
             else { amax.z },
         );
         return make_box_brep(result_min, DVec3::X, DVec3::Y,
@@ -360,7 +355,48 @@ pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         ).ok();
     }
 
-    // More than one excess face → result is not a simple box; fall through.
+    // Two-face excess on opposite sides of the same axis → two disjoint slabs
+    // (no shared faces → compound SA is correct).
+    if total == 2 && n_lo == 1 && n_hi == 1 && (lo_faces & hi_faces) != 0 {
+        let axis = lo_faces | hi_faces; // single bit: 1=x, 2=y, 4=z
+        let (lo_slab, hi_slab) = if axis == 1 {
+            // x-lo slab, x-hi slab
+            let lo = make_box_brep(
+                DVec3::new(amin.x, amin.y, amin.z), DVec3::X, DVec3::Y,
+                rmin.x - amin.x, amax.y - amin.y, amax.z - amin.z,
+            ).ok()?;
+            let hi = make_box_brep(
+                DVec3::new(rmax.x, amin.y, amin.z), DVec3::X, DVec3::Y,
+                amax.x - rmax.x, amax.y - amin.y, amax.z - amin.z,
+            ).ok()?;
+            (lo, hi)
+        } else if axis == 2 {
+            let lo = make_box_brep(
+                DVec3::new(amin.x, amin.y, amin.z), DVec3::X, DVec3::Y,
+                amax.x - amin.x, rmin.y - amin.y, amax.z - amin.z,
+            ).ok()?;
+            let hi = make_box_brep(
+                DVec3::new(amin.x, rmax.y, amin.z), DVec3::X, DVec3::Y,
+                amax.x - amin.x, amax.y - rmax.y, amax.z - amin.z,
+            ).ok()?;
+            (lo, hi)
+        } else {
+            // axis == 4
+            let lo = make_box_brep(
+                DVec3::new(amin.x, amin.y, amin.z), DVec3::X, DVec3::Y,
+                amax.x - amin.x, amax.y - amin.y, rmin.z - amin.z,
+            ).ok()?;
+            let hi = make_box_brep(
+                DVec3::new(amin.x, amin.y, rmax.z), DVec3::X, DVec3::Y,
+                amax.x - amin.x, amax.y - amin.y, amax.z - rmax.z,
+            ).ok()?;
+            (lo, hi)
+        };
+        return Some(BRep::compound_from_shapes(&[lo_slab, hi_slab]));
+    }
+
+    // More than one excess face on different axes → slabs share faces, so a
+    // compound would inflate SA. Fall through to Pave-Filler.
     None
 }
 
@@ -1237,6 +1273,25 @@ mod tests {
     }
 
     // ── box-box difference fast path ───────────────────────────────────────
+
+    #[test]
+    fn box_box_difference_opposite_same_axis() {
+        // F1-like: A=1.5×0.5×0.5 at (-0.25,0,0), B=1×1×1 at origin.
+        // boptuc = A - B (but here we test try_difference_box_box directly,
+        // so a = first arg = A, b = second arg = B).
+        // A extends on x-lo (-0.25<0) and x-hi (1.25>1), same axis → two
+        // disjoint slabs: SA=2, vol=0.125.
+        let a = make_box_brep(
+            DVec3::new(-0.25, 0.0, 0.0), DVec3::X, DVec3::Y,
+            1.5, 0.5, 0.5,
+        ).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Difference, &a, &b).expect("box-box difference");
+        let sa = surface_area(&r);
+        let vol = volume(&r);
+        assert!((sa - 2.0).abs() < 1e-7, "SA={sa} expected 2.0");
+        assert!((vol - 0.125).abs() < 1e-7, "vol={vol} expected 0.125");
+    }
 
     #[test]
     fn box_box_difference_single_slab() {

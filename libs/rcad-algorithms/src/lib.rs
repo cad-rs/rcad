@@ -2676,9 +2676,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     }
 
     if matches!(op, BooleanOpType::Difference) {
-        // Fast-path: box-box difference where A extends beyond B on at most
-        // one face (result is a simple slab). Avoids Pave-Filler coplanar-face
-        // errors (bcut_simple_c1 — SA=1.75 vs expected 2.5).
+        // Fast-path: axis-aligned box-box difference via slab decomposition.
+        // Avoids Pave-Filler coplanar-face errors (bcut_simple_c1 — SA=1.75 vs expected 2.5).
+        // Handles single-face and multi-face excess, returning a compound for ≥2 slabs.
         if let Some(r) = boolean_unit_octant::try_difference_box_box(a, b) {
             return Ok(r);
         }
