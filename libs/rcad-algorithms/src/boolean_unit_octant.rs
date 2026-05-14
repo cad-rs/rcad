@@ -163,8 +163,7 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         if !all_inside { continue; }
         return match (op, swapped) {
             (BooleanOpType::Union, _) => Some(outer.clone()),
-            (BooleanOpType::Intersection, false) => Some(inner.clone()),
-            (BooleanOpType::Intersection, true) => Some(outer.clone()),
+            (BooleanOpType::Intersection, _) => Some(inner.clone()),
             (BooleanOpType::Difference, true) => Some(BRep::default()),
             _ => None,
         };
@@ -1238,6 +1237,20 @@ mod tests {
         let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("no-overlap");
         let n_faces: usize = r.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         assert_eq!(n_faces, 0, "expected empty intersection");
+    }
+
+    #[test]
+    fn box_box_intersection_a7_like() {
+        // bcommon_simple A7: 1×1×1 ∩ 1×1.5×1 → the contained 1×1×1 (SA=6, vol=1).
+        // Tests that try_containment returns inner (not outer) when smaller operand
+        // is passed first (swapped=true).
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.5, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("box-box A7");
+        let sa = surface_area(&r);
+        let vol = volume(&r);
+        assert!((sa - 6.0).abs() < 1e-7, "SA={sa} expected 6.0");
+        assert!((vol - 1.0).abs() < 1e-7, "vol={vol} expected 1.0");
     }
 
     #[test]
