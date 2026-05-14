@@ -29,7 +29,7 @@ use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
-use rcad_modeling::{loft_with_history, make_sphere_brep, sew_shells};
+use rcad_modeling::{loft_with_history, make_box_brep, make_sphere_brep, sew_shells};
 use crate::BooleanOpType;
 
 use crate::brep_int_curve_surface::is_point_inside_by_ray;
@@ -201,6 +201,85 @@ pub fn try_intersection_eighth_unit_ball(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(brep_eighth_of_unit_ball());
     }
     None
+}
+
+/// Try to extract the axis-aligned bounding box of an axis-aligned box BRep.
+///
+/// Returns `Some([min, max])` if the BRep has exactly 1 solid, 1 shell, 6
+/// planar faces with axis-aligned normals (±X, ±Y, ±Z), 8 vertices, and every
+/// vertex is at an AABB corner (each coordinate matches either the min or max
+/// for that axis). Returns `None` for rotated boxes, non-box shapes, or
+/// degenerate inputs.
+fn try_as_axis_aligned_box(brep: &BRep) -> Option<[DVec3; 2]> {
+    if brep.solids.len() != 1
+        || brep.solids[0].shells.len() != 1
+        || brep.solids[0].shells[0].faces.len() != 6
+        || brep.vertices.len() != 8
+    {
+        return None;
+    }
+    // All 6 face surfaces must be planes with axis-aligned normals.
+    for fi in 0..6 {
+        let si = brep.geom.face_surface.get(fi)?.as_ref()?;
+        let surf = brep.geom.surfaces.get(*si)?;
+        match surf {
+            Surface3::Plane(p) => {
+                let (ax, ay, az) = (p.normal.x.abs(), p.normal.y.abs(), p.normal.z.abs());
+                // Exactly one component near 1.0, the other two near 0.0.
+                let ok = (ax > 1.0 - TOLERANCE_AXIS_ALIGN
+                    && ay < TOLERANCE_AXIS_ALIGN
+                    && az < TOLERANCE_AXIS_ALIGN)
+                    || (ay > 1.0 - TOLERANCE_AXIS_ALIGN
+                        && ax < TOLERANCE_AXIS_ALIGN
+                        && az < TOLERANCE_AXIS_ALIGN)
+                    || (az > 1.0 - TOLERANCE_AXIS_ALIGN
+                        && ax < TOLERANCE_AXIS_ALIGN
+                        && ay < TOLERANCE_AXIS_ALIGN);
+                if !ok {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    let [vmin, vmax] = brep.bounding_box()?;
+    let scale = (vmax - vmin).length().max(1.0);
+    let tol = TOLERANCE_ABS.max(TOLERANCE_LEN_MIN * scale);
+    // All vertices must be at AABB corners.
+    for v in &brep.vertices {
+        let p = v.point;
+        for (val, lo, hi) in [(p.x, vmin.x, vmax.x), (p.y, vmin.y, vmax.y), (p.z, vmin.z, vmax.z)] {
+            if (val - lo).abs() > tol && (val - hi).abs() > tol {
+                return None;
+            }
+        }
+    }
+    Some([vmin, vmax])
+}
+
+/// Intersection of two axis-aligned boxes computed analytically via AABB overlap.
+///
+/// Both BReps must be detected as axis-aligned boxes by [`try_as_axis_aligned_box`].
+/// The result is a new box built via [`make_box_brep`] at the overlap region.
+/// Returns `None` when either operand is not an axis-aligned box, or when the
+/// boxes do not overlap (zero or negative volume on any axis).
+pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    let [amin, amax] = try_as_axis_aligned_box(a)?;
+    let [bmin, bmax] = try_as_axis_aligned_box(b)?;
+
+    let rmin = DVec3::new(amin.x.max(bmin.x), amin.y.max(bmin.y), amin.z.max(bmin.z));
+    let rmax = DVec3::new(amax.x.min(bmax.x), amax.y.min(bmax.y), amax.z.min(bmax.z));
+
+    let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
+    let zero_tol = TOLERANCE_LEN_MIN * scale;
+    let w = rmax.x - rmin.x;
+    let h = rmax.y - rmin.y;
+    let d = rmax.z - rmin.z;
+    if w <= zero_tol || h <= zero_tol || d <= zero_tol {
+        return None;
+    }
+
+    make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
 }
 
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
@@ -1021,5 +1100,57 @@ mod tests {
             try_difference_coaxial_cylinder_minus_cone(&pcy, &pc).is_some(),
             "ZP3 boptuc expects coaxial cylinder\\cone shortcut"
         );
+    }
+
+    // ── box-box intersection fast path ─────────────────────────────────────
+
+    #[test]
+    fn box_box_intersection_partial_overlap() {
+        // bcommon_simple_c1: 1×1×1 ∩ 1.5×0.5×0.5 → 1×0.5×0.5 (SA=2.5, vol=0.25)
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.5, 0.5, 0.5).unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("box-box intersection");
+        let sa = surface_area(&r);
+        let vol = volume(&r);
+        assert!((sa - 2.5).abs() < 1e-7, "SA={sa} expected 2.5");
+        assert!((vol - 0.25).abs() < 1e-7, "vol={vol} expected 0.25");
+    }
+
+    #[test]
+    fn box_box_intersection_full_containment() {
+        // 2×2×2 box ∩ 0.5×0.5×0.5 inside → the inner 0.5^3 box
+        let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let inner = make_box_brep(
+            DVec3::new(0.25, 0.25, 0.25),
+            DVec3::X,
+            DVec3::Y,
+            0.5,
+            0.5,
+            0.5,
+        )
+        .unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &outer, &inner).expect("containment");
+        let vol = volume(&r);
+        assert!((vol - 0.125).abs() < 1e-7, "vol={vol} expected 0.125");
+    }
+
+    #[test]
+    fn box_box_intersection_no_overlap() {
+        // Disjoint boxes → empty intersection.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("no-overlap");
+        let n_faces: usize = r.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        assert_eq!(n_faces, 0, "expected empty intersection");
+    }
+
+    #[test]
+    fn box_box_intersection_non_box_falls_through() {
+        // Sphere ∩ box falls through to generic path (no panic).
+        let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &sphere, &b).expect("sphere-box");
+        // Some result — specific value doesn't matter.
+        assert!(r.solids.len() >= 1 || r.vertices.is_empty());
     }
 }

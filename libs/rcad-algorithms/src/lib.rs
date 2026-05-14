@@ -2657,6 +2657,12 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
             return Ok(r);
         }
+        // Fast-path: axis-aligned box-box intersection via AABB overlap.
+        // Avoids Pave-Filler coplanar-face classification errors for partial
+        // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
+        if let Some(r) = boolean_unit_octant::try_intersection_box_box(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_concentric_spheres(a, b) {
             return Ok(r);
         }
@@ -7716,6 +7722,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         // Exact duplicate boundary but opposite orientation/normal.
@@ -7731,6 +7738,7 @@ mod tests {
             inner_wires: vec![],
             normal: -DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8142,6 +8150,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         // Adjacent square [1,2]x[0,1], shares only edge e1 with f1.
@@ -8157,6 +8166,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8233,6 +8243,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8248,6 +8259,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8302,6 +8314,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8318,6 +8331,7 @@ mod tests {
             inner_wires: vec![],
             normal: -DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8370,6 +8384,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f2 = Face {
@@ -8379,6 +8394,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8433,6 +8449,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f2 = Face {
@@ -8442,6 +8459,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8522,6 +8540,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         // Face B: bottom arc (rev e0) + seam e2(fwd) + e1(fwd) + seam e3(rev)
@@ -8537,6 +8556,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8603,6 +8623,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let fb = Face {
@@ -8617,6 +8638,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8680,6 +8702,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f2 = Face {
@@ -8689,6 +8712,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -8766,6 +8790,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let fb = Face {
@@ -8780,6 +8805,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::NEG_X,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -10234,6 +10260,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -10243,6 +10270,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
 
@@ -10298,6 +10326,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -10307,6 +10336,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10379,6 +10409,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -10388,6 +10419,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10457,6 +10489,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let f1 = Face {
@@ -10466,6 +10499,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10531,6 +10565,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10617,6 +10652,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10700,6 +10736,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let face_b = Face {
@@ -10709,6 +10746,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10781,6 +10819,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10859,6 +10898,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -10956,6 +10996,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let face_b = Face {
@@ -10965,6 +11006,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
@@ -11075,6 +11117,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         let face_b = Face {
@@ -11084,6 +11127,7 @@ mod tests {
             inner_wires: vec![],
             normal: DVec3::Z,
             triangles: vec![],
+            sample_point: None,
             mesh_dirty: true,
         };
         brep.solids.push(Solid {
