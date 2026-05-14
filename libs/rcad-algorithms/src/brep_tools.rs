@@ -25,8 +25,8 @@
 
 use crate::tolerance::*;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
-use rcad_kernel::{BRep, Curve2d, Curve3, Surface3};
 use rcad_kernel::topology::{Face, Shell, Wire};
+use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -845,6 +845,302 @@ pub fn bounding_box(brep: &BRep) -> Option<[DVec3; 2]> {
     }
 
     Some([min_pt, max_pt])
+}
+
+// =============================================================================
+// Shell / Solid Extraction (explode equivalent)
+// =============================================================================
+
+/// Create a new self-contained BRep containing only the specified flat face
+/// indices from the source BRep.  Vertices, edges, and geometry referenced by
+/// the selected faces are copied into the new BRep with dense index renumbering.
+fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
+    use std::collections::{HashMap, HashSet};
+
+    use rcad_kernel::topology::{Edge, Shell, Solid, Wire, WireEdge};
+
+    if face_indices.is_empty() {
+        return BRep::new();
+    }
+
+    // Build flat-face index → (solid_idx, shell_idx, local_face_idx) lookup
+    let mut flat_index_map: Vec<(usize, usize, usize)> = Vec::new(); // (solid, shell, local_face)
+    for (si, solid) in source.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for fi in 0..shell.faces.len() {
+                flat_index_map.push((si, shi, fi));
+            }
+        }
+    }
+
+    // Collect unique edge indices referenced by the selected faces.
+    // Also save face topology for later (before remapping).
+    let mut edge_set: HashSet<usize> = HashSet::new();
+    #[derive(Clone)]
+    struct FaceTopo {
+        outer: Vec<WireEdge>,
+        inner: Vec<Vec<WireEdge>>,
+        normal: DVec3,
+        triangles: Vec<[usize; 3]>,
+    }
+    let mut face_topos: Vec<FaceTopo> = Vec::with_capacity(face_indices.len());
+
+    for &fi in face_indices.iter() {
+        if fi >= flat_index_map.len() {
+            continue;
+        }
+        let (si, shi, lfi) = flat_index_map[fi];
+        let face = &source.solids[si].shells[shi].faces[lfi];
+
+        for we in &face.outer_wire.edges {
+            edge_set.insert(we.idx);
+        }
+        for wire in &face.inner_wires {
+            for we in &wire.edges {
+                edge_set.insert(we.idx);
+            }
+        }
+
+        face_topos.push(FaceTopo {
+            outer: face.outer_wire.edges.clone(),
+            inner: face.inner_wires.iter().map(|w| w.edges.clone()).collect(),
+            normal: face.normal,
+            triangles: face.triangles.clone(),
+        });
+    }
+
+    // Collect vertex indices from the selected edges.
+    let mut vertex_set: HashSet<usize> = HashSet::new();
+    for &ei in &edge_set {
+        if ei < source.edges.len() {
+            vertex_set.insert(source.edges[ei].start);
+            vertex_set.insert(source.edges[ei].end);
+        }
+    }
+
+    // Collect geometry indices referenced by edges and faces.
+    let mut curve_set: HashSet<usize> = HashSet::new();
+    let mut surface_set: HashSet<usize> = HashSet::new();
+    let mut curve2d_set: HashSet<usize> = HashSet::new();
+
+    for &ei in &edge_set {
+        if let Some(Some(ci)) = source.geom.edge_curve.get(ei) {
+            curve_set.insert(*ci);
+        }
+        if let Some(pcurves) = source.geom.edge_pcurves.get(ei) {
+            for pc in pcurves {
+                surface_set.insert(pc.surface_idx);
+                curve2d_set.insert(pc.curve2d_idx);
+            }
+        }
+    }
+    for &fi in face_indices.iter() {
+        if let Some(Some(si)) = source.geom.face_surface.get(fi) {
+            surface_set.insert(*si);
+        }
+    }
+
+    // Build sorted remap tables: old → new dense indices.
+    let make_remap = |set: &HashSet<usize>| -> (Vec<usize>, HashMap<usize, usize>) {
+        let mut sorted: Vec<usize> = set.iter().copied().collect();
+        sorted.sort();
+        let map: HashMap<usize, usize> =
+            sorted.iter().enumerate().map(|(n, &o)| (o, n)).collect();
+        (sorted, map)
+    };
+
+    let (sorted_vertices, v_remap) = make_remap(&vertex_set);
+    let (sorted_edges, e_remap) = make_remap(&edge_set);
+    let (sorted_curves, c_remap) = make_remap(&curve_set);
+    let (sorted_surfaces, s_remap) = make_remap(&surface_set);
+    let (sorted_curve2ds, k_remap) = make_remap(&curve2d_set);
+
+    let mut result = BRep::new();
+
+    // --- vertices ---
+    for &old in &sorted_vertices {
+        result.vertices.push(source.vertices[old]);
+        result
+            .geom
+            .vertex_tolerance
+            .push(source.geom.vertex_tolerance.get(old).copied().unwrap_or(CONFUSION));
+    }
+
+    // --- edges ---
+    for &old in &sorted_edges {
+        let e = &source.edges[old];
+        result.edges.push(Edge {
+            start: v_remap[&e.start],
+            end: v_remap[&e.end],
+        });
+
+        result.geom.edge_curve.push(
+            source
+                .geom
+                .edge_curve
+                .get(old)
+                .and_then(|o| o.map(|c| c_remap[&c])),
+        );
+        result.geom.edge_pcurves.push(
+            source
+                .geom
+                .edge_pcurves
+                .get(old)
+                .map(|v| {
+                    v.iter()
+                        .map(|p| rcad_kernel::PCurve {
+                            surface_idx: s_remap[&p.surface_idx],
+                            curve2d_idx: k_remap[&p.curve2d_idx],
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+        result
+            .geom
+            .edge_curve_range
+            .push(source.geom.edge_curve_range.get(old).copied().flatten());
+        result
+            .geom
+            .edge_degenerated
+            .push(*source.geom.edge_degenerated.get(old).unwrap_or(&false));
+        result
+            .geom
+            .edge_same_parameter
+            .push(*source.geom.edge_same_parameter.get(old).unwrap_or(&true));
+        result
+            .geom
+            .edge_same_range
+            .push(*source.geom.edge_same_range.get(old).unwrap_or(&true));
+        result
+            .geom
+            .edge_tolerance
+            .push(*source.geom.edge_tolerance.get(old).unwrap_or(&CONFUSION));
+    }
+
+    // --- geometry pools ---
+    for &old in &sorted_curves {
+        result.geom.curves.push(source.geom.curves[old].clone());
+    }
+    for &old in &sorted_surfaces {
+        result.geom.surfaces.push(source.geom.surfaces[old].clone());
+    }
+    for &old in &sorted_curve2ds {
+        result.geom.curve2ds.push(source.geom.curve2ds[old].clone());
+        result
+            .geom
+            .curve2d_range
+            .push(source.geom.curve2d_range.get(old).copied().flatten());
+    }
+
+    // --- faces (topology + face-level geom) ---
+    let mut new_faces: Vec<Face> = Vec::with_capacity(face_topos.len());
+    for (i, &fi) in face_indices.iter().enumerate() {
+        let ft = &face_topos[i];
+
+        let remap_wire_edges = |wes: &[WireEdge]| -> Vec<WireEdge> {
+            wes.iter()
+                .map(|we| WireEdge {
+                    idx: e_remap[&we.idx],
+                    forward: we.forward,
+                })
+                .collect()
+        };
+
+        new_faces.push(Face {
+            outer_wire: Wire {
+                edges: remap_wire_edges(&ft.outer),
+            },
+            inner_wires: ft
+                .inner
+                .iter()
+                .map(|w| Wire {
+                    edges: remap_wire_edges(w),
+                })
+                .collect(),
+            normal: ft.normal,
+            triangles: ft
+                .triangles
+                .iter()
+                .map(|&[a, b, c]| {
+                    [
+                        v_remap.get(&a).copied().unwrap_or(0),
+                        v_remap.get(&b).copied().unwrap_or(0),
+                        v_remap.get(&c).copied().unwrap_or(0),
+                    ]
+                })
+                .collect(),
+            mesh_dirty: true,
+        });
+
+        // face-level geometry
+        result
+            .geom
+            .face_surface
+            .push(source.geom.face_surface.get(fi).copied().flatten().map(|si| s_remap[&si]));
+        result
+            .geom
+            .face_surface_range
+            .push(source.geom.face_surface_range.get(fi).copied().flatten());
+        result
+            .geom
+            .face_tolerance
+            .push(*source.geom.face_tolerance.get(fi).unwrap_or(&CONFUSION));
+    }
+
+    // Wrap in solid/shell topology.
+    result.solids.push(Solid {
+        shells: vec![Shell { faces: new_faces }],
+    });
+
+    // Copy compound structure if source is a compound.
+    // NOTE: We don't try to rebuild the compound — each extracted subset is
+    // a standalone self-contained BRep with one Solid.
+    result
+}
+
+/// Extract each solid from a (possibly compound) BRep as a separate
+/// self-contained BRep.  Equivalent to OCCT `explode ... so`.
+///
+/// Each returned BRep has only the vertices, edges, and geometry belonging
+/// to that solid, with indices renumbered from 0.
+pub fn extract_solids(brep: &BRep) -> Vec<BRep> {
+    let mut results = Vec::new();
+    let mut flat_idx = 0;
+
+    for solid in &brep.solids {
+        let face_count: usize = solid.shells.iter().map(|sh| sh.faces.len()).sum();
+        if face_count > 0 {
+            let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
+            results.push(extract_brep_subset(brep, &indices));
+        }
+        flat_idx += face_count;
+    }
+
+    results
+}
+
+/// Extract each shell from a BRep as a separate self-contained BRep.
+/// Equivalent to OCCT `explode ... Sh`.
+///
+/// Each returned BRep has only the vertices, edges, and geometry belonging
+/// to that shell, with indices renumbered from 0.
+pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
+    let mut results = Vec::new();
+    let mut flat_idx = 0;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            let face_count = shell.faces.len();
+            if face_count > 0 {
+                let indices: Vec<usize> = (flat_idx..flat_idx + face_count).collect();
+                results.push(extract_brep_subset(brep, &indices));
+            }
+            flat_idx += face_count;
+        }
+    }
+
+    results
 }
 
 // =============================================================================
