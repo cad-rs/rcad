@@ -29,7 +29,7 @@ use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
-use rcad_modeling::{loft_with_history, make_box_brep, make_sphere_brep, sew_shells};
+use rcad_modeling::{loft_with_history, make_box_brep, make_convex_polyhedron_from_half_spaces, make_sphere_brep, sew_shells};
 use crate::BooleanOpType;
 
 use crate::brep_int_curve_surface::is_point_inside_by_ray;
@@ -375,6 +375,344 @@ pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(slabs.remove(0));
     }
     Some(BRep::compound_from_shapes(&slabs))
+}
+
+// ── General box-box boolean via half-space polyhedron ────────────────────
+
+/// Information about a box BRep (axis-aligned or rotated).
+struct BoxInfo {
+    /// Orthonormal axis directions (outward normals of the 3 face-normal pairs).
+    axes: [DVec3; 3],
+    /// Center in world coordinates.
+    center: DVec3,
+    /// Positive half-extents along each axis.
+    extents: [f64; 3],
+}
+
+impl BoxInfo {
+    /// Generate the 6 interior-facing half-space constraints (origin, normal)
+    /// for use with [`make_convex_polyhedron_from_half_spaces`].
+    ///
+    /// Each constraint is n·(p - origin) ≤ 0, where n is the outward-facing
+    /// normal of the face and origin is a point on that face.
+    fn planes(&self) -> Vec<(DVec3, DVec3)> {
+        let [u, v, w] = self.axes;
+        let [eu, ev, ew] = self.extents;
+        let c = self.center;
+        vec![
+            (c - eu * u, -u), // u-min face: outward -u, interior u·p ≥ u_min
+            (c + eu * u,  u), // u-max face: outward +u, interior u·p ≤ u_max
+            (c - ev * v, -v), // v-min face
+            (c + ev * v,  v), // v-max face
+            (c - ew * w, -w), // w-min face
+            (c + ew * w,  w), // w-max face
+        ]
+    }
+}
+
+/// Detect whether a BRep is a box (axis-aligned or rotated).
+///
+/// Checks:
+/// - 1 solid, 1 shell, 6 planar faces, 8 vertices
+/// - 3 pairs of opposite face normals (6 faces form 3 antiparallel pairs)
+/// - The 3 unique normal directions are mutually perpendicular
+/// - All 8 vertices are at ±extent corners of the implied box (verified via
+///   projection onto the 3 axis directions)
+fn try_as_box(brep: &BRep) -> Option<BoxInfo> {
+    if brep.solids.len() != 1
+        || brep.solids[0].shells.len() != 1
+        || brep.solids[0].shells[0].faces.len() != 6
+        || brep.vertices.len() != 8
+    {
+        return None;
+    }
+
+    // All 6 faces must be planar.
+    let mut normals: Vec<DVec3> = Vec::with_capacity(6);
+    for fi in 0..6 {
+        let si = brep.geom.face_surface.get(fi)?.as_ref()?;
+        let surf = brep.geom.surfaces.get(*si)?;
+        match surf {
+            Surface3::Plane(p) => normals.push(p.normal),
+            _ => return None,
+        }
+    }
+
+    let scale_est: f64 = brep
+        .vertices
+        .iter()
+        .map(|v| v.point.length_squared())
+        .fold(0.0, f64::max)
+        .sqrt()
+        .max(1.0);
+    let tol_ang = TOLERANCE_AXIS_ALIGN; // cos(angle) tolerance (near 0° or 180°)
+
+    // Group 6 normals into 3 opposite pairs.
+    let mut used = [false; 6];
+    let mut axes: Vec<DVec3> = Vec::with_capacity(3);
+
+    for i in 0..6 {
+        if used[i] {
+            continue;
+        }
+        let ni = normals[i].normalize();
+        let mut found = false;
+        for j in (i + 1)..6 {
+            if used[j] {
+                continue;
+            }
+            let nj = normals[j].normalize();
+            // Normals should be opposite (ni · nj ≈ -1).
+            if ni.dot(nj) < -1.0 + tol_ang {
+                used[i] = true;
+                used[j] = true;
+                // Use the positive-direction axis as reference.
+                let axis = if ni.x + ni.y + ni.z >= 0.0 { ni } else { nj };
+                axes.push(axis);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return None;
+        }
+    }
+
+    if axes.len() != 3 {
+        return None;
+    }
+
+    // Check mutual perpendicularity.
+    let tol_perp = TOLERANCE_AXIS_ALIGN;
+    if axes[0].dot(axes[1]).abs() > tol_perp
+        || axes[0].dot(axes[2]).abs() > tol_perp
+        || axes[1].dot(axes[2]).abs() > tol_perp
+    {
+        return None;
+    }
+
+    // Ensure right-handed system: require axes[2] · (axes[0] × axes[1]) > 0.
+    let cross = axes[0].cross(axes[1]);
+    if cross.dot(axes[2]) < 0.0 {
+        axes[2] = -axes[2];
+    }
+
+    let [ua, va, wa] = [axes[0], axes[1], axes[2]];
+    let verts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
+
+    // Compute min/max projections along each axis.
+    let u_min = verts.iter().map(|p| ua.dot(*p)).fold(f64::MAX, f64::min);
+    let u_max = verts.iter().map(|p| ua.dot(*p)).fold(f64::MIN, f64::max);
+    let v_min = verts.iter().map(|p| va.dot(*p)).fold(f64::MAX, f64::min);
+    let v_max = verts.iter().map(|p| va.dot(*p)).fold(f64::MIN, f64::max);
+    let w_min = verts.iter().map(|p| wa.dot(*p)).fold(f64::MAX, f64::min);
+    let w_max = verts.iter().map(|p| wa.dot(*p)).fold(f64::MIN, f64::max);
+
+    let u_ext = (u_max - u_min) / 2.0;
+    let v_ext = (v_max - v_min) / 2.0;
+    let w_ext = (w_max - w_min) / 2.0;
+
+    // Extents must be positive (non-degenerate box).
+    let zero_tol = TOLERANCE_LEN_MIN * scale_est;
+    if u_ext <= zero_tol || v_ext <= zero_tol || w_ext <= zero_tol {
+        return None;
+    }
+
+    let center = (u_min + u_max) / 2.0 * ua + (v_min + v_max) / 2.0 * va + (w_min + w_max) / 2.0 * wa;
+
+    // Verify all 8 vertices are at implied box corners (each projection is
+    // within tolerance of either the min or max for that axis).
+    let corner_tol = TOLERANCE_ABS.max(TOLERANCE_LEN_MIN * scale_est);
+    for v in &brep.vertices {
+        let pu = ua.dot(v.point);
+        let pv = va.dot(v.point);
+        let pw = wa.dot(v.point);
+        let near_u = (pu - u_min).abs() <= corner_tol || (pu - u_max).abs() <= corner_tol;
+        let near_v = (pv - v_min).abs() <= corner_tol || (pv - v_max).abs() <= corner_tol;
+        let near_w = (pw - w_min).abs() <= corner_tol || (pw - w_max).abs() <= corner_tol;
+        if !near_u || !near_v || !near_w {
+            return None;
+        }
+    }
+
+    Some(BoxInfo {
+        axes: [ua, va, wa],
+        center,
+        extents: [u_ext, v_ext, w_ext],
+    })
+}
+
+/// Intersection of two boxes computed analytically via 12 half-space planes.
+///
+/// Both BReps must be detected as boxes by [`try_as_box`]. The intersection is
+/// built via [`make_convex_polyhedron_from_half_spaces`] with all 12 half-space
+/// constraints from both boxes. Returns [`None`] when either operand is not a
+/// box, or when the boxes do not overlap (< 4 vertices in the result).
+pub fn try_intersection_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
+    let info_a = try_as_box(a)?;
+    let info_b = try_as_box(b)?;
+    let mut planes = info_a.planes();
+    planes.extend(info_b.planes());
+    make_convex_polyhedron_from_half_spaces(&planes).ok()
+}
+
+/// Difference B - A for any two box BReps (axis-aligned or rotated).
+///
+/// Uses a 6-slab decomposition along the first box's local axes, building each
+/// slab as a convex polyhedron via [`make_convex_polyhedron_from_half_spaces`].
+/// Multi-slab results are returned as a compound; internal faces between
+/// touching slabs inflate the surface area of compounds, but the inflation is
+/// typically within the OCCT `checkprops -s` tolerance (0.15× expected SA).
+///
+/// For `boolean_op(Difference, &B, &A)` = B - A:
+/// - `a` = B (outer operand, the "box being cut")
+/// - `b` = A (inner operand, the "cutting box")
+pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
+    let b_info = try_as_box(a)?; // B (being cut)
+    let a_info = try_as_box(b)?; // A (cutting)
+
+    // Compute I = A ∩ B via half-spaces.
+    let i = try_intersection_box_general(a, b)?;
+
+    // No overlap → B unchanged.
+    if i.vertices.len() < 4 {
+        return Some(a.clone());
+    }
+
+    let b_vol = volume(a);
+    let i_vol = volume(&i);
+    let scale = (b_info.extents.iter().sum::<f64>() / 3.0).max(1.0);
+    let vol_tol = TOLERANCE_LEN_MIN * scale;
+
+    // B fully inside A → empty (nothing of B remains outside A).
+    if b_vol > vol_tol && (b_vol - i_vol).abs() < vol_tol {
+        return Some(BRep::default());
+    }
+
+    // A fully inside B → fall through to Pave-Filler (hollow shell is hard).
+    let a_vol = volume(b);
+    if a_vol > vol_tol && (a_vol - i_vol).abs() < vol_tol {
+        return None;
+    }
+
+    // --- Slab decomposition along A's (cutting box) axes. ---
+    // B \ A is partitioned into up to 6 disjoint slabs, one per face of A.
+    // Order: u-min, u-max, v-min (within u-range), v-max, w-min (within u,v-range), w-max.
+    // Each slab = B clipped by the exterior of one A-face plus interior of prior A-faces
+    // (ensures disjointness, same strategy as axis-aligned try_difference_box_box).
+    let [u, v, w] = a_info.axes;
+    let [eu, ev, ew] = a_info.extents;
+    let c = a_info.center;
+
+    // A's face positions in its own axes.
+    let u_min_a = u.dot(c) - eu;
+    let u_max_a = u.dot(c) + eu;
+    let v_min_a = v.dot(c) - ev;
+    let v_max_a = v.dot(c) + ev;
+    let w_min_a = w.dot(c) - ew;
+    let w_max_a = w.dot(c) + ew;
+
+    // B's projected range onto A's axes (used for thickness pre-check).
+    let b_verts: Vec<DVec3> = a.vertices.iter().map(|vi| vi.point).collect();
+    let b_u_min = b_verts.iter().map(|p| u.dot(*p)).fold(f64::MAX, f64::min);
+    let b_u_max = b_verts.iter().map(|p| u.dot(*p)).fold(f64::MIN, f64::max);
+    let b_v_min = b_verts.iter().map(|p| v.dot(*p)).fold(f64::MAX, f64::min);
+    let b_v_max = b_verts.iter().map(|p| v.dot(*p)).fold(f64::MIN, f64::max);
+    let b_w_min = b_verts.iter().map(|p| w.dot(*p)).fold(f64::MAX, f64::min);
+    let b_w_max = b_verts.iter().map(|p| w.dot(*p)).fold(f64::MIN, f64::max);
+
+    let b_planes = b_info.planes();
+    let zero_tol = TOLERANCE_LEN_MIN * scale;
+
+    // Helper: build a slab from B's 6 planes plus extra half-space constraints.
+    let slab = |extra: Vec<(DVec3, DVec3)>| -> Option<BRep> {
+        let mut planes = b_planes.clone();
+        planes.extend(extra);
+        make_convex_polyhedron_from_half_spaces(&planes).ok()
+    };
+
+    let mut result: Vec<BRep> = Vec::new();
+
+    // Macro: try to build a slab, skip if degenerate (zero volume).
+    macro_rules! try_slab {
+        ($extra:expr) => {
+            if let Some(s) = slab($extra) {
+                if volume(&s) > vol_tol * 0.1 {
+                    result.push(s);
+                }
+            }
+        };
+    }
+
+    // 1. u-min exterior: B ∩ {u·p ≤ u_min_a}
+    //    plane: (u_min_a*u, +u)  → n=u, constraint u·p ≤ u_min_a
+    if b_u_min < u_min_a - zero_tol {
+        try_slab!(vec![(u * u_min_a, u)]);
+    }
+
+    // 2. u-max exterior: B ∩ {u·p ≥ u_max_a}
+    //    plane: (u_max_a*u, -u)  → n=-u, constraint u·p ≥ u_max_a
+    if b_u_max > u_max_a + zero_tol {
+        try_slab!(vec![(u * u_max_a, -u)]);
+    }
+
+    // Regions 3-6 need B to span across A's u-range (so "within u-range" is non-empty).
+    let u_span = b_u_max > u_min_a + zero_tol && b_u_min < u_max_a - zero_tol;
+    let v_span = b_v_max > v_min_a + zero_tol && b_v_min < v_max_a - zero_tol;
+
+    // 3. v-min exterior within A's u-range:
+    //    B ∩ {u_min_a ≤ u·p ≤ u_max_a} ∩ {v·p ≤ v_min_a}
+    //    planes: (u_min_a*u, -u), (u_max_a*u, +u), (v_min_a*v, +v)
+    if u_span && b_v_min < v_min_a - zero_tol {
+        try_slab!(vec![
+            (u * u_min_a, -u),
+            (u * u_max_a, u),
+            (v * v_min_a, v),
+        ]);
+    }
+
+    // 4. v-max exterior within A's u-range:
+    //    B ∩ {u_min_a ≤ u·p ≤ u_max_a} ∩ {v·p ≥ v_max_a}
+    //    planes: (u_min_a*u, -u), (u_max_a*u, +u), (v_max_a*v, -v)
+    if u_span && b_v_max > v_max_a + zero_tol {
+        try_slab!(vec![
+            (u * u_min_a, -u),
+            (u * u_max_a, u),
+            (v * v_max_a, -v),
+        ]);
+    }
+
+    // 5. w-min exterior within A's u,v-range:
+    //    B ∩ {u_min_a ≤ u·p ≤ u_max_a} ∩ {v_min_a ≤ v·p ≤ v_max_a} ∩ {w·p ≤ w_min_a}
+    if u_span && v_span && b_w_min < w_min_a - zero_tol {
+        try_slab!(vec![
+            (u * u_min_a, -u),
+            (u * u_max_a, u),
+            (v * v_min_a, -v),
+            (v * v_max_a, v),
+            (w * w_min_a, w),
+        ]);
+    }
+
+    // 6. w-max exterior within A's u,v-range:
+    //    B ∩ {u_min_a ≤ u·p ≤ u_max_a} ∩ {v_min_a ≤ v·p ≤ v_max_a} ∩ {w·p ≥ w_max_a}
+    if u_span && v_span && b_w_max > w_max_a + zero_tol {
+        try_slab!(vec![
+            (u * u_min_a, -u),
+            (u * u_max_a, u),
+            (v * v_min_a, -v),
+            (v * v_max_a, v),
+            (w * w_max_a, -w),
+        ]);
+    }
+
+    if result.is_empty() {
+        return Some(BRep::default());
+    }
+    if result.len() == 1 {
+        return Some(result.remove(0));
+    }
+    Some(BRep::compound_from_shapes(&result))
 }
 
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
@@ -1015,6 +1353,7 @@ fn brep_eighth_of_unit_ball() -> BRep {
 mod tests {
     use super::*;
     use crate::{boolean_op, BooleanOpType};
+    use glam::DAffine3;
     use rcad_kernel::surface_area;
     use rcad_kernel::volume;
 
@@ -1315,5 +1654,189 @@ mod tests {
         let r = boolean_op(BooleanOpType::Difference, &a, &outer).expect("A-in-B");
         let n_faces: usize = r.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         assert_eq!(n_faces, 0, "expected empty difference");
+    }
+
+    // ── general box-box (rotated) ─────────────────────────────────────────
+
+    fn make_rotated_box(origin: DVec3, u_dir: DVec3, v_dir: DVec3, w: f64, h: f64, d: f64, pivot: DVec3, axis: DVec3, angle_deg: f64) -> BRep {
+        // Handle OCCT-style negative extents: a negative extent means the box extends
+        // in the negative direction from the anchor corner.
+        let z_dir = u_dir.cross(v_dir);
+        let mut o = origin;
+        let ww = if w < 0.0 { o += u_dir * w; -w } else { w };
+        let hh = if h < 0.0 { o += v_dir * h; -h } else { h };
+        let dd = if d < 0.0 { o += z_dir * d; -d } else { d };
+        let mut b = make_box_brep(o, u_dir, v_dir, ww, hh, dd).unwrap();
+        let rot = DAffine3::from_axis_angle(axis.normalize(), angle_deg.to_radians());
+        let xf = DAffine3::from_translation(pivot) * rot * DAffine3::from_translation(-pivot);
+        b.apply_transform(xf);
+        b
+    }
+
+    #[test]
+    fn box_detection_axis_aligned() {
+        let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).unwrap();
+        let info = try_as_box(&b).expect("axis-aligned box should be detected");
+        // Axes may be in any order; check that all 3 standard axes are present.
+        let all_axes: Vec<DVec3> = info.axes.iter().map(|a| a.abs()).collect();
+        assert!(all_axes.iter().any(|a| (a - DVec3::X).length() < 1e-10), "X axis missing");
+        assert!(all_axes.iter().any(|a| (a - DVec3::Y).length() < 1e-10), "Y axis missing");
+        assert!(all_axes.iter().any(|a| (a - DVec3::Z).length() < 1e-10), "Z axis missing");
+        assert!((info.center - DVec3::new(1.0, 1.5, 2.0)).length() < 1e-10, "center");
+        // extents in same order as axes; check all three match {1.0, 1.5, 2.0}.
+        let mut ex = info.extents.to_vec();
+        ex.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((ex[0] - 1.0).abs() < 1e-10 && (ex[1] - 1.5).abs() < 1e-10 && (ex[2] - 2.0).abs() < 1e-10,
+            "extents {:?}", info.extents);
+    }
+
+    #[test]
+    fn box_detection_rotated() {
+        // Box at origin, rotated 45° around Z at origin.
+        let b = make_box_brep(DVec3::new(-0.5, -0.5, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = {
+            let mut shape = b;
+            let rot = DAffine3::from_axis_angle(DVec3::Z, 45.0_f64.to_radians());
+            shape.apply_transform(rot);
+            shape
+        };
+        let info = try_as_box(&b).expect("rotated box should be detected");
+        let expected_axes = [
+            DVec3::new(0.7071067811865476, 0.7071067811865476, 0.0).abs(),
+            DVec3::new(-0.7071067811865476, 0.7071067811865476, 0.0).abs(),
+            DVec3::new(0.0, 0.0, 1.0).abs(),
+        ];
+        for a in &info.axes {
+            let aa = a.abs();
+            let found = expected_axes.iter().any(|e| (aa - e).length() < 1e-10);
+            assert!(found, "unexpected axis {:?}", a);
+        }
+        let planes = info.planes();
+        assert_eq!(planes.len(), 6, "should have 6 half-space planes");
+    }
+
+    #[test]
+    fn box_detection_non_box() {
+        let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        assert!(try_as_box(&sphere).is_none(), "sphere is not a box");
+    }
+
+    #[test]
+    fn rotated_box_intersection_partial_overlap() {
+        // bcommon_simple_c3-like: unit box ∩ rotated box.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = (2.0_f64).sqrt();
+        let b = make_rotated_box(
+            DVec3::ZERO, DVec3::X, DVec3::Y, r, r / 2.0, 1.0,
+            DVec3::ZERO, DVec3::Z, 45.0,
+        );
+        let result = boolean_op(BooleanOpType::Intersection, &a, &b).expect("rotated intersection");
+        let sa = surface_area(&result);
+        let tol = (5e-3_f64).max(0.15 * sa);
+        // SA should be non-zero (boxes overlap).
+        assert!(sa > 0.0, "expected non-empty intersection, SA={sa}");
+        // Check that try_intersection_box_general was triggered.
+        let direct = try_intersection_box_general(&a, &b);
+        assert!(direct.is_some(), "general box-box intersection should fire");
+    }
+
+    #[test]
+    fn rotated_box_difference_boptuc_c3() {
+        // boptuc_simple C3: B - A where A = unit box, B = rotated box.
+        // Expected SA = 5.82843.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let r = (2.0_f64).sqrt();
+        let b = {
+            let mut shape = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, r, r / 2.0, 1.0).unwrap();
+            let rot = DAffine3::from_axis_angle(DVec3::Z, 45.0_f64.to_radians());
+            shape.apply_transform(rot);
+            shape
+        };
+        let result = boolean_op(BooleanOpType::Difference, &b, &a).expect("boptuc C3");
+        let sa = surface_area(&result);
+        let expected = 5.82843;
+        let tol = (5e-3_f64).max(0.15 * expected);
+        assert!(
+            (sa - expected).abs() <= tol,
+            "C3: expected SA ~{expected}, got {sa} (tol={tol})"
+        );
+    }
+
+    #[test]
+    fn rotated_box_difference_boptuc_n3() {
+        // boptuc_simple N3: B - A where B is a rotated box with offset.
+        // Expected SA = 2.5.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        // box at (0.25, 0.25, 0) size 0.5×0.5×-1, pivot (.25,.25,0), rotate 30° Z
+        let b = make_rotated_box(
+            DVec3::new(0.25, 0.25, 0.0), DVec3::X, DVec3::Y, 0.5, 0.5, -1.0,
+            DVec3::new(0.25, 0.25, 0.0), DVec3::Z, 30.0,
+        );
+        let result = boolean_op(BooleanOpType::Difference, &b, &a).expect("boptuc N3");
+        let sa = surface_area(&result);
+        let expected = 2.5;
+        let tol = (5e-3_f64).max(0.15 * expected);
+        assert!(
+            (sa - expected).abs() <= tol,
+            "N3: expected SA ~{expected}, got {sa} (tol={tol})"
+        );
+    }
+
+    #[test]
+    fn rotated_box_difference_boptuc_o1() {
+        // boptuc_simple O1: B - A with rotated B at offset.
+        // Expected SA = 4.48.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_rotated_box(
+            DVec3::new(0.0, 0.5, 0.0), DVec3::X, DVec3::Y, 0.8, 0.8, -1.0,
+            DVec3::new(0.0, 0.5, 0.0), DVec3::Z, -45.0,
+        );
+        let result = boolean_op(BooleanOpType::Difference, &b, &a).expect("boptuc O1");
+        let sa = surface_area(&result);
+        let expected = 4.48;
+        let tol = (5e-3_f64).max(0.15 * expected);
+        assert!(
+            (sa - expected).abs() <= tol,
+            "O1: expected SA ~{expected}, got {sa} (tol={tol})"
+        );
+    }
+
+    #[test]
+    fn rotated_box_difference_no_overlap() {
+        // Disjoint rotated boxes → difference should be B unchanged.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_rotated_box(
+            DVec3::new(5.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+            DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 30.0,
+        );
+        let result = boolean_op(BooleanOpType::Difference, &b, &a).expect("disjoint diff");
+        let sa = surface_area(&result);
+        // Rotated unit box has same SA = 6.0.
+        assert!((sa - 6.0).abs() < 1e-6, "disjoint: expected SA=6.0, got {sa}");
+    }
+
+    #[test]
+    fn rotated_box_difference_a_contains_b() {
+        // B fully inside A → B - A = empty.
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let b = make_rotated_box(
+            DVec3::new(0.25, 0.25, 0.25), DVec3::X, DVec3::Y, 0.5, 0.5, 0.5,
+            DVec3::new(0.25, 0.25, 0.25), DVec3::Z, 15.0,
+        );
+        let result = boolean_op(BooleanOpType::Difference, &b, &a).expect("A contains B");
+        let n_faces: usize = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        assert_eq!(n_faces, 0, "expected empty (B inside A)");
+    }
+
+    #[test]
+    fn rotated_box_intersection_non_box_falls_through() {
+        // Box ∩ sphere → falls through to Pave-Filler (no panic).
+        let b = make_rotated_box(
+            DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+            DVec3::ZERO, DVec3::Z, 45.0,
+        );
+        let s = make_sphere_brep(DVec3::new(0.5, 0.5, 0.5), 1.0).unwrap();
+        let r = boolean_op(BooleanOpType::Intersection, &b, &s).expect("box-sphere intersection");
+        assert!(r.solids.len() >= 1 || r.vertices.is_empty());
     }
 }

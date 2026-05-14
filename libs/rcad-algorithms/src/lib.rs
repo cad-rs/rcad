@@ -2663,6 +2663,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_box_box(a, b) {
             return Ok(r);
         }
+        // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
+        if let Some(r) = boolean_unit_octant::try_intersection_box_general(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_concentric_spheres(a, b) {
             return Ok(r);
         }
@@ -2680,6 +2684,11 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // Avoids Pave-Filler coplanar-face errors (bcut_simple_c1, boptuc_simple/E9).
         // Multi-slab results returned as a compound.
         if let Some(r) = boolean_unit_octant::try_difference_box_box(a, b) {
+            return Ok(r);
+        }
+        // Fast-path: general box-box difference (rotated boxes) via half-space
+        // slab decomposition along the first operand's local axes.
+        if let Some(r) = boolean_unit_octant::try_difference_box_general(a, b) {
             return Ok(r);
         }
         if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b) {
