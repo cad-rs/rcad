@@ -150,8 +150,8 @@ pub use brep_tools::{
     count_vertices, count_wires, extract_shells, extract_solids, get_curve, get_edge_range,
     get_edge_tolerance, get_face_tolerance, get_inner_wires, get_outer_wire, get_pcurve,
     get_shape_type, get_surface, get_vertex_tolerance, is_closed, is_edge_degenerate,
-    mirror_shape, read_brep_from_file, read_brep_from_string, rotate_shape, scale_shape,
-    transform_shape, write_brep_to_file, write_brep_to_string,
+    mirror_shape, n_ary_partition, read_brep_from_file, read_brep_from_string, rotate_shape,
+    scale_shape, transform_shape, write_brep_to_file, write_brep_to_string,
 };
 pub use brep_top_adaptor::{
     EdgeAdaptor, EdgeExplorer, FaceAdaptor, FaceExplorer, OrientedEdge, ShapeIterator,

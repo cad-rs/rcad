@@ -27,6 +27,7 @@ use crate::tolerance::*;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
 use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -1141,6 +1142,165 @@ pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
     }
 
     results
+}
+
+/// Partition objects by tools using boolean-subset decomposition.
+///
+/// For each object and each combination of tools (inside/outside per tool mask),
+/// computes the corresponding cell using pairwise boolean operations.
+/// Returns all non-empty cells as individual self-contained BReps (one solid each).
+///
+/// This is equivalent to OCCT's `BRepAlgoAPI_Splitter` / `BRepAlgoAPI_Partition`
+/// for the case where all tools are solids (have positive volume). Face tools
+/// (planar faces acting as half-space dividers) may or may not be supported
+/// depending on the boolean engine's ability to handle face operands.
+///
+/// The number of boolean operations per call is O(objects.len() × 2^n_tools × n_tools),
+/// so this is suitable only for small numbers of tools (≤ 10).
+pub fn n_ary_partition(objects: &[BRep], tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+    let mut cells = Vec::new();
+    let n_tools = tools.len();
+
+    for obj in objects {
+        // Each mask bit i controls whether tool[i] is: 1 = intersection, 0 = difference.
+        let max_mask = if n_tools >= 32 { 1u32 << 31 } else { 1u32 << n_tools };
+
+        for mask in 0..max_mask {
+            let mut cell = obj.clone();
+            let mut failed = false;
+
+            for i in 0..n_tools {
+                let inside = (mask >> i) & 1 != 0;
+                let op = if inside {
+                    crate::BooleanOpType::Intersection
+                } else {
+                    crate::BooleanOpType::Difference
+                };
+                match crate::boolean_op(op, &cell, &tools[i]) {
+                    Ok(r) => cell = r,
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+
+            if failed {
+                continue;
+            }
+
+            // Collect all flat face indices from this cell's solids.
+            let mut face_idx_list: Vec<usize> = Vec::new();
+            let mut flat_idx = 0;
+            for solid in &cell.solids {
+                for shell in &solid.shells {
+                    for _ in &shell.faces {
+                        face_idx_list.push(flat_idx);
+                        flat_idx += 1;
+                    }
+                }
+            }
+
+            if face_idx_list.is_empty() {
+                continue;
+            }
+
+            // Decompose into connected face components and extract each as a separate BRep.
+            for component in connected_face_components(&cell, &face_idx_list) {
+                if !component.is_empty() {
+                    cells.push(extract_brep_subset(&cell, &component));
+                }
+            }
+        }
+    }
+
+    // Filter out empty cells (boolean result may produce zero-face shapes).
+    cells.retain(|c| count_faces(c) > 0);
+
+    Ok(cells)
+}
+
+/// Find connected components of a set of flat face indices within a BRep.
+/// Two faces are connected if they share at least one edge (same edge index).
+fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usize>> {
+    use std::collections::{HashMap, HashSet};
+
+    let face_set: HashSet<usize> = face_indices.iter().copied().collect();
+    if face_set.is_empty() {
+        return Vec::new();
+    }
+
+    // Build edge → face list for our faces of interest.
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut flat_idx: usize = 0;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for lfi in 0..shell.faces.len() {
+                let global_fi = flat_idx + lfi;
+                if face_set.contains(&global_fi) {
+                    if let Some(face) = shell.faces.get(lfi) {
+                        for wire_edge in &face.outer_wire.edges {
+                            edge_to_faces
+                                .entry(wire_edge.idx)
+                                .or_default()
+                                .push(global_fi);
+                        }
+                        for wire in &face.inner_wires {
+                            for wire_edge in &wire.edges {
+                                edge_to_faces
+                                    .entry(wire_edge.idx)
+                                    .or_default()
+                                    .push(global_fi);
+                            }
+                        }
+                    }
+                }
+            }
+            flat_idx += shell.faces.len();
+        }
+    }
+
+    // Build adjacency: face A → [faces that share an edge with A].
+    let mut adjacency: HashMap<usize, Vec<usize>> = HashMap::new();
+    for faces in edge_to_faces.values() {
+        if faces.len() >= 2 {
+            for i in 0..faces.len() {
+                for j in (i + 1)..faces.len() {
+                    adjacency.entry(faces[i]).or_default().push(faces[j]);
+                    adjacency.entry(faces[j]).or_default().push(faces[i]);
+                }
+            }
+        }
+    }
+
+    // DFS over face indices to find connected components.
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut components: Vec<Vec<usize>> = Vec::new();
+
+    for &fi in face_indices {
+        if !visited.insert(fi) {
+            continue;
+        }
+
+        let mut component: Vec<usize> = Vec::new();
+        let mut stack: Vec<usize> = vec![fi];
+
+        while let Some(current) = stack.pop() {
+            component.push(current);
+            if let Some(neighbors) = adjacency.get(&current) {
+                for &neighbor in neighbors {
+                    if visited.insert(neighbor) {
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        components.push(component);
+    }
+
+    components
 }
 
 // =============================================================================
