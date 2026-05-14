@@ -146,7 +146,20 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         // All inner vertices must be inside the outer solid (not just its bbox).
         // This is critical for curved solids (e.g. sphere bbox contains box corners
         // that are outside the sphere surface).
-        let all_inside = inner.vertices.iter().all(|v| is_point_inside_by_ray(v.point, outer));
+        // Nudge each vertex toward the centroid so boundary points (on faces/edges)
+        // move slightly inside before ray testing — ray casting from exact boundary
+        // points is unreliable because `param > TOLERANCE_ABS` discards the
+        // starting-point hit, breaking parity-based inside/outside detection.
+        let centroid = inner.center();
+        let all_inside = inner.vertices.iter().all(|v| {
+            let dir = centroid - v.point;
+            let test_point = if dir.length_squared() > 0.0 {
+                v.point + dir.normalize() * (TOLERANCE_ABS * 10.0)
+            } else {
+                v.point
+            };
+            is_point_inside_by_ray(test_point, outer)
+        });
         if !all_inside { continue; }
         return match (op, swapped) {
             (BooleanOpType::Union, _) => Some(outer.clone()),
