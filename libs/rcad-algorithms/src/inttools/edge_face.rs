@@ -104,25 +104,33 @@ fn ray_cast_contains_with_tol(px: f64, py: f64, poly: &[(f64, f64)], eps: f64) -
 /// Clip an infinite line to a convex polygon on a plane.
 /// Returns the parametric interval `(t_min, t_max)` of the line inside the polygon,
 /// or None if the line doesn't cross the polygon.
+///
+/// This is a wrapper around [`clip_line_to_polygon_with_tol`] that returns only the
+/// first inside interval for backward compatibility with convex polygons.
 pub fn clip_line_to_convex_polygon(
     line: &Line3,
     plane: &Plane,
     face_verts: &[DVec3],
 ) -> Option<(f64, f64)> {
-    clip_line_to_convex_polygon_with_tol(line, plane, face_verts, TOLERANCE_ABS)
+    let intervals = clip_line_to_polygon_with_tol(line, plane, face_verts, TOLERANCE_ABS);
+    intervals.first().copied()
 }
 
-/// Same as [`clip_line_to_convex_polygon`] with clip margins scaled from `geom_tol`
-/// (minimum [`TOLERANCE_ABS`] for parallel-edge and empty-interval tests).
-pub fn clip_line_to_convex_polygon_with_tol(
+/// Clip an infinite line to a (possibly non-convex) polygon on a plane.
+/// Returns all parametric intervals along the line that lie inside the polygon,
+/// or an empty vec if the line doesn't cross the polygon.
+///
+/// Algorithm: find all edge-intersection t-values along the line, sort and dedup,
+/// then test each interval midpoint via ray-cast point-in-polygon.
+pub fn clip_line_to_polygon_with_tol(
     line: &Line3,
     plane: &Plane,
     face_verts: &[DVec3],
     geom_tol: f64,
-) -> Option<(f64, f64)> {
+) -> Vec<(f64, f64)> {
     let eps = geom_tol.max(TOLERANCE_ABS);
     if face_verts.len() < 3 {
-        return None;
+        return vec![];
     }
     let (u_axis, v_axis) = plane_local_basis(plane);
 
@@ -133,8 +141,7 @@ pub fn clip_line_to_convex_polygon_with_tol(
     let origin_u = d.dot(u_axis);
     let origin_v = d.dot(v_axis);
 
-    // Determine polygon winding (signed area)
-    let n = face_verts.len();
+    // Project polygon vertices to 2D
     let pts_2d: Vec<(f64, f64)> = face_verts
         .iter()
         .map(|v| {
@@ -143,55 +150,113 @@ pub fn clip_line_to_convex_polygon_with_tol(
         })
         .collect();
 
-    let mut area = 0.0;
-    for i in 0..n {
-        let j = (i + 1) % n;
-        area += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
-    }
-    // sign: +1 for CCW, -1 for CW. Inward normal = sign * (ey, -ex)
-    let sign = if area >= 0.0 { 1.0 } else { -1.0 };
+    let n = pts_2d.len();
+    let mut t_vals = Vec::new();
 
-    // Cyrus-Beck clipping against each polygon edge
-    let mut t_enter = f64::NEG_INFINITY;
-    let mut t_exit = f64::INFINITY;
-
+    // Find all edge intersection t-values: for each polygon edge, compute
+    // where the line crosses the edge's supporting line and check if the
+    // intersection lies within the edge segment.
     for i in 0..n {
         let j = (i + 1) % n;
         let (ax, ay) = pts_2d[i];
         let (bx, by) = pts_2d[j];
-
         let ex = bx - ax;
         let ey = by - ay;
-        // Inward-facing edge normal: sign * (ey, -ex)
-        let nx = sign * ey;
-        let ny = sign * (-ex);
 
-        let denom = nx * line_u + ny * line_v;
-        let num = nx * (origin_u - ax) + ny * (origin_v - ay);
-
+        // line_dir × edge_dir — zero means parallel
+        let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
-            // Line parallel to edge
-            if num > eps {
-                // Line is outside this edge
-                return None;
-            }
-            // Line is inside or on the edge, continue
+            continue;
+        }
+
+        // t where line crosses the edge's supporting line:
+        //   line(t) = edge(i) + s * (edge(i+1) - edge(i))
+        //   (p[i] - origin) × edge_dir / (line_dir × edge_dir)
+        let t = ((ax - origin_u) * ey - (ay - origin_v) * ex) / denom;
+
+        // Edge parameter s — check the intersection is within the segment
+        let s = if ex.abs() > eps {
+            (origin_u + t * line_u - ax) / ex
         } else {
-            let t = -num / denom;
-            if denom < 0.0 {
-                // Entering
-                t_enter = t_enter.max(t);
-            } else {
-                // Exiting
-                t_exit = t_exit.min(t);
+            (origin_v + t * line_v - ay) / ey
+        };
+
+        if s >= -eps && s <= 1.0 + eps {
+            t_vals.push(t);
+        }
+    }
+
+    if t_vals.is_empty() {
+        // Line doesn't cross any edge — check if origin is inside
+        if point_in_planar_face_with_tol(line.origin, plane, face_verts, geom_tol) {
+            return vec![(f64::NEG_INFINITY, f64::INFINITY)];
+        }
+        return vec![];
+    }
+
+    // Sort by t-value
+    t_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // Remove duplicates within tolerance
+    let mut deduped: Vec<f64> = Vec::new();
+    for &t in &t_vals {
+        if deduped.is_empty() {
+            deduped.push(t);
+        } else {
+            let last = deduped[deduped.len() - 1];
+            if (t - last).abs() > eps {
+                deduped.push(t);
             }
         }
     }
 
-    if t_enter > t_exit + eps {
-        return None;
+    // Compute polygon's t-range along the line direction to choose a safe
+    // "far" offset for testing unbounded intervals.
+    let line_dir_len_sq = line_u * line_u + line_v * line_v;
+    let (min_vert_t, max_vert_t) = if line_dir_len_sq > eps {
+        let mut min_t = f64::INFINITY;
+        let mut max_t = f64::NEG_INFINITY;
+        for &(u, v) in &pts_2d {
+            let t = ((u - origin_u) * line_u + (v - origin_v) * line_v) / line_dir_len_sq;
+            min_t = min_t.min(t);
+            max_t = max_t.max(t);
+        }
+        (min_t, max_t)
+    } else {
+        (0.0, 0.0)
+    };
+    let far_offset = (max_vert_t - min_vert_t + 1.0).max(1.0) * 2.0;
+
+    let mut result = Vec::new();
+
+    // Unbounded interval before first t-value
+    {
+        let test_t = deduped[0] - far_offset;
+        let test_pt = line.origin + line.direction * test_t;
+        if point_in_planar_face_with_tol(test_pt, plane, face_verts, geom_tol) {
+            result.push((f64::NEG_INFINITY, deduped[0]));
+        }
     }
-    Some((t_enter, t_exit))
+
+    // Intervals between consecutive t-values
+    for k in 0..deduped.len() - 1 {
+        let t_mid = (deduped[k] + deduped[k + 1]) / 2.0;
+        let mid_pt = line.origin + line.direction * t_mid;
+        if point_in_planar_face_with_tol(mid_pt, plane, face_verts, geom_tol) {
+            result.push((deduped[k], deduped[k + 1]));
+        }
+    }
+
+    // Unbounded interval after last t-value
+    {
+        let test_t = deduped[deduped.len() - 1] + far_offset;
+        let test_pt = line.origin + line.direction * test_t;
+        if point_in_planar_face_with_tol(test_pt, plane, face_verts, geom_tol) {
+            result.push((deduped[deduped.len() - 1], f64::INFINITY));
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -269,5 +334,70 @@ mod tests {
         let (t_min, t_max) = clip_line_to_convex_polygon(&line, &plane, &verts).unwrap();
         assert!((t_min - 1.0).abs() < TOLERANCE_MESH_LEGACY, "t_min={t_min}");
         assert!((t_max - 2.0).abs() < TOLERANCE_MESH_LEGACY, "t_max={t_max}");
+
+        // New API also returns the same single interval for convex polygons
+        let intervals = clip_line_to_polygon_with_tol(&line, &plane, &verts, TOLERANCE_ABS);
+        assert_eq!(intervals.len(), 1);
+        assert!((intervals[0].0 - 1.0).abs() < TOLERANCE_MESH_LEGACY);
+        assert!((intervals[0].1 - 2.0).abs() < TOLERANCE_MESH_LEGACY);
+    }
+
+    #[test]
+    fn clip_line_to_l_shape() {
+        // L-shaped polygon matching the H1/H2 top cap profile:
+        //   (0,0)-(2,0)-(2,1)-(1,1)-(1,3)-(0,3)
+        // The reflex vertex at (1,1) makes this non-convex.
+        let plane = Plane {
+            origin: DVec3::ZERO,
+            normal: DVec3::Z,
+        };
+        let verts = vec![
+            DVec3::new(0.0, 0.0, 0.0),
+            DVec3::new(2.0, 0.0, 0.0),
+            DVec3::new(2.0, 1.0, 0.0),
+            DVec3::new(1.0, 1.0, 0.0),
+            DVec3::new(1.0, 3.0, 0.0),
+            DVec3::new(0.0, 3.0, 0.0),
+        ];
+
+        // Line through the wide region (y = 0.5): should clip from x=0 to x=2
+        let line1 = Line3 {
+            origin: DVec3::new(-1.0, 0.5, 0.0),
+            direction: DVec3::X,
+        };
+        let intervals1 = clip_line_to_polygon_with_tol(&line1, &plane, &verts, TOLERANCE_ABS);
+        assert_eq!(intervals1.len(), 1, "line through wide region should have 1 interval");
+        assert!((intervals1[0].0 - 1.0).abs() < TOLERANCE_MESH_LEGACY, "t_min={}", intervals1[0].0);
+        assert!((intervals1[0].1 - 3.0).abs() < TOLERANCE_MESH_LEGACY, "t_max={}", intervals1[0].1);
+
+        // Line through the narrow arm (y = 1.5): should clip from x=0 to x=1
+        let line2 = Line3 {
+            origin: DVec3::new(-1.0, 1.5, 0.0),
+            direction: DVec3::X,
+        };
+        let intervals2 = clip_line_to_polygon_with_tol(&line2, &plane, &verts, TOLERANCE_ABS);
+        assert_eq!(intervals2.len(), 1, "line through narrow arm should have 1 interval");
+        assert!((intervals2[0].0 - 1.0).abs() < TOLERANCE_MESH_LEGACY, "t_min={}", intervals2[0].0);
+        assert!((intervals2[0].1 - 2.0).abs() < TOLERANCE_MESH_LEGACY, "t_max={}", intervals2[0].1);
+
+        // Line through the notch (x = 1.5): only one interval through the lower arm
+        // At x=1.5 the upper arm (x ∈ [0,1]) doesn't cover this x, so the line
+        // enters at y=0, exits at y=1, and stays outside from y=1 onward.
+        let line3 = Line3 {
+            origin: DVec3::new(1.5, -1.0, 0.0),
+            direction: DVec3::Y,
+        };
+        let intervals3 = clip_line_to_polygon_with_tol(&line3, &plane, &verts, TOLERANCE_ABS);
+        assert_eq!(intervals3.len(), 1, "line through notch should have 1 interval");
+        assert!((intervals3[0].0 - 1.0).abs() < TOLERANCE_MESH_LEGACY, "t_min={}", intervals3[0].0);
+        assert!((intervals3[0].1 - 2.0).abs() < TOLERANCE_MESH_LEGACY, "t_max={}", intervals3[0].1);
+
+        // Line that misses the polygon entirely
+        let line4 = Line3 {
+            origin: DVec3::new(5.0, 0.0, 0.0),
+            direction: DVec3::Y,
+        };
+        let intervals4 = clip_line_to_polygon_with_tol(&line4, &plane, &verts, TOLERANCE_ABS);
+        assert!(intervals4.is_empty(), "line outside should have 0 intervals");
     }
 }

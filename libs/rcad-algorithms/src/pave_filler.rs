@@ -1604,52 +1604,54 @@ impl<'a> PaveFiller<'a> {
                 let verts2 = self.ds.face_boundary_points(f2);
                 let clip_tol = self.ff_tol(f1, f2);
 
-                let range1 =
-                    inttools::edge_face::clip_line_to_convex_polygon_with_tol(&line, p1, &verts1, clip_tol);
-                let range2 =
-                    inttools::edge_face::clip_line_to_convex_polygon_with_tol(&line, p2, &verts2, clip_tol);
+                let ranges1 =
+                    inttools::edge_face::clip_line_to_polygon_with_tol(&line, p1, &verts1, clip_tol);
+                let ranges2 =
+                    inttools::edge_face::clip_line_to_polygon_with_tol(&line, p2, &verts2, clip_tol);
 
-                if let (Some((t1_min, t1_max)), Some((t2_min, t2_max))) = (range1, range2) {
-                    let t_min = t1_min.max(t2_min);
-                    let t_max = t1_max.min(t2_max);
-                    // Keep strict: overlap length along the intersection line is parametric, not V–V
-                    // coincidence — tying this to `fuzzy_tol` can change sphere–box trims and area.
-                    if t_max - t_min < TOLERANCE_ABS {
-                        return;
+                for &(t1_min, t1_max) in &ranges1 {
+                    for &(t2_min, t2_max) in &ranges2 {
+                        let t_min = t1_min.max(t2_min);
+                        let t_max = t1_max.min(t2_max);
+                        // Keep strict: overlap length along the intersection line is parametric, not V–V
+                        // coincidence — tying this to `fuzzy_tol` can change sphere–box trims and area.
+                        if t_max - t_min < TOLERANCE_ABS {
+                            continue;
+                        }
+
+                        let p_start = line.origin + line.direction * t_min;
+                        let p_end = line.origin + line.direction * t_max;
+
+                        let v_start = self.ds.add_vertex(p_start);
+                        let v_end = self.ds.add_vertex(p_end);
+
+                        let curve_idx = self.ds.intersection_curves.len();
+                        let pca = line_pcurve_on_plane(&line, p1);
+                        let pcb = line_pcurve_on_plane(&line, p2);
+                        self.ds.intersection_curves.push(IntersectionCurve {
+                            curve: Curve3::Line(line),
+                            polyline: vec![],
+                            start_vertex: v_start,
+                            end_vertex: v_end,
+                            t_range: [t_min, t_max],
+                            pcurve_on_a: Some(pca),
+                            pcurve_on_b: Some(pcb),
+                        });
+
+                        self.ds.interferences.push(Interference::FaceFace {
+                            f1,
+                            f2,
+                            curves: vec![curve_idx],
+                            points: vec![],
+                        });
+
+                        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                        self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                        self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                        self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                     }
-
-                    let p_start = line.origin + line.direction * t_min;
-                    let p_end = line.origin + line.direction * t_max;
-
-                    let v_start = self.ds.add_vertex(p_start);
-                    let v_end = self.ds.add_vertex(p_end);
-
-                    let curve_idx = self.ds.intersection_curves.len();
-                    let pca = line_pcurve_on_plane(&line, p1);
-                    let pcb = line_pcurve_on_plane(&line, p2);
-                    self.ds.intersection_curves.push(IntersectionCurve {
-                        curve: Curve3::Line(line),
-                        polyline: vec![],
-                        start_vertex: v_start,
-                        end_vertex: v_end,
-                        t_range: [t_min, t_max],
-                        pcurve_on_a: Some(pca),
-                        pcurve_on_b: Some(pcb),
-                    });
-
-                    self.ds.interferences.push(Interference::FaceFace {
-                        f1,
-                        f2,
-                        curves: vec![curve_idx],
-                        points: vec![],
-                    });
-
-                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
-                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
-                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
-                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
             }
         }
