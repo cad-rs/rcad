@@ -1845,7 +1845,7 @@ fn build_trimmed_edge_pieces(
     p_min: f64, p_max: f64,
     p_lo: f64, p_hi: f64,
     z_lo: f64, z_hi: f64, ew: f64,
-    corner: &impl Fn(f64, f64) -> DVec3,
+    corner: &dyn Fn(f64, f64) -> DVec3,
     normal: DVec3,
     pieces: &mut Vec<BRep>,
 ) {
@@ -1965,44 +1965,69 @@ fn build_box_cylinder_result_partial(
     // Side walls — always use build_trimmed_edge_pieces for proper z-splitting
     // at z_lo/z_hi, matching the cap polygon edge vertices.
 
+    // Helper for building trimmed edge pieces from intersection list.
+    // Skips when the intersection covers the full span (both points at
+    // corners), since `build_trimmed_edge_pieces` treats p_lo=p_min/p_hi=p_max
+    // as "no intersection" and incorrectly keeps the full face.
+    let trimmed_or_skip = |ints: &[f64], lo: f64, hi: f64,
+                           cn: &dyn Fn(f64, f64) -> DVec3, nrm: DVec3,
+                           pieces: &mut Vec<BRep>| {
+        if ints.len() >= 2 && (ints.last().unwrap() - ints.first().unwrap()).abs() >= tol {
+            let p_lo = ints[0];
+            let p_hi = ints[ints.len() - 1];
+            if p_lo > lo + tol || p_hi < hi - tol {
+                build_trimmed_edge_pieces(lo, hi, p_lo, p_hi, z_lo, z_hi, ew, cn, nrm, pieces);
+            }
+            // else: full span — cylinder removes this entire face. Nothing to keep.
+        } else if ints.len() == 1 {
+            // Single intersection point — check which interval to keep.
+            let p = ints[0];
+            // Determine which face this is by checking nrm vs u_ax/v_ax.
+            let is_u_face = nrm.dot(u_ax).abs() > 0.5;
+            let inside: Box<dyn Fn(f64) -> bool> = if is_u_face {
+                Box::new(|coord: f64| { (eu - cu).powi(2) + (coord - cv).powi(2) < cyl_r.powi(2) + tol })
+            } else {
+                Box::new(|coord: f64| { (coord - cu).powi(2) + (ev - cv).powi(2) < cyl_r.powi(2) + tol })
+            };
+            let mid_lo = (lo + p) * 0.5;
+            let mid_hi = (p + hi) * 0.5;
+            let ins_lo = inside(mid_lo);
+            let ins_hi = inside(mid_hi);
+            if !ins_lo && !ins_hi {
+                // Both outside — tangent. Keep full face.
+                build_trimmed_edge_pieces(lo, hi, lo, hi, z_lo, z_hi, ew, cn, nrm, pieces);
+            } else if !ins_lo {
+                if p > lo + tol { build_trimmed_edge_pieces(lo, hi, lo, p, z_lo, z_hi, ew, cn, nrm, pieces); }
+            } else if !ins_hi {
+                if p < hi - tol { build_trimmed_edge_pieces(lo, hi, p, hi, z_lo, z_hi, ew, cn, nrm, pieces); }
+            } else {
+                // Both inside — shouldn't happen. Fall through to full face.
+                build_trimmed_edge_pieces(lo, hi, lo, hi, z_lo, z_hi, ew, cn, nrm, pieces);
+            }
+        } else {
+            build_trimmed_edge_pieces(lo, hi, lo, hi, z_lo, z_hi, ew, cn, nrm, pieces);
+        }
+    };
+
     // u_max face (normal = +u_ax, param v)
     {
         let cn = |p: f64, z: f64| -> DVec3 { c + eu*u_ax + p*v_ax + z*DVec3::Z };
-        if ints_u_max.len() >= 2 && (ints_u_max.last().unwrap() - ints_u_max.first().unwrap()).abs() >= tol {
-            build_trimmed_edge_pieces(-ev, ev, ints_u_max[0], ints_u_max[ints_u_max.len()-1], z_lo, z_hi, ew, &cn, u_ax, &mut pieces);
-        } else {
-            build_trimmed_edge_pieces(-ev, ev, -ev, ev, z_lo, z_hi, ew, &cn, u_ax, &mut pieces);
-        }
+        trimmed_or_skip(&ints_u_max, -ev, ev, &cn, u_ax, &mut pieces);
     }
-
     // u_min face (normal = -u_ax, param v)
     {
         let cn = |p: f64, z: f64| -> DVec3 { c - eu*u_ax + p*v_ax + z*DVec3::Z };
-        if ints_u_min.len() >= 2 && (ints_u_min.last().unwrap() - ints_u_min.first().unwrap()).abs() >= tol {
-            build_trimmed_edge_pieces(-ev, ev, ints_u_min[0], ints_u_min[ints_u_min.len()-1], z_lo, z_hi, ew, &cn, -u_ax, &mut pieces);
-        } else {
-            build_trimmed_edge_pieces(-ev, ev, -ev, ev, z_lo, z_hi, ew, &cn, -u_ax, &mut pieces);
-        }
+        trimmed_or_skip(&ints_u_min, -ev, ev, &cn, -u_ax, &mut pieces);
     }
-
     // v_max face (normal = +v_ax, param u)
     {
         let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax + ev*v_ax + z*DVec3::Z };
-        if ints_v_max.len() >= 2 && (ints_v_max.last().unwrap() - ints_v_max.first().unwrap()).abs() >= tol {
-            build_trimmed_edge_pieces(-eu, eu, ints_v_max[0], ints_v_max[ints_v_max.len()-1], z_lo, z_hi, ew, &cn, v_ax, &mut pieces);
-        } else {
-            build_trimmed_edge_pieces(-eu, eu, -eu, eu, z_lo, z_hi, ew, &cn, v_ax, &mut pieces);
-        }
+        trimmed_or_skip(&ints_v_max, -eu, eu, &cn, v_ax, &mut pieces);
     }
-
     // v_min face (normal = -v_ax, param u)
     {
         let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax - ev*v_ax + z*DVec3::Z };
-        if ints_v_min.len() >= 2 && (ints_v_min.last().unwrap() - ints_v_min.first().unwrap()).abs() >= tol {
-            build_trimmed_edge_pieces(-eu, eu, ints_v_min[0], ints_v_min[ints_v_min.len()-1], z_lo, z_hi, ew, &cn, -v_ax, &mut pieces);
-        } else {
-            build_trimmed_edge_pieces(-eu, eu, -eu, eu, z_lo, z_hi, ew, &cn, -v_ax, &mut pieces);
-        }
+        trimmed_or_skip(&ints_v_min, -eu, eu, &cn, -v_ax, &mut pieces);
     }
 
     if !cap_bottom.is_empty() {
