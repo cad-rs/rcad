@@ -1707,23 +1707,32 @@ fn arc_vertices(
         (-cw_len, cw_len)
     } else if ccw_in && !cw_in {
         (ccw_len, ccw_len)
-    } else if cw_in && ccw_in && (cw_len - ccw_len).abs() <= 1e-12 {
-        // Lengths equal within FP tolerance. Prefer direction whose midpoint
-        // is strictly inside the box (not on the boundary).
-        let strict_tol = 1e-9;
-        let inside_strict = |th: f64| -> bool {
-            let u = cu + r * th.cos();
-            let v = cv + r * th.sin();
-            u > -eu + strict_tol && u < eu - strict_tol && v > -ev + strict_tol && v < ev - strict_tol
-        };
-        let cs = inside_strict(cw_mid);
-        let ccws = inside_strict(ccw_mid);
-        if cs && !ccws {
-            (-cw_len, cw_len)
-        } else if ccws && !cs {
-            (ccw_len, ccw_len)
+    } else if cw_in && ccw_in {
+        // Both midpoints are inside the box. The shorter arc may still go outside
+        // the box at non-midpoint positions (e.g., an arc >180° whose midpoint
+        // happens to be inside but passes through a bulge).  Sample several points
+        // along the shorter arc to verify all lie inside; if not, take the longer.
+        let shorter_cw = cw_len <= ccw_len;
+        let (check_len, check_dir) = if shorter_cw {
+            (cw_len, -1.0)  // CW direction = decreasing θ
         } else {
-            (-cw_len, cw_len) // default to CW
+            (ccw_len, 1.0)  // CCW direction = increasing θ
+        };
+        // Check 5 evenly-spaced sample points along the shorter arc.
+        let n_samples = 5usize;
+        let all_inside = (0..=n_samples).all(|i| {
+            let frac = i as f64 / n_samples as f64;
+            let th = th_start + check_dir * check_len * frac;
+            // Normalize to [0, 2π)
+            let th_n = th.rem_euclid(2.0 * std::f64::consts::PI);
+            inside_box(th_n)
+        });
+        if all_inside {
+            // Shorter arc stays inside → use it.
+            if shorter_cw { (-cw_len, cw_len) } else { (ccw_len, ccw_len) }
+        } else {
+            // Shorter arc exits the box → use the longer arc.
+            if shorter_cw { (ccw_len, ccw_len) } else { (-cw_len, cw_len) }
         }
     } else if cw_len <= ccw_len {
         (-cw_len, cw_len)
@@ -2177,8 +2186,299 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         return build_box_cylinder_full_containment(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
     }
 
+    // When cylinder center is inside the box UV rect and extends beyond 2+ edges,
+    // the merged-segment cap polygon can't handle the disconnected circle arcs.
+    // Build caps with inner hole (face-with-hole topology) instead.
+    let inside_uv = cu >= -eu && cu <= eu && cv >= -ev && cv <= ev;
+    let extends_beyond_left = cu - cyl_r < -eu;
+    let extends_beyond_right = cu + cyl_r > eu;
+    let extends_beyond_bottom = cv - cyl_r < -ev;
+    let extends_beyond_top = cv + cyl_r > ev;
+    let n_beyond = [extends_beyond_left, extends_beyond_right, extends_beyond_bottom, extends_beyond_top].iter().filter(|&&x| x).count();
+    if inside_uv && n_beyond >= 2 {
+        return build_box_cylinder_result_partial_with_holes(
+            c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi,
+        );
+    }
+
     let result = build_box_cylinder_result_partial(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
     result
+}
+
+/// Build box − cylinder difference when the cylinder center is inside the box UV
+/// rect.  The merged-segment cap polygon fails for some configurations (cylinder
+/// extends beyond edges while center is inside).  Instead, use a face-with-hole
+/// topology:
+///
+///   outer wire:  full box rectangle (CCW)
+///   inner wire:  CW closed loop formed by:
+///     - box-perimeter edges where the box edge lies inside the cylinder
+///     - circle arcs where the circle edge lies inside the box
+///
+/// The inner wire is built by classifying each perimeter segment between adjacent
+/// intersection points: segments whose midpoint is *inside* the circle become box
+/// perimeter edges, and segments whose midpoint is *outside* the circle become
+/// circle arcs.  The polygon is then reversed to produce a CW inner wire.
+fn build_box_cylinder_result_partial_with_holes(
+    c: DVec3, u_ax: DVec3, v_ax: DVec3, eu: f64, ev: f64, ew: f64,
+    cu: f64, cv: f64, cyl_r: f64, cyl_z_lo: f64, cyl_z_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let z_lo = (cyl_z_lo - c.z).max(-ew);
+    let z_hi = (cyl_z_hi - c.z).min(ew);
+    if z_hi <= z_lo + tol { return None; }
+
+    let corner = |u: f64, v: f64, z: f64| -> DVec3 { c + u*u_ax + v*v_ax + z*DVec3::Z };
+
+    // Get intersection points sorted by perimeter t (CCW along box perimeter).
+    let mut pts = circle_rect_intersections_uv(cu, cv, cyl_r, eu, ev);
+    if pts.len() < 2 { return None; }
+    pts.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+
+    let n = pts.len();
+
+    // Classify each perimeter segment:
+    //   INSIDE  (midpoint in circle) → box perimeter edge in the hole boundary
+    //   OUTSIDE (midpoint outside)   → circle arc in the hole boundary
+    let is_inside: Vec<bool> = (0..n).map(|i| {
+        let a = &pts[i];
+        let b = &pts[(i + 1) % n];
+        let mid_t = if a.t <= b.t { (a.t + b.t) * 0.5 } else { (a.t + b.t + 8.0) * 0.5 % 8.0 };
+        let (mu, mv) = box_perimeter_uv(mid_t, eu, ev);
+        (mu - cu).powi(2) + (mv - cv).powi(2) <= cyl_r.powi(2) + tol
+    }).collect();
+
+    // Outer wire: full box rectangle (CCW)
+    let box_outer = |z: f64| -> Vec<DVec3> { vec![
+        corner(-eu, -ev, z), corner(eu, -ev, z),
+        corner(eu, ev, z), corner(-eu, ev, z),
+    ]};
+
+    // Build inner wire (CW) from the hole boundary.
+    //
+    // First build in CCW perimeter order: INSIDE segments → box perimeter edge
+    // (add_box_perimeter_vertices goes CCW = increasing t); OUTSIDE segments →
+    // circle arc (arc_vertices picks the direction that stays inside the box).
+    // Then reverse the whole polygon to obtain CW winding for the inner hole.
+    let build_inner = |z: f64| -> Vec<DVec3> {
+        let mut poly: Vec<DVec3> = Vec::new();
+        for i in 0..n {
+            let a = &pts[i];
+            let b = &pts[(i + 1) % n];
+            if is_inside[i] {
+                // Box perimeter edge (CCW direction = increasing t)
+                add_box_perimeter_vertices(a.t, b.t, eu, ev, z, &corner, &mut poly);
+            } else {
+                // Circle arc: the perimeter segment is outside the cylinder, so the
+                // hole boundary follows the circle arc between the two intersection points.
+                let th_a = (a.v - cv).atan2(a.u - cu);
+                let th_b = (b.v - cv).atan2(b.u - cu);
+                let arc = arc_vertices(cu, cv, cyl_r, th_a, th_b, eu, ev, z, &corner);
+                for pt in &arc {
+                    if poly.is_empty() || (poly.last().unwrap() - *pt).length() > tol {
+                        poly.push(*pt);
+                    }
+                }
+            }
+        }
+        // Reverse to obtain CW winding for the inner hole.
+        poly.reverse();
+        if poly.len() >= 2 && (poly.last().unwrap() - poly[0]).length() < tol {
+            poly.pop();
+        }
+        poly
+    };
+
+    let mut pieces: Vec<BRep> = Vec::new();
+
+    // Side walls — same as build_box_cylinder_result_partial (per-edge intersection)
+    let add_pt = |v: f64, lo: f64, hi: f64, out: &mut Vec<f64>| {
+        if v >= lo - tol && v <= hi + tol { out.push(v.clamp(lo, hi)); }
+    };
+
+    let mut ints_u_min: Vec<f64> = Vec::with_capacity(2);
+    let d0 = -eu - cu; let disc0 = cyl_r * cyl_r - d0 * d0;
+    if disc0 >= 0.0 { let off = disc0.sqrt(); add_pt(cv-off, -ev, ev, &mut ints_u_min); add_pt(cv+off, -ev, ev, &mut ints_u_min); }
+    ints_u_min.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_u_min.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    let mut ints_u_max: Vec<f64> = Vec::with_capacity(2);
+    let d1 = eu - cu; let disc1 = cyl_r * cyl_r - d1 * d1;
+    if disc1 >= 0.0 { let off = disc1.sqrt(); add_pt(cv-off, -ev, ev, &mut ints_u_max); add_pt(cv+off, -ev, ev, &mut ints_u_max); }
+    ints_u_max.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_u_max.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    let mut ints_v_min: Vec<f64> = Vec::with_capacity(2);
+    let d2 = -ev - cv; let disc2 = cyl_r * cyl_r - d2 * d2;
+    if disc2 >= 0.0 { let off = disc2.sqrt(); add_pt(cu-off, -eu, eu, &mut ints_v_min); add_pt(cu+off, -eu, eu, &mut ints_v_min); }
+    ints_v_min.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_v_min.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    let mut ints_v_max: Vec<f64> = Vec::with_capacity(2);
+    let d3 = ev - cv; let disc3 = cyl_r * cyl_r - d3 * d3;
+    if disc3 >= 0.0 { let off = disc3.sqrt(); add_pt(cu-off, -eu, eu, &mut ints_v_max); add_pt(cu+off, -eu, eu, &mut ints_v_max); }
+    ints_v_max.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_v_max.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    let mut add_side_strip = |cn: &dyn Fn(f64, f64) -> DVec3, nrm: DVec3, s_min: f64, s_max: f64| {
+        if s_max <= s_min + tol { return; }
+        if z_lo > -ew + tol { if let Some(f) = rect_face_4([cn(s_min, -ew), cn(s_max, -ew), cn(s_max, z_lo), cn(s_min, z_lo)], nrm) { pieces.push(f); } }
+        if z_hi < ew - tol { if let Some(f) = rect_face_4([cn(s_min, z_hi), cn(s_max, z_hi), cn(s_max, ew), cn(s_min, ew)], nrm) { pieces.push(f); } }
+        if z_hi > z_lo + tol { if let Some(f) = rect_face_4([cn(s_min, z_lo), cn(s_max, z_lo), cn(s_max, z_hi), cn(s_min, z_hi)], nrm) { pieces.push(f); } }
+    };
+
+    // Helper: when a face has exactly 1 cylinder intersection point (the other
+    // wraps beyond the adjacent face), determine which interval to keep by
+    // checking the midpoint of each side.  Returns `None` if the full face
+    // should be kept (tangent case).
+    let check_single_ints = |lo: f64, hi: f64, p: f64, inside: &dyn Fn(f64) -> bool| -> Option<(f64, f64)> {
+        let mid_lo = (lo + p) * 0.5;
+        let mid_hi = (p + hi) * 0.5;
+        let ins_lo = inside(mid_lo);
+        let ins_hi = inside(mid_hi);
+        if !ins_lo && !ins_hi { None }        // both outside = tangent → full face
+        else if !ins_lo { Some((lo, p)) }     // wrap toward hi (other point beyond hi)
+        else if !ins_hi { Some((p, hi)) }     // wrap toward lo
+        else { None }                         // both inside = shouldn't happen → full face
+    };
+
+    // u_max face (right, u=eu)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + eu*u_ax + p*v_ax + z*DVec3::Z };
+        if ints_u_max.len() >= 2 && (ints_u_max.last().unwrap() - ints_u_max.first().unwrap()).abs() >= tol {
+            let p_lo = ints_u_max[0]; let p_hi = ints_u_max[ints_u_max.len()-1];
+            if p_lo > -ev + tol { add_side_strip(&cn, u_ax, -ev, p_lo); }
+            if p_hi < ev - tol { add_side_strip(&cn, u_ax, p_hi, ev); }
+        } else if ints_u_max.len() == 1 {
+            let p = ints_u_max[0];
+            let inside = |v: f64| -> bool { (eu - cu).powi(2) + (v - cv).powi(2) < cyl_r.powi(2) + tol };
+            if let Some((s_lo, s_hi)) = check_single_ints(-ev, ev, p, &inside) {
+                if s_hi > s_lo + tol { add_side_strip(&cn, u_ax, s_lo, s_hi); }
+            } else {
+                add_side_strip(&cn, u_ax, -ev, ev);
+            }
+        } else {
+            add_side_strip(&cn, u_ax, -ev, ev);
+        }
+    }
+    // u_min face (left, u=-eu)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c - eu*u_ax + p*v_ax + z*DVec3::Z };
+        if ints_u_min.len() >= 2 && (ints_u_min.last().unwrap() - ints_u_min.first().unwrap()).abs() >= tol {
+            let p_lo = ints_u_min[0]; let p_hi = ints_u_min[ints_u_min.len()-1];
+            if p_lo > -ev + tol { add_side_strip(&cn, -u_ax, -ev, p_lo); }
+            if p_hi < ev - tol { add_side_strip(&cn, -u_ax, p_hi, ev); }
+        } else if ints_u_min.len() == 1 {
+            let p = ints_u_min[0];
+            let inside = |v: f64| -> bool { (-eu - cu).powi(2) + (v - cv).powi(2) < cyl_r.powi(2) + tol };
+            if let Some((s_lo, s_hi)) = check_single_ints(-ev, ev, p, &inside) {
+                if s_hi > s_lo + tol { add_side_strip(&cn, -u_ax, s_lo, s_hi); }
+            } else {
+                add_side_strip(&cn, -u_ax, -ev, ev);
+            }
+        } else {
+            add_side_strip(&cn, -u_ax, -ev, ev);
+        }
+    }
+    // v_max face (top, v=ev)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax + ev*v_ax + z*DVec3::Z };
+        if ints_v_max.len() >= 2 && (ints_v_max.last().unwrap() - ints_v_max.first().unwrap()).abs() >= tol {
+            let p_lo = ints_v_max[0]; let p_hi = ints_v_max[ints_v_max.len()-1];
+            if p_lo > -eu + tol { add_side_strip(&cn, v_ax, -eu, p_lo); }
+            if p_hi < eu - tol { add_side_strip(&cn, v_ax, p_hi, eu); }
+        } else if ints_v_max.len() == 1 {
+            let p = ints_v_max[0];
+            let inside = |u: f64| -> bool { (u - cu).powi(2) + (ev - cv).powi(2) < cyl_r.powi(2) + tol };
+            if let Some((s_lo, s_hi)) = check_single_ints(-eu, eu, p, &inside) {
+                if s_hi > s_lo + tol { add_side_strip(&cn, v_ax, s_lo, s_hi); }
+            } else {
+                add_side_strip(&cn, v_ax, -eu, eu);
+            }
+        } else {
+            add_side_strip(&cn, v_ax, -eu, eu);
+        }
+    }
+    // v_min face (bottom, v=-ev)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax - ev*v_ax + z*DVec3::Z };
+        if ints_v_min.len() >= 2 && (ints_v_min.last().unwrap() - ints_v_min.first().unwrap()).abs() >= tol {
+            let p_lo = ints_v_min[0]; let p_hi = ints_v_min[ints_v_min.len()-1];
+            if p_lo > -eu + tol { add_side_strip(&cn, -v_ax, -eu, p_lo); }
+            if p_hi < eu - tol { add_side_strip(&cn, -v_ax, p_hi, eu); }
+        } else if ints_v_min.len() == 1 {
+            let p = ints_v_min[0];
+            let inside = |u: f64| -> bool { (u - cu).powi(2) + (-ev - cv).powi(2) < cyl_r.powi(2) + tol };
+            if let Some((s_lo, s_hi)) = check_single_ints(-eu, eu, p, &inside) {
+                if s_hi > s_lo + tol { add_side_strip(&cn, -v_ax, s_lo, s_hi); }
+            } else {
+                add_side_strip(&cn, -v_ax, -eu, eu);
+            }
+        } else {
+            add_side_strip(&cn, -v_ax, -eu, eu);
+        }
+    }
+
+    // Cap faces with inner hole
+    let outer_lo = box_outer(z_lo);
+    let inner_lo = build_inner(z_lo);
+    if !inner_lo.is_empty() {
+        if let Some(f) = planar_face_with_inner_hole(&outer_lo, &inner_lo, DVec3::Z) {
+            pieces.push(f);
+        }
+    }
+    let outer_hi = box_outer(z_hi);
+    let inner_hi = build_inner(z_hi);
+    if !inner_hi.is_empty() {
+        if let Some(f) = planar_face_with_inner_hole(&outer_hi, &inner_hi, -DVec3::Z) {
+            pieces.push(f);
+        }
+    }
+
+    // Cylindrical wall: build wall pieces for each consecutive-OUTSIDE arc range.
+    // (An "arc range" is a group of consecutive segments where the hole boundary
+    // follows the circle, i.e. `is_inside[i] == false`.)
+    {
+        let mut i = 0;
+        while i < n {
+            if is_inside[i] {
+                i += 1;
+                continue;
+            }
+            // Start of an outside range: find the end (consecutive outside segments).
+            let start_idx = i;
+            while i < n && !is_inside[i] { i += 1; }
+            let end_idx = i; // i is now first-inside or n
+
+            // The arc range goes from pts[start_idx] to pts[end_idx] (wrapping at n).
+            let a = &pts[start_idx];
+            let b = &pts[end_idx % n];
+            let th_a = (a.v - cv).atan2(a.u - cu);
+            let th_b = (b.v - cv).atan2(b.u - cu);
+
+            // Generate arc vertices at z_lo and z_hi for this range.
+            let lo = arc_vertices(cu, cv, cyl_r, th_a, th_b, eu, ev, z_lo, &corner);
+            let hi = arc_vertices(cu, cv, cyl_r, th_a, th_b, eu, ev, z_hi, &corner);
+            let nv = lo.len().min(hi.len());
+            if nv >= 2 {
+                for j in 0..nv - 1 {
+                    let b0 = lo[j]; let b1 = lo[j + 1];
+                    let t1 = hi[j + 1]; let t0 = hi[j];
+                    let mid = (b0 + b1 + t1 + t0) / 4.0;
+                    let u_mid = (mid - c).dot(u_ax) - cu;
+                    let v_mid = (mid - c).dot(v_ax) - cv;
+                    let outward = (u_ax * u_mid + v_ax * v_mid).normalize();
+                    let n_vec = (t0 - b0).cross(b1 - b0).normalize();
+                    let n_final = if n_vec.dot(outward) > 0.0 { n_vec } else { -n_vec };
+                    if let Some(f) = rect_face_4([b0, b1, t1, t0], n_final) { pieces.push(f); }
+                }
+            }
+        }
+    }
+
+    if pieces.is_empty() { return None; }
+    let sewn = sew_shells(&pieces, tol.max(TOLERANCE_ABS * 100.0));
+    Some(sewn.brep)
 }
 
 #[cfg(test)]

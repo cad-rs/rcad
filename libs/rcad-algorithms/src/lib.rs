@@ -2613,7 +2613,6 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 /// Both BReps must have populated GeomStore (call
 /// `geom_populate::populate_box_geom` first for box primitives).
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    eprintln!("DBG boolean_op entered: op={:?}", op);
     // Fast-path: identical operands (union/intersection → either operand, difference → empty).
     if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
         return Ok(r);
@@ -2685,7 +2684,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     }
 
     if matches!(op, BooleanOpType::Difference) {
-        eprintln!("DBG bop Difference paths entered");
         if let Some(r) = boolean_unit_octant::try_difference_box_box(a, b) {
             return Ok(r);
         }
