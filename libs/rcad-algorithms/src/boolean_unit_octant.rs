@@ -180,9 +180,13 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
 /// Returns `None` for touching or overlapping shapes (bboxes meet or intersect
 /// on every axis), letting the caller fall through to the generic Pave/Builder path.
 pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Compounds must go through the full Pave-Filler union path.
+    if a.compound.is_some() || b.compound.is_some() {
+        return None;
+    }
     let Some([amin, amax]) = a.bounding_box() else { return None; };
     let Some([bmin, bmax]) = b.bounding_box() else { return None; };
-    // Gap on ANY axis 鈫?bboxes are disjoint (no contact, no volume overlap).
+    // Gap on ANY axis鈫?bboxes are disjoint (no contact, no volume overlap).
     if amax.x < bmin.x || amin.x > bmax.x
         || amax.y < bmin.y || amin.y > bmax.y
         || amax.z < bmin.z || amin.z > bmax.z
@@ -712,7 +716,48 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     if result.len() == 1 {
         return Some(result.remove(0));
     }
-    Some(BRep::compound_from_shapes(&result))
+    use std::io::Write;
+    let slab_vol_sum: f64 = result.iter().map(|s| volume(s)).sum();
+    let slab_sa_sum: f64 = result.iter().map(|s| surface_area(s)).sum();
+    let sa_b = surface_area(a); // SA of the input box B (being cut).
+
+    // If slab SA significantly exceeds B's SA, the slab decomposition is creating
+    // excess internal faces (double-counted between adjacent slabs) that inflate SA.
+    // Fall through to Pave-Filler for correct SA.
+    if slab_sa_sum > sa_b * 1.15 {
+        let _ = writeln!(
+            std::io::stderr(),
+            "DEBUG_MULTI_SLAB SA_INFLATED slab_count={} slab_sa={:.6} sa_b={:.6}",
+            result.len(), slab_sa_sum, sa_b,
+        );
+        return None;
+    }
+
+    // Try boolean union to merge adjacent slabs (removes shared internal faces, G4-like).
+    let mut fused = result[0].clone();
+    let mut ok = true;
+    for slab in &result[1..] {
+        match crate::boolean_op(crate::BooleanOpType::Union, &fused, slab) {
+            Ok(u) => { fused = u; }
+            Err(_) => { ok = false; break; }
+        }
+    }
+    let fused_sa = surface_area(&fused);
+    let vol_ok = ok && (volume(&fused) - slab_vol_sum).abs() < vol_tol * (result.len() as f64).max(1000.0);
+    let merged = ok && fused_sa < slab_sa_sum * 0.9999;
+    let _ = writeln!(
+        std::io::stderr(),
+        "DEBUG_MULTI_SLAB slab_count={} slab_sa={:.6} fused_sa={:.6} slab_vol={:.12} ok={} vol_ok={} merged={}",
+        result.len(), slab_sa_sum, fused_sa, slab_vol_sum, ok, vol_ok, merged,
+    );
+    if vol_ok {
+        return Some(fused);
+    }
+    if !ok {
+        // Union errored — fall through to Pave-Filler.
+        return None;
+    }
+    None
 }
 
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
