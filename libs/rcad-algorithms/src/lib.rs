@@ -2613,6 +2613,7 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 /// Both BReps must have populated GeomStore (call
 /// `geom_populate::populate_box_geom` first for box primitives).
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    eprintln!("DBG boolean_op entered: op={:?}", op);
     // Fast-path: identical operands (union/intersection → either operand, difference → empty).
     if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
         return Ok(r);
@@ -2650,6 +2651,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_disjoint(a, b) {
             return Ok(r);
         }
+        // Axis-aligned box-box: touching/gap → compound, overlap → Pave-Filler.
+        if let Some(r) = boolean_unit_octant::try_union_axis_aligned_box_box(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 
@@ -2680,14 +2685,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     }
 
     if matches!(op, BooleanOpType::Difference) {
-        // Fast-path: axis-aligned box-box difference via full slab decomposition.
-        // Avoids Pave-Filler coplanar-face errors (bcut_simple_c1, boptuc_simple/E9).
-        // Multi-slab results returned as a compound.
+        eprintln!("DBG bop Difference paths entered");
         if let Some(r) = boolean_unit_octant::try_difference_box_box(a, b) {
             return Ok(r);
         }
-        // Fast-path: general box-box difference (rotated boxes) via half-space
-        // slab decomposition along the first operand's local axes.
         if let Some(r) = boolean_unit_octant::try_difference_box_general(a, b) {
             return Ok(r);
         }

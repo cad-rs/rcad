@@ -1155,14 +1155,14 @@ fn try_axis_aligned_world_rect_plane_area(
                         if (a_vert - a_loop).abs() <= AGREE_REL * scale_agree + abs_eps
                             && a_loop + abs_eps >= a_hull * LOOP_FRAC_OF_HULL_MIN
                         {
-                            return Some(a_loop);
+                                return Some(a_loop);
                         }
                         // Vertex ring and dense sample agree, but hull is much larger → very concave face.
                         // The polygon is simple and the shoelace is trustworthy (e.g. box-cylinder annular cap).
                         if (a_vert - a_loop).abs() <= AGREE_REL * scale_agree + abs_eps
                             && a_vert + abs_eps < a_hull * 0.6
                         {
-                            return Some(a_vert.max(0.0));
+                                return Some(a_vert.max(0.0));
                         }
                         // Limit to large silhouette patches: small faces (`bcommon_simple/B1`) can have
                         // bogus vertex-ring shoelaces while hull matches OCCT; `bfuse_simple/D9` top uses ~40000.
@@ -1173,8 +1173,9 @@ fn try_axis_aligned_world_rect_plane_area(
                             && a_vert > 1e-18
                             && a_vert > a_loop * (1.0 + VERT_OVER_LOOP_REL) + abs_eps
                         {
-                            return Some(a_vert.max(0.0));
+                                return Some(a_vert.max(0.0));
                         }
+                    } else {
                     }
                 }
                 return Some(a_hull);

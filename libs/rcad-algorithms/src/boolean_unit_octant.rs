@@ -196,6 +196,39 @@ pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
     None
 }
 
+/// Union of two axis-aligned boxes: compound for touching/gap, None for overlap.
+///
+/// When boxes are separated (gap) or touching (face/edge/vertex contact), the
+/// result is a compound of the two input shapes -- no actual fusion is needed.
+/// When the boxes have positive-volume overlap, returns `None` so the caller
+/// falls through to the generic Pave-Filler `fuse` path.
+///
+/// This matches OCCT behavior with `nurbsconvert`: touching boxes remain as
+/// separate solids in a compound rather than being fused into one (bfuse_simple/A9).
+pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    if a.compound.is_some() || b.compound.is_some() {
+        return None;
+    }
+    let [amin, amax] = try_as_axis_aligned_box(a)?;
+    let [bmin, bmax] = try_as_axis_aligned_box(b)?;
+
+    let rmin = DVec3::new(amin.x.max(bmin.x), amin.y.max(bmin.y), amin.z.max(bmin.z));
+    let rmax = DVec3::new(amax.x.min(bmax.x), amax.y.min(bmax.y), amax.z.min(bmax.z));
+
+    let scale = (amax - amin).length().max((bmax - bmin).length()).max(1.0);
+    let zero_tol = TOLERANCE_LEN_MIN * scale;
+    let w = rmax.x - rmin.x;
+    let h = rmax.y - rmin.y;
+    let d = rmax.z - rmin.z;
+
+    if w <= zero_tol || h <= zero_tol || d <= zero_tol {
+        // Gap or touching: keep as separate solids in a compound.
+        return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
+    }
+    // Positive-volume overlap: let Pave-Filler handle it.
+    None
+}
+
 /// Intersection: unit sphere (kernel primitive) 鈭?axis box [0,1]鲁.
 pub fn try_intersection_eighth_unit_ball(a: &BRep, b: &BRep) -> Option<BRep> {
     if (is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b))
@@ -279,7 +312,10 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     let h = rmax.y - rmin.y;
     let d = rmax.z - rmin.z;
     if w <= zero_tol || h <= zero_tol || d <= zero_tol {
-        return None;
+        // Zero-volume overlap (touching face/edge/vertex): result is empty.
+        // Without this, the Pave-Filler fallback may return a non-empty result
+        // for touching-face cases (bcommon_simple/B2), unlike OCCT with nurbsconvert.
+        return Some(BRep::default());
     }
 
     make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
@@ -1671,6 +1707,24 @@ fn arc_vertices(
         (-cw_len, cw_len)
     } else if ccw_in && !cw_in {
         (ccw_len, ccw_len)
+    } else if cw_in && ccw_in && (cw_len - ccw_len).abs() <= 1e-12 {
+        // Lengths equal within FP tolerance. Prefer direction whose midpoint
+        // is strictly inside the box (not on the boundary).
+        let strict_tol = 1e-9;
+        let inside_strict = |th: f64| -> bool {
+            let u = cu + r * th.cos();
+            let v = cv + r * th.sin();
+            u > -eu + strict_tol && u < eu - strict_tol && v > -ev + strict_tol && v < ev - strict_tol
+        };
+        let cs = inside_strict(cw_mid);
+        let ccws = inside_strict(ccw_mid);
+        if cs && !ccws {
+            (-cw_len, cw_len)
+        } else if ccws && !cs {
+            (ccw_len, ccw_len)
+        } else {
+            (-cw_len, cw_len) // default to CW
+        }
     } else if cw_len <= ccw_len {
         (-cw_len, cw_len)
     } else {
@@ -1942,9 +1996,10 @@ fn build_box_cylinder_result_partial(
         }
     }
 
-    // Cap faces
     if !cap_bottom.is_empty() {
-        if let Some(f) = planar_face_from_polygon(&cap_bottom, DVec3::Z) { pieces.push(f); }
+        if let Some(f) = planar_face_from_polygon(&cap_bottom, DVec3::Z) {
+            pieces.push(f);
+        }
     }
     if !cap_top.is_empty() {
         if let Some(f) = planar_face_from_polygon(&cap_top, -DVec3::Z) { pieces.push(f); }
@@ -2122,7 +2177,8 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         return build_box_cylinder_full_containment(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
     }
 
-    build_box_cylinder_result_partial(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi)
+    let result = build_box_cylinder_result_partial(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
+    result
 }
 
 #[cfg(test)]
