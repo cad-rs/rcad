@@ -1157,6 +1157,13 @@ fn try_axis_aligned_world_rect_plane_area(
                         {
                             return Some(a_loop);
                         }
+                        // Vertex ring and dense sample agree, but hull is much larger → very concave face.
+                        // The polygon is simple and the shoelace is trustworthy (e.g. box-cylinder annular cap).
+                        if (a_vert - a_loop).abs() <= AGREE_REL * scale_agree + abs_eps
+                            && a_vert + abs_eps < a_hull * 0.6
+                        {
+                            return Some(a_vert.max(0.0));
+                        }
                         // Limit to large silhouette patches: small faces (`bcommon_simple/B1`) can have
                         // bogus vertex-ring shoelaces while hull matches OCCT; `bfuse_simple/D9` top uses ~40000.
                         const MIN_HULL_ABS_VERT_FALLBACK: f64 = 15000.0;
@@ -1217,6 +1224,7 @@ fn try_planar_face_area_shoelace(
                     const REL: f64 = 1e-5;
                     let scale = a_rect.max(a_shoe).max(1.0);
                     let abs_eps = 1e-9 * scale;
+
                     // OCCT `bcommon_simple/C8`: axis-aligned plane ∩ tilted box gives a parallelogram
                     // whose vertices all sit on the loop's axis-aligned bbox; `w*h` over-counts.
                     // Boolean T-junctions can permute wire edge order so shoe-lace on dense samples

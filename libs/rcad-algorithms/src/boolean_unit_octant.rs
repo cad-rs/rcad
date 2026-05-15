@@ -1,4 +1,4 @@
-﻿//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
+//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
 //! path is wrong or overly faceted: (1) unit ball 鈭?`[0,1]鲁`, (2) coaxial sharp cone 鈭?finite
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
@@ -29,7 +29,7 @@ use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
-use rcad_modeling::{loft_with_history, make_box_brep, make_convex_polyhedron_from_half_spaces, make_sphere_brep, sew_shells};
+use rcad_modeling::{loft_with_history, make_box_brep, make_convex_polyhedron_from_half_spaces, make_cylinder_brep, make_sphere_brep, sew_shells};
 use crate::BooleanOpType;
 
 use crate::brep_int_curve_surface::is_point_inside_by_ray;
@@ -1392,9 +1392,741 @@ fn brep_eighth_of_unit_ball() -> BRep {
         compound: None,
         compsolid: None,
     }
+
+}
+
+// ── Box–Cylinder Difference Fast Path (box − cylinder, Z-axis cylinder) ───────
+
+/// A point where the circle intersects a box edge in UV space.
+#[derive(Debug, Clone, Copy)]
+struct UVEdgePt {
+    /// Perimeter parameter t ∈ [0, 8)
+    t: f64,
+    /// UV coordinates
+    u: f64,
+    v: f64,
+    /// Edge index: 0 = u_min, 1 = u_max, 2 = v_min, 3 = v_max
+    edge: usize,
+    /// Circle angle θ = atan2(v − cv, u − cu)
+    theta: f64,
+}
+
+/// Find which of the 3 box axes is closest to the world Z axis.
+fn find_z_axis_index(info: &BoxInfo) -> Option<usize> {
+    for i in 0..3 {
+        if info.axes[i].dot(DVec3::Z).abs() > 1.0 - TOLERANCE_AXIS_ALIGN {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Extract cylinder parameters from a cylinder primitive.
+fn try_cylinder_center_axis_radius_height(brep: &BRep) -> Option<(DVec3, DVec3, f64, f64)> {
+    let Some(shell) = brep.solids.first()?.shells.first() else { return None };
+    let mut center = DVec3::ZERO;
+    let mut axis = DVec3::Z;
+    let mut radius = 0.0;
+    let mut height = 0.0;
+    let mut found = false;
+    for fi in 0..shell.faces.len() {
+        let Some(Some(si)) = brep.geom.face_surface.get(fi) else { continue };
+        let Some(surf) = brep.geom.surfaces.get(*si) else { continue };
+        if let Surface3::Cylinder(cc) = surf {
+            axis = cc.axis.normalize_or_zero();
+            center = cc.origin;
+            radius = cc.radius;
+            found = true;
+        }
+    }
+    if !found { return None; }
+    let mut z_vals = Vec::new();
+    for fi in 0..shell.faces.len() {
+        let Some(Some(si)) = brep.geom.face_surface.get(fi) else { continue };
+        let Some(surf) = brep.geom.surfaces.get(*si) else { continue };
+        if let Surface3::Plane(pl) = surf {
+            z_vals.push(pl.origin.z);
+        }
+    }
+    if z_vals.len() < 2 { return None; }
+    let z_lo = z_vals.iter().min_by(|a,b| a.partial_cmp(b).unwrap()).copied()?;
+    let z_hi = z_vals.iter().max_by(|a,b| a.partial_cmp(b).unwrap()).copied()?;
+    height = z_hi - z_lo;
+    Some((center, axis, radius, height))
+}
+
+/// Box perimeter in UV space (CCW from v_min).
+/// t ∈ [0,2) → v_min (v=−ev), u∈[−eu,eu]
+/// t ∈ [2,4) → u_max (u=eu),  v∈[−ev,ev]
+/// t ∈ [4,6) → v_max (v=ev),  u∈[eu,−eu]
+/// t ∈ [6,8) → u_min (u=−eu), v∈[ev,−ev]
+fn box_perimeter_uv(t: f64, eu: f64, ev: f64) -> (f64, f64) {
+    let tn = t.rem_euclid(8.0);
+    if tn < 2.0 {
+        let s = tn / 2.0;
+        (-eu + 2.0 * eu * s, -ev)
+    } else if tn < 4.0 {
+        let s = (tn - 2.0) / 2.0;
+        (eu, -ev + 2.0 * ev * s)
+    } else if tn < 6.0 {
+        let s = (tn - 4.0) / 2.0;
+        (eu - 2.0 * eu * s, ev)
+    } else {
+        let s = (tn - 6.0) / 2.0;
+        (-eu, ev - 2.0 * ev * s)
+    }
+}
+
+/// Map UV coordinate to perimeter t ∈ [0, 8).
+fn uv_to_perimeter_t(u: f64, v: f64, eu: f64, ev: f64) -> f64 {
+    if v <= -ev + TOLERANCE_LEN_MIN {
+        ((u + eu) / (2.0 * eu).max(TOLERANCE_LEN_MIN)) * 2.0
+    } else if u >= eu - TOLERANCE_LEN_MIN {
+        2.0 + ((v + ev) / (2.0 * ev).max(TOLERANCE_LEN_MIN)) * 2.0
+    } else if v >= ev - TOLERANCE_LEN_MIN {
+        4.0 + ((eu - u) / (2.0 * eu).max(TOLERANCE_LEN_MIN)) * 2.0
+    } else {
+        6.0 + ((ev - v) / (2.0 * ev).max(TOLERANCE_LEN_MIN)) * 2.0
+    }
+}
+
+/// Find circle-box edge intersections in UV space.
+fn circle_rect_intersections_uv(cu: f64, cv: f64, r: f64, eu: f64, ev: f64) -> Vec<UVEdgePt> {
+    let mut pts = Vec::new();
+    let tol = TOLERANCE_LEN_MIN;
+
+    let add_if = |u: f64, v: f64, edge: usize, pts: &mut Vec<UVEdgePt>| {
+        if u >= -eu - tol && u <= eu + tol && v >= -ev - tol && v <= ev + tol {
+            let u_cl = u.clamp(-eu, eu);
+            let v_cl = v.clamp(-ev, ev);
+            let t = uv_to_perimeter_t(u_cl, v_cl, eu, ev);
+            let theta = (v_cl - cv).atan2(u_cl - cu);
+            pts.push(UVEdgePt { t, u: u_cl, v: v_cl, edge, theta });
+        }
+    };
+
+    let d = -ev - cv; let disc = r * r - d * d;
+    if disc >= 0.0 { let off = disc.sqrt(); add_if(cu + off, -ev, 2, &mut pts); if off > tol { add_if(cu - off, -ev, 2, &mut pts); } }
+    let d = ev - cv; let disc = r * r - d * d;
+    if disc >= 0.0 { let off = disc.sqrt(); add_if(cu + off, ev, 3, &mut pts); if off > tol { add_if(cu - off, ev, 3, &mut pts); } }
+    let d = -eu - cu; let disc = r * r - d * d;
+    if disc >= 0.0 { let off = disc.sqrt(); add_if(-eu, cv + off, 0, &mut pts); if off > tol { add_if(-eu, cv - off, 0, &mut pts); } }
+    let d = eu - cu; let disc = r * r - d * d;
+    if disc >= 0.0 { let off = disc.sqrt(); add_if(eu, cv + off, 1, &mut pts); if off > tol { add_if(eu, cv - off, 1, &mut pts); } }
+
+    pts.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+    pts.dedup_by(|a, b| (a.t - b.t).abs() < tol && (a.u - b.u).abs() < tol && (a.v - b.v).abs() < tol);
+    pts
+}
+
+/// Create a planar BRep face from 4 corner points and a given normal.
+fn rect_face_4(corners: [DVec3; 4], normal: DVec3) -> Option<BRep> {
+    let mut brep = BRep::default();
+    let surface = Surface3::Plane(Plane { origin: corners[0], normal });
+    let vs: Vec<usize> = corners.iter().map(|p| make_vertex(&mut brep, *p)).collect();
+    let mut wes = Vec::with_capacity(4);
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        let dir = (corners[j] - corners[i]).normalize();
+        let len = (corners[j] - corners[i]).length();
+        if len < TOLERANCE_LEN_MIN { return None; }
+        let ei = make_edge(&mut brep, Curve3::Line(Line3 { origin: corners[i], direction: dir }), 0.0, len, vs[i], vs[j]).ok()?;
+        wes.push(WireEdge::new(ei, true));
+    }
+    let _fi = make_face(&mut brep, surface, make_wire(wes), vec![]).ok()?;
+    Some(brep)
+}
+
+/// Create a planar face from a polygon with a given normal.
+fn planar_face_from_polygon(poly: &[DVec3], normal: DVec3) -> Option<BRep> {
+    if poly.len() < 3 { return None; }
+    let mut brep = BRep::default();
+    let surface = Surface3::Plane(Plane { origin: poly[0], normal });
+    let vs: Vec<usize> = poly.iter().map(|p| make_vertex(&mut brep, *p)).collect();
+    let mut wes = Vec::with_capacity(poly.len());
+    let n = poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let dir = (poly[j] - poly[i]).normalize();
+        let len = (poly[j] - poly[i]).length();
+        if len < TOLERANCE_LEN_MIN { return None; }
+        let ei = make_edge(&mut brep, Curve3::Line(Line3 { origin: poly[i], direction: dir }), 0.0, len, vs[i], vs[j]).ok()?;
+        wes.push(WireEdge::new(ei, true));
+    }
+    let _fi = make_face(&mut brep, surface, make_wire(wes), vec![]).ok()?;
+    Some(brep)
+}
+
+/// Create a planar face from an outer polygon and an inner polygon (hole).
+/// `outer` must be CCW when viewed along `normal`.
+/// `inner` must be CW when viewed along `normal`.
+fn planar_face_with_inner_hole(outer: &[DVec3], inner: &[DVec3], normal: DVec3) -> Option<BRep> {
+    if outer.len() < 3 || inner.len() < 3 { return None; }
+    let mut brep = BRep::default();
+    let surface = Surface3::Plane(Plane { origin: outer[0], normal });
+    let vs: Vec<usize> = outer.iter().map(|p| make_vertex(&mut brep, *p)).collect();
+    let mut outer_wes = Vec::with_capacity(outer.len());
+    let n = outer.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let dir = (outer[j] - outer[i]).normalize();
+        let len = (outer[j] - outer[i]).length();
+        if len < TOLERANCE_LEN_MIN { return None; }
+        let ei = make_edge(&mut brep, Curve3::Line(Line3 { origin: outer[i], direction: dir }), 0.0, len, vs[i], vs[j]).ok()?;
+        outer_wes.push(WireEdge::new(ei, true));
+    }
+    let inner_vs: Vec<usize> = inner.iter().map(|p| make_vertex(&mut brep, *p)).collect();
+    let mut inner_wes = Vec::with_capacity(inner.len());
+    let m = inner.len();
+    for i in 0..m {
+        let j = (i + 1) % m;
+        let dir = (inner[j] - inner[i]).normalize();
+        let len = (inner[j] - inner[i]).length();
+        if len < TOLERANCE_LEN_MIN { return None; }
+        let ei = make_edge(&mut brep, Curve3::Line(Line3 { origin: inner[i], direction: dir }), 0.0, len, inner_vs[i], inner_vs[j]).ok()?;
+        inner_wes.push(WireEdge::new(ei, true));
+    }
+    let _fi = make_face(&mut brep, surface, make_wire(outer_wes), vec![make_wire(inner_wes)]).ok()?;
+    Some(brep)
+}
+
+// ── shared segment types and helpers ────────────────────────────────────────
+
+/// A merged segment along the box perimeter — either inside or outside the cylinder.
+struct MergedSeg {
+    t0: f64,
+    t1: f64,
+    outside: bool,
+}
+
+/// Compute merged segments along the box perimeter from intersection points.
+fn compute_merged_segments(ints: &[UVEdgePt], cu: f64, cv: f64, cyl_r: f64, eu: f64, ev: f64) -> Vec<MergedSeg> {
+    let tol = TOLERANCE_LEN_MIN;
+    let r2 = cyl_r * cyl_r;
+
+    let outside_at = |t: f64| -> bool {
+        let (u, v) = box_perimeter_uv(t, eu, ev);
+        (u - cu).powi(2) + (v - cv).powi(2) > r2 + tol
+    };
+
+    if ints.is_empty() {
+        return vec![MergedSeg { t0: 0.0, t1: 8.0, outside: outside_at(0.0) }];
+    }
+
+    let mut t_vals: Vec<f64> = ints.iter().map(|p| p.t).collect();
+    t_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    t_vals.dedup_by(|a, b| (*a - *b).abs() < tol);
+
+    let mut segs: Vec<MergedSeg> = Vec::new();
+    let mut prev_t = 0.0;
+    for &t in &t_vals {
+        if t <= prev_t + tol { continue; }
+        let mid_t = (prev_t + t) / 2.0;
+        segs.push(MergedSeg { t0: prev_t, t1: t, outside: outside_at(mid_t) });
+        prev_t = t;
+    }
+    if prev_t < 8.0 - tol {
+        let mid_t = (prev_t + 8.0) / 2.0;
+        segs.push(MergedSeg { t0: prev_t, t1: 8.0, outside: outside_at(mid_t) });
+    }
+
+    let mut merged: Vec<MergedSeg> = Vec::new();
+    for s in segs {
+        if let Some(last) = merged.last_mut() {
+            if last.outside == s.outside {
+                last.t1 = s.t1;
+                continue;
+            }
+        }
+        merged.push(s);
+    }
+    merged
+}
+
+/// Generate evenly-spaced points on a circular arc, choosing the direction
+/// whose midpoint stays inside the box rect.  Returns vertices in world
+/// coordinates via `corner(u, v, z)`, including both endpoints.
+fn arc_vertices(
+    cu: f64, cv: f64, r: f64,
+    th_start: f64, th_end: f64,
+    eu: f64, ev: f64, z: f64,
+    corner: &impl Fn(f64, f64, f64) -> DVec3,
+) -> Vec<DVec3> {
+    let tol = TOLERANCE_LEN_MIN;
+    let inside_box = |th: f64| -> bool {
+        let u = cu + r * th.cos();
+        let v = cv + r * th.sin();
+        u >= -eu - tol && u <= eu + tol && v >= -ev - tol && v <= ev + tol
+    };
+
+    let mut cw_len = th_start - th_end;
+    if cw_len < 0.0 { cw_len += 2.0 * std::f64::consts::PI; }
+    let ccw_len = 2.0 * std::f64::consts::PI - cw_len;
+
+    let cw_mid = th_start - cw_len / 2.0;
+    let ccw_mid = th_start + ccw_len / 2.0;
+    let cw_in = inside_box(cw_mid);
+    let ccw_in = inside_box(ccw_mid);
+    let (dtheta, arc_len) = if cw_in && !ccw_in {
+        (-cw_len, cw_len)
+    } else if ccw_in && !cw_in {
+        (ccw_len, ccw_len)
+    } else if cw_len <= ccw_len {
+        (-cw_len, cw_len)
+    } else {
+        (ccw_len, ccw_len)
+    };
+    let steps = (arc_len / 0.08).ceil() as usize;
+    let steps = steps.max(2).min(200);
+
+    let mut verts = Vec::with_capacity(steps + 1);
+    verts.push(corner(cu + r * th_start.cos(), cv + r * th_start.sin(), z));
+    for i in 1..steps {
+        let th = th_start + dtheta * (i as f64 / steps as f64);
+        let pt = corner(cu + r * th.cos(), cv + r * th.sin(), z);
+        if (verts.last().unwrap() - pt).length() > tol {
+            verts.push(pt);
+        }
+    }
+    let pt_end = corner(cu + r * th_end.cos(), cv + r * th_end.sin(), z);
+    if (verts.last().unwrap() - pt_end).length() > tol {
+        verts.push(pt_end);
+    }
+    verts
+}
+
+/// Build cap polygon at z level for (box rect − circle).
+fn build_cap_polygon(
+    merged: &[MergedSeg], cu: f64, cv: f64, cyl_r: f64,
+    eu: f64, ev: f64, z: f64,
+    corner: &impl Fn(f64, f64, f64) -> DVec3,
+) -> Vec<DVec3> {
+    let tol = TOLERANCE_LEN_MIN;
+
+    if merged.is_empty() || (merged.len() == 1 && !merged[0].outside) {
+        return vec![];
+    }
+
+    let mut poly = Vec::new();
+    for seg in merged {
+        if seg.t1 <= seg.t0 + tol { continue; }
+        if seg.outside {
+            add_box_perimeter_vertices(seg.t0, seg.t1, eu, ev, z, corner, &mut poly);
+        } else {
+            let (pu, pv) = box_perimeter_uv(seg.t0, eu, ev);
+            let (nu, nv) = box_perimeter_uv(seg.t1, eu, ev);
+            let th_prev = (pv - cv).atan2(pu - cu);
+            let th_next = (nv - cv).atan2(nu - cu);
+            add_circle_arc_vertices(cu, cv, cyl_r, th_prev, th_next, eu, ev, z, corner, &mut poly);
+        }
+    }
+
+    if poly.len() >= 2 && (poly.last().unwrap() - poly[0]).length() < tol { poly.pop(); }
+    poly
+}
+
+/// Add box perimeter vertices between two t values.
+fn add_box_perimeter_vertices(
+    t_start: f64, t_end: f64, eu: f64, ev: f64, z: f64,
+    corner: &impl Fn(f64, f64, f64) -> DVec3,
+    poly: &mut Vec<DVec3>,
+) {
+    let tol = TOLERANCE_LEN_MIN;
+    if poly.is_empty() || ((t_start - 0.0).abs() < tol || (t_start - 8.0).abs() < tol) {
+        let (u0, v0) = box_perimeter_uv(t_start, eu, ev);
+        let pt = corner(u0, v0, z);
+        if poly.is_empty() || (poly.last().unwrap() - pt).length() > tol {
+            poly.push(pt);
+        }
+    }
+
+    let corner_ts = [2.0, 4.0, 6.0];
+    let start_norm = if t_start < 0.0 { t_start + 8.0 } else { t_start };
+    let end_norm = if t_end <= t_start { t_end + 8.0 } else { t_end };
+
+    for &ct in &corner_ts {
+        let ct_norm = if ct < start_norm { ct + 8.0 } else { ct };
+        if ct_norm > start_norm + tol && ct_norm < end_norm - tol {
+            let (u, v) = box_perimeter_uv(ct, eu, ev);
+            let pt = corner(u, v, z);
+            if (poly.last().unwrap() - pt).length() > tol { poly.push(pt); }
+        }
+    }
+
+    let (ue, ve) = box_perimeter_uv(t_end, eu, ev);
+    let pt = corner(ue, ve, z);
+    if (poly.last().unwrap() - pt).length() > tol { poly.push(pt); }
+}
+
+/// Add circular arc vertices for the cap polygon, taking direction from
+/// `arc_vertices` and skipping the first vertex (already in poly from the
+/// preceding box perimeter segment).
+fn add_circle_arc_vertices(
+    cu: f64, cv: f64, r: f64,
+    th_start: f64, th_end: f64,
+    eu: f64, ev: f64, z: f64,
+    corner: &impl Fn(f64, f64, f64) -> DVec3,
+    poly: &mut Vec<DVec3>,
+) {
+    let verts = arc_vertices(cu, cv, r, th_start, th_end, eu, ev, z, corner);
+    // verts[0] is the start point, already in poly from the previous segment
+    for i in 1..verts.len() {
+        if (poly.last().unwrap() - verts[i]).length() > TOLERANCE_LEN_MIN {
+            poly.push(verts[i]);
+        }
+    }
+}
+
+/// Build side wall pieces trimmed at cylinder intersection parameters.
+fn build_trimmed_edge_pieces(
+    p_min: f64, p_max: f64,
+    p_lo: f64, p_hi: f64,
+    z_lo: f64, z_hi: f64, ew: f64,
+    corner: &impl Fn(f64, f64) -> DVec3,
+    normal: DVec3,
+    pieces: &mut Vec<BRep>,
+) {
+    let tol = TOLERANCE_LEN_MIN;
+    let push = |c: [DVec3; 4], n: DVec3, p: &mut Vec<BRep>| { if let Some(f) = rect_face_4(c, n) { p.push(f); } };
+
+    let strip = |s_min: f64, s_max: f64, pieces: &mut Vec<BRep>| {
+        if s_max <= s_min + tol { return; }
+        if z_lo > -ew + tol { push([corner(s_min, -ew), corner(s_max, -ew), corner(s_max, z_lo), corner(s_min, z_lo)], normal, pieces); }
+        if z_hi < ew - tol { push([corner(s_min, z_hi), corner(s_max, z_hi), corner(s_max, ew), corner(s_min, ew)], normal, pieces); }
+        if z_hi > z_lo + tol { push([corner(s_min, z_lo), corner(s_max, z_lo), corner(s_max, z_hi), corner(s_min, z_hi)], normal, pieces); }
+    };
+
+    if p_lo <= p_min + tol && p_hi >= p_max - tol { strip(p_min, p_max, pieces); return; }
+    if p_lo > p_min + tol { strip(p_min, p_lo, pieces); }
+    if p_hi < p_max - tol { strip(p_hi, p_max, pieces); }
+}
+
+/// Build quad faces for the cylindrical wall from merged perimeter segments,
+/// using the same angular step as the cap polygon for matching vertices.
+fn build_cylindrical_wall_from_segs(
+    merged: &[MergedSeg],
+    cu: f64, cv: f64, cyl_r: f64,
+    z_lo: f64, z_hi: f64, eu: f64, ev: f64,
+    u_ax: DVec3, v_ax: DVec3, c: DVec3,
+    corner: &impl Fn(f64, f64, f64) -> DVec3,
+    pieces: &mut Vec<BRep>,
+) {
+    let tol = TOLERANCE_LEN_MIN;
+    for seg in merged {
+        if seg.outside { continue; }
+        let (pu, pv) = box_perimeter_uv(seg.t0, eu, ev);
+        let (nu, nv) = box_perimeter_uv(seg.t1, eu, ev);
+        let th_prev = (pv - cv).atan2(pu - cu);
+        let th_next = (nv - cv).atan2(nu - cu);
+
+        let lo_verts = arc_vertices(cu, cv, cyl_r, th_prev, th_next, eu, ev, z_lo, corner);
+        let hi_verts = arc_vertices(cu, cv, cyl_r, th_prev, th_next, eu, ev, z_hi, corner);
+
+        let n = lo_verts.len().min(hi_verts.len());
+        if n < 2 { continue; }
+
+        for i in 0..n - 1 {
+            let b0 = lo_verts[i];
+            let b1 = lo_verts[i + 1];
+            let t1 = hi_verts[i + 1];
+            let t0 = hi_verts[i];
+
+            // Compute outward radial direction for sign convention
+            let mid = (b0 + b1 + t1 + t0) / 4.0;
+            let u_mid = (mid - c).dot(u_ax);
+            let v_mid = (mid - c).dot(v_ax);
+            let radial_u = u_mid - cu;
+            let radial_v = v_mid - cv;
+            let outward = (u_ax * radial_u + v_ax * radial_v).normalize();
+            let n_vec = (t0 - b0).cross(b1 - b0).normalize();
+            let n_final = if n_vec.dot(outward) > 0.0 { n_vec } else { -n_vec };
+
+            if let Some(f) = rect_face_4([b0, b1, t1, t0], n_final) { pieces.push(f); }
+        }
+    }
+}
+
+/// Main Stage 3 orchestrator: build box − cylinder with partial XY containment.
+fn build_box_cylinder_result_partial(
+    c: DVec3, u_ax: DVec3, v_ax: DVec3, eu: f64, ev: f64, ew: f64,
+    cu: f64, cv: f64, cyl_r: f64, cyl_z_lo: f64, cyl_z_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let z_lo = (cyl_z_lo - c.z).max(-ew);
+    let z_hi = (cyl_z_hi - c.z).min(ew);
+    if z_hi <= z_lo + tol { return None; }
+
+    let corner_z = |u: f64, v: f64, z: f64| -> DVec3 { c + u*u_ax + v*v_ax + z*DVec3::Z };
+
+    let ints = circle_rect_intersections_uv(cu, cv, cyl_r, eu, ev);
+    let merged = compute_merged_segments(&ints, cu, cv, cyl_r, eu, ev);
+    let cap_bottom = build_cap_polygon(&merged, cu, cv, cyl_r, eu, ev, z_lo, &corner_z);
+    let cap_top = build_cap_polygon(&merged, cu, cv, cyl_r, eu, ev, z_hi, &corner_z);
+
+    let mut pieces: Vec<BRep> = Vec::new();
+
+    // Compute per-edge intersection parameters directly (NOT from the global
+    // intersection list, which loses corner-shared entries during dedup).
+    let add_pt = |v: f64, lo: f64, hi: f64, out: &mut Vec<f64>| {
+        if v >= lo - tol && v <= hi + tol { out.push(v.clamp(lo, hi)); }
+    };
+
+    // u_min edge (u=-eu): solve (-eu-cu)^2 + (v-cv)^2 = r^2 → v
+    let mut ints_u_min: Vec<f64> = Vec::with_capacity(2);
+    let d0 = -eu - cu; let disc0 = cyl_r * cyl_r - d0 * d0;
+    if disc0 >= 0.0 { let off = disc0.sqrt(); add_pt(cv-off, -ev, ev, &mut ints_u_min); add_pt(cv+off, -ev, ev, &mut ints_u_min); }
+    ints_u_min.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_u_min.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    // u_max edge (u=eu): solve (eu-cu)^2 + (v-cv)^2 = r^2 → v
+    let mut ints_u_max: Vec<f64> = Vec::with_capacity(2);
+    let d1 = eu - cu; let disc1 = cyl_r * cyl_r - d1 * d1;
+    if disc1 >= 0.0 { let off = disc1.sqrt(); add_pt(cv-off, -ev, ev, &mut ints_u_max); add_pt(cv+off, -ev, ev, &mut ints_u_max); }
+    ints_u_max.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_u_max.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    // v_min edge (v=-ev): solve (u-cu)^2 + (-ev-cv)^2 = r^2 → u
+    let mut ints_v_min: Vec<f64> = Vec::with_capacity(2);
+    let d2 = -ev - cv; let disc2 = cyl_r * cyl_r - d2 * d2;
+    if disc2 >= 0.0 { let off = disc2.sqrt(); add_pt(cu-off, -eu, eu, &mut ints_v_min); add_pt(cu+off, -eu, eu, &mut ints_v_min); }
+    ints_v_min.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_v_min.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    // v_max edge (v=ev): solve (u-cu)^2 + (ev-cv)^2 = r^2 → u
+    let mut ints_v_max: Vec<f64> = Vec::with_capacity(2);
+    let d3 = ev - cv; let disc3 = cyl_r * cyl_r - d3 * d3;
+    if disc3 >= 0.0 { let off = disc3.sqrt(); add_pt(cu-off, -eu, eu, &mut ints_v_max); add_pt(cu+off, -eu, eu, &mut ints_v_max); }
+    ints_v_max.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    ints_v_max.dedup_by(|a,b| (*a - *b).abs() < tol);
+
+    // Side walls — always use build_trimmed_edge_pieces for proper z-splitting
+    // at z_lo/z_hi, matching the cap polygon edge vertices.
+
+    // u_max face (normal = +u_ax, param v)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + eu*u_ax + p*v_ax + z*DVec3::Z };
+        if ints_u_max.len() >= 2 && (ints_u_max.last().unwrap() - ints_u_max.first().unwrap()).abs() >= tol {
+            build_trimmed_edge_pieces(-ev, ev, ints_u_max[0], ints_u_max[ints_u_max.len()-1], z_lo, z_hi, ew, &cn, u_ax, &mut pieces);
+        } else {
+            build_trimmed_edge_pieces(-ev, ev, -ev, ev, z_lo, z_hi, ew, &cn, u_ax, &mut pieces);
+        }
+    }
+
+    // u_min face (normal = -u_ax, param v)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c - eu*u_ax + p*v_ax + z*DVec3::Z };
+        if ints_u_min.len() >= 2 && (ints_u_min.last().unwrap() - ints_u_min.first().unwrap()).abs() >= tol {
+            build_trimmed_edge_pieces(-ev, ev, ints_u_min[0], ints_u_min[ints_u_min.len()-1], z_lo, z_hi, ew, &cn, -u_ax, &mut pieces);
+        } else {
+            build_trimmed_edge_pieces(-ev, ev, -ev, ev, z_lo, z_hi, ew, &cn, -u_ax, &mut pieces);
+        }
+    }
+
+    // v_max face (normal = +v_ax, param u)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax + ev*v_ax + z*DVec3::Z };
+        if ints_v_max.len() >= 2 && (ints_v_max.last().unwrap() - ints_v_max.first().unwrap()).abs() >= tol {
+            build_trimmed_edge_pieces(-eu, eu, ints_v_max[0], ints_v_max[ints_v_max.len()-1], z_lo, z_hi, ew, &cn, v_ax, &mut pieces);
+        } else {
+            build_trimmed_edge_pieces(-eu, eu, -eu, eu, z_lo, z_hi, ew, &cn, v_ax, &mut pieces);
+        }
+    }
+
+    // v_min face (normal = -v_ax, param u)
+    {
+        let cn = |p: f64, z: f64| -> DVec3 { c + p*u_ax - ev*v_ax + z*DVec3::Z };
+        if ints_v_min.len() >= 2 && (ints_v_min.last().unwrap() - ints_v_min.first().unwrap()).abs() >= tol {
+            build_trimmed_edge_pieces(-eu, eu, ints_v_min[0], ints_v_min[ints_v_min.len()-1], z_lo, z_hi, ew, &cn, -v_ax, &mut pieces);
+        } else {
+            build_trimmed_edge_pieces(-eu, eu, -eu, eu, z_lo, z_hi, ew, &cn, -v_ax, &mut pieces);
+        }
+    }
+
+    // Cap faces
+    if !cap_bottom.is_empty() {
+        if let Some(f) = planar_face_from_polygon(&cap_bottom, DVec3::Z) { pieces.push(f); }
+    }
+    if !cap_top.is_empty() {
+        if let Some(f) = planar_face_from_polygon(&cap_top, -DVec3::Z) { pieces.push(f); }
+    }
+
+    // Cylindrical wall
+    build_cylindrical_wall_from_segs(&merged, cu, cv, cyl_r, z_lo, z_hi, eu, ev, u_ax, v_ax, c, &corner_z, &mut pieces);
+
+    if pieces.is_empty() { return None; }
+
+    let sewn = sew_shells(&pieces, tol.max(TOLERANCE_ABS * 100.0));
+    Some(sewn.brep)
+}
+
+/// Build box − cylinder difference for full XY containment (cylinder inside or
+/// tangent to the box rect). Uses inner-wire annular cap faces and a full 360°
+/// cylindrical wall, with side walls split at the cylinder Z range.
+fn build_box_cylinder_full_containment(
+    c: DVec3, u_ax: DVec3, v_ax: DVec3, eu: f64, ev: f64, ew: f64,
+    cu: f64, cv: f64, cyl_r: f64, cyl_z_lo: f64, cyl_z_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let z_lo = (cyl_z_lo - c.z).max(-ew);
+    let z_hi = (cyl_z_hi - c.z).min(ew);
+    if z_hi <= z_lo + tol { return None; }
+
+    let mut pieces: Vec<BRep> = Vec::new();
+    let p = |u: f64, v: f64, z: f64| -> DVec3 { c + u*u_ax + v*v_ax + z*DVec3::Z };
+
+    // Discretize circle (CCW in XY) for inner wires and cylindrical wall.
+    let n_circ = 64usize;
+    let circle_ccw = |z: f64| -> Vec<DVec3> {
+        (0..n_circ).map(|i| {
+            let th = 2.0 * std::f64::consts::PI * (i as f64) / (n_circ as f64);
+            p(cu + cyl_r * th.cos(), cv + cyl_r * th.sin(), z)
+        }).collect()
+    };
+    let ccw_lo = circle_ccw(z_lo);
+    let ccw_hi = circle_ccw(z_hi);
+
+    // ── 1. Side walls split at z_lo/z_hi ──
+    let mut strip = |u: f64, v0: f64, v1: f64, z0: f64, z1: f64, nrm: DVec3| {
+        if z1 <= z0 + tol { return; }
+        if let Some(f) = rect_face_4([p(u, v0, z0), p(u, v1, z0), p(u, v1, z1), p(u, v0, z1)], nrm) {
+            pieces.push(f);
+        }
+    };
+    let mut split_wall = |u: f64, v_min: f64, v_max: f64, nrm: DVec3| {
+        if z_lo > -ew + tol { strip(u, v_min, v_max, -ew, z_lo, nrm); }
+        strip(u, v_min, v_max, z_lo, z_hi, nrm);
+        if z_hi < ew - tol { strip(u, v_min, v_max, z_hi, ew, nrm); }
+    };
+    split_wall(eu, -ev, ev, u_ax);
+    split_wall(-eu, -ev, ev, -u_ax);
+    split_wall(ev, -eu, eu, v_ax);
+    split_wall(-ev, -eu, eu, -v_ax);
+
+    // ── 2. Annular cap faces —──
+    // Bottom region
+    if z_lo > -ew + tol {
+        // Full bottom face at z=-ew (cylinder doesn't reach bottom).
+        let bot = [p(-eu, -ev, -ew), p(-eu, ev, -ew), p(eu, ev, -ew), p(eu, -ev, -ew)];
+        if let Some(f) = rect_face_4(bot, -DVec3::Z) { pieces.push(f); }
+        // Interior annular cap at z_lo, normal +Z.
+        // Outer CCW in XY; inner CW in XY (= reversed CCW).
+        let outer = [p(-eu, -ev, z_lo), p(eu, -ev, z_lo), p(eu, ev, z_lo), p(-eu, ev, z_lo)];
+        if let Some(f) = planar_face_with_inner_hole(&outer, &ccw_lo.iter().rev().copied().collect::<Vec<_>>(), DVec3::Z) { pieces.push(f); }
+    } else {
+        // Bottom face IS the annular cap (cylinder goes through bottom).
+        // Outer CCW in -Z view (= CW in XY); inner CW in -Z view (= CCW in XY).
+        let outer = [p(-eu, -ev, -ew), p(-eu, ev, -ew), p(eu, ev, -ew), p(eu, -ev, -ew)];
+        if let Some(f) = planar_face_with_inner_hole(&outer, &ccw_lo, -DVec3::Z) { pieces.push(f); }
+    }
+
+    // Top region
+    if z_hi < ew - tol {
+        // Full top face at z=ew (cylinder doesn't reach top).
+        let top = [p(-eu, -ev, ew), p(eu, -ev, ew), p(eu, ev, ew), p(-eu, ev, ew)];
+        if let Some(f) = rect_face_4(top, DVec3::Z) { pieces.push(f); }
+        // Interior annular cap at z_hi, normal -Z.
+        // Outer CCW in -Z view (= CW in XY); inner CW in -Z view (= CCW in XY).
+        let outer = [p(-eu, -ev, z_hi), p(-eu, ev, z_hi), p(eu, ev, z_hi), p(eu, -ev, z_hi)];
+        if let Some(f) = planar_face_with_inner_hole(&outer, &ccw_hi, -DVec3::Z) { pieces.push(f); }
+    } else {
+        // Top face IS the annular cap (cylinder goes through top).
+        // Outer CCW in +Z view (= CCW in XY); inner CW in +Z view (= CW in XY = reversed CCW).
+        let outer = [p(-eu, -ev, ew), p(eu, -ev, ew), p(eu, ev, ew), p(-eu, ev, ew)];
+        if let Some(f) = planar_face_with_inner_hole(&outer, &ccw_hi.iter().rev().copied().collect::<Vec<_>>(), DVec3::Z) { pieces.push(f); }
+    }
+
+    // ── 3. Cylindrical wall (full 360°) ──
+    for i in 0..n_circ {
+        let b0 = ccw_lo[i];
+        let b1 = ccw_lo[(i + 1) % n_circ];
+        let t0 = ccw_hi[i];
+        let t1 = ccw_hi[(i + 1) % n_circ];
+        let mid = (b0 + b1 + t1 + t0) / 4.0;
+        let radial = mid - (c + cu*u_ax + cv*v_ax + mid.z*DVec3::Z);
+        let inward = (-radial).normalize_or_zero();
+        let inward = if inward.length_squared() < 0.5 { DVec3::X } else { inward };
+        let n_vec = (t0 - b0).cross(b1 - b0).normalize();
+        let n_final = if n_vec.dot(inward) > 0.0 { n_vec } else { -n_vec };
+        if let Some(f) = rect_face_4([b0, b1, t1, t0], n_final) { pieces.push(f); }
+    }
+
+    // ── 4. Sew ──
+    if pieces.is_empty() { return None; }
+    let sewn = sew_shells(&pieces, tol.max(TOLERANCE_ABS * 100.0));
+    Some(sewn.brep)
+}
+
+/// Entry point for box − cylinder boolean difference.
+pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Detect which BRep is the box and which is the cylinder.
+    // First check: a is a cylinder and b is a box → box is b (the B in B−A).
+    // Second check: a is a box and b is a cylinder → box is a.
+    let (box_brep, cyl_center, cyl_axis, cyl_r, cyl_brep_for_z) = {
+        let ba = try_as_box(a);
+        let ca = try_cylinder_center_axis_radius_height(a);
+        let bb = try_as_box(b);
+        let cb = try_cylinder_center_axis_radius_height(b);
+
+        if let (Some(cyl), Some(bx)) = (ca, bb) {
+            let (center, axis, radius, _) = cyl;
+            (bx, center, axis, radius, a)
+        } else if let (Some(bx), Some(cyl)) = (ba, cb) {
+            let (center, axis, radius, _) = cyl;
+            (bx, center, axis, radius, b)
+        } else {
+            return None;
+        }
+    };
+
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN { return None; }
+
+    let z_idx = find_z_axis_index(&box_brep)?;
+    let (u_idx, v_idx) = match z_idx {
+        0 => (1, 2),
+        1 => (2, 0),
+        _ => (0, 1),
+    };
+    let u_ax = box_brep.axes[u_idx];
+    let v_ax = box_brep.axes[v_idx];
+    let eu = box_brep.extents[u_idx];
+    let ev = box_brep.extents[v_idx];
+    let ew = box_brep.extents[z_idx];
+    let c = box_brep.center;
+
+    let cu = (cyl_center - c).dot(u_ax);
+    let cv = (cyl_center - c).dot(v_ax);
+
+    // Get cylinder Z range from cap faces of the original cylinder BRep.
+    let find_z = |brep: &BRep| -> Option<(f64, f64)> {
+        let shell = brep.solids.first()?.shells.first()?;
+        let mut z_vals: Vec<f64> = Vec::new();
+        for fi in 0..shell.faces.len() {
+            if let Some(Some(si)) = brep.geom.face_surface.get(fi) {
+                if let Some(Surface3::Plane(pl)) = brep.geom.surfaces.get(*si) {
+                    z_vals.push(pl.origin.z);
+                }
+            }
+        }
+        if z_vals.len() < 2 { return None; }
+        z_vals.sort_by(|a,b| a.partial_cmp(b).unwrap());
+        Some((z_vals[0], z_vals[z_vals.len()-1]))
+    };
+    let (cyl_z_lo, cyl_z_hi) = find_z(cyl_brep_for_z)?;
+
+    // If cylinder is fully contained in (or tangent to) the box XY rect, use the
+    // inner-wire approach since the merged-segment method can't handle it.
+    let tol_xy = TOL * 10.0;
+    if cu - cyl_r >= -eu - tol_xy && cu + cyl_r <= eu + tol_xy
+        && cv - cyl_r >= -ev - tol_xy && cv + cyl_r <= ev + tol_xy
+    {
+        return build_box_cylinder_full_containment(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
+    }
+
+    build_box_cylinder_result_partial(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi)
 }
 
 #[cfg(test)]
+
 mod tests {
     use super::*;
     use crate::{boolean_op, BooleanOpType};
