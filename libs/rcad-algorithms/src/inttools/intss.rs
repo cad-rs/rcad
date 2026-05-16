@@ -1545,9 +1545,9 @@ fn numeric_intss_impl(
 
     // Clamp infinite domains. For cylinders the v-domain is [-∞, +∞]; we use
     // a range large enough to cover any practical intersection geometry.
-    // Use 100 units as default — covers most mechanical parts. For larger
-    // parts, the caller should pass explicit domain overrides.
-    const DOMAIN_CLAMP: f64 = 100.0;
+    // 500 units covers large mechanical parts; callers should pass explicit
+    // domain overrides for parts exceeding this range.
+    const DOMAIN_CLAMP: f64 = 500.0;
     let clamp_dom = |[u0, u1, v0, v1]: [f64; 4]| -> [f64; 4] {
         [
             if u0.is_finite() { u0 } else { -DOMAIN_CLAMP },

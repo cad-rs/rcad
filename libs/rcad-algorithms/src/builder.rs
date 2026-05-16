@@ -250,8 +250,8 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
 }
 
 type FaceEntry = (
-    Vec<usize>,
-    Vec<Vec<usize>>,
+    Vec<(usize, bool)>,        // outer wire: (edge_idx, forward)
+    Vec<Vec<(usize, bool)>>,   // inner wires: each is Vec<(edge_idx, forward)>
     Vec<[usize; 3]>,
     DVec3,
     Surface3,
@@ -381,12 +381,15 @@ impl ResultBuilder {
 
         let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
 
-        // Add edges for outer boundary
+        // Add edges for outer boundary. Track the forward flag so that when
+        // add_edge reuses an existing edge whose stored vertex order is reversed
+        // relative to the expected traversal direction, the wire marks it correctly.
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
             let ei = self.add_edge(vert_indices[i], vert_indices[j]);
-            edge_indices.push(ei);
+            let forward = self.edges[ei].0 == vert_indices[i];
+            edge_indices.push((ei, forward));
         }
 
         // Triangulate outer boundary (use original positions for stability on difference / holes).
@@ -401,19 +404,20 @@ impl ResultBuilder {
         // Handle inner wires (holes) 鈥?only create wire topology, NOT triangles.
         // The face triangulation covers only the outer boundary; inner wires are
         // stored as topological holes and will be tesselled separately if needed.
-        let mut inner_wire_edges: Vec<Vec<usize>> = Vec::new();
+        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
         for wire_pts in &sub.inner_wires {
             if wire_pts.len() < 3 {
                 continue;
             }
             // Add vertices for this inner wire
             let wire_verts: Vec<usize> = wire_pts.iter().map(|&p| self.add_vertex(p)).collect();
-            // Add edges
+            // Add edges with forward flag
             let mut wire_edges = Vec::new();
             for i in 0..wire_verts.len() {
                 let j = (i + 1) % wire_verts.len();
                 let ei = self.add_edge(wire_verts[i], wire_verts[j]);
-                wire_edges.push(ei);
+                let forward = self.edges[ei].0 == wire_verts[i];
+                wire_edges.push((ei, forward));
             }
             inner_wire_edges.push(wire_edges);
         }
@@ -427,14 +431,14 @@ impl ResultBuilder {
         };
         let area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
 
-        let mut outer_sig = edge_indices.clone();
+        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
         outer_sig.sort_unstable();
         let nlen = normal.length();
         let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
         for (existing_idx, (existing_outer, _existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
             self.faces.iter().enumerate()
         {
-            let mut ex_sig = existing_outer.clone();
+            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
             ex_sig.sort_unstable();
 
             let elen = existing_normal.length();
@@ -593,13 +597,13 @@ impl ResultBuilder {
         Some(seq)
     }
 
-    fn replace_edge_ids_in_wire(wire: &[usize], rep: &[Option<Vec<usize>>]) -> Vec<usize> {
+    fn replace_edge_ids_in_wire(wire: &[(usize, bool)], rep: &[Option<Vec<usize>>]) -> Vec<(usize, bool)> {
         let mut out = Vec::with_capacity(wire.len() * 2);
-        for &eid in wire {
+        for &(eid, fwd) in wire {
             if let Some(chain) = rep.get(eid).and_then(|r| r.as_ref()) {
-                out.extend_from_slice(chain);
+                out.extend(chain.iter().map(|&new_eid| (new_eid, fwd)));
             } else {
-                out.push(eid);
+                out.push((eid, fwd));
             }
         }
         out
@@ -626,12 +630,16 @@ impl ResultBuilder {
 
         for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area) in self.faces {
             let wire = Wire {
-                edges: edge_indices.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
+                edges: edge_indices.iter().map(|&(idx, forward)| {
+                    if forward { WireEdge::fwd(idx) } else { WireEdge::rev(idx) }
+                }).collect(),
             };
             let inner_wires: Vec<Wire> = inner_wire_edges
                 .into_iter()
                 .map(|wire_edge_idxs| Wire {
-                    edges: wire_edge_idxs.iter().map(|&idx| WireEdge::fwd(idx)).collect(),
+                    edges: wire_edge_idxs.iter().map(|&(idx, forward)| {
+                        if forward { WireEdge::fwd(idx) } else { WireEdge::rev(idx) }
+                    }).collect(),
                 })
                 .collect();
             let mesh_dirty = triangles.is_empty();
@@ -1675,14 +1683,17 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // For sphere faces, use UV tessellation into patches even when there are
-        // intersection curves. The sphere's great-circle trim curves in UV space
-        // are sinusoidal and don't reliably split the face into proper sub-regions;
-        // tessellating gives each patch an independent sample point for correct
-        // In/Out classification against the other solid.
+        // For sphere faces with no intersection curves, use UV tessellation into
+        // patches to provide valid boundary polygons (the sphere's single face has
+        // only 2 boundary vertices: north and south poles along the seam).
+        // With intersection curves, fall through to split_curved_face_parametric
+        // which splits the UV domain by trim curves for accurate classification
+        // and constructs inner wire holes from closed-loop trims.
         if matches!(&face.surface, Surface3::Sphere(_)) {
-            let subs = self.tessellate_sphere_face(face_idx);
-            return subs;
+            if face.face_info.curves_in.is_empty() {
+                return self.tessellate_sphere_face(face_idx);
+            }
+            // Has intersection curves: let split_curved_face_parametric handle it.
         }
 
         match &face.surface {
@@ -2032,6 +2043,15 @@ impl<'a> BooleanBuilder<'a> {
                     // Project the circle center to 2D and split by the circle boundary.
                     let center_2d = project_to_2d(circle.center);
                     let radius = circle.radius;
+
+                    // Skip degenerate circles (radius ≈ 0) from tangent sphere-plane
+                    // intersections.  These cannot split the planar face and would produce
+                    // a damaged boundary triangle instead of the full face rectangle.
+                    // Use a relaxed tolerance — the sphere-plane distance may produce
+                    // a radius of ~1e-6 from floating-point noise (e.g. sqrt(1²-1²)).
+                    if radius < TOLERANCE_PLANE_DIST_RELAX {
+                        None
+                    } else {
                     let mut next: Vec<Vec<DVec2>> = Vec::new();
 
                     // Pre-sample the 3D circle at 128 3D points, projected to 2D.
@@ -2125,6 +2145,7 @@ impl<'a> BooleanBuilder<'a> {
                     // Track this circle so we can compute correct sample points later
                     embedded_circles.push((center_2d, radius));
                     Some(next)
+                    } // end else (radius >= TOLERANCE_ABS)
                 }
                 Curve3::Line(line) => {
                     // Use segment from start to end vertex
