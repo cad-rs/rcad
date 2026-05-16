@@ -1011,11 +1011,47 @@ impl<'a> PaveFiller<'a> {
     fn check_edge_edge(&mut self, e1: usize, e2: usize) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
+        let tol = self.ee_tol(e1, e2);
 
-        if let (Curve3::Line(l1), Curve3::Line(l2)) = (&edge1.curve, &edge2.curve)
-            && let Some((t1, t2, point)) =
-                intersect_line_line(l1, edge1.t_range, l2, edge2.t_range, self.ee_tol(e1, e2))
-        {
+        let hits: Vec<(f64, f64, DVec3)> = match (&edge1.curve, &edge2.curve) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => {
+                intersect_line_line(l1, edge1.t_range, l2, edge2.t_range, tol)
+                    .into_iter()
+                    .map(|(t1, t2, p)| (t1, t2, p))
+                    .collect()
+            }
+            (Curve3::Line(l), Curve3::Circle(c)) => intersect_line_circle(l, c, tol)
+                .into_iter()
+                .filter(|(t_line, t_circle, _)| {
+                    in_range(*t_line, edge1.t_range, tol)
+                        && in_range(*t_circle, edge2.t_range, tol)
+                })
+                .map(|(t_line, t_circle, p)| (t_line, t_circle, p))
+                .collect(),
+            (Curve3::Circle(c), Curve3::Line(l)) => intersect_line_circle(l, c, tol)
+                .into_iter()
+                .filter(|(t_line, t_circle, _)| {
+                    in_range(*t_line, edge2.t_range, tol)
+                        && in_range(*t_circle, edge1.t_range, tol)
+                })
+                .map(|(t_line, t_circle, p)| (t_circle, t_line, p))
+                .collect(),
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => intersect_circle_circle(c1, c2, tol)
+                .into_iter()
+                .filter_map(|p| {
+                    let t1 = circle_param(p, c1);
+                    let t2 = circle_param(p, c2);
+                    if in_range(t1, edge1.t_range, tol) && in_range(t2, edge2.t_range, tol) {
+                        Some((t1, t2, p))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => vec![],
+        };
+
+        for (t1, t2, point) in hits {
             let new_v = self.ds.add_vertex(point);
             self.ds.interferences.push(Interference::EdgeEdge {
                 e1,
@@ -3271,6 +3307,7 @@ impl<'a> PaveFiller<'a> {
         f2: usize,
         s1: &Surface3,
         s2: &Surface3,
+        grid_n: usize,
     ) {
         use inttools::intss::numeric_intss_with_domains;
         use inttools::pcurve_derive::polyline_pcurve_by_projection;
@@ -3313,7 +3350,7 @@ impl<'a> PaveFiller<'a> {
         let result = numeric_intss_with_domains(
             s1,
             s2,
-            64,
+            grid_n,
             dom1,
             dom2,
             Some(self.ff_tol(f1, f2)),
@@ -3399,7 +3436,21 @@ impl<'a> PaveFiller<'a> {
         // marcher.
         let both_curved = !matches!(&s1, Surface3::Plane(_)) && !matches!(&s2, Surface3::Plane(_));
         if both_curved {
-            self.intersect_ff_by_numeric_intss(f1, f2, &s1, &s2);
+            // Adaptive grid density: scale with the surface characteristic dimension.
+            // Larger surfaces need finer grids to detect narrow intersection bands
+            // (e.g. a small cylinder intersecting a large sphere).
+            let char_len = |s: &Surface3| -> f64 {
+                match s {
+                    Surface3::Sphere(sp) => sp.radius,
+                    Surface3::Cylinder(cy) => cy.radius,
+                    Surface3::Cone(co) => co.radius.max(0.5),
+                    Surface3::Torus(to) => to.major_radius.max(to.minor_radius),
+                    _ => 1.0,
+                }
+            };
+            let avg_len = (char_len(&s1) + char_len(&s2)) * 0.5;
+            let grid_n = ((avg_len * 10.0) as usize).max(64).min(256);
+            self.intersect_ff_by_numeric_intss(f1, f2, &s1, &s2, grid_n);
             return;
         }
 
@@ -3569,12 +3620,12 @@ impl<'a> PaveFiller<'a> {
     fn generate_surface_samples(&self, surface: &Surface3, n1: usize, n2: usize) -> Vec<DVec3> {
         match surface {
             Surface3::Cylinder(cyl) => {
-                inttools::marching::sample_cylinder(cyl, [-5.0, 5.0], n1, n2)
+                inttools::marching::sample_cylinder(cyl, [-20.0, 20.0], n1, n2)
             }
             Surface3::Sphere(sph) => inttools::marching::sample_sphere(sph, n1, n2),
             Surface3::Torus(torus) => inttools::marching::sample_torus(torus, n1, n2),
-            Surface3::Plane(plane) => sample_plane(plane, 5.0, n1),
-            Surface3::Cone(cone) => sample_cone(cone, 0.01, 5.0, n1, n2),
+            Surface3::Plane(plane) => sample_plane(plane, 20.0, n1),
+            Surface3::Cone(cone) => sample_cone(cone, 0.01, 20.0, n1, n2),
             // Generic fallback: sample via surface.default_domain() UV grid.
             // Works for BSpline, Bezier, Offset, Revolution, Trimmed, LinearExtrusion.
             _ => sample_surface_generic(surface, n1, n2),
@@ -3595,7 +3646,7 @@ impl<'a> PaveFiller<'a> {
                 // sample_cylinder returns row = height, col = azimuth,
                 // so transpose to row = azimuth, col = height for grid indexing.
                 // Rebuild in (n_u azimuth) × (n_v height) order.
-                let height_range = [-5.0_f64, 5.0_f64];
+                let height_range = [-20.0_f64, 20.0_f64];
                 let u_ax = if cyl.axis.x.abs() < 0.9 {
                     cyl.axis.cross(DVec3::X).normalize()
                 } else {
@@ -3872,8 +3923,176 @@ fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Ve
         .collect()
 }
 
-/// Check whether a point lies within the boundary of a sphere-face, defined by
-/// the sphere face boundary vertices (used for tangent-point containment check).
+/// Compute the angular parameter of `point` on `circle` in [0, 2π).
+fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
+    let u = rcad_kernel::any_perpendicular(circle.normal);
+    let v = circle.normal.cross(u);
+    let d = point - circle.center;
+    let mut theta = d.dot(v).atan2(d.dot(u));
+    if theta < 0.0 {
+        theta += std::f64::consts::TAU;
+    }
+    theta
+}
+
+/// Intersect a 3D line with a 3D circle.
+/// Returns `(t_on_line, t_on_circle, point)` for each intersection found.
+fn intersect_line_circle(
+    line: &Line3,
+    circle: &Circle3,
+    tol: f64,
+) -> Vec<(f64, f64, DVec3)> {
+    let mut results = Vec::new();
+    let d = line.direction;
+    let o = line.origin;
+    let c = circle.center;
+    let n = circle.normal;
+    let r = circle.radius;
+    let r_sq = r * r;
+
+    // Planarity constraint: every point on the circle satisfies (P - c)·n = 0.
+    let dn = d.dot(n);
+    let w = o - c;
+    let wn = w.dot(n);
+
+    if dn.abs() > tol {
+        // Line pierces the circle plane at one point.
+        let t = -wn / dn;
+        let p = o + d * t;
+        if (p - c).length_squared() <= r_sq + tol * (r + 1.0) {
+            results.push((t, circle_param(p, circle), p));
+        }
+    } else if wn.abs() <= tol {
+        // Line lies in the circle plane — solve 2D line-circle.
+        let t_closest = -w.dot(d);
+        let perp_dist_sq = ((o + d * t_closest) - c).length_squared();
+
+        if perp_dist_sq <= r_sq + tol * tol {
+            let along = (r_sq - perp_dist_sq).max(0.0).sqrt();
+            let t1 = t_closest - along;
+            let p1 = o + d * t1;
+            results.push((t1, circle_param(p1, circle), p1));
+
+            let t2 = t_closest + along;
+            if (t2 - t1).abs() > tol {
+                let p2 = o + d * t2;
+                results.push((t2, circle_param(p2, circle), p2));
+            }
+        }
+    }
+
+    results
+}
+
+/// Intersect two coplanar 3D circles (their planes are parallel/coincident).
+fn intersect_coplanar_circles(c1: &Circle3, c2: &Circle3, tol: f64) -> Vec<DVec3> {
+    let d_vec = c2.center - c1.center;
+    let d = d_vec.length();
+    let r1 = c1.radius;
+    let r2 = c2.radius;
+
+    // Disjoint or concentric → no isolated intersection points
+    if d > r1 + r2 + tol || d < (r1 - r2).abs() - tol || d < tol {
+        return vec![];
+    }
+
+    // 2D circle-circle intersection
+    // x = projection of intersection point onto the line of centers
+    let x = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
+    let y_sq = r1 * r1 - x * x;
+
+    if y_sq < -tol * tol {
+        return vec![];
+    }
+    let y = y_sq.max(0.0).sqrt();
+
+    let dir = d_vec / d;
+    let perp = c1.normal.cross(dir).try_normalize().unwrap_or(DVec3::ZERO);
+
+    let mid = c1.center + dir * x;
+    if y < tol || perp == DVec3::ZERO {
+        vec![mid]
+    } else {
+        vec![mid + perp * y, mid - perp * y]
+    }
+}
+
+/// Intersect two 3D circles that may lie in different planes.
+/// Returns up to 2 intersection points.
+fn intersect_circle_circle(
+    c1: &Circle3,
+    c2: &Circle3,
+    tol: f64,
+) -> Vec<DVec3> {
+    let n1 = c1.normal;
+    let n2 = c2.normal;
+    let cross = n1.cross(n2);
+    let cross_len_sq = cross.length_squared();
+
+    // Parallel/coincident planes → coplanar circle-circle case
+    if cross_len_sq < TOLERANCE_ANG * TOLERANCE_ANG {
+        let offset = (c2.center - c1.center).dot(n1).abs();
+        if offset > tol {
+            return vec![];
+        }
+        return intersect_coplanar_circles(c1, c2, tol);
+    }
+
+    // Planes intersect in a line L along the cross-product direction.
+    let line_dir = cross / cross_len_sq.sqrt();
+    let b = n1.dot(n2);
+    let denom = 1.0 - b * b; // sin²θ > 0 (not parallel)
+    let h1 = c1.center.dot(n1);
+    let h2 = c2.center.dot(n2);
+    let alpha = (h1 - h2 * b) / denom;
+    let beta = (h2 - h1 * b) / denom;
+    let base = n1 * alpha + n2 * beta; // a point on line L
+
+    // Intersect sphere of circle1 (center=c1.center, radius=r1) with line L.
+    let w = base - c1.center;
+    let a = line_dir.dot(line_dir); // = 1 for unit direction
+    let b2 = 2.0 * w.dot(line_dir);
+    let c = w.dot(w) - c1.radius * c1.radius;
+    let disc = b2 * b2 - 4.0 * a * c;
+
+    if disc < -tol * tol {
+        return vec![];
+    }
+    if disc < tol * tol {
+        let t = -b2 / (2.0 * a);
+        let p = base + line_dir * t;
+        return if (p - c2.center).length_squared() <= (c2.radius + tol) * (c2.radius + tol) {
+            vec![p]
+        } else {
+            vec![]
+        };
+    }
+
+    let sqrt_disc = disc.sqrt();
+    let t1 = (-b2 - sqrt_disc) / (2.0 * a);
+    let t2 = (-b2 + sqrt_disc) / (2.0 * a);
+    let p1 = base + line_dir * t1;
+    let p2 = base + line_dir * t2;
+
+    let r2_tol_sq = (c2.radius + tol) * (c2.radius + tol);
+    let mut results = Vec::with_capacity(2);
+    if (p1 - c2.center).length_squared() <= r2_tol_sq {
+        results.push(p1);
+    }
+    if (p2 - p1).length_squared() > tol * tol
+        && (p2 - c2.center).length_squared() <= r2_tol_sq
+    {
+        results.push(p2);
+    }
+    results
+}
+
+/// Check if a parameter `t` falls within `range` (inclusive, with tolerance).
+fn in_range(t: f64, range: [f64; 2], tol: f64) -> bool {
+    let lo = range[0].min(range[1]) - tol;
+    let hi = range[0].max(range[1]) + tol;
+    t >= lo && t <= hi
+}
 fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
     if boundary_verts.is_empty() {
         return false;

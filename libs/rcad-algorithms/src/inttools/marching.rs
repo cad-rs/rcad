@@ -576,7 +576,36 @@ fn march_one_direction_monitored_simple(
         let tangent = g1.cross(g2);
         let t_len = tangent.length();
         if t_len < TOLERANCE_ABS {
-            break; // tangent surfaces — can't march
+            // Tangent surfaces — the gradient cross product is zero, so the
+            // usual marching direction is undefined.  Try to recover by
+            // extrapolating the last valid step direction and projecting back
+            // onto the intersection.  A small offset in a known-good direction
+            // often escapes the tangent region.
+            if points.len() > 1 {
+                let last_step = current - points[points.len() - 1];
+                let step_len = last_step.length();
+                if step_len > TOLERANCE_ABS {
+                    let attempt_dir = last_step / step_len;
+                    let next_raw = current + attempt_dir * current_step.abs();
+                    let next = project_onto_intersection(s1, s2, next_raw);
+                    let step_dist = (next - current).length();
+                    if step_dist < current_step.abs() * 5.0 && step_dist > TOLERANCE_ABS {
+                        if !bounds_check(next) {
+                            break;
+                        }
+                        arc_len += step_dist;
+                        let arc_cap = step_size * (max_steps as f64).min(400.0);
+                        if arc_len >= arc_cap {
+                            break;
+                        }
+                        points.push(next);
+                        current = next;
+                        last_dir = attempt_dir;
+                        continue;
+                    }
+                }
+            }
+            break;
         }
         let dir = tangent / t_len * step_size.signum();
 

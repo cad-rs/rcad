@@ -2327,8 +2327,9 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         let cb = try_cylinder_center_axis_radius_height(b);
 
         if let (Some(cyl), Some(bx)) = (ca, bb) {
-            let (center, axis, radius, _) = cyl;
-            (bx, center, axis, radius, a)
+            // Operation is cylinder - box, but this fast-path only handles box - cylinder.
+            // Return None to fall through to Pave-Filler.
+            return None;
         } else if let (Some(bx), Some(cyl)) = (ba, cb) {
             let (center, axis, radius, _) = cyl;
             (bx, center, axis, radius, b)

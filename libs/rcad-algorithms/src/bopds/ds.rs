@@ -364,16 +364,21 @@ impl DS {
                     } else {
                         (0.0, 2.0 * PI)
                     };
-                    // No margin: the exact v-range of the cylinder is used as the UV
-                    // boundary.  Out-of-bounds PCurve endpoints are clipped to the
-                    // boundary by extend_trim_to_uv_boundary later in the pipeline.
-                    // Without the margin, constant-v trims at v=0 or v=h are correctly
-                    // identified as boundary trims and filtered out.
+                    // Add a small margin to the v-range so that intersection polyline
+                    // endpoints near v=0 or v=h are not clipped by
+                    // extend_trim_to_uv_boundary.  A 1% margin matches the cone case
+                    // below and has worked well in practice.
+                    let v_range = h_max - h_min;
+                    let margin = if v_range > TOLERANCE_COORD_SUB {
+                        v_range * 0.01 + TOLERANCE_COORD_SUB
+                    } else {
+                        TOLERANCE_COORD_SUB
+                    };
                     let uv = vec![
-                        DVec2::new(u_lo, h_min),
-                        DVec2::new(u_hi, h_min),
-                        DVec2::new(u_hi, h_max),
-                        DVec2::new(u_lo, h_max),
+                        DVec2::new(u_lo, h_min - margin),
+                        DVec2::new(u_hi, h_min - margin),
+                        DVec2::new(u_hi, h_max + margin),
+                        DVec2::new(u_lo, h_max + margin),
                     ];
                     self.faces[fi].uv_boundary = Some(uv);
                     continue;

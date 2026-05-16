@@ -2704,7 +2704,8 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         }
     }
 
-    boolean_op_pave_fill_build(op, a, b)
+    let r = boolean_op_pave_fill_build(op, a, b)?;
+    Ok(r)
 }
 
 /// Perform a boolean operation with advanced execution options and report.

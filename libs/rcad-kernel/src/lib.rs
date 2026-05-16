@@ -1474,8 +1474,13 @@ impl BRep {
         sum / self.vertices.len() as f64
     }
 
-    /// Returns the axis-aligned bounding box of all vertices as `[min, max]`,
+    /// Returns the axis-aligned bounding box as `[min, max]`,
     /// or `None` if the BRep has no vertices.
+    ///
+    /// The result accounts for both vertex positions and analytic geometry
+    /// (curves and surfaces) that may extend beyond the discrete vertex set
+    /// — for example, a cylinder BRep with only two seam vertices still
+    /// reports the full radius extent.
     pub fn bounding_box(&self) -> Option<[DVec3; 2]> {
         if self.vertices.is_empty() {
             return None;
@@ -1486,8 +1491,148 @@ impl BRep {
             mn = mn.min(v.point);
             mx = mx.max(v.point);
         }
+
+        // Expand for analytic curves whose points are not fully covered by vertices.
+        for curve in &self.geom.curves {
+            if let Some([c_mn, c_mx]) = curve_bounding_box(curve) {
+                mn = mn.min(c_mn);
+                mx = mx.max(c_mx);
+            }
+        }
+
+        // Expand for analytic surfaces whose full extent is not captured by vertices.
+        for surface in &self.geom.surfaces {
+            if let Some([s_mn, s_mx]) = surface_bounding_box(surface, &self.vertices) {
+                mn = mn.min(s_mn);
+                mx = mx.max(s_mx);
+            }
+        }
+
         Some([mn, mx])
     }
+}
+
+/// Conservative bounding-box contribution from an analytic curve.
+fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
+        match curve {
+            geom::Curve3::Circle(c) => {
+                let r = DVec3::splat(c.radius);
+                Some([c.center - r, c.center + r])
+            }
+            geom::Curve3::Ellipse(e) => {
+                let max_r = e.major_radius.max(e.minor_radius);
+                let r = DVec3::splat(max_r);
+                Some([e.center - r, e.center + r])
+            }
+            geom::Curve3::BSpline(b) => {
+                let mut mn = DVec3::splat(f64::INFINITY);
+                let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                for &p in &b.control_points {
+                    mn = mn.min(p);
+                    mx = mx.max(p);
+                }
+                if mn.is_finite() { Some([mn, mx]) } else { None }
+            }
+            geom::Curve3::Bezier(b) => {
+                let mut mn = DVec3::splat(f64::INFINITY);
+                let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                for &p in &b.control_points {
+                    mn = mn.min(p);
+                    mx = mx.max(p);
+                }
+                if mn.is_finite() { Some([mn, mx]) } else { None }
+            }
+            _ => None,
+        }
+    }
+
+    /// Conservative bounding-box contribution from an analytic surface,
+    /// expanding based on vertex positions projected onto the surface frame.
+    fn surface_bounding_box(surface: &geom::Surface3, vertices: &[crate::Vertex]) -> Option<[DVec3; 2]> {
+        match surface {
+            geom::Surface3::Cylinder(cyl) => {
+                let r = cyl.radius;
+                let axis = cyl.axis.normalize_or_zero();
+                if axis.length_squared() < 0.5 { return None; }
+
+                // Project all vertices onto the cylinder axis to find the
+                // axial extent of the trimmed surface.
+                let mut min_axial = f64::INFINITY;
+                let mut max_axial = f64::NEG_INFINITY;
+                for v in vertices {
+                    let proj = (v.point - cyl.origin).dot(axis);
+                    min_axial = min_axial.min(proj);
+                    max_axial = max_axial.max(proj);
+                }
+                if !min_axial.is_finite() { return None; }
+
+                let p_lo = cyl.origin + axis * min_axial;
+                let p_hi = cyl.origin + axis * max_axial;
+                let rv = DVec3::splat(r);
+                Some([p_lo.min(p_hi) - rv, p_lo.max(p_hi) + rv])
+            }
+            geom::Surface3::Sphere(sph) => {
+                let r = DVec3::splat(sph.radius);
+                Some([sph.center - r, sph.center + r])
+            }
+            geom::Surface3::Torus(tor) => {
+                let r = tor.major_radius + tor.minor_radius;
+                let rv = DVec3::splat(r);
+                Some([tor.center - rv, tor.center + rv])
+            }
+            geom::Surface3::Cone(cone) => {
+                let axis = cone.axis_dir();
+                let apex = cone.apex_point();
+
+                // Project vertices onto the cone axis.
+                let mut min_axial = f64::INFINITY;
+                let mut max_axial = f64::NEG_INFINITY;
+                for v in vertices {
+                    let proj = (v.point - apex).dot(axis);
+                    min_axial = min_axial.min(proj);
+                    max_axial = max_axial.max(proj);
+                }
+                if !min_axial.is_finite() { return None; }
+
+                let max_r = cone.radius_at_axial(min_axial)
+                    .max(cone.radius_at_axial(max_axial));
+                let rv = DVec3::splat(max_r.max(cone.radius));
+                let p_lo = apex + axis * min_axial;
+                let p_hi = apex + axis * max_axial;
+                Some([p_lo.min(p_hi) - rv, p_lo.max(p_hi) + rv])
+            }
+            geom::Surface3::Ellipsoid(e) => {
+                let max_r = e.radius_x.max(e.radius_y).max(e.radius_z);
+                let rv = DVec3::splat(max_r);
+                Some([e.center - rv, e.center + rv])
+            }
+            geom::Surface3::BSpline(b) => {
+                let mut mn = DVec3::splat(f64::INFINITY);
+                let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                for row in &b.control_points {
+                    for p in row {
+                        mn = mn.min(*p);
+                        mx = mx.max(*p);
+                    }
+                }
+                if mn.is_finite() { Some([mn, mx]) } else { None }
+            }
+            geom::Surface3::Bezier(b) => {
+                let mut mn = DVec3::splat(f64::INFINITY);
+                let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                for row in &b.control_points {
+                    for &p in row {
+                        mn = mn.min(p);
+                        mx = mx.max(p);
+                    }
+                }
+                if mn.is_finite() { Some([mn, mx]) } else { None }
+            }
+            _ => None,
+        }
+    }
+
+impl BRep {
 
     /// Apply a rigid-body (or general affine) transform to this BRep **in-place**.
     ///

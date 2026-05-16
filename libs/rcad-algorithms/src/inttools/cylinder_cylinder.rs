@@ -308,25 +308,45 @@ fn intersect_perpendicular_cylinders(
     }
 
     // Unequal radii: intersection curves are two congruent ellipses.
-    // Each ellipse lies in a plane spanned by a3 and (a1 or a2).
-    // - Ellipse 1: normal = a2, major axis along a1, minor along a3
-    //   major_radius = r2, minor_radius = r1  (projected from cyl1's cross-section)
-    // - Ellipse 2: normal = a1, major axis along a2, minor along a3
-    //   major_radius = r1, minor_radius = r2
+    // Each ellipse lies in the plane spanned by a3 = a1 × a2 (the
+    // third orthogonal direction) and the other cylinder's axis.
+    //
+    // For ellipse1 (normal = a2 = cyl2 axis):
+    //   radius in direction a1 = r2  (cross-section of cyl2)
+    //   radius in direction a3 = r1  (cross-section of cyl1)
+    //
+    // For ellipse2 (normal = a1 = cyl1 axis):
+    //   radius in direction a2 = r1  (cross-section of cyl1)
+    //   radius in direction a3 = r2  (cross-section of cyl2)
+    //
+    // We ensure major_radius >= minor_radius (required invariant for
+    // downstream code) by swapping the major direction when needed.
+    let a3 = a1.cross(a2).normalize();
+
+    let (maj_dir1, maj_r1, min_r1) = if r2 >= r1 {
+        (a1, r2, r1)
+    } else {
+        (a3, r1, r2)
+    };
+    let (maj_dir2, maj_r2, min_r2) = if r1 >= r2 {
+        (a2, r1, r2)
+    } else {
+        (a3, r2, r1)
+    };
 
     let ellipse1 = Ellipse3 {
         center: origin,
         normal: a2,
-        major_dir: a1,
-        major_radius: r2,
-        minor_radius: r1,
+        major_dir: maj_dir1,
+        major_radius: maj_r1,
+        minor_radius: min_r1,
     };
     let ellipse2 = Ellipse3 {
         center: origin,
         normal: a1,
-        major_dir: a2,
-        major_radius: r1,
-        minor_radius: r2,
+        major_dir: maj_dir2,
+        major_radius: maj_r2,
+        minor_radius: min_r2,
     };
     CylinderCylinderResult::TwoEllipses(ellipse1, ellipse2)
 }
@@ -425,16 +445,23 @@ mod tests {
     #[test]
     fn perpendicular_unequal_radii_steinmetz() {
         // c1: axis=X, r1=2;  c2: axis=Y, r2=1
-        // ellipse1: normal=a2=Y, major_dir=a1=X, major_radius=r2=1, minor_radius=r1=2
-        // ellipse2: normal=a1=X, major_dir=a2=Y, major_radius=r1=2, minor_radius=r2=1
+        // After fix: both ellipses have major=2 >= minor=1.
+        // ellipse1 (normal = a2 = Y): a3 direction has r1=2, a1 has r2=1
+        //   → major_dir=a3 (or -a3), major_radius=2, minor_radius=1
+        // ellipse2 (normal = a1 = X): a2 direction has r1=2, a3 has r2=1
+        //   → major_dir=a2, major_radius=2, minor_radius=1
         let c1 = cyl(DVec3::ZERO, DVec3::X, 2.0);
         let c2 = cyl(DVec3::ZERO, DVec3::Y, 1.0);
         match intersect_cylinder_cylinder(&c1, &c2) {
             CylinderCylinderResult::TwoEllipses(e1, e2) => {
-                assert!((e1.minor_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "e1.minor={}", e1.minor_radius);
-                assert!((e1.major_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e1.major={}", e1.major_radius);
-                assert!((e2.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e2.minor={}", e2.minor_radius);
+                assert!(e1.major_radius >= e1.minor_radius,
+                    "e1: major {:.6} < minor {:.6}", e1.major_radius, e1.minor_radius);
+                assert!(e2.major_radius >= e2.minor_radius,
+                    "e2: major {:.6} < minor {:.6}", e2.major_radius, e2.minor_radius);
+                assert!((e1.major_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "e1.major={}", e1.major_radius);
+                assert!((e1.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e1.minor={}", e1.minor_radius);
                 assert!((e2.major_radius - 2.0).abs() < TOLERANCE_COORD_SUB, "e2.major={}", e2.major_radius);
+                assert!((e2.minor_radius - 1.0).abs() < TOLERANCE_COORD_SUB, "e2.minor={}", e2.minor_radius);
             }
             other => panic!("expected TwoEllipses, got {other:?}"),
         }
