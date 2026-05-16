@@ -222,11 +222,73 @@ pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     let d = rmax.z - rmin.z;
 
     if w <= zero_tol || h <= zero_tol || d <= zero_tol {
-        // Gap or touching: keep as separate solids in a compound.
+        // Gap or touching: check if full-face contact → merge boxes.
+        let touching_x = w <= zero_tol;
+        let touching_y = h <= zero_tol;
+        let touching_z = d <= zero_tol;
+        let touch_count = [touching_x, touching_y, touching_z].iter().filter(|&&b| b).count();
+
+        if touch_count == 1 {
+            // Single-axis face contact. Check that the overlap fully covers
+            // both boxes in the other two dimensions (full-face contact).
+            let full_face = if touching_x {
+                rmin.y <= amin.y && rmax.y >= amax.y && rmin.y <= bmin.y && rmax.y >= bmax.y
+                    && rmin.z <= amin.z && rmax.z >= amax.z && rmin.z <= bmin.z && rmax.z >= bmax.z
+            } else if touching_y {
+                rmin.x <= amin.x && rmax.x >= amax.x && rmin.x <= bmin.x && rmax.x >= bmax.x
+                    && rmin.z <= amin.z && rmax.z >= amax.z && rmin.z <= bmin.z && rmax.z >= bmax.z
+            } else {
+                // touching_z
+                rmin.x <= amin.x && rmax.x >= amax.x && rmin.x <= bmin.x && rmax.x >= bmax.x
+                    && rmin.y <= amin.y && rmax.y >= amax.y && rmin.y <= bmin.y && rmax.y >= bmax.y
+            };
+            if full_face {
+                let cmin = DVec3::new(
+                    amin.x.min(bmin.x),
+                    amin.y.min(bmin.y),
+                    amin.z.min(bmin.z),
+                );
+                let cmax = DVec3::new(
+                    amax.x.max(bmax.x),
+                    amax.y.max(bmax.y),
+                    amax.z.max(bmax.z),
+                );
+                let dims = cmax - cmin;
+                return Some(
+                    rcad_modeling::make_box_brep(cmin, DVec3::X, DVec3::Y, dims.x, dims.y, dims.z)
+                        .expect("full-face touch merged box"),
+                );
+            }
+        }
+        // Gap, edge/vertex contact, or partial-face touch: keep separate.
         return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
     }
-    // Positive-volume overlap: let Pave-Filler handle it.
-    None
+    // Positive-volume overlap.
+    // Containment: if one box entirely contains the other, return the larger.
+    if amin.x <= bmin.x && amin.y <= bmin.y && amin.z <= bmin.z
+        && amax.x >= bmax.x && amax.y >= bmax.y && amax.z >= bmax.z
+    {
+        return Some(a.clone());
+    }
+    if bmin.x <= amin.x && bmin.y <= amin.y && bmin.z <= amin.z
+        && bmax.x >= amax.x && bmax.y >= amax.y && bmax.z >= amax.z
+    {
+        return Some(b.clone());
+    }
+
+    // Partial overlap: build the union from A\B slabs, the overlap slab, and
+    // B\A slabs, then sew and remove internal face pairs.
+    let a_slabs = decompose_slabs(amin, amax, rmin, rmax, zero_tol)?;
+    let b_slabs = decompose_slabs(bmin, bmax, rmin, rmax, zero_tol)?;
+    let overlap = make_box_brep(
+        rmin, DVec3::X, DVec3::Y, w, h, d,
+    ).ok()?;
+
+    let mut all_slabs = a_slabs;
+    all_slabs.push(overlap);
+    all_slabs.extend(b_slabs);
+
+    Some(sew_slabs_into_solid(&all_slabs, zero_tol))
 }
 
 /// Intersection: unit sphere (kernel primitive) 鈭?axis box [0,1]鲁.
@@ -321,6 +383,173 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
 }
 
+/// Decompose the axis-aligned box `[outer_min, outer_max]` into up to 26 axis-aligned
+/// slabs by cutting at the boundaries of the interior region `[inner_min, inner_max]`
+/// (a 3×3×3 grid, excluding the center cell).  Cells that fall entirely inside the
+/// interior region are omitted.
+///
+/// Returns `None` if `make_box_brep` fails for any cell (should not happen for valid
+/// axis-aligned geometries).
+fn decompose_slabs(
+    outer_min: DVec3, outer_max: DVec3,
+    inner_min: DVec3, inner_max: DVec3,
+    zero_tol: f64,
+) -> Option<Vec<BRep>> {
+    let xs = [outer_min.x, inner_min.x, inner_max.x, outer_max.x];
+    let ys = [outer_min.y, inner_min.y, inner_max.y, outer_max.y];
+    let zs = [outer_min.z, inner_min.z, inner_max.z, outer_max.z];
+
+    let mut slabs: Vec<BRep> = Vec::new();
+    for xi in 0..3 {
+        let x0 = xs[xi]; let x1 = xs[xi + 1]; let dx = x1 - x0;
+        if dx <= zero_tol { continue; }
+        for yi in 0..3 {
+            let y0 = ys[yi]; let y1 = ys[yi + 1]; let dy = y1 - y0;
+            if dy <= zero_tol { continue; }
+            for zi in 0..3 {
+                let z0 = zs[zi]; let z1 = zs[zi + 1]; let dz = z1 - z0;
+                if dz <= zero_tol { continue; }
+                // Skip cells fully inside the overlap region.
+                if x0 >= inner_min.x && x1 <= inner_max.x
+                    && y0 >= inner_min.y && y1 <= inner_max.y
+                    && z0 >= inner_min.z && z1 <= inner_max.z
+                { continue; }
+                slabs.push(make_box_brep(
+                    DVec3::new(x0, y0, z0),
+                    DVec3::X, DVec3::Y, dx, dy, dz,
+                ).ok()?);
+            }
+        }
+    }
+    Some(slabs)
+}
+
+/// Sew a collection of axis-aligned box slabs into a single solid, then detect
+/// and remove internal face pairs (coplanar faces with opposite normals and
+/// overlapping 2D extent).  The remaining faces form the correct external boundary.
+///
+/// Falls back to `BRep::compound_from_shapes` when no pairs were stitched or the
+/// sewn result has no solids/shells.
+fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
+    if slabs.is_empty() {
+        return BRep::default();
+    }
+    if slabs.len() == 1 {
+        return slabs[0].clone();
+    }
+
+    let sewn = sew_shells(slabs, zero_tol);
+    if sewn.stitched_pairs == 0 {
+        return BRep::compound_from_shapes(slabs);
+    }
+
+    let mut brep = sewn.brep;
+    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+        return BRep::compound_from_shapes(slabs);
+    }
+
+    // Collect face-level plane + 2D-extent info for internal-face detection.
+    struct Fi {
+        face_idx: usize,
+        axis: usize,
+        coord: f64,
+        sign: f64,
+        u_min: f64, u_max: f64,
+        v_min: f64, v_max: f64,
+    }
+
+    let shell = &brep.solids[0].shells[0];
+    let mut finfo: Vec<Fi> = Vec::with_capacity(shell.faces.len());
+    let edge_ok = |idx: usize| idx < brep.edges.len();
+    let vert_ok = |idx: usize| idx < brep.vertices.len();
+
+    for (fi, face) in shell.faces.iter().enumerate() {
+        let n = face.normal;
+        let (axis, sign) = if n.x.abs() > 0.5 {
+            (0usize, n.x.signum())
+        } else if n.y.abs() > 0.5 {
+            (1usize, n.y.signum())
+        } else {
+            (2usize, n.z.signum())
+        };
+
+        let mut pts: Vec<DVec3> = Vec::new();
+        for we in &face.outer_wire.edges {
+            if !edge_ok(we.idx) { continue; }
+            let e = &brep.edges[we.idx];
+            if vert_ok(e.start) { pts.push(brep.vertices[e.start].point); }
+            if vert_ok(e.end) { pts.push(brep.vertices[e.end].point); }
+        }
+        if pts.is_empty() { continue; }
+
+        let coord = match axis {
+            0 => pts[0].x, 1 => pts[0].y, _ => pts[0].z,
+        };
+
+        let (u_min, u_max, v_min, v_max) = match axis {
+            0 => {
+                let (us, vs): (Vec<f64>, Vec<f64>) =
+                    pts.iter().map(|p| (p.y, p.z)).unzip();
+                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
+            },
+            1 => {
+                let (us, vs): (Vec<f64>, Vec<f64>) =
+                    pts.iter().map(|p| (p.x, p.z)).unzip();
+                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
+            },
+            _ => {
+                let (us, vs): (Vec<f64>, Vec<f64>) =
+                    pts.iter().map(|p| (p.x, p.y)).unzip();
+                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
+            },
+        };
+
+        finfo.push(Fi { face_idx: fi, axis, coord, sign, u_min, u_max, v_min, v_max });
+    }
+
+    // Detect internal pairs: same axis, opposite sign, same coord,
+    // overlapping 2D extent.
+    let n_faces = shell.faces.len();
+    let mut internal = vec![false; n_faces];
+    for i in 0..finfo.len() {
+        if internal[finfo[i].face_idx] { continue; }
+        for j in (i + 1)..finfo.len() {
+            if internal[finfo[j].face_idx] { continue; }
+            let a = &finfo[i];
+            let b = &finfo[j];
+            if a.axis != b.axis { continue; }
+            if a.sign * b.sign > 0.0 { continue; }
+            if (a.coord - b.coord).abs() > zero_tol { continue; }
+            let tol_ext = zero_tol * 10.0;
+            let overlap_u = a.u_min.max(b.u_min) + tol_ext < a.u_max.min(b.u_max);
+            let overlap_v = a.v_min.max(b.v_min) + tol_ext < a.v_max.min(b.v_max);
+            if overlap_u && overlap_v {
+                internal[a.face_idx] = true;
+                internal[b.face_idx] = true;
+            }
+        }
+    }
+
+    // Remove internal faces.
+    for solid in &mut brep.solids {
+        for shell in &mut solid.shells {
+            let mut kept: Vec<Face> = Vec::with_capacity(shell.faces.len());
+            for (fi, face) in shell.faces.drain(..).enumerate() {
+                if !internal[fi] {
+                    kept.push(face);
+                }
+            }
+            shell.faces = kept;
+        }
+    }
+
+    brep.solids.retain(|s| {
+        s.shells.iter().any(|sh| !sh.faces.is_empty())
+    });
+
+    brep
+}
+
 /// Difference of two axis-aligned boxes computed analytically.
 ///
 /// Decomposes A \ B into axis-aligned cells using a full 3D grid at
@@ -350,177 +579,8 @@ pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(BRep::default());
     }
 
-    // Full 3D grid at the overlap boundary.  Every shared face between
-    // adjacent cells is a FULL-face match (never partial), so internal
-    // faces can be reliably detected after sewing.
-    let xs = [amin.x, rmin.x, rmax.x, amax.x];
-    let ys = [amin.y, rmin.y, rmax.y, amax.y];
-    let zs = [amin.z, rmin.z, rmax.z, amax.z];
-
-    let mut slabs: Vec<BRep> = Vec::new();
-    for xi in 0..3 {
-        let x0 = xs[xi];
-        let x1 = xs[xi + 1];
-        let dx = x1 - x0;
-        if dx <= zero_tol {
-            continue;
-        }
-        for yi in 0..3 {
-            let y0 = ys[yi];
-            let y1 = ys[yi + 1];
-            let dy = y1 - y0;
-            if dy <= zero_tol {
-                continue;
-            }
-            for zi in 0..3 {
-                let z0 = zs[zi];
-                let z1 = zs[zi + 1];
-                let dz = z1 - z0;
-                if dz <= zero_tol {
-                    continue;
-                }
-                // Skip cells fully inside the overlap region.
-                if x0 >= rmin.x && x1 <= rmax.x
-                    && y0 >= rmin.y && y1 <= rmax.y
-                    && z0 >= rmin.z && z1 <= rmax.z
-                {
-                    continue;
-                }
-                slabs.push(make_box_brep(
-                    DVec3::new(x0, y0, z0),
-                    DVec3::X,
-                    DVec3::Y,
-                    dx,
-                    dy,
-                    dz,
-                ).ok()?);
-            }
-        }
-    }
-
-    if slabs.is_empty() {
-        return Some(BRep::default());
-    }
-    if slabs.len() == 1 {
-        return Some(slabs.remove(0));
-    }
-
-    // Sew slabs into a single shell, then detect and remove internal
-    // face pairs (coplanar faces with opposite normals and overlapping
-    // 2D extent).  The remaining faces form the correct external boundary.
-    let sewn = sew_shells(&slabs, zero_tol);
-    if sewn.stitched_pairs == 0 {
-        return Some(BRep::compound_from_shapes(&slabs));
-    }
-
-    let mut brep = sewn.brep;
-    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
-        return Some(BRep::compound_from_shapes(&slabs));
-    }
-
-    // Collect face-level plane + 2D-extent info for internal-face detection.
-    struct Fi {
-        face_idx: usize,    // index in shell.faces
-        axis: usize,        // 0=x, 1=y, 2=z  (normal axis)
-        coord: f64,         // plane coordinate on the axis
-        sign: f64,          // +1 or -1 (normal direction)
-        u_min: f64, u_max: f64,  // 2D extent on the face plane
-        v_min: f64, v_max: f64,
-    }
-
-    let shell = &brep.solids[0].shells[0];
-    let mut finfo: Vec<Fi> = Vec::with_capacity(shell.faces.len());
-    let edge_ok = |idx: usize| idx < brep.edges.len();
-    let vert_ok = |idx: usize| idx < brep.vertices.len();
-
-    for (fi, face) in shell.faces.iter().enumerate() {
-        let n = face.normal;
-        let (axis, sign) = if n.x.abs() > 0.5 {
-            (0usize, n.x.signum())
-        } else if n.y.abs() > 0.5 {
-            (1usize, n.y.signum())
-        } else {
-            (2usize, n.z.signum())
-        };
-
-        // Collect vertex positions from the outer wire.
-        let mut pts: Vec<DVec3> = Vec::new();
-        for we in &face.outer_wire.edges {
-            if !edge_ok(we.idx) { continue; }
-            let e = &brep.edges[we.idx];
-            if vert_ok(e.start) { pts.push(brep.vertices[e.start].point); }
-            if vert_ok(e.end) { pts.push(brep.vertices[e.end].point); }
-        }
-        if pts.is_empty() { continue; }
-
-        let coord = match axis {
-            0 => pts[0].x, 1 => pts[0].y, _ => pts[0].z,
-        };
-
-        let (u_min, u_max, v_min, v_max) = match axis {
-            0 => { // x-plane → (y,z)
-                let (us, vs): (Vec<f64>, Vec<f64>) =
-                    pts.iter().map(|p| (p.y, p.z)).unzip();
-                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
-            },
-            1 => { // y-plane → (x,z)
-                let (us, vs): (Vec<f64>, Vec<f64>) =
-                    pts.iter().map(|p| (p.x, p.z)).unzip();
-                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
-            },
-            _ => { // z-plane → (x,y)
-                let (us, vs): (Vec<f64>, Vec<f64>) =
-                    pts.iter().map(|p| (p.x, p.y)).unzip();
-                (fold_min(&us), fold_max(&us), fold_min(&vs), fold_max(&vs))
-            },
-        };
-
-        finfo.push(Fi { face_idx: fi, axis, coord, sign, u_min, u_max, v_min, v_max });
-    }
-
-    // Detect internal pairs: same axis, opposite sign, same coord,
-    // overlapping 2D extent.
-    let n_faces = shell.faces.len();
-    let mut internal = vec![false; n_faces];
-    for i in 0..finfo.len() {
-        if internal[finfo[i].face_idx] { continue; }
-        for j in (i + 1)..finfo.len() {
-            if internal[finfo[j].face_idx] { continue; }
-            let a = &finfo[i];
-            let b = &finfo[j];
-            if a.axis != b.axis { continue; }
-            if a.sign * b.sign > 0.0 { continue; }  // same direction
-            if (a.coord - b.coord).abs() > zero_tol { continue; }
-            // Check 2D extent overlap (sharing an edge is NOT overlap).
-            let tol_ext = zero_tol * 10.0;
-            let overlap_u = a.u_min.max(b.u_min) + tol_ext < a.u_max.min(b.u_max);
-            let overlap_v = a.v_min.max(b.v_min) + tol_ext < a.v_max.min(b.v_max);
-            if overlap_u && overlap_v {
-                internal[a.face_idx] = true;
-                internal[b.face_idx] = true;
-            }
-        }
-    }
-
-    // Remove internal faces.
-    for solid in &mut brep.solids {
-        for shell in &mut solid.shells {
-            let mut kept: Vec<Face> = Vec::with_capacity(shell.faces.len());
-            for (fi, face) in shell.faces.drain(..).enumerate() {
-                if !internal[fi] {
-                    kept.push(face);
-                }
-            }
-            shell.faces = kept;
-        }
-    }
-
-    // Discard solids whose all faces were internal.
-    brep.solids.retain(|s| {
-        s.shells.iter().any(|sh| !sh.faces.is_empty())
-    });
-
-    Some(brep)
+    let slabs = decompose_slabs(amin, amax, rmin, rmax, zero_tol)?;
+    Some(sew_slabs_into_solid(&slabs, zero_tol))
 }
 
 fn fold_min(v: &[f64]) -> f64 { v.iter().cloned().fold(f64::MAX, f64::min) }
