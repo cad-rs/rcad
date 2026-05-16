@@ -2704,7 +2704,18 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         }
     }
 
-    let r = boolean_op_pave_fill_build(op, a, b)?;
+    let r = match boolean_op_pave_fill_build(op, a, b) {
+        Ok(r) => r,
+        Err(_) => {
+            // Retry with robust infrastructure on failure. The conservative
+            // default tries escalating fuzzy tolerances, glue mode, and
+            // make-connected passes — recovering many numerical-instability
+            // and degenerate-topology cases that the single-shot path misses.
+            let options = BooleanRobustOptions::default();
+            let (r, _report) = boolean_op_robust(op, a, b, options)?;
+            r
+        }
+    };
     Ok(r)
 }
 

@@ -945,13 +945,21 @@ fn classify_against_solid_for_boolean(
                 if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
                     && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
                 {
-                    const NU_PROBE: usize = 3;
-                    const NV_PROBE: usize = 3;
-                    (0..NU_PROBE)
+                    // For tiny faces (bbox diagonal < 10×TOLERANCE_MESH_LEGACY),
+                    // use denser probe grid to avoid misclassification.
+                    let bbox_diag = sub.boundary.iter().copied().reduce(|a, b| a.min(b)).zip(
+                        sub.boundary.iter().copied().reduce(|a, b| a.max(b)),
+                    ).map(|(mn, mx)| (mx - mn).length()).unwrap_or(0.0);
+                    let (nu_probe, nv_probe) = if bbox_diag < 10.0 * TOLERANCE_MESH_LEGACY {
+                        (7usize, 7usize)
+                    } else {
+                        (3usize, 3usize)
+                    };
+                    (0..nu_probe)
                         .flat_map(|iu| {
-                            (0..NV_PROBE).map(move |iv| {
-                                let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / NU_PROBE as f64;
-                                let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / NV_PROBE as f64;
+                            (0..nv_probe).map(move |iv| {
+                                let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / nu_probe as f64;
+                                let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / nv_probe as f64;
                                 sub.surface.point_at(u, v)
                             })
                         })
