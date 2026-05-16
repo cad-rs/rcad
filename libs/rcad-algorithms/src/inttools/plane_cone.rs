@@ -56,10 +56,16 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
 
     // ── Plane through apex ────────────────────────────────────────────────────
     if apex_to_plane.abs() < TOLERANCE_ABS {
-        let angle_between = sin_angle.atan2(cos_angle); // angle between plane and axis
+        let angle_between = sin_angle.atan2(cos_angle); // angle between plane NORMAL and axis
         let half = cone.half_angle_rad;
 
-        if (angle_between - half).abs() < TOLERANCE_ANG {
+        // The plane itself makes an angle of π/2 − angle_between with the axis.
+        //   π/2 − angle_between < half  → plane cuts through cone → TwoLines
+        //   π/2 − angle_between = half  → plane tangent to cone  → SingleLine
+        //   π/2 − angle_between > half  → plane misses cone      → Point
+        let two_lines_cutoff = std::f64::consts::FRAC_PI_2 - half;
+
+        if (angle_between - two_lines_cutoff).abs() < TOLERANCE_ANG {
             // Tangent: single generator line
             let dir = plane_n.cross(axis_n).normalize();
             let gen_dir = (axis_n * half.cos() + dir * half.sin()).normalize();
@@ -69,7 +75,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
             });
         }
 
-        if angle_between < half {
+        if angle_between > two_lines_cutoff {
             // Two generators
             let cross = plane_n.cross(axis_n);
             if is_zero_vec(cross) {
@@ -93,27 +99,27 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
     }
 
     // ── General case: conic type via Dandelin criterion ───────────────────────
-    // Let σ = angle between the cutting plane and the cone axis.
-    // cos(σ) = sin_angle  (since σ = 90° − angle_between_normal_and_axis)
-    // The cone's generator makes angle β (= half_angle_rad) with the axis.
+    // Let σ = angle between the cutting plane and the cone axis,
+    //     β = cone half-angle.
+    // cos(σ) = sin_angle  (since σ = π/2 − acos(cos_angle))
     //
-    //  cos(σ) = sin_angle > sin_beta  →  Ellipse   (plane steeper than generator)
-    //  cos(σ) = sin_angle ≈ sin_beta  →  Parabola  (plane parallel to one generator)
-    //  cos(σ) = sin_angle < sin_beta  →  Hyperbola (plane shallower; cuts both nappes)
+    //  cos(σ) > cos(β) → σ < β → Hyperbola  (plane cuts both nappes)
+    //  cos(σ) ≈ cos(β) → σ ≈ β → Parabola   (plane parallel to one generator)
+    //  cos(σ) < cos(β) → σ > β → Ellipse    (plane cuts one nappe completely)
     let cos_beta = cone.half_angle_rad.cos();
     let sin_beta = cone.half_angle_rad.sin();
 
-    // ── Parabola: plane parallel to exactly one generator ─────────────────────
-    if (sin_angle - sin_beta).abs() < TOLERANCE_ANG {
-        return build_parabola(plane, cone, apex_to_plane, axis_n);
-    }
-
-    // ── Hyperbola: sin_angle < sin_beta ───────────────────────────────────────
-    if sin_angle < sin_beta - TOLERANCE_ANG {
+    // ── Hyperbola: σ < β ↔ cos(σ) > cos(β) ↔ sin_angle > cos_beta ──────────
+    if sin_angle > cos_beta + TOLERANCE_ANG {
         return build_hyperbola(plane, cone, apex_to_plane, axis_n, cos_beta, sin_beta, sin_angle);
     }
 
-    // ── Ellipse: sin_angle > cos_beta ─────────────────────────────────────────
+    // ── Parabola: σ ≈ β ↔ cos(σ) ≈ cos(β) ↔ sin_angle ≈ cos_beta ───────────
+    if (sin_angle - cos_beta).abs() < TOLERANCE_ANG {
+        return build_parabola(plane, cone, apex_to_plane, axis_n);
+    }
+
+    // ── Ellipse: σ > β ↔ cos(σ) < cos(β) ↔ sin_angle < cos_beta ────────────
     build_ellipse(plane, cone, apex_to_plane, axis_n, cos_angle)
 }
 
@@ -259,7 +265,7 @@ fn build_hyperbola(
     cone: &ConicalSurface,
     apex_to_plane: f64,
     axis_n: DVec3,
-    _cos_beta: f64,
+    cos_beta: f64,
     sin_beta: f64,
     sin_angle: f64,
 ) -> PlaneConicalResult {
@@ -296,29 +302,24 @@ fn build_hyperbola(
     //   a = d * sin_beta / sin_beta = d,  b = 0 → degenerate (two straight lines).
     // We handle this by using the ρ-based formula when cos_angle ≈ 0.
 
-    let discriminant = sin_beta * sin_beta - sin_angle * sin_angle;
-    if discriminant <= TOLERANCE_ABS * TOLERANCE_ABS {
-        // Parabola boundary or degenerate; caller should have caught this.
-        // Fall back to no intersection to be safe.
-        return PlaneConicalResult::NoIntersection;
-    }
-    let sqrt_d = discriminant.sqrt();
     let d = apex_to_plane.abs();
 
-    let (a, b) = if cos_angle < TOLERANCE_ANG {
-        // Plane nearly parallel to axis: compute by radial distance from axis.
-        // apex_to_plane is distance along plane normal; for axis-parallel plane,
-        // plane normal ⊥ axis, so ρ = distance from cone axis to plane.
-        // The hyperbola at that distance from the cone axis:
-        //   at height y along axis: r(y) = y * tan_beta
-        //   intersection with plane at distance ρ: y = ρ / tan_beta  (where both branches meet)
-        // a = ρ / tan_beta  (half-distance between vertices)
-        // b = ρ (transverse width at x = 0... approximate)
-        let rho = d;
-        (rho / tan_beta, rho)
-    } else {
-        (d * sin_beta / sqrt_d, d * sin_angle * cos_angle.abs() / sqrt_d)
-    };
+    // General hyperbola formula (σ < β).
+    // K = sin_angle²·tan²β − cos_angle² = cos²σ·tan²β − sin²σ > 0 for σ < β.
+    // a = d·tanβ / K  (semi-transverse axis)
+    // b = a·√(sin_angle² − cos_beta²) / cos_beta  (semi-conjugate axis)
+    // Derived from the vertices at x=0: V1=(0, z1·tanβ, z1), V2=(0, -z2·tanβ, z2)
+    // where z1,2 = d/(sinσ ∓ cosσ·tanβ).
+    let k_val = sin_angle * sin_angle * tan_beta * tan_beta - cos_angle * cos_angle;
+    if k_val <= TOLERANCE_ABS * TOLERANCE_ABS {
+        return PlaneConicalResult::NoIntersection;
+    }
+    let a = d * tan_beta / k_val;
+    let e_sq_minus_1 = (sin_angle * sin_angle - cos_beta * cos_beta) / (cos_beta * cos_beta);
+    if e_sq_minus_1 <= 0.0 {
+        return PlaneConicalResult::NoIntersection;
+    }
+    let b = a * e_sq_minus_1.sqrt();
 
     if a < TOLERANCE_ABS {
         return PlaneConicalResult::Point(center);
@@ -401,24 +402,26 @@ mod tests {
         }
     }
 
-    /// A plane with its normal nearly aligned with the cone axis cuts only one
-    /// nappe at a shallow angle → hyperbola (sin_angle < sin_beta).
+    /// A plane parallel to the cone axis cuts both nappes → hyperbola
+    /// (σ = 0 < β ↔ sin_angle > cos_beta).
     ///
-    /// Cone: axis Y, half-angle 60°.  sin_beta = sin(60°) ≈ 0.866.
-    /// Plane normal = normalize(Y * 2 + Z): cos_angle ≈ 0.894, sin_angle ≈ 0.447.
-    /// sin_angle (0.447) < sin_beta (0.866) → hyperbola.
+    /// Cone: axis Y, half-angle 60°, so cos_beta = cos(60°) = 0.5.
+    /// Plane normal = (X + Z)/√2: makes 90° with Y-axis.
+    /// cos_angle = 0, sin_angle = 1. sin_angle (1.0) > cos_beta (0.5) → hyperbola.
     #[test]
     fn hyperbola_case() {
         let cone_60 = ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
-            half_angle_rad: std::f64::consts::PI / 3.0, // 60°; sin_beta ≈ 0.866
+            half_angle_rad: std::f64::consts::PI / 3.0, // 60°; cos_beta = 0.5
         };
-        // normal = normalize(2Y + Z): cos_angle = 2/sqrt(5) ≈ 0.894, sin_angle ≈ 0.447
-        let n = DVec3::new(0.0, 2.0, 1.0).normalize();
+        // normal = normalize(X + Z): cos_angle = |n·Y| = 0, sin_angle = 1
+        // σ = 0 (plane parallel to axis) < β = 60° → hyperbola
+        // origin at (0.5, 0, 0) so plane does NOT pass through apex
+        let n = DVec3::new(1.0, 0.0, 1.0).normalize();
         let plane = Plane {
-            origin: DVec3::new(0.0, 0.5, 0.0),
+            origin: DVec3::new(0.5, 0.0, 0.0),
             normal: n,
         };
         match intersect_plane_cone(&plane, &cone_60) {
@@ -430,14 +433,14 @@ mod tests {
         }
     }
 
-    /// A 30° half-angle cone with a steeply-tilted cutting plane should
-    /// yield an ellipse (sin_angle > sin_beta).
+    /// A 30° half-angle cone with a cutting plane at σ ≈ 26.6° (< β = 30°):
+    /// the plane is shallower than the generator → hyperbola.
     ///
-    /// Cone: axis Y, half_angle=30°, so sin_beta=0.5.
-    /// Plane normal = normalize(Z * 2 + Y): angle between normal and Y ≈ 63°,
-    /// sin_angle ≈ sin(63°) ≈ 0.891 > sin_beta=0.5 → ellipse.
+    /// Cone: axis Y, half_angle=30°, so cos_beta≈0.866.
+    /// Plane normal = normalize(Z * 2 + Y): cos_angle≈0.447 (sinσ), sin_angle≈0.894 (cosσ).
+    /// σ = π/2 − acos(0.447) ≈ 26.6° < β=30° → hyperbola.
     #[test]
-    fn steep_oblique_gives_ellipse() {
+    fn oblique_plane_gives_hyperbola() {
         let cone = ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Y,
@@ -451,8 +454,11 @@ mod tests {
             normal: n,
         };
         match intersect_plane_cone(&plane, &cone) {
-            PlaneConicalResult::Ellipse(_) => {}
-            other => panic!("Expected Ellipse for steep cut of 30° cone, got {other:?}"),
+            PlaneConicalResult::Hyperbola(h) => {
+                assert!(h.semi_major > 0.0, "semi_major must be positive: {}", h.semi_major);
+                assert!(h.semi_minor > 0.0, "semi_minor must be positive: {}", h.semi_minor);
+            }
+            other => panic!("Expected Hyperbola for σ≈26.6° < β=30°, got {other:?}"),
         }
     }
 }

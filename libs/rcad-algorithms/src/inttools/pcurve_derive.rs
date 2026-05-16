@@ -307,6 +307,7 @@ pub fn fallback_pcurve_by_projection(
             let p3 = curve.point_at(t);
             match surface {
                 Surface3::Sphere(sph) => sph.world_to_uv(p3),
+                Surface3::Cone(cone) => cone.world_to_uv(p3),
                 _ => {
                     let proj = closest_point_on_surface(surface, p3, 16);
                     DVec2::new(proj.params.0, proj.params.1)

@@ -221,6 +221,34 @@ impl ConicalSurface {
     pub fn radius_at_axial(&self, axial: f64) -> f64 {
         self.radius + axial * self.half_angle_rad.tan()
     }
+
+    /// UV coordinates of world point `p` relative to this conical surface.
+    ///
+    /// `u` = azimuth (−π, π], `v` = slant distance from the reference circle at
+    /// `self.apex`, matching [`SurfaceEval::point_at`].  When `p` is off the
+    /// surface the returned `(u, v)` corresponds to the closest point on the cone.
+    pub fn world_to_uv(self, p: DVec3) -> DVec2 {
+        let axis = self.axis_dir();
+        let x_ax = any_perpendicular(axis);
+        let y_ax = axis.cross(x_ax).normalize();
+        let local = p - self.apex;
+        let along = local.dot(axis);
+        let perp = local - axis * along;
+        let radial = perp.length();
+
+        let u = if radial < 1e-15 {
+            0.0
+        } else {
+            let perp_n = perp / radial;
+            perp_n.dot(y_ax).atan2(perp_n.dot(x_ax))
+        };
+
+        let cos_half = self.half_angle_rad.cos();
+        let sin_half = self.half_angle_rad.sin();
+        let v = along * cos_half + (radial - self.radius) * sin_half;
+
+        DVec2::new(u, v)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -2923,6 +2923,7 @@ impl<'a> BooleanBuilder<'a> {
                             // `closest_point_on_surface` can pick a wrong local minimum for oblique trims.
                             match &surface {
                                 rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
+                                rcad_kernel::geom::Surface3::Cone(cone) => cone.world_to_uv(p3),
                                 _ => {
                                     let proj = rcad_kernel::projection::closest_point_on_surface(
                                         &surface, p3, 16,

@@ -2746,7 +2746,9 @@ impl<'a> PaveFiller<'a> {
         let mut curve_indices = Vec::new();
 
         match intersect_plane_cone(plane, cone) {
-            PlaneConicalResult::NoIntersection | PlaneConicalResult::Point(_) => return,
+            PlaneConicalResult::NoIntersection | PlaneConicalResult::Point(_) => {
+                return;
+            }
 
             PlaneConicalResult::SingleLine(line) => {
                 let extent = 20.0_f64;
