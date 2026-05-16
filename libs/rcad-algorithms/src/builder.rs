@@ -1683,17 +1683,11 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // For sphere faces with no intersection curves, use UV tessellation into
-        // patches to provide valid boundary polygons (the sphere's single face has
-        // only 2 boundary vertices: north and south poles along the seam).
-        // With intersection curves, fall through to split_curved_face_parametric
-        // which splits the UV domain by trim curves for accurate classification
-        // and constructs inner wire holes from closed-loop trims.
+        // For sphere faces, use UV tessellation into patches to provide valid
+        // boundary polygons (the sphere's single face has only 2 boundary vertices:
+        // north and south poles along the seam).
         if matches!(&face.surface, Surface3::Sphere(_)) {
-            if face.face_info.curves_in.is_empty() {
-                return self.tessellate_sphere_face(face_idx);
-            }
-            // Has intersection curves: let split_curved_face_parametric handle it.
+            return self.tessellate_sphere_face(face_idx);
         }
 
         match &face.surface {
