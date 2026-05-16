@@ -2684,6 +2684,149 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// Find the parameter range of `curve` that lies within both faces' UV
+    /// boundaries.  Coarse-samples over `search_range`, picks the longest
+    /// contiguous segment, then binary-searches each endpoint to sub-step
+    /// precision so the returned range corresponds to curve-on-face-boundary.
+    /// Returns `None` when no valid segment is found.
+    fn trim_curve_to_faces(
+        ds: &DS,
+        curve: &Curve3,
+        search_range: [f64; 2],
+        f1: usize,
+        f2: usize,
+    ) -> Option<[f64; 2]> {
+        use crate::medial_axis::point_in_polygon_2d;
+        use rcad_kernel::projection::closest_point_on_surface;
+        use std::f64::consts::TAU;
+
+        const N: usize = 256;
+
+        let face1 = &ds.faces[f1];
+        let face2 = &ds.faces[f2];
+        let uv_bnd1 = face1.uv_boundary.as_ref()?;
+        let uv_bnd2 = face2.uv_boundary.as_ref()?;
+        let s1 = &face1.surface;
+        let s2 = &face2.surface;
+
+        // UV from 3D point on a surface, normalising u ∈ [0, 2π].
+        let uv_on_surface = |surface: &Surface3, p: DVec3| -> DVec2 {
+            match surface {
+                Surface3::Cone(cone) => {
+                    let uv = cone.world_to_uv(p);
+                    DVec2::new(if uv.x < 0.0 { uv.x + TAU } else { uv.x }, uv.y)
+                }
+                Surface3::Sphere(sph) => sph.world_to_uv(p),
+                Surface3::Cylinder(cyl) => {
+                    let x_ax = any_perpendicular(cyl.axis);
+                    let y_ax = cyl.axis.cross(x_ax).normalize();
+                    let local = p - cyl.origin;
+                    let u = local.dot(y_ax).atan2(local.dot(x_ax));
+                    DVec2::new(if u < 0.0 { u + TAU } else { u }, local.dot(cyl.axis))
+                }
+                _ => {
+                    let proj = closest_point_on_surface(surface, p, 16);
+                    DVec2::new(proj.params.0, proj.params.1)
+                }
+            }
+        };
+
+        // True when the curve point at t is inside *both* faces' UV boundaries.
+        // For planar faces the 3D point must actually lie on the plane (not just
+        // project there), else an off-surface point would be a false positive.
+        let point_in_both = |t: f64| -> bool {
+            let pt = curve.point_at(t);
+            for (sf, bnd) in &[(s1, uv_bnd1), (s2, uv_bnd2)] {
+                if let Surface3::Plane(pl) = sf {
+                    if (pt - pl.origin).dot(pl.normal).abs() > TOLERANCE_COORD_SUB {
+                        return false;
+                    }
+                }
+                let uv = uv_on_surface(sf, pt);
+                if !point_in_polygon_2d(uv, bnd) {
+                    return false;
+                }
+            }
+            true
+        };
+
+        let [t0, t1] = search_range;
+        let step = (t1 - t0) / N as f64;
+        let mut seg_start: Option<(usize, f64)> = None;
+        let mut segments: Vec<(usize, usize, f64, f64)> = Vec::new();
+
+        for i in 0..=N {
+            let t = t0 + step * i as f64;
+            let inside = point_in_both(t);
+
+            if inside {
+                if seg_start.is_none() {
+                    seg_start = Some((i, t));
+                }
+            } else if let Some((si, st)) = seg_start.take() {
+                if t - st > TOLERANCE_LINEAR_ULTRA_STRICT {
+                    segments.push((si, i, st, t));
+                }
+            }
+        }
+        if let Some((si, st)) = seg_start.take() {
+            if t1 - st > TOLERANCE_LINEAR_ULTRA_STRICT {
+                segments.push((si, N, st, t1));
+            }
+        }
+
+        // Longest segment
+        let (si, ei, rough_start, rough_end) = segments.into_iter().max_by(|a, b| {
+            (a.3 - a.2)
+                .partial_cmp(&(b.3 - b.2))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+
+        // ── binary-search refinement of both endpoints ──
+        // Start: between sample (si-1, outside) and sample (si, inside).
+        let refined_start = if si > 0 {
+            let t_out = t0 + step * (si - 1) as f64;
+            let mut lo = t_out;   // outside
+            let mut hi = rough_start; // inside
+            for _ in 0..48 {
+                let mid = 0.5 * (lo + hi);
+                if point_in_both(mid) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            hi
+        } else {
+            rough_start
+        };
+
+        // End: between sample (ei-1, inside) and sample (ei, outside).
+        let refined_end = if ei < N {
+            let t_in = t0 + step * (ei - 1) as f64;
+            let t_out = t0 + step * ei as f64;
+            let mut lo = t_in;  // inside
+            let mut hi = t_out; // outside
+            for _ in 0..48 {
+                let mid = 0.5 * (lo + hi);
+                if point_in_both(mid) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            lo
+        } else {
+            rough_end
+        };
+
+        if refined_end - refined_start > TOLERANCE_LINEAR_ULTRA_STRICT {
+            Some([refined_start, refined_end])
+        } else {
+            None
+        }
+    }
+
     // ── Plane × Cone analytic face-face intersection ──────────────────────────
 
     fn intersect_plane_cone_faces(
@@ -2751,39 +2894,85 @@ impl<'a> PaveFiller<'a> {
             }
 
             PlaneConicalResult::SingleLine(line) => {
-                let extent = 20.0_f64;
-                let pca_plane = line_pcurve_on_plane(&line, plane);
-                let pcb_cone = fallback_pcurve_by_projection(
+                if let Some(trimmed) = Self::trim_curve_to_faces(
+                    self.ds,
                     &Curve3::Line(line),
-                    &[-extent, extent],
-                    &Surface3::Cone(*cone),
-                );
-                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
-                let ci = add_curve(self.ds, Curve3::Line(line), [-extent, extent], pca, pcb, f1, f2);
-                curve_indices.push(ci);
+                    [-30.0, 30.0],
+                    f1,
+                    f2,
+                ) {
+                    let pca_plane = line_pcurve_on_plane(&line, plane);
+                    let pcb_cone = fallback_pcurve_by_projection(
+                        &Curve3::Line(line),
+                        &trimmed,
+                        &Surface3::Cone(*cone),
+                    );
+                    let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                    let ci = add_curve(
+                        self.ds,
+                        Curve3::Line(line),
+                        trimmed,
+                        pca,
+                        pcb,
+                        f1,
+                        f2,
+                    );
+                    curve_indices.push(ci);
+                }
             }
 
             PlaneConicalResult::TwoLines(l1, l2) => {
-                let extent = 20.0_f64;
-                let pca1 = line_pcurve_on_plane(&l1, plane);
-                let pcb1 = fallback_pcurve_by_projection(
+                if let Some(t1) = Self::trim_curve_to_faces(
+                    self.ds,
                     &Curve3::Line(l1),
-                    &[-extent, extent],
-                    &Surface3::Cone(*cone),
-                );
-                let (pca1, pcb1) = make_pcurves(pca1, pcb1);
-                let ci1 = add_curve(self.ds, Curve3::Line(l1), [-extent, extent], pca1, pcb1, f1, f2);
+                    [-30.0, 30.0],
+                    f1,
+                    f2,
+                ) {
+                    let pca1 = line_pcurve_on_plane(&l1, plane);
+                    let pcb1 = fallback_pcurve_by_projection(
+                        &Curve3::Line(l1),
+                        &t1,
+                        &Surface3::Cone(*cone),
+                    );
+                    let (pca1, pcb1) = make_pcurves(pca1, pcb1);
+                    let ci1 = add_curve(
+                        self.ds,
+                        Curve3::Line(l1),
+                        t1,
+                        pca1,
+                        pcb1,
+                        f1,
+                        f2,
+                    );
+                    curve_indices.push(ci1);
+                }
 
-                let pca2 = line_pcurve_on_plane(&l2, plane);
-                let pcb2 = fallback_pcurve_by_projection(
+                if let Some(t2) = Self::trim_curve_to_faces(
+                    self.ds,
                     &Curve3::Line(l2),
-                    &[-extent, extent],
-                    &Surface3::Cone(*cone),
-                );
-                let (pca2, pcb2) = make_pcurves(pca2, pcb2);
-                let ci2 = add_curve(self.ds, Curve3::Line(l2), [-extent, extent], pca2, pcb2, f1, f2);
-                curve_indices.push(ci1);
-                curve_indices.push(ci2);
+                    [-30.0, 30.0],
+                    f1,
+                    f2,
+                ) {
+                    let pca2 = line_pcurve_on_plane(&l2, plane);
+                    let pcb2 = fallback_pcurve_by_projection(
+                        &Curve3::Line(l2),
+                        &t2,
+                        &Surface3::Cone(*cone),
+                    );
+                    let (pca2, pcb2) = make_pcurves(pca2, pcb2);
+                    let ci2 = add_curve(
+                        self.ds,
+                        Curve3::Line(l2),
+                        t2,
+                        pca2,
+                        pcb2,
+                        f1,
+                        f2,
+                    );
+                    curve_indices.push(ci2);
+                }
             }
 
             PlaneConicalResult::Circle(circle) => {
@@ -2811,42 +3000,67 @@ impl<'a> PaveFiller<'a> {
             }
 
             PlaneConicalResult::Parabola(parabola) => {
-                // Parabola: use fallback projection on both surfaces.
-                // Parameterise the parabola over a finite t range centred at the vertex.
-                let t_range = [-20.0_f64, 20.0_f64];
-                let pca_plane = fallback_pcurve_by_projection(
+                if let Some(trimmed) = Self::trim_curve_to_faces(
+                    self.ds,
                     &Curve3::Parabola(parabola),
-                    &t_range,
-                    &Surface3::Plane(*plane),
-                );
-                let pcb_cone = fallback_pcurve_by_projection(
-                    &Curve3::Parabola(parabola),
-                    &t_range,
-                    &Surface3::Cone(*cone),
-                );
-                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
-                let ci =
-                    add_curve(self.ds, Curve3::Parabola(parabola), t_range, pca, pcb, f1, f2);
-                curve_indices.push(ci);
+                    [-30.0, 30.0],
+                    f1,
+                    f2,
+                ) {
+                    let pca_plane = fallback_pcurve_by_projection(
+                        &Curve3::Parabola(parabola),
+                        &trimmed,
+                        &Surface3::Plane(*plane),
+                    );
+                    let pcb_cone = fallback_pcurve_by_projection(
+                        &Curve3::Parabola(parabola),
+                        &trimmed,
+                        &Surface3::Cone(*cone),
+                    );
+                    let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                    let ci = add_curve(
+                        self.ds,
+                        Curve3::Parabola(parabola),
+                        trimmed,
+                        pca,
+                        pcb,
+                        f1,
+                        f2,
+                    );
+                    curve_indices.push(ci);
+                }
             }
 
             PlaneConicalResult::Hyperbola(hyperbola) => {
-                // Hyperbola: use fallback projection on both surfaces.
-                let t_range = [-20.0_f64, 20.0_f64];
-                let pca_plane = fallback_pcurve_by_projection(
+                if let Some(trimmed) = Self::trim_curve_to_faces(
+                    self.ds,
                     &Curve3::Hyperbola(hyperbola),
-                    &t_range,
-                    &Surface3::Plane(*plane),
-                );
-                let pcb_cone = fallback_pcurve_by_projection(
-                    &Curve3::Hyperbola(hyperbola),
-                    &t_range,
-                    &Surface3::Cone(*cone),
-                );
-                let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
-                let ci =
-                    add_curve(self.ds, Curve3::Hyperbola(hyperbola), t_range, pca, pcb, f1, f2);
-                curve_indices.push(ci);
+                    [-30.0, 30.0],
+                    f1,
+                    f2,
+                ) {
+                    let pca_plane = fallback_pcurve_by_projection(
+                        &Curve3::Hyperbola(hyperbola),
+                        &trimmed,
+                        &Surface3::Plane(*plane),
+                    );
+                    let pcb_cone = fallback_pcurve_by_projection(
+                        &Curve3::Hyperbola(hyperbola),
+                        &trimmed,
+                        &Surface3::Cone(*cone),
+                    );
+                    let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
+                    let ci = add_curve(
+                        self.ds,
+                        Curve3::Hyperbola(hyperbola),
+                        trimmed,
+                        pca,
+                        pcb,
+                        f1,
+                        f2,
+                    );
+                    curve_indices.push(ci);
+                }
             }
         }
 
