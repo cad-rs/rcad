@@ -9,9 +9,10 @@
 //! ear-cut, or fan-triangulation from wire vertices.
 
 use glam::{DVec2, DVec3};
+use std::f64::consts::PI;
 
 use crate::BRep;
-use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
+use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval, any_perpendicular};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -392,13 +393,13 @@ fn try_face_with_holes(
 /// Resolution used for UV-grid tessellation of curved faces (per axis).
 ///
 /// 64×64 gives a <0.1% volume error for a unit sphere.
-const UV_TESS_N: usize = 64;
+const UV_TESS_N: usize = 80;
 
 /// Finer grid for masked sphere patches (trimmed / holed) when ear-cut fails.
-const SPHERE_UV_MASK_N: usize = 160;
+const SPHERE_UV_MASK_N: usize = 200;
 
 /// Grid for ‖∂P/∂u×∂P/∂v‖ midpoint integration on a UV rectangle (per-axis).
-const PARAM_RECT_AREA_N: usize = 64;
+const PARAM_RECT_AREA_N: usize = 80;
 
 /// Winding-number test; correct for self-intersecting polygons, unlike the
 /// even-odd ray-crossing test used by [`point_in_polygon_2d`].
@@ -886,16 +887,15 @@ fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskC
                     DVec2::new(u1, v1),
                     DVec2::new(u0, v1),
                 ];
-                let all_corners_in = if use_uv {
-                    corners_uv
-                        .iter()
-                        .all(|q| point_in_polygon_2d(outer_poly, *q))
+                let center = DVec2::new((u0 + u1) * 0.5, (v0 + v1) * 0.5);
+                let quad_in = if use_uv {
+                    point_in_polygon_2d(outer_poly, center)
+                        || corners_uv.iter().any(|q| point_in_polygon_2d(outer_poly, *q))
                 } else {
-                    corners_uv
-                        .iter()
-                        .all(|q| point_in_spherical_polygon_3d(outer_3d, s.point_at(q.x, q.y)))
+                    point_in_spherical_polygon_3d(outer_3d, s.point_at(center.x, center.y))
+                        || corners_uv.iter().any(|q| point_in_spherical_polygon_3d(outer_3d, s.point_at(q.x, q.y)))
                 };
-                if !all_corners_in {
+                if !quad_in {
                     continue;
                 }
                 n_inside += 1;
@@ -1887,15 +1887,42 @@ fn estimate_uv_domain_from_wire(
 
     match surf {
         Surface3::Cylinder(cyl) => {
-            // CylindricalSurface: u = azimuth [0, 2π], v = height along axis.
-            let d = surf.default_domain(); // [0, 2π, -inf, inf]
-            let u0 = d[0];
-            let u1 = d[1];
+            // CylindricalSurface: u = azimuth, v = height along axis.
+            // Estimate u-range from wire vertex projections AND edge curve samples,
+            // instead of full [0, 2π].  Vertex projections alone miss full-cylinder
+            // faces (seam and opposite-side vertices only span π).
             let v_vals: Vec<f64> = pts.iter().map(|p| (*p - cyl.origin).dot(cyl.axis)).collect();
             let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
             let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             if v0 >= v1 { return None; }
-            Some([u0, u1, v0 - 1e-10, v1 + 1e-10])
+            // Reconstruct reference directions matching SurfaceEval::point_at.
+            let x_ax = any_perpendicular(cyl.axis);
+            let y_ax = cyl.axis.cross(x_ax).normalize();
+            let point_to_u = |p: DVec3| -> f64 {
+                let radial = p - cyl.origin - (p - cyl.origin).dot(cyl.axis) * cyl.axis;
+                let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
+                if u < 0.0 { u + 2.0 * PI } else { u }
+            };
+            let mut u_vals: Vec<f64> = pts.iter().map(|p| point_to_u(*p)).collect();
+            // Also sample each edge's 3D curve to fill gaps between vertices.
+            use crate::geom::CurveEval;
+            let all_wires = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter());
+            for we in all_wires.flat_map(|w| &w.edges) {
+                let curve = brep.geom.edge_curve.get(we.idx).and_then(|o| *o)
+                    .and_then(|ci| brep.geom.curves.get(ci));
+                let range = brep.geom.edge_curve_range.get(we.idx).and_then(|o| *o);
+                if let (Some(curve), Some([t0, t1])) = (curve, range) {
+                    let ns = 16;
+                    for k in 0..=ns {
+                        let frac = k as f64 / ns as f64;
+                        u_vals.push(point_to_u(curve.point_at(t0 + (t1 - t0) * frac)));
+                    }
+                }
+            }
+            let u0 = u_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+            let u1 = u_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if u0 >= u1 { return None; }
+            Some([u0 - 1e-10, u1 + 1e-10, v0 - 1e-10, v1 + 1e-10])
         }
         Surface3::Cone(con) => {
             // ConicalSurface: u = azimuth [0, 2π], v = slant distance ≥ 0.
