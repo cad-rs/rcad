@@ -1633,15 +1633,26 @@ impl<'a> BooleanBuilder<'a> {
                                 let ic = &self.ds.intersection_curves[ci];
                                 let [t0, t1] = ic.t_range;
                                 const N: usize = 8;
-                                let pts: Vec<f64> = (0..=N)
+                                let uvs: Vec<DVec2> = (0..=N)
                                     .map(|i| {
                                         let t = t0 + (t1 - t0) * i as f64 / N as f64;
-                                        pcurve.point_at(t).x
+                                        pcurve.point_at(t)
                                     })
                                     .collect();
-                                let u_min = pts.iter().cloned().fold(f64::INFINITY, f64::min);
-                                let u_max = pts.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                                (u_max - u_min) >= bnd_u_span * 0.85
+                                let u_min = uvs.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                                let u_max = uvs.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                                if (u_max - u_min) < bnd_u_span * 0.85 {
+                                    return false;
+                                }
+                                // Exclude full-wrap curves at the V boundary (cap circles).
+                                // Cap circles span the full U-range but follow the cylinder's
+                                // top/bottom edge — they are not interior Steinmetz-style cuts
+                                // that require 2D tessellation to resolve.
+                                let all_at_v_bnd = uvs.iter().all(|p| {
+                                    (p.y - bnd_v_min).abs() < vb_tol
+                                        || (p.y - bnd_v_max).abs() < vb_tol
+                                });
+                                !all_at_v_bnd
                             })
                         });
                     if has_full_wrap {
