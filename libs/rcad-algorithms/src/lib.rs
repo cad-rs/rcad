@@ -2681,6 +2681,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b) {
+            return Ok(r);
+        }
     }
 
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
@@ -2735,8 +2738,10 @@ pub fn boolean_op_with_retry(
     a: &BRep,
     b: &BRep,
 ) -> Result<BRep, BooleanError> {
-    // First attempt: standard path (no fuzzy tolerance / glue).
-    if let Ok(brep) = boolean_op_pave_fill_build(op, a, b) {
+    // First attempt: standard path including fast-paths (containment, box-box, etc.).
+    // Previously called boolean_op_pave_fill_build directly, which bypassed fast-paths
+    // and caused bcommon_simple box-box failures (e.g. E1 expected SA=4 got SA=5).
+    if let Ok(brep) = boolean_op(op, a, b) {
         return Ok(brep);
     }
     // Fallback: retry with escalating tolerance.

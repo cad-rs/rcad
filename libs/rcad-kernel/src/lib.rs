@@ -1510,6 +1510,31 @@ impl BRep {
 
         Some([mn, mx])
     }
+
+    /// Bounding box from vertices and curves only, excluding surface expansion.
+    ///
+    /// This is tighter than [`bounding_box`] for shapes where surface expansion
+    /// overestimates the extent (e.g. cone frustums whose analytic surface extends
+    /// past the actual solid). Useful for containment pre-checks where a false
+    /// positive from surface expansion would produce incorrect results.
+    pub fn vertices_curves_bounding_box(&self) -> Option<[DVec3; 2]> {
+        if self.vertices.is_empty() {
+            return None;
+        }
+        let mut mn = DVec3::splat(f64::INFINITY);
+        let mut mx = DVec3::splat(f64::NEG_INFINITY);
+        for v in &self.vertices {
+            mn = mn.min(v.point);
+            mx = mx.max(v.point);
+        }
+        for curve in &self.geom.curves {
+            if let Some([c_mn, c_mx]) = curve_bounding_box(curve) {
+                mn = mn.min(c_mn);
+                mx = mx.max(c_mx);
+            }
+        }
+        Some([mn, mx])
+    }
 }
 
 /// Conservative bounding-box contribution from an analytic curve.

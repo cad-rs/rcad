@@ -136,13 +136,18 @@ pub fn try_identical_operands(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<B
 /// For Difference B inside A: not handled (falls through to generic Pave-Filler).
 pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
     for (outer, inner, swapped) in [(a, b, false), (b, a, true)] {
-        let Some([omin, omax]) = outer.bounding_box() else { continue };
-        let Some([imin, imax]) = inner.bounding_box() else { continue };
-        // Bbox of inner must be within bbox of outer (inclusive with tolerance).
+        // Use vertices+curves bbox (excluding surface expansion) for the pre-check.
+        // Surface expansion inflates bboxes for shapes like cone frustums (apex extends
+        // past the solid), causing false containment positives (ZM1).
+        let Some([omin, omax]) = outer.vertices_curves_bounding_box() else { continue };
+        let Some([imin, imax]) = inner.vertices_curves_bounding_box() else { continue };
         let tol = TOLERANCE_ABS;
-        if imin.x < omin.x - tol || imax.x > omax.x + tol { continue; }
-        if imin.y < omin.y - tol || imax.y > omax.y + tol { continue; }
-        if imin.z < omin.z - tol || imax.z > omax.z + tol { continue; }
+        if !(imin.x >= omin.x - tol && imax.x <= omax.x + tol &&
+             imin.y >= omin.y - tol && imax.y <= omax.y + tol &&
+             imin.z >= omin.z - tol && imax.z <= omax.z + tol)
+        {
+            continue;
+        }
         // All inner vertices must be inside the outer solid (not just its bbox).
         // This is critical for curved solids (e.g. sphere bbox contains box corners
         // that are outside the sphere surface).
@@ -1296,6 +1301,26 @@ fn try_intersection_coaxial_cone_cylinder_pair(cone: &BRep, cyl: &BRep) -> Optio
 pub fn try_intersection_coaxial_cone_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     try_intersection_coaxial_cone_cylinder_pair(a, b)
         .or_else(|| try_intersection_coaxial_cone_cylinder_pair(b, a))
+}
+
+/// Two coaxial Z-aligned cylinders with the same radius -> intersection is the
+/// overlapping Z-span cylinder (e.g. OCCT bcommon_simple/J1).
+pub fn try_intersection_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (z1_lo, z1_hi, r1) = z_axis_cylinder_z_span_r(a)?;
+    let (z2_lo, z2_hi, r2) = z_axis_cylinder_z_span_r(b)?;
+    if (r1 - r2).abs() > TOLERANCE_ADAPTIVE_MAX {
+        return None;
+    }
+    let z0 = z1_lo.max(z2_lo);
+    let z1 = z1_hi.min(z2_hi);
+    if z1 - z0 < TOLERANCE_MESH_LEGACY {
+        return None;
+    }
+    let zm = (z0 + z1) * 0.5;
+    let h = z1 - z0;
+    rcad_modeling::make_cylinder_brep(
+        DVec3::new(0.0, 0.0, zm), DVec3::Z, DVec3::X, r1, h,
+    ).ok()
 }
 
 /// `cone \ cylinder` when the cylinder closes the cone base and contains the cone frustum up to `z_hi`:

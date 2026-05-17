@@ -122,11 +122,13 @@ fn intersect_parallel_cones(
         if (tan1 - tan2).abs() < TOLERANCE_LEN_MIN {
             // Equal half-angles, different apices.
             // The two cones are coaxial "nested" with the same angle.
-            // They only share a single point if one apex is on the other's surface
-            // (but that requires r1(delta_along) = 0, i.e. delta_along * tan2 = 0,
-            //  which means delta_along = 0, already caught above).
-            // Otherwise no intersection of lateral surfaces.
-            return ConeConeResult::NoIntersection;
+            // For infinite cones the lateral surfaces are parallel and never
+            // intersect.  However for frustums (bounded cones) the face-boundary
+            // edges still need processing by the pave-filler — return General so
+            // the numeric engine gets a chance to find intersection curves, even
+            // if it also returns empty, the pave-filler still processes face-plane
+            // pairs for the end caps.
+            return ConeConeResult::General;
         }
 
         let h = -delta_along * tan2 / (tan1 - tan2);
