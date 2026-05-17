@@ -1589,7 +1589,6 @@ fn numeric_intss_impl(
     // (direct `intersect_surfaces` calls without domain overrides) the
     // original nn-distance is used to avoid altering sign-change patterns for
     // large default domains.
-    let use_analytic = dom2_override.is_some();
     let approx_dist_to_s2 = |p: DVec3| -> f64 {
         if !p.is_finite() {
             return f64::INFINITY;
@@ -1598,18 +1597,25 @@ fn numeric_intss_impl(
             .iter()
             .map(|q| (*q - p).length())
             .fold(f64::INFINITY, f64::min);
-        if use_analytic {
+        if let Some([u_min, u_max, v_min, v_max]) = dom2_override {
             let proj = closest_point_on_surface(s2, p, 16);
-            // Use analytic distance unconditionally when domain overrides are
-            // provided (the caller guarantees bounded faces).
             if proj.distance.is_finite() {
-                proj.distance.min(nn_d)
-            } else {
-                nn_d
+                let (u, v) = proj.params;
+                // Accept analytic distance when the projection lands within
+                // the face UV boundary (with a small numerical slop to avoid
+                // rejecting borderline projections at discrete grid edges).
+                let uv_tol = TOLERANCE_ABS
+                    .max(TOLERANCE_COORD_SUB * (u_max - u_min + v_max - v_min) * 0.5);
+                if u >= u_min - uv_tol
+                    && u <= u_max + uv_tol
+                    && v >= v_min - uv_tol
+                    && v <= v_max + uv_tol
+                {
+                    return proj.distance.min(nn_d);
+                }
             }
-        } else {
-            nn_d
         }
+        nn_d
     };
 
     // Threshold: treated as "on the surface" if distance < this.
