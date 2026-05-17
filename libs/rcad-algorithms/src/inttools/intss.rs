@@ -51,6 +51,7 @@ use crate::inttools::{
     torus_cone::{TorusConeResult, intersect_torus_cone_with_tolerance},
     torus_torus::{TorusTorusResult, intersect_torus_torus_with_tolerance},
 };
+use rcad_kernel::projection::closest_point_on_surface;
 use crate::tolerance::*;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1581,15 +1582,34 @@ fn numeric_intss_impl(
         return SurfaceSurfaceIntersection::default();
     }
 
-    // Approximate distance from 3D point to s2 surface via closest sample
+    // Approximate distance from 3D point to s2 surface via closest sample,
+    // optionally refined with analytic distance when the projection falls within
+    // the face UV domain (only when bounded domain overrides are provided by
+    // the caller — the boolean Pave-Filler path).  For unbounded surfaces
+    // (direct `intersect_surfaces` calls without domain overrides) the
+    // original nn-distance is used to avoid altering sign-change patterns for
+    // large default domains.
+    let use_analytic = dom2_override.is_some();
     let approx_dist_to_s2 = |p: DVec3| -> f64 {
         if !p.is_finite() {
             return f64::INFINITY;
         }
-        s2_pts
+        let nn_d = s2_pts
             .iter()
             .map(|q| (*q - p).length())
-            .fold(f64::INFINITY, f64::min)
+            .fold(f64::INFINITY, f64::min);
+        if use_analytic {
+            let proj = closest_point_on_surface(s2, p, 16);
+            // Use analytic distance unconditionally when domain overrides are
+            // provided (the caller guarantees bounded faces).
+            if proj.distance.is_finite() {
+                proj.distance.min(nn_d)
+            } else {
+                nn_d
+            }
+        } else {
+            nn_d
+        }
     };
 
     // Threshold: treated as "on the surface" if distance < this.
@@ -1805,14 +1825,22 @@ fn greedy_order_points(pts: Vec<DVec3>, gap_floor: f64) -> Vec<Vec<DVec3>> {
     };
 
     // Estimate gap tolerance from average nearest-neighbor distance
-    // (rough: use 3x the median distance between sorted x-coordinates)
+    // (rough: use 3x the median distance between sorted x-coordinates).
+    // Also compute the bounding-box diagonal to prevent gap_tol from
+    // shrinking excessively when dense analytic-distance crossing points
+    // reduce the median nn-distance (e.g. cone-cylinder pairs).
     let gap_tol = {
         let mut dists: Vec<f64> = Vec::with_capacity(pts.len());
+        let mut bbox_min = DVec3::splat(f64::INFINITY);
+        let mut bbox_max = DVec3::splat(f64::NEG_INFINITY);
         for i in 0..pts.len() {
+            let pi = pts[i];
+            bbox_min = bbox_min.min(pi);
+            bbox_max = bbox_max.max(pi);
             let mut best = f64::INFINITY;
             for j in 0..pts.len() {
                 if i != j {
-                    let d = (pts[i] - pts[j]).length();
+                    let d = (pi - pts[j]).length();
                     if d < best {
                         best = d;
                     }
@@ -1822,7 +1850,12 @@ fn greedy_order_points(pts: Vec<DVec3>, gap_floor: f64) -> Vec<Vec<DVec3>> {
         }
         dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median = dists[dists.len() / 2];
-        (median * 5.0).max(TOLERANCE_COORD_SUB).max(gap_floor)
+        let bbox_diag = (bbox_max - bbox_min).length();
+        // Floor by 2% of the bounding-box diagonal so gap_tol doesn't collapse
+        // below ∼2% of the curve's spatial extent (handles analytic-distance
+        // oversampling while keeping Steinmetz and other small intersections intact).
+        let bbox_floor = bbox_diag * 0.02;
+        (median * 5.0).max(bbox_floor).max(TOLERANCE_COORD_SUB).max(gap_floor)
     };
 
     // Stitch gap tolerance: more generous than within-chain growth.

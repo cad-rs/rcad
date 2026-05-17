@@ -966,6 +966,159 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     None
 }
 
+/// Union of two general boxes (axis-aligned or rotated), computed analytically.
+///
+/// Both BReps must be detected as boxes by [`try_as_box`]. For disjoint boxes,
+/// returns a compound of the two inputs. For containment, returns the containing
+/// box. For partial overlap, decomposes A and B into non-overlapping slabs
+/// around each other's axes, adds the overlap region, and sews into a solid.
+///
+/// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
+/// internal-face inflation is detected.
+pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
+    let info_a = try_as_box(a)?;
+    let info_b = try_as_box(b)?;
+
+    let inter = try_intersection_box_general(a, b)?;
+
+    // No overlap → compound (disjoint boxes).
+    if inter.vertices.len() < 4 {
+        return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
+    }
+
+    let inter_vol = volume(&inter);
+    let a_vol = volume(a);
+    let b_vol = volume(b);
+    let scale = (a_vol.max(b_vol) / 3.0).max(1.0);
+    let vol_tol = TOLERANCE_LEN_MIN * scale;
+
+    // A contains B → A alone is the union.
+    if b_vol > vol_tol && (b_vol - inter_vol).abs() < vol_tol {
+        return Some(a.clone());
+    }
+    // B contains A → B alone is the union.
+    if a_vol > vol_tol && (a_vol - inter_vol).abs() < vol_tol {
+        return Some(b.clone());
+    }
+
+    let a_planes = info_a.planes();
+    let b_planes = info_b.planes();
+    let zero_tol = TOLERANCE_LEN_MIN * scale;
+
+    let mut slabs: Vec<BRep> = Vec::new();
+
+    // Helper macro: build a convex polyhedron from base planes + extra half-spaces.
+    macro_rules! try_slab {
+        ($base:expr, $extra:expr) => {
+            let mut planes = ($base).to_vec();
+            planes.extend($extra);
+            if let Ok(s) = make_convex_polyhedron_from_half_spaces(&planes) {
+                if volume(&s) > vol_tol * 0.1 {
+                    slabs.push(s);
+                }
+            }
+        };
+    }
+
+    // ── A \ B slabs: decompose A around B's axes ──
+    {
+        let [u, v, w] = info_b.axes;
+        let [eu, ev, ew] = info_b.extents;
+        let c = info_b.center;
+        let u_min = u.dot(c) - eu;
+        let u_max = u.dot(c) + eu;
+        let v_min = v.dot(c) - ev;
+        let v_max = v.dot(c) + ev;
+        let w_min = w.dot(c) - ew;
+        let w_max = w.dot(c) + ew;
+
+        let a_verts: Vec<DVec3> = a.vertices.iter().map(|vi| vi.point).collect();
+        let a_u_min = a_verts.iter().map(|p| u.dot(*p)).fold(f64::MAX, f64::min);
+        let a_u_max = a_verts.iter().map(|p| u.dot(*p)).fold(f64::MIN, f64::max);
+        let a_v_min = a_verts.iter().map(|p| v.dot(*p)).fold(f64::MAX, f64::min);
+        let a_v_max = a_verts.iter().map(|p| v.dot(*p)).fold(f64::MIN, f64::max);
+        let a_w_min = a_verts.iter().map(|p| w.dot(*p)).fold(f64::MAX, f64::min);
+        let a_w_max = a_verts.iter().map(|p| w.dot(*p)).fold(f64::MIN, f64::max);
+
+        let u_span = a_u_max > u_min + zero_tol && a_u_min < u_max - zero_tol;
+        let v_span = a_v_max > v_min + zero_tol && a_v_min < v_max - zero_tol;
+
+        if a_u_min < u_min - zero_tol {
+            try_slab!(&a_planes, vec![(u * u_min, u)]);
+        }
+        if a_u_max > u_max + zero_tol {
+            try_slab!(&a_planes, vec![(u * u_max, -u)]);
+        }
+        if u_span && a_v_min < v_min - zero_tol {
+            try_slab!(&a_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, v)]);
+        }
+        if u_span && a_v_max > v_max + zero_tol {
+            try_slab!(&a_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_max, -v)]);
+        }
+        if u_span && v_span && a_w_min < w_min - zero_tol {
+            try_slab!(&a_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, -v), (v * v_max, v), (w * w_min, w)]);
+        }
+        if u_span && v_span && a_w_max > w_max + zero_tol {
+            try_slab!(&a_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, -v), (v * v_max, v), (w * w_max, -w)]);
+        }
+    }
+
+    // ── A ∩ B (overlap) ──
+    slabs.push(inter);
+
+    // ── B \ A slabs: decompose B around A's axes ──
+    {
+        let [u, v, w] = info_a.axes;
+        let [eu, ev, ew] = info_a.extents;
+        let c = info_a.center;
+        let u_min = u.dot(c) - eu;
+        let u_max = u.dot(c) + eu;
+        let v_min = v.dot(c) - ev;
+        let v_max = v.dot(c) + ev;
+        let w_min = w.dot(c) - ew;
+        let w_max = w.dot(c) + ew;
+
+        let b_verts: Vec<DVec3> = b.vertices.iter().map(|vi| vi.point).collect();
+        let b_u_min = b_verts.iter().map(|p| u.dot(*p)).fold(f64::MAX, f64::min);
+        let b_u_max = b_verts.iter().map(|p| u.dot(*p)).fold(f64::MIN, f64::max);
+        let b_v_min = b_verts.iter().map(|p| v.dot(*p)).fold(f64::MAX, f64::min);
+        let b_v_max = b_verts.iter().map(|p| v.dot(*p)).fold(f64::MIN, f64::max);
+        let b_w_min = b_verts.iter().map(|p| w.dot(*p)).fold(f64::MAX, f64::min);
+        let b_w_max = b_verts.iter().map(|p| w.dot(*p)).fold(f64::MIN, f64::max);
+
+        let u_span = b_u_max > u_min + zero_tol && b_u_min < u_max - zero_tol;
+        let v_span = b_v_max > v_min + zero_tol && b_v_min < v_max - zero_tol;
+
+        if b_u_min < u_min - zero_tol {
+            try_slab!(&b_planes, vec![(u * u_min, u)]);
+        }
+        if b_u_max > u_max + zero_tol {
+            try_slab!(&b_planes, vec![(u * u_max, -u)]);
+        }
+        if u_span && b_v_min < v_min - zero_tol {
+            try_slab!(&b_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, v)]);
+        }
+        if u_span && b_v_max > v_max + zero_tol {
+            try_slab!(&b_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_max, -v)]);
+        }
+        if u_span && v_span && b_w_min < w_min - zero_tol {
+            try_slab!(&b_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, -v), (v * v_max, v), (w * w_min, w)]);
+        }
+        if u_span && v_span && b_w_max > w_max + zero_tol {
+            try_slab!(&b_planes, vec![(u * u_min, -u), (u * u_max, u), (v * v_min, -v), (v * v_max, v), (w * w_max, -w)]);
+        }
+    }
+
+    if slabs.is_empty() {
+        return Some(BRep::default());
+    }
+    if slabs.len() == 1 {
+        return Some(slabs.remove(0));
+    }
+
+    Some(sew_slabs_into_solid(&slabs, zero_tol))
+}
+
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
 fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
     let sh = brep.solids.get(0)?.shells.get(0)?;
