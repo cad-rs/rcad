@@ -40,6 +40,8 @@ pub enum SphereConeResult {
     TwoCircles(Circle3, Circle3),
     /// The intersection is a tangent point.
     TangentPoint(DVec3),
+    /// Off-axis intersection: one or more polyline branches on the cone surface.
+    Polyline(Vec<Vec<DVec3>>),
     /// General case. Caller should fall back to marching.
     General,
 }
@@ -78,6 +80,12 @@ pub fn intersect_sphere_cone_with_tolerance(
     // ── Axis-aligned case: sphere center on cone axis ───────────────────────────
     if d_perp < tol * 10.0 {
         return intersect_sphere_cone_on_axis(sphere, cone, z_c, tol);
+    }
+
+    // ── Off-axis: try θ-parameterized solver ──────────────────────────────
+    let result = intersect_sphere_cone_off_axis(sphere, cone);
+    if !matches!(result, SphereConeResult::General) {
+        return result;
     }
 
     // ── General case: numerical fallback ───────────────────────────────────────
@@ -213,6 +221,162 @@ fn intersect_sphere_cone_on_axis(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Off-axis θ-parameterized solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Off-axis sphere-cone intersection using a θ-parameterized quadratic solver.
+///
+/// Parameterizes the cone by θ (angle around axis) and s (axial distance from
+/// true apex).  For each θ, solves `A·s² + B(θ)·s + D = 0` where the sphere
+/// constraint |P(θ,s) − C|² = R² gives:
+///
+/// | Term | Expression |
+/// |------|------------|
+/// | A    | `1 + tan²(β)` (constant, ≥ 1) |
+/// | B(θ) | `−2·(Cz + tan(β)·(Cx·cos(θ) + Cy·sin(θ)))` |
+/// | D    | `|C_local|² − R²` (constant) |
+///
+/// Returns [`SphereConeResult::Polyline`] with one or more branches.
+fn intersect_sphere_cone_off_axis(
+    sphere: &SphericalSurface,
+    cone: &ConicalSurface,
+) -> SphereConeResult {
+    let axis = cone.axis_dir();
+    let tan_beta = cone.half_angle_rad.tan();
+    if tan_beta.abs() < 1e-12 {
+        return SphereConeResult::General; // degenerate (cylinder)
+    }
+    let apex_true = cone.apex_point();
+    let sphere_r = sphere.radius;
+    if sphere_r < TOLERANCE_ABS {
+        return SphereConeResult::General;
+    }
+
+    // Local basis: u, v ⊥ axis
+    let u = any_perpendicular(axis);
+    let v = axis.cross(u).normalize();
+
+    // Decompose sphere-center offset in the (u, v, axis) basis
+    let cl = sphere.center - apex_true;
+    let cx = cl.dot(u);
+    let cy = cl.dot(v);
+    let cz = cl.dot(axis);
+    let local_sq = cl.length_squared();
+
+    // Constant coefficients
+    let a_coef = 1.0 + tan_beta * tan_beta; // A ≥ 1
+    let d_coef = local_sq - sphere_r * sphere_r;
+
+    const N_THETA: usize = 256;
+    let mut lower_branch: Vec<Option<DVec3>> = Vec::with_capacity(N_THETA + 1);
+    let mut upper_branch: Vec<Option<DVec3>> = Vec::with_capacity(N_THETA + 1);
+
+    for i in 0..=N_THETA {
+        let theta = std::f64::consts::TAU * i as f64 / N_THETA as f64;
+        let (cos_t, sin_t) = (theta.cos(), theta.sin());
+
+        let b_theta = -2.0 * (cz + tan_beta * (cx * cos_t + cy * sin_t));
+        let delta = b_theta * b_theta - 4.0 * a_coef * d_coef;
+
+        if delta < 0.0 {
+            lower_branch.push(None);
+            upper_branch.push(None);
+            continue;
+        }
+
+        let sqrt_delta = delta.sqrt();
+        // Stable quadratic: "far" root via standard formula, "near" root via Vieta
+        let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
+        let s_near = if s_far.abs() > 1e-15 {
+            d_coef / (a_coef * s_far)
+        } else {
+            // s_far ≈ 0 (D ≈ 0, near-tangent case), compute directly
+            (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
+        };
+
+        // Order so that s_lower ≤ s_upper
+        let (s_lower, s_upper) = if s_far <= s_near {
+            (s_far, s_near)
+        } else {
+            (s_near, s_far)
+        };
+
+        // Eval 3D point at given s on the θ ray
+        let pt_at_s = |s: f64| -> DVec3 {
+            let radial = s * tan_beta;
+            apex_true + axis * s + radial * (u * cos_t + v * sin_t)
+        };
+
+        // Lower branch — closer to apex
+        if s_lower >= 0.0 {
+            lower_branch.push(Some(pt_at_s(s_lower)));
+        } else {
+            lower_branch.push(None);
+        }
+
+        // Upper branch — further from apex (skip if coincident with lower)
+        if s_upper >= 0.0 && (s_upper - s_lower).abs() > TOLERANCE_ABS * 0.1 {
+            upper_branch.push(Some(pt_at_s(s_upper)));
+        } else {
+            upper_branch.push(None);
+        }
+    }
+
+    // Extract contiguous valid runs from a branch array, handling θ=0/2π wrap.
+    let extract_runs = |branch: &[Option<DVec3>]| -> Vec<Vec<DVec3>> {
+        let n = branch.len();
+        // Find first gap so we can rotate to avoid wrap issues
+        let gap_at = branch.iter().position(|x| x.is_none()).unwrap_or(n);
+        let mut rotated: Vec<Option<DVec3>> = Vec::with_capacity(n);
+        rotated.extend_from_slice(&branch[gap_at..]);
+        rotated.extend_from_slice(&branch[..gap_at]);
+
+        let mut curves: Vec<Vec<DVec3>> = Vec::new();
+        let mut current: Vec<DVec3> = Vec::new();
+        for pt in &rotated {
+            match pt {
+                Some(p) => current.push(*p),
+                None => {
+                    if current.len() >= 2 {
+                        curves.push(current.clone());
+                    }
+                    current.clear();
+                }
+            }
+        }
+        if current.len() >= 2 {
+            curves.push(current);
+        }
+        curves
+    };
+
+    let mut all_branches = extract_runs(&lower_branch);
+    all_branches.extend(extract_runs(&upper_branch));
+
+    // Closed-curve check: drop duplicate endpoint for runs where first ≈ last
+    for branch in &mut all_branches {
+        if branch.len() >= 3 {
+            let d = (branch[0] - branch[branch.len() - 1]).length();
+            if d < TOLERANCE_ABS * 10.0 {
+                branch.pop();
+            }
+        }
+    }
+
+    // Filter very short branches and empty
+    let all_branches: Vec<Vec<DVec3>> = all_branches
+        .into_iter()
+        .filter(|b| b.len() >= 3)
+        .collect();
+
+    if all_branches.is_empty() {
+        SphereConeResult::NoIntersection
+    } else {
+        SphereConeResult::Polyline(all_branches)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -256,6 +420,7 @@ mod tests {
             SphereConeResult::TwoCircles(_, _) => {}
             SphereConeResult::TangentPoint(_) => {}
             SphereConeResult::General => {}
+            SphereConeResult::Polyline(_) => {}
         }
     }
 
@@ -275,13 +440,21 @@ mod tests {
         ));
     }
 
-    /// Sphere center off-axis should return General.
+    /// Sphere center off-axis should return Polyline (via θ-parameterized solver).
     #[test]
-    fn sphere_off_axis_general() {
+    fn sphere_off_axis_polyline() {
         let s = sphere(DVec3::new(2.0, 0.0, 5.0), 3.0);
         let k = cone(DVec3::ZERO, DVec3::Z, 45.0);
         let result = intersect_sphere_cone(&s, &k);
-        assert!(matches!(result, SphereConeResult::General));
+        match result {
+            SphereConeResult::Polyline(branches) => {
+                assert!(!branches.is_empty());
+                for branch in &branches {
+                    assert!(branch.len() >= 3);
+                }
+            }
+            other => panic!("expected Polyline, got {:?}", other),
+        }
     }
 
     /// Sphere tangent to cone (one circle).
@@ -302,6 +475,68 @@ mod tests {
             SphereConeResult::TwoCircles(_, _) => {}
             SphereConeResult::TangentPoint(_) => {}
             _ => {}
+        }
+    }
+
+    /// Sphere center off-axis with large sphere producing a closed curve.
+    #[test]
+    fn off_axis_sphere_cone_closed_curve() {
+        // Cone: apex at origin, axis=Z, 30° half-angle, zero radius at apex
+        // Sphere: center at (3, 0, 5), radius 4
+        // Should produce a closed intersection curve (sphere envelopes cone)
+        let s = sphere(DVec3::new(3.0, 0.0, 5.0), 4.0);
+        let k = cone(DVec3::ZERO, DVec3::Z, 30.0);
+        let result = intersect_sphere_cone(&s, &k);
+        match result {
+            SphereConeResult::Polyline(branches) => {
+                assert!(!branches.is_empty());
+                for branch in &branches {
+                    assert!(branch.len() >= 3);
+                    // Check all points are on both surfaces
+                    for pt in branch {
+                        let to_center = pt - s.center;
+                        let sd = to_center.length() - s.radius;
+                        assert!(sd.abs() < 0.1, "sphere distance too large: {}", sd);
+                        let cone_pt = pt - k.apex;
+                        let axial = cone_pt.dot(k.axis_dir());
+                        let radial = (cone_pt - k.axis_dir() * axial).length();
+                        let r_cone = axial * k.half_angle_rad.tan();
+                        let cd = (radial - r_cone).abs();
+                        assert!(cd < 0.1, "cone distance too large: {}", cd);
+                    }
+                }
+            }
+            other => panic!("expected Polyline, got {:?}", other),
+        }
+    }
+
+    /// Sphere far from the cone — no intersection.
+    #[test]
+    fn off_axis_no_intersection() {
+        let s = sphere(DVec3::new(100.0, 0.0, 0.0), 1.0);
+        let k = cone(DVec3::ZERO, DVec3::Z, 30.0);
+        let result = intersect_sphere_cone(&s, &k);
+        assert!(matches!(result, SphereConeResult::NoIntersection));
+    }
+
+    /// Sphere partially intersecting the cone (discriminant gaps).
+    #[test]
+    fn off_axis_partial_intersection() {
+        // Cone: apex at origin, axis=Z, 30° half-angle
+        // Sphere: center at (6, 0, 3), radius 2
+        // Only partially intersects — some θ have no intersection
+        let s = sphere(DVec3::new(6.0, 0.0, 3.0), 2.0);
+        let k = cone(DVec3::ZERO, DVec3::Z, 30.0);
+        let result = intersect_sphere_cone(&s, &k);
+        match result {
+            SphereConeResult::Polyline(branches) => {
+                assert!(!branches.is_empty());
+                for branch in &branches {
+                    assert!(branch.len() >= 3);
+                }
+            }
+            SphereConeResult::NoIntersection => {} // also valid
+            other => panic!("expected Polyline or NoIntersection, got {:?}", other),
         }
     }
 }

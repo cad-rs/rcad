@@ -1619,6 +1619,12 @@ impl<'a> PaveFiller<'a> {
             (Surface3::Torus(tor1), Surface3::Torus(tor2)) => {
                 self.intersect_torus_torus_faces(f1, f2, tor1, tor2);
             }
+            // ── Sphere × Cone ────────────────────────────────────────────
+            (Surface3::Sphere(sph), Surface3::Cone(cone))
+            | (Surface3::Cone(cone), Surface3::Sphere(sph)) => {
+                let (sph, cone) = (*sph, *cone);
+                self.intersect_sphere_cone_faces(f1, f2, &sph, &cone);
+            }
             _ => {
                 // General case: numerical marching
                 self.intersect_ff_by_marching(f1, f2);
@@ -3564,6 +3570,153 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    fn intersect_sphere_cone_faces(
+        &mut self,
+        f1: usize,
+        f2: usize,
+        sphere: &SphericalSurface,
+        cone: &ConicalSurface,
+    ) {
+        use inttools::sphere_cone::{SphereConeResult, intersect_sphere_cone};
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_cone, fallback_pcurve_by_projection,
+            polyline_pcurve_by_projection,
+        };
+        use std::f64::consts::TAU;
+
+        let sphere_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Sphere(_));
+
+        let make_pcurves = |pca: Curve2d, pcb: Curve2d| -> (Option<Curve2d>, Option<Curve2d>) {
+            if sphere_is_f1 { (Some(pca), Some(pcb)) } else { (Some(pcb), Some(pca)) }
+        };
+
+        let s1 = Surface3::Sphere(*sphere);
+        let s2 = Surface3::Cone(*cone);
+
+        match intersect_sphere_cone(sphere, cone) {
+            SphereConeResult::NoIntersection => (),
+
+            SphereConeResult::General => {
+                self.intersect_ff_by_marching(f1, f2);
+            }
+
+            SphereConeResult::SingleCircle(circ) => {
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ),
+                    &[0.0, TAU],
+                    &s1,
+                );
+                let pcb = circle_pcurve_on_cone(&circ, cone);
+                let (pca, pcb) = make_pcurves(pca, pcb);
+                let pts = sample_circle_arc(&circ, 0.0, TAU, 32);
+                let v_start = self.ds.add_vertex(pts[0]);
+                let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+                let ci = self.ds.intersection_curves.len();
+                self.ds.intersection_curves.push(IntersectionCurve {
+                    curve: Curve3::Circle(circ),
+                    polyline: vec![],
+                    start_vertex: v_start,
+                    end_vertex: v_end,
+                    t_range: [0.0, TAU],
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
+                });
+                self.ds.faces[f1].face_info.curves_in.insert(ci);
+                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![ci], points: vec![],
+                });
+            }
+
+            SphereConeResult::TwoCircles(c1, c2) => {
+                for circ in [c1, c2] {
+                    let pca = fallback_pcurve_by_projection(
+                        &Curve3::Circle(circ),
+                        &[0.0, TAU],
+                        &s1,
+                    );
+                    let pcb = circle_pcurve_on_cone(&circ, cone);
+                    let (pca, pcb) = make_pcurves(pca, pcb);
+                    let pts = sample_circle_arc(&circ, 0.0, TAU, 32);
+                    let v_start = self.ds.add_vertex(pts[0]);
+                    let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+                    let ci = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Circle(circ),
+                        polyline: vec![],
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, TAU],
+                        pcurve_on_a: pca,
+                        pcurve_on_b: pcb,
+                    });
+                    self.ds.faces[f1].face_info.curves_in.insert(ci);
+                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1, f2, curves: vec![ci], points: vec![],
+                    });
+                }
+            }
+
+            SphereConeResult::TangentPoint(pt) => {
+                let v = self.ds.add_vertex(pt);
+                self.ds.faces[f1].face_info.vertices_in.insert(v);
+                self.ds.faces[f2].face_info.vertices_in.insert(v);
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![], points: vec![v],
+                });
+            }
+
+            SphereConeResult::Polyline(branches) => {
+                let mut curve_indices = Vec::new();
+                for branch in branches {
+                    if branch.len() < 2 { continue; }
+                    let v_start = self.ds.add_vertex(branch[0]);
+                    let v_end = self.ds.add_vertex(branch[branch.len() - 1]);
+                    let dir = (branch[branch.len() - 1] - branch[0])
+                        .normalize_or_zero();
+                    let ci = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Line(Line3 {
+                            origin: branch[0],
+                            direction: if dir.length_squared() > 0.5 {
+                                dir
+                            } else {
+                                DVec3::X
+                            },
+                        }),
+                        polyline: branch.clone(),
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, 1.0],
+                        pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
+                        pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                    });
+                    curve_indices.push(ci);
+                    self.ds.faces[f1].face_info.curves_in.insert(ci);
+                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                }
+                if !curve_indices.is_empty() {
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1, f2, curves: curve_indices, points: vec![],
+                    });
+                }
+            }
+        }
+    }
+
     /// For curved×curved face pairs, use numeric_intss_with_density (sign-change
     /// edge marching) which returns ordered polylines without the closure/drift
     /// issues of the gradient marcher.
@@ -3715,7 +3868,23 @@ impl<'a> PaveFiller<'a> {
                 }
             };
             let avg_len = (char_len(&s1) + char_len(&s2)) * 0.5;
-            let grid_n = ((avg_len * 10.0) as usize).max(64).min(256);
+            let mut grid_n = ((avg_len * 10.0) as usize).max(64).min(256);
+
+            // For skew cone-cylinder pairs, boost the s1 grid density.
+            // Perpendicular/skewed axes produce narrow intersection bands
+            // that need finer sampling to detect reliably (see ZK6).
+            let skew_factor = match (&s1, &s2) {
+                (Surface3::Cylinder(c1), Surface3::Cone(c2))
+                | (Surface3::Cone(c2), Surface3::Cylinder(c1)) => {
+                    let a1 = c1.axis.normalize();
+                    let a2 = c2.axis.normalize();
+                    let sin_angle = a1.cross(a2).length();
+                    (1.0 + sin_angle * 3.0).min(3.0)
+                }
+                _ => 1.0,
+            };
+            grid_n = ((grid_n as f64 * skew_factor) as usize).min(256);
+
             self.intersect_ff_by_numeric_intss(f1, f2, &s1, &s2, grid_n);
             return;
         }

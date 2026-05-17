@@ -640,6 +640,22 @@ fn sphere_x_cone_with_tolerance(
         SphereConeResult::General => {
             return numeric_intss(&Surface3::Sphere(*s), &Surface3::Cone(*c));
         }
+        SphereConeResult::Polyline(branches) => {
+            let s1 = Surface3::Sphere(*s);
+            let s2 = Surface3::Cone(*c);
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                let pca = polyline_pcurve_by_projection(&branch, &s1);
+                let pcb = polyline_pcurve_by_projection(&branch, &s2);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
+                });
+            }
+        }
     }
     out
 }
@@ -1605,6 +1621,35 @@ fn numeric_intss_impl(
         if !p.is_finite() {
             return f64::INFINITY;
         }
+
+        // Analytic unsigned distance for Cone and Cylinder surfaces (O(1), exact).
+        // This catches narrow intersection bands that the pre-sampled s2 grid
+        // misses, without requiring domain overrides.  The nn_d below still
+        // provides bounded-domain awareness.
+        let analytic_d = match s2 {
+            Surface3::Cylinder(cyl) => {
+                let axis = cyl.axis.normalize_or_zero();
+                let to_pt = p - cyl.origin;
+                let radial_len = (to_pt - axis * to_pt.dot(axis)).length();
+                (radial_len - cyl.radius).abs()
+            }
+            Surface3::Cone(cone) => {
+                let axis = cone.axis_dir();
+                let apex = cone.apex;
+                let to_pt = p - apex;
+                let along = to_pt.dot(axis);
+                let radial_len = (to_pt - axis * along).length();
+                let (sin_h, cos_h) = cone.half_angle_rad.sin_cos();
+                // Signed distance to the single nappe:
+                //   F(P) = (r - R)·cos(β) - z·sin(β)   where z = along, r = radial_len
+                //   F(P) = 0 on the cone surface
+                //   |F(P)| = Euclidean distance to the cone lateral surface
+                let d = (radial_len - cone.radius) * cos_h - along * sin_h;
+                d.abs()
+            }
+            _ => f64::INFINITY,
+        };
+
         let nn_d = s2_pts
             .iter()
             .map(|q| (*q - p).length())
@@ -1623,11 +1668,11 @@ fn numeric_intss_impl(
                     && v >= v_min - uv_tol
                     && v <= v_max + uv_tol
                 {
-                    return proj.distance.min(nn_d);
+                    return proj.distance.min(nn_d).min(analytic_d);
                 }
             }
         }
-        nn_d
+        nn_d.min(analytic_d)
     };
 
     // Threshold: treated as "on the surface" if distance < this.
