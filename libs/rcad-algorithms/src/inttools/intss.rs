@@ -1259,7 +1259,7 @@ fn torus_x_cylinder_coaxial(
     };
 
     for &hz in &heights {
-        let center = cyl.origin + axis * hz;
+        let center = torus.center + axis * hz;
         let circle = Circle3 {
             center,
             normal: axis,

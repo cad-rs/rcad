@@ -1067,6 +1067,42 @@ impl SurfaceEval for ToroidalSurface {
     }
 }
 
+impl ToroidalSurface {
+    /// UV coordinates of world point `p` relative to this toroidal surface.
+    ///
+    /// `u` = major angle (−π, π], `v` = minor angle [0, 2π),
+    /// matching [`SurfaceEval::point_at`].  When `p` is on the surface
+    /// the returned `(u, v)` is exact; off-surface points project onto
+    /// the tube center circle in the radial direction.
+    pub fn world_to_uv(self, p: DVec3) -> DVec2 {
+        use std::f64::consts::TAU;
+        let axis = self.axis.normalize_or_zero();
+        let x_ax = any_perpendicular(axis);
+        let y_ax = axis.cross(x_ax).normalize();
+        let local = p - self.center;
+        let axial = local.dot(axis);
+        let radial_vec = local - axis * axial;
+        let radial_dist = radial_vec.length();
+
+        // u = azimuth around main axis
+        let u = if radial_dist < 1e-15 {
+            0.0
+        } else {
+            let rn = radial_vec / radial_dist;
+            rn.dot(y_ax).atan2(rn.dot(x_ax))
+        };
+
+        // v = angle around tube:
+        // On surface: radial_dist = R + r·cos(v), axial = r·sin(v)
+        //   → v = atan2(axial, radial_dist - R)
+        let v_base = axial.atan2(radial_dist - self.major_radius);
+        // Convert v from [-π, π] to [0, 2π)
+        let v = if v_base < 0.0 { v_base + TAU } else { v_base };
+
+        DVec2::new(u, v)
+    }
+}
+
 impl SurfaceEval for EllipsoidalSurface {
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let (axis, x_axis, y_axis) = orthonormal_frame(self.axis, self.ref_dir);

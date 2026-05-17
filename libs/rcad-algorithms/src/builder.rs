@@ -1108,7 +1108,8 @@ impl<'a> BooleanBuilder<'a> {
                 return opposite;
             }
         }
-        Self::keep_subface_policy(self.op, source, class)
+        let policy = Self::keep_subface_policy(self.op, source, class);
+        policy
     }
 
     fn pcurve_matches_face_surface(
@@ -2889,7 +2890,9 @@ impl<'a> BooleanBuilder<'a> {
         // Need UV boundary to operate in parameter space
         let uv_boundary = match &face.uv_boundary {
             Some(b) if b.len() >= 3 => b.clone(),
-            _ => return self.split_curved_face_legacy(face_idx),
+            _ => {
+                return self.split_curved_face_legacy(face_idx);
+            },
         };
 
         let surface = face.surface.clone();
@@ -2915,24 +2918,50 @@ impl<'a> BooleanBuilder<'a> {
                     // but that domain does **not** match the 3D curve's `t_range` (e.g. plane鈥搒phere
                     // circles use [0, 2蟺]). Re-sample the 3D intersection curve and project to UV so
                     // sphere trimming matches geometry (fixes sphere 鈭?trotated box / OCCT bcommon A4).
-                    rcad_kernel::geom::Curve2d::BSpline(_) => (0..=N)
-                        .map(|i| {
-                            let t = t0 + (t1 - t0) * i as f64 / N as f64;
-                            let p3 = ic.curve.point_at(t);
-                            // Plane鈥搒phere circles lie exactly on the sphere; inverse param is stable.
+                    rcad_kernel::geom::Curve2d::BSpline(_) => {
+                        if !ic.polyline.is_empty() {
+                            // Numerical marching stores sampled 3D points in `polyline`.
+                            // `ic.curve` is a chord-line approximation (degenerate for closed
+                            // curves), so re-sampling from it gives wrong 3D points (torus ZL4).
+                            // Use polyline points directly, projecting to UV via world_to_uv.
+                            ic.polyline.iter().map(|&p3| {
+                                let uv = match &surface {
+                                    rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
+                                    rcad_kernel::geom::Surface3::Cone(cone) => cone.world_to_uv(p3),
+                                    rcad_kernel::geom::Surface3::Torus(torus) => torus.world_to_uv(p3),
+                                    _ => {
+                                        let proj = rcad_kernel::projection::closest_point_on_surface(
+                                            &surface, p3, 16,
+                                        );
+                                        DVec2::new(proj.params.0, proj.params.1)
+                                    }
+                                };
+                                uv
+                            }).collect()
+                        } else {
+                            let raw: Vec<DVec2> = (0..=N)
+                            .map(|i| {
+                                let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                                let p3 = ic.curve.point_at(t);
+                            // Plane–sphere circles lie exactly on the sphere; inverse param is stable.
                             // `closest_point_on_surface` can pick a wrong local minimum for oblique trims.
-                            match &surface {
+                            let uv = match &surface {
                                 rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
                                 rcad_kernel::geom::Surface3::Cone(cone) => cone.world_to_uv(p3),
+                                rcad_kernel::geom::Surface3::Torus(torus) => torus.world_to_uv(p3),
                                 _ => {
                                     let proj = rcad_kernel::projection::closest_point_on_surface(
                                         &surface, p3, 16,
                                     );
                                     DVec2::new(proj.params.0, proj.params.1)
                                 }
-                            }
+                            };
+                            uv
                         })
-                        .collect(),
+                        .collect();
+                        raw
+                        }
+                    },
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
                     // t parameterization as the 3D intersection curve.
                     _ => (0..=N)
@@ -3104,6 +3133,8 @@ impl<'a> BooleanBuilder<'a> {
             .into_iter()
             .map(|trim| Self::extend_trim_to_uv_boundary(&trim, &uv_boundary, bnd_u_span, bnd_v_span))
             .collect();
+
+
 
         // Split UV polygon by each trim polyline
         let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary.clone()];

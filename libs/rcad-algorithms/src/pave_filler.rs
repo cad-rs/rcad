@@ -3300,13 +3300,9 @@ impl<'a> PaveFiller<'a> {
         for sir in &result.curves {
             match &sir.curve_3d {
                 SurfaceCurve::Circle(circle) => {
-                    let pts = sample_circle_arc(circle, 0.0, std::f64::consts::TAU, 32);
-                    if pts.len() < 2 {
-                        continue;
-                    }
-                    let v_start = self.ds.add_vertex(pts[0]);
-                    let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
-
+                    // Split full-circle into two half-circles so each has U-span = PI < 85% of TAU.
+                    // This prevents has_full_wrap from triggering on coaxial torus×cylinder faces,
+                    // while keeping the fix scoped to torus intersections only.
                     let (pca, pcb) = if let (Some(a), Some(b)) = (&sir.pcurve_on_a, &sir.pcurve_on_b) {
                         if torus_is_f1 {
                             (Some(a.clone()), Some(b.clone()))
@@ -3317,30 +3313,44 @@ impl<'a> PaveFiller<'a> {
                         (None, None)
                     };
 
-                    let curve_idx = self.ds.intersection_curves.len();
-                    self.ds.intersection_curves.push(IntersectionCurve {
-                        curve: Curve3::Circle(*circle),
-                        polyline: vec![],
-                        start_vertex: v_start,
-                        end_vertex: v_end,
-                        t_range: [0.0, std::f64::consts::TAU],
-                        pcurve_on_a: pca,
-                        pcurve_on_b: pcb,
-                    });
+                    let mut curve_indices = Vec::new();
+                    for (t0, t1) in [(0.0, std::f64::consts::PI), (std::f64::consts::PI, std::f64::consts::TAU)] {
+                        let pts = sample_circle_arc(circle, t0, t1, 16);
+                        if pts.len() < 2 {
+                            continue;
+                        }
+                        let v_start = self.ds.add_vertex(pts[0]);
+                        let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
 
-                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
-                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
-                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
-                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                        let curve_idx = self.ds.intersection_curves.len();
+                        self.ds.intersection_curves.push(IntersectionCurve {
+                            curve: Curve3::Circle(*circle),
+                            polyline: vec![],
+                            start_vertex: v_start,
+                            end_vertex: v_end,
+                            t_range: [t0, t1],
+                            pcurve_on_a: pca.clone(),
+                            pcurve_on_b: pcb.clone(),
+                        });
 
-                    self.ds.interferences.push(Interference::FaceFace {
-                        f1,
-                        f2,
-                        curves: vec![curve_idx],
-                        points: vec![],
-                    });
+                        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                        self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                        self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                        self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+
+                        curve_indices.push(curve_idx);
+                    }
+
+                    if !curve_indices.is_empty() {
+                        self.ds.interferences.push(Interference::FaceFace {
+                            f1,
+                            f2,
+                            curves: curve_indices,
+                            points: vec![],
+                        });
+                    }
                 }
                 SurfaceCurve::Polyline(pts) => {
                     if pts.len() < 2 {
