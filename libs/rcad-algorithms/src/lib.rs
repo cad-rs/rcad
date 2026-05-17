@@ -2723,6 +2723,29 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     Ok(r)
 }
 
+/// Like [`boolean_op`] but with conservative auto-retry for numerical-instability cases.
+///
+/// First tries the standard [`boolean_op_pave_fill_build`] path (identical to
+/// [`boolean_op`]'s first attempt).  On failure, delegates to
+/// [`boolean::boolean_op_with_retry_policy`] with [`RetryPolicy::conservative`]
+/// and default [`BooleanOptions`] to escalate fuzzy tolerance, glue mode, and
+/// make-connected passes.
+pub fn boolean_op_with_retry(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+) -> Result<BRep, BooleanError> {
+    // First attempt: standard path (no fuzzy tolerance / glue).
+    if let Ok(brep) = boolean_op_pave_fill_build(op, a, b) {
+        return Ok(brep);
+    }
+    // Fallback: retry with escalating tolerance.
+    boolean::boolean_op_with_retry_policy(
+        op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
+    )
+    .map(|(brep, _report)| brep)
+}
+
 /// Perform a boolean operation with advanced execution options and report.
 pub fn boolean_op_with_options(
     op: BooleanOpType,
