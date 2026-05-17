@@ -1559,8 +1559,12 @@ fn numeric_intss_impl(
     let [u1_0, u1_1, v1_0, v1_1] = dom1_override.unwrap_or_else(|| clamp_dom(dom1));
     let [u2_0, u2_1, v2_0, v2_1] = dom2_override.unwrap_or_else(|| clamp_dom(dom2));
 
-    // Pre-sample s2 on a grid for fast approximate distance computation
-    let n2 = n.min(48);
+    // Pre-sample s2 on a grid for fast approximate distance computation.
+    // For pairs where both surfaces are curved (e.g. cone × cylinder) a
+    // denser s2 grid captures the surface shape more accurately, improving
+    // sign-change detection near the intersection band.  Cap at 80 to keep
+    // the O(n1² × n2²) distance evaluation tractable.
+    let n2 = n.min(80);
     let mut s2_pts: Vec<DVec3> = Vec::with_capacity(n2 * n2);
     for i in 0..n2 {
         for j in 0..n2 {
