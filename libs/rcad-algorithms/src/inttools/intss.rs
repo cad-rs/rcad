@@ -824,6 +824,18 @@ fn cylinder_x_cone(
         CylinderConeResult::General => {
             return numeric_intss(&Surface3::Cylinder(*cyl), &Surface3::Cone(*cone));
         }
+        CylinderConeResult::ParallelOffsetPolyline(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+        }
     }
     out
 }

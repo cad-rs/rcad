@@ -3084,7 +3084,10 @@ impl<'a> PaveFiller<'a> {
         cone: &ConicalSurface,
     ) {
         use inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
-        use inttools::pcurve_derive::{circle_pcurve_on_cylinder, fallback_pcurve_by_projection};
+        use inttools::pcurve_derive::{
+            circle_pcurve_on_cylinder, fallback_pcurve_by_projection,
+            polyline_pcurve_by_projection,
+        };
         use std::f64::consts::TAU;
 
         // Determine which face carries the cylinder (for pcurve_on_a/b ordering).
@@ -3099,6 +3102,53 @@ impl<'a> PaveFiller<'a> {
 
             CylinderConeResult::General => {
                 self.intersect_ff_by_marching(f1, f2);
+            }
+
+            CylinderConeResult::ParallelOffsetPolyline(branches) => {
+                let s1 = Surface3::Cylinder(*cyl);
+                let s2 = Surface3::Cone(*cone);
+                let mut curve_indices = Vec::new();
+                for branch in branches {
+                    if branch.len() < 2 {
+                        continue;
+                    }
+                    let v_start = self.ds.add_vertex(branch[0]);
+                    let v_end = self.ds.add_vertex(branch[branch.len() - 1]);
+                    let dir = (branch[branch.len() - 1] - branch[0])
+                        .normalize_or_zero();
+                    let ci = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Line(Line3 {
+                            origin: branch[0],
+                            direction: if dir.length_squared() > 0.5 {
+                                dir
+                            } else {
+                                DVec3::X
+                            },
+                        }),
+                        polyline: branch.clone(),
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, 1.0],
+                        pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
+                        pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                    });
+                    curve_indices.push(ci);
+                    self.ds.faces[f1].face_info.curves_in.insert(ci);
+                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                }
+                if !curve_indices.is_empty() {
+                    self.ds.interferences.push(Interference::FaceFace {
+                        f1,
+                        f2,
+                        curves: curve_indices,
+                        points: vec![],
+                    });
+                }
             }
 
             CylinderConeResult::CoaxialCircle(circle) => {
