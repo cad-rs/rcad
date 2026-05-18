@@ -115,19 +115,26 @@ impl SubFace {
                 surface_pt + inward * (TOLERANCE_ABS * 10.0)
             }
             Surface3::Cylinder(c) => {
-                // For cylinder faces, the outward normal points AWAY from the axis.
-                // To get a sample point just inside the solid, offset toward the axis.
-                let centroid = if self.boundary.is_empty() {
-                    DVec3::ZERO
-                } else {
+                use rcad_kernel::geom::SurfaceEval;
+                // Use UV centroid to get a precise point on the cylinder surface
+                // (3D boundary centroid can fall at the top/bottom edge outside the
+                // actual cylinder extent, producing a sample outside the other solid).
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    c.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    c.origin + c.axis.normalize() * 0.5
                 };
                 // Compute inward direction (toward cylinder axis)
                 let axis = c.axis.normalize();
-                let to_axis = c.origin + axis * (centroid - c.origin).dot(axis) - centroid;
+                let to_axis = c.origin + axis * (surface_pt - c.origin).dot(axis) - surface_pt;
                 let inward = to_axis.normalize_or_zero();
-                // Use inward offset so the sample is just inside the cylinder surface
-                centroid + inward * (TOLERANCE_ABS * 10.0)
+                // Use inward offset so the sample is clearly inside the cylinder surface.
+                // The offset must exceed the Relaxed classification tolerance band
+                // (base_tolerance * 100 * model_scale ≈ 3.5e-5 at unit scale) to avoid
+                // misclassification as "On" a nearby face of the other solid.
+                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
             }
             Surface3::Torus(t) => {
                 use rcad_kernel::geom::SurfaceEval;
@@ -173,7 +180,7 @@ impl SubFace {
                 } else {
                     -self.normal
                 };
-                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
             }
             _ => {
                 // Use the true area centroid (shoelace formula) instead of the vertex
@@ -392,34 +399,11 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        // Triangulate outer boundary (use original positions for stability on difference / holes).
         let mut tris = triangulate_polygon(&sub.boundary, normal);
-        // Remap triangle indices from local (0..n) to result vertex indices
         for tri in &mut tris {
             for idx in tri.iter_mut() {
                 *idx = vert_indices[*idx];
             }
-        }
-
-        // Handle inner wires (holes) 鈥?only create wire topology, NOT triangles.
-        // The face triangulation covers only the outer boundary; inner wires are
-        // stored as topological holes and will be tesselled separately if needed.
-        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
-        for wire_pts in &sub.inner_wires {
-            if wire_pts.len() < 3 {
-                continue;
-            }
-            // Add vertices for this inner wire
-            let wire_verts: Vec<usize> = wire_pts.iter().map(|&p| self.add_vertex(p)).collect();
-            // Add edges with forward flag
-            let mut wire_edges = Vec::new();
-            for i in 0..wire_verts.len() {
-                let j = (i + 1) % wire_verts.len();
-                let ei = self.add_edge(wire_verts[i], wire_verts[j]);
-                let forward = self.edges[ei].0 == wire_verts[i];
-                wire_edges.push((ei, forward));
-            }
-            inner_wire_edges.push(wire_edges);
         }
 
         // Deduplicate coincident faces that map to the same topological boundary.
@@ -429,7 +413,7 @@ impl ResultBuilder {
         } else {
             sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64
         };
-        let area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
+        let mut area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
 
         let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
         outer_sig.sort_unstable();
@@ -460,7 +444,7 @@ impl ResultBuilder {
 
         self.faces.push((
             edge_indices,
-            inner_wire_edges,
+            vec![],
             tris,
             normal,
             sub.surface.clone(),
@@ -1186,13 +1170,16 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
-                let keep = if !face_split
-                    && self.op == BooleanOpType::Union
+                let keep = if self.op == BooleanOpType::Union
+                    && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
-                    && self.is_glued_face(fi, &b_faces)
+                    && (self.is_glued_face(fi, &b_faces)
+                        || self.coplanar_ff_normals_opposite(fi) == Some(false))
                 {
-                    // For Union, unsplit planar faces that are fully glued with a
-                    // face from the other operand are internal to the result.
+                    // For Union, planar On sub-faces coplanar with a B-face can be
+                    // removed — the B-face covers this region on the external surface.
+                    // Same-normal coplanar faces (normals point the same direction)
+                    // mean this face is redundant in the union result.
                     false
                 } else if !face_split
                     && self.op == BooleanOpType::Difference
@@ -2063,7 +2050,7 @@ impl<'a> BooleanBuilder<'a> {
                     let on_circle_tol = TOLERANCE_COORD_SUB;
 
                     for poly in &polygons_2d {
-                        let halves = split_polygon_by_circle_2d(poly, center_2d, radius);
+                        let halves = split_polygon_by_circle_2d(poly, center_2d, radius, Some(self.op));
                         for half in halves {
                             // Check whether this half has a contiguous on-circle arc segment.
                             let on: Vec<bool> = half.iter()
@@ -2253,6 +2240,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         let debug_split = std::env::var("RCAD_DEBUG_SPLIT").is_ok();
+
         polygons_2d
             .into_iter()
             .filter(|p| p.len() >= 3)
@@ -3524,7 +3512,8 @@ mod tests {
     }
 
     /// `split_polygon_by_circle_2d` must produce two regions for a full square when the
-    /// disk center is inside the square (annulus + cap path).
+    /// disk center is inside the square (annulus + cap path), except for Union where
+    /// the inner circle is redundant and only the outer polygon is returned.
     #[test]
     fn split_unit_square_by_circle_center_inside() {
         use glam::DVec2;
@@ -3534,8 +3523,12 @@ mod tests {
             DVec2::new(1.0, 1.0),
             DVec2::new(0.0, 1.0),
         ];
-        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3);
-        assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
+        // For Union, the inner circle is skipped (prevents double-counting)
+        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Union));
+        assert_eq!(out.len(), 1, "Union should skip inner circle, got {}", out.len());
+        // For Difference, the full split is needed
+        let out_diff = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
+        assert!(out_diff.len() >= 2, "Difference should split, got {}", out_diff.len());
     }
 
     /// Corner-centered disk (e.g. plane x=0: circle in (y,z) with center at box corner) must
@@ -3549,7 +3542,7 @@ mod tests {
             DVec2::new(1.0, 1.0),
             DVec2::new(0.0, 1.0),
         ];
-        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.0, 0.0), 1.0);
+        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.0, 0.0), 1.0, None);
         assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
     }
 
@@ -5119,7 +5112,7 @@ fn find_circle_segment_crossing(a: DVec2, b: DVec2, center: DVec2, radius: f64, 
     None
 }
 
-fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec<Vec<DVec2>> {
+fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Option<BooleanOpType>) -> Vec<Vec<DVec2>> {
     const N_CIRCLE_SAMPLES: usize = 24;
     let n = poly.len();
     if n < 3 {
@@ -5168,6 +5161,12 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64) -> Vec
                     center + DVec2::new(theta.cos(), theta.sin()) * radius
                 })
                 .collect();
+            if op == Some(BooleanOpType::Union) {
+                // For Union, the inner circle is redundant — the containing face fully
+                // covers this region in the result. Returning only the outer polygon
+                // prevents double-counting from overlapping SubFaces.
+                return vec![poly.to_vec()];
+            }
             return vec![circle_poly, poly.to_vec()];
         }
     }

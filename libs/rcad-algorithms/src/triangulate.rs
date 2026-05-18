@@ -540,7 +540,7 @@ pub fn triangulate_polygon(nodes: &[DVec3], normal: DVec3) -> Vec<[usize; 3]> {
 /// Triangulate an outer ring with optional hole rings.
 ///
 /// Returns local indices into `outer + holes` point order.
-fn triangulate_polygon_with_holes(
+pub(crate) fn triangulate_polygon_with_holes(
     outer: &[DVec3],
     holes: &[Vec<DVec3>],
     normal: DVec3,
