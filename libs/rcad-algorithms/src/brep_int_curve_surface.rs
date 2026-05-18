@@ -897,6 +897,44 @@ fn is_point_in_face_bounds(brep: &BRep, point: DVec3, _uv: DVec2, face_idx: usiz
                     return false; // Point is inside a hole
                 }
         }
+
+        // For cylinder and cone surfaces, verify the axial (V) bounds using the
+        // face's wire vertices projected onto the axis.  The primitive cylinder
+        // wall face has only 2 unique wire vertices (seam edges), so
+        // point_in_polygon_on_surface falls through to point_on_closed_surface
+        // which only checks the infinite surface radius without axial bounds —
+        // causing false hits for points far above/below the actual face.
+        match &surface {
+            Surface3::Cylinder(cyl) => {
+                let axis = cyl.axis.normalize();
+                let (min_v, max_v) = wire_vertices.iter().fold(
+                    (f64::INFINITY, f64::NEG_INFINITY),
+                    |(mn, mx), &v| {
+                        let proj = (v - cyl.origin).dot(axis);
+                        (mn.min(proj), mx.max(proj))
+                    },
+                );
+                let point_v = (point - cyl.origin).dot(axis);
+                if point_v < min_v - tol * 100.0 || point_v > max_v + tol * 100.0 {
+                    return false;
+                }
+            }
+            Surface3::Cone(cone) => {
+                let axis = cone.axis_dir();
+                let (min_v, max_v) = wire_vertices.iter().fold(
+                    (f64::INFINITY, f64::NEG_INFINITY),
+                    |(mn, mx), &v| {
+                        let proj = (v - cone.apex).dot(axis);
+                        (mn.min(proj), mx.max(proj))
+                    },
+                );
+                let point_v = (point - cone.apex).dot(axis);
+                if point_v < min_v - tol * 100.0 || point_v > max_v + tol * 100.0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
     }
 
     is_inside
