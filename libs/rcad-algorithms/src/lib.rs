@@ -2654,9 +2654,25 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_axis_aligned_box_box(a, b) {
             return Ok(r);
         }
-        // Note: try_union_box_general (rotated box-box slab decomposition) is intentionally
-        // omitted — it produces incorrect surface area for some rotated configurations (e.g.
-        // bopfuse_simple C3). The general fuse path handles these correctly.
+        // Rotated box-box via slab decomposition.  The result is validated against
+        // a tight upper-bound SA(A)+SA(B)-SA(I)  where I = A∩B: if the slab
+        // decomposition left internal faces, the SA exceeds this bound and we fall
+        // through to the general fuse path (bopfuse_simple C3 is one such case).
+        if let Some(r) = boolean_unit_octant::try_union_box_general(a, b) {
+            let sum_sa = total_surface_area(a) + total_surface_area(b);
+            let r_sa = total_surface_area(&r);
+            let mut ok = false;
+            if let Some(inter) = boolean_unit_octant::try_intersection_box_general(a, b) {
+                let inter_sa = total_surface_area(&inter);
+                ok = r_sa <= sum_sa - inter_sa + 1e-6;
+            } else {
+                ok = r_sa <= sum_sa + 1e-6;
+            }
+            if ok {
+                return Ok(r);
+            }
+            // Fall through to fuse below (the slab result was inflated).
+        }
         return bop_occt_union::fuse(a, b);
     }
 
