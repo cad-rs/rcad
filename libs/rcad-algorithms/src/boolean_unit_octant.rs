@@ -2151,17 +2151,23 @@ fn add_box_perimeter_vertices(
         }
     }
 
-    let corner_ts = [2.0, 4.0, 6.0];
+    let corner_ts = [0.0, 2.0, 4.0, 6.0];
     let start_norm = if t_start < 0.0 { t_start + 8.0 } else { t_start };
     let end_norm = if t_end <= t_start { t_end + 8.0 } else { t_end };
 
+    // Collect corners within range and sort by normalized t for CCW order.
+    let mut corners_in_range: Vec<(f64, f64, f64)> = Vec::new();
     for &ct in &corner_ts {
         let ct_norm = if ct < start_norm { ct + 8.0 } else { ct };
         if ct_norm > start_norm + tol && ct_norm < end_norm - tol {
             let (u, v) = box_perimeter_uv(ct, eu, ev);
-            let pt = corner(u, v, z);
-            if (poly.last().unwrap() - pt).length() > tol { poly.push(pt); }
+            corners_in_range.push((ct_norm, u, v));
         }
+    }
+    corners_in_range.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    for (_, u, v) in corners_in_range {
+        let pt = corner(u, v, z);
+        if (poly.last().unwrap() - pt).length() > tol { poly.push(pt); }
     }
 
     let (ue, ve) = box_perimeter_uv(t_end, eu, ev);
@@ -2180,7 +2186,14 @@ fn add_circle_arc_vertices(
     poly: &mut Vec<DVec3>,
 ) {
     let verts = arc_vertices(cu, cv, r, th_start, th_end, eu, ev, z, corner);
-    // verts[0] is the start point, already in poly from the previous segment
+    // verts[0] is the start point — already in poly from the previous segment,
+    // or if poly is empty (first merged segment is a circle arc, not box perimeter)
+    // we need to push it here.
+    if poly.is_empty() {
+        if let Some(&first) = verts.first() {
+            poly.push(first);
+        }
+    }
     for i in 1..verts.len() {
         if (poly.last().unwrap() - verts[i]).length() > TOLERANCE_LEN_MIN {
             poly.push(verts[i]);
@@ -2731,7 +2744,7 @@ fn build_box_cylinder_result_partial_with_holes(
             } else {
                 add_side_strip(&cn, u_ax, -ev, ev);
             }
-        } else {
+        } else if (eu - cu).powi(2) + (0.0 - cv).powi(2) > cyl_r.powi(2) + tol {
             add_side_strip(&cn, u_ax, -ev, ev);
         }
     }
@@ -2750,7 +2763,7 @@ fn build_box_cylinder_result_partial_with_holes(
             } else {
                 add_side_strip(&cn, -u_ax, -ev, ev);
             }
-        } else {
+        } else if (-eu - cu).powi(2) + (0.0 - cv).powi(2) > cyl_r.powi(2) + tol {
             add_side_strip(&cn, -u_ax, -ev, ev);
         }
     }
@@ -2769,7 +2782,7 @@ fn build_box_cylinder_result_partial_with_holes(
             } else {
                 add_side_strip(&cn, v_ax, -eu, eu);
             }
-        } else {
+        } else if (0.0 - cu).powi(2) + (ev - cv).powi(2) > cyl_r.powi(2) + tol {
             add_side_strip(&cn, v_ax, -eu, eu);
         }
     }
@@ -2788,25 +2801,39 @@ fn build_box_cylinder_result_partial_with_holes(
             } else {
                 add_side_strip(&cn, -v_ax, -eu, eu);
             }
-        } else {
+        } else if (0.0 - cu).powi(2) + (-ev - cv).powi(2) > cyl_r.powi(2) + tol {
             add_side_strip(&cn, -v_ax, -eu, eu);
         }
     }
 
-    // Cap faces with inner hole
+    // Cap faces with inner hole (+ full bottom/top face when cylinder doesn't reach).
+    // Bottom region
     let outer_lo = box_outer(z_lo);
     let inner_lo = build_inner(z_lo);
-    if !inner_lo.is_empty() {
-        if let Some(f) = planar_face_with_inner_hole(&outer_lo, &inner_lo, DVec3::Z) {
-            pieces.push(f);
+    if z_lo > -ew + tol {
+        // Full bottom face at z=-ew (cylinder doesn't reach bottom).
+        let bot = [corner(-eu, -ev, -ew), corner(-eu, ev, -ew), corner(eu, ev, -ew), corner(eu, -ev, -ew)];
+        if let Some(f) = rect_face_4(bot, -DVec3::Z) { pieces.push(f); }
+        // Interior annular cap at z_lo, normal +Z.
+        if !inner_lo.is_empty() {
+            if let Some(f) = planar_face_with_inner_hole(&outer_lo, &inner_lo, DVec3::Z) { pieces.push(f); }
         }
+    } else if !inner_lo.is_empty() {
+        if let Some(f) = planar_face_with_inner_hole(&outer_lo, &inner_lo, DVec3::Z) { pieces.push(f); }
     }
+    // Top region
     let outer_hi = box_outer(z_hi);
     let inner_hi = build_inner(z_hi);
-    if !inner_hi.is_empty() {
-        if let Some(f) = planar_face_with_inner_hole(&outer_hi, &inner_hi, -DVec3::Z) {
-            pieces.push(f);
+    if z_hi < ew - tol {
+        // Full top face at z=ew (cylinder doesn't reach top).
+        let top = [corner(-eu, -ev, ew), corner(eu, -ev, ew), corner(eu, ev, ew), corner(-eu, ev, ew)];
+        if let Some(f) = rect_face_4(top, DVec3::Z) { pieces.push(f); }
+        // Interior annular cap at z_hi, normal -Z.
+        if !inner_hi.is_empty() {
+            if let Some(f) = planar_face_with_inner_hole(&outer_hi, &inner_hi, -DVec3::Z) { pieces.push(f); }
         }
+    } else if !inner_hi.is_empty() {
+        if let Some(f) = planar_face_with_inner_hole(&outer_hi, &inner_hi, -DVec3::Z) { pieces.push(f); }
     }
 
     // Cylindrical wall: build wall pieces for each consecutive-OUTSIDE arc range.
@@ -2853,6 +2880,19 @@ fn build_box_cylinder_result_partial_with_holes(
     if pieces.is_empty() { return None; }
     let sewn = sew_shells(&pieces, tol.max(TOLERANCE_ABS * 100.0));
     Some(sewn.brep)
+}
+
+/// Print surface area of each piece for debugging.
+#[allow(dead_code)]
+fn debug_piece_sas(label: &str, pieces: &[BRep]) {
+    for (i, p) in pieces.iter().enumerate() {
+        if let Some(sol) = p.solids.first() {
+            if let Some(sh) = sol.shells.first() {
+                let sa = surface_area(p);
+                eprintln!("  [{label} piece {i}] sa={sa}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

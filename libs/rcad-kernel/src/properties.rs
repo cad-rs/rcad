@@ -1233,7 +1233,12 @@ fn try_planar_face_area_shoelace(
                     // correct (`bcommon_simple/B1`): only trust the smaller shoe when it is a
                     // substantial fraction of the rect metric (true parallelogram vs AABB).
                     if a_rect > a_shoe * (1.0 + REL) + abs_eps {
-                        if a_shoe + abs_eps >= a_rect * 0.65 {
+                        // When the shoelace is a significant fraction of the bounding
+                        // rect, the polygon is legitimate (possibly concave). Only
+                        // fall back to the rect when shoelace is pathologically small
+                        // (permuted wire edges from boolean T-junctions).
+                        let ratio = a_shoe / a_rect.max(1e-12);
+                        if ratio >= 0.40 || a_shoe + abs_eps >= a_rect * 0.65 {
                             return Some(a_shoe.max(0.0));
                         }
                         return Some(a_rect.max(0.0));
