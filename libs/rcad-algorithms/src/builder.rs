@@ -2919,22 +2919,16 @@ impl<'a> BooleanBuilder<'a> {
                     // circles use [0, 2蟺]). Re-sample the 3D intersection curve and project to UV so
                     // sphere trimming matches geometry (fixes sphere 鈭?trotated box / OCCT bcommon A4).
                     rcad_kernel::geom::Curve2d::BSpline(_) => {
-                        if !ic.polyline.is_empty() {
-                            // Numerical marching stores sampled 3D points in `polyline`.
-                            // `ic.curve` is a chord-line approximation (degenerate for closed
-                            // curves), so re-sampling from it gives wrong 3D points (torus ZL4).
-                            // Use polyline points directly, projecting to UV via world_to_uv.
+                        // For Torus surfaces the BSpline chord-line approximation is
+                        // degenerate (the closed curve's seam causes wrong 3D points — ZL4).
+                        // Use the marching polyline points directly for Torus; for all other
+                        // surfaces the analytic BSpline re-sampling is more accurate.
+                        if !ic.polyline.is_empty() && matches!(&surface, rcad_kernel::geom::Surface3::Torus(_)) {
                             ic.polyline.iter().map(|&p3| {
-                                let uv = match &surface {
-                                    rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
-                                    rcad_kernel::geom::Surface3::Cone(cone) => cone.world_to_uv(p3),
-                                    rcad_kernel::geom::Surface3::Torus(torus) => torus.world_to_uv(p3),
-                                    _ => {
-                                        let proj = rcad_kernel::projection::closest_point_on_surface(
-                                            &surface, p3, 16,
-                                        );
-                                        DVec2::new(proj.params.0, proj.params.1)
-                                    }
+                                let uv = if let rcad_kernel::geom::Surface3::Torus(t) = &surface {
+                                    t.world_to_uv(p3)
+                                } else {
+                                    unreachable!()
                                 };
                                 uv
                             }).collect()

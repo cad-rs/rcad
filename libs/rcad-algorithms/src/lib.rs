@@ -2654,10 +2654,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_axis_aligned_box_box(a, b) {
             return Ok(r);
         }
-        // General box-box union (rotated boxes) via half-space slab decomposition.
-        if let Some(r) = boolean_unit_octant::try_union_box_general(a, b) {
-            return Ok(r);
-        }
+        // Note: try_union_box_general (rotated box-box slab decomposition) is intentionally
+        // omitted — it produces incorrect surface area for some rotated configurations (e.g.
+        // bopfuse_simple C3). The general fuse path handles these correctly.
         return bop_occt_union::fuse(a, b);
     }
 
