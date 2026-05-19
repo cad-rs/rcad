@@ -1638,13 +1638,40 @@ impl<'a> BooleanBuilder<'a> {
                                 const N: usize = 8;
                                 let uvs: Vec<DVec2> = (0..=N)
                                     .map(|i| {
-                                        let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                                        // BSpline/Bezier pcurves have knot domain [0, 1],
+                                        // not the IC's t_range (e.g. [0, 2π] for an ellipse).
+                                        // Normalize so de_boor_2d evaluates within the knot domain.
+                                        let t = match pcurve {
+                                            Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
+                                                i as f64 / N as f64
+                                            }
+                                            _ => t0 + (t1 - t0) * i as f64 / N as f64,
+                                        };
                                         pcurve.point_at(t)
                                     })
                                     .collect();
-                                let u_min = uvs.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                                let u_max = uvs.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                                if (u_max - u_min) < bnd_u_span * 0.85 {
+                                let span = if bnd_u_min.is_finite() && bnd_u_span.is_finite() && bnd_u_span > 0.0 {
+                                    // Circular span for periodic surfaces: unwrapping artifacts in the
+                                    // pcurve BSpline can inflate the raw (max-min) span to many times
+                                    // the true range (e.g. 4.7→41.5 when the true values wrap from 6.2
+                                    // back to 0.1 on a [0, 2π) surface).
+                                    let mut wrapped: Vec<f64> = uvs.iter().map(|p| {
+                                        let s = p.x - bnd_u_min;
+                                        s - (s / bnd_u_span).floor() * bnd_u_span
+                                    }).collect();
+                                    wrapped.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                                    let max_gap = wrapped.windows(2)
+                                        .map(|w| w[1] - w[0])
+                                        .fold(0.0_f64, f64::max)
+                                        .max(wrapped[0] + bnd_u_span - wrapped[wrapped.len() - 1]);
+                                    let circ_span = bnd_u_span - max_gap;
+                                    circ_span
+                                } else {
+                                    let u_min = uvs.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                                    let u_max = uvs.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                                    u_max - u_min
+                                };
+                                if span < bnd_u_span * 0.85 {
                                     return false;
                                 }
                                 // Exclude full-wrap curves at the V boundary (cap circles).

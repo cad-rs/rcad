@@ -2163,7 +2163,8 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
         use inttools::pcurve_derive::{
-            fallback_pcurve_by_projection, line_pcurve_on_cylinder, polyline_pcurve_by_projection,
+            ellipse_pcurve_on_cylinder, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
+            polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;
 
@@ -2491,47 +2492,19 @@ impl<'a> PaveFiller<'a> {
 
             CylinderCylinderResult::TwoEllipses(e1, e2) => {
                 // Perpendicular Steinmetz unequal-radii.
-                // Each ellipse lies in a plane; use ellipse_pcurve_on_plane for the
-                // plane PCurve and fallback for the cylinder PCurve.
-                let plane1 = rcad_kernel::geom::Plane {
-                    origin: e1.center,
-                    normal: e1.normal,
-                };
-                let plane2 = rcad_kernel::geom::Plane {
-                    origin: e2.center,
-                    normal: e2.normal,
-                };
-
-                let pca1 = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(e1),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl1),
-                );
-                let pcb1 = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(e1),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl2),
-                );
+                // Use analytic pcurves on both cylinders (no iterative projection).
+                let pca1 = ellipse_pcurve_on_cylinder(&e1, cyl1);
+                let pcb1 = ellipse_pcurve_on_cylinder(&e1, cyl2);
                 let (pca1, pcb1) = make_pcurves(pca1, pcb1);
                 let ci1 = add_ellipse(self.ds, &e1, pca1, pcb1, f1, f2);
 
-                let pca2 = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(e2),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl1),
-                );
-                let pcb2 = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(e2),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl2),
-                );
+                let pca2 = ellipse_pcurve_on_cylinder(&e2, cyl1);
+                let pcb2 = ellipse_pcurve_on_cylinder(&e2, cyl2);
                 let (pca2, pcb2) = make_pcurves(pca2, pcb2);
                 let ci2 = add_ellipse(self.ds, &e2, pca2, pcb2, f1, f2);
 
                 curve_indices.push(ci1);
                 curve_indices.push(ci2);
-
-                let _ = (plane1, plane2); // suppress warnings
             }
         }
 

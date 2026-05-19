@@ -195,6 +195,68 @@ pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2
     })
 }
 
+/// Compute the PCurve of an [`Ellipse3`] on a [`CylindricalSurface`].
+///
+/// Samples the ellipse at 33 evenly-spaced parameter values over [0, 2π],
+/// projects each 3D point onto the cylinder's (u, v) domain using the analytic
+/// inverse mapping, and interpolates a [`BSplineCurve2`].
+///
+/// Unlike [`fallback_pcurve_by_projection`], this avoids iterative closest-point
+/// projection and is exact for points on the cylinder surface. The ellipse's
+/// own parameterization gives well-distributed sample points.
+pub fn ellipse_pcurve_on_cylinder(ellipse: &Ellipse3, cyl: &CylindricalSurface) -> Curve2d {
+    let axis = cyl.axis.normalize_or_zero();
+    let u_axis = any_perpendicular(axis);
+    let v_axis = axis.cross(u_axis).normalize();
+
+    let n = 33_usize;
+    let mut pts: Vec<DVec2> = (0..n)
+        .map(|i| {
+            let t = std::f64::consts::TAU * i as f64 / (n - 1) as f64;
+            let p3 = ellipse.point_at(t);
+            let v = (p3 - cyl.origin).dot(axis);
+            let radial = p3 - cyl.origin - axis * v;
+            let mut u = radial.dot(v_axis).atan2(radial.dot(u_axis));
+            // Map to [0, 2π] to match cylinder UV convention (same as
+            // closest_point_on_surface and cone_uv_from_point).
+            if u < 0.0 {
+                u += std::f64::consts::TAU;
+            }
+            DVec2::new(u, v)
+        })
+        .collect();
+
+    // Unwrap seam discontinuities: samples near the 0/2π seam may have a
+    // large jump if the ellipse crosses it.
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x -= std::f64::consts::TAU;
+            }
+        } else if du < -std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x += std::f64::consts::TAU;
+            }
+        }
+    }
+
+    match interpolate_points_2d(&pts) {
+        Ok(bspline) => Curve2d::BSpline(bspline),
+        Err(_) => {
+            let a = pts[0];
+            let b = *pts.last().unwrap_or(&a);
+            let d = b - a;
+            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+                d.normalize()
+            } else {
+                DVec2::X
+            };
+            Curve2d::Line(Line2d { origin: a, direction: dir })
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cone functions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,8 +379,9 @@ pub fn fallback_pcurve_by_projection(
         })
         .collect();
 
-    // Unwrap seam discontinuities: atan2-based u values are in [-π, π], but
-    // consecutive samples may jump by ~2π when the curve crosses the seam.
+    // Unwrap seam discontinuities: u values are in [0, 2π] after the mapping,
+    // but consecutive samples may still jump by ~2π when the ellipse crosses
+    // the seam. Make the u sequence monotone for a clean BSpline.
     // Make the u sequence monotone so the interpolated BSpline has no kinks.
     for i in 1..pts.len() {
         let du = pts[i].x - pts[i - 1].x;
