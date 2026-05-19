@@ -2528,8 +2528,9 @@ impl<'a> PaveFiller<'a> {
         cyl: &CylindricalSurface,
     ) {
         use inttools::pcurve_derive::{
-            circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_plane,
-            fallback_pcurve_by_projection, line_pcurve_on_cylinder, line_pcurve_on_plane,
+            circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_cylinder,
+            ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
+            line_pcurve_on_plane,
         };
         use inttools::plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder};
         use rcad_kernel::CurveEval;
@@ -2634,11 +2635,7 @@ impl<'a> PaveFiller<'a> {
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
                 let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
-                let pcb_cyl = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(ellipse),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl),
-                );
+                let pcb_cyl = ellipse_pcurve_on_cylinder(&ellipse, cyl);
                 let (pca, pcb) = make_pcurves(pca_plane, pcb_cyl);
                 let ci = add_curve(
                     self.ds,
@@ -2816,8 +2813,9 @@ impl<'a> PaveFiller<'a> {
         cone: &ConicalSurface,
     ) {
         use inttools::pcurve_derive::{
-            circle_pcurve_on_plane, ellipse_pcurve_on_plane, fallback_pcurve_by_projection,
-            line_pcurve_on_plane,
+            circle_pcurve_on_cone, circle_pcurve_on_plane, ellipse_pcurve_on_cone,
+            ellipse_pcurve_on_plane, fallback_pcurve_by_projection,
+            line_pcurve_on_cone, line_pcurve_on_plane, sampled_pcurve_on_cone,
         };
         use inttools::plane_cone::{PlaneConicalResult, intersect_plane_cone};
         use std::f64::consts::TAU;
@@ -2881,11 +2879,7 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 ) {
                     let pca_plane = line_pcurve_on_plane(&line, plane);
-                    let pcb_cone = fallback_pcurve_by_projection(
-                        &Curve3::Line(line),
-                        &trimmed,
-                        &Surface3::Cone(*cone),
-                    );
+                    let pcb_cone = line_pcurve_on_cone(&line, cone);
                     let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
                     let ci = add_curve(
                         self.ds,
@@ -2909,11 +2903,7 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 ) {
                     let pca1 = line_pcurve_on_plane(&l1, plane);
-                    let pcb1 = fallback_pcurve_by_projection(
-                        &Curve3::Line(l1),
-                        &t1,
-                        &Surface3::Cone(*cone),
-                    );
+                    let pcb1 = line_pcurve_on_cone(&l1, cone);
                     let (pca1, pcb1) = make_pcurves(pca1, pcb1);
                     let ci1 = add_curve(
                         self.ds,
@@ -2935,11 +2925,7 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 ) {
                     let pca2 = line_pcurve_on_plane(&l2, plane);
-                    let pcb2 = fallback_pcurve_by_projection(
-                        &Curve3::Line(l2),
-                        &t2,
-                        &Surface3::Cone(*cone),
-                    );
+                    let pcb2 = line_pcurve_on_cone(&l2, cone);
                     let (pca2, pcb2) = make_pcurves(pca2, pcb2);
                     let ci2 = add_curve(
                         self.ds,
@@ -2956,11 +2942,7 @@ impl<'a> PaveFiller<'a> {
 
             PlaneConicalResult::Circle(circle) => {
                 let pca_plane = circle_pcurve_on_plane(&circle, plane);
-                let pcb_cone = fallback_pcurve_by_projection(
-                    &Curve3::Circle(circle),
-                    &[0.0, TAU],
-                    &Surface3::Cone(*cone),
-                );
+                let pcb_cone = circle_pcurve_on_cone(&circle, cone);
                 let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
                 let ci = add_curve(self.ds, Curve3::Circle(circle), [0.0, TAU], pca, pcb, f1, f2);
                 curve_indices.push(ci);
@@ -2968,11 +2950,7 @@ impl<'a> PaveFiller<'a> {
 
             PlaneConicalResult::Ellipse(ellipse) => {
                 let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
-                let pcb_cone = fallback_pcurve_by_projection(
-                    &Curve3::Ellipse(ellipse),
-                    &[0.0, TAU],
-                    &Surface3::Cone(*cone),
-                );
+                let pcb_cone = ellipse_pcurve_on_cone(&ellipse, cone);
                 let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
                 let ci = add_curve(self.ds, Curve3::Ellipse(ellipse), [0.0, TAU], pca, pcb, f1, f2);
                 curve_indices.push(ci);
@@ -2991,10 +2969,10 @@ impl<'a> PaveFiller<'a> {
                         &trimmed,
                         &Surface3::Plane(*plane),
                     );
-                    let pcb_cone = fallback_pcurve_by_projection(
+                    let pcb_cone = sampled_pcurve_on_cone(
                         &Curve3::Parabola(parabola),
                         &trimmed,
-                        &Surface3::Cone(*cone),
+                        cone,
                     );
                     let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
                     let ci = add_curve(
@@ -3023,10 +3001,10 @@ impl<'a> PaveFiller<'a> {
                         &trimmed,
                         &Surface3::Plane(*plane),
                     );
-                    let pcb_cone = fallback_pcurve_by_projection(
+                    let pcb_cone = sampled_pcurve_on_cone(
                         &Curve3::Hyperbola(hyperbola),
                         &trimmed,
-                        &Surface3::Cone(*cone),
+                        cone,
                     );
                     let (pca, pcb) = make_pcurves(pca_plane, pcb_cone);
                     let ci = add_curve(
@@ -3064,7 +3042,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
         use inttools::pcurve_derive::{
-            circle_pcurve_on_cylinder, fallback_pcurve_by_projection,
+            circle_pcurve_on_cone, circle_pcurve_on_cylinder, fallback_pcurve_by_projection,
             polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;
@@ -3132,11 +3110,7 @@ impl<'a> PaveFiller<'a> {
 
             CylinderConeResult::CoaxialCircle(circle) => {
                 let pca_cyl = circle_pcurve_on_cylinder(&circle, cyl);
-                let pcb_cone = fallback_pcurve_by_projection(
-                    &Curve3::Circle(circle),
-                    &[0.0, TAU],
-                    &Surface3::Cone(*cone),
-                );
+                let pcb_cone = circle_pcurve_on_cone(&circle, cone);
                 let (pca, pcb) = make_pcurves(pca_cyl, pcb_cone);
 
                 let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
@@ -3179,7 +3153,7 @@ impl<'a> PaveFiller<'a> {
         cone2: &ConicalSurface,
     ) {
         use inttools::cone_cone::{ConeConeResult, intersect_cone_cone};
-        use inttools::pcurve_derive::fallback_pcurve_by_projection;
+        use inttools::pcurve_derive::circle_pcurve_on_cone;
         use std::f64::consts::TAU;
 
         // Determine which face is cone1 (for pcurve_on_a/b ordering).
@@ -3208,16 +3182,8 @@ impl<'a> PaveFiller<'a> {
             }
 
             ConeConeResult::CoaxialCircle(circle) => {
-                let pca_cone1 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(circle),
-                    &[0.0, TAU],
-                    &Surface3::Cone(*cone1),
-                );
-                let pcb_cone2 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(circle),
-                    &[0.0, TAU],
-                    &Surface3::Cone(*cone2),
-                );
+                let pca_cone1 = circle_pcurve_on_cone(&circle, cone1);
+                let pcb_cone2 = circle_pcurve_on_cone(&circle, cone2);
                 let (pca, pcb) = make_pcurves(pca_cone1, pcb_cone2);
 
                 let pts = sample_circle_arc(&circle, 0.0, TAU, 32);
