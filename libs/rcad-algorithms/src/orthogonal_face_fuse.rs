@@ -339,6 +339,14 @@ fn fuse_orthogonal_in_shell(brep: &mut BRep, si: usize, shi: usize, tol: f64, to
             if !face.inner_wires.is_empty() {
                 continue;
             }
+            // Skip curved surfaces (cylinder, cone, sphere, torus, BSpline, etc.)
+            // — the orthogonal coplanar fuse projects faces onto a plane, which
+            // flattens curved patches (e.g. tessellated cylinder from a full-wrap
+            // TwoEllipses intersection). Curved surfaces are merged by the
+            // downstream `unify_same_domain_faces` pass which preserves type.
+            if !face_is_plane(brep, flat_face_index(brep, si, shi, fi)) {
+                continue;
+            }
             let Some(p0) = face_first_point(brep, face) else {
                 continue;
             };
