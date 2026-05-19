@@ -164,15 +164,65 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
 
 /// Compute the PCurve of a [`Circle3`] on a [`CylindricalSurface`].
 ///
-/// A circle perpendicular to the cylinder axis at height h returns a
-/// horizontal [`Line2d`] at v = h in (θ, h) space.
+/// For a circle perpendicular to the cylinder axis (axial/parallel circle),
+/// returns a horizontal [`Line2d`] at v = h.  For circles in diagonal planes
+/// (e.g. the Steinmetz TwoCircles case), samples 33 points on the circle,
+/// maps each to cylinder UV via the analytic inverse mapping, and interpolates
+/// a [`BSplineCurve2`].
 pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> Curve2d {
-    let h = (circle.center - cyl.origin).dot(cyl.axis.normalize());
-
-    Curve2d::Line(Line2d {
-        origin: DVec2::new(0.0, h),
-        direction: DVec2::new(1.0, 0.0),
-    })
+    let axis = cyl.axis.normalize_or_zero();
+    let normal_dot = circle.normal.normalize().dot(axis).abs();
+    // Perpendicular circle: constant v (horizontal line in UV space).
+    if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
+        let h = (circle.center - cyl.origin).dot(axis);
+        return Curve2d::Line(Line2d {
+            origin: DVec2::new(0.0, h),
+            direction: DVec2::new(1.0, 0.0),
+        });
+    }
+    // Diagonal circle: sample and map to UV.
+    let u_axis = any_perpendicular(axis);
+    let v_axis = axis.cross(u_axis).normalize();
+    let n = 33_usize;
+    let mut pts: Vec<DVec2> = (0..n)
+        .map(|i| {
+            let t = std::f64::consts::TAU * i as f64 / (n - 1) as f64;
+            let p3 = circle.point_at(t);
+            let v = (p3 - cyl.origin).dot(axis);
+            let radial = p3 - cyl.origin - axis * v;
+            let mut u = radial.dot(v_axis).atan2(radial.dot(u_axis));
+            if u < 0.0 {
+                u += std::f64::consts::TAU;
+            }
+            DVec2::new(u, v)
+        })
+        .collect();
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x -= std::f64::consts::TAU;
+            }
+        } else if du < -std::f64::consts::PI {
+            for p in &mut pts[i..] {
+                p.x += std::f64::consts::TAU;
+            }
+        }
+    }
+    match interpolate_points_2d(&pts) {
+        Ok(bspline) => Curve2d::BSpline(bspline),
+        Err(_) => {
+            let a = pts[0];
+            let b = *pts.last().unwrap_or(&a);
+            let d = b - a;
+            let dir = if d.length_squared() > TOLERANCE_VEC_SQ_MIN {
+                d.normalize()
+            } else {
+                DVec2::X
+            };
+            Curve2d::Line(Line2d { origin: a, direction: dir })
+        }
+    }
 }
 
 /// Compute the PCurve of a [`Line3`] on a [`CylindricalSurface`].

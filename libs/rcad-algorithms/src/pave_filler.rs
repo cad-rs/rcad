@@ -2163,7 +2163,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
         use inttools::pcurve_derive::{
-            ellipse_pcurve_on_cylinder, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
+            circle_pcurve_on_cylinder, ellipse_pcurve_on_cylinder, line_pcurve_on_cylinder,
             polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;
@@ -2460,29 +2460,13 @@ impl<'a> PaveFiller<'a> {
                 // Perpendicular Steinmetz equal-radii: circles in diagonal planes.
                 // PCurves for the cylinder surfaces use projection fallback since
                 // these circles are not latitude or generator lines.
-                let pca1 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(c1),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl1),
-                );
-                let pcb1 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(c1),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl2),
-                );
+                let pca1 = circle_pcurve_on_cylinder(&c1, cyl1);
+                let pcb1 = circle_pcurve_on_cylinder(&c1, cyl2);
                 let (pca1, pcb1) = make_pcurves(pca1, pcb1);
                 let ci1 = add_circle(self.ds, &c1, pca1, pcb1, f1, f2);
 
-                let pca2 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(c2),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl1),
-                );
-                let pcb2 = fallback_pcurve_by_projection(
-                    &Curve3::Circle(c2),
-                    &[0.0, TAU],
-                    &Surface3::Cylinder(*cyl2),
-                );
+                let pca2 = circle_pcurve_on_cylinder(&c2, cyl1);
+                let pcb2 = circle_pcurve_on_cylinder(&c2, cyl2);
                 let (pca2, pcb2) = make_pcurves(pca2, pcb2);
                 let ci2 = add_circle(self.ds, &c2, pca2, pcb2, f1, f2);
 
