@@ -2352,26 +2352,34 @@ impl<'a> PaveFiller<'a> {
                         let theta = t_low + (t_high - t_low) * i as f64 / N_SAMPLES as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
                         let diff = r1 * ct - dx;
-                        let disc = r2_sq - diff * diff;
-                        if disc < 0.0 {
+                        let disc_sq = r2_sq - diff * diff;
+                        if disc_sq < 0.0 && disc_sq > -1e-12 {
+                            // Near-tangent point: noise within floating-point precision.
+                            // Clamp to zero so tangent endpoints are included, enabling
+                            // both branches to share vertices and form a closed loop.
+                        } else if disc_sq < 0.0 {
                             continue;
                         }
-                        let v = dz + branch_sign * disc.sqrt();
+                        let disc = disc_sq.max(0.0).sqrt();
+                        let v = dz + branch_sign * disc;
                         pts.push(off_cyl1.origin + v * a1 + r1 * (ct * u1 + st * v1));
                     }
 
                     // Interval B: [τ - t_high, τ - t_low] — cos increases from cos_min to cos_max
                     let t2 = TAU - t_high;
                     let t3 = TAU - t_low;
-                    for i in 1..N_SAMPLES {
+                    for i in 1..=N_SAMPLES {
                         let theta = t2 + (t3 - t2) * i as f64 / N_SAMPLES as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
                         let diff = r1 * ct - dx;
-                        let disc = r2_sq - diff * diff;
-                        if disc < 0.0 {
+                        let disc_sq = r2_sq - diff * diff;
+                        if disc_sq < 0.0 && disc_sq > -1e-12 {
+                            // Same near-tangent clamp as Interval A
+                        } else if disc_sq < 0.0 {
                             continue;
                         }
-                        let v = dz + branch_sign * disc.sqrt();
+                        let disc = disc_sq.max(0.0).sqrt();
+                        let v = dz + branch_sign * disc;
                         pts.push(off_cyl1.origin + v * a1 + r1 * (ct * u1 + st * v1));
                     }
 
@@ -2423,6 +2431,10 @@ impl<'a> PaveFiller<'a> {
                         curves: curve_indices,
                         points: vec![],
                     });
+                } else {
+                    // PerpendicularOffsetCurves sampling produced no valid intersection curves
+                    // (e.g. near-tangent cylinder-cylinder). Fall back to numerical marching.
+                    self.intersect_ff_by_numeric_intss(f1, f2, &Surface3::Cylinder(off_cyl1), &Surface3::Cylinder(off_cyl2), 32);
                 }
                 return;
             }
@@ -2458,8 +2470,6 @@ impl<'a> PaveFiller<'a> {
 
             CylinderCylinderResult::TwoCircles(c1, c2) => {
                 // Perpendicular Steinmetz equal-radii: circles in diagonal planes.
-                // PCurves for the cylinder surfaces use projection fallback since
-                // these circles are not latitude or generator lines.
                 let pca1 = circle_pcurve_on_cylinder(&c1, cyl1);
                 let pcb1 = circle_pcurve_on_cylinder(&c1, cyl2);
                 let (pca1, pcb1) = make_pcurves(pca1, pcb1);

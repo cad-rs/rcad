@@ -25,7 +25,7 @@ pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> Plan
             return PlaneCylinderResult::NoIntersection;
         }
         if (dist - cyl.radius).abs() < TOLERANCE_ABS {
-            let tang_point = cyl.origin + plane.normal * (-axis_to_plane);
+            let tang_point = cyl.origin + plane.normal * axis_to_plane;
             return PlaneCylinderResult::TangentLine(Line3 {
                 origin: tang_point,
                 direction: cyl.axis,
@@ -33,7 +33,7 @@ pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> Plan
         }
         let offset_dir = plane.normal.cross(cyl.axis).normalize();
         let half_chord = (cyl.radius * cyl.radius - dist * dist).sqrt();
-        let center_on_plane = cyl.origin - plane.normal * axis_to_plane;
+        let center_on_plane = cyl.origin + plane.normal * axis_to_plane;
 
         let l1_origin = center_on_plane + offset_dir * half_chord;
         let l2_origin = center_on_plane - offset_dir * half_chord;

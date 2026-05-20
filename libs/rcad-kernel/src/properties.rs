@@ -1452,13 +1452,15 @@ fn try_cylinder_trimmed_face_area(
             .map(|&p| { let proj = closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
             .collect();
 
-        // (constant-v filter removed — envelope now uses all uv points)
-        let mut unwrapped = Vec::with_capacity(n);
-        unwrapped.push(uvs[0].x);
-        for i in 1..n {
-            let du = short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x);
-            unwrapped.push(unwrapped[i - 1] + du);
-        }
+        // Simple unwrapping for cylinder faces: accumulate via short deltas on S¹.
+        let unwrapped: Vec<f64> = {
+            let mut o = Vec::with_capacity(n);
+            o.push(uvs[0].x);
+            for i in 1..n {
+                o.push(o[i - 1] + short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x));
+            }
+            o
+        };
 
         // Shoelace area.
         let mut area2 = 0.0_f64;
@@ -1519,6 +1521,15 @@ fn try_cylinder_trimmed_face_area(
             let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let u_span = u_max - u_min;
             const WRAP_THRESHOLD: f64 = std::f64::consts::PI;
+            let pop_bins = upper.iter().filter(|v| v.is_finite()).count();
+            let v_min_all = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+            let v_max_all = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+
+            if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                eprintln!("[WIRE_UV] n_pts={} shoelace={:.6} band_area={:.6} u_span={:.4} u_min={:.4} u_max={:.4} pop_bins={}/{} v_range=[{:.4},{:.4}] wrap={}",
+                    nf, uv_area, band_area, u_span, u_min, u_max, pop_bins, n_bins, v_min_all, v_max_all, u_span > WRAP_THRESHOLD);
+            }
+
             if u_span > WRAP_THRESHOLD {
                 // Wrap around: close the gap from the last populated bin to the first
                 if let (Some(lu), Some(lr)) = (prev_u, prev_range) {
@@ -1539,6 +1550,33 @@ fn try_cylinder_trimmed_face_area(
     let inner_area: f64 = face.inner_wires.iter()
         .filter_map(|w| wire_uv_area(w)).sum();
     let total_uv_area = outer_area - inner_area;
+    let debug = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
+    if debug {
+        let n_edges = face.outer_wire.edges.len();
+        let u_range = {
+            let mut pts_3d = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, 256);
+            trim_almost_closed_polyline(&mut pts_3d, 1e-5);
+            if pts_3d.len() < 3 { (0.0, 0.0) } else {
+                let npts = pts_3d.len();
+                let surf = Surface3::Cylinder(*cyl);
+                let uvs: Vec<DVec2> = pts_3d.iter()
+                    .map(|&p| { let proj = crate::projection::closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
+                    .collect();
+                let mut unwrapped = Vec::with_capacity(npts);
+                unwrapped.push(uvs[0].x);
+                for i in 1..npts {
+                    let du = short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x);
+                    unwrapped.push(unwrapped[i - 1] + du);
+                }
+                let u_min = unwrapped.iter().cloned().fold(f64::INFINITY, f64::min);
+                let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                (u_min, u_max - u_min)
+            }
+        };
+        let _v_min = u_range.0;
+        eprintln!("[CYL_SA] edges={} outer_uv={:.6} inner_uv={:.6} net_uv={:.6} R={} SA={:.6} u_span={:.4} inner_wires={}",
+            n_edges, outer_area, inner_area, total_uv_area, cyl.radius, cyl.radius * total_uv_area, u_range.1, face.inner_wires.len());
+    }
     if total_uv_area > 1e-14 { Some(cyl.radius * total_uv_area) } else { None }
 }
 

@@ -594,8 +594,10 @@ impl ResultBuilder {
     }
 
     fn build(mut self, subdivide_t_junction_seams: bool) -> (BRep, BooleanHistory) {
+        eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         if subdivide_t_junction_seams {
             self.subdivide_edges_at_interior_vertices();
+            eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         }
         let vertices = self
             .vertices
@@ -665,6 +667,7 @@ impl ResultBuilder {
             compound: None,
             compsolid: None,
         };
+        eprintln!("BRep built: {} faces", brep.solids[0].shells[0].faces.len());
         (brep, history)
     }
 }
@@ -893,25 +896,27 @@ fn classify_against_solid_for_boolean(
 ) -> Classification {
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
-    if op != BooleanOpType::Intersection {
+    // For non-Intersection ops, only probe when primary is In — the UV centroid
+    // of a large sub-face can fall inside the other solid even when portions of
+    // the sub-face extend outside (e.g. offset cylinder-cylinder where the trim
+    // curves don't fully enclose the intersection region on one surface).
+    if op != BooleanOpType::Intersection && !matches!(c0, Classification::In) {
         return c0;
     }
 
     // When the primary sample is In or On, the sub-face centroid may not be
-    // representative for intersection 鈥?boundary-vertex centroids can fall inside
-    // the other solid even when the sub-face is entirely outside (e.g. a planar
-    // sub-face of a box near a sphere's surface, where arc points cluster on one
-    // side of the polygon).  Probe additional samples to disambiguate.
+    // representative — boundary-vertex centroids can fall inside the other solid
+    // even when the sub-face is entirely outside (e.g. a planar sub-face of a box
+    // near a sphere's surface, where arc points cluster on one side of the polygon).
+    // Probe additional samples to disambiguate.
     if matches!(c0, Classification::In | Classification::On) {
         let probe_pts: Vec<DVec3> = {
-            // 1. True area centroid + interior blend points.
-            //    Boundary-vertex centroids are unreliable when vertices are unevenly
-            //    distributed (e.g. a box-face arc from a sphere intersection clusters
-            //    points along the arc, biasing the centroid toward the sphere).
-            //    The area centroid is always inside a convex polygon, and interior
-            //    blend points (70% centroid + 30% boundary vertex) lie strictly inside
-            //    the sub-face region where classification is unambiguous.
-            let interior_pts: Vec<DVec3> = if sub.boundary.len() >= 3 {
+            // 1. For planar surfaces: true area centroid + interior blend points
+            //    (area centroid always inside a convex planar polygon).
+            //    For curved surfaces the boundary is NOT planar so skip the
+            //    area centroid — only use UV-domain interior points.
+            let is_planar = matches!(sub.surface, Surface3::Plane(_));
+            let interior_pts: Vec<DVec3> = if is_planar && sub.boundary.len() >= 3 {
                 let ac = planar_polygon_centroid(&sub.boundary, sub.normal);
                 let step = (sub.boundary.len() / 4).max(1);
                 let blends: Vec<DVec3> = (0..sub.boundary.len())
@@ -925,14 +930,7 @@ fn classify_against_solid_for_boolean(
                 vec![]
             };
 
-            // 2. The boundary centroid (fallback for non-planar sub-faces).
-            let centroid = if !sub.boundary.is_empty() {
-                Some(sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64)
-            } else {
-                None
-            };
-
-            // 3. UV-domain interior points when available.
+            // 2. UV-domain interior points when available (all surface types).
             let uv_pts: Vec<DVec3> = if let Some([u0, u1, v0, v1]) = sub.uv_domain {
                 if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
                     && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
@@ -964,9 +962,6 @@ fn classify_against_solid_for_boolean(
             };
 
             let mut pts = interior_pts;
-            if let Some(c) = centroid {
-                pts.push(c);
-            }
             pts.extend(uv_pts);
             pts
         };
@@ -983,10 +978,18 @@ fn classify_against_solid_for_boolean(
         }
         // If the clear majority of probe points are Out, re-classify as Out.
         // The threshold avoids false positives from a few boundary points that
-        // happen to fall inside the other solid.
+        // happen to fall inside the other solid. For non-planar surfaces we
+        // use a more lenient threshold (uv_pts tend to over-sample the interior
+        // centroid, biasing toward In).
         let total = in_count + out_count;
-        if total >= 3 && out_count >= in_count * 2 {
+        let min_out = if matches!(sub.surface, Surface3::Plane(_)) { in_count * 2 } else { in_count };
+        if total >= 3 && out_count >= min_out {
             return Classification::Out;
+        }
+        if probe_pts.len() > 1 || total > 0 {
+            let sp = sub.sample_point();
+            eprintln!("[PROBE] face_class={:?} n_probe={} n_classified={} in={} out={} sample=({:.4},{:.4},{:.4})",
+                c0, probe_pts.len(), total, in_count, out_count, sp.x, sp.y, sp.z);
         }
         return c0;
     }
@@ -1147,6 +1150,7 @@ impl<'a> BooleanBuilder<'a> {
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
         let (brep, _) = self.build_with_history()?;
+        eprintln!("BooleanBuilder::build: {} faces", brep.solids[0].shells[0].faces.len());
         Ok(brep)
     }
 
@@ -1597,6 +1601,19 @@ impl<'a> BooleanBuilder<'a> {
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
                     let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
+                    if face_idx == 3 {
+                        eprintln!("[DBG] face[3] cylinder curves_in={:?}", fi.curves_in.iter().collect::<Vec<_>>());
+                        for &ci in &fi.curves_in {
+                            let pc = self.find_pcurve_for_face(ci, face_idx);
+                            eprintln!("[DBG] face[3] ci={ci} has_pcurve={}", pc.is_some());
+                            if let Some(ref pcurve) = pc {
+                                let ic = &self.ds.intersection_curves[ci];
+                                let [t0, t1] = ic.t_range;
+                                let pts = [t0, 0.5*(t0+t1), t1].map(|t| pcurve.point_at(t));
+                                eprintln!("[DBG] face[3] ci={ci} pts={:?} v=[{}, {}] bnd_v=[{}, {}]", pts, pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min), pts.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max), bnd_v_min, bnd_v_max);
+                            }
+                        }
+                    }
                     let all_at_boundary = fi.curves_in.iter().all(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
                             let ic = &self.ds.intersection_curves[ci];
@@ -1713,7 +1730,7 @@ impl<'a> BooleanBuilder<'a> {
             | Surface3::BSpline(_)
             | Surface3::Bezier(_) => self.split_curved_face_parametric(face_idx),
             _ => {
-                // Other curved surfaces 鈥?return whole face for now
+                // Other curved surfaces — return whole face for now
                 self.single_subface_from_whole_face(face_idx)
             }
         }
@@ -2934,42 +2951,25 @@ impl<'a> BooleanBuilder<'a> {
                     // circles use [0, 2蟺]). Re-sample the 3D intersection curve and project to UV so
                     // sphere trimming matches geometry (fixes sphere 鈭?trotated box / OCCT bcommon A4).
                     rcad_kernel::geom::Curve2d::BSpline(_) => {
-                        // For Torus surfaces the BSpline chord-line approximation is
-                        // degenerate (the closed curve's seam causes wrong 3D points — ZL4).
-                        // Use the marching polyline points directly for Torus; for all other
-                        // surfaces the analytic BSpline re-sampling is more accurate.
-                        if !ic.polyline.is_empty() && matches!(&surface, rcad_kernel::geom::Surface3::Torus(_)) {
-                            ic.polyline.iter().map(|&p3| {
-                                let uv = if let rcad_kernel::geom::Surface3::Torus(t) = &surface {
-                                    t.world_to_uv(p3)
-                                } else {
-                                    unreachable!()
-                                };
-                                uv
-                            }).collect()
-                        } else {
-                            let raw: Vec<DVec2> = (0..=N)
+                        // For BSpline pcurves the 3D curve is often stored as a chord-line
+                        // approximation (e.g. PerpendicularOffsetCurves). Re-sampling the
+                        // line produces UV points that lie on the line, not on the actual
+                        // intersection curve — causing degenerate trim polylines.
+                        // The BSpline pcurve itself is the correct UV representation
+                        // (created by polyline_pcurve_by_projection in the pave_filler),
+                        // so sample it directly on its [0, 1] domain.
+                        let raw: Vec<DVec2> = (0..=N)
                             .map(|i| {
-                                let t = t0 + (t1 - t0) * i as f64 / N as f64;
-                                let p3 = ic.curve.point_at(t);
-                            // Plane–sphere circles lie exactly on the sphere; inverse param is stable.
-                            // `closest_point_on_surface` can pick a wrong local minimum for oblique trims.
-                            let uv = match &surface {
-                                rcad_kernel::geom::Surface3::Sphere(sph) => sph.world_to_uv(p3),
-                                rcad_kernel::geom::Surface3::Cone(cone) => cone.world_to_uv(p3),
-                                rcad_kernel::geom::Surface3::Torus(torus) => torus.world_to_uv(p3),
-                                _ => {
-                                    let proj = rcad_kernel::projection::closest_point_on_surface(
-                                        &surface, p3, 16,
-                                    );
-                                    DVec2::new(proj.params.0, proj.params.1)
-                                }
-                            };
-                            uv
-                        })
-                        .collect();
+                                let t = i as f64 / N as f64;
+                                pcurve.point_at(t)
+                            })
+                            .collect();
+                        let u_min = raw.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                        let u_max = raw.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                        let v_min = raw.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                        let v_max = raw.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                        eprintln!("[DBG] pcurve_sampled UV: u=[{:.6}, {:.6}] v=[{:.6}, {:.6}] n={}", u_min, u_max, v_min, v_max, raw.len());
                         raw
-                        }
                     },
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
                     // t parameterization as the 3D intersection curve.
@@ -3233,6 +3233,17 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
         }
 
+        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() && !is_sphere {
+            eprintln!("[CURVED_SPLIT] face_idx={} trim_count={} polygon_count={}", face_idx, trim_polylines.len(), uv_polygons.len());
+            for (i, poly) in uv_polygons.iter().enumerate() {
+                let u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let v_max = poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                eprintln!("[CURVED_SPLIT]   poly[{}]: u=[{:.6},{:.6}] v=[{:.6},{:.6}] npts={}", i, u_min, u_max, v_min, v_max, poly.len());
+            }
+        }
+
         // CHECKPOINT 1: after initial trim collection (before sphere u-normalization)
         if is_sphere {
             _debug_sphere_polygons(1, &uv_polygons);
@@ -3342,6 +3353,8 @@ impl<'a> BooleanBuilder<'a> {
 
 
         // Map each UV sub-polygon back to 3D
+        eprintln!("[DBG] split_face[{}]: {} uv_polys -> {} valid", face_idx, uv_polygons.len(),
+            uv_polygons.iter().filter(|p| p.len() >= 3 && is_valid_uv_polygon(p)).count());
         uv_polygons
             .into_iter()
             .filter(|p| p.len() >= 3 && is_valid_uv_polygon(p))
@@ -4998,8 +5011,30 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         (edge_e, edge_s, pt_e, pt_s, false)
     };
 
+    eprintln!("[DBG_SPLIT] poly={:?} n={}", poly, poly.len());
+    eprintln!("[DBG_SPLIT] trim_start={:?} trim_end={:?}", trim_start, trim_end);
+    eprintln!("[DBG_SPLIT] edge_s={} edge_e={} ia={} ib={}", edge_s, edge_e, ia, ib);
+    eprintln!("[DBG_SPLIT] p_a={:?} p_b={:?}", p_a, p_b);
+
+    // If both endpoints project to the same edge, inserting them as polygon
+    // vertices creates distinct sub-edges that the standard split can handle
+    // without self-overlapping sub-polygons.
     if ia == ib {
-        // Both endpoints project to the same edge 鈥?degenerate, can't split
+        let edge_a = poly[ia];
+        let edge_b = poly[(ia + 1) % n];
+        let edge_vec = edge_b - edge_a;
+        let edge_len_sq = edge_vec.dot(edge_vec);
+        if edge_len_sq > TOLERANCE_FLOAT_LOOSE && (p_a - p_b).length_squared() > TOLERANCE_FLOAT_ULTRA {
+            let t_a = ((p_a - edge_a).dot(edge_vec) / edge_len_sq).clamp(0.0, 1.0);
+            let t_b = ((p_b - edge_a).dot(edge_vec) / edge_len_sq).clamp(0.0, 1.0);
+            let (p_first, p_second) = if t_a <= t_b { (p_a, p_b) } else { (p_b, p_a) };
+            let mut new_poly = poly[..=ia].to_vec();
+            new_poly.push(p_first);
+            new_poly.push(p_second);
+            new_poly.extend_from_slice(&poly[ia + 1..]);
+            return split_uv_polygon_by_trim(&new_poly, trim);
+        }
+        // Degenerate: endpoints are coincident — no split possible, return original.
         return vec![poly.to_vec()];
     }
 
@@ -5092,6 +5127,22 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
 
     let sub_a = dedup_2d(sub_a);
     let sub_b = dedup_2d(sub_b);
+
+    eprintln!("[DBG_SPLIT] sub_a: {} pts, sub_b: {} pts", sub_a.len(), sub_b.len());
+    if sub_a.len() >= 3 {
+        let u_min = sub_a.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = sub_a.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = sub_a.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = sub_a.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        eprintln!("[DBG_SPLIT] sub_a: u=[{:.6}, {:.6}] v=[{:.6}, {:.6}]", u_min, u_max, v_min, v_max);
+    }
+    if sub_b.len() >= 3 {
+        let u_min = sub_b.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = sub_b.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = sub_b.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = sub_b.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        eprintln!("[DBG_SPLIT] sub_b: u=[{:.6}, {:.6}] v=[{:.6}, {:.6}]", u_min, u_max, v_min, v_max);
+    }
 
     let mut out = Vec::new();
     if sub_a.len() >= 3 {

@@ -2586,6 +2586,7 @@ pub(crate) fn boolean_postprocess_pave_result(
     {
         return Ok(BRep::default());
     }
+    eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
     Ok(result)
 }
 
