@@ -2302,119 +2302,86 @@ impl<'a> PaveFiller<'a> {
                 // Parametrization on cyl1's surface:
                 //   P(θ) = O1 + v(θ)*a1 + R1*(cos(θ)*U1 + sin(θ)*V1)
                 //   v(θ) = dz ± √(R2² - (R1·cos(θ) - dx)²)
-                // where U1 = direction of closest approach between axes,
-                // V1 = a1 × U1 (and a2 = ±V1 since axes are perpendicular).
+                //
+                // Two closed-loop intersection curves per face, one per θ interval:
+                //   Loop 1 (θ∈[t_low, t_high]): forward branch+  back branch-
+                //   Loop 2 (θ∈[τ-t_high, τ-t_low]): forward branch+  back branch-
+                // Each loop is a single IntersectionCurve whose start/end vertex
+                // coincide (same 3D tangent point) — the boolean builder sees a
+                // single closed trim boundary per loop.
                 let a1 = off_cyl1.axis.normalize();
                 let a2 = off_cyl2.axis.normalize();
                 let r1 = off_cyl1.radius;
                 let r2 = off_cyl2.radius;
-                let r1_sq = r1 * r1;
                 let r2_sq = r2 * r2;
-
-                // Closest points between the two skew axis lines
                 let w = off_cyl1.origin - off_cyl2.origin;
-                let b = a1.dot(a2);
-                let denom = 1.0 - b * b;
-                let d1 = a1.dot(w);
-                let d2 = a2.dot(w);
-                let t = (b * d2 - d1) / denom;
-                let s = (d2 - b * d1) / denom;
-                let closest1 = off_cyl1.origin + a1 * t;
-                let closest2 = off_cyl2.origin + a2 * s;
-
-                // U1 = direction of closest approach (from closest2 toward closest1)
-                let conn = closest1 - closest2;
-                let u1 = conn.normalize();
+                let denom = 1.0 - a1.dot(a2) * a1.dot(a2);
+                if denom.abs() < 1e-12 { return; }
+                let d1 = a1.dot(w); let d2 = a2.dot(w);
+                let t = (a1.dot(a2) * d2 - d1) / denom;
+                let s = (d2 - a1.dot(a2) * d1) / denom;
+                let conn = (off_cyl1.origin + a1 * t) - (off_cyl2.origin + a2 * s);
+                let conn_len = conn.length();
+                if conn_len < 1e-12 { return; }
+                let u1 = conn / conn_len;
                 let v1 = a1.cross(u1).normalize();
-
-                // Offsets of cyl2 origin in cyl1's local frame
                 let delta = off_cyl2.origin - off_cyl1.origin;
-                let dx = delta.dot(u1); // ≈ dist
+                let dx = delta.dot(u1);
                 let dz = delta.dot(a1);
-
-                // Valid θ range: (r1·cos(θ) - dx)² ≤ r2²
                 let cos_min = ((dx - r2) / r1).clamp(-1.0, 1.0);
                 let cos_max = ((dx + r2) / r1).clamp(-1.0, 1.0);
-                if cos_min > cos_max {
-                    return;
-                }
+                if cos_min > cos_max { return; }
+                let t_low = cos_max.acos();
+                let t_high = cos_min.acos();
 
-                let t_low = cos_max.acos();  // θ where cos = cos_max (closest to 0)
-                let t_high = cos_min.acos(); // θ where cos = cos_min (farthest from 0)
+                let surface1 = Surface3::Cylinder(off_cyl1);
+                let surface2 = Surface3::Cylinder(off_cyl2);
+                let n_per = 9;
 
-                const N_SAMPLES: usize = 64;
+                for (t_start, t_end) in [(t_low, t_high), (TAU - t_high, TAU - t_low)] {
+                    let n_pts = n_per * 2 + 1; // forward + backward (share the turn-around point)
+                    let mut pts: Vec<DVec3> = Vec::with_capacity(n_pts);
 
-                for branch_sign in [1.0_f64, -1.0_f64] {
-                    let mut pts = Vec::new();
-
-                    // Interval A: [t_low, t_high] — cos decreases from cos_max to cos_min
-                    for i in 0..=N_SAMPLES {
-                        let theta = t_low + (t_high - t_low) * i as f64 / N_SAMPLES as f64;
+                    // Forward: branch = +1, θ = t_start → t_end
+                    for i in 0..=n_per {
+                        let theta = t_start + (t_end - t_start) * i as f64 / n_per as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
                         let diff = r1 * ct - dx;
-                        let disc_sq = r2_sq - diff * diff;
-                        if disc_sq < 0.0 && disc_sq > -1e-12 {
-                            // Near-tangent point: noise within floating-point precision.
-                            // Clamp to zero so tangent endpoints are included, enabling
-                            // both branches to share vertices and form a closed loop.
-                        } else if disc_sq < 0.0 {
-                            continue;
-                        }
-                        let disc = disc_sq.max(0.0).sqrt();
-                        let v = dz + branch_sign * disc;
-                        pts.push(off_cyl1.origin + v * a1 + r1 * (ct * u1 + st * v1));
+                        let disc = (r2_sq - diff * diff).max(0.0).sqrt();
+                        let v_z = dz + disc; // branch sign +1
+                        pts.push(off_cyl1.origin + v_z * a1 + r1 * (ct * u1 + st * v1));
                     }
-
-                    // Interval B: [τ - t_high, τ - t_low] — cos increases from cos_min to cos_max
-                    let t2 = TAU - t_high;
-                    let t3 = TAU - t_low;
-                    for i in 1..=N_SAMPLES {
-                        let theta = t2 + (t3 - t2) * i as f64 / N_SAMPLES as f64;
+                    // Backward: branch = -1, θ = t_end → t_start (reversed)
+                    for i in 1..=n_per {
+                        let theta = t_end - (t_end - t_start) * i as f64 / n_per as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
                         let diff = r1 * ct - dx;
-                        let disc_sq = r2_sq - diff * diff;
-                        if disc_sq < 0.0 && disc_sq > -1e-12 {
-                            // Same near-tangent clamp as Interval A
-                        } else if disc_sq < 0.0 {
-                            continue;
-                        }
-                        let disc = disc_sq.max(0.0).sqrt();
-                        let v = dz + branch_sign * disc;
-                        pts.push(off_cyl1.origin + v * a1 + r1 * (ct * u1 + st * v1));
+                        let disc = (r2_sq - diff * diff).max(0.0).sqrt();
+                        let v_z = dz - disc; // branch sign -1
+                        pts.push(off_cyl1.origin + v_z * a1 + r1 * (ct * u1 + st * v1));
                     }
+                    if pts.len() < 2 { continue; }
 
-                    if pts.len() < 2 {
-                        continue;
-                    }
-
-                    // Build pcurves via projection
-                    let pca_raw =
-                        polyline_pcurve_by_projection(&pts, &Surface3::Cylinder(off_cyl1));
-                    let pcb_raw =
-                        polyline_pcurve_by_projection(&pts, &Surface3::Cylinder(off_cyl2));
-
-                    let (pca, pcb) = match (pca_raw, pcb_raw) {
+                    let pca = polyline_pcurve_by_projection(&pts, &surface1);
+                    let pcb = polyline_pcurve_by_projection(&pts, &surface2);
+                    let (pca, pcb) = match (pca, pcb) {
                         (Some(a), Some(b)) => make_pcurves(a, b),
                         _ => continue,
                     };
 
+                    // add_vertex dedup: pts[0] and pts[pts.len()-1] are the same
+                    // tangent point (θ=t_start, disc=0, both branches coincide).
                     let v_start = self.ds.add_vertex(pts[0]);
                     let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
                     let ci = self.ds.intersection_curves.len();
                     self.ds.intersection_curves.push(IntersectionCurve {
                         curve: Curve3::Line(Line3 {
                             origin: pts[0],
-                            direction: (pts[pts.len() - 1] - pts[0])
-                                .normalize_or(DVec3::X),
+                            direction: (pts[pts.len() - 1] - pts[0]).normalize_or(DVec3::X),
                         }),
-                        polyline: pts,
-                        start_vertex: v_start,
-                        end_vertex: v_end,
-                        t_range: [0.0, 1.0],
-                        pcurve_on_a: pca,
-                        pcurve_on_b: pcb,
+                        polyline: pts, start_vertex: v_start, end_vertex: v_end,
+                        t_range: [0.0, 1.0], pcurve_on_a: pca, pcurve_on_b: pcb,
                     });
-
                     self.ds.faces[f1].face_info.curves_in.insert(ci);
                     self.ds.faces[f2].face_info.curves_in.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -2423,20 +2390,6 @@ impl<'a> PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                     curve_indices.push(ci);
                 }
-
-                if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
-                        f1,
-                        f2,
-                        curves: curve_indices,
-                        points: vec![],
-                    });
-                } else {
-                    // PerpendicularOffsetCurves sampling produced no valid intersection curves
-                    // (e.g. near-tangent cylinder-cylinder). Fall back to numerical marching.
-                    self.intersect_ff_by_numeric_intss(f1, f2, &Surface3::Cylinder(off_cyl1), &Surface3::Cylinder(off_cyl2), 32);
-                }
-                return;
             }
 
             CylinderCylinderResult::General => {

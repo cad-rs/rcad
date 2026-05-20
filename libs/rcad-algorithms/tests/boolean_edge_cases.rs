@@ -8,7 +8,7 @@
 /// - Failure recovery scenarios
 use rcad_algorithms::tolerance::*;
 use glam::DVec3;
-use rcad_algorithms::{BooleanOpType, boolean_op, BooleanError};
+use rcad_algorithms::{BooleanOpType, boolean_op, BooleanError, total_surface_area, boolean_op_with_retry};
 use rcad_kernel::properties::volume;
 use rcad_modeling::{
     make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
@@ -378,4 +378,111 @@ fn intersection_commutativity() {
         vol_ab,
         vol_ba
     );
+}
+
+// ── ZF1 Debug ────────────────────────────────────────────────────────────────
+
+use glam::DAffine3;
+use rcad_kernel::face_surface_area;
+
+fn zf1_face_count(brep: &rcad_kernel::BRep) -> usize {
+    brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count()
+}
+
+fn zf1_debug_cyl(origin: DVec3, axis: DVec3, radius: f64, height: f64, label: &str) -> rcad_kernel::BRep {
+    let c = make_cylinder_brep(origin, axis, DVec3::X, radius, height).expect(label);
+    eprintln!("{label}: SA = {:.6}, faces = {}", total_surface_area(&c), zf1_face_count(&c));
+    c
+}
+
+fn zf1_print_face_breakdown(brep: &rcad_kernel::BRep, label: &str) {
+    let mut fi = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let fsa = face_surface_area(brep, face, fi);
+                let n_edges = face.outer_wire.edges.len();
+                let inner = face.inner_wires.len();
+                // Get surface info
+                let surf_desc = match brep.geom.face_surface.get(fi).copied().flatten() {
+                    Some(si) => match brep.geom.surfaces.get(si) {
+                        Some(rcad_kernel::geom::Surface3::Cylinder(c)) => {
+                            // Compute UV range the same way as estimate_uv_domain_from_wire
+                            let pts: Vec<glam::DVec3> = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter())
+                                .flat_map(|w| &w.edges)
+                                .filter_map(|we| {
+                                    let edge = brep.edges.get(we.idx)?;
+                                    let vidx = if we.forward { edge.start } else { edge.end };
+                                    brep.vertices.get(vidx).map(|v| v.point)
+                                })
+                                .collect();
+                            if !pts.is_empty() {
+                                let v_vals: Vec<f64> = pts.iter().map(|p| (*p - c.origin).dot(c.axis)).collect();
+                                let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+                                let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                                let x_ax = rcad_kernel::any_perpendicular(c.axis);
+                                let y_ax = c.axis.cross(x_ax).normalize();
+                                let u_vals: Vec<f64> = pts.iter().map(|p| {
+                                    let radial = *p - c.origin - (*p - c.origin).dot(c.axis) * c.axis;
+                                    let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
+                                    if u < 0.0 { u + 2.0 * std::f64::consts::PI } else { u }
+                                }).collect();
+                                let u0 = u_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+                                let u1 = u_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                                format!("Cyl(r={}, uv=[{:.4},{:.4},{:.4},{:.4}])", c.radius, u0, u1, v0, v1)
+                            } else {
+                                format!("Cyl(r={})", c.radius)
+                            }
+                        }
+                        Some(_) => "OtherSurf".to_string(),
+                        None => "NoSurf".to_string(),
+                    }
+                    None => "NoFaceSurf".to_string(),
+                };
+                eprintln!("  {label} Face[flat={fi}] {surf_desc} edges={n_edges} inner={inner} SA={fsa:.6}");
+                fi += 1;
+            }
+        }
+    }
+}
+
+#[test]
+fn zf1_debug() {
+    let b1 = zf1_debug_cyl(DVec3::new(0.0, 0.0, 2.0), DVec3::Z, 1.0, 4.0, "b1");
+    let b2_prim = zf1_debug_cyl(DVec3::new(0.0, 0.0, 2.0), DVec3::Z, 0.5, 4.0, "b2_prim");
+
+    let mut b2 = b2_prim;
+    let pivot = DVec3::new(0.0, 0.0, 2.0);
+    let rot1 = DAffine3::from_axis_angle(DVec3::X, (90.0_f64).to_radians());
+    let xf1 = DAffine3::from_translation(pivot) * rot1 * DAffine3::from_translation(-pivot);
+    b2.apply_transform(xf1);
+    let rot2 = DAffine3::from_axis_angle(DVec3::Y, (270.0_f64).to_radians());
+    let xf2 = DAffine3::from_translation(pivot) * rot2 * DAffine3::from_translation(-pivot);
+    b2.apply_transform(xf2);
+    b2.apply_transform(DAffine3::from_translation(DVec3::new(0.5, 0.0, 0.0)));
+    eprintln!("b2 (transformed): SA = {:.6}, faces = {}", total_surface_area(&b2), zf1_face_count(&b2));
+
+    eprintln!("\nb1 face breakdown:");
+    zf1_print_face_breakdown(&b1, "b1");
+    eprintln!("\nb2 face breakdown:");
+    zf1_print_face_breakdown(&b2, "b2");
+
+    // Boolean ops
+    eprintln!("\n=== BOOLEAN OPS ===");
+
+    let fuse = boolean_op_with_retry(BooleanOpType::Union, &b1, &b2).expect("fuse");
+    eprintln!("Union: SA={:.6}, faces={}", total_surface_area(&fuse), zf1_face_count(&fuse));
+    zf1_print_face_breakdown(&fuse, "Union");
+
+    let inter = boolean_op_with_retry(BooleanOpType::Intersection, &b1, &b2).expect("inter");
+    eprintln!("Intersection: SA={:.6}, faces={}", total_surface_area(&inter), zf1_face_count(&inter));
+    zf1_print_face_breakdown(&inter, "Inter");
+
+    let diff = boolean_op_with_retry(BooleanOpType::Difference, &b1, &b2).expect("diff");
+    eprintln!("Diff b1-b2: SA={:.6}, faces={}", total_surface_area(&diff), zf1_face_count(&diff));
+    zf1_print_face_breakdown(&diff, "Diff_b1-b2");
+
+    let diff2 = boolean_op_with_retry(BooleanOpType::Difference, &b2, &b1).expect("diff2");
+    eprintln!("Diff b2-b1: SA={:.6}, faces={}", total_surface_area(&diff2), zf1_face_count(&diff2));
+    zf1_print_face_breakdown(&diff2, "Diff_b2-b1");
 }

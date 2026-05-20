@@ -484,7 +484,11 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
         })
         .collect();
 
-    // Unwrap seam discontinuities (same logic as fallback_pcurve_by_projection).
+    // Phase 1: Standard seam unwrap using π-threshold.
+    if std::env::var("RCAD_DEBUG_PC").is_ok() && matches!(surface, Surface3::Cylinder(_)) {
+        eprintln!("[PC_DEBUG] Phase1 start: pts[0].x={:.6} pts[last].x={:.6} n={}",
+            pts[0].x, pts[pts.len()-1].x, pts.len());
+    }
     for i in 1..pts.len() {
         let du = pts[i].x - pts[i - 1].x;
         if du > std::f64::consts::PI {
@@ -494,6 +498,84 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
         } else if du < -std::f64::consts::PI {
             for p in &mut pts[i..] {
                 p.x += std::f64::consts::TAU;
+            }
+        }
+    }
+
+    if std::env::var("RCAD_DEBUG_PC").is_ok() && matches!(surface, Surface3::Cylinder(_)) {
+        eprintln!("[PC_DEBUG] Phase1 end: pts[0].x={:.6} pts[last].x={:.6}", pts[0].x, pts[pts.len()-1].x);
+        if pts.len() >= 5 {
+            eprintln!("[PC_DEBUG] Phase1 sample: [{:.6}, {:.6}, {:.6}, {:.6}, {:.6}]",
+                pts[0].x, pts[1].x, pts[2].x, pts[3].x, pts[4].x);
+        }
+    }
+
+    // Phase 2: Detect V-shape folds. When the polyline has two disconnected curve
+    // segments concatenated (e.g. PerpendicularOffsetCurves with a near-π gap),
+    // the standard π-threshold unwrap may fold the sequence — u goes up then back
+    // instead of continuing in one direction.
+    //
+    // Detection: 1 sign change in consecutive du values (e.g. all-negative →
+    // all-positive), with span < 2π and near-zero net delta.
+    //
+    // NOTE: On Cylinder surfaces, this V-fold is geometrically correct — the
+    // analytic atan2 formula gives identical values to Newton projection, and the
+    // intersection curve genuinely wraps from u=0 to u=π and back. The fix for
+    // offset-cylinder boolean failures (ZE7-9, ZF1-4) is in the Pave-Filler, not
+    // here. This detection is diagnostic-only.
+    if pts.len() >= 3 && matches!(surface, Surface3::Cylinder(_)) {
+        let u_min = pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = pts.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let abs_span = u_max - u_min;
+        let net_delta = pts[pts.len() - 1].x - pts[0].x;
+        if abs_span < std::f64::consts::TAU * 0.9 && net_delta.abs() < abs_span * 0.5 {
+            // Count sign changes in consecutive du values to detect V-shape fold.
+            // A V-shape fold has exactly one sign change (e.g. all-negative → all-positive).
+            // A boundary jump between valid segments has two sign changes (e.g.
+            // positive → single-negative-jump → positive).
+            let mut sign_changes = 0;
+            let mut fold_idx = 0;
+            let mut prev_sign = 0i8;
+            for i in 1..pts.len() {
+                let du = pts[i].x - pts[i - 1].x;
+                let sign = if du.abs() > 1e-12 {
+                    if du > 0.0 { 1 } else { -1 }
+                } else { 0 };
+                if sign != 0 && prev_sign != 0 && sign != prev_sign {
+                    sign_changes += 1;
+                    if sign_changes == 1 {
+                        fold_idx = i;
+                    }
+                }
+                if sign != 0 {
+                    prev_sign = sign;
+                }
+            }
+            eprintln!("[PCURVE_SIGNS] n_pts={} abs_span={:.6} net_delta={:.6} sign_changes={} fold_idx={}",
+                pts.len(), abs_span, net_delta, sign_changes, fold_idx);
+            if sign_changes == 1 && fold_idx >= 2 && fold_idx + 2 <= pts.len() {
+                eprintln!("[PCURVE_FOLD] V-fold: span={:.6} net={:.6} fold_idx={} n={} u_first={:.4} u_fold={:.4} u_last={:.4}",
+                    abs_span, net_delta, fold_idx, pts.len(),
+                    pts[0].x, pts[fold_idx].x, pts[pts.len()-1].x);
+                if let Surface3::Cylinder(cyl) = surface {
+                    // Analytic u recomputation is NOT effective here — the V-fold
+                    // is geometrically correct on the cylinder UV (the intersection
+                    // curve wraps around the front of the cylinder and back). The
+                    // Newton projection already gives the correct analytic u values
+                    // (identical to atan2). The V-fold detection is diagnostic only.
+                    //
+                    // The actual fix for offset cylinder failures (ZE7-9, ZF1-4) is
+                    // in the Pave-Filler: the PerpendicularOffsetCurves handler
+                    // concatenates two ~π segments with a near-π gap, and Phase 1
+                    // unwrap can choose the wrong branch. The BSpline through these
+                    // folded points produces a self-intersecting PCurve, which causes
+                    // the boolean builder to produce wrong geometry.
+                    let _ = cyl;
+                    eprintln!("[PCURVE_FOLD] V-fold on Cylinder — diagnostic only, no fix applied");
+                }
+                // Note: for Cone/Torus surfaces we do not apply a fold fix
+                // here.  Empirical testing shows the V-shape fold only occurs
+                // on cylinder surfaces from Newton's 2π-periodic branch issue.
             }
         }
     }

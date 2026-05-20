@@ -12,7 +12,7 @@ use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
 use crate::BRep;
-use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval, any_perpendicular};
+use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -1799,7 +1799,7 @@ fn curved_face_uv_domain(
         if d.iter().all(|x| x.is_finite()) {
             Some(d)
         } else {
-            estimate_uv_domain_from_wire(brep, face, surf)
+            estimate_uv_domain_from_wire(brep, face, face_flat_idx, surf)
         }
     }
 }
@@ -1909,6 +1909,7 @@ fn orient_by_ref(tri: [DVec3; 3], n_ref: DVec3) -> [DVec3; 3] {
 fn estimate_uv_domain_from_wire(
     brep: &BRep,
     face: &crate::topology::Face,
+    face_flat_idx: usize,
     surf: &crate::geom::Surface3,
 ) -> Option<[f64; 4]> {
     use crate::geom::Surface3;
@@ -1930,41 +1931,58 @@ fn estimate_uv_domain_from_wire(
 
     match surf {
         Surface3::Cylinder(cyl) => {
-            // CylindricalSurface: u = azimuth, v = height along axis.
-            // Estimate u-range from wire vertex projections AND edge curve samples,
-            // instead of full [0, 2π].  Vertex projections alone miss full-cylinder
-            // faces (seam and opposite-side vertices only span π).
-            let v_vals: Vec<f64> = pts.iter().map(|p| (*p - cyl.origin).dot(cyl.axis)).collect();
-            let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
-            let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            if v0 >= v1 { return None; }
-            // Reconstruct reference directions matching SurfaceEval::point_at.
-            let x_ax = any_perpendicular(cyl.axis);
-            let y_ax = cyl.axis.cross(x_ax).normalize();
-            let point_to_u = |p: DVec3| -> f64 {
-                let radial = p - cyl.origin - (p - cyl.origin).dot(cyl.axis) * cyl.axis;
-                let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
-                if u < 0.0 { u + 2.0 * PI } else { u }
-            };
-            let mut u_vals: Vec<f64> = pts.iter().map(|p| point_to_u(*p)).collect();
-            // Also sample each edge's 3D curve to fill gaps between vertices.
-            use crate::geom::CurveEval;
+            // Use edge pcurves on this face to determine the UV domain.
+            // This avoids the any_perpendicular reference-frame mismatch
+            // that occurs when projecting 3D curve points through point_to_u.
+            let surf_idx = brep.geom.face_surface.get(face_flat_idx).and_then(|o| *o)?;
+            let mut u_vals: Vec<f64> = Vec::new();
+            let mut v_vals: Vec<f64> = pts.iter().map(|p| (*p - cyl.origin).dot(cyl.axis)).collect();
+            if v_vals.is_empty() { return None; }
+
+            use crate::geom::Curve2dEval;
             let all_wires = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter());
             for we in all_wires.flat_map(|w| &w.edges) {
-                let curve = brep.geom.edge_curve.get(we.idx).and_then(|o| *o)
-                    .and_then(|ci| brep.geom.curves.get(ci));
                 let range = brep.geom.edge_curve_range.get(we.idx).and_then(|o| *o);
-                if let (Some(curve), Some([t0, t1])) = (curve, range) {
-                    let ns = 16;
-                    for k in 0..=ns {
-                        let frac = k as f64 / ns as f64;
-                        u_vals.push(point_to_u(curve.point_at(t0 + (t1 - t0) * frac)));
+                if let Some([t0, t1]) = range {
+                    // Find pcurve on this face's surface.
+                    if let Some(c2d) = brep.geom.edge_pcurves.get(we.idx)
+                        .and_then(|pcurves| pcurves.iter().find(|pc| pc.surface_idx == surf_idx))
+                        .and_then(|pc| brep.geom.curve2ds.get(pc.curve2d_idx))
+                    {
+                        let ns = 16;
+                        for k in 0..=ns {
+                            let frac = k as f64 / ns as f64;
+                            let uv = c2d.point_at(t0 + (t1 - t0) * frac);
+                            let u = if uv.x < 0.0 { uv.x + 2.0 * PI } else { uv.x };
+                            u_vals.push(u);
+                            if uv.y.is_finite() { v_vals.push(uv.y); }
+                        }
                     }
                 }
             }
+
+            if u_vals.is_empty() {
+                // Fallback: vertex-based estimate only
+                let u_vert: Vec<f64> = pts.iter().map(|p| {
+                    let radial = *p - cyl.origin - (*p - cyl.origin).dot(cyl.axis) * cyl.axis;
+                    let x_ax = crate::geom::any_perpendicular(cyl.axis);
+                    let y_ax = cyl.axis.cross(x_ax).normalize();
+                    let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
+                    if u < 0.0 { u + 2.0 * PI } else { u }
+                }).collect();
+                let u0 = u_vert.iter().cloned().fold(f64::INFINITY, f64::min);
+                let u1 = u_vert.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                if u0 >= u1 { return None; }
+                let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+                let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                return Some([u0 - 1e-10, u1 + 1e-10, v0 - 1e-10, v1 + 1e-10]);
+            }
+
             let u0 = u_vals.iter().cloned().fold(f64::INFINITY, f64::min);
             let u1 = u_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            if u0 >= u1 { return None; }
+            let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+            let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if u0 >= u1 || v0 >= v1 { return None; }
             Some([u0 - 1e-10, u1 + 1e-10, v0 - 1e-10, v1 + 1e-10])
         }
         Surface3::Cone(con) => {
