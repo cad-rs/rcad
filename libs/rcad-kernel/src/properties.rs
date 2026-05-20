@@ -1965,7 +1965,7 @@ fn estimate_uv_domain_from_wire(
                 // Fallback: vertex-based estimate only
                 let u_vert: Vec<f64> = pts.iter().map(|p| {
                     let radial = *p - cyl.origin - (*p - cyl.origin).dot(cyl.axis) * cyl.axis;
-                    let x_ax = crate::geom::any_perpendicular(cyl.axis);
+                    let x_ax = cyl.ref_dir.normalize();
                     let y_ax = cyl.axis.cross(x_ax).normalize();
                     let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
                     if u < 0.0 { u + 2.0 * PI } else { u }

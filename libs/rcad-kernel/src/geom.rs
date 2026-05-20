@@ -161,6 +161,31 @@ pub struct CylindricalSurface {
     pub origin: Point3,
     pub axis: Vec3,
     pub radius: f64,
+    /// Reference direction for u=0 (perpendicular to axis).
+    /// Preserved through rotation so UV mapping stays consistent.
+    pub ref_dir: Vec3,
+}
+
+impl CylindricalSurface {
+    /// Create a cylinder with [`any_perpendicular(axis)`](any_perpendicular) as the reference direction.
+    pub fn new(origin: Point3, axis: Vec3, radius: f64) -> Self {
+        Self {
+            origin,
+            axis: axis.normalize_or_zero(),
+            radius: radius.abs(),
+            ref_dir: any_perpendicular(axis),
+        }
+    }
+
+    /// Create a cylinder with an explicit reference direction for u=0.
+    pub fn new_with_ref_dir(origin: Point3, axis: Vec3, radius: f64, ref_dir: Vec3) -> Self {
+        Self {
+            origin,
+            axis: axis.normalize_or_zero(),
+            radius: radius.abs(),
+            ref_dir: ref_dir.normalize_or_zero(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -942,12 +967,12 @@ impl SurfaceEval for Plane {
 impl SurfaceEval for CylindricalSurface {
     /// u = azimuth angle [0, 2π], v = height along axis.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize();
         let y_ax = self.axis.cross(x_ax).normalize();
         self.origin + self.radius * (u.cos() * x_ax + u.sin() * y_ax) + v * self.axis
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize();
         let y_ax = self.axis.cross(x_ax).normalize();
         (u.cos() * x_ax + u.sin() * y_ax).normalize()
     }
@@ -2404,6 +2429,7 @@ mod eval_tests {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 3.0,
+            ref_dir: DVec3::X,
         };
         for u in [0.0, 1.0, PI, 2.0 * PI - 0.1] {
             let p = c.point_at(u, 0.0);

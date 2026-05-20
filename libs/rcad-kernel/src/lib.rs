@@ -1056,6 +1056,7 @@ impl BRep {
             origin: DVec3::new(0.0, -half_h, 0.0),
             axis: DVec3::Y,
             radius: r,
+            ref_dir: DVec3::X,
         });
         let top_plane = Surface3::Plane(Plane {
             origin: DVec3::new(0.0, half_h, 0.0),

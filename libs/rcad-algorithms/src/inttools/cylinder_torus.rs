@@ -6,7 +6,7 @@
 //! - **Perpendicular axes**: Complex quartic curve, numerical fallback
 //! - **General**: Numerical marching
 
-use rcad_kernel::geom::{Circle3, CylindricalSurface, ToroidalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, ToroidalSurface};
 
 use crate::tolerance::*;
 
@@ -123,6 +123,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 5.0, // Same as major radius
         };
 
@@ -154,6 +155,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 7.0, // Outside R + r = 6.0
         };
 
@@ -174,6 +176,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 6.0, // Exactly R + r = 6.0
         };
 
@@ -202,6 +205,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 4.0, // Exactly R - r = 4.0
         };
 
@@ -228,6 +232,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::X,
+            ref_dir: any_perpendicular(DVec3::X),
             radius: 5.0,
         };
 
@@ -248,6 +253,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::new(0.0, 2.0, 0.0),
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 5.0,
         };
 

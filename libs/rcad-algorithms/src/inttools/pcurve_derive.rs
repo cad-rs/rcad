@@ -230,7 +230,7 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
 /// A line parallel to the cylinder axis at azimuth θ returns a vertical
 /// [`Line2d`] at u = θ in (θ, h) space.
 pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2d {
-    let u_axis = any_perpendicular(cyl.axis);
+    let u_axis = cyl.ref_dir.normalize();
     let v_axis = cyl.axis.cross(u_axis).normalize();
 
     let radial = line.origin - cyl.origin;
@@ -256,7 +256,7 @@ pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2
 /// own parameterization gives well-distributed sample points.
 pub fn ellipse_pcurve_on_cylinder(ellipse: &Ellipse3, cyl: &CylindricalSurface) -> Curve2d {
     let axis = cyl.axis.normalize_or_zero();
-    let u_axis = any_perpendicular(axis);
+    let u_axis = cyl.ref_dir.normalize();
     let v_axis = axis.cross(u_axis).normalize();
 
     let n = 33_usize;
@@ -664,6 +664,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let circle = Circle3 {

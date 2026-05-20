@@ -484,6 +484,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         };
         let hits = intersect_line_cylinder(&line, [-10.0, 10.0], &cyl);
@@ -504,6 +505,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         };
         let hits = intersect_line_cylinder(&line, [-10.0, 10.0], &cyl);

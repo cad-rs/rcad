@@ -618,6 +618,7 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
                 origin: c.origin,
                 axis: c.axis,
                 radius: new_radius,
+                ref_dir: c.ref_dir,
             }))
         }
 
@@ -882,11 +883,13 @@ pub fn intersect_offset_cylinder_cylinder(
         origin: cyl1.origin,
         axis: cyl1.axis,
         radius: r1,
+        ref_dir: cyl1.ref_dir,
     };
     let offset_cyl2 = CylindricalSurface {
         origin: cyl2.origin,
         axis: cyl2.axis,
         radius: r2,
+        ref_dir: cyl2.ref_dir,
     };
 
     // Use existing cylinder-cylinder intersection
@@ -946,6 +949,7 @@ pub fn intersect_offset_plane_cylinder(
         origin: cyl.origin,
         axis: cyl.axis,
         radius: r,
+        ref_dir: cyl.ref_dir,
     };
 
     // Use existing plane-cylinder intersection
@@ -1034,6 +1038,7 @@ pub fn intersect_offset_cylinder_sphere(
         origin: cyl.origin,
         axis: cyl.axis,
         radius: r_cyl,
+        ref_dir: cyl.ref_dir,
     };
     let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r_sphere);
 
@@ -2347,6 +2352,7 @@ pub fn create_arc_join(
         origin: p0,
         axis: edge_dir,
         radius,
+        ref_dir: any_perpendicular(edge_dir),
     });
 
     // Create vertices for the arc join face
@@ -3491,6 +3497,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
 
@@ -4347,7 +4354,7 @@ mod tests {
     #[test]
     fn offset_plane_cylinder_perpendicular() {
         let plane = Plane { origin: DVec3::new(0.0, 5.0, 0.0), normal: DVec3::Y };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, ref_dir: any_perpendicular(DVec3::Y), radius: 2.0 };
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::Circle(c) => {
@@ -4361,7 +4368,7 @@ mod tests {
     #[test]
     fn offset_plane_cylinder_with_offsets() {
         let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Y };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, ref_dir: any_perpendicular(DVec3::Y), radius: 2.0 };
 
         // Plane offset by 1 (y=1), cylinder offset by 0.5 (r=2.5)
         match intersect_offset_plane_cylinder(&plane, &cyl, 1.0, 0.5) {
@@ -4376,7 +4383,7 @@ mod tests {
     #[test]
     fn offset_plane_cylinder_parallel_two_lines() {
         let plane = Plane { origin: DVec3::ZERO, normal: DVec3::X };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, ref_dir: any_perpendicular(DVec3::Y), radius: 2.0 };
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::TwoLines(l1, l2) => {
@@ -4390,7 +4397,7 @@ mod tests {
     #[test]
     fn offset_plane_cylinder_no_intersection() {
         let plane = Plane { origin: DVec3::new(10.0, 0.0, 0.0), normal: DVec3::X };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, ref_dir: any_perpendicular(DVec3::Y), radius: 2.0 };
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::NoIntersection => {}
@@ -4401,7 +4408,7 @@ mod tests {
     #[test]
     fn offset_plane_cylinder_oblique_ellipse() {
         let plane = Plane { origin: DVec3::ZERO, normal: DVec3::new(0.0, 1.0, 1.0).normalize() };
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, radius: 1.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Y, ref_dir: any_perpendicular(DVec3::Y), radius: 1.0 };
 
         match intersect_offset_plane_cylinder(&plane, &cyl, 0.0, 0.0) {
             OffsetIntersectionCurve::Ellipse(e) => {
@@ -4469,7 +4476,7 @@ mod tests {
 
     #[test]
     fn offset_cylinder_sphere_axis_aligned_two_circles() {
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius: 2.0 };
         let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 3.0), DVec3::Z, 5.0);
 
         match intersect_offset_cylinder_sphere(&cyl, &sphere, 0.0, 0.0) {
@@ -4486,7 +4493,7 @@ mod tests {
 
     #[test]
     fn offset_cylinder_sphere_with_offsets() {
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius: 2.0 };
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
 
         // Without offset: tangent (R=r)
@@ -4506,7 +4513,7 @@ mod tests {
 
     #[test]
     fn offset_cylinder_sphere_off_axis_general() {
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius: 1.0 };
         let sphere = SphericalSurface::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 5.0);
 
         // Off-axis cases may return General or fall back to Numerical approximation
@@ -4519,7 +4526,7 @@ mod tests {
 
     #[test]
     fn offset_cylinder_sphere_no_intersection() {
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius: 1.0 };
         let sphere = SphericalSurface::new(DVec3::new(10.0, 0.0, 0.0), DVec3::Z, 2.0);
 
         // Sphere center far off axis
@@ -4531,7 +4538,7 @@ mod tests {
 
     #[test]
     fn offset_cylinder_sphere_degenerate() {
-        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 0.5 };
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius: 0.5 };
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 0.5);
 
         // Negative offset creates degenerate surfaces
@@ -4689,6 +4696,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let surf = Surface3::Cylinder(cylinder);
@@ -4706,6 +4714,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let surf = Surface3::Cylinder(cylinder);
@@ -4730,6 +4739,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let surf = Surface3::Cylinder(cylinder);
@@ -4983,6 +4993,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         });
 
@@ -4998,6 +5009,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
 
@@ -5115,6 +5127,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(1.0, 2.0, 3.0),
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 2.0,
         });
 

@@ -2641,7 +2641,7 @@ impl<'a> PaveFiller<'a> {
                 }
                 Surface3::Sphere(sph) => sph.world_to_uv(p),
                 Surface3::Cylinder(cyl) => {
-                    let x_ax = any_perpendicular(cyl.axis);
+                    let x_ax = cyl.ref_dir.normalize();
                     let y_ax = cyl.axis.cross(x_ax).normalize();
                     let local = p - cyl.origin;
                     let u = local.dot(y_ax).atan2(local.dot(x_ax));
@@ -6530,6 +6530,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let dist = filler.point_to_surface_distance(DVec3::new(1.5, 0.0, 0.0), &Surface3::Cylinder(cyl));

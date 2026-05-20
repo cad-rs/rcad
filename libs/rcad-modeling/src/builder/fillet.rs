@@ -1066,6 +1066,7 @@ fn rebuild_with_variable_fillet_verts_history(
             origin: p_orig0,
             axis: edge_dir,
             radius: start_radius,
+            ref_dir: any_perpendicular(edge_dir),
         })
     } else {
         // Compute cone apex: extrapolate to the point where radius = 0.
@@ -1338,6 +1339,7 @@ fn rebuild_with_fillet_verts_history(
             origin: p_orig0,
             axis: edge_dir,
             radius,
+            ref_dir: any_perpendicular(edge_dir),
         });
 
         let ea = add_line_edge(&mut dst, nv0a_idx, nv1a_idx)?;

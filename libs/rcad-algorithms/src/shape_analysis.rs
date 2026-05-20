@@ -5224,6 +5224,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         });
 
@@ -5558,6 +5559,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         });
 
@@ -6211,6 +6213,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         });
 

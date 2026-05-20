@@ -163,6 +163,7 @@ fn cylinder_surface_tessellation() {
         origin: DVec3::ZERO,
         axis: DVec3::Z,
         radius: 1.0,
+        ref_dir: any_perpendicular(DVec3::Z),
     });
 
     let params = TessellationParams::standard();

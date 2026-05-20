@@ -372,7 +372,7 @@ pub fn plane_to_bspline(plane: &Plane, _u_deg: usize, _v_deg: usize) -> BSplineS
 /// * `u_deg` - Degree in u direction (minimum 2 for exact circle)
 /// * `v_deg` - Degree in v direction (minimum 1)
 pub fn cylinder_to_bspline(cyl: &CylindricalSurface, _u_deg: usize, _v_deg: usize) -> BSplineSurface {
-    let x_ax = any_perpendicular(cyl.axis);
+    let x_ax = cyl.ref_dir.normalize();
     let y_ax = cyl.axis.cross(x_ax).normalize();
 
     let w = (2.0_f64).sqrt() / 2.0;
@@ -1129,6 +1129,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let bs = cylinder_to_bspline(&cyl, 2, 1);

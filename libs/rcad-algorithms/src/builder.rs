@@ -6782,6 +6782,7 @@ mod glue_tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         };
 
@@ -6820,6 +6821,7 @@ mod glue_tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         };
 

@@ -6425,6 +6425,7 @@ fn face_count_of(brep: &BRep) -> usize {
 mod tests {
     use super::*;
     use glam::DVec3;
+    use rcad_kernel::geom::any_perpendicular;
     use rcad_kernel::PrimitiveSolid;
     use rcad_modeling::{
         make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
@@ -8601,6 +8602,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
 
@@ -8847,11 +8849,13 @@ mod tests {
         let cyl1 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let cyl2 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
 

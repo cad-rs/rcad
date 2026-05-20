@@ -930,6 +930,7 @@ pub fn transform_surface(surface: &Surface3, transform: DAffine3) -> Surface3 {
                 origin: transform.transform_point3(cyl.origin),
                 axis: transform.transform_vector3(cyl.axis).normalize(),
                 radius: cyl.radius * scale,
+                ref_dir: transform.transform_vector3(cyl.ref_dir).normalize(),
             })
         }
         Surface3::Sphere(sphere) => {
@@ -1320,6 +1321,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         assert!(is_surface_u_closed(&Surface3::Cylinder(cylinder), TOLERANCE_MESH_LEGACY));
@@ -1561,6 +1563,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let scale = DAffine3::from_scale(DVec3::splat(2.0));

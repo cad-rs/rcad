@@ -1451,6 +1451,7 @@ fn try_detect_cylinder(surface: &BSplineSurface, tolerance: f64) -> Option<Cylin
         origin: axis_point,
         axis,
         radius: avg_radius,
+        ref_dir: any_perpendicular(axis),
     })
 }
 
@@ -2258,6 +2259,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         assert_eq!(identify_canonical_form(&cylinder, TOLERANCE_MESH_LEGACY), CanonicalForm::CylinderZ);
@@ -2265,6 +2267,7 @@ mod tests {
         let tilted_cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::new(1.0, 1.0, 1.0).normalize(),
+            ref_dir: any_perpendicular(DVec3::new(1.0, 1.0, 1.0).normalize()),
             radius: 1.0,
         });
         assert_eq!(identify_canonical_form(&tilted_cylinder, TOLERANCE_MESH_LEGACY), CanonicalForm::CylinderGeneral);
@@ -2333,6 +2336,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let bspline = cylinder_to_bspline(&cylinder);
@@ -2470,6 +2474,7 @@ mod tests {
         let cylinder_bspline = cylinder_to_bspline(&CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         });
         let result = try_convert_to_analytic(&cylinder_bspline, TOLERANCE_RETRY_LADDER_COARSE);

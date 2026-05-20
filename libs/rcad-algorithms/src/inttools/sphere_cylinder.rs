@@ -42,7 +42,7 @@
 //! and cylinder axis) the intersection is a quartic space curve.  We return
 //! `General` so the caller can fall back to numeric marching.
 
-use rcad_kernel::geom::{Circle3, CylindricalSurface, SphericalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, SphericalSurface};
 
 use crate::tolerance::*;
 
@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn cyl(origin: DVec3, radius: f64) -> CylindricalSurface {
-        CylindricalSurface { origin, axis: DVec3::Z, radius }
+        CylindricalSurface { origin, axis: DVec3::Z, ref_dir: any_perpendicular(DVec3::Z), radius }
     }
 
     // ── Axis-aligned ──────────────────────────────────────────────────────────

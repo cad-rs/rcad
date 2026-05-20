@@ -27,7 +27,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, Surface3};
-use rcad_kernel::geom::{CurveEval, SurfaceEval};
+use rcad_kernel::geom::{any_perpendicular, CurveEval, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 
 // =============================================================================
@@ -243,6 +243,7 @@ pub fn find_surface_through_points(
                         origin: cylinder.axis_point,
                         axis: cylinder.axis_direction,
                         radius: cylinder.radius,
+                        ref_dir: any_perpendicular(cylinder.axis_direction),
                     }),
                     rms_error: cylinder.rms_error,
                     surface_type: FittedSurfaceType::Cylinder,

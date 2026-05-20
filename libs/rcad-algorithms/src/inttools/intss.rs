@@ -2118,11 +2118,13 @@ mod tests {
         let c1 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(1.5, 0.0, 0.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let r = intersect_surfaces(&c1, &c2);
@@ -2136,11 +2138,13 @@ mod tests {
         let c1 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(2.0, 0.0, 0.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let r = intersect_surfaces(&c1, &c2);
@@ -2153,11 +2157,13 @@ mod tests {
         let c1 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(2.0 + 3.0 * TOLERANCE_ABS, 0.0, 0.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
 
@@ -2254,11 +2260,13 @@ mod tests {
         let c1 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(0.0, -2.0, 0.0),
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         });
         let c2 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(-2.0, 0.0, 0.0),
             axis: DVec3::X,
+            ref_dir: any_perpendicular(DVec3::X),
             radius: 1.0,
         });
         let r = intersect_surfaces(&c1, &c2);
@@ -2331,6 +2339,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         });
         let cone = Surface3::Cone(ConicalSurface {
@@ -2457,6 +2466,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         });
 
@@ -2479,6 +2489,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         let cone = Surface3::Cone(ConicalSurface {
@@ -2539,6 +2550,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 5.0,
         });
 
@@ -2640,6 +2652,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(5.0, 0.0, 0.0),
             axis: DVec3::X,
+            ref_dir: any_perpendicular(DVec3::X),
             radius: 0.5,
         });
 

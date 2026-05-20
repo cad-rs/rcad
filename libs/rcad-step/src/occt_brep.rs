@@ -423,12 +423,13 @@ fn parse_surface(c: &mut Cursor<'_>) -> Result<Surface3, OcctBrepError> {
         "2" => {
             let p = c.parse_point3()?;
             let dv = c.parse_dir3()?;
-            let _dx = c.parse_dir3()?;
+            let dx = c.parse_dir3()?;
             let _dy = c.parse_dir3()?;
             Ok(Surface3::Cylinder(CylindricalSurface {
                 origin: p,
                 axis: dv,
                 radius: c.parse_f64()?,
+                ref_dir: dx,
             }))
         }
         "3" => {

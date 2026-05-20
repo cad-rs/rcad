@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use glam::{DVec2, DVec3};
 use rcad_algorithms::{boolean_op, boolean_op_par, BooleanOpType};
+use rcad_kernel::any_perpendicular;
 use rcad_modeling::{
     make_box_brep, make_cylinder_brep, make_sphere_brep,
     fillet_edge, loft, sweep_pipe,

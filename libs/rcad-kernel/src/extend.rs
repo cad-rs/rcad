@@ -620,6 +620,7 @@ mod tests {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 1.0,
+            ref_dir: DVec3::X,
         };
         let surf = trim_surface(Surface3::Cylinder(cyl), 0.0, 1.0, 0.0, 2.0);
         let [u0, u1, v0, v1] = surf.default_domain();

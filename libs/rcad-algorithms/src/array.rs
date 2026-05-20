@@ -1055,6 +1055,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
             origin: transform_point(c.origin),
             axis: transform_direction(c.axis),
             radius: c.radius,
+            ref_dir: transform_direction(c.ref_dir),
         }),
         Surface3::Sphere(s) => Surface3::Sphere(SphericalSurface {
             center: transform_point(s.center),

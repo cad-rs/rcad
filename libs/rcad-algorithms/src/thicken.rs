@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::SurfaceEval;
-use rcad_kernel::geom::{Curve3, Line3, Surface3};
+use rcad_kernel::geom::{any_perpendicular, Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::tolerance::*;
@@ -910,7 +910,7 @@ fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
         Surface3::Cylinder(c) => {
             let r = c.radius + d;
             if r <= TOLERANCE_ABS { return None; }
-            Some(Surface3::Cylinder(CylindricalSurface { origin: c.origin, axis: c.axis, radius: r }))
+            Some(Surface3::Cylinder(CylindricalSurface { origin: c.origin, axis: c.axis, radius: r, ref_dir: c.ref_dir }))
         }
         Surface3::Cone(c) => {
             let sin_a = c.half_angle_rad.sin();
@@ -1571,7 +1571,7 @@ mod tests {
     #[test]
     fn offset_cylinder_grows() {
         let c = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0,
+            origin: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: any_perpendicular(DVec3::Z),
         });
         let off = offset_surface(&c, 0.3).unwrap();
         if let Surface3::Cylinder(c) = off {

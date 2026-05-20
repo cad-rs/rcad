@@ -1333,6 +1333,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         let results = intersect_line_cylinder(&line, &cyl);
@@ -1350,6 +1351,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         let results = intersect_line_cylinder(&line, &cyl);
@@ -1366,6 +1368,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         let results = intersect_line_cylinder(&line, &cyl);
@@ -1578,6 +1581,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 3.0,
         };
         match intersect_plane_cylinder_intana(&plane, &cyl) {
@@ -1598,6 +1602,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 2.0,
         };
         match intersect_plane_cylinder_intana(&plane, &cyl) {
@@ -1703,11 +1708,13 @@ mod tests {
         let cyl1 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         let cyl2 = CylindricalSurface {
             origin: DVec3::new(10.0, 0.0, 0.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         assert!(matches!(
@@ -1721,11 +1728,13 @@ mod tests {
         let cyl1 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 3.0,
         };
         let cyl2 = CylindricalSurface {
             origin: DVec3::new(2.0, 0.0, 0.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 3.0,
         };
         match intersect_cylinder_cylinder(&cyl1, &cyl2) {
@@ -1739,11 +1748,13 @@ mod tests {
         let cyl1 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         let cyl2 = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::X,
+            ref_dir: any_perpendicular(DVec3::X),
             radius: 2.0,
         };
         // Perpendicular intersecting cylinders

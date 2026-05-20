@@ -38,6 +38,7 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
+use rcad_kernel::geom::any_perpendicular;
 use rcad_kernel::{Curve2d, Curve3, Curve2dEval, CurveEval, Surface3, SurfaceEval};
 use std::rc::Rc;
 use std::f64::consts::PI;
@@ -1031,6 +1032,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 1.0,
         };
         let surface = Surface3::Cylinder(cylinder);
@@ -1146,6 +1148,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 2.0,
         };
         let surface = Surface3::Cylinder(cylinder);
@@ -1253,6 +1256,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 1.0,
         };
         let surface = Surface3::Cylinder(cylinder);
@@ -1270,6 +1274,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 1.0,
         };
         let surface = Surface3::Cylinder(cylinder);
@@ -1293,6 +1298,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 1.0,
         };
         let trimmed = Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface::new(
@@ -1312,6 +1318,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: dvec3(0.0, 0.0, 0.0),
             axis: dvec3(0.0, 0.0, 1.0),
+            ref_dir: any_perpendicular(dvec3(0.0, 0.0, 1.0)),
             radius: 1.0,
         };
         let trimmed = Surface3::Trimmed(rcad_kernel::geom::TrimmedSurface::new(

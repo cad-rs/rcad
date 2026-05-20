@@ -775,6 +775,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 3.0,
         });
         assert!((surface_implicit(&cyl, DVec3::new(3.0, 5.0, 0.0))).abs() < TOLERANCE_ABS);
@@ -817,6 +818,7 @@ mod tests {
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(1.0, 0.0, 0.0),
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.5,
         });
 
@@ -870,6 +872,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
+            ref_dir: any_perpendicular(DVec3::Y),
             radius: 1.0,
         };
         let pts = sample_cylinder(&cyl, [0.0, 2.0], 8, 4);

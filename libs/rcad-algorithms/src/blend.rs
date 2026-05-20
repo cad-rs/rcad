@@ -1305,6 +1305,7 @@ fn create_pipe_surface(
             origin,
             axis,
             radius,
+            ref_dir: any_perpendicular(axis),
         }));
     }
 

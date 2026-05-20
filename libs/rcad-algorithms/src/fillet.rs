@@ -873,6 +873,7 @@ fn compute_cylinder_plane_fillet(
             origin: cylinder.origin,
             axis: cylinder.axis,
             radius: cylinder.radius + radius,
+            ref_dir: cylinder.ref_dir,
         }))
     } else {
         // Edge is perpendicular or angled to cylinder axis - creates toroidal fillet
@@ -1533,6 +1534,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let plane = Plane {
@@ -1783,6 +1785,7 @@ mod tests {
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let plane = Plane {

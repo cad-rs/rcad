@@ -396,11 +396,11 @@ pub fn closest_point_on_surface(
             let radial = v - cyl.axis * along;
             let radial_len = radial.length();
             let point = if radial_len < 1e-14 {
-                cyl.origin + cyl.axis * along + cyl.radius * any_perpendicular(cyl.axis)
+                cyl.origin + cyl.axis * along + cyl.radius * cyl.ref_dir
             } else {
                 cyl.origin + cyl.axis * along + radial / radial_len * cyl.radius
             };
-            let u_axis = any_perpendicular(cyl.axis);
+            let u_axis = cyl.ref_dir.normalize();
             let v_axis = cyl.axis.cross(u_axis);
             let r = (point - cyl.origin - cyl.axis * along).normalize_or_zero();
             let theta = r.dot(v_axis).atan2(r.dot(u_axis));
@@ -598,6 +598,7 @@ mod tests {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
             radius: 1.0,
+            ref_dir: DVec3::X,
         });
         let q = DVec3::new(3.0, 2.0, 0.0);
         let r = closest_point_on_surface(&cyl, q, 16);
@@ -838,6 +839,7 @@ mod tests {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
             radius: 2.0,
+            ref_dir: DVec3::X,
         });
         // Query inside cylinder
         let q = DVec3::new(0.0, 0.0, 1.0);

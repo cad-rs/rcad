@@ -39,7 +39,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
     BRep,
-    geom::{Curve3, Surface3, Line3, Plane},
+    geom::{any_perpendicular, Curve3, Surface3, Line3, Plane},
     topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
 use std::collections::HashMap;
@@ -1457,6 +1457,7 @@ mod tests {
         let cylinder = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         });
         assert_eq!(SurfaceType::from(&cylinder), SurfaceType::Cylinder);

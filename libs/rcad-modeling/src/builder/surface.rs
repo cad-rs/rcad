@@ -2,7 +2,7 @@ use super::{BuildError, normalize_vector, validate_point, validate_positive};
 use glam::DVec3;
 use rcad_kernel::Surface3;
 use rcad_kernel::geom::{
-    ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface,
+    any_perpendicular, ConicalSurface, CylindricalSurface, Plane, SphericalSurface, ToroidalSurface,
 };
 
 pub fn plane(origin: DVec3, normal: DVec3) -> Result<Surface3, BuildError> {
@@ -27,6 +27,7 @@ pub fn cylindrical_surface(
         origin,
         axis,
         radius,
+        ref_dir: any_perpendicular(axis),
     }))
 }
 

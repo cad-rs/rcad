@@ -260,6 +260,7 @@ pub fn construct_cylinder_from_axis(axis_point: DVec3, axis_dir: DVec3, radius: 
         origin: axis_point,
         axis: axis_dir.normalize_or(DVec3::Z),
         radius: radius.abs().max(TOLERANCE_ABS),
+        ref_dir: any_perpendicular(axis_dir.normalize_or(DVec3::Z)),
     }
 }
 

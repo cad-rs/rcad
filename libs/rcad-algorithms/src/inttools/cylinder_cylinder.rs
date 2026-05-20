@@ -29,7 +29,7 @@
 //! fall back to numeric marching.
 
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, CylindricalSurface, Ellipse3, Line3};
+use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, Ellipse3, Line3};
 
 use crate::tolerance::*;
 
@@ -324,7 +324,7 @@ mod tests {
     use super::*;
 
     fn cyl(origin: DVec3, axis: DVec3, radius: f64) -> CylindricalSurface {
-        CylindricalSurface { origin, axis, radius }
+        CylindricalSurface { origin, axis, ref_dir: any_perpendicular(axis), radius }
     }
 
     // ── Parallel axes ──────────────────────────────────────────────────────────

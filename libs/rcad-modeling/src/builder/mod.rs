@@ -237,6 +237,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                 origin: mirror_point(c.origin),
                 axis: mirror_vec(c.axis),
                 radius: c.radius,
+                ref_dir: mirror_vec(c.ref_dir),
             }),
             Surface3::Sphere(s) => Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
                 center: mirror_point(s.center),
@@ -367,6 +368,7 @@ fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, 
             Surface3::Cylinder(c) => {
                 c.origin = xform_point(c.origin);
                 c.axis = xform_vec(c.axis);
+                c.ref_dir = xform_vec(c.ref_dir);
             }
             Surface3::Sphere(s) => {
                 s.center = xform_point(s.center);

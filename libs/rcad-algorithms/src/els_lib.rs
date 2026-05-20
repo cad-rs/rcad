@@ -85,7 +85,7 @@ pub fn plane_tangent_v(plane: &Plane) -> DVec3 {
 ///
 /// P(u, v) = origin + radius * (cos(u) * x_axis + sin(u) * y_axis) + v * axis
 pub fn cylinder_point_at(cyl: &CylindricalSurface, u: f64, v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(cyl.axis);
+    let x_ax = cyl.ref_dir.normalize();
     let y_ax = cyl.axis.cross(x_ax).normalize();
     cyl.origin + cyl.radius * (u.cos() * x_ax + u.sin() * y_ax) + v * cyl.axis
 }
@@ -96,7 +96,7 @@ pub fn cylinder_point_at(cyl: &CylindricalSurface, u: f64, v: f64) -> DVec3 {
 /// parameters. The u angle is normalized to [0, 2*pi).
 pub fn cylinder_parameters(cyl: &CylindricalSurface, point: DVec3) -> DVec2 {
     let axis = cyl.axis.normalize_or_zero();
-    let x_ax = any_perpendicular(axis);
+    let x_ax = cyl.ref_dir.normalize();
     let y_ax = axis.cross(x_ax).normalize();
 
     // Vector from cylinder origin to point
@@ -120,7 +120,7 @@ pub fn cylinder_parameters(cyl: &CylindricalSurface, point: DVec3) -> DVec2 {
 ///
 /// The normal points outward from the axis (radially).
 pub fn cylinder_normal(cyl: &CylindricalSurface, u: f64, _v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(cyl.axis);
+    let x_ax = cyl.ref_dir.normalize();
     let y_ax = cyl.axis.cross(x_ax).normalize();
     (u.cos() * x_ax + u.sin() * y_ax).normalize()
 }
@@ -129,7 +129,7 @@ pub fn cylinder_normal(cyl: &CylindricalSurface, u: f64, _v: f64) -> DVec3 {
 ///
 /// This is the azimuthal tangent (along the circular cross-section).
 pub fn cylinder_tangent_u(cyl: &CylindricalSurface, u: f64, _v: f64) -> DVec3 {
-    let x_ax = any_perpendicular(cyl.axis);
+    let x_ax = cyl.ref_dir.normalize();
     let y_ax = cyl.axis.cross(x_ax).normalize();
     (-u.sin() * x_ax + u.cos() * y_ax).normalize()
 }
@@ -549,6 +549,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 2.0,
         };
         for u in [0.0, PI / 2.0, PI, 3.0 * PI / 2.0] {
@@ -563,6 +564,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::new(1.0, 2.0, 3.0),
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 5.0,
         };
         let u = 1.2;
@@ -581,6 +583,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let n = cylinder_normal(&cyl, 0.0, 0.0);
@@ -593,6 +596,7 @@ mod tests {
         let cyl = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
+            ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
         let tu = cylinder_tangent_u(&cyl, 1.0, 0.0);
