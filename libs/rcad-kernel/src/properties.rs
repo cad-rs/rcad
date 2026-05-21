@@ -1649,6 +1649,21 @@ fn try_analytic_face_surface_area(
                         Some(c.radius * (u1 - u0).abs() * (v1 - v0).abs())
                     }
                 }
+                Surface3::Cone(_) => {
+                    // For trimmed cone faces, param_rect_area_cross assumes
+                    // the UV polygon IS the full [u0,u1]×[v0,v1] rectangle.
+                    // Boolean splitting produces sub-faces whose UV polygon
+                    // covers only part of the rectangle; the rectangular
+                    // approximation overcounts but often stays within tolerance.
+                    // However, when the u-span exceeds 2π (the periodic domain),
+                    // the overcount is pathological (e.g. ZG6 poly[0] has
+                    // u-span 9.45 vs correct ~3.17).  Fall back to tessellation.
+                    if (u1 - u0).abs() > std::f64::consts::TAU * 1.01 {
+                        None
+                    } else {
+                        param_rect_area_cross(surf, u0, u1, v0, v1)
+                    }
+                }
                 _ => param_rect_area_cross(surf, u0, u1, v0, v1),
             }
         }

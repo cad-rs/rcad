@@ -3136,6 +3136,30 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+        // For Cone surfaces: clip trim polyline v-coordinates to the face's
+        // v-domain.  Intersection curve pcurves may extend beyond the cone's
+        // valid v-range when computed from infinite-surface intersection,
+        // producing sub-face UV polygons that inflate surface area (e.g. ZG5).
+        if matches!(&surface, Surface3::Cone(_)) {
+            let f_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+            let f_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+            trim_polylines = trim_polylines
+                .into_iter()
+                .filter_map(|trim| {
+                    let clipped: Vec<DVec2> = trim.iter()
+                        .map(|p| DVec2::new(p.x, p.y.clamp(f_v_min, f_v_max)))
+                        .collect();
+                    // Skip trims that collapse entirely after clipping
+                    // (the IC was entirely outside the face's v-domain).
+                    let cv_min = clipped.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let cv_max = clipped.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    if (cv_max - cv_min).abs() < TOLERANCE_COORD_SUB {
+                        return None;
+                    }
+                    Some(clipped)
+                })
+                .collect();
+        }
 
         // Extend axis-aligned trims to the UV boundary so endpoints
         // land on the boundary polygon rather than outside it (the
@@ -3378,11 +3402,53 @@ impl<'a> BooleanBuilder<'a> {
                 let bnd_u_max = uv_poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
                 let bnd_v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
                 let bnd_v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-                // Use boundary bbox directly.
-                let u_min = bnd_u_min;
-                let u_max = bnd_u_max;
                 let v_min = bnd_v_min;
                 let v_max = bnd_v_max;
+
+                // For periodic surfaces, correct the u-domain when the raw
+                // u-span exceeds one period.  The seam-crossing handler
+                // delegates complex cases (>2 crossings) as the original
+                // polygon, whose u-range may be much wider than the actual
+                // angular extent of the sub-face (e.g. ZG6: u in [-1.58,
+                // 7.87], span 9.45 vs correct ~3.17).  Without correction
+                // both param_rect_area_cross and tessellate_curved_face
+                // grossly overcount surface area.
+                let (u_min, u_max) = if matches!(&surface, Surface3::Cone(_))
+                    && (bnd_u_max - bnd_u_min) > u_period + TOLERANCE_ABS
+                {
+                    let period = u_period;
+                    let mut u_norm: Vec<f64> = uv_poly.iter().map(|p| {
+                        let mut u = p.x;
+                        if u < 0.0 {
+                            u += period * ((0.0 - u) / period).ceil();
+                        } else if u >= period {
+                            u -= period * ((u - period) / period).ceil();
+                        }
+                        u
+                    }).collect();
+                    u_norm.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let max_gap = u_norm.windows(2)
+                        .map(|w| w[1] - w[0])
+                        .fold(0.0_f64, f64::max)
+                        .max(u_norm[0] + period - u_norm[u_norm.len() - 1]);
+                    let eff_span = period - max_gap;
+                    if eff_span > TOLERANCE_ABS && eff_span < (bnd_u_max - bnd_u_min) {
+                        // Gap end = start + gap = the first point after the gap
+                        let gap_end = if (u_norm[0] + period - u_norm[u_norm.len() - 1] - max_gap).abs() < TOLERANCE_ABS {
+                            0.0 // gap wraps around the seam
+                        } else {
+                            u_norm.windows(2)
+                                .find(|w| (w[1] - w[0] - max_gap).abs() < TOLERANCE_ABS)
+                                .map(|w| w[1])
+                                .unwrap_or(bnd_u_min)
+                        };
+                        (gap_end, gap_end + eff_span)
+                    } else {
+                        (bnd_u_min, bnd_u_max)
+                    }
+                } else {
+                    (bnd_u_min, bnd_u_max)
+                };
                 let uv_domain = if u_min.is_finite() && u_max.is_finite()
                     && v_min.is_finite() && v_max.is_finite()
                     && (u_max - u_min) > TOLERANCE_FLOAT_LOOSE && (v_max - v_min) > TOLERANCE_FLOAT_LOOSE
