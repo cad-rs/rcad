@@ -12,7 +12,7 @@ use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
 use crate::BRep;
-use crate::geom::{CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
+use crate::geom::{ConicalSurface, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -1580,6 +1580,81 @@ fn try_cylinder_trimmed_face_area(
     if total_uv_area > 1e-14 { Some(cyl.radius * total_uv_area) } else { None }
 }
 
+/// UV-polygon-aware surface area for trimmed cone sub-faces.
+///
+/// For a cone parameterized as P(u,v) = apex + v·cos(α)·axis + (R + v·sin(α))·(cos(u)·x̂ + sin(u)·ŷ),
+/// the area element is |∂P/∂u × ∂P/∂v| = R + v·sin(α).  The surface area over a
+/// UV polygon is therefore:
+///
+///   A = ∫∫ (R + v·sin(α)) du dv
+///     = R · Area(UV_polygon) + sin(α) · ∫∫ v du dv
+///
+/// where ∫∫ v du dv is the first moment about the u-axis, computed via Green's theorem
+/// from the polygon boundary.  This avoids the overcount from `param_rect_area_cross`
+/// which integrates over the bounding rectangle of the UV polygon.
+fn try_cone_trimmed_face_area(
+    cone: &ConicalSurface,
+    brep: &BRep,
+    face: &Face,
+) -> Option<f64> {
+    use crate::projection::closest_point_on_surface;
+
+    let wire_uv_data = |wire: &Wire| -> Option<(f64, f64)> {
+        // Returns (area, first_moment_Mu) for the UV polygon
+        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 256);
+        trim_almost_closed_polyline(&mut pts_3d, 1e-5);
+        if pts_3d.len() < 3 { return None; }
+
+        let n = pts_3d.len();
+        let surf = Surface3::Cone(*cone);
+        let uvs: Vec<DVec2> = pts_3d.iter()
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
+            .collect();
+
+        // Unwrap u for periodic S¹ parameter
+        let unwrapped: Vec<f64> = {
+            let mut o = Vec::with_capacity(n);
+            o.push(uvs[0].x);
+            for i in 1..n {
+                o.push(o[i - 1] + short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x));
+            }
+            o
+        };
+
+        // Shoelace area and first moment M_u = ∫∫ v du dv
+        let mut area2 = 0.0_f64;
+        let mut moment6 = 0.0_f64;  // 6 × M_u before division
+        for i in 0..n {
+            let j = if i + 1 < n { i + 1 } else { 0 };
+            let cross = unwrapped[i] * uvs[j].y - unwrapped[j] * uvs[i].y;
+            area2 += cross;
+            moment6 += (uvs[i].y + uvs[j].y) * cross;
+        }
+        let uv_area = area2.abs() * 0.5;
+        let mu = moment6.abs() / 6.0;  // ∫∫ v du dv = |moment6| / 6
+        Some((uv_area, mu))
+    };
+
+    let (outer_area, outer_mu) = wire_uv_data(&face.outer_wire)?;
+    let (inner_area, inner_mu) = {
+        let mut a = 0.0_f64;
+        let mut m = 0.0_f64;
+        for w in &face.inner_wires {
+            if let Some((wa, wm)) = wire_uv_data(w) {
+                a += wa;
+                m += wm;
+            }
+        }
+        (a, m)
+    };
+    let net_area = outer_area - inner_area;
+    let net_mu = outer_mu - inner_mu;
+    let r = cone.radius;
+    let sin_alpha = cone.half_angle_rad.sin();
+    let total = r * net_area + sin_alpha * net_mu;
+    if total > 1e-14 { Some(total) } else { None }
+}
+
 /// Prefer analytic / parametric area for `surface_area`: plane (shoelace); all sphere faces
 /// (UV polygon mask + `R² dΩ`); finite-UV rectangular patches on other surfaces without inner
 /// wires (cylinder exact; otherwise `‖Pu×Pv‖` midpoint rule on the same domain as tessellation).
@@ -1649,15 +1724,20 @@ fn try_analytic_face_surface_area(
                         Some(c.radius * (u1 - u0).abs() * (v1 - v0).abs())
                     }
                 }
-                Surface3::Cone(_) => {
-                    // For trimmed cone faces, param_rect_area_cross assumes
-                    // the UV polygon IS the full [u0,u1]×[v0,v1] rectangle.
-                    // Boolean splitting produces sub-faces whose UV polygon
-                    // covers only part of the rectangle; the rectangular
-                    // approximation overcounts but often stays within tolerance.
-                    // However, when the u-span exceeds 2π (the periodic domain),
-                    // the overcount is pathological (e.g. ZG6 poly[0] has
-                    // u-span 9.45 vs correct ~3.17).  Fall back to tessellation.
+                Surface3::Cone(c) => {
+                    // For trimmed cone faces, param_rect_area_cross assumes the
+                    // UV polygon IS the full [u0,u1]×[v0,v1] rectangle.  Boolean
+                    // splitting produces sub-faces whose UV polygon covers only
+                    // part of the rectangle, overcounting the area.  Use the UV
+                    // polygon to compute the exact area for trimmed faces.
+                    let edge_n = face.outer_wire.edges.len();
+                    if edge_n > 6 || !face.inner_wires.is_empty() {
+                        try_cone_trimmed_face_area(c, brep, face)
+                    } else {
+                        param_rect_area_cross(surf, u0, u1, v0, v1)
+                    }
+                }
+                Surface3::Torus(_) => {
                     if (u1 - u0).abs() > std::f64::consts::TAU * 1.01 {
                         None
                     } else {
@@ -2166,8 +2246,8 @@ pub fn face_triangles_pub(
 /// Returns 0.0 if the BRep has no faces.
 pub fn surface_area(brep: &BRep) -> f64 {
     let mut total = 0.0f64;
-    for (fi, f) in face_flat_iter(brep) {
-        let a = face_surface_area(brep, f, fi);
+    for (_fi, f) in face_flat_iter(brep) {
+        let a = face_surface_area(brep, f, _fi);
         total += a;
     }
     total

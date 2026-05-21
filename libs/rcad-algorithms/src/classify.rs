@@ -501,8 +501,9 @@ fn classify_with_multi_ray_voting(
     let mut out_votes = 0u32;
     let mut valid_rays = 0u32;
 
-    for ray_dir in &ray_dirs {
-        match ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol, workspace_fuzzy) {
+    for (ri, ray_dir) in ray_dirs.iter().enumerate() {
+        let cr = ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol, workspace_fuzzy);
+        match cr {
             Some(Classification::In) => {
                 in_votes += 1;
                 valid_rays += 1;
@@ -511,7 +512,7 @@ fn classify_with_multi_ray_voting(
                 out_votes += 1;
                 valid_rays += 1;
             }
-            None => continue, // Ambiguous hit, try next ray
+            None => {} // Ambiguous hit, try next ray
             Some(Classification::On) => return Classification::On,
         }
 
@@ -801,7 +802,7 @@ fn classify_analytic_cone_solid(
 
     let cone = cone?;
     let axis = cone.axis.normalize_or_zero();
-    let apex = cone.apex;
+    let apex = cone.apex_point();
     let tan_half = cone.half_angle_rad.tan();
     if tan_half.abs() < TOLERANCE_LEN_MIN {
         return None;
@@ -946,7 +947,7 @@ fn check_point_on_face(
         }
         Surface3::Cone(c) => {
             let axis = c.axis.normalize_or_zero();
-            let apex = c.apex;
+            let apex = c.apex_point();
             let v = point - apex;
             let along = v.dot(axis);
             let perp = (v - axis * along).length();
@@ -1099,7 +1100,7 @@ fn ray_cast_classify(
             Surface3::Cone(c) => {
                 let axis = c.axis.normalize_or_zero();
                 let tan_a = c.half_angle_rad.tan();
-                let apex = c.apex;
+                let apex = c.apex_point();
                 let co = point - apex;
                 let d_along = ray_dir.dot(axis);
                 let co_along = co.dot(axis);
@@ -1611,7 +1612,7 @@ fn distance_to_surface(point: DVec3, surface: &Surface3) -> f64 {
         }
         Surface3::Cone(cone) => {
             let axis = cone.axis.normalize_or_zero();
-            let apex = cone.apex;
+            let apex = cone.apex_point();
             let v = point - apex;
             let along = v.dot(axis);
             let perp = (v - axis * along).length();

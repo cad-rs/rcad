@@ -945,11 +945,21 @@ fn classify_against_solid_for_boolean(
                     } else {
                         (3usize, 3usize)
                     };
+                    // When uv_centroid is available, center the grid on it to avoid
+                    // generating 3D points outside the sub-face UV polygon. The
+                    // uv_domain rectangle can extend beyond the UV polygon for
+                    // periodic surfaces (Cone, Torus) after u-span correction,
+                    // causing probe points to fall outside the sub-face boundary.
+                    let (cu, cv, u_span, v_span) = if let Some(uvc) = sub.uv_centroid {
+                        (uvc.x, uvc.y, (u1 - u0) * 0.5, (v1 - v0) * 0.5)
+                    } else {
+                        (0.5 * (u0 + u1), 0.5 * (v0 + v1), u1 - u0, v1 - v0)
+                    };
                     (0..nu_probe)
                         .flat_map(|iu| {
                             (0..nv_probe).map(move |iv| {
-                                let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / nu_probe as f64;
-                                let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / nv_probe as f64;
+                                let u = cu + (iu as f64 + 0.5 - nu_probe as f64 / 2.0) / nu_probe as f64 * u_span;
+                                let v = cv + (iv as f64 + 0.5 - nv_probe as f64 / 2.0) / nv_probe as f64 * v_span;
                                 sub.surface.point_at(u, v)
                             })
                         })
