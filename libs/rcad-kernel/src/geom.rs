@@ -967,12 +967,12 @@ impl SurfaceEval for Plane {
 impl SurfaceEval for CylindricalSurface {
     /// u = azimuth angle [0, 2π], v = height along axis.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = self.ref_dir.normalize();
+        let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
         self.origin + self.radius * (u.cos() * x_ax + u.sin() * y_ax) + v * self.axis
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
-        let x_ax = self.ref_dir.normalize();
+        let x_ax = any_perpendicular(self.axis);
         let y_ax = self.axis.cross(x_ax).normalize();
         (u.cos() * x_ax + u.sin() * y_ax).normalize()
     }
