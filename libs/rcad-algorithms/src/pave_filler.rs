@@ -2322,8 +2322,14 @@ impl<'a> PaveFiller<'a> {
                 let s = (d2 - a1.dot(a2) * d1) / denom;
                 let conn = (off_cyl1.origin + a1 * t) - (off_cyl2.origin + a2 * s);
                 let conn_len = conn.length();
-                if conn_len < 1e-12 { return; }
-                let u1 = conn / conn_len;
+                let u1 = if conn_len < 1e-12 {
+                    // Axes intersect (zero or near-zero offset along the
+                    // connecting vector).  Pick any direction perpendicular to
+                    // a1 — a1 × a2 works since the axes are perpendicular.
+                    a1.cross(a2).normalize()
+                } else {
+                    conn / conn_len
+                };
                 let v1 = a1.cross(u1).normalize();
                 let delta = off_cyl2.origin - off_cyl1.origin;
                 let dx = delta.dot(u1);

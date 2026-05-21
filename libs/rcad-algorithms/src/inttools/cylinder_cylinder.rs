@@ -311,8 +311,17 @@ fn intersect_perpendicular_cylinders(
     // when r1 == r2 (the difference of squares x² − z² = r1² − r2²
     // factorises into planes n1·P = 0 and n2·P = 0).  For unequal
     // radii the intersection curves are general space curves — not
-    // planar ellipses — so we fall back to numerical marching.
-    CylinderCylinderResult::General
+    // planar ellipses — but we can still use the analytic
+    // θ-parametrization of PerpendicularOffsetCurves (same formula
+    // works for both offset and intersecting axes).
+    if dist <= r1 + r2 + linear_tol {
+        return CylinderCylinderResult::PerpendicularOffsetCurves {
+            cyl1: *cyl1,
+            cyl2: *cyl2,
+            dist,
+        };
+    }
+    CylinderCylinderResult::NoIntersection
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
