@@ -2164,7 +2164,7 @@ impl<'a> PaveFiller<'a> {
         use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
         use inttools::pcurve_derive::{
             circle_pcurve_on_cylinder, ellipse_pcurve_on_cylinder, line_pcurve_on_cylinder,
-            polyline_pcurve_by_projection,
+            line_theta_on_cylinder, polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;
 

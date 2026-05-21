@@ -225,19 +225,32 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
     }
 }
 
-/// Compute the PCurve of a [`Line3`] on a [`CylindricalSurface`].
+/// Compute the azimuth θ of a line's origin on a cylindrical surface, mapped
+/// to [0, 2π).  This is the u-coordinate the line's pcurve would have.
 ///
-/// A line parallel to the cylinder axis at azimuth θ returns a vertical
-/// [`Line2d`] at u = θ in (θ, h) space.
-pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2d {
+/// A line parallel to the cylinder axis at angular position θ returns θ in [0, 2π).
+pub fn line_theta_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> f64 {
     let u_axis = cyl.ref_dir.normalize();
     let v_axis = cyl.axis.cross(u_axis).normalize();
 
     let radial = line.origin - cyl.origin;
     let radial_perp = radial - cyl.axis * radial.dot(cyl.axis.normalize());
-    let theta = radial_perp.dot(v_axis).atan2(radial_perp.dot(u_axis));
+    let mut theta = radial_perp.dot(v_axis).atan2(radial_perp.dot(u_axis));
 
-    let h = radial.dot(cyl.axis.normalize());
+    // Map to [0, 2π)
+    if theta < 0.0 {
+        theta += std::f64::consts::TAU;
+    }
+    theta
+}
+
+/// Compute the PCurve of a [`Line3`] on a [`CylindricalSurface`].
+///
+/// A line parallel to the cylinder axis at azimuth θ returns a vertical
+/// [`Line2d`] at u = θ in (θ, h) space.
+pub fn line_pcurve_on_cylinder(line: &Line3, cyl: &CylindricalSurface) -> Curve2d {
+    let theta = line_theta_on_cylinder(line, cyl);
+    let h = (line.origin - cyl.origin).dot(cyl.axis.normalize());
 
     Curve2d::Line(Line2d {
         origin: DVec2::new(theta, h),

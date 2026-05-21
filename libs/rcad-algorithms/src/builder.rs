@@ -1628,8 +1628,18 @@ impl<'a> BooleanBuilder<'a> {
                             if v_max < bnd_v_min - vb_tol || v_min > bnd_v_max + vb_tol {
                                 return true;
                             }
-                            let at_v_top = (v_max - bnd_v_max).abs() < vb_tol;
-                            let at_v_bot = (v_min - bnd_v_min).abs() < vb_tol;
+                            // Clip to face V bounds — only for line pcurves whose IC's
+                            // t_range may exceed the face domain (e.g. generator lines with
+                            // extent=20).  BSpline/Bezier pcurves already have a bounded
+                            // t_range ([0, 1]) within the face.
+                            let is_line = matches!(pcurve, Curve2d::Line(_));
+                            let v_min_f = if is_line { v_min.max(bnd_v_min) } else { v_min };
+                            let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
+                            if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
+                                return true;
+                            }
+                            let at_v_top = (v_max_f - bnd_v_max).abs() <= vb_tol;
+                            let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
                             at_v_top || at_v_bot
                         })
                     });
