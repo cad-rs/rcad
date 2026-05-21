@@ -1611,19 +1611,6 @@ impl<'a> BooleanBuilder<'a> {
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
                     let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
-                    if face_idx == 3 {
-                        eprintln!("[DBG] face[3] cylinder curves_in={:?}", fi.curves_in.iter().collect::<Vec<_>>());
-                        for &ci in &fi.curves_in {
-                            let pc = self.find_pcurve_for_face(ci, face_idx);
-                            eprintln!("[DBG] face[3] ci={ci} has_pcurve={}", pc.is_some());
-                            if let Some(ref pcurve) = pc {
-                                let ic = &self.ds.intersection_curves[ci];
-                                let [t0, t1] = ic.t_range;
-                                let pts = [t0, 0.5*(t0+t1), t1].map(|t| pcurve.point_at(t));
-                                eprintln!("[DBG] face[3] ci={ci} pts={:?} v=[{}, {}] bnd_v=[{}, {}]", pts, pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min), pts.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max), bnd_v_min, bnd_v_max);
-                            }
-                        }
-                    }
                     let all_at_boundary = fi.curves_in.iter().all(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
                             let ic = &self.ds.intersection_curves[ci];
@@ -1731,6 +1718,20 @@ impl<'a> BooleanBuilder<'a> {
                     if has_full_wrap {
                         return self.tessellate_cylinder_face_2d(face_idx, 32, 32);
                     }
+
+                    // For cylinder faces with complex (marched) intersection curves,
+                    // use UV grid tessellation instead of split_curved_face_parametric.
+                    // High-order curves from numeric marching (e.g., the cone–cylinder
+                    // quartic in ZK8) cause the parametric splitter to produce overlapping
+                    // UV polygons, inflating the surface area in the same way as cone faces.
+                    let has_complex_curve = fi.curves_in.iter().any(|&ci| {
+                        self.find_pcurve_for_face(ci, face_idx).is_some_and(|pc| {
+                            matches!(pc, Curve2d::BSpline(_) | Curve2d::Bezier(_))
+                        })
+                    });
+                    if has_complex_curve {
+                        return self.tessellate_cylinder_face_2d(face_idx, 32, 32);
+                    }
                 }
             }
         }
@@ -1740,6 +1741,16 @@ impl<'a> BooleanBuilder<'a> {
         // north and south poles along the seam).
         if matches!(&face.surface, Surface3::Sphere(_)) {
             return self.tessellate_sphere_face(face_idx);
+        }
+
+        // For cone faces with intersection curves, use UV grid tessellation instead
+        // of split_curved_face_parametric.  The parametric splitter can produce
+        // overlapping sub-face UV polygons when intersection curves are high-order
+        // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
+        // double-counting.  A grid guarantees that each UV region maps to exactly one
+        // sub-face whose sample point correctly represents the region.
+        if matches!(&face.surface, Surface3::Cone(_)) {
+            return self.tessellate_cone_face_2d(face_idx, 32, 32);
         }
 
         match &face.surface {
@@ -1989,6 +2000,93 @@ impl<'a> BooleanBuilder<'a> {
                     // the Case-2 UV probe to a neighbourhood of the center so that
                     // out-of-centre probe points on boundary patches cannot falsely
                     // classify the patch as "In".
+                    uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
+                    inner_wires: vec![],
+                });
+            }
+        }
+        subs
+    }
+
+    /// Tessellate a cone face into a UV grid. Each grid cell is a [`SubFace`] with
+    /// its own sample point, so that classify_point can independently decide whether
+    /// that region is inside or outside the other solid.
+    ///
+    /// This replaces [`split_curved_face_parametric`] for cone faces because the UV
+    /// splitter can produce overlapping sub-face polygons when intersection curves are
+    /// high-order (e.g. the cone–cylinder quartic from skew axes in ZK8/ZL1), leading
+    /// to SA double-counting.  The grid approach guarantees each UV region is covered
+    /// by exactly one sub-face whose sample point correctly represents the region.
+    fn tessellate_cone_face_2d(
+        &self,
+        face_idx: usize,
+        n_u: usize,
+        n_v: usize,
+    ) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let cone = match &face.surface {
+            Surface3::Cone(c) => *c,
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        let uv_boundary = match &face.uv_boundary {
+            Some(b) if b.len() >= 3 => b.clone(),
+            _ => return self.single_subface_from_whole_face(face_idx),
+        };
+        let u_lo = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_hi = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        if !u_lo.is_finite() || !u_hi.is_finite() || !v_min.is_finite() || !v_max.is_finite() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+        let u_span = u_hi - u_lo;
+        let v_span = v_max - v_min;
+        if u_span < TOLERANCE_LEN_MIN || v_span < TOLERANCE_LEN_MIN {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+
+        const N_SEG: usize = 4;
+
+        let mut subs = Vec::with_capacity(n_u * n_v);
+        for ui in 0..n_u {
+            let u0 = u_lo + u_span * ui as f64 / n_u as f64;
+            let u1 = u_lo + u_span * (ui + 1) as f64 / n_u as f64;
+            for vi in 0..n_v {
+                let v0 = v_min + v_span * vi as f64 / n_v as f64;
+                let v1 = v_min + v_span * (vi + 1) as f64 / n_v as f64;
+
+                let mut boundary = Vec::with_capacity(4 * N_SEG);
+                // Bottom edge (v=v0, u from u0 to u1)
+                for s in 0..=N_SEG {
+                    let u = u0 + (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(cone.point_at(u, v0));
+                }
+                // Right edge (u=u1, v from v0 to v1)
+                for s in 1..=N_SEG {
+                    let v = v0 + (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(cone.point_at(u1, v));
+                }
+                // Top edge (v=v1, u from u1 to u0)
+                for s in 1..=N_SEG {
+                    let u = u1 - (u1 - u0) * s as f64 / N_SEG as f64;
+                    boundary.push(cone.point_at(u, v1));
+                }
+                // Left edge (u=u0, v from v1 to v0)
+                for s in 1..N_SEG {
+                    let v = v1 - (v1 - v0) * s as f64 / N_SEG as f64;
+                    boundary.push(cone.point_at(u0, v));
+                }
+
+                let u_mid = 0.5 * (u0 + u1);
+                let v_mid = 0.5 * (v0 + v1);
+                let sub_normal = cone.normal_at(u_mid, v_mid);
+
+                subs.push(SubFace {
+                    boundary,
+                    surface: face.surface.clone(),
+                    normal: sub_normal,
+                    uv_centroid: Some(DVec2::new(u_mid, v_mid)),
+                    sample_override: Some(cone.point_at(u_mid, v_mid)),
                     uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
                     inner_wires: vec![],
                 });

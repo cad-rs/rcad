@@ -1513,24 +1513,14 @@ fn try_cylinder_trimmed_face_area(
                 prev_range = Some(range);
             }
             // The envelope method with wrap-around is only valid when the UV
-            // polygon actually wraps around the full cylinder (span close to 2π).
-            // For partial-wrap faces (e.g., wedge faces from boolean splitting),
-            // the shoelace area is correct and the wrap-around overcounts by
-            // integrating across empty bins.
-            let u_min = unwrapped.iter().cloned().fold(f64::INFINITY, f64::min);
-            let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let u_span = u_max - u_min;
-            const WRAP_THRESHOLD: f64 = std::f64::consts::PI;
+            // polygon actually wraps around the full cylinder (populated bins
+            // cover nearly all of 0-2π).  For partial-wrap faces (e.g., wedge
+            // faces from boolean splitting where u_span ~200° but only ~55% of
+            // bins are populated), the wrap-around gap closure would integrate
+            // across empty bins and overcount.  A 85% threshold distinguishes
+            // true wrap-around (figure-8) from partial-wrap merged faces.
             let pop_bins = upper.iter().filter(|v| v.is_finite()).count();
-            let v_min_all = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
-            let v_max_all = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
-
-            if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                eprintln!("[WIRE_UV] n_pts={} shoelace={:.6} band_area={:.6} u_span={:.4} u_min={:.4} u_max={:.4} pop_bins={}/{} v_range=[{:.4},{:.4}] wrap={}",
-                    nf, uv_area, band_area, u_span, u_min, u_max, pop_bins, n_bins, v_min_all, v_max_all, u_span > WRAP_THRESHOLD);
-            }
-
-            if u_span > WRAP_THRESHOLD {
+            if pop_bins as f64 > n_bins as f64 * 0.85 {
                 // Wrap around: close the gap from the last populated bin to the first
                 if let (Some(lu), Some(lr)) = (prev_u, prev_range) {
                     let du = (TWO_PI + first_u) - lu;
@@ -1549,35 +1539,85 @@ fn try_cylinder_trimmed_face_area(
     let outer_area = wire_uv_area(&face.outer_wire)?;
     let inner_area: f64 = face.inner_wires.iter()
         .filter_map(|w| wire_uv_area(w)).sum();
-    let total_uv_area = outer_area - inner_area;
-    let debug = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
-    if debug {
-        let n_edges = face.outer_wire.edges.len();
-        let u_range = {
-            let mut pts_3d = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, 256);
-            trim_almost_closed_polyline(&mut pts_3d, 1e-5);
-            if pts_3d.len() < 3 { (0.0, 0.0) } else {
-                let npts = pts_3d.len();
-                let surf = Surface3::Cylinder(*cyl);
-                let uvs: Vec<DVec2> = pts_3d.iter()
-                    .map(|&p| { let proj = crate::projection::closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
-                    .collect();
-                let mut unwrapped = Vec::with_capacity(npts);
-                unwrapped.push(uvs[0].x);
-                for i in 1..npts {
-                    let du = short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x);
-                    unwrapped.push(unwrapped[i - 1] + du);
-                }
-                let u_min = unwrapped.iter().cloned().fold(f64::INFINITY, f64::min);
-                let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                (u_min, u_max - u_min)
+    let mut total_uv_area = outer_area - inner_area;
+
+    // Detect figure-8 cancellation: after unify_same_domain_faces, the merged outer
+    // wire may self-intersect and be split into outer + inner loops whose UV areas
+    // nearly cancel (both ~half the cylinder).  In this case, compute the envelope
+    // of ALL points (outer + inner combined), which covers the full cylinder surface.
+    if inner_area.abs() > 1e-6 && (outer_area - inner_area).abs() < 0.5 * inner_area.abs().max(outer_area) {
+        let all_wires = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter());
+        let mut all_uvs: Vec<DVec2> = Vec::new();
+        let surf = Surface3::Cylinder(*cyl);
+        for wire in all_wires {
+            let mut pts = sample_wire_polyline_3d_with_n(brep, wire, 128);
+            trim_almost_closed_polyline(&mut pts, 1e-5);
+            if pts.len() < 3 { continue; }
+            for &p in &pts {
+                let proj = closest_point_on_surface(&surf, p, 16);
+                all_uvs.push(DVec2::new(proj.params.0, proj.params.1));
             }
-        };
-        let _v_min = u_range.0;
-        eprintln!("[CYL_SA] edges={} outer_uv={:.6} inner_uv={:.6} net_uv={:.6} R={} SA={:.6} u_span={:.4} inner_wires={}",
-            n_edges, outer_area, inner_area, total_uv_area, cyl.radius, cyl.radius * total_uv_area, u_range.1, face.inner_wires.len());
+        }
+        if all_uvs.len() >= 3 {
+            let n = all_uvs.len();
+            const TWO_PI: f64 = std::f64::consts::PI * 2.0;
+            let unwrapped: Vec<f64> = {
+                let mut o = Vec::with_capacity(n);
+                o.push(all_uvs[0].x);
+                for i in 1..n {
+                    o.push(o[i - 1] + short_delta_on_circle_01(all_uvs[i - 1].x, all_uvs[i].x));
+                }
+                o
+            };
+            let u_min = unwrapped.iter().cloned().fold(f64::INFINITY, f64::min);
+            let u_max = unwrapped.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let u_span = u_max - u_min;
+            const WRAP_THRESHOLD: f64 = std::f64::consts::PI;
+
+            if u_span > WRAP_THRESHOLD {
+                // Full cylinder wrap: the combined outer+inner wires span the full
+                // cylinder circumference.  The envelope method undercounts for
+                // boundary-only UV points (figure-8 lobes); instead use the global
+                // v range which correctly gives the full cylinder area between the
+                // extreme v bounds of all points.
+                let v_min = all_uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+                let v_max = all_uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+                total_uv_area = TWO_PI * (v_max - v_min);
+            } // else: non-wrap, shoelace is fine; keep total_uv_area as computed
+        }
     }
     if total_uv_area > 1e-14 { Some(cyl.radius * total_uv_area) } else { None }
+}
+
+/// Compute the raw UV shoelace area for a cylinder face's outer wire (no inner-wire
+/// subtraction, no envelope/band method).  Used by [`surface_area`] to detect and
+/// normalize overlapping UV sub-faces from boolean splitting.
+fn cylinder_outer_wire_uv_shoelace_area(cyl: &CylindricalSurface, brep: &BRep, face: &Face) -> Option<f64> {
+    use crate::projection::closest_point_on_surface;
+    let surf = Surface3::Cylinder(*cyl);
+    let mut pts = sample_wire_polyline_3d_with_n(brep, &face.outer_wire, 256);
+    trim_almost_closed_polyline(&mut pts, 1e-5);
+    if pts.len() < 3 { return None; }
+    let uvs: Vec<DVec2> = pts.iter()
+        .map(|&p| {
+            let proj = closest_point_on_surface(&surf, p, 16);
+            DVec2::new(proj.params.0, proj.params.1)
+        })
+        .collect();
+    let n = uvs.len();
+    let unwrapped: Vec<f64> = {
+        let mut o = Vec::with_capacity(n);
+        o.push(uvs[0].x);
+        for i in 1..n {
+            o.push(o[i - 1] + short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x));
+        }
+        o
+    };
+    let area2: f64 = (0..n).map(|i| {
+        let j = (i + 1) % n;
+        unwrapped[i] * uvs[j].y - unwrapped[j] * uvs[i].y
+    }).sum::<f64>();
+    Some(area2.abs() * 0.5)
 }
 
 /// UV-polygon-aware surface area for trimmed cone sub-faces.
@@ -1632,6 +1672,53 @@ fn try_cone_trimmed_face_area(
         }
         let uv_area = area2.abs() * 0.5;
         let mu = moment6.abs() / 6.0;  // ∫∫ v du dv = |moment6| / 6
+
+        // Detect doubled-back UV polygon: short_delta unwrapping cancels the net u
+        // range, producing a near-zero uv_area even though the face has real area.
+        let total_abs_path: f64 = (1..n)
+            .map(|i| (unwrapped[i] - unwrapped[i - 1]).abs())
+            .sum();
+        let net_range = (unwrapped[n - 1] - unwrapped[0]).abs();
+        if net_range < total_abs_path * 0.25 && total_abs_path > std::f64::consts::PI {
+            // Envelope method: bin UV points by u-mod-2π, track v_min/v_max per bin,
+            // then integrate trapezoidally.  Handles doubled-back polygons correctly
+            // because it does not depend on winding order.
+            const TWO_PI: f64 = std::f64::consts::TAU;
+            const N_BINS: usize = 512;
+            let step = TWO_PI / N_BINS as f64;
+            let mut v_min = vec![f64::INFINITY; N_BINS];
+            let mut v_max = vec![f64::NEG_INFINITY; N_BINS];
+            for uv in &uvs {
+                let b = ((uv.x.rem_euclid(TWO_PI) / TWO_PI) * N_BINS as f64) as usize;
+                let b = b.min(N_BINS - 1);
+                if uv.y > v_max[b] { v_max[b] = uv.y; }
+                if uv.y < v_min[b] { v_min[b] = uv.y; }
+            }
+
+            let mut env_area = 0.0_f64;
+            let mut env_mu = 0.0_f64;
+            let mut prev_u: Option<f64> = None;
+            let mut prev_range: Option<f64> = None;
+            let mut prev_strip: Option<f64> = None;
+
+            for b in 0..N_BINS {
+                if !v_min[b].is_finite() { continue; }
+                let u_center = (b as f64 + 0.5) * step;
+                let range = v_max[b] - v_min[b];
+                let strip_mu = (v_max[b] * v_max[b] - v_min[b] * v_min[b]) * 0.5;
+                if let (Some(pu), Some(pr), Some(pm)) = (prev_u, prev_range, prev_strip) {
+                    let du = u_center - pu;
+                    env_area += (range + pr) * 0.5 * du;
+                    env_mu += (strip_mu + pm) * 0.5 * du;
+                }
+                prev_u = Some(u_center);
+                prev_range = Some(range);
+                prev_strip = Some(strip_mu);
+            }
+
+            return Some((env_area, env_mu));
+        }
+
         Some((uv_area, mu))
     };
 
@@ -1700,7 +1787,6 @@ fn try_analytic_face_surface_area(
             // over-counts because du spans >2π. Fall through to tessellation.
             None
         }
-        _ if !face.inner_wires.is_empty() => None,
         _ => {
             let [u0, u1, v0, v1] = curved_face_uv_domain(brep, face, face_flat_idx, surf)?;
             if !u0.is_finite()
@@ -1719,7 +1805,13 @@ fn try_analytic_face_surface_area(
                         // Trimmed face: UV bounding box overcounts.
                         // For cylinders, |∂P/∂u×∂P/∂v| = R constant, so
                         // surface area = R × shoelace area of the UV polygon.
-                        try_cylinder_trimmed_face_area(c, brep, face)
+                        let result = try_cylinder_trimmed_face_area(c, brep, face);
+                        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                            eprintln!("[CYL_ANALYTIC] fi={} edges={} inner={} analytic={}",
+                                face_flat_idx, edge_n, face.inner_wires.len(),
+                                result.map(|v| format!("{:.6}", v)).unwrap_or_else(|| "None".into()));
+                        }
+                        result
                     } else {
                         Some(c.radius * (u1 - u0).abs() * (v1 - v0).abs())
                     }
@@ -1730,20 +1822,18 @@ fn try_analytic_face_surface_area(
                     // splitting produces sub-faces whose UV polygon covers only
                     // part of the rectangle, overcounting the area.  Use the UV
                     // polygon to compute the exact area for trimmed faces.
-                    let edge_n = face.outer_wire.edges.len();
-                    if edge_n > 6 || !face.inner_wires.is_empty() {
-                        try_cone_trimmed_face_area(c, brep, face)
-                    } else {
-                        param_rect_area_cross(surf, u0, u1, v0, v1)
-                    }
+                    // Always use the trimmed face area — split_face can create
+                    // sub-faces with ≤6 edges that are still trimmed.
+                    try_cone_trimmed_face_area(c, brep, face)
                 }
                 Surface3::Torus(_) => {
-                    if (u1 - u0).abs() > std::f64::consts::TAU * 1.01 {
+                    if !face.inner_wires.is_empty() || (u1 - u0).abs() > std::f64::consts::TAU * 1.01 {
                         None
                     } else {
                         param_rect_area_cross(surf, u0, u1, v0, v1)
                     }
                 }
+                _ if !face.inner_wires.is_empty() => None,
                 _ => param_rect_area_cross(surf, u0, u1, v0, v1),
             }
         }
@@ -2244,12 +2334,133 @@ pub fn face_triangles_pub(
 /// sphere: parametric `R² dΩ` on the same UV mask as the raster), otherwise
 /// sums triangle areas (pre-triangulated, UV-sampled, or fan-triangulated).
 /// Returns 0.0 if the BRep has no faces.
+///
+/// Cylinder sub-faces from boolean splitting may have overlapping UV polygons
+/// (the intersection curve mapping is numerically inconsistent).  When the sum
+/// of UV shoelace areas across all sub-faces on a cylinder surface exceeds
+/// `2π × (v_global_max - v_global_min)`, each sub-face area is scaled down
+/// proportionally to the correct total.
 pub fn surface_area(brep: &BRep) -> f64 {
+    struct CylEntry { sa: f64, uv_area: f64, v_min: f64, v_max: f64, radius: f64 }
+
+    // Groups of cylinder faces on the same geometric cylinder (identified by
+    // comparing origin, axis, and radius within tolerance).  Boolean splitting
+    // may create multiple surface indices for the same physical cylinder, so
+    // we cannot rely on surface-index equality alone.
+    struct CylGroup { origin: DVec3, axis: DVec3, radius: f64, entries: Vec<CylEntry> }
+    let mut cyl_groups: Vec<CylGroup> = Vec::new();
     let mut total = 0.0f64;
+
     for (_fi, f) in face_flat_iter(brep) {
-        let a = face_surface_area(brep, f, _fi);
+        let analytic = try_analytic_face_surface_area(brep, f, _fi);
+        let a = match analytic {
+            Some(sa) => sa,
+            None => {
+                let tris = face_triangles(brep, f, _fi);
+                tris.iter().map(|&[a, b, c]| tri_area(a, b, c)).sum()
+            }
+        };
         total += a;
+
+        // Track analytic cylinder faces for UV-overlap normalization.
+        // Skip faces with inner wires (figure-8 case has its own handling).
+        if analytic.is_some() {
+            if let Some(si) = brep.geom.face_surface.get(_fi).copied().flatten() {
+                if let Some(surf) = brep.geom.surfaces.get(si) {
+                    if let Surface3::Cylinder(c) = surf {
+                        if f.inner_wires.is_empty() {
+                            if let Some([_, _, v0, v1]) = curved_face_uv_domain(brep, f, _fi, surf) {
+                                if let Some(uv_area) = cylinder_outer_wire_uv_shoelace_area(c, brep, f) {
+                                    // Find or create group for this geometric cylinder
+                                    let found = cyl_groups.iter_mut().find(|g| {
+                                        (g.origin - c.origin).length_squared() < 1e-8
+                                        && g.axis.dot(c.axis) > 1.0 - 1e-8
+                                        && (g.radius - c.radius).abs() < 1e-8
+                                    });
+                                    let g = match found {
+                                        Some(g) => g,
+                                        None => {
+                                            cyl_groups.push(CylGroup {
+                                                origin: c.origin, axis: c.axis,
+                                                radius: c.radius, entries: Vec::new(),
+                                            });
+                                            cyl_groups.last_mut().unwrap()
+                                        }
+                                    };
+                                    g.entries.push(CylEntry {
+                                        sa: a, uv_area, v_min: v0, v_max: v1, radius: c.radius,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    // Normalize each cylinder group: if sum of UV shoelace areas exceeds
+    // the maximum possible UV area (2π × global v-span), scale down proportionally.
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        // Second pass: print all face area breakdown
+        for (_fi, f) in face_flat_iter(brep) {
+            let surf_idx = brep.geom.face_surface.get(_fi).copied().flatten();
+            let surf_name = surf_idx.and_then(|si| brep.geom.surfaces.get(si)).map(|s| {
+                match s {
+                    Surface3::Plane(_) => "Plane".to_string(),
+                    Surface3::Cylinder(_) => "Cylinder".to_string(),
+                    Surface3::Cone(_) => "Cone".to_string(),
+                    Surface3::Sphere(_) => "Sphere".to_string(),
+                    Surface3::Torus(_) => "Torus".to_string(),
+                    _ => "Other".to_string(),
+                }
+            }).unwrap_or_else(|| "None".to_string());
+            let edge_n = f.outer_wire.edges.len();
+            let analytic = try_analytic_face_surface_area(brep, f, _fi);
+            let a = match analytic {
+                Some(sa) => sa,
+                None => {
+                    let tris = face_triangles(brep, f, _fi);
+                    tris.iter().map(|&[a, b, c]| tri_area(a, b, c)).sum()
+                }
+            };
+            eprintln!("[SA_FACE] fi={} surf={} edges={} inner={} analytic={} area={:.6}",
+                _fi, surf_name, edge_n, f.inner_wires.len(),
+                analytic.is_some(), a);
+        }
+        eprintln!("[SA_TRACK] cylinder groups={}", cyl_groups.len());
+        for (gi, g) in cyl_groups.iter().enumerate() {
+            eprintln!("[SA_TRACK]  cyl group={} entries={} R={}", gi, g.entries.len(), g.radius);
+            let entries = &g.entries;
+            let total_uv: f64 = entries.iter().map(|e| e.uv_area).sum();
+            let v_min = entries.iter().map(|e| e.v_min).fold(f64::INFINITY, f64::min);
+            let v_max = entries.iter().map(|e| e.v_max).fold(f64::NEG_INFINITY, f64::max);
+            eprintln!("[SA_TRACK]    total_uv={:.6} v_rng=[{:.4},{:.4}] max_uv={:.6}",
+                total_uv, v_min, v_max, std::f64::consts::PI * 2.0 * (v_max - v_min));
+            for (i, e) in entries.iter().enumerate() {
+                eprintln!("[SA_TRACK]    [{}] sa={:.6} uv={:.6} v=[{:.4},{:.4}] R={}",
+                    i, e.sa, e.uv_area, e.v_min, e.v_max, e.radius);
+            }
+        }
+    }
+    const TWO_PI: f64 = std::f64::consts::PI * 2.0;
+    for g in &cyl_groups {
+        let entries = &g.entries;
+        if entries.len() < 2 { continue; }
+        let total_uv: f64 = entries.iter().map(|e| e.uv_area).sum();
+        let v_min = entries.iter().map(|e| e.v_min).fold(f64::INFINITY, f64::min);
+        let v_max = entries.iter().map(|e| e.v_max).fold(f64::NEG_INFINITY, f64::max);
+        let v_span = v_max - v_min;
+        if v_span < 1e-14 { continue; }
+        let max_uv = TWO_PI * v_span;
+        if total_uv > max_uv * 1.01 {
+            let scale = max_uv / total_uv;
+            let old_sum: f64 = entries.iter().map(|e| e.sa).sum();
+            total = total - old_sum;
+            total += entries.iter().map(|e| e.radius * e.uv_area * scale).sum::<f64>();
+        }
+    }
+
     total
 }
 
