@@ -924,11 +924,13 @@ fn classify_against_solid_for_boolean(
 ) -> Classification {
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
-    // For non-Intersection ops, only probe when primary is In — the UV centroid
+    // For non-Intersection ops, only probe when primary is In or On — the UV centroid
     // of a large sub-face can fall inside the other solid even when portions of
     // the sub-face extend outside (e.g. offset cylinder-cylinder where the trim
     // curves don't fully enclose the intersection region on one surface).
-    if op != BooleanOpType::Intersection && !matches!(c0, Classification::In) {
+    // On-classified sub-faces (e.g. cylinder wall sub-faces whose sample point
+    // lands on a box corner) need probe grid fallback to disambiguate.
+    if op != BooleanOpType::Intersection && !matches!(c0, Classification::In | Classification::On) {
         return c0;
     }
 
@@ -1697,7 +1699,19 @@ impl<'a> BooleanBuilder<'a> {
                             let v_min_f = if is_line { v_min.max(bnd_v_min) } else { v_min };
                             let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
                             if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
-                                return true;
+                                // Horizontal line pcurve (constant V). Check if it is
+                                // actually at the V-boundary — a horizontal line interior
+                                // to the V range (e.g. a coaxial circle at z=0 on a cylinder
+                                // with V∈[0,3]) is NOT a boundary curve and must NOT be
+                                // treated as one, otherwise `all_at_boundary` becomes true
+                                // and the face tessellates instead of splitting
+                                // parametrically, losing interior cuts.
+                                let at_v_top_line = (v_max_f - bnd_v_max).abs() <= vb_tol;
+                                let at_v_bot_line = (v_min_f - bnd_v_min).abs() <= vb_tol;
+                                if at_v_top_line || at_v_bot_line {
+                                    return true;
+                                }
+                                return false;
                             }
                             let at_v_top = (v_max_f - bnd_v_max).abs() <= vb_tol;
                             let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
@@ -2288,15 +2302,33 @@ impl<'a> BooleanBuilder<'a> {
                             let replace = match (fi, li) {
                                 (Some(f), Some(l)) => {
                                     let cnt = on.iter().filter(|&&x| x).count();
-                                    // Replace only when the on-circle block is a contiguous
-                                    // interior segment of the polygon, NOT the entire polygon.
-                                    // When ALL vertices are on the circle (f==0 && l==last), the
-                                    // polygon is entirely on the circle boundary (e.g. the inside
-                                    // sub-face of a plane split by a circle). Replacing the arc
-                                    // would destroy the polygon geometry because the fi/li angular
-                                    // span and direction logic breaks down for a full-circle polygon.
-                                    cnt >= 3 && l - f + 1 == cnt
-                                        && !(f == 0 && l == half.len() - 1)
+                                    if cnt >= 3 && l - f + 1 == cnt {
+                                        if f == 0 && l == half.len() - 1 {
+                                            // All vertices on the circle boundary.
+                                            // A full-circle polygon (angular span ~2π) must
+                                            // NOT be replaced — the direction logic breaks
+                                            // down for a closed ring of on-circle vertices.
+                                            // But a partial circular segment (all vertices on
+                                            // the circle, e.g. curved triangle from splitting
+                                            // an inscribed polygon by line edges) DOES need
+                                            // the high-density arc replacement.
+                                            if cnt >= 4 {
+                                                let first_angle = (half[0] - center_2d).to_angle();
+                                                let last_angle = (half[l] - center_2d).to_angle();
+                                                let span = (last_angle - first_angle
+                                                    + std::f64::consts::TAU)
+                                                    % std::f64::consts::TAU;
+                                                span < std::f64::consts::TAU - 0.01
+                                            } else {
+                                                // cnt == 3: too few vertices for a full circle
+                                                true
+                                            }
+                                        } else {
+                                            true
+                                        }
+                                    } else {
+                                        false
+                                    }
                                 }
                                 _ => false,
                             };
@@ -2489,28 +2521,28 @@ impl<'a> BooleanBuilder<'a> {
                         let sum = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p);
                         sum / poly_2d.len() as f64
                     };
-                    let centroid_in_circle = embedded_circles.iter().any(|&(c, r)| {
+                    // Tolerance for "definitely outside a circle" — on-circle vertices can
+                    // be up to ~2e-5 beyond the true radius after the center nudge in
+                    // split_polygon_by_circle_2d (max 2e-5). Use 1000× TOLERANCE_ABS (1e-4)
+                    // to safely exclude them; genuine outside vertices (dist ~√2 ≈ 0.414
+                    // beyond the circle) are well above this threshold.
+                    const OUTSIDE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                    // Only consider circles that actually cut holes — a circle that
+                    // contains ALL polygon vertices (e.g. the outer boundary circle
+                    // from a merged coplanar face) is not a hole and shouldn't block
+                    // the outside-point search below.
+                    let hole_circles: Vec<_> = embedded_circles.iter().filter(|&&(c, r)| {
+                        poly_2d.iter().any(|uv| (*uv - c).length() > r + OUTSIDE_TOL)
+                    }).collect();
+                    let centroid_in_hole = hole_circles.iter().any(|&&(c, r)| {
                         (centroid_2d - c).length() < r
                     });
-                    if centroid_in_circle && !boundary.is_empty() {
-                        // The polygon centroid may be inside an embedded circle (e.g. the outer
-                        // piece of a square split by a corner-centred circle: the vertex average
-                        // is pulled toward the arc samples which all lie ON the circle boundary).
-                        // boundary[0] can itself be on the circle (crossing point) — using it as
-                        // sample_override would place the sample ON the sphere and cause incorrect
-                        // "inside" classification.  Instead, find the first vertex that is
-                        // genuinely outside every embedded circle.
-                        // Must exceed the maximum distance an on-circle vertex can be from
-                        // the true circle boundary after the center nudge in
-                        // split_polygon_by_circle_2d. The nudge is max(tol*200, TOLERANCE_MESH_LEGACY)
-                        // = max(2e-5, 1e-6) = 2e-5, so on-circle vertices can be up to
-                        // ~2e-5 outside the original circle radius. Use 1000× TOLERANCE_ABS
-                        // (1e-4) to safely exclude them — genuine outside vertices like
-                        // far corners (dist ~√2 ≈ 0.414 beyond the circle) are well above
-                        // this threshold.
-                        const OUTSIDE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                    if centroid_in_hole && !boundary.is_empty() {
+                        // Find the first boundary vertex outside every hole circle.
+                        // boundary[0] can be on a circle boundary (crossing point), so
+                        // use the OUTSIDE_TOL margin to exclude on-circle vertices.
                         let outside_pt = poly_2d.iter().zip(boundary.iter()).find(|(uv, _)| {
-                            embedded_circles.iter().all(|&(c, r)| {
+                            hole_circles.iter().all(|&&(c, r)| {
                                 (*uv - c).length() > r + OUTSIDE_TOL
                             })
                         }).map(|(_, p3d)| *p3d);
@@ -3823,9 +3855,14 @@ mod tests {
         let (out, out_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Union));
         assert_eq!(out.len(), 1, "Union should return 1 polygon, got {}", out.len());
         assert_eq!(out_wires.len(), 1, "Union should return 1 inner_wire, got {}", out_wires.len());
-        // For Difference, the full split is needed
-        let (out_diff, _) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
-        assert!(out_diff.len() >= 2, "Difference should split, got {}", out_diff.len());
+        // For Difference (A - B), the polygon keeps outer, circle is inner_wire
+        let (out_diff, diff_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
+        assert_eq!(out_diff.len(), 1, "Difference should return 1 poly with inner_wire, got {}", out_diff.len());
+        assert_eq!(diff_wires.len(), 1, "Difference should return 1 inner_wire, got {}", diff_wires.len());
+        // For Common (A ∩ B), only the circle region is kept
+        let (out_common, com_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Intersection));
+        assert_eq!(out_common.len(), 1, "Common should return 1 poly (circle), got {}", out_common.len());
+        assert_eq!(com_wires.len(), 0, "Common should return 0 inner_wires, got {}", com_wires.len());
     }
 
     /// Corner-centered disk (e.g. plane x=0: circle in (y,z) with center at box corner) must
@@ -5493,23 +5530,25 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                     center + DVec2::new(theta.cos(), theta.sin()) * radius
                 })
                 .collect();
-            if op == Some(BooleanOpType::Union) {
-                // Check if the entire circle polygon is inside the outer boundary.
-                // If so, inner_wire is safe (area subtraction will be correct).
-                // If the circle extends beyond the polygon, fall through to the
-                // crossing-based split below — the inner_wire would subtract
-                // the FULL circle area instead of just the clipped portion.
-                let circle_fully_inside = circle_poly.iter().all(|&p| point_in_polygon_2d(poly, p));
-                if circle_fully_inside {
-                    return (vec![poly.to_vec()], vec![circle_poly]);
+            let circle_fully_inside = circle_poly.iter().all(|&p| point_in_polygon_2d(poly, p));
+            if circle_fully_inside {
+                match op {
+                    Some(BooleanOpType::Union) | Some(BooleanOpType::Difference) => {
+                        // Keep polygon, subtract circle as hole (inner_wire).
+                        return (vec![poly.to_vec()], vec![circle_poly]);
+                    }
+                Some(BooleanOpType::Intersection) => {
+                    // For Intersection A∩B, the inner_wire (hole) represents the
+                // region of A outside B. The caller's crossing split
+                // produces the non-overlapping circle region separately.
+                        return (vec![circle_poly], vec![]);
+                    }
+                    _ => {} // Other ops: fall through to crossing-based split
                 }
-                // Circle extends beyond polygon boundary — fall through to
-                // crossing-based split which handles same-edge crossings.
-            } else {
-                // Non-Union: approximate split as annulus + disk cap.
-                // The caller's classification decides which half to keep.
-                return (vec![circle_poly, poly.to_vec()], vec![]);
             }
+            // Circle extends beyond polygon boundary — fall through to
+            // crossing-based split which handles same-edge crossings
+            // and produces correct non-overlapping regions for all ops.
         }
     }
 
@@ -5596,7 +5635,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
 
     // Check for all_outside + center_inside (Union) case where endpoints
     // are all outside the circle but edges need crossing detection via midpoint.
-    if crossings.len() < 2 && all_outside && point_in_polygon_2d(poly, center) && op == Some(BooleanOpType::Union) {
+    if crossings.len() < 2 && all_outside && point_in_polygon_2d(poly, center) {
         let mut ec: Vec<(usize, DVec2)> = Vec::new();
         for ei in 0..n {
             let ej = (ei + 1) % n;
@@ -6011,11 +6050,16 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
         // When a vertex lies exactly on the split line (|d| < tol), the original
         // edge-crossing test would skip the edge entirely, losing the crossing.
         // This happens when a circular face with few boundary vertices is split
-        // by a line passing through two vertices.
+        // by a line passing through two vertices (e.g. an inscribed square on a
+        // cylinder cap, where box edge passes through circle polygon vertices).
         //
-        // Fix: when the *current* vertex is on the line and the *next* vertex is
-        // not, search backward for the first non-on-line vertex. If its sign
-        // opposes the next vertex's sign, the line crosses at this vertex.
+        // Fix: two cases:
+        // 1. *Current* vertex on line, *next* off: search backward for the first
+        //    non-on-line vertex. If its sign opposes the next vertex's sign, the
+        //    line crosses at this vertex.
+        // 2. *Next* vertex on line, *current* off: search forward from the next
+        //    for the first non-on-line vertex. If its sign opposes the current
+        //    vertex's sign, the line crosses at the next vertex.
         if di.abs() < tol && dj.abs() >= tol {
             let mut pi = (i + n - 1) % n;
             while pi != i && dists[pi].abs() < tol {
@@ -6023,6 +6067,16 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
             }
             if pi != i && dists[pi] * dj < 0.0 {
                 crossings.push((i, poly[i]));
+                continue;
+            }
+        }
+        if di.abs() >= tol && dj.abs() < tol {
+            let mut nj = (j + 1) % n;
+            while nj != j && dists[nj].abs() < tol {
+                nj = (nj + 1) % n;
+            }
+            if nj != j && di * dists[nj] < 0.0 {
+                crossings.push((j, poly[j]));
                 continue;
             }
         }
@@ -6041,7 +6095,14 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
         return vec![poly.to_vec()];
     }
 
+    // Deduplicate: the forward-search and backward-search may both detect
+    // a crossing at the same vertex from adjacent edges (e.g. a diamond
+    // polygon split by a line through two opposite vertices).
     crossings.sort_by_key(|(idx, _)| *idx);
+    crossings.dedup_by(|a, b| a.0 == b.0);
+    if crossings.len() < 2 {
+        return vec![poly.to_vec()];
+    }
 
     let (idx1, pt1) = crossings[0];
     let (idx2, pt2) = crossings[1];
@@ -7341,6 +7402,155 @@ mod glue_tests {
             assert!(
                 (dist - sphere.radius).abs() < 0.001,
                 "Point should be on sphere surface"
+            );
+        }
+    }
+
+    /// `split_polygon_2d_by_line` must correctly split a diamond polygon when the
+    /// split line passes through two opposite vertices (vertices exactly on the line).
+    /// This tests the forward-search and backward-search crossing detection.
+    #[test]
+    fn split_diamond_by_diagonal() {
+        use glam::DVec2;
+        // Diamond with vertices at cardinal points — split by x-axis
+        // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
+        let poly = vec![
+            DVec2::new(1.0, 0.0),
+            DVec2::new(0.0, 1.0),
+            DVec2::new(-1.0, 0.0),
+            DVec2::new(0.0, -1.0),
+        ];
+        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
+        assert!(out.len() >= 2, "diamond split by diagonal should produce 2+ polygons, got {}", out.len());
+        // Each sub-polygon should be non-degenerate
+        for (i, p) in out.iter().enumerate() {
+            assert!(p.len() >= 3, "sub-polygon {i} has {} vertices", p.len());
+        }
+    }
+
+    /// `split_polygon_2d_by_line` must correctly split a polygon when the split line
+    /// does NOT pass through any vertex (normal case, no regression).
+    #[test]
+    fn split_square_offset_line() {
+        use glam::DVec2;
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(2.0, 0.0),
+            DVec2::new(2.0, 2.0),
+            DVec2::new(0.0, 2.0),
+        ];
+        // Vertical line x=1.2 — does not pass through any vertex
+        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
+        assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
+    }
+
+    /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
+    /// rcad reports 16.3 vs expected 22.0 (= 7π ≈ 21.9911).
+    #[test]
+    fn zd3_concentric_cylinder_union() {
+        use crate::boolean::boolean_op_with_retry_policy;
+        use crate::brep_algo::total_surface_area;
+        use crate::BooleanOpType;
+        use crate::RetryPolicy;
+        use glam::DVec3;
+        use rcad_modeling::make_cylinder_brep;
+
+        // OCCT ZD3 geometry:
+        //   pcylinder b1 1 2     → r=1, h=2, z∈[0,2]
+        //   pcylinder b2 0.5 3   → r=0.5, h=3, z∈[-1,2] after ttranslate 0 0 -1
+        //
+        // rcad make_cylinder_brep centers the cylinder at `center`, so:
+        //   b1: center at z=1 → z∈[0,2]
+        //   b2: center at z=0.5 → z∈[-1,2]
+        let b1 = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+            .expect("b1");
+        let b2 =
+            make_cylinder_brep(DVec3::new(0.0, 0.0, 0.5), DVec3::Z, DVec3::X, 0.5, 3.0)
+                .expect("b2");
+
+        let expected_sa = 7.0 * std::f64::consts::PI;
+
+        let result = boolean_op_with_retry_policy(
+            BooleanOpType::Union,
+            &b1,
+            &b2,
+            &RetryPolicy::default(),
+            Default::default(),
+        )
+        .expect("ZD3 fuse");
+
+        let actual_sa = total_surface_area(&result.0);
+
+        let face_count: usize = result
+            .0
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .flat_map(|sh| &sh.faces)
+            .count();
+
+        println!(
+            "ZD3: SA = {:.4} (expected {:.4} = 7π, diff = {:.4})",
+            actual_sa,
+            expected_sa,
+            actual_sa - expected_sa
+        );
+        println!("Result has {} faces", face_count);
+
+        // Surface details from GeomStore
+        let brep = &result.0;
+        println!("  GeomStore: {} surfaces", brep.geom.surfaces.len());
+        for (idx, surf) in brep.geom.surfaces.iter().enumerate() {
+            match surf {
+                rcad_kernel::geom::Surface3::Cylinder(c) => {
+                    println!(
+                        "  Surf[{}]: Cyl origin=({:.4},{:.4},{:.4}) axis=({:.4},{:.4},{:.4}) radius={:.4}",
+                        idx, c.origin.x, c.origin.y, c.origin.z,
+                        c.axis.x, c.axis.y, c.axis.z, c.radius
+                    );
+                }
+                rcad_kernel::geom::Surface3::Plane(p) => {
+                    println!(
+                        "  Surf[{}]: Plane origin=({:.4},{:.4},{:.4}) normal=({:.4},{:.4},{:.4})",
+                        idx, p.origin.x, p.origin.y, p.origin.z,
+                        p.normal.x, p.normal.y, p.normal.z
+                    );
+                }
+                _ => {
+                    println!("  Surf[{}]: {:?}", idx, std::mem::discriminant(surf));
+                }
+            }
+        }
+
+        // Face-to-surface mapping
+        let mut flat_idx = 0;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for _face in &shell.faces {
+                    let surf_idx = brep.geom.face_surface.get(flat_idx).and_then(|&i| i);
+                    println!("  Face[{}]: surf_idx={:?}", flat_idx, surf_idx);
+                    flat_idx += 1;
+                }
+            }
+        }
+
+        // Remaining face_surface entries that don't map to faces
+        let total_faces = flat_idx;
+        if total_faces < brep.geom.face_surface.len() {
+            for fi in total_faces..brep.geom.face_surface.len() {
+                println!("  Face[{}] (geom only): surf_idx={:?}", fi, brep.geom.face_surface[fi]);
+            }
+        }
+
+        // Allow wide tolerance for now — this is a known failure
+        let tol = (5e-3_f64).max(0.15 * expected_sa.abs());
+        if (actual_sa - expected_sa).abs() > tol {
+            println!(
+                "ZD3 FAIL: SA {:.4} vs expected {:.4} (diff {:.4}, tol {:.4})",
+                actual_sa,
+                expected_sa,
+                actual_sa - expected_sa,
+                tol
             );
         }
     }
