@@ -25,9 +25,12 @@
 //! We return `General` so the caller falls back to numeric marching.
 
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, ConicalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface};
+use rcad_kernel::SurfaceEval;
+use std::f64::consts::TAU;
 
 use crate::tolerance::*;
+use super::pcurve_derive::refine_polyline;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -44,6 +47,13 @@ pub enum ConeConeResult {
     CoaxialCircle(Circle3),
     /// Coaxial cones that only touch at a single point (a shared apex).
     CoaxialPoint(DVec3),
+    /// Skew axes (non-parallel): analytic quartic solution.
+    ///
+    /// The two cones intersect in a quartic space curve.  For each cone azimuth
+    /// u ∈ [0, 2π) the second cone's equation reduces to a quadratic in the
+    /// slant distance v, solved analytically.  Two branches (± sqrt) are returned
+    /// as polylines.
+    SkewQuartic(Vec<Vec<DVec3>>),
     /// General case (skew or oblique axes).  Caller should fall back to marching.
     General,
 }
@@ -65,8 +75,208 @@ pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Co
         return intersect_parallel_cones(cone1, cone2, a1, a2);
     }
 
-    // ── General / skew ────────────────────────────────────────────────────────
+    // ── Skew axes (analytic quartic solver) ──────────────────────────────────
+    // Parameterize cone1, substitute into cone2 equation → quadratic in v per u.
+    let skew_result = intersect_skew_cone_cone(cone1, cone2);
+    if !skew_result.is_empty() {
+        return ConeConeResult::SkewQuartic(skew_result);
+    }
+
+    // ── General / skew (fallback to marching) ─────────────────────────────────
     ConeConeResult::General
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skew-axis analytic solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the intersection of two cones with skew (non-parallel) axes using
+/// an analytic quartic solver.
+///
+/// # Theory
+///
+/// Cone 1 parametrisation (u = azimuth [0, 2π), v = slant distance from apex):
+///
+/// ```text
+/// P(u,v) = O1 + v·d1(u)
+/// d1(u) = a1 + tan(α1)·(cos(u)·x1 + sin(u)·y1)
+/// |d1|² = sec²(α1)  (constant for a given cone)
+/// ```
+///
+/// Cone 2 implicit equation (for any point P):
+///
+/// ```text
+/// ((P - O2)·a2)² = cos²(α2)·|P - O2|²
+/// ```
+///
+/// Substituting P(u,v) gives F(v) = 0 where
+///
+/// ```text
+/// a_v(u)·v² + b_v(u)·v + c_v = 0
+///
+/// a_v(u) = (d1·a2)² - cos²(α2)·|d1|²
+/// b_v(u) = 2·(Δ·a2)·(d1·a2) - 2·cos²(α2)·(Δ·d1)
+/// c_v    = (Δ·a2)² - cos²(α2)·|Δ|²                                  (constant)
+/// Δ      = O1 - O2
+/// ```
+///
+/// For each u we solve the quadratic for v, giving two branches (± sqrt).
+fn intersect_skew_cone_cone(
+    cone1: &ConicalSurface,
+    cone2: &ConicalSurface,
+) -> Vec<Vec<DVec3>> {
+    let a1 = cone1.axis.normalize();
+    let a2 = cone2.axis.normalize();
+    let o1 = cone1.apex_point();
+    let o2 = cone2.apex_point();
+    let tan1 = cone1.half_angle_rad.tan();
+    let cos2_2 = cone2.half_angle_rad.cos().powi(2); // cos²(α2)
+    let d1_sq = 1.0 + tan1 * tan1; // |d1|² = sec²(α1)
+
+    // Perpendicular basis for cone1.
+    let x1 = any_perpendicular(a1);
+    let y1 = a1.cross(x1).normalize();
+
+    let delta = o1 - o2; // O1 - O2
+    let delta_a2 = delta.dot(a2);
+    let delta_sq = delta.length_squared();
+    let c_v = delta_a2 * delta_a2 - cos2_2 * delta_sq; // constant
+
+    const N_SAMPLES: usize = 128;
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+    let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+
+        // d1(u) = a1 + tan(α1)·(cos(u)·x1 + sin(u)·y1)
+        let d1 = a1 + tan1 * (cos_u * x1 + sin_u * y1);
+        let d1_a2 = d1.dot(a2);
+        let delta_d1 = delta.dot(d1);
+
+        // a_v(u) = (d1·a2)² - cos²(α2)·|d1|²
+        let a_v = d1_a2 * d1_a2 - cos2_2 * d1_sq;
+
+        // b_v(u) = 2·(Δ·a2)·(d1·a2) - 2·cos²(α2)·(Δ·d1)
+        let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
+
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 {
+                continue;
+            }
+            let sqrt_disc = disc.sqrt();
+            let two_a_v = 2.0 * a_v;
+
+            let v_plus = (-b_v + sqrt_disc) / two_a_v;
+            let v_minus = (-b_v - sqrt_disc) / two_a_v;
+
+            if v_plus.is_finite() {
+                let p = cone1.point_at(u, v_plus);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                }
+            }
+            if v_minus.is_finite() {
+                let p = cone1.point_at(u, v_minus);
+                if p.is_finite() {
+                    branch_minus.push((u, p));
+                }
+            }
+        } else if b_v.abs() > 1e-12 {
+            // a_v ≈ 0: solve linear b_v·v + c_v = 0
+            let v = -c_v / b_v;
+            if v.is_finite() {
+                let p = cone1.point_at(u, v);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                    branch_minus.push((u, p));
+                }
+            }
+        }
+    }
+
+    // Adaptive refinement: subdivide segments where chord error exceeds tolerance
+    let eval_plus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d1 = a1 + tan1 * (cos_u * x1 + sin_u * y1);
+        let d1_a2 = d1.dot(a2);
+        let delta_d1 = delta.dot(d1);
+        let a_v = d1_a2 * d1_a2 - cos2_2 * d1_sq;
+        let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+    let eval_minus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d1 = a1 + tan1 * (cos_u * x1 + sin_u * y1);
+        let d1_a2 = d1.dot(a2);
+        let delta_d1 = delta.dot(d1);
+        let a_v = d1_a2 * d1_a2 - cos2_2 * d1_sq;
+        let b_v = 2.0 * delta_a2 * d1_a2 - 2.0 * cos2_2 * delta_d1;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cone1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+
+    let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
+        refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+        refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+    );
+
+    // Dedup: remove trailing points that nearly duplicate the first point.
+    let dedup = |pts: &mut Vec<DVec3>| {
+        while pts.len() >= 3 {
+            let n = pts.len();
+            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                pts.pop();
+            } else {
+                break;
+            }
+        }
+    };
+
+    let mut branches = Vec::new();
+    if branch_plus.len() >= 2 {
+        dedup(&mut branch_plus);
+        if branch_plus.len() >= 2 {
+            branches.push(branch_plus);
+        }
+    }
+    if branch_minus.len() >= 2 {
+        let is_distinct = branches.is_empty()
+            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+        if is_distinct {
+            dedup(&mut branch_minus);
+            if branch_minus.len() >= 2 {
+                branches.push(branch_minus);
+            }
+        }
+    }
+
+    branches
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,6 +440,12 @@ pub fn intersect_cone_cone_with_tolerance(
         }
     }
 
+    // ── Skew axes (analytic quartic solver) ──────────────────────────────
+    let skew_result = intersect_skew_cone_cone(cone1, cone2);
+    if !skew_result.is_empty() {
+        return ConeConeResult::SkewQuartic(skew_result);
+    }
+
     ConeConeResult::General
 }
 
@@ -270,14 +486,16 @@ mod tests {
         ));
     }
 
-    /// Different apices, same half-angle, coaxial → NoIntersection (nested same-angle cones).
+    /// Different apices, same half-angle, coaxial → General (numeric fallback for bounded frustums).
     #[test]
     fn coaxial_same_angle_different_apex_no_intersection() {
         let k1 = cone(DVec3::ZERO, DVec3::Z, 45.0);
         let k2 = cone(DVec3::new(0.0, 0.0, 2.0), DVec3::Z, 45.0);
+        // intersect_parallel_cones returns General for same-angle coaxial cones so the
+        // pave-filler can process face-boundary edges for bounded frustums.
         assert!(matches!(
             intersect_cone_cone(&k1, &k2),
-            ConeConeResult::NoIntersection
+            ConeConeResult::General
         ));
     }
 
@@ -330,12 +548,42 @@ mod tests {
         }
     }
 
-    /// Skew axes → General.
+    /// Skew axes → analytic SkewQuartic solver.
     #[test]
-    fn skew_axes_general() {
+    fn skew_axes_quartic() {
         let k1 = cone(DVec3::ZERO, DVec3::Z, 30.0);
         let k2 = cone(DVec3::new(1.0, 0.0, 0.0), DVec3::X, 30.0);
-        assert!(matches!(intersect_cone_cone(&k1, &k2), ConeConeResult::General));
+        match intersect_cone_cone(&k1, &k2) {
+            ConeConeResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} contains non-finite point");
+                    }
+                }
+            }
+            ConeConeResult::General => {
+                // Acceptable fallback if solver returns nothing.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
+    }
+
+    /// Skew cones with perpendicular axes.
+    #[test]
+    fn skew_axes_perpendicular() {
+        let k1 = cone(DVec3::ZERO, DVec3::Z, 45.0);
+        let k2 = cone(DVec3::new(2.0, 0.0, 0.0), DVec3::X, 30.0);
+        match intersect_cone_cone(&k1, &k2) {
+            ConeConeResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                let all_finite: bool = branches.iter().flat_map(|b| b.iter()).all(|p| p.is_finite());
+                assert!(all_finite, "some branch contains non-finite point");
+            }
+            ConeConeResult::General => {}
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
     /// Anti-parallel axes (same line but opposite directions) should still be

@@ -16,6 +16,7 @@ pub mod plane_sphere;
 pub mod plane_torus;
 pub mod sphere_cone;
 pub mod sphere_cylinder;
+pub mod sphere_torus;
 pub mod torus_cone;
 pub mod torus_torus;
 pub mod vertex_ops;

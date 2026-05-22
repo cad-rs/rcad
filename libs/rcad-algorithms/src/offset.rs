@@ -913,7 +913,8 @@ pub fn intersect_offset_cylinder_cylinder(
             OffsetIntersectionCurve::TwoEllipses(e1, e2)
         }
         crate::inttools::cylinder_cylinder::CylinderCylinderResult::PerpendicularOffsetCurves { .. }
-        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
+        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General
+        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::SkewQuartic(_) => {
             // Fall back to numerical approximation
             intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2, d1, d2)
         }
@@ -1053,7 +1054,8 @@ pub fn intersect_offset_cylinder_sphere(
         crate::inttools::sphere_cylinder::SphereCylinderResult::TwoCircles(c1, c2) => {
             OffsetIntersectionCurve::TwoCircles(c1, c2)
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::General => {
+        crate::inttools::sphere_cylinder::SphereCylinderResult::General
+        | crate::inttools::sphere_cylinder::SphereCylinderResult::SkewQuartic(_) => {
             // Fall back to numerical approximation
             intersect_cylinder_sphere_numerical(&offset_cyl, &offset_sphere, d_cyl, d_sphere)
         }

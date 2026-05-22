@@ -600,6 +600,98 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Adaptive polyline refinement
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Refine a polyline by subdividing segments where chord error exceeds tolerance.
+///
+/// `samples` is a slice of `(parameter, point_3d)` pairs representing the curve
+/// at discrete parameter values.  For each consecutive pair, evaluates the curve
+/// at the parametric midpoint using `eval_fn`.  If the midpoint deviates from the
+/// chord by more than `chord_tol`, the segment is recursively subdivided up to
+/// `max_depth` levels.
+///
+/// Returns a new `Vec<(f64, DVec3)>` with additional inserted samples.
+pub fn refine_polyline<F>(
+    samples: &[(f64, DVec3)],
+    eval_fn: F,
+    chord_tol: f64,
+    max_depth: usize,
+) -> Vec<(f64, DVec3)>
+where
+    F: Fn(f64) -> Option<DVec3>,
+{
+    if samples.len() < 2 {
+        return samples.to_vec();
+    }
+
+    let chord_tol_sq = chord_tol * chord_tol;
+
+    fn subdivide<F>(
+        p0: DVec3,
+        p1: DVec3,
+        u0: f64,
+        u1: f64,
+        eval_fn: &F,
+        chord_tol_sq: f64,
+        depth: usize,
+        max_depth: usize,
+        out: &mut Vec<(f64, DVec3)>,
+    ) where
+        F: Fn(f64) -> Option<DVec3>,
+    {
+        if depth >= max_depth {
+            return;
+        }
+
+        let u_mid = (u0 + u1) * 0.5;
+        if let Some(p_mid) = eval_fn(u_mid) {
+            let chord = p1 - p0;
+            let chord_len_sq = chord.length_squared();
+            if chord_len_sq > 0.0 {
+                let t = ((p_mid - p0).dot(chord) / chord_len_sq).clamp(0.0, 1.0);
+                let chord_pt = p0 + t * chord;
+                if (p_mid - chord_pt).length_squared() > chord_tol_sq {
+                    // Subdivide left and right
+                    subdivide(p0, p_mid, u0, u_mid, eval_fn, chord_tol_sq, depth + 1, max_depth, out);
+                    out.push((u_mid, p_mid));
+                    subdivide(p_mid, p1, u_mid, u1, eval_fn, chord_tol_sq, depth + 1, max_depth, out);
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::with_capacity(samples.len() * 2);
+    result.push(samples[0]);
+
+    for i in 0..samples.len() - 1 {
+        let (u0, p0) = samples[i];
+        let (u1, p1) = samples[i + 1];
+
+        subdivide(p0, p1, u0, u1, &eval_fn, chord_tol_sq, 0, max_depth, &mut result);
+
+        // Append the end point if it was not already inserted by subdivision
+        let last_u = result.last().unwrap().0;
+        if (last_u - u1).abs() > 1e-14 {
+            result.push((u1, p1));
+        }
+    }
+
+    // Trim trailing near-duplicates (common for closed curves)
+    while result.len() >= 3 {
+        let n = result.len();
+        let d = (result[n - 1].1 - result[0].1).length_squared();
+        if d < TOLERANCE_VEC_SQ_MIN {
+            result.pop();
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

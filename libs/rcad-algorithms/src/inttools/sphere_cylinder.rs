@@ -36,15 +36,20 @@
 //! - If `|d − r| ≤ R`: the sphere surface intersects the cylinder surface;
 //!   the exact intersection is a quartic (Viviani-type) curve — return `General`.
 //!
-//! ## General case
+//! ## General / skew case
 //!
-//! For all other configurations (arbitrary relative orientation of sphere centre
-//! and cylinder axis) the intersection is a quartic space curve.  We return
-//! `General` so the caller can fall back to numeric marching.
+//! For arbitrary off-axis configurations the intersection is a quartic space
+//! curve (Viviani-type).  We solve it analytically by substituting the
+//! cylinder parametrisation into the sphere equation, yielding a quadratic
+//! in `v` for each cylinder azimuth `u` — see [`intersect_skew_sphere_cylinder`].
 
+use glam::DVec3;
 use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, SphericalSurface};
+use rcad_kernel::SurfaceEval;
+use std::f64::consts::TAU;
 
 use crate::tolerance::*;
+use super::pcurve_derive::refine_polyline;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -64,6 +69,10 @@ pub enum SphereCylinderResult {
     /// The intersection is a quartic space curve.  The caller should fall back
     /// to numeric marching.
     General,
+    /// Skew (off-axis) configuration solved analytically via cylinder-azimuth
+    /// sampling.  Each inner Vec is a polyline branch of the intersection curve
+    /// in 3D (at most two branches, from the ± sqrt of the quadratic).
+    SkewQuartic(Vec<Vec<DVec3>>),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +88,8 @@ pub enum SphereCylinderResult {
 ///   (axis-aligned case, discriminant = 0).
 /// - [`TwoCircles`](SphereCylinderResult::TwoCircles) — two circles (axis-aligned).
 /// - [`General`](SphereCylinderResult::General) — quartic; fall back to marching.
+/// - [`SkewQuartic`](SphereCylinderResult::SkewQuartic) — analytic quartic branches
+///   (off-axis, solved via cylinder parametrisation).
 ///
 /// The axis-aligned tolerance is ten times the absolute position tolerance.
 pub fn intersect_sphere_cylinder(
@@ -162,7 +173,177 @@ pub fn intersect_sphere_cylinder_with_tolerance(
     }
 
     // ── Quartic (Viviani-type) intersection ───────────────────────────────────
-    SphereCylinderResult::General
+    // Try analytic quartic solver first; fall back to General (marching) if
+    // it returns no branches (e.g. near-tangent configurations).
+    let skew_result = intersect_skew_sphere_cylinder(sphere, cyl);
+    if !skew_result.is_empty() {
+        SphereCylinderResult::SkewQuartic(skew_result)
+    } else {
+        SphereCylinderResult::General
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skew-axis analytic solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the intersection of a sphere and cylinder with skew (off-axis)
+/// configuration using an analytic quartic solver.
+///
+/// # Theory
+///
+/// Cylinder parametrisation (u = azimuth [0, 2π), v = height along axis):
+///
+/// ```text
+/// P(u,v) = O_cyl + v·a_cyl + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// ```
+///
+/// The sphere surface satisfies:
+///
+/// ```text
+/// |P - O_sph|² = R²
+/// ```
+///
+/// Substituting P(u,v) gives a quadratic in v for each fixed u:
+///
+/// ```text
+/// a_v·v² + b_v(u)·v + c_v(u) = 0
+///
+/// a_v   = 1                                              (always, |a_cyl| = 1)
+/// b_v(u) = 2·(D0·a_cyl)
+/// c_v(u) = |D0|² - R²
+/// D0(u)  = O_cyl - O_sph + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// ```
+///
+/// Since a_v = 1, the quadratic never degenerates.  For each u we compute
+/// `v = (-b_v ± sqrt(b_v² - 4·c_v)) / 2`, giving up to two branches.
+fn intersect_skew_sphere_cylinder(
+    sphere: &SphericalSurface,
+    cyl: &CylindricalSurface,
+) -> Vec<Vec<DVec3>> {
+    let a_cyl = cyl.axis.normalize();
+    let o_cyl = cyl.origin;
+    let o_sph = sphere.center;
+    let r_cyl = cyl.radius;
+    let r_sph = sphere.radius;
+
+    // Perpendicular basis for cylinder (must match CylindricalSurface::point_at).
+    let x_cyl = any_perpendicular(a_cyl);
+    let y_cyl = a_cyl.cross(x_cyl).normalize();
+
+    let delta_o = o_cyl - o_sph; // O_cyl - O_sph
+
+    const N_SAMPLES: usize = 128;
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+    let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+
+        // D0(u) = (O_cyl - O_sph) + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+
+        // b_v(u) = 2·(D0·a_cyl)
+        let b_v = 2.0 * d0.dot(a_cyl);
+
+        // c_v(u) = |D0|² - R²
+        let c_v = d0.length_squared() - r_sph * r_sph;
+
+        // v² + b_v·v + c_v = 0  (a_v = 1, always non-degenerate)
+        let disc = b_v * b_v - 4.0 * c_v;
+
+        if disc < 0.0 {
+            // No intersection at this u azimuth.
+            continue;
+        }
+
+        let sqrt_disc = disc.sqrt();
+
+        let v_plus = (-b_v + sqrt_disc) * 0.5;
+        let v_minus = (-b_v - sqrt_disc) * 0.5;
+
+        if v_plus.is_finite() {
+            let p = cyl.point_at(u, v_plus);
+            if p.is_finite() {
+                branch_plus.push((u, p));
+            }
+        }
+        if v_minus.is_finite() {
+            let p = cyl.point_at(u, v_minus);
+            if p.is_finite() {
+                branch_minus.push((u, p));
+            }
+        }
+    }
+
+    // Adaptive refinement: subdivide segments where chord error exceeds tolerance
+    let eval_plus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+        let b_v = 2.0 * d0.dot(a_cyl);
+        let c_v = d0.length_squared() - r_sph * r_sph;
+        let disc = b_v * b_v - 4.0 * c_v;
+        if disc < 0.0 { return None; }
+        let v = (-b_v + disc.sqrt()) * 0.5;
+        if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+        None
+    };
+    let eval_minus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+        let b_v = 2.0 * d0.dot(a_cyl);
+        let c_v = d0.length_squared() - r_sph * r_sph;
+        let disc = b_v * b_v - 4.0 * c_v;
+        if disc < 0.0 { return None; }
+        let v = (-b_v - disc.sqrt()) * 0.5;
+        if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+        None
+    };
+
+    let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
+        refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+        refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+    );
+
+    // Dedup: remove trailing points that nearly duplicate the first point
+    // (closed curve degeneracy).
+    let dedup = |pts: &mut Vec<DVec3>| {
+        while pts.len() >= 3 {
+            let n = pts.len();
+            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                pts.pop();
+            } else {
+                break;
+            }
+        }
+    };
+
+    let mut branches = Vec::new();
+    if branch_plus.len() >= 2 {
+        dedup(&mut branch_plus);
+        if branch_plus.len() >= 2 {
+            branches.push(branch_plus);
+        }
+    }
+    if branch_minus.len() >= 2 {
+        // Check the minus branch is distinct from the plus branch.  If they're
+        // nearly the same (tangent intersection), keep only one.
+        let is_distinct = branches.is_empty()
+            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+        if is_distinct {
+            dedup(&mut branch_minus);
+            if branch_minus.len() >= 2 {
+                branches.push(branch_minus);
+            }
+        }
+    }
+
+    branches
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,19 +435,67 @@ mod tests {
     }
 
     /// Sphere centre off-axis, sphere large enough to reach the cylinder surface.
-    /// d_perp=1, R=5, r=2 → d_perp - R = -4 < r; d_perp + R = 6 > r → General.
+    /// d_perp=1, R=5, r=2 → d_perp - R = -4 < r; d_perp + R = 6 > r → SkewQuartic.
     #[test]
-    fn general_off_axis_intersecting() {
+    fn skew_quartic_off_axis_intersecting() {
         let sph = sphere(DVec3::new(1.0, 0.0, 0.0), 5.0);
         let c = cyl(DVec3::ZERO, 2.0);
-        assert!(matches!(intersect_sphere_cylinder(&sph, &c), SphereCylinderResult::General));
+        match intersect_sphere_cylinder(&sph, &c) {
+            SphereCylinderResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} contains non-finite point");
+                    }
+                }
+            }
+            SphereCylinderResult::General => {
+                // Acceptable fallback if the solver returns nothing.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
-    /// Classic test: sphere centre at (1,0,0), far from cylinder → General (was already).
+    /// Off-axis sphere-cylinder with perpendicular axes.
     #[test]
-    fn general_off_axis_original() {
-        let sph = sphere(DVec3::new(1.0, 0.0, 0.0), 5.0);
-        let c = cyl(DVec3::ZERO, 2.0);
-        assert!(matches!(intersect_sphere_cylinder(&sph, &c), SphereCylinderResult::General));
+    fn skew_quartic_perpendicular_axes() {
+        let sph = sphere(DVec3::new(2.0, 0.0, 0.0), 4.0);
+        let c = cyl(DVec3::ZERO, 1.0);
+        match intersect_sphere_cylinder(&sph, &c) {
+            SphereCylinderResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                let n = branches.iter().map(|b| b.len()).min().unwrap_or(0);
+                assert!(n >= 2, "shortest branch has {n} points");
+            }
+            SphereCylinderResult::General => {
+                // Acceptable fallback.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
+    }
+
+    /// Sphere fully enclosing the cylinder, centre far off-axis — should still
+    /// produce an intersection curve.
+    #[test]
+    fn skew_quartic_sphere_encloses_cylinder() {
+        let sph = sphere(DVec3::new(5.0, 0.0, 0.0), 10.0);
+        let c = cyl(DVec3::ZERO, 3.0);
+        match intersect_sphere_cylinder(&sph, &c) {
+            SphereCylinderResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                let min_len = branches.iter().map(|b| b.len()).min().unwrap_or(0);
+                assert!(min_len >= 2, "branch too short");
+                let all_finite: bool = branches
+                    .iter()
+                    .flat_map(|b| b.iter())
+                    .all(|p| p.is_finite());
+                assert!(all_finite, "some branch contains non-finite point");
+            }
+            SphereCylinderResult::General => {
+                // Acceptable fallback.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 }

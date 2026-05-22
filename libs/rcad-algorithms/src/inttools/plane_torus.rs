@@ -9,7 +9,10 @@
 //!   - If |d| > R+r: No intersection
 //! - **Oblique**: Complex curve, fall back to numerical marching
 
+use glam::DVec3;
+use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Circle3, Plane, ToroidalSurface};
+use rcad_kernel::SurfaceEval;
 
 use crate::tolerance::*;
 
@@ -22,6 +25,10 @@ pub enum PlaneTorusResult {
     TangentCircle(Circle3),
     /// Two circles (perpendicular case).
     TwoCircles(Circle3, Circle3),
+    /// Skew plane intersection: one or more polyline branches sampled on the
+    /// torus parameterization.  For each torus azimuth u ∈ [0, 2π), solve the
+    /// plane constraint cos(v)·B(u) + sin(v)·C = D(u) for the tube angle v.
+    SkewPolyline(Vec<Vec<DVec3>>),
     /// Complex intersection, fall back to numerical marching.
     General,
 }
@@ -55,6 +62,12 @@ pub fn intersect_plane_torus_with_tolerance(
     if dot_na < TOLERANCE_ANG {
         // Plane parallel to axis: may produce two circles
         return intersect_plane_torus_parallel(plane, torus, tol);
+    }
+
+    // Skew plane: try u-parameterized analytic solver
+    let skew_result = intersect_plane_torus_skew(plane, torus);
+    if !skew_result.is_empty() {
+        return PlaneTorusResult::SkewPolyline(skew_result);
     }
 
     // General oblique case: fall back to numerical
@@ -197,6 +210,136 @@ fn intersect_plane_torus_parallel(
         // Fall back to numerical marching for this case
         PlaneTorusResult::General
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skew plane analytic solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the intersection of a skew plane with a torus using a u-parameterized
+/// analytic solver on the torus surface.
+///
+/// For each torus azimuth u ∈ [0, 2π), the tube cross-section circle intersects
+/// the plane in 0, 1, or 2 points.  Solve the plane constraint:
+///
+/// ```text
+/// cos(v)·B(u) + sin(v)·C = D(u)
+/// ```
+///
+/// where B(u) and D(u) depend on u, and C is constant.  The solution is:
+///
+/// ```text
+/// v = atan2(C, B(u)) ± acos(D(u) / sqrt(B(u)² + C²))
+/// ```
+///
+/// Returns polylines for the ± branches, each clipped to contiguous θ-ranges.
+pub fn intersect_plane_torus_skew(
+    plane: &Plane,
+    torus: &ToroidalSurface,
+) -> Vec<Vec<DVec3>> {
+    use std::f64::consts::TAU;
+    let n = plane.normal.normalize();
+    let a = torus.axis.normalize();
+    let r_major = torus.major_radius;
+    let r_minor = torus.minor_radius;
+
+    // Torus frame: x, y span the major circle plane, z = axis
+    let x = any_perpendicular(a);
+    let y = a.cross(x).normalize();
+
+    // Projections of plane normal onto torus frame
+    let nx = n.dot(x);
+    let ny = n.dot(y);
+    let nz = n.dot(a);
+
+    // If the plane is nearly parallel to the torus axis, nz ≈ 0 → the parallel
+    // case handler should already have caught this.
+    if nz.abs() < 1e-12 {
+        return vec![];
+    }
+
+    // Plane distance from origin: d = plane.origin · n (since plane is
+    // defined by points P where (P - plane.origin)·n = 0, equivalently P·n = d)
+    let d = plane.origin.dot(n);
+
+    // Constant terms
+    let a_cn = torus.center.dot(n); // center·n
+
+    const N_SAMPLES: usize = 128;
+    let mut branch_plus: Vec<Option<DVec3>> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<Option<DVec3>> = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cu, su) = (u.cos(), u.sin());
+
+        // B(u) = cos(u)·nx + sin(u)·ny
+        let bu = cu * nx + su * ny;
+
+        // D(u) = (d - a_cn - R·B(u)) / r
+        let du = (d - a_cn - r_major * bu) / r_minor;
+
+        // m = sqrt(B(u)² + nz²)
+        let m = (bu * bu + nz * nz).sqrt();
+
+        if du.abs() > m {
+            // No solution at this u
+            branch_plus.push(None);
+            branch_minus.push(None);
+            continue;
+        }
+
+        let acos_val = (du / m).clamp(-1.0, 1.0).acos();
+        let v0 = nz.atan2(bu);
+
+        let v_plus = v0 + acos_val;
+        let v_minus = v0 - acos_val;
+
+        // Compute 3D points on the torus
+        let radial = cu * x + su * y;
+        let tube_center = torus.center + r_major * radial;
+        let pt_plus = tube_center + r_minor * (v_plus.cos() * radial + v_plus.sin() * a);
+        let pt_minus = tube_center + r_minor * (v_minus.cos() * radial + v_minus.sin() * a);
+
+        branch_plus.push(Some(pt_plus));
+        branch_minus.push(Some(pt_minus));
+    }
+
+    // Extract contiguous runs from each branch
+    let extract_runs = |branch: &[Option<DVec3>]| -> Vec<Vec<DVec3>> {
+        let mut curves: Vec<Vec<DVec3>> = Vec::new();
+        let mut current: Vec<DVec3> = Vec::new();
+        for pt in branch {
+            match pt {
+                Some(p) => current.push(*p),
+                None => {
+                    if current.len() >= 2 {
+                        curves.push(current.clone());
+                    }
+                    current.clear();
+                }
+            }
+        }
+        if current.len() >= 2 {
+            curves.push(current);
+        }
+        curves
+    };
+
+    let mut branches = extract_runs(&branch_plus);
+    branches.extend(extract_runs(&branch_minus));
+
+    // Closed-curve dedup: remove trailing point if it nearly duplicates the first
+    for branch in &mut branches {
+        if branch.len() >= 3 {
+            let d = (branch[0] - branch[branch.len() - 1]).length();
+            if d < TOLERANCE_ABS * 10.0 {
+                branch.pop();
+            }
+        }
+    }
+
+    branches
 }
 
 #[cfg(test)]
@@ -525,6 +668,17 @@ mod tests {
         };
 
         let result = intersect_plane_torus(&plane, &torus);
-        assert!(matches!(result, PlaneTorusResult::General));
+        // Now handled analytically by the skew solver → SkewPolyline.
+        match &result {
+            PlaneTorusResult::SkewPolyline(branches) => {
+                assert!(!branches.is_empty(), "Expected at least one branch");
+                assert!(branches.iter().all(|b| b.len() >= 2), "Each branch needs ≥2 points");
+                let total_pts: usize = branches.iter().map(|b| b.len()).sum();
+                // The 45° plane through the torus center only intersects along two
+                // small arcs (near the tangent zone), so total points is modest.
+                assert!(total_pts >= 20, "Expected ≥20 refined points, got {total_pts}");
+            }
+            other => panic!("Expected SkewPolyline, got {:?}", other),
+        }
     }
 }

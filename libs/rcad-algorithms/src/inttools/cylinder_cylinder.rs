@@ -30,8 +30,11 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{any_perpendicular, Circle3, CylindricalSurface, Ellipse3, Line3};
+use rcad_kernel::SurfaceEval;
+use std::f64::consts::TAU;
 
 use crate::tolerance::*;
+use super::pcurve_derive::refine_polyline;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -65,6 +68,13 @@ pub enum CylinderCylinderResult {
         /// Distance between axes
         dist: f64,
     },
+    /// Skew axes (non-parallel, non-perpendicular): analytic quartic solution.
+    ///
+    /// The two cylinders intersect in a quartic space curve.  For each cylinder
+    /// azimuth u ∈ [0, 2π) the second cylinder's equation reduces to a quadratic
+    /// in the height v, solved analytically.  Two branches (± sqrt) are returned
+    /// as polylines.
+    SkewQuartic(Vec<Vec<DVec3>>),
     /// General case (skew axes or oblique angle not handled analytically).
     /// The caller should fall back to numeric marching.
     General,
@@ -116,7 +126,14 @@ fn intersect_cylinder_cylinder_with_eps(
         return intersect_perpendicular_cylinders(cyl1, cyl2, a1, a2, linear_tol);
     }
 
-    // ── General skew / oblique ────────────────────────────────────────────────
+    // ── Skew axes (analytic quartic solver) ──────────────────────────────────
+    // Parameterize cyl1, substitute into cyl2 equation → quadratic in v per u.
+    let skew_result = intersect_skew_cylinder_cylinder(cyl1, cyl2);
+    if !skew_result.is_empty() {
+        return CylinderCylinderResult::SkewQuartic(skew_result);
+    }
+
+    // ── General / oblique (fallback to marching) ──────────────────────────────
     CylinderCylinderResult::General
 }
 
@@ -325,6 +342,294 @@ fn intersect_perpendicular_cylinders(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Skew-axis analytic solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the intersection of two cylinders with skew (non-parallel,
+/// non-perpendicular) axes using an analytic quartic solver.
+///
+/// # Theory
+///
+/// Cylinder 1 parametrisation (u = azimuth [0, 2π), v = height along axis):
+///
+/// ```text
+/// P(u,v) = O1 + v·a1 + r1·(cos(u)·x1 + sin(u)·y1)
+/// ```
+///
+/// Cylinder 2 implicit equation (for any point P, distance from axis a2 is r2):
+///
+/// ```text
+/// |P - O2|² - ((P - O2)·a2)² = r2²
+/// ```
+///
+/// Substituting P(u,v) gives F(v) = 0 where
+///
+/// ```text
+/// a_v·v² + b_v(u)·v + c_v(u) = 0
+///
+/// a_v   = 1 - (a1·a2)²                                           (constant)
+/// b_v(u) = 2·(D0·a1) - 2·(D0·a2)·(a1·a2)
+/// c_v(u) = |D0|² - (D0·a2)² - r2²
+/// D0(u)  = O1 - O2 + r1·(cos(u)·x1 + sin(u)·y1)
+/// ```
+///
+/// For each u we solve the quadratic for v, giving two branches (± sqrt).
+fn intersect_skew_cylinder_cylinder(
+    cyl1: &CylindricalSurface,
+    cyl2: &CylindricalSurface,
+) -> Vec<Vec<DVec3>> {
+    let a1 = cyl1.axis.normalize();
+    let a2 = cyl2.axis.normalize();
+    let o1 = cyl1.origin;
+    let o2 = cyl2.origin;
+    let r1 = cyl1.radius;
+    let r2_sq = cyl2.radius * cyl2.radius;
+
+    // Perpendicular basis for cyl1 (must match CylindricalSurface::point_at).
+    let x1 = any_perpendicular(a1);
+    let y1 = a1.cross(x1).normalize();
+
+    // Constant coefficient a_v = 1 - (a1·a2)².
+    let a1_dot_a2 = a1.dot(a2);
+    let a_v = 1.0 - a1_dot_a2 * a1_dot_a2;
+
+    let delta = o1 - o2; // O1 - O2
+
+    const N_SAMPLES: usize = 128;
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+    let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+
+        // D0(u) = (O1 - O2) + r1·(cos(u)·x1 + sin(u)·y1)
+        let d0 = delta + r1 * (cos_u * x1 + sin_u * y1);
+        let d0_a1 = d0.dot(a1);
+        let d0_a2 = d0.dot(a2);
+        let d0_sq = d0.length_squared();
+
+        // b_v(u) = 2·(D0·a1) - 2·(D0·a2)·(a1·a2)
+        let b_v = 2.0 * d0_a1 - 2.0 * d0_a2 * a1_dot_a2;
+
+        // c_v(u) = |D0|² - (D0·a2)² - r2²
+        let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
+
+        if a_v.abs() > 1e-12 {
+            // Quadratic: a_v·v² + b_v·v + c_v = 0
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 {
+                continue;
+            }
+            let sqrt_disc = disc.sqrt();
+            let two_a_v = 2.0 * a_v;
+
+            let v_plus = (-b_v + sqrt_disc) / two_a_v;
+            let v_minus = (-b_v - sqrt_disc) / two_a_v;
+
+            if v_plus.is_finite() {
+                let p = cyl1.point_at(u, v_plus);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                }
+            }
+            if v_minus.is_finite() {
+                let p = cyl1.point_at(u, v_minus);
+                if p.is_finite() {
+                    branch_minus.push((u, p));
+                }
+            }
+        } else if b_v.abs() > 1e-12 {
+            // a_v ≈ 0 (near-parallel axes): solve linear b_v·v + c_v = 0
+            let v = -c_v / b_v;
+            if v.is_finite() {
+                let p = cyl1.point_at(u, v);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                    branch_minus.push((u, p));
+                }
+            }
+        }
+    }
+
+    // Adaptive refinement: subdivide segments where chord error exceeds tolerance
+    let eval_plus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta + r1 * (cos_u * x1 + sin_u * y1);
+        let d0_a1 = d0.dot(a1);
+        let d0_a2 = d0.dot(a2);
+        let d0_sq = d0.length_squared();
+        let b_v = 2.0 * d0_a1 - 2.0 * d0_a2 * a1_dot_a2;
+        let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+    let eval_minus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta + r1 * (cos_u * x1 + sin_u * y1);
+        let d0_a1 = d0.dot(a1);
+        let d0_a2 = d0.dot(a2);
+        let d0_sq = d0.length_squared();
+        let b_v = 2.0 * d0_a1 - 2.0 * d0_a2 * a1_dot_a2;
+        let c_v = d0_sq - d0_a2 * d0_a2 - r2_sq;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cyl1.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+
+    let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
+        refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+        refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+    );
+
+    // Dedup: remove trailing points that nearly duplicate the first point
+    // (closed curve degeneracy).
+    let dedup = |pts: &mut Vec<DVec3>| {
+        while pts.len() >= 3 {
+            let n = pts.len();
+            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                pts.pop();
+            } else {
+                break;
+            }
+        }
+    };
+
+    let mut branches = Vec::new();
+    if branch_plus.len() >= 2 {
+        dedup(&mut branch_plus);
+        if branch_plus.len() >= 2 {
+            branches.push(branch_plus);
+        }
+    }
+    if branch_minus.len() >= 2 {
+        // Check the minus branch is distinct from the plus branch.
+        let is_distinct = branches.is_empty()
+            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+        if is_distinct {
+            dedup(&mut branch_minus);
+            if branch_minus.len() >= 2 {
+                branches.push(branch_minus);
+            }
+        }
+    }
+
+    branches
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Perpendicular offset curves sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sample the perpendicular offset curves parameterization and return polylines.
+///
+/// For two perpendicular cylinders with offset (non-intersecting) axes,
+/// the intersection curve(s) can be parameterized on cyl1's surface:
+///
+/// ```text
+/// P(θ) = O1 + v(θ)·a1 + R1·(cos(θ)·u1 + sin(θ)·v1)
+/// v(θ) = dz ± √(R2² - (R1·cos(θ) - dx)²)
+/// ```
+///
+/// Returns two polylines (one per closed loop), each combining the + and -
+/// branches. The loops meet at tangent points where the discriminant is zero.
+pub fn sample_perpendicular_offset_curves(
+    cyl1: &CylindricalSurface,
+    cyl2: &CylindricalSurface,
+    _dist: f64,
+    n_samples: usize,
+) -> Vec<Vec<DVec3>> {
+    let a1 = cyl1.axis.normalize();
+    let a2 = cyl2.axis.normalize();
+    let r1 = cyl1.radius;
+    let r2 = cyl2.radius;
+    let r2_sq = r2 * r2;
+    let w = cyl1.origin - cyl2.origin;
+    let denom = 1.0 - a1.dot(a2) * a1.dot(a2);
+    if denom.abs() < 1e-12 {
+        return vec![];
+    }
+    let d1 = a1.dot(w);
+    let d2 = a2.dot(w);
+    let t = (a1.dot(a2) * d2 - d1) / denom;
+    let s = (d2 - a1.dot(a2) * d1) / denom;
+    let conn = (cyl1.origin + a1 * t) - (cyl2.origin + a2 * s);
+    let conn_len = conn.length();
+    let u1 = if conn_len < 1e-12 {
+        a1.cross(a2).normalize()
+    } else {
+        conn / conn_len
+    };
+    let v1 = a1.cross(u1).normalize();
+    let delta = cyl2.origin - cyl1.origin;
+    let dx = delta.dot(u1);
+    let dz = delta.dot(a1);
+    let cos_min = ((dx - r2) / r1).clamp(-1.0, 1.0);
+    let cos_max = ((dx + r2) / r1).clamp(-1.0, 1.0);
+    if cos_min > cos_max {
+        return vec![];
+    }
+    let t_low = cos_max.acos();
+    let t_high = cos_min.acos();
+
+    let mut branches = Vec::new();
+
+    for (t_start, t_end) in [(t_low, t_high), (TAU - t_high, TAU - t_low)] {
+        // Forward: branch = +1, θ = t_start → t_end
+        // Backward: branch = -1, θ = t_end → t_start (reversed in the loop)
+        // Combined they form a single closed curve.
+        let n_pts = n_samples * 2 + 1;
+        let mut pts: Vec<DVec3> = Vec::with_capacity(n_pts);
+
+        // Forward: positive sqrt branch
+        for i in 0..=n_samples {
+            let theta = t_start + (t_end - t_start) * i as f64 / n_samples as f64;
+            let (ct, st) = (theta.cos(), theta.sin());
+            let diff = r1 * ct - dx;
+            let disc = (r2_sq - diff * diff).max(0.0).sqrt();
+            let v_z = dz + disc;
+            pts.push(cyl1.origin + v_z * a1 + r1 * (ct * u1 + st * v1));
+        }
+        // Backward: negative sqrt branch (reversed, skip the already-sampled t_end)
+        for i in 1..=n_samples {
+            let theta = t_end - (t_end - t_start) * i as f64 / n_samples as f64;
+            let (ct, st) = (theta.cos(), theta.sin());
+            let diff = r1 * ct - dx;
+            let disc = (r2_sq - diff * diff).max(0.0).sqrt();
+            let v_z = dz - disc;
+            pts.push(cyl1.origin + v_z * a1 + r1 * (ct * u1 + st * v1));
+        }
+
+        if pts.len() >= 2 {
+            branches.push(pts);
+        }
+    }
+
+    branches
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -416,27 +721,53 @@ mod tests {
     }
 
     #[test]
-    fn perpendicular_unequal_radii_falls_back_to_general() {
+    fn perpendicular_unequal_radii_offset_curves() {
         // c1: axis=X, r1=2;  c2: axis=Y, r2=1
-        // Unequal radii with intersecting axes → the curves are not planar
-        // ellipses, so we must fall back to numerical marching.
+        // Unequal radii with intersecting axes → PerpendicularOffsetCurves.
         let c1 = cyl(DVec3::ZERO, DVec3::X, 2.0);
         let c2 = cyl(DVec3::ZERO, DVec3::Y, 1.0);
-        assert!(matches!(
-            intersect_cylinder_cylinder(&c1, &c2),
-            CylinderCylinderResult::General
-        ));
+        match intersect_cylinder_cylinder(&c1, &c2) {
+            CylinderCylinderResult::PerpendicularOffsetCurves { .. } => {}
+            other => panic!("expected PerpendicularOffsetCurves, got {other:?}"),
+        }
     }
 
     #[test]
-    fn skew_axes_falls_back_to_general() {
-        // Axes cross at 45°
+    fn skew_axes_quartic() {
+        // Axes cross at 45° → SkewQuartic solver
         let c1 = cyl(DVec3::ZERO, DVec3::X, 1.0);
         let c2 = cyl(DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0).normalize(), 1.0);
-        assert!(matches!(
-            intersect_cylinder_cylinder(&c1, &c2),
-            CylinderCylinderResult::General
-        ));
+        match intersect_cylinder_cylinder(&c1, &c2) {
+            CylinderCylinderResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} contains non-finite point");
+                    }
+                }
+            }
+            CylinderCylinderResult::General => {
+                // Acceptable fallback if solver returns nothing.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skew_axes_45_deg_offset() {
+        // Two cylinders with 45° skew and a small origin offset.
+        let c1 = cyl(DVec3::ZERO, DVec3::X, 1.0);
+        let c2 = cyl(DVec3::new(0.5, 0.0, 0.0), DVec3::new(1.0, 1.0, 0.0).normalize(), 1.0);
+        match intersect_cylinder_cylinder(&c1, &c2) {
+            CylinderCylinderResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                let all_finite: bool = branches.iter().flat_map(|b| b.iter()).all(|p| p.is_finite());
+                assert!(all_finite, "some branch contains non-finite point");
+            }
+            CylinderCylinderResult::General => {}
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
     #[test]

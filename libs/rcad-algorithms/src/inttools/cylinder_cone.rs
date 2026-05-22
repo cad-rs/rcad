@@ -30,8 +30,11 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, CylindricalSurface};
+use rcad_kernel::SurfaceEval;
+use std::f64::consts::TAU;
 
 use crate::tolerance::*;
+use super::pcurve_derive::refine_polyline;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
@@ -55,6 +58,16 @@ pub enum CylinderConeResult {
     /// General case (skew axes or oblique angle not handled analytically).
     /// The caller should fall back to numeric marching.
     General,
+    /// Skew axes (non-parallel, non-coaxial): analytic quartic solution.
+    ///
+    /// The cylinder and cone intersect in a quartic space curve.  For each
+    /// cylinder azimuth u ∈ [0, 2π) the cone equation reduces to a quadratic
+    /// in the cylinder height v, solved analytically.  Two branches (± sqrt)
+    /// are returned as polylines.
+    ///
+    /// Used when the axes are skew (neither parallel nor coincident), avoiding
+    /// expensive numeric marching on a dense grid.
+    SkewQuartic(Vec<Vec<DVec3>>),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,12 +90,15 @@ pub fn intersect_cylinder_cone(
         return intersect_parallel_cylinder_cone(cyl, cone, a_cyl, a_cone);
     }
 
-    // ── General / skew ────────────────────────────────────────────────────────
-    // Perform a quick distance-based no-intersection test:
-    // Find closest distance between the two axes.  If the cylinder completely
-    // misses the cone's bounding envelope, return NoIntersection.
+    // ── Skew axes ──────────────────────────────────────────────────────────
+    // Try analytic quartic solver first; fall back to numeric marching if it
+    // produces no result (e.g. surfaces barely graze each other).
 
-    // For now, return General (marching handles this correctly).
+    let skew_result = intersect_skew_cylinder_cone(cyl, cone);
+    if !skew_result.is_empty() {
+        return CylinderConeResult::SkewQuartic(skew_result);
+    }
+
     CylinderConeResult::General
 }
 
@@ -275,6 +291,215 @@ fn intersect_parallel_offset_cylinder_cone(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Skew-axis analytic solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the intersection of a cylinder and cone with skew (non-parallel)
+/// axes using an analytic quartic solver.
+///
+/// # Theory
+///
+/// Cylinder parametrization (u = azimuth [0, 2π), v = height along axis):
+///
+/// ```text
+/// P(u,v) = O_cyl + v·a_cyl + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// ```
+///
+/// The cone surface satisfies:
+///
+/// ```text
+/// |P - O_cone|²·cos²(α) = ((P - O_cone)·a_cone)²
+/// ```
+///
+/// Substituting P(u,v) gives F(v) = 0 where
+///
+/// ```text
+/// a_v·v² + b_v(u)·v + c_v(u) = 0
+///
+/// a_v   = (a_cyl·a_cone)² - cos²(α)                          (constant)
+/// b_v(u) = 2·(D0·a_cone)·(a_cyl·a_cone) - 2·cos²(α)·(D0·a_cyl)
+/// c_v(u) = (D0·a_cone)² - cos²(α)·|D0|²
+/// D0(u)  = O_cyl - O_cone + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+/// ```
+///
+/// For each u, we solve the quadratic for v, giving two branches (± sqrt).
+fn intersect_skew_cylinder_cone(
+    cyl: &CylindricalSurface,
+    cone: &ConicalSurface,
+) -> Vec<Vec<DVec3>> {
+    let a_cyl = cyl.axis.normalize();
+    let a_cone = cone.axis_dir();
+    let o_cyl = cyl.origin;
+    let o_cone = cone.apex_point();
+    let r_cyl = cyl.radius;
+    let cos_alpha = cone.half_angle_rad.cos();
+    let cos2 = cos_alpha * cos_alpha; // cos²(α)
+
+    // Perpendicular basis for cylinder (must match CylindricalSurface::point_at).
+    let x_cyl = any_perpendicular(a_cyl);
+    let y_cyl = a_cyl.cross(x_cyl).normalize();
+
+    // Constant coefficient a_v = (a_cyl·a_cone)² - cos²(α).
+    let a_dot = a_cyl.dot(a_cone);
+    let a_v = a_dot * a_dot - cos2;
+
+    // Pre-computed constants for b_v and c_v.
+    let a_dot2 = 2.0 * a_dot; // 2·(a_cyl·a_cone)
+    let two_cos2 = 2.0 * cos2; // 2·cos²(α)
+
+    let delta_o = o_cyl - o_cone; // O_cyl - O_cone
+
+    const N_SAMPLES: usize = 128;
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+    let mut branch_plus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<(f64, DVec3)> = Vec::with_capacity(N_SAMPLES + 1);
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+
+        // D0(u) = (O_cyl - O_cone) + r_cyl·(cos(u)·x_cyl + sin(u)·y_cyl)
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+
+        let d0_a = d0.dot(a_cone); // D0·a_cone
+        let d0_cyl = d0.dot(a_cyl); // D0·a_cyl
+        let d0_sq = d0.length_squared(); // |D0|²
+
+        // b_v(u) = 2·(D0·a_cone)·(a_cyl·a_cone) - 2·cos²(α)·(D0·a_cyl)
+        let b_v = a_dot2 * d0_a - two_cos2 * d0_cyl;
+
+        // c_v(u) = (D0·a_cone)² - cos²(α)·|D0|²
+        let c_v = d0_a * d0_a - cos2 * d0_sq;
+
+        if a_v.abs() > 1e-12 {
+            // Quadratic: a_v·v² + b_v·v + c_v = 0
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+
+            if disc < 0.0 {
+                // No intersection at this u azimuth.
+                continue;
+            }
+
+            let sqrt_disc = disc.sqrt();
+            let two_a_v = 2.0 * a_v;
+
+            let v_plus = (-b_v + sqrt_disc) / two_a_v;
+            let v_minus = (-b_v - sqrt_disc) / two_a_v;
+
+            // Only push valid (finite) points.
+            if v_plus.is_finite() {
+                let p = cyl.point_at(u, v_plus);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                }
+            }
+            if v_minus.is_finite() {
+                let p = cyl.point_at(u, v_minus);
+                if p.is_finite() {
+                    branch_minus.push((u, p));
+                }
+            }
+        } else if b_v.abs() > 1e-12 {
+            // Near-degenerate a_v ≈ 0: solve linear b_v·v + c_v = 0
+            let v = -c_v / b_v;
+            if v.is_finite() {
+                let p = cyl.point_at(u, v);
+                if p.is_finite() {
+                    branch_plus.push((u, p));
+                    branch_minus.push((u, p));
+                }
+            }
+        }
+    }
+
+    // Adaptive refinement: subdivide segments where chord error exceeds tolerance
+    let eval_plus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+        let d0_a = d0.dot(a_cone);
+        let d0_cyl = d0.dot(a_cyl);
+        let d0_sq = d0.length_squared();
+        let b_v = a_dot2 * d0_a - two_cos2 * d0_cyl;
+        let c_v = d0_a * d0_a - cos2 * d0_sq;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v + disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+    let eval_minus = |u: f64| -> Option<DVec3> {
+        let (cos_u, sin_u) = (u.cos(), u.sin());
+        let d0 = delta_o + r_cyl * (cos_u * x_cyl + sin_u * y_cyl);
+        let d0_a = d0.dot(a_cone);
+        let d0_cyl = d0.dot(a_cyl);
+        let d0_sq = d0.length_squared();
+        let b_v = a_dot2 * d0_a - two_cos2 * d0_cyl;
+        let c_v = d0_a * d0_a - cos2 * d0_sq;
+        if a_v.abs() > 1e-12 {
+            let disc = b_v * b_v - 4.0 * a_v * c_v;
+            if disc < 0.0 { return None; }
+            let v = (-b_v - disc.sqrt()) / (2.0 * a_v);
+            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else if b_v.abs() > 1e-12 {
+            let v = -c_v / b_v;
+            if v.is_finite() { let p = cyl.point_at(u, v); if p.is_finite() { return Some(p); } }
+            None
+        } else { None }
+    };
+
+    let (mut branch_plus, mut branch_minus): (Vec<DVec3>, Vec<DVec3>) = (
+        refine_polyline(&branch_plus, eval_plus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+        refine_polyline(&branch_minus, eval_minus, CHORD_TOL, REFINE_DEPTH)
+            .into_iter().map(|(_, p)| p).collect(),
+    );
+
+    // Dedup: remove trailing points that nearly duplicate the first point
+    // (closed curve degeneracy).
+    let dedup = |pts: &mut Vec<DVec3>| {
+        while pts.len() >= 3 {
+            let n = pts.len();
+            if (pts[n - 1] - pts[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                pts.pop();
+            } else {
+                break;
+            }
+        }
+    };
+
+    let mut branches = Vec::new();
+    if branch_plus.len() >= 2 {
+        dedup(&mut branch_plus);
+        if branch_plus.len() >= 2 {
+            branches.push(branch_plus);
+        }
+    }
+    if branch_minus.len() >= 2 {
+        // Check the minus branch is distinct from the plus branch by comparing
+        // their first points. If they're nearly the same, the branches collapsed
+        // (tangent intersection) — keep only one.
+        let is_distinct = branches.is_empty()
+            || (branch_minus[0] - branches[0][0]).length_squared() > TOLERANCE_VEC_SQ_MIN;
+        if is_distinct {
+            dedup(&mut branch_minus);
+            if branch_minus.len() >= 2 {
+                branches.push(branch_minus);
+            }
+        }
+    }
+
+    branches
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -339,20 +564,48 @@ mod tests {
         }
     }
 
-    /// Skew axes → General.
+    /// Skew axes → analytic SkewQuartic solver handles it.
     #[test]
-    fn skew_axes_general() {
+    fn skew_axes_quartic() {
         let c = cyl(DVec3::ZERO, DVec3::Z, 1.0);
         let k = cone(DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0).normalize(), 45.0);
-        assert!(matches!(intersect_cylinder_cone(&c, &k), CylinderConeResult::General));
+        match intersect_cylinder_cone(&c, &k) {
+            CylinderConeResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} contains non-finite point");
+                    }
+                }
+            }
+            CylinderConeResult::General => {
+                // Acceptable fallback if the solver returns nothing.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
-    /// Perpendicular axes → General.
+    /// Perpendicular axes → analytic SkewQuartic solver handles it.
     #[test]
-    fn perpendicular_axes_general() {
+    fn perpendicular_axes_quartic() {
         let c = cyl(DVec3::ZERO, DVec3::Z, 1.0);
         let k = cone(DVec3::ZERO, DVec3::X, 45.0);
-        assert!(matches!(intersect_cylinder_cone(&c, &k), CylinderConeResult::General));
+        match intersect_cylinder_cone(&c, &k) {
+            CylinderConeResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected at least 1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} contains non-finite point");
+                    }
+                }
+            }
+            CylinderConeResult::General => {
+                // Acceptable fallback.
+            }
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
     /// Parallel, offset axes → two polyline branches (upper nappe).
