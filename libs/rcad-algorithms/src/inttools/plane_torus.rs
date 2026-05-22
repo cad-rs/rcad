@@ -242,6 +242,7 @@ pub fn intersect_plane_torus_skew(
     let a = torus.axis.normalize();
     let r_major = torus.major_radius;
     let r_minor = torus.minor_radius;
+    let torus_center = torus.center;
 
     // Torus frame: x, y span the major circle plane, z = axis
     let x = any_perpendicular(a);
@@ -263,11 +264,11 @@ pub fn intersect_plane_torus_skew(
     let d = plane.origin.dot(n);
 
     // Constant terms
-    let a_cn = torus.center.dot(n); // center·n
+    let a_cn = torus_center.dot(n); // center·n
 
     const N_SAMPLES: usize = 128;
-    let mut branch_plus: Vec<Option<DVec3>> = Vec::with_capacity(N_SAMPLES + 1);
-    let mut branch_minus: Vec<Option<DVec3>> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_plus: Vec<(f64, Option<DVec3>)> = Vec::with_capacity(N_SAMPLES + 1);
+    let mut branch_minus: Vec<(f64, Option<DVec3>)> = Vec::with_capacity(N_SAMPLES + 1);
 
     for i in 0..=N_SAMPLES {
         let u = (i as f64 / N_SAMPLES as f64) * TAU;
@@ -284,8 +285,8 @@ pub fn intersect_plane_torus_skew(
 
         if du.abs() > m {
             // No solution at this u
-            branch_plus.push(None);
-            branch_minus.push(None);
+            branch_plus.push((u, None));
+            branch_minus.push((u, None));
             continue;
         }
 
@@ -297,21 +298,21 @@ pub fn intersect_plane_torus_skew(
 
         // Compute 3D points on the torus
         let radial = cu * x + su * y;
-        let tube_center = torus.center + r_major * radial;
+        let tube_center = torus_center + r_major * radial;
         let pt_plus = tube_center + r_minor * (v_plus.cos() * radial + v_plus.sin() * a);
         let pt_minus = tube_center + r_minor * (v_minus.cos() * radial + v_minus.sin() * a);
 
-        branch_plus.push(Some(pt_plus));
-        branch_minus.push(Some(pt_minus));
+        branch_plus.push((u, Some(pt_plus)));
+        branch_minus.push((u, Some(pt_minus)));
     }
 
-    // Extract contiguous runs from each branch
-    let extract_runs = |branch: &[Option<DVec3>]| -> Vec<Vec<DVec3>> {
-        let mut curves: Vec<Vec<DVec3>> = Vec::new();
-        let mut current: Vec<DVec3> = Vec::new();
-        for pt in branch {
+    // Extract contiguous runs from each branch (returns Vec<(u, point)>)
+    let extract_runs = |branch: &[(f64, Option<DVec3>)]| -> Vec<Vec<(f64, DVec3)>> {
+        let mut curves: Vec<Vec<(f64, DVec3)>> = Vec::new();
+        let mut current: Vec<(f64, DVec3)> = Vec::new();
+        for &(u, ref pt) in branch {
             match pt {
-                Some(p) => current.push(*p),
+                Some(p) => current.push((u, *p)),
                 None => {
                     if current.len() >= 2 {
                         curves.push(current.clone());
@@ -326,11 +327,68 @@ pub fn intersect_plane_torus_skew(
         curves
     };
 
-    let mut branches = extract_runs(&branch_plus);
-    branches.extend(extract_runs(&branch_minus));
+    let mut raw_branches = extract_runs(&branch_plus);
+    raw_branches.extend(extract_runs(&branch_minus));
+
+    // ── Adaptive chord-error refinement ────────────────────────────────────
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+
+    let refined: Vec<Vec<DVec3>> = raw_branches
+        .into_iter()
+        .filter(|b| b.len() >= 4)
+        .map(|branch| {
+            let (sign_branch, _) = branch[0];
+            let _ = sign_branch; // branch identifier (not needed for eval)
+            // For each branch, we need to build an eval closure.
+            // We determine sign by evaluating at the first u and checking
+            // which v formula produces the matching 3D point.
+            let u_first = branch[0].0;
+            let p_first = branch[0].1;
+            let (cu_f, su_f) = (u_first.cos(), u_first.sin());
+            let bu_f = cu_f * nx + su_f * ny;
+            let du_f = (d - a_cn - r_major * bu_f) / r_minor;
+            let m_f = (bu_f * bu_f + nz * nz).sqrt();
+            let acos_f = (du_f / m_f).clamp(-1.0, 1.0).acos();
+            let v0_f = nz.atan2(bu_f);
+            // Determine whether this branch uses v0 + acos or v0 - acos
+            let radial_f = cu_f * x + su_f * y;
+            let tube_center_f = torus_center + r_major * radial_f;
+            let p_plus = tube_center_f
+                + r_minor * ((v0_f + acos_f).cos() * radial_f + (v0_f + acos_f).sin() * a);
+            let use_plus = (p_first - p_plus).length_squared()
+                < TOLERANCE_VEC_SQ_MIN;
+
+            let pts_for_eval = branch.clone();
+            let eval_fn = move |u_mid: f64| -> Option<DVec3> {
+                let (cu, su) = (u_mid.cos(), u_mid.sin());
+                let bu = cu * nx + su * ny;
+                let du = (d - a_cn - r_major * bu) / r_minor;
+                let m = (bu * bu + nz * nz).sqrt();
+                if du.abs() > m {
+                    return None;
+                }
+                let acos_val = (du / m).clamp(-1.0, 1.0).acos();
+                let v0 = nz.atan2(bu);
+                let v = if use_plus { v0 + acos_val } else { v0 - acos_val };
+                let radial = cu * x + su * y;
+                let tube_center = torus_center + r_major * radial;
+                let p = tube_center
+                    + r_minor * (v.cos() * radial + v.sin() * a);
+                if p.is_finite() { Some(p) } else { None }
+            };
+
+            let refined =
+                crate::inttools::pcurve_derive::refine_polyline(
+                    &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
+                );
+            refined.into_iter().map(|(_, p)| p).collect()
+        })
+        .collect();
 
     // Closed-curve dedup: remove trailing point if it nearly duplicates the first
-    for branch in &mut branches {
+    let mut result = refined;
+    for branch in &mut result {
         if branch.len() >= 3 {
             let d = (branch[0] - branch[branch.len() - 1]).length();
             if d < TOLERANCE_ABS * 10.0 {
@@ -339,7 +397,7 @@ pub fn intersect_plane_torus_skew(
         }
     }
 
-    branches
+    result
 }
 
 #[cfg(test)]

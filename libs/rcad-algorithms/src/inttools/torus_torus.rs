@@ -479,17 +479,97 @@ fn intersect_skew_torus_torus(
         }
     }
 
-    // Convert to 3D polylines, filter short branches
-    let min_len = 4;
-    let branches_3d: Vec<Vec<DVec3>> = branches
+    // ── Adaptive chord-error refinement ────────────────────────────────────
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+
+    let refined_3d: Vec<Vec<DVec3>> = branches
         .into_iter()
-        .filter(|b| b.len() >= min_len)
-        .map(|b| b.into_iter().map(|(_, p)| p).collect())
+        .filter(|b| b.len() >= 4)
+        .map(|branch| {
+            let pts_for_eval = branch.clone();
+            let eval_fn = move |u_mid: f64| -> Option<DVec3> {
+                let idx = pts_for_eval.partition_point(|&(u, _)| u < u_mid);
+                if idx == 0 || idx >= pts_for_eval.len() {
+                    return None;
+                }
+                let (u0, p0) = pts_for_eval[idx - 1];
+                let (u1, p1) = pts_for_eval[idx];
+                let t_frac = ((u_mid - u0) / (u1 - u0)).clamp(0.0, 1.0);
+                let expected = p0.lerp(p1, t_frac);
+
+                let (cu, su) = (u_mid.cos(), u_mid.sin());
+                let drxy = d_dot_x1 * cu + d_dot_y1 * su;
+                let rxy_a2 = a2_dot_x1 * cu + a2_dot_y1 * su;
+
+                let m_val = d_sq + r_major1_sq + r_minor1_sq + 2.0 * r_major1 * drxy;
+                let n_val = 2.0 * r_minor1 * (drxy + r_major1);
+                let q_val = d_dot_a2 + r_major1 * rxy_a2;
+                let r_cos_val = r_minor1 * rxy_a2;
+
+                let m_sq = m_val * m_val;
+                let n_sq = n_val * n_val;
+                let q_sq = q_val * q_val;
+                let r_cos_sq = r_cos_val * r_cos_val;
+
+                let a_const = m_sq + 2.0 * term_r2_sq_minus_m2_sq * m_val + four_r2_sq * q_sq
+                    + c2_sq_sq;
+                let a_cos =
+                    2.0 * m_val * n_val + 2.0 * term_r2_sq_minus_m2_sq * n_val
+                        + 8.0 * r_major2_sq * q_val * r_cos_val;
+                let a_sin = 2.0 * (m_val * sin_s + term_r2_sq_minus_m2_sq * sin_s)
+                    + 8.0 * r_major2_sq * q_val * sin_t;
+                let a_cos2 = n_sq + four_r2_sq * r_cos_sq;
+                let a_sin2 = a_sin2_const;
+                let a_cossin = 2.0 * n_val * sin_s + a_cossin_sin_t_const * r_cos_val;
+
+                let a4 = a_const - a_cos + a_cos2;
+                let a3_v = 2.0 * (a_sin - a_cossin);
+                let a2_v = 2.0 * a_const - 2.0 * a_cos2 + 4.0 * a_sin2;
+                let a1_v = 2.0 * (a_sin + a_cossin);
+                let a0_v = a_const + a_cos + a_cos2;
+
+                let t_roots = crate::solve_quartic(a4, a3_v, a2_v, a1_v, a0_v);
+
+                // Convert t = tan(v/2) → v ∈ [0, 2π)
+                let mut v_candidates: Vec<f64> = t_roots
+                    .iter()
+                    .filter(|t| t.is_finite())
+                    .map(|&t| {
+                        let v = 2.0 * t.atan();
+                        if v < 0.0 { v + TAU } else { v }
+                    })
+                    .collect();
+
+                // Check for root at/near v = π (t → ∞)
+                if a4.abs() < 1e-6 {
+                    v_candidates.push(std::f64::consts::PI);
+                }
+
+                v_candidates
+                    .iter()
+                    .filter(|v| v.is_finite())
+                    .map(|&v| (v, t1.point_at(u_mid, v)))
+                    .filter(|(_, p)| p.is_finite())
+                    .min_by(|(_, pa), (_, pb)| {
+                        (pa - expected)
+                            .length_squared()
+                            .partial_cmp(&(pb - expected).length_squared())
+                            .unwrap()
+                    })
+                    .map(|(_, p)| p)
+            };
+
+            let refined = crate::inttools::pcurve_derive::refine_polyline(
+                &branch, eval_fn, CHORD_TOL, REFINE_DEPTH,
+            );
+            refined.into_iter().map(|(_, p)| p).collect()
+        })
         .collect();
 
     // Dedup near-duplicate trailing points
     let mut result = Vec::new();
-    for mut branch in branches_3d {
+    for mut branch in refined_3d {
         while branch.len() >= 3 {
             let n = branch.len();
             if (branch[n - 1] - branch[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {

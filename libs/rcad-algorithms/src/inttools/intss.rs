@@ -584,14 +584,18 @@ fn sphere_x_cylinder_with_tolerance(
     match intersect_sphere_cylinder_with_tolerance(s, c, fuzzy_tol) {
         SphereCylinderResult::SkewQuartic(branches) => {
             let mut out = SurfaceSurfaceIntersection::default();
+            let s_sph = Surface3::Sphere(*s);
+            let s_cyl = Surface3::Cylinder(*c);
             for branch in &branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(branch, &s_sph);
+                let pcb = polyline_pcurve_by_projection(branch, &s_cyl);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch.clone()),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
             out
@@ -763,12 +767,16 @@ fn cylinder_x_cylinder_from_result(
         }
         CylinderCylinderResult::PerpendicularOffsetCurves { ref cyl1, ref cyl2, dist } => {
             let branches = sample_perpendicular_offset_curves(cyl1, cyl2, dist, 16);
+            let s_c1 = Surface3::Cylinder(*c1);
+            let s_c2 = Surface3::Cylinder(*c2);
             for branch in branches {
                 if branch.len() < 2 { continue; }
+                let pca = polyline_pcurve_by_projection(&branch, &s_c1);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_c2);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
@@ -776,14 +784,18 @@ fn cylinder_x_cylinder_from_result(
             return numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2));
         }
         CylinderCylinderResult::SkewQuartic(branches) => {
+            let s_c1 = Surface3::Cylinder(*c1);
+            let s_c2 = Surface3::Cylinder(*c2);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_c1);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_c2);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
@@ -824,26 +836,34 @@ fn cylinder_x_cone(
             return numeric_intss(&Surface3::Cylinder(*cyl), &Surface3::Cone(*cone));
         }
         CylinderConeResult::ParallelOffsetPolyline(branches) => {
+            let s_cyl = Surface3::Cylinder(*cyl);
+            let s_cone = Surface3::Cone(*cone);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_cyl);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_cone);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
         CylinderConeResult::SkewQuartic(branches) => {
+            let s_cyl = Surface3::Cylinder(*cyl);
+            let s_cone = Surface3::Cone(*cone);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_cyl);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_cone);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
@@ -907,14 +927,18 @@ fn cone_x_cone_from_result(
             return numeric_intss(&Surface3::Cone(*k1), &Surface3::Cone(*k2));
         }
         ConeConeResult::SkewQuartic(branches) => {
+            let s_k1 = Surface3::Cone(*k1);
+            let s_k2 = Surface3::Cone(*k2);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_k1);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_k2);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
@@ -971,12 +995,16 @@ fn torus_x_plane(
     let branches = intersect_plane_torus_skew(plane, torus);
     if !branches.is_empty() {
         let mut out = SurfaceSurfaceIntersection::default();
+        let s_torus = Surface3::Torus(*torus);
+        let s_plane = Surface3::Plane(*plane);
         for branch in branches {
             if branch.len() < 2 { continue; }
+            let pca = polyline_pcurve_by_projection(&branch, &s_torus);
+            let pcb = polyline_pcurve_by_projection(&branch, &s_plane);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Polyline(branch),
-                pcurve_on_a: None,
-                pcurve_on_b: None,
+                pcurve_on_a: pca,
+                pcurve_on_b: pcb,
             });
         }
         return out;
@@ -1021,12 +1049,16 @@ fn torus_x_plane_parallel(
             }
         }
         PlaneTorusResult::SkewPolyline(branches) => {
+            let s_torus = Surface3::Torus(*torus);
+            let s_plane = Surface3::Plane(*plane);
             for branch in branches {
                 if branch.len() < 2 { continue; }
+                let pca = polyline_pcurve_by_projection(&branch, &s_torus);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_plane);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
         }
@@ -1194,14 +1226,18 @@ fn torus_x_sphere(
         super::sphere_torus::intersect_skew_sphere_torus(sphere, torus);
     if !st_result.is_empty() {
         let mut out = SurfaceSurfaceIntersection::default();
+        let s_torus = Surface3::Torus(*torus);
+        let s_sphere = Surface3::Sphere(*sphere);
         for branch in st_result {
             if branch.len() < 2 {
                 continue;
             }
+            let pca = polyline_pcurve_by_projection(&branch, &s_torus);
+            let pcb = polyline_pcurve_by_projection(&branch, &s_sphere);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Polyline(branch),
-                pcurve_on_a: None,
-                pcurve_on_b: None,
+                pcurve_on_a: pca,
+                pcurve_on_b: pcb,
             });
         }
         if !out.curves.is_empty() {
@@ -1340,14 +1376,18 @@ fn torus_x_cylinder(
     let ct_result = super::cylinder_torus::intersect_cylinder_torus_with_tolerance(cyl, torus, 0.0);
     if let CylinderTorusResultAlias::SkewQuartic(branches) = &ct_result {
         let mut out = SurfaceSurfaceIntersection::default();
+        let s_torus = Surface3::Torus(*torus);
+        let s_cyl = Surface3::Cylinder(*cyl);
         for branch in branches {
             if branch.len() < 2 {
                 continue;
             }
+            let pca = polyline_pcurve_by_projection(branch, &s_torus);
+            let pcb = polyline_pcurve_by_projection(branch, &s_cyl);
             out.curves.push(SurfaceIntersectionResult {
                 curve_3d: SurfaceCurve::Polyline(branch.clone()),
-                pcurve_on_a: None,
-                pcurve_on_b: None,
+                pcurve_on_a: pca,
+                pcurve_on_b: pcb,
             });
         }
         return out;
@@ -1488,14 +1528,18 @@ fn torus_x_cone_with_tolerance(
             });
         }
         TorusConeResult::SkewQuartic(branches) => {
+            let s_torus = Surface3::Torus(*torus);
+            let s_cone = Surface3::Cone(*cone);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_torus);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_cone);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
             return out;
@@ -1588,14 +1632,18 @@ fn torus_x_torus_with_tolerance(
             });
         }
         TorusTorusResult::SkewQuartic(branches) => {
+            let s_t1 = Surface3::Torus(*t1);
+            let s_t2 = Surface3::Torus(*t2);
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
                 }
+                let pca = polyline_pcurve_by_projection(&branch, &s_t1);
+                let pcb = polyline_pcurve_by_projection(&branch, &s_t2);
                 out.curves.push(SurfaceIntersectionResult {
                     curve_3d: SurfaceCurve::Polyline(branch),
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
+                    pcurve_on_a: pca,
+                    pcurve_on_b: pcb,
                 });
             }
             return out;

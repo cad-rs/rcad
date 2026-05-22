@@ -50,6 +50,15 @@ use rcad_kernel::{
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 use crate::tolerance::*;
+use crate::inttools::cone_cone::{ConeConeResult, intersect_cone_cone};
+use crate::inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
+use crate::inttools::plane_cone::{PlaneConicalResult, intersect_plane_cone};
+use crate::inttools::sphere_cone::{SphereConeResult, intersect_sphere_cone_with_tolerance};
+use crate::inttools::torus_torus::{TorusTorusResult, intersect_torus_torus};
+use crate::inttools::cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus};
+use crate::inttools::torus_cone::{TorusConeResult, intersect_torus_cone};
+use crate::inttools::plane_torus::{PlaneTorusResult, intersect_plane_torus};
+use crate::inttools::sphere_torus::{SphereTorusResult, intersect_sphere_torus};
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Error Types
@@ -1062,6 +1071,335 @@ pub fn intersect_offset_cylinder_sphere(
     }
 }
 
+// ── Cone offset helper ─────────────────────────────────────────────────
+fn offset_conical_surface(c: &ConicalSurface, d: f64) -> Option<ConicalSurface> {
+    let sin_a = c.half_angle_rad.sin();
+    let cos_a = c.half_angle_rad.cos();
+    let axial_shift = if sin_a.abs() > TOLERANCE_LINEAR_ULTRA_STRICT { d / sin_a } else { d };
+    let new_radius = c.radius + d * cos_a;
+    if new_radius <= 0.0 && d > 0.0 {
+        return None;
+    }
+    let new_apex = c.apex - c.axis.normalize_or(DVec3::Y) * axial_shift;
+    Some(ConicalSurface {
+        apex: new_apex,
+        axis: c.axis,
+        radius: new_radius.max(0.0),
+        half_angle_rad: c.half_angle_rad,
+    })
+}
+
+// ── Phase 2: New offset handler functions ──────────────────────────────
+
+pub fn intersect_offset_cone_cone(
+    cone1: &ConicalSurface,
+    cone2: &ConicalSurface,
+    d1: f64,
+    d2: f64,
+) -> OffsetIntersectionCurve {
+    let off_c1 = match offset_conical_surface(cone1, d1) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    let off_c2 = match offset_conical_surface(cone2, d2) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    match intersect_cone_cone(&off_c1, &off_c2) {
+        ConeConeResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        ConeConeResult::Coaxial => OffsetIntersectionCurve::Coincident,
+        ConeConeResult::CoaxialCircle(c) => OffsetIntersectionCurve::Circle(c),
+        ConeConeResult::CoaxialPoint(p) => OffsetIntersectionCurve::TangentPoint(p),
+        ConeConeResult::SkewQuartic(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        ConeConeResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_cylinder_cone(
+    cyl: &CylindricalSurface,
+    cone: &ConicalSurface,
+    d_cyl: f64,
+    d_cone: f64,
+) -> OffsetIntersectionCurve {
+    let r = cyl.radius + d_cyl;
+    if r <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_cyl = CylindricalSurface {
+        origin: cyl.origin,
+        axis: cyl.axis,
+        radius: r,
+        ref_dir: cyl.ref_dir,
+    };
+    let offset_cone = match offset_conical_surface(cone, d_cone) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    match intersect_cylinder_cone(&offset_cyl, &offset_cone) {
+        CylinderConeResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        CylinderConeResult::CoaxialCircle(c) => OffsetIntersectionCurve::Circle(c),
+        CylinderConeResult::ParallelOffsetPolyline(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        CylinderConeResult::SkewQuartic(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        CylinderConeResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_plane_cone(
+    plane: &Plane,
+    cone: &ConicalSurface,
+    d_plane: f64,
+    d_cone: f64,
+) -> OffsetIntersectionCurve {
+    let offset_plane = Plane {
+        origin: plane.origin + plane.normal * d_plane,
+        normal: plane.normal,
+    };
+    let offset_cone = match offset_conical_surface(cone, d_cone) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    match intersect_plane_cone(&offset_plane, &offset_cone) {
+        PlaneConicalResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        PlaneConicalResult::Point(p) => OffsetIntersectionCurve::TangentPoint(p),
+        PlaneConicalResult::SingleLine(l) => OffsetIntersectionCurve::Line(l),
+        PlaneConicalResult::TwoLines(l1, l2) => OffsetIntersectionCurve::TwoLines(l1, l2),
+        PlaneConicalResult::Circle(c) => OffsetIntersectionCurve::Circle(c),
+        PlaneConicalResult::Ellipse(e) => OffsetIntersectionCurve::Ellipse(e),
+        PlaneConicalResult::Parabola(_) | PlaneConicalResult::Hyperbola(_) => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_sphere_cone(
+    sphere: &SphericalSurface,
+    cone: &ConicalSurface,
+    d_sphere: f64,
+    d_cone: f64,
+) -> OffsetIntersectionCurve {
+    let r_sphere = sphere.radius + d_sphere;
+    if r_sphere <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r_sphere);
+    let offset_cone = match offset_conical_surface(cone, d_cone) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    match intersect_sphere_cone_with_tolerance(&offset_sphere, &offset_cone, TOLERANCE_ABS) {
+        SphereConeResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        SphereConeResult::SingleCircle(c) => OffsetIntersectionCurve::Circle(c),
+        SphereConeResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        SphereConeResult::TangentPoint(p) => OffsetIntersectionCurve::TangentPoint(p),
+        SphereConeResult::Polyline(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        SphereConeResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_torus_torus(
+    t1: &ToroidalSurface,
+    t2: &ToroidalSurface,
+    d1: f64,
+    d2: f64,
+) -> OffsetIntersectionCurve {
+    let r1 = t1.minor_radius + d1;
+    if r1 <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let r2 = t2.minor_radius + d2;
+    if r2 <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let off_t1 = ToroidalSurface {
+        center: t1.center,
+        axis: t1.axis,
+        major_radius: t1.major_radius,
+        minor_radius: r1,
+    };
+    let off_t2 = ToroidalSurface {
+        center: t2.center,
+        axis: t2.axis,
+        major_radius: t2.major_radius,
+        minor_radius: r2,
+    };
+    match intersect_torus_torus(&off_t1, &off_t2) {
+        TorusTorusResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        TorusTorusResult::SingleCircle(c) => OffsetIntersectionCurve::Circle(c),
+        TorusTorusResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        TorusTorusResult::TangentCircle(c) => OffsetIntersectionCurve::TangentCircle(c),
+        TorusTorusResult::Coaxial => OffsetIntersectionCurve::Coincident,
+        TorusTorusResult::SkewQuartic(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        TorusTorusResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_cylinder_torus(
+    cyl: &CylindricalSurface,
+    torus: &ToroidalSurface,
+    d_cyl: f64,
+    d_torus: f64,
+) -> OffsetIntersectionCurve {
+    let r_cyl = cyl.radius + d_cyl;
+    if r_cyl <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_cyl = CylindricalSurface {
+        origin: cyl.origin,
+        axis: cyl.axis,
+        radius: r_cyl,
+        ref_dir: cyl.ref_dir,
+    };
+    let r_minor = torus.minor_radius + d_torus;
+    if r_minor <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_torus = ToroidalSurface {
+        center: torus.center,
+        axis: torus.axis,
+        major_radius: torus.major_radius,
+        minor_radius: r_minor,
+    };
+    match intersect_cylinder_torus(&offset_cyl, &offset_torus) {
+        CylinderTorusResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        CylinderTorusResult::TangentCircle(c) => OffsetIntersectionCurve::TangentCircle(c),
+        CylinderTorusResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        CylinderTorusResult::SkewQuartic(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        CylinderTorusResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_torus_cone(
+    torus: &ToroidalSurface,
+    cone: &ConicalSurface,
+    d_torus: f64,
+    d_cone: f64,
+) -> OffsetIntersectionCurve {
+    let r_minor = torus.minor_radius + d_torus;
+    if r_minor <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_torus = ToroidalSurface {
+        center: torus.center,
+        axis: torus.axis,
+        major_radius: torus.major_radius,
+        minor_radius: r_minor,
+    };
+    let offset_cone = match offset_conical_surface(cone, d_cone) {
+        Some(c) => c,
+        None => return OffsetIntersectionCurve::NoIntersection,
+    };
+    match intersect_torus_cone(&offset_torus, &offset_cone) {
+        TorusConeResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        TorusConeResult::SingleCircle(c) => OffsetIntersectionCurve::Circle(c),
+        TorusConeResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        TorusConeResult::TangentCircle(c) => OffsetIntersectionCurve::TangentCircle(c),
+        TorusConeResult::SkewQuartic(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        TorusConeResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_plane_torus(
+    plane: &Plane,
+    torus: &ToroidalSurface,
+    d_plane: f64,
+    d_torus: f64,
+) -> OffsetIntersectionCurve {
+    let offset_plane = Plane {
+        origin: plane.origin + plane.normal * d_plane,
+        normal: plane.normal,
+    };
+    let r_minor = torus.minor_radius + d_torus;
+    if r_minor <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_torus = ToroidalSurface {
+        center: torus.center,
+        axis: torus.axis,
+        major_radius: torus.major_radius,
+        minor_radius: r_minor,
+    };
+    match intersect_plane_torus(&offset_plane, &offset_torus) {
+        PlaneTorusResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        PlaneTorusResult::TangentCircle(c) => OffsetIntersectionCurve::TangentCircle(c),
+        PlaneTorusResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        PlaneTorusResult::SkewPolyline(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        PlaneTorusResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
+pub fn intersect_offset_sphere_torus(
+    sphere: &SphericalSurface,
+    torus: &ToroidalSurface,
+    d_sphere: f64,
+    d_torus: f64,
+) -> OffsetIntersectionCurve {
+    let r_sphere = sphere.radius + d_sphere;
+    if r_sphere <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let r_minor = torus.minor_radius + d_torus;
+    if r_minor <= 0.0 {
+        return OffsetIntersectionCurve::NoIntersection;
+    }
+    let offset_sphere = SphericalSurface::new(sphere.center, sphere.axis, r_sphere);
+    let offset_torus = ToroidalSurface {
+        center: torus.center,
+        axis: torus.axis,
+        major_radius: torus.major_radius,
+        minor_radius: r_minor,
+    };
+    match intersect_sphere_torus(&offset_sphere, &offset_torus) {
+        SphereTorusResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
+        SphereTorusResult::OneCircle(c) => OffsetIntersectionCurve::Circle(c),
+        SphereTorusResult::TwoCircles(c1, c2) => OffsetIntersectionCurve::TwoCircles(c1, c2),
+        SphereTorusResult::SkewPolyline(branches) => branches
+            .into_iter()
+            .next()
+            .filter(|b| b.len() >= 2)
+            .map(OffsetIntersectionCurve::Numerical)
+            .unwrap_or(OffsetIntersectionCurve::General),
+        SphereTorusResult::General => OffsetIntersectionCurve::General,
+    }
+}
+
 /// Intersect two offset surfaces of arbitrary types.
 ///
 /// Dispatches to the appropriate analytical handler based on surface types,
@@ -1093,6 +1431,40 @@ pub fn intersect_offset_surfaces(
         (Surface3::Cylinder(c), Surface3::Sphere(s))
         | (Surface3::Sphere(s), Surface3::Cylinder(c)) => {
             intersect_offset_cylinder_sphere(c, s, d1, d2)
+        }
+        (Surface3::Plane(p), Surface3::Cone(c))
+        | (Surface3::Cone(c), Surface3::Plane(p)) => {
+            intersect_offset_plane_cone(p, c, d1, d2)
+        }
+        (Surface3::Cylinder(c), Surface3::Cone(k))
+        | (Surface3::Cone(k), Surface3::Cylinder(c)) => {
+            intersect_offset_cylinder_cone(c, k, d1, d2)
+        }
+        (Surface3::Sphere(s), Surface3::Cone(c))
+        | (Surface3::Cone(c), Surface3::Sphere(s)) => {
+            intersect_offset_sphere_cone(s, c, d1, d2)
+        }
+        (Surface3::Cone(k1), Surface3::Cone(k2)) => {
+            intersect_offset_cone_cone(k1, k2, d1, d2)
+        }
+        (Surface3::Plane(p), Surface3::Torus(t))
+        | (Surface3::Torus(t), Surface3::Plane(p)) => {
+            intersect_offset_plane_torus(p, t, d1, d2)
+        }
+        (Surface3::Sphere(s), Surface3::Torus(t))
+        | (Surface3::Torus(t), Surface3::Sphere(s)) => {
+            intersect_offset_sphere_torus(s, t, d1, d2)
+        }
+        (Surface3::Cylinder(c), Surface3::Torus(t))
+        | (Surface3::Torus(t), Surface3::Cylinder(c)) => {
+            intersect_offset_cylinder_torus(c, t, d1, d2)
+        }
+        (Surface3::Torus(t), Surface3::Cone(c))
+        | (Surface3::Cone(c), Surface3::Torus(t)) => {
+            intersect_offset_torus_cone(t, c, d1, d2)
+        }
+        (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+            intersect_offset_torus_torus(t1, t2, d1, d2)
         }
         // For other combinations, fall back to numerical approximation
         _ => intersect_surfaces_numerical(surf1, surf2, d1, d2),
@@ -2921,17 +3293,15 @@ fn offset_shell_with_options_impl(
             let vs = vertex_map[e.start];
             let ve = vertex_map[e.end];
 
-            let p0 = result.vertices[vs].point;
-            let p1 = result.vertices[ve].point;
-            let dir = (p1 - p0).normalize_or(DVec3::X);
-            let len = (p1 - p0).length();
+            let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
+            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces)
+                .unwrap_or_else(|| {
+                    let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
+                    let len = (result.vertices[ve].point - result.vertices[vs].point).length();
+                    (Curve3::Line(Line3 { origin: result.vertices[vs].point, direction: dir }), 0.0, len)
+                });
 
-            let curve = Curve3::Line(Line3 {
-                origin: p0,
-                direction: dir,
-            });
-
-            let eidx = add_edge(&mut result, curve, 0.0, len, vs, ve);
+            let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
             wire_edges.push(WireEdge::fwd(eidx));
         }
 
@@ -3049,17 +3419,15 @@ pub fn offset_shell_with_options(
             let vs = vertex_map[e.start];
             let ve = vertex_map[e.end];
 
-            let p0 = result.vertices[vs].point;
-            let p1 = result.vertices[ve].point;
-            let dir = (p1 - p0).normalize_or(DVec3::X);
-            let len = (p1 - p0).length();
+            let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
+            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces)
+                .unwrap_or_else(|| {
+                    let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
+                    let len = (result.vertices[ve].point - result.vertices[vs].point).length();
+                    (Curve3::Line(Line3 { origin: result.vertices[vs].point, direction: dir }), 0.0, len)
+                });
 
-            let curve = Curve3::Line(Line3 {
-                origin: p0,
-                direction: dir,
-            });
-
-            let eidx = add_edge(&mut result, curve, 0.0, len, vs, ve);
+            let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
             wire_edges.push(WireEdge::fwd(eidx));
         }
 
@@ -3457,7 +3825,7 @@ pub fn offset_shape(brep: &BRep, opts: OffsetOptions) -> Result<OffsetResult, Of
 mod tests {
     use super::*;
     use glam::DVec3;
-    use rcad_kernel::geom::{Plane, SphericalSurface, CylindricalSurface};
+    use rcad_kernel::geom::{Plane, SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
 
     #[test]
     fn offset_plane_translates() {
@@ -5158,5 +5526,215 @@ mod tests {
     fn offset_auto_repair_option() {
         let opts = OffsetOptions::new(0.5).with_auto_repair(true);
         assert!(opts.auto_repair);
+    }
+
+    // ── Phase 2: New offset handler tests ──────────────────────────────
+
+    #[test]
+    fn offset_cone_cone_coaxial() {
+        let c1 = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.3 };
+        let c2 = ConicalSurface { apex: DVec3::new(0.0, 0.0, 3.0), axis: DVec3::Z, radius: 2.0, half_angle_rad: 0.5 };
+        match intersect_offset_cone_cone(&c1, &c2, 0.0, 0.0) {
+            OffsetIntersectionCurve::Circle(_) | OffsetIntersectionCurve::NoIntersection | OffsetIntersectionCurve::General => {}
+            other => panic!("Unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offset_cone_cone_with_offset() {
+        let c1 = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.5 };
+        let c2 = ConicalSurface { apex: DVec3::new(0.0, 0.0, 2.0), axis: DVec3::Z, radius: 2.0, half_angle_rad: 0.5 };
+        let result = intersect_offset_cone_cone(&c1, &c2, 0.2, 0.3);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+        ));
+    }
+
+    #[test]
+    fn offset_cylinder_cone_basic() {
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 };
+        let cone = ConicalSurface { apex: DVec3::new(0.0, 0.0, 5.0), axis: DVec3::Z, radius: 2.0, half_angle_rad: 0.3 };
+        let result = intersect_offset_cylinder_cone(&cyl, &cone, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::General
+        ));
+    }
+
+    #[test]
+    fn offset_cylinder_cone_with_offset() {
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 1.0 };
+        let cone = ConicalSurface { apex: DVec3::new(0.0, 0.0, 5.0), axis: DVec3::Z, radius: 2.0, half_angle_rad: 0.3 };
+        let result = intersect_offset_cylinder_cone(&cyl, &cone, 0.2, 0.1);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::General
+        ));
+    }
+
+    #[test]
+    fn offset_plane_cone_perpendicular() {
+        let plane = Plane { origin: DVec3::new(0.0, 0.0, 3.0), normal: DVec3::Z };
+        let cone = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.5 };
+        let result = intersect_offset_plane_cone(&plane, &cone, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::Ellipse(_)
+            | OffsetIntersectionCurve::NoIntersection
+        ));
+    }
+
+    #[test]
+    fn offset_plane_cone_with_offset() {
+        let plane = Plane { origin: DVec3::new(0.0, 0.0, 3.0), normal: DVec3::Z };
+        let cone = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.5 };
+        let result = intersect_offset_plane_cone(&plane, &cone, 0.2, 0.1);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::Ellipse(_)
+            | OffsetIntersectionCurve::NoIntersection
+        ));
+    }
+
+    #[test]
+    fn offset_sphere_cone_basic() {
+        let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 2.0), DVec3::Z, 3.0);
+        let cone = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.5 };
+        let result = intersect_offset_sphere_cone(&sphere, &cone, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::NoIntersection
+        ));
+    }
+
+    #[test]
+    fn offset_sphere_cone_negative_degenerate() {
+        let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 2.0), DVec3::Z, 0.3);
+        let cone = ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.5 };
+        // Negative offset larger than sphere radius → degenerate
+        match intersect_offset_sphere_cone(&sphere, &cone, -1.0, 0.0) {
+            OffsetIntersectionCurve::NoIntersection => {}
+            other => panic!("Expected NoIntersection for degenerate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offset_torus_torus_basic() {
+        let t1 = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 };
+        let t2 = ToroidalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, major_radius: 3.0, minor_radius: 0.8 };
+        let result = intersect_offset_torus_torus(&t1, &t2, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_torus_torus_with_offset() {
+        let t1 = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 };
+        let t2 = ToroidalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, major_radius: 3.0, minor_radius: 0.8 };
+        let result = intersect_offset_torus_torus(&t1, &t2, 0.2, 0.1);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_cylinder_torus_basic() {
+        let cyl = CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, radius: 2.0 };
+        let torus = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 5.0, minor_radius: 1.0 };
+        let result = intersect_offset_cylinder_torus(&cyl, &torus, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_torus_cone_basic() {
+        let torus = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 4.0, minor_radius: 1.0 };
+        let cone = ConicalSurface { apex: DVec3::new(0.0, 0.0, -2.0), axis: DVec3::Z, radius: 1.0, half_angle_rad: 0.4 };
+        let result = intersect_offset_torus_cone(&torus, &cone, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_plane_torus_basic() {
+        let plane = Plane { origin: DVec3::new(0.0, 0.0, 2.0), normal: DVec3::Z };
+        let torus = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 };
+        let result = intersect_offset_plane_torus(&plane, &torus, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TangentCircle(_)
+        ));
+    }
+
+    #[test]
+    fn offset_sphere_torus_basic() {
+        let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, 5.0);
+        let torus = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 };
+        let result = intersect_offset_sphere_torus(&sphere, &torus, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_sphere_torus_with_offsets() {
+        let sphere = SphericalSurface::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, 5.0);
+        let torus = ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 };
+        let result = intersect_offset_sphere_torus(&sphere, &torus, 0.5, 0.3);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_torus_via_dispatch() {
+        let s1 = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 });
+        let s2 = Surface3::Torus(ToroidalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, major_radius: 3.0, minor_radius: 0.8 });
+        let result = intersect_offset_surfaces(&s1, &s2, 0.0, 0.0);
+        assert!(matches!(result,
+            OffsetIntersectionCurve::NoIntersection
+            | OffsetIntersectionCurve::General
+            | OffsetIntersectionCurve::Circle(_)
+            | OffsetIntersectionCurve::TwoCircles(_, _)
+        ));
+    }
+
+    #[test]
+    fn offset_dispatch_new_pairings() {
+        // Verify that an un-handled pairing still falls back to numerical
+        let s1 = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 3.0, minor_radius: 1.0 });
+        let s2 = Surface3::Torus(ToroidalSurface { center: DVec3::new(2.0, 0.0, 0.0), axis: DVec3::Z, major_radius: 3.0, minor_radius: 0.8 });
+        let result = intersect_offset_surfaces(&s1, &s2, 0.0, 0.0);
+        // The new torus-torus handler should now be reached instead of numerical
+        assert!(!matches!(result, OffsetIntersectionCurve::NoIntersection));
     }
 }

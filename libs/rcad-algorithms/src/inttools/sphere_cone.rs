@@ -268,8 +268,8 @@ fn intersect_sphere_cone_off_axis(
     let d_coef = local_sq - sphere_r * sphere_r;
 
     const N_THETA: usize = 256;
-    let mut lower_branch: Vec<Option<DVec3>> = Vec::with_capacity(N_THETA + 1);
-    let mut upper_branch: Vec<Option<DVec3>> = Vec::with_capacity(N_THETA + 1);
+    let mut lower_branch: Vec<Option<(f64, DVec3)>> = Vec::with_capacity(N_THETA + 1);
+    let mut upper_branch: Vec<Option<(f64, DVec3)>> = Vec::with_capacity(N_THETA + 1);
 
     for i in 0..=N_THETA {
         let theta = std::f64::consts::TAU * i as f64 / N_THETA as f64;
@@ -309,30 +309,30 @@ fn intersect_sphere_cone_off_axis(
 
         // Lower branch — closer to apex
         if s_lower >= 0.0 {
-            lower_branch.push(Some(pt_at_s(s_lower)));
+            lower_branch.push(Some((theta, pt_at_s(s_lower))));
         } else {
             lower_branch.push(None);
         }
 
         // Upper branch — further from apex (skip if coincident with lower)
         if s_upper >= 0.0 && (s_upper - s_lower).abs() > TOLERANCE_ABS * 0.1 {
-            upper_branch.push(Some(pt_at_s(s_upper)));
+            upper_branch.push(Some((theta, pt_at_s(s_upper))));
         } else {
             upper_branch.push(None);
         }
     }
 
     // Extract contiguous valid runs from a branch array, handling θ=0/2π wrap.
-    let extract_runs = |branch: &[Option<DVec3>]| -> Vec<Vec<DVec3>> {
+    let extract_runs = |branch: &[Option<(f64, DVec3)>]| -> Vec<Vec<(f64, DVec3)>> {
         let n = branch.len();
         // Find first gap so we can rotate to avoid wrap issues
         let gap_at = branch.iter().position(|x| x.is_none()).unwrap_or(n);
-        let mut rotated: Vec<Option<DVec3>> = Vec::with_capacity(n);
+        let mut rotated: Vec<Option<(f64, DVec3)>> = Vec::with_capacity(n);
         rotated.extend_from_slice(&branch[gap_at..]);
         rotated.extend_from_slice(&branch[..gap_at]);
 
-        let mut curves: Vec<Vec<DVec3>> = Vec::new();
-        let mut current: Vec<DVec3> = Vec::new();
+        let mut curves: Vec<Vec<(f64, DVec3)>> = Vec::new();
+        let mut current: Vec<(f64, DVec3)> = Vec::new();
         for pt in &rotated {
             match pt {
                 Some(p) => current.push(*p),
@@ -347,14 +347,106 @@ fn intersect_sphere_cone_off_axis(
         if current.len() >= 2 {
             curves.push(current);
         }
+
+        // Fix θ monotonicity in runs that wrap the θ=0/2π boundary
+        // (rotation may place TAU before 0 in a single run)
+        for curve in &mut curves {
+            for j in 1..curve.len() {
+                if curve[j].0 < curve[j - 1].0 - 1e-12 {
+                    for k in j..curve.len() {
+                        curve[k].0 += std::f64::consts::TAU;
+                    }
+                    break;
+                }
+            }
+        }
+
         curves
     };
 
-    let mut all_branches = extract_runs(&lower_branch);
-    all_branches.extend(extract_runs(&upper_branch));
+    let lower_param_branches = extract_runs(&lower_branch);
+    let upper_param_branches = extract_runs(&upper_branch);
+
+    // ── Adaptive chord-error refinement ────────────────────────────────────
+    const CHORD_TOL: f64 = 1e-6;
+    const REFINE_DEPTH: usize = 2;
+
+    // Lower-branch eval: recompute 3D point at any θ, picking the near-apex root
+    let lower_eval = {
+        move |theta: f64| -> Option<DVec3> {
+            let (cos_t, sin_t) = (theta.cos(), theta.sin());
+            let b_theta = -2.0 * (cz + tan_beta * (cx * cos_t + cy * sin_t));
+            let delta = b_theta * b_theta - 4.0 * a_coef * d_coef;
+            if delta < 0.0 {
+                return None;
+            }
+            let sqrt_delta = delta.sqrt();
+            let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
+            let s_near = if s_far.abs() > 1e-15 {
+                d_coef / (a_coef * s_far)
+            } else {
+                (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
+            };
+            let (s_lower, _s_upper) = if s_far <= s_near { (s_far, s_near) } else { (s_near, s_far) };
+            if s_lower < 0.0 {
+                return None;
+            }
+            let radial = s_lower * tan_beta;
+            Some(apex_true + axis * s_lower + radial * (u * cos_t + v * sin_t))
+        }
+    };
+
+    // Upper-branch eval: recompute 3D point at any θ, picking the far-from-apex root
+    let upper_eval = {
+        move |theta: f64| -> Option<DVec3> {
+            let (cos_t, sin_t) = (theta.cos(), theta.sin());
+            let b_theta = -2.0 * (cz + tan_beta * (cx * cos_t + cy * sin_t));
+            let delta = b_theta * b_theta - 4.0 * a_coef * d_coef;
+            if delta < 0.0 {
+                return None;
+            }
+            let sqrt_delta = delta.sqrt();
+            let s_far = (-b_theta - b_theta.signum() * sqrt_delta) / (2.0 * a_coef);
+            let s_near = if s_far.abs() > 1e-15 {
+                d_coef / (a_coef * s_far)
+            } else {
+                (-b_theta + b_theta.signum() * sqrt_delta) / (2.0 * a_coef)
+            };
+            let (s_lower, s_upper) = if s_far <= s_near { (s_far, s_near) } else { (s_near, s_far) };
+            if s_upper < 0.0 || (s_upper - s_lower).abs() <= TOLERANCE_ABS * 0.1 {
+                return None;
+            }
+            let radial = s_upper * tan_beta;
+            Some(apex_true + axis * s_upper + radial * (u * cos_t + v * sin_t))
+        }
+    };
+
+    let mut result: Vec<Vec<DVec3>> = Vec::new();
+
+    for branch in &lower_param_branches {
+        if branch.len() >= 4 {
+            let refined = crate::inttools::pcurve_derive::refine_polyline(
+                branch, &lower_eval, CHORD_TOL, REFINE_DEPTH,
+            );
+            result.push(refined.into_iter().map(|(_, p)| p).collect());
+        } else if branch.len() >= 2 {
+            result.push(branch.iter().map(|&(_, p)| p).collect());
+        }
+    }
+
+    for branch in &upper_param_branches {
+        if branch.len() >= 4 {
+            let refined = crate::inttools::pcurve_derive::refine_polyline(
+                branch, &upper_eval, CHORD_TOL, REFINE_DEPTH,
+            );
+            result.push(refined.into_iter().map(|(_, p)| p).collect());
+        } else if branch.len() >= 2 {
+            result.push(branch.iter().map(|&(_, p)| p).collect());
+        }
+    }
 
     // Closed-curve check: drop duplicate endpoint for runs where first ≈ last
-    for branch in &mut all_branches {
+    for branch in &mut result {
         if branch.len() >= 3 {
             let d = (branch[0] - branch[branch.len() - 1]).length();
             if d < TOLERANCE_ABS * 10.0 {
@@ -364,15 +456,12 @@ fn intersect_sphere_cone_off_axis(
     }
 
     // Filter very short branches and empty
-    let all_branches: Vec<Vec<DVec3>> = all_branches
-        .into_iter()
-        .filter(|b| b.len() >= 3)
-        .collect();
+    let result: Vec<Vec<DVec3>> = result.into_iter().filter(|b| b.len() >= 3).collect();
 
-    if all_branches.is_empty() {
+    if result.is_empty() {
         SphereConeResult::NoIntersection
     } else {
-        SphereConeResult::Polyline(all_branches)
+        SphereConeResult::Polyline(result)
     }
 }
 
