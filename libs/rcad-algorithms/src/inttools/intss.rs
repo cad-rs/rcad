@@ -35,7 +35,8 @@ use rcad_kernel::geom::{
 use crate::inttools::{
     cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
-    cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance},
+    cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder, intersect_cylinder_cylinder_with_tolerance, sample_perpendicular_offset_curves},
+    cylinder_torus::CylinderTorusResult as CylinderTorusResultAlias,
     marching::project_onto_intersection_tol,
     pcurve_derive::{
         circle_pcurve_on_cone, circle_pcurve_on_cylinder, circle_pcurve_on_plane,
@@ -47,6 +48,7 @@ use crate::inttools::{
     plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},
     plane_plane::{PlanePlaneResult, intersect_plane_plane},
     plane_sphere::{PlaneSphereResult, intersect_plane_sphere},
+    plane_torus::{PlaneTorusResult, intersect_plane_torus, intersect_plane_torus_skew},
     sphere_cone::{SphereConeResult, intersect_sphere_cone_with_tolerance},
     torus_cone::{TorusConeResult, intersect_torus_cone_with_tolerance},
     torus_torus::{TorusTorusResult, intersect_torus_torus_with_tolerance},
@@ -577,8 +579,28 @@ fn sphere_x_cylinder_with_tolerance(
         return out;
     }
 
-    // General case: numerical
-    numeric_intss(&Surface3::Sphere(*s), &Surface3::Cylinder(*c))
+    // General / off-axis case: try analytic quartic solver first.
+    use super::sphere_cylinder::{SphereCylinderResult, intersect_sphere_cylinder_with_tolerance};
+    match intersect_sphere_cylinder_with_tolerance(s, c, fuzzy_tol) {
+        SphereCylinderResult::SkewQuartic(branches) => {
+            let mut out = SurfaceSurfaceIntersection::default();
+            for branch in &branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch.clone()),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+            out
+        }
+        _ => {
+            // Fall back to numeric marching if the quartic solver returns nothing.
+            numeric_intss(&Surface3::Sphere(*s), &Surface3::Cylinder(*c))
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -672,69 +694,8 @@ fn cylinder_x_cylinder(
     c1: &CylindricalSurface,
     c2: &CylindricalSurface,
 ) -> SurfaceSurfaceIntersection {
-    if vectors_parallel(c1.axis, c2.axis) {
-        // Parallel cylinders.
-        // Find separation of axes.
-        let diff = c2.origin - c1.origin;
-        // Project diff onto plane perp to axis
-        let proj = diff - c1.axis * diff.dot(c1.axis);
-        let d = proj.length();
-        let r1 = c1.radius;
-        let r2 = c2.radius;
-
-        // No intersection or one inside the other
-        if d > r1 + r2 + TOLERANCE_ABS || d < (r1 - r2).abs() - TOLERANCE_ABS {
-            return SurfaceSurfaceIntersection::default();
-        }
-
-        // For coaxial cylinders of the same radius → coincident (infinite intersection)
-        if d < TOLERANCE_ABS && (r1 - r2).abs() < TOLERANCE_ABS {
-            return SurfaceSurfaceIntersection::default(); // coincident
-        }
-
-        // The two cylinders intersect in two lines parallel to the axis (for infinite cylinders)
-        // At angle θ in the cross-section where: r1²+d²-2*d*r1*cos(θ) = r2² → θ from c1 axis
-        // These intersection lines are infinitely long — represent as lines through 2 points.
-        let mut out = SurfaceSurfaceIntersection::default();
-        // Direction of separation (in perp plane)
-        let sep_dir = if d > TOLERANCE_ABS {
-            proj / d
-        } else {
-            any_perpendicular(c1.axis)
-        };
-        // Angle of intersection point from c1 axis towards c2 axis
-        let cos_t = if d > TOLERANCE_ABS {
-            (d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)
-        } else {
-            0.0
-        };
-        let cos_t = cos_t.clamp(-1.0, 1.0);
-        let sin_t = (1.0 - cos_t * cos_t).sqrt();
-        let perp = c1.axis.cross(sep_dir).normalize_or_zero();
-
-        for &sign in &[1.0f64, -1.0f64] {
-            let dir_in_plane = sep_dir * cos_t + perp * (sign * sin_t);
-            let pt = c1.origin + dir_in_plane * r1;
-            let line = Line3 {
-                origin: pt,
-                direction: c1.axis,
-            };
-            let pca = line_pcurve_on_cylinder(&line, c1);
-            let pcb = line_pcurve_on_cylinder(&line, c2);
-            out.curves.push(SurfaceIntersectionResult {
-                curve_3d: SurfaceCurve::Line(line),
-                pcurve_on_a: Some(pca),
-                pcurve_on_b: Some(pcb),
-            });
-            if sin_t < TOLERANCE_ABS {
-                break;
-            } // tangent — only one line
-        }
-        return out;
-    }
-
-    // Non-parallel axes → numerical
-    numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2))
+    use crate::inttools::cylinder_cylinder::intersect_cylinder_cylinder;
+    cylinder_x_cylinder_from_result(c1, c2, intersect_cylinder_cylinder(c1, c2))
 }
 
 fn cylinder_x_cylinder_with_tolerance(
@@ -800,9 +761,31 @@ fn cylinder_x_cylinder_from_result(
                 });
             }
         }
-        CylinderCylinderResult::PerpendicularOffsetCurves { .. }
-        | CylinderCylinderResult::General => {
+        CylinderCylinderResult::PerpendicularOffsetCurves { ref cyl1, ref cyl2, dist } => {
+            let branches = sample_perpendicular_offset_curves(cyl1, cyl2, dist, 16);
+            for branch in branches {
+                if branch.len() < 2 { continue; }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+        }
+        CylinderCylinderResult::General => {
             return numeric_intss(&Surface3::Cylinder(*c1), &Surface3::Cylinder(*c2));
+        }
+        CylinderCylinderResult::SkewQuartic(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
         }
     }
     out
@@ -841,6 +824,18 @@ fn cylinder_x_cone(
             return numeric_intss(&Surface3::Cylinder(*cyl), &Surface3::Cone(*cone));
         }
         CylinderConeResult::ParallelOffsetPolyline(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+        }
+        CylinderConeResult::SkewQuartic(branches) => {
             for branch in branches {
                 if branch.len() < 2 {
                     continue;
@@ -911,6 +906,18 @@ fn cone_x_cone_from_result(
         ConeConeResult::General => {
             return numeric_intss(&Surface3::Cone(*k1), &Surface3::Cone(*k2));
         }
+        ConeConeResult::SkewQuartic(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+        }
     }
     out
 }
@@ -933,6 +940,11 @@ fn cone_x_cone_from_result(
 ///   `R ± sqrt(r² - d²)`, both centered at the torus center projected onto
 ///   the plane.
 ///
+/// **Analytic case — plane ∥ torus axis**:
+///   If the plane is parallel to the torus axis, the tube center circle (radius
+///   `R`) intersects the plane at up to two points, producing up to two
+///   circles of radius `r` (the tube radius) in the plane.
+///
 /// **All other planes** fall back to numerical marching.
 fn torus_x_plane(
     torus: &rcad_kernel::geom::ToroidalSurface,
@@ -941,19 +953,97 @@ fn torus_x_plane(
     let axis = torus.axis.normalize();
     let normal = plane.normal.normalize();
 
-    // Check whether the plane is perpendicular to the torus axis.
-    // cos(angle between normal and axis): perpendicular ⟺ |cos| ≈ 1.
     let cos_angle = axis.dot(normal).abs();
-    const PERP_TOL: f64 = TOLERANCE_MESH_LEGACY;
+    const TOL: f64 = TOLERANCE_MESH_LEGACY;
 
-    if (cos_angle - 1.0).abs() > PERP_TOL {
-        // Not perpendicular — fall back to numerical
-        return numeric_intss(
-            &Surface3::Torus(*torus),
-            &Surface3::Plane(*plane),
-        );
+    // ── Perpendicular to axis ─────────────────────────────────────────────────
+    if (cos_angle - 1.0).abs() < TOL {
+        // Existing perpendicular analytic handling.
+        return torus_x_plane_perp(torus, plane, axis, normal);
     }
 
+    // ── Parallel to axis (delegate to plane_torus module) ─────────────────────
+    if cos_angle < TOL {
+        return torus_x_plane_parallel(torus, plane);
+    }
+
+    // ── Skew → u-parameterized analytic solver ─────────────────────────────────
+    let branches = intersect_plane_torus_skew(plane, torus);
+    if !branches.is_empty() {
+        let mut out = SurfaceSurfaceIntersection::default();
+        for branch in branches {
+            if branch.len() < 2 { continue; }
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Polyline(branch),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
+        }
+        return out;
+    }
+
+    // ── Fallback → numeric marching ──────────────────────────────────────────────
+    numeric_intss(
+        &Surface3::Torus(*torus),
+        &Surface3::Plane(*plane),
+    )
+}
+
+/// Handle plane ∥ torus axis via the analytic `plane_torus` module.
+fn torus_x_plane_parallel(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    plane: &rcad_kernel::geom::Plane,
+) -> SurfaceSurfaceIntersection {
+    use std::f64::consts::TAU;
+    let mut out = SurfaceSurfaceIntersection::default();
+    match intersect_plane_torus(plane, torus) {
+        PlaneTorusResult::NoIntersection => {}
+        PlaneTorusResult::TangentCircle(c) => {
+            let pca = fallback_pcurve_by_projection(
+                &Curve3::Circle(c), &[0.0, TAU], &Surface3::Torus(*torus));
+            let pcb = circle_pcurve_on_plane(&c, plane);
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Circle(c),
+                pcurve_on_a: Some(pca),
+                pcurve_on_b: Some(pcb),
+            });
+        }
+        PlaneTorusResult::TwoCircles(c1, c2) => {
+            for circ in [c1, c2] {
+                let pca = fallback_pcurve_by_projection(
+                    &Curve3::Circle(circ), &[0.0, TAU], &Surface3::Torus(*torus));
+                let pcb = circle_pcurve_on_plane(&circ, plane);
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Circle(circ),
+                    pcurve_on_a: Some(pca),
+                    pcurve_on_b: Some(pcb),
+                });
+            }
+        }
+        PlaneTorusResult::SkewPolyline(branches) => {
+            for branch in branches {
+                if branch.len() < 2 { continue; }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+        }
+        PlaneTorusResult::General => {
+            return numeric_intss(&Surface3::Torus(*torus), &Surface3::Plane(*plane));
+        }
+    }
+    out
+}
+
+/// Handle plane ⟂ torus axis (two coaxial circles).
+fn torus_x_plane_perp(
+    torus: &rcad_kernel::geom::ToroidalSurface,
+    plane: &rcad_kernel::geom::Plane,
+    axis: DVec3,
+    normal: DVec3,
+) -> SurfaceSurfaceIntersection {
     // Signed distance from torus center to the plane along the axis.
     let d = (plane.origin - torus.center).dot(normal) * normal.dot(axis).signum();
     let d_sq = d * d;
@@ -1094,9 +1184,29 @@ fn torus_x_sphere(
     let foot = torus.center + axis * t;
     let d_perp = (sphere.center - foot).length();
 
-    // Analytic case: sphere center on torus axis
+    // On-axis: sphere center on torus axis → circles (existing path)
     if d_perp < TOLERANCE_ABS {
         return torus_x_sphere_on_axis(torus, sphere, axis);
+    }
+
+    // Off-axis: try analytic torus-parameterized solver before numeric
+    let st_result =
+        super::sphere_torus::intersect_skew_sphere_torus(sphere, torus);
+    if !st_result.is_empty() {
+        let mut out = SurfaceSurfaceIntersection::default();
+        for branch in st_result {
+            if branch.len() < 2 {
+                continue;
+            }
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Polyline(branch),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
+        }
+        if !out.curves.is_empty() {
+            return out;
+        }
     }
 
     numeric_intss(&Surface3::Torus(*torus), &Surface3::Sphere(*sphere))
@@ -1224,6 +1334,23 @@ fn torus_x_cylinder(
     // Coaxial: same axis line
     if sin_angle < TOLERANCE_ANG && d_perp < TOLERANCE_ABS {
         return torus_x_cylinder_coaxial(torus, cyl, t_axis);
+    }
+
+    // Skew: try quartic-based analytic solver
+    let ct_result = super::cylinder_torus::intersect_cylinder_torus_with_tolerance(cyl, torus, 0.0);
+    if let CylinderTorusResultAlias::SkewQuartic(branches) = &ct_result {
+        let mut out = SurfaceSurfaceIntersection::default();
+        for branch in branches {
+            if branch.len() < 2 {
+                continue;
+            }
+            out.curves.push(SurfaceIntersectionResult {
+                curve_3d: SurfaceCurve::Polyline(branch.clone()),
+                pcurve_on_a: None,
+                pcurve_on_b: None,
+            });
+        }
+        return out;
     }
 
     numeric_intss(&Surface3::Torus(*torus), &Surface3::Cylinder(*cyl))
@@ -1360,6 +1487,19 @@ fn torus_x_cone_with_tolerance(
                 pcurve_on_b: Some(pcb),
             });
         }
+        TorusConeResult::SkewQuartic(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+            return out;
+        }
         TorusConeResult::General => {
             return numeric_intss(&Surface3::Torus(*torus), &Surface3::Cone(*cone));
         }
@@ -1446,6 +1586,19 @@ fn torus_x_torus_with_tolerance(
                 pcurve_on_a: Some(pca),
                 pcurve_on_b: Some(pcb),
             });
+        }
+        TorusTorusResult::SkewQuartic(branches) => {
+            for branch in branches {
+                if branch.len() < 2 {
+                    continue;
+                }
+                out.curves.push(SurfaceIntersectionResult {
+                    curve_3d: SurfaceCurve::Polyline(branch),
+                    pcurve_on_a: None,
+                    pcurve_on_b: None,
+                });
+            }
+            return out;
         }
         TorusTorusResult::Coaxial => {
             // Identical tori - infinite overlap, return empty
@@ -2537,8 +2690,43 @@ mod tests {
     }
 
     #[test]
+    fn torus_sphere_off_axis_skew_polyline() {
+        // Torus: axis=Z, R=5, r=2.
+        // Sphere: center at (3,0,0), radius=5 (off-axis by 3 units).
+        // The intersection should be a closed polyline, not two circles.
+        let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: DVec3::ZERO,
+            axis: DVec3::Z,
+            major_radius: 5.0,
+            minor_radius: 2.0,
+        });
+        let sphere = Surface3::Sphere(SphericalSurface {
+            center: DVec3::new(3.0, 0.0, 0.0),
+            axis: DVec3::Z,
+            radius: 5.0,
+            ref_dir: any_perpendicular(DVec3::Z),
+        });
+
+        let r = intersect_surfaces(&torus, &sphere);
+        assert!(!r.curves.is_empty(), "off-axis torus-sphere should have intersection");
+        // Should produce at least one polyline (skew solver)
+        for c in &r.curves {
+            match &c.curve_3d {
+                SurfaceCurve::Polyline(pts) => {
+                    assert!(pts.len() >= 4, "polyline should have ≥4 points");
+                }
+                other => {
+                    panic!("Expected Polyline, got {:?}", other);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn torus_cylinder_coaxial_gives_circles() {
         // Torus: axis=Z, R=5, r=1.
+        // Cylinder: axis=Z, radius=5 (cuts torus tube at centerline).
+        // (5-5)² + h² = 1² → h = ±1 → two circles.
         // Cylinder: axis=Z, radius=5 (cuts torus tube at centerline).
         // (5-5)² + h² = 1² → h = ±1 → two circles.
         let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {

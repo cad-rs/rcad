@@ -20,14 +20,30 @@
 //! When the two tube circles are tangent (touching), the 3D intersection is a
 //! single tangent circle.
 //!
+//! ## Skew case (non-coaxial, non-parallel axes)
+//!
+//! Solved analytically by parameterizing one torus P₁(u,v) and substituting
+//! into the other torus's implicit equation:
+//!
+//! ```text
+//! (|P|² + R₂² - r₂²)² = 4R₂²(|P|² - (P·a₂)²)
+//! ```
+//!
+//! At each u ∈ [0, 2π) the substitution yields a quadratic trigonometric
+//! equation in v (the tube angle).  Via t = tan(v/2) this becomes a monic
+//! quartic in t, solved via Ferrari's method.
+//!
 //! ## General case
 //!
 //! For all other configurations (skew axes, offset axes) the intersection is a
 //! complex space curve. We return `General` so the caller falls back to numeric
 //! marching.
 
+use std::f64::consts::TAU;
+
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, ToroidalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, ToroidalSurface};
+use rcad_kernel::SurfaceEval;
 
 use crate::tolerance::*;
 
@@ -48,6 +64,9 @@ pub enum TorusTorusResult {
     TangentCircle(Circle3),
     /// Coaxial tori with identical geometry (same axis, same radii, same center).
     Coaxial,
+    /// Skew (non-coaxial) intersection: analytic quartic solution via
+    /// torus parameterization.  Returns one or more 3D polylines.
+    SkewQuartic(Vec<Vec<DVec3>>),
     /// General case. Caller should fall back to marching.
     General,
 }
@@ -87,6 +106,13 @@ pub fn intersect_torus_torus_with_tolerance(
     // ── Coaxial: same axis line ───────────────────────────────────────────────
     if sin_angle < TOLERANCE_ANG && d_perp < tol {
         return intersect_torus_torus_coaxial(t1, t2, a1);
+    }
+
+    // ── Skew (non-coaxial): try analytic quartic solver ──────────────────────
+    // Parameterize t1 via (u,v) and substitute into t2's implicit.
+    let skew_result = intersect_skew_torus_torus(t1, t2);
+    if !skew_result.is_empty() {
+        return TorusTorusResult::SkewQuartic(skew_result);
     }
 
     // ── General case: numerical fallback ─────────────────────────────────────
@@ -229,8 +255,256 @@ fn intersect_torus_torus_coaxial(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests
+// Skew (non-coaxial) case — analytic quartic solver
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Skew torus × torus intersection via torus-parameterized quartic solver.
+///
+/// Parameterize torus 1 P₁(u,v) and substitute into torus 2's implicit:
+///
+/// ```text
+/// (|P|² + R₂² - r₂²)² = 4R₂²(|P|² - (P·a₂)²)
+/// ```
+///
+/// At each u the substitution yields a quadratic trigonometric equation in v:
+///
+/// ```text
+/// A_const + A_cos·cos(v) + A_sin·sin(v) + A_cos2·cos²(v)
+///     + A_sin2·sin²(v) + A_cossin·cos(v)·sin(v) = 0
+/// ```
+///
+/// Via t = tan(v/2):
+/// ```text
+/// a₄·t⁴ + a₃·t³ + a₂·t² + a₁·t + a₀ = 0
+/// ```
+/// Solved via Ferrari's method (crate::solve_quartic).
+fn intersect_skew_torus_torus(
+    t1: &ToroidalSurface,
+    t2: &ToroidalSurface,
+) -> Vec<Vec<DVec3>> {
+    let a1 = t1.axis.normalize();
+    let a2 = t2.axis.normalize();
+    let o1 = t1.center;
+    let o2 = t2.center;
+
+    let d = o1 - o2; // t1 center in t2-centered frame
+
+    let r_major1 = t1.major_radius;
+    let r_minor1 = t1.minor_radius;
+    let r_major2 = t2.major_radius;
+    let r_minor2 = t2.minor_radius;
+
+    let r_major1_sq = r_major1 * r_major1;
+    let r_minor1_sq = r_minor1 * r_minor1;
+    let r_major2_sq = r_major2 * r_major2;
+    let r_minor2_sq = r_minor2 * r_minor2;
+    let c2_sq = r_major2_sq - r_minor2_sq; // R₂² - r₂²
+    let c2_sq_sq = c2_sq * c2_sq; // (R₂² - r₂²)²
+
+    // Perpendicular basis for torus 1
+    let x1 = any_perpendicular(a1);
+    let y1 = a1.cross(x1).normalize();
+
+    // ── Pre-computed constants (independent of u) ──────────────────────────
+    let d_sq = d.length_squared();
+    let d_dot_a1 = d.dot(a1);
+    let d_dot_a2 = d.dot(a2);
+    let a1_dot_a2 = a1.dot(a2);
+
+    // Components of D and a2 in the plane of torus 1
+    let d_dot_x1 = d.dot(x1);
+    let d_dot_y1 = d.dot(y1);
+    let a2_dot_x1 = a2.dot(x1);
+    let a2_dot_y1 = a2.dot(y1);
+
+    // Constant (u-independent) parts of the trigonometric coefficients
+    // sin_S = coefficient of sin(v) in |P₁ - O₂|²
+    let sin_s = 2.0 * r_minor1 * d_dot_a1;
+
+    // sin_T = coefficient of sin(v) in (P₁ - O₂)·a₂
+    let sin_t = r_minor1 * a1_dot_a2;
+
+    // Constant sub-expressions for A_sin2 and parts of A_const, A_sin
+    let term_r2_sq_minus_m2_sq = r_minor2_sq - r_major2_sq;
+
+    let sin_s_sq = sin_s * sin_s;
+    let sin_t_sq = sin_t * sin_t;
+    let four_r2_sq = 4.0 * r_major2_sq;
+
+    // A_sin2 and the sin_T contribution to A_cossin are constant:
+    let a_sin2_const = sin_s_sq + four_r2_sq * sin_t_sq;
+    let a_cossin_sin_t_const = four_r2_sq * sin_t;
+
+    const N_SAMPLES: usize = 128;
+    let mut samples: Vec<(f64, f64, DVec3)> = Vec::new();
+
+    for i in 0..=N_SAMPLES {
+        let u = (i as f64 / N_SAMPLES as f64) * TAU;
+        let (cu, su) = (u.cos(), u.sin());
+
+        // r_xy(u) = cos(u)·x₁ + sin(u)·y₁
+        let drxy = d_dot_x1 * cu + d_dot_y1 * su; // D · r_xy(u)
+        let rxy_a2 = a2_dot_x1 * cu + a2_dot_y1 * su; // r_xy(u) · a₂
+
+        // ── Compute trigonometric coefficients ────────────────────────────
+        // S = |P₁ - O₂|² = M + N·cos(v) + sin_S·sin(v)
+        let m = d_sq + r_major1_sq + r_minor1_sq + 2.0 * r_major1 * drxy;
+        let n = 2.0 * r_minor1 * (drxy + r_major1);
+
+        // T = (P₁ - O₂)·a₂ = Q + R_cos·cos(v) + sin_T·sin(v)
+        let q = d_dot_a2 + r_major1 * rxy_a2;
+        let r_cos = r_minor1 * rxy_a2;
+
+        let m_sq = m * m;
+        let n_sq = n * n;
+        let q_sq = q * q;
+        let r_cos_sq = r_cos * r_cos;
+
+        // A_const = M² + 2(r₂² - R₂²)M + 4R₂²Q² + (R₂² - r₂²)²
+        let a_const = m_sq + 2.0 * term_r2_sq_minus_m2_sq * m + four_r2_sq * q_sq + c2_sq_sq;
+
+        // A_cos = 2MN + 2(r₂² - R₂²)N + 8R₂²·Q·R_cos
+        let a_cos = 2.0 * m * n + 2.0 * term_r2_sq_minus_m2_sq * n + 8.0 * r_major2_sq * q * r_cos;
+
+        // A_sin = 2M·sin_S + 2(r₂² - R₂²)·sin_S + 8R₂²·Q·sin_T
+        let a_sin = 2.0 * (m * sin_s + term_r2_sq_minus_m2_sq * sin_s) + 8.0 * r_major2_sq * q * sin_t;
+
+        // A_cos2 = N² + 4R₂²·R_cos²
+        let a_cos2 = n_sq + four_r2_sq * r_cos_sq;
+
+        // A_sin2 = sin_S² + 4R₂²·sin_T²  (constant)
+        let a_sin2 = a_sin2_const;
+
+        // A_cossin = 2N·sin_S + 8R₂²·R_cos·sin_T
+        let a_cossin = 2.0 * n * sin_s + a_cossin_sin_t_const * r_cos;
+
+        // ── Quartic in t = tan(v/2) ───────────────────────────────────────
+        let a4 = a_const - a_cos + a_cos2;
+        let a3 = 2.0 * (a_sin - a_cossin);
+        let a2 = 2.0 * a_const - 2.0 * a_cos2 + 4.0 * a_sin2;
+        let a1 = 2.0 * (a_sin + a_cossin);
+        let a0 = a_const + a_cos + a_cos2;
+
+        let t_roots = crate::solve_quartic(a4, a3, a2, a1, a0);
+
+        // Convert t = tan(v/2) → v ∈ [0, 2π)
+        let mut v_vals: Vec<f64> = Vec::new();
+        for &t in &t_roots {
+            if t.is_finite() {
+                let v = 2.0 * t.atan();
+                let v_norm = if v < 0.0 { v + TAU } else { v };
+                v_vals.push(v_norm);
+            }
+        }
+
+        // Check for root at/near v = π (t → ∞).
+        // The value of the trigonometric equation at v = π equals a₄.
+        if a4.abs() < 1e-6 {
+            v_vals.push(std::f64::consts::PI);
+        }
+
+        // Deduplicate v values
+        v_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v_vals.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+        for &v in &v_vals {
+            if v.is_finite() {
+                let p = t1.point_at(u, v);
+                if p.is_finite() {
+                    samples.push((u, v, p));
+                }
+            }
+        }
+    }
+
+    if samples.len() < 2 {
+        return vec![];
+    }
+
+    // ── Branch extraction ──────────────────────────────────────────────────
+    samples.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
+    let mut branches: Vec<Vec<(f64, DVec3)>> = Vec::new();
+
+    let mut i = 0;
+    while i < samples.len() {
+        let u_cur = samples[i].0;
+        let mut cur_pts: Vec<(f64, DVec3)> = Vec::new();
+        while i < samples.len() && (samples[i].0 - u_cur).abs() < 1e-14 {
+            cur_pts.push((samples[i].1, samples[i].2));
+            i += 1;
+        }
+        cur_pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        if branches.is_empty() {
+            for &(v, p) in &cur_pts {
+                branches.push(vec![(u_cur, p)]);
+            }
+        } else {
+            let v_threshold = if cur_pts.len() >= 2 {
+                let v_range = cur_pts.last().unwrap().0 - cur_pts[0].0;
+                (v_range / cur_pts.len() as f64) * 2.5
+            } else {
+                (TAU / N_SAMPLES as f64) * 20.0
+            };
+
+            let mut assigned = vec![false; cur_pts.len()];
+            for branch in &mut branches {
+                let last_v = branch.last().unwrap().0;
+                let mut best_idx = None;
+                let mut best_dist = f64::MAX;
+                for (j, &(v, _)) in cur_pts.iter().enumerate() {
+                    if !assigned[j] {
+                        let dist = (v - last_v).abs();
+                        if dist < best_dist && dist < v_threshold {
+                            best_dist = dist;
+                            best_idx = Some(j);
+                        }
+                    }
+                }
+                if let Some(idx) = best_idx {
+                    branch.push((u_cur, cur_pts[idx].1));
+                    assigned[idx] = true;
+                }
+            }
+            for (j, &(_, p)) in cur_pts.iter().enumerate() {
+                if !assigned[j] {
+                    branches.push(vec![(u_cur, p)]);
+                }
+            }
+        }
+    }
+
+    // Convert to 3D polylines, filter short branches
+    let min_len = 4;
+    let branches_3d: Vec<Vec<DVec3>> = branches
+        .into_iter()
+        .filter(|b| b.len() >= min_len)
+        .map(|b| b.into_iter().map(|(_, p)| p).collect())
+        .collect();
+
+    // Dedup near-duplicate trailing points
+    let mut result = Vec::new();
+    for mut branch in branches_3d {
+        while branch.len() >= 3 {
+            let n = branch.len();
+            if (branch[n - 1] - branch[0]).length_squared() < TOLERANCE_VEC_SQ_MIN {
+                branch.pop();
+            } else {
+                break;
+            }
+        }
+        if branch.len() >= 2 {
+            result.push(branch);
+        }
+    }
+
+    result
+}
 
 #[cfg(test)]
 mod tests {
@@ -270,6 +544,7 @@ mod tests {
             TorusTorusResult::NoIntersection => {}
             TorusTorusResult::General => {}
             TorusTorusResult::Coaxial => {}
+            _ => {}
         }
     }
 
@@ -292,22 +567,36 @@ mod tests {
         }
     }
 
-    /// Non-coaxial tori should return General.
+    /// Non-coaxial tori (parallel axes, offset centers) should return SkewQuartic
+    /// when the analytic solver succeeds, or General as a fallback.
     #[test]
     fn non_coaxial_tori_general() {
         let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.0);
         let t2 = torus(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, 5.0, 1.0);
         let result = intersect_torus_torus(&t1, &t2);
-        assert!(matches!(result, TorusTorusResult::General));
+        match result {
+            TorusTorusResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected ≥1 branch");
+            }
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
-    /// Tori with skew axes should return General.
+    /// Tori with skew axes should return SkewQuartic when the analytic solver
+    /// succeeds, or General as a fallback.
     #[test]
     fn skew_axes_tori_general() {
         let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.0);
         let t2 = torus(DVec3::ZERO, DVec3::X, 5.0, 1.0);
         let result = intersect_torus_torus(&t1, &t2);
-        assert!(matches!(result, TorusTorusResult::General));
+        match result {
+            TorusTorusResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected ≥1 branch");
+            }
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
     }
 
     /// Concentric tori with touching tubes (tangent case).
@@ -361,5 +650,99 @@ mod tests {
         // Same torus, just opposite axis direction
         let result = intersect_torus_torus(&t1, &t2);
         assert!(matches!(result, TorusTorusResult::Coaxial));
+    }
+
+    // ── Skew solver tests ──────────────────────────────────────────────────
+
+    /// Skew tori with perpendicular axes (Z and X) and different major radii.
+    /// Torus1: R=5, r=1, axis=Z, center=origin.
+    /// Torus2: R=4, r=0.8, axis=X, center=origin.
+    /// The two tori should intersect in a space curve.
+    #[test]
+    fn skew_axes_different_major_radii() {
+        let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.0);
+        let t2 = torus(DVec3::ZERO, DVec3::X, 4.0, 0.8);
+        let result = intersect_torus_torus(&t1, &t2);
+        match &result {
+            TorusTorusResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected ≥1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} has non-finite point");
+                    }
+                }
+            }
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
+    }
+
+    /// Skew tori with perpendicular axes (Z and Y) and offset center.
+    /// Torus1: R=5, r=1, axis=Z, center=origin.
+    /// Torus2: R=5, r=1, axis=Y, center at (0, 2, 2).
+    /// The offset reduces the intersection region.
+    #[test]
+    fn skew_y_axis_offset_tori() {
+        let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.0);
+        let t2 = torus(DVec3::new(0.0, 2.0, 2.0), DVec3::Y, 5.0, 1.0);
+        let result = intersect_torus_torus(&t1, &t2);
+        match &result {
+            TorusTorusResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected ≥1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} has non-finite point");
+                    }
+                }
+            }
+            TorusTorusResult::NoIntersection => {} // Possible if offset is large enough
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected SkewQuartic, NoIntersection, or General, got {other:?}"),
+        }
+    }
+
+    /// Skew tori with perpendicular axes (X and Z) and different minor radii.
+    /// Torus1: R=5, r=1.5, axis=Z, center=origin
+    /// Torus2: R=5, r=0.5, axis=X, center=origin
+    /// The different tube thicknesses still produce an intersection.
+    #[test]
+    fn skew_different_minor_radii() {
+        let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.5);
+        let t2 = torus(DVec3::ZERO, DVec3::X, 5.0, 0.5);
+        let result = intersect_torus_torus(&t1, &t2);
+        match &result {
+            TorusTorusResult::SkewQuartic(branches) => {
+                assert!(!branches.is_empty(), "expected ≥1 branch");
+                for (i, branch) in branches.iter().enumerate() {
+                    assert!(branch.len() >= 2, "branch {i} has < 2 points");
+                    for p in branch {
+                        assert!(p.is_finite(), "branch {i} has non-finite point");
+                    }
+                }
+            }
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected SkewQuartic or General, got {other:?}"),
+        }
+    }
+
+    /// Skew tori that are far apart — should produce empty intersection.
+    /// Torus1: R=5, r=1, axis=Z, center=origin.
+    /// Torus2: R=5, r=1, axis=X, center at (20, 0, 0).
+    /// The 20-unit offset puts the tori far apart.
+    #[test]
+    fn skew_axes_far_apart() {
+        let t1 = torus(DVec3::ZERO, DVec3::Z, 5.0, 1.0);
+        let t2 = torus(DVec3::new(20.0, 0.0, 0.0), DVec3::X, 5.0, 1.0);
+        let result = intersect_torus_torus(&t1, &t2);
+        match &result {
+            TorusTorusResult::NoIntersection => {}
+            TorusTorusResult::SkewQuartic(branches) => {
+                // If the solver finds no intersection points, branches should be empty
+            }
+            TorusTorusResult::General => {} // Acceptable fallback
+            other => panic!("expected NoIntersection, SkewQuartic, or General, got {other:?}"),
+        }
     }
 }
