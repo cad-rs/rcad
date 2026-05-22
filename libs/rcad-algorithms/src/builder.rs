@@ -1298,6 +1298,17 @@ impl<'a> BooleanBuilder<'a> {
                     // For Union, unsplit planar faces that are fully glued with a
                     // face from the other operand are internal to the result.
                     false
+                } else if self.op == BooleanOpType::Union
+                    && class == Classification::On
+                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                    && self.coplanar_ff_normals_opposite(fi) == Some(false)
+                {
+                    // For Union, planar On sub-faces coplanar with an A-face (same
+                    // normal) can be removed — the A-face covers this region on the
+                    // external surface. Mirrors the A-face logic at lines ~1240-1250.
+                    // Fixes cylinder-box Union where the box bottom face is split by
+                    // a circle coplanar with the cylinder bottom cap (e.g. X7/X8/Y9).
+                    false
                 } else {
                     self.keep_subface(SourceSide::B, fi, class, &a_faces)
                 };
@@ -5483,10 +5494,17 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                 })
                 .collect();
             if op == Some(BooleanOpType::Union) {
-                // Union: polygon has the circle as a hole (inner_wire).
-                // Return the full polygon plus the circle as inner_wire so the
-                // caller can create a SubFace with a topological hole.
-                return (vec![poly.to_vec()], vec![circle_poly]);
+                // Check if the entire circle polygon is inside the outer boundary.
+                // If so, inner_wire is safe (area subtraction will be correct).
+                // If the circle extends beyond the polygon, fall through to the
+                // crossing-based split below — the inner_wire would subtract
+                // the FULL circle area instead of just the clipped portion.
+                let circle_fully_inside = circle_poly.iter().all(|&p| point_in_polygon_2d(poly, p));
+                if circle_fully_inside {
+                    return (vec![poly.to_vec()], vec![circle_poly]);
+                }
+                // Circle extends beyond polygon boundary — fall through to
+                // crossing-based split which handles same-edge crossings.
             } else {
                 // Non-Union: approximate split as annulus + disk cap.
                 // The caller's classification decides which half to keep.
@@ -5584,7 +5602,13 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             let ej = (ei + 1) % n;
             let mid = (poly[ei] + poly[ej]) * 0.5;
             if signed_dist(mid) < -tol {
+                // Both endpoints are outside the circle, but the edge passes through
+                // it (midpoint inside). Find BOTH crossings: entry (start→mid) and
+                // exit (mid→end). This gives 2 crossings on the same edge.
                 if let Some(pt) = find_circle_segment_crossing(poly[ei], mid, center, radius, tol) {
+                    ec.push((ei, pt));
+                }
+                if let Some(pt) = find_circle_segment_crossing(mid, poly[ej], center, radius, tol) {
                     ec.push((ei, pt));
                 }
             }
@@ -5615,7 +5639,115 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     let (idx2, pt2) = crossings[1];
 
     if idx1 == idx2 {
-        return (vec![poly.to_vec()], vec![]);
+        // Both crossings on the same polygon edge. Create inside (circle-interior)
+        // and outside (circle-exterior) sub-polygons.
+
+        // Determine which crossing is closer to edge start (poly[idx1])
+        // versus edge end (poly[(idx1+1)%n]).
+        let e_end = poly[(idx1 + 1) % n];
+        let e_start = poly[idx1];
+        let evec = e_end - e_start;
+        let elen2 = evec.length_squared();
+        let t_pt1 = if elen2 > 1e-30 { (pt1 - e_start).dot(evec) / elen2 } else { 0.0 };
+        let t_pt2 = if elen2 > 1e-30 { (pt2 - e_start).dot(evec) / elen2 } else { 0.0 };
+        let (near_start, near_end) = if t_pt1 < t_pt2 { (pt1, pt2) } else { (pt2, pt1) };
+
+        // Interior arc: near_start → near_end through inner_mid_theta (circle interior side).
+        // The chord midpoint points from center toward the chord — the arc nearest the chord
+        // is the interior (smaller) arc, which is the circle-interior side.
+        let chord_mid = (near_start + near_end) * 0.5;
+        let inner_mid_theta = (chord_mid - center).to_angle();
+        let theta_start = (near_start - center).to_angle();
+        let theta_end = (near_end - center).to_angle();
+        let int_delta = {
+            let mut d = theta_end - theta_start;
+            let go_ccw = if theta_start < theta_end {
+                inner_mid_theta > theta_start && inner_mid_theta < theta_end
+            } else {
+                inner_mid_theta > theta_start || inner_mid_theta < theta_end
+            };
+            if go_ccw {
+                while d < 0.0 { d += std::f64::consts::TAU; }
+                if d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+            } else {
+                while d > 0.0 { d -= std::f64::consts::TAU; }
+                if d < -std::f64::consts::TAU { d += std::f64::consts::TAU; }
+            }
+            d
+        };
+        let int_arc_n = ((N_CIRCLE_SAMPLES as f64 * int_delta.abs() / std::f64::consts::TAU)
+            as usize).max(3);
+        let interior_arc: Vec<DVec2> = (0..=int_arc_n)
+            .map(|i| {
+                let t = i as f64 / int_arc_n as f64;
+                let theta = theta_start + int_delta * t;
+                center + DVec2::new(theta.cos(), theta.sin()) * radius
+            })
+            .collect();
+
+        // Inside sub-polygon (circular segment = chord + interior arc):
+        // near_start → interior_arc → near_end (chord closes implicitly).
+        let mut sub_inside: Vec<DVec2> = Vec::new();
+        sub_inside.push(near_start);
+        for &p in interior_arc.iter().skip(1) {
+            let last = *sub_inside.last().unwrap();
+            if (p - last).length_squared() > TOLERANCE_FLOAT_ULTRA {
+                sub_inside.push(p);
+            }
+        }
+
+        // Outside sub-polygon: near_start → backward polygon walk → near_end
+        // → interior_arc_rev (closing through the large/exterior arc).
+        let mut sub_outside: Vec<DVec2> = Vec::new();
+        sub_outside.push(near_start);
+        // Walk polygon vertices backward from idx1 (through idx1-1, idx1-2, ...,
+        // wrapping around to idx1+1).  This is the long path from near_start
+        // to near_end that stays outside the circle.
+        for k in 0..n {
+            let vi = (idx1 + n - k) % n;
+            let v = poly[vi];
+            let last = *sub_outside.last().unwrap();
+            if (v - last).length_squared() > TOLERANCE_FLOAT_ULTRA {
+                sub_outside.push(v);
+            }
+        }
+        // Add near_end on edge idx1 (closer to poly[idx1+1]).
+        {
+            let last = *sub_outside.last().unwrap();
+            if (near_end - last).length_squared() > TOLERANCE_FLOAT_ULTRA {
+                sub_outside.push(near_end);
+            }
+        }
+        // Add interior_arc reversed (near_end → ... → near_start through the
+        // large/exterior arc) to close the outside polygon.
+        for &p in interior_arc.iter().rev() {
+            let last = *sub_outside.last().unwrap();
+            if (p - last).length_squared() > TOLERANCE_FLOAT_ULTRA {
+                sub_outside.push(p);
+            }
+        }
+
+        // Dedup consecutive near-coincident vertices and trailing-first match
+        let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
+            let mut result: Vec<DVec2> = Vec::new();
+            for p in v {
+                if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
+                    result.push(p);
+                }
+            }
+            if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
+                result.pop();
+            }
+            result
+        };
+        let sub_inside = dedup(sub_inside);
+        let sub_outside = dedup(sub_outside);
+
+        let mut out = Vec::new();
+        if sub_inside.len() >= 3 { out.push(sub_inside); }
+        if sub_outside.len() >= 3 { out.push(sub_outside); }
+
+        return if out.is_empty() { (vec![poly.to_vec()], vec![]) } else { (out, vec![]) };
     }
 
     // Sample the arc between pt1 and pt2 (going through the inside of the polygon)
