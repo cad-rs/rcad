@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -13,7 +13,7 @@ use crate::history::{
 };
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
-use crate::triangulate::triangulate_polygon;
+use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOpType {
@@ -399,10 +399,35 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        let mut tris = triangulate_polygon(&sub.boundary, normal);
+        // Add edges for inner wire boundaries (holes).
+        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        let mut iw_vert_indices_all: Vec<usize> = Vec::new();
+        for iw_poly in &sub.inner_wires {
+            if iw_poly.len() < 3 {
+                continue;
+            }
+            let iw_vert_indices: Vec<usize> = iw_poly.iter().map(|&p| self.add_vertex(p)).collect();
+            let mut iw_edge_indices = Vec::new();
+            for i in 0..iw_vert_indices.len() {
+                let j = (i + 1) % iw_vert_indices.len();
+                let ei = self.add_edge(iw_vert_indices[i], iw_vert_indices[j]);
+                let forward = self.edges[ei].0 == iw_vert_indices[i];
+                iw_edge_indices.push((ei, forward));
+            }
+            inner_wire_edges.push(iw_edge_indices);
+            iw_vert_indices_all.extend(iw_vert_indices);
+        }
+
+        // Triangulate outer boundary with optional holes.
+        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+        let mut tris = if sub.inner_wires.is_empty() {
+            triangulate_polygon(&sub.boundary, normal)
+        } else {
+            triangulate_polygon_with_holes(&sub.boundary, &sub.inner_wires, normal)
+        };
         for tri in &mut tris {
             for idx in tri.iter_mut() {
-                *idx = vert_indices[*idx];
+                *idx = all_vert_indices[*idx];
             }
         }
 
@@ -419,10 +444,13 @@ impl ResultBuilder {
         outer_sig.sort_unstable();
         let nlen = normal.length();
         let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
-        for (existing_idx, (existing_outer, _existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
             self.faces.iter().enumerate()
         {
             let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
+            for iw_edges in existing_inner {
+                ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
+            }
             ex_sig.sort_unstable();
 
             let elen = existing_normal.length();
@@ -444,7 +472,7 @@ impl ResultBuilder {
 
         self.faces.push((
             edge_indices,
-            vec![],
+            inner_wire_edges,
             tris,
             normal,
             sub.surface.clone(),
@@ -1176,6 +1204,31 @@ impl<'a> BooleanBuilder<'a> {
 
         // Debug tracing: set to true to print sub-face classification for debugging
         let debug_trace = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
+
+        if debug_trace {
+            eprintln!("=== INTERSECTION CURVES ===");
+            for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
+                let curve_desc = match &ic.curve {
+                    rcad_kernel::geom::Curve3::Circle(c) => format!("Circle center=({:.4},{:.4},{:.4}) r={:.4} normal=({:.4},{:.4},{:.4})", c.center.x, c.center.y, c.center.z, c.radius, c.normal.x, c.normal.y, c.normal.z),
+                    rcad_kernel::geom::Curve3::Ellipse(_) => "Ellipse".to_string(),
+                    rcad_kernel::geom::Curve3::Line(_) => "Line".to_string(),
+                    _ => "Other".to_string(),
+                };
+                eprintln!("  IC[{ci}] {curve_desc}");
+            }
+            eprintln!("=== FACES ===");
+            for fi in 0..self.ds.faces.len() {
+                let face = &self.ds.faces[fi];
+                let surf_desc = match &face.surface {
+                    rcad_kernel::geom::Surface3::Plane(p) => format!("Plane origin=({:.4},{:.4},{:.4}) normal=({:.4},{:.4},{:.4})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z),
+                    rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder".to_string(),
+                    rcad_kernel::geom::Surface3::Cone(_) => "Cone".to_string(),
+                    _ => "Other".to_string(),
+                };
+                let cis: Vec<String> = face.face_info.curves_in.iter().map(|ci| format!("{ci}")).collect();
+                eprintln!("  face[{fi}] {surf_desc} curves_in=[{}] nverts={}", cis.join(","), face.boundary_verts.len());
+            }
+        }
 
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
@@ -2172,7 +2225,7 @@ impl<'a> BooleanBuilder<'a> {
         let boundary_2d: Vec<DVec2> = boundary_3d.iter().map(|&p| project_to_2d(p)).collect();
 
         // Process each intersection curve to split the polygon
-        let mut polygons_2d: Vec<Vec<DVec2>> = vec![boundary_2d.clone()];
+        let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
         // may fall inside the circle 鈥?we must use a vertex-based sample instead.
@@ -2181,7 +2234,7 @@ impl<'a> BooleanBuilder<'a> {
         for &ci in split_curve_ids {
             let ic = &self.ds.intersection_curves[ci];
 
-            let curve_halfspace_split: Option<Vec<Vec<DVec2>>> = match &ic.curve {
+            let curve_result: Option<Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)>> = match &ic.curve {
                 Curve3::Circle(circle) => {
                     // Plane-sphere intersection produces a circle lying in the plane.
                     // Project the circle center to 2D and split by the circle boundary.
@@ -2196,7 +2249,7 @@ impl<'a> BooleanBuilder<'a> {
                     if radius < TOLERANCE_PLANE_DIST_RELAX {
                         None
                     } else {
-                    let mut next: Vec<Vec<DVec2>> = Vec::new();
+                    let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
 
                     // Pre-sample the 3D circle at 128 3D points, projected to 2D.
                     // `split_curved_face_parametric` samples sphere UV edges at 32 points
@@ -2211,9 +2264,10 @@ impl<'a> BooleanBuilder<'a> {
                         .collect();
                     let on_circle_tol = TOLERANCE_COORD_SUB;
 
-                    for poly in &polygons_2d {
-                        let halves = split_polygon_by_circle_2d(poly, center_2d, radius, Some(self.op));
+                    for (poly, existing_wires) in &poly_wires {
+                        let (halves, new_inner_wires) = split_polygon_by_circle_2d(poly, center_2d, radius, Some(self.op));
                         for half in halves {
+                            let all_wires = [existing_wires.clone(), new_inner_wires.clone()].concat();
                             // Check whether this half has a contiguous on-circle arc segment.
                             let on: Vec<bool> = half.iter()
                                 .map(|p| ((*p - center_2d).length() - radius).abs() < on_circle_tol)
@@ -2280,9 +2334,9 @@ impl<'a> BooleanBuilder<'a> {
                                 replaced.dedup_by(|a, b| {
                                     (*a - *b).length_squared() < on_circle_tol * on_circle_tol
                                 });
-                                next.push(replaced);
+                                next.push((replaced, all_wires));
                             } else {
-                                next.push(half);
+                                next.push((half, all_wires));
                             }
                         }
                     }
@@ -2300,8 +2354,8 @@ impl<'a> BooleanBuilder<'a> {
                     } else {
                         let seg_s2d = project_to_2d(p_start);
                         let _seg_e2d = project_to_2d(p_end);
-                        let mut next: Vec<Vec<DVec2>> = Vec::new();
-                        for poly in &polygons_2d {
+                        let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
+                        for (poly, existing_wires) in &poly_wires {
                             // Use line direction to split
                             let dir = DVec2::new(
                                 (line.direction - plane.normal * line.direction.dot(plane.normal))
@@ -2310,7 +2364,9 @@ impl<'a> BooleanBuilder<'a> {
                                     .dot(v_axis),
                             );
                             let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
-                            next.extend(halves);
+                            for half in halves {
+                                next.push((half, existing_wires.clone()));
+                            }
                         }
                         Some(next)
                     }
@@ -2322,10 +2378,12 @@ impl<'a> BooleanBuilder<'a> {
                     if !points_coincide(p_start, p_end) {
                         let seg_s2d = project_to_2d(p_start);
                         let seg_e2d = project_to_2d(p_end);
-                        let mut next: Vec<Vec<DVec2>> = Vec::new();
-                        for poly in &polygons_2d {
+                        let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
+                        for (poly, existing_wires) in &poly_wires {
                             let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
-                            next.extend(halves);
+                            for half in halves {
+                                next.push((half, existing_wires.clone()));
+                            }
                         }
                         Some(next)
                     } else {
@@ -2334,10 +2392,10 @@ impl<'a> BooleanBuilder<'a> {
                 }
             };
 
-            if let Some(new_polys) = curve_halfspace_split
+            if let Some(new_polys) = curve_result
                 && !new_polys.is_empty()
             {
-                polygons_2d = new_polys;
+                poly_wires = new_polys;
             }
         }
 
@@ -2397,17 +2455,20 @@ impl<'a> BooleanBuilder<'a> {
         });
         imprint_uv.dedup_by(|a, b| (*a - *b).length_squared() < edge_tol * edge_tol);
 
-        for poly in &mut polygons_2d {
+        for (poly, _) in &mut poly_wires {
             *poly = insert_points_on_polygon_edges(poly, &imprint_uv, edge_tol);
         }
 
         let debug_split = std::env::var("RCAD_DEBUG_SPLIT").is_ok();
 
-        polygons_2d
+        poly_wires
             .into_iter()
-            .filter(|p| p.len() >= 3)
-            .map(|poly_2d| {
+            .filter(|(p, _)| p.len() >= 3)
+            .map(|(poly_2d, inner_wires_2d)| {
                 let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
+                let inner_wires: Vec<Vec<DVec3>> = inner_wires_2d.iter()
+                    .map(|iw| iw.iter().map(|uv| lift_to_3d(*uv)).collect())
+                    .collect();
                 // If there are embedded circles and this polygon's centroid falls inside
                 // one of them, use the first boundary vertex (offset by normal) as the
                 // sample point instead. All polygon vertices of the outer region are
@@ -2473,7 +2534,7 @@ impl<'a> BooleanBuilder<'a> {
                     uv_centroid: None,
                     sample_override,
                     uv_domain: None,
-                    inner_wires: vec![],
+                    inner_wires,
                 }
             })
             .collect()
@@ -3737,7 +3798,7 @@ mod tests {
 
     /// `split_polygon_by_circle_2d` must produce two regions for a full square when the
     /// disk center is inside the square (annulus + cap path), except for Union where
-    /// the inner circle is redundant and only the outer polygon is returned.
+    /// the inner circle becomes a hole (inner_wire).
     #[test]
     fn split_unit_square_by_circle_center_inside() {
         use glam::DVec2;
@@ -3747,11 +3808,12 @@ mod tests {
             DVec2::new(1.0, 1.0),
             DVec2::new(0.0, 1.0),
         ];
-        // For Union, the inner circle is skipped (prevents double-counting)
-        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Union));
-        assert_eq!(out.len(), 1, "Union should skip inner circle, got {}", out.len());
+        // For Union, the inner circle becomes an inner_wire (not a separate polygon)
+        let (out, out_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Union));
+        assert_eq!(out.len(), 1, "Union should return 1 polygon, got {}", out.len());
+        assert_eq!(out_wires.len(), 1, "Union should return 1 inner_wire, got {}", out_wires.len());
         // For Difference, the full split is needed
-        let out_diff = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
+        let (out_diff, _) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
         assert!(out_diff.len() >= 2, "Difference should split, got {}", out_diff.len());
     }
 
@@ -3766,7 +3828,7 @@ mod tests {
             DVec2::new(1.0, 1.0),
             DVec2::new(0.0, 1.0),
         ];
-        let out = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.0, 0.0), 1.0, None);
+        let (out, _) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.0, 0.0), 1.0, None);
         assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
     }
 
@@ -5374,11 +5436,11 @@ fn find_circle_segment_crossing(a: DVec2, b: DVec2, center: DVec2, radius: f64, 
     None
 }
 
-fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Option<BooleanOpType>) -> Vec<Vec<DVec2>> {
+fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Option<BooleanOpType>) -> (Vec<Vec<DVec2>>, Vec<Vec<DVec2>>) {
     const N_CIRCLE_SAMPLES: usize = 24;
     let n = poly.len();
     if n < 3 {
-        return vec![poly.to_vec()];
+        return (vec![poly.to_vec()], vec![]);
     }
 
     let tol = TOLERANCE_ABS;
@@ -5408,15 +5470,12 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
 
     if all_inside {
         // All polygon vertices inside circle 鈥?keep whole polygon
-        return vec![poly.to_vec()];
+        return (vec![poly.to_vec()], vec![]);
     }
 
     if all_outside {
-        // Every vertex is on or outside the circle (in signed-distance sense). The disk may
-        // still intersect the polygon interior (e.g. center outside the square but arc cutting
-        // across) 鈥?do not drop to a single polygon in that case; fall through to crossings.
-        if point_in_polygon_2d(poly, center) {
-            // Center inside polygon: annulus + disk cap
+        let center_in_poly = point_in_polygon_2d(poly, center);
+        if center_in_poly {
             let circle_poly: Vec<DVec2> = (0..N_CIRCLE_SAMPLES)
                 .map(|i| {
                     let theta = std::f64::consts::TAU * i as f64 / N_CIRCLE_SAMPLES as f64;
@@ -5424,12 +5483,15 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                 })
                 .collect();
             if op == Some(BooleanOpType::Union) {
-                // For Union, the inner circle is redundant — the containing face fully
-                // covers this region in the result. Returning only the outer polygon
-                // prevents double-counting from overlapping SubFaces.
-                return vec![poly.to_vec()];
+                // Union: polygon has the circle as a hole (inner_wire).
+                // Return the full polygon plus the circle as inner_wire so the
+                // caller can create a SubFace with a topological hole.
+                return (vec![poly.to_vec()], vec![circle_poly]);
+            } else {
+                // Non-Union: approximate split as annulus + disk cap.
+                // The caller's classification decides which half to keep.
+                return (vec![circle_poly, poly.to_vec()], vec![]);
             }
-            return vec![circle_poly, poly.to_vec()];
         }
     }
 
@@ -5514,9 +5576,27 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         }
     }
 
+    // Check for all_outside + center_inside (Union) case where endpoints
+    // are all outside the circle but edges need crossing detection via midpoint.
+    if crossings.len() < 2 && all_outside && point_in_polygon_2d(poly, center) && op == Some(BooleanOpType::Union) {
+        let mut ec: Vec<(usize, DVec2)> = Vec::new();
+        for ei in 0..n {
+            let ej = (ei + 1) % n;
+            let mid = (poly[ei] + poly[ej]) * 0.5;
+            if signed_dist(mid) < -tol {
+                if let Some(pt) = find_circle_segment_crossing(poly[ei], mid, center, radius, tol) {
+                    ec.push((ei, pt));
+                }
+            }
+        }
+        if ec.len() >= 2 {
+            crossings = ec;
+        }
+    }
+
     if crossings.len() < 2 {
         // Can't split 鈥?keep as-is
-        return vec![poly.to_vec()];
+        return (vec![poly.to_vec()], vec![]);
     }
 
     // Sort crossings by edge index
@@ -5527,7 +5607,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     crossings.dedup_by(|a, b| (a.1 - b.1).length_squared() < tol * tol);
 
     if crossings.len() < 2 {
-        return vec![poly.to_vec()];
+        return (vec![poly.to_vec()], vec![]);
     }
 
     // Take the first two crossings
@@ -5535,7 +5615,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     let (idx2, pt2) = crossings[1];
 
     if idx1 == idx2 {
-        return vec![poly.to_vec()];
+        return (vec![poly.to_vec()], vec![]);
     }
 
     // Sample the arc between pt1 and pt2 (going through the inside of the polygon)
@@ -5672,9 +5752,9 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     }
 
     if out.is_empty() {
-        vec![poly.to_vec()]
+        (vec![poly.to_vec()], vec![])
     } else {
-        out
+        (out, vec![])
     }
 }
 
@@ -7133,3 +7213,4 @@ mod glue_tests {
         }
     }
 }
+
