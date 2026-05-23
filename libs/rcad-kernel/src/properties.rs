@@ -598,9 +598,6 @@ fn spherical_holed_uv_mask_setup(
         .map(|p| sphere_point_to_uv(s, *p).x.rem_euclid(2.0 * std::f64::consts::PI))
         .collect();
     // Fix degenerate u=0 at sphere poles before unwrapping.
-    // sphere_point_to_uv returns u=atan2(0,0)=0 at poles, which is wrong
-    // for faces ending at a pole — it makes the unwrap produce a 4π u-range.
-    // Infer the correct u from adjacent non-pole vertices.
     {
         use std::f64::consts::PI;
         let two_pi = 2.0 * PI;
@@ -814,28 +811,14 @@ fn spherical_holed_uv_mask_setup(
 
     if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
         // Compute shoelace area of UV polygon (in UV^2 units, not physical area)
-        let mut uv_area = 0.0;
+        let mut _uv_area = 0.0;
         let n = outer_uv.len();
         for i in 0..n {
             let j = (i + 1) % n;
-            uv_area += outer_uv[i].x * outer_uv[j].y;
-            uv_area -= outer_uv[j].x * outer_uv[i].y;
+            _uv_area += outer_uv[i].x * outer_uv[j].y;
+            _uv_area -= outer_uv[j].x * outer_uv[i].y;
         }
-        uv_area = (uv_area * 0.5).abs();
-        let expected_uv_area = (umax - umin) * (vmax - vmin);
-        eprintln!("[SPHERE_AREA] use_uv_winding={} u_range=[{:.6},{:.6}] v_range=[{:.6},{:.6}] outer_uv_nverts={} outer_u_span={:.6} raw_u_range={:.6} uv_shoelace_area={:.6} expected_bbox_area={:.6} ratio={:.6}",
-            use_uv_winding, umin, umax, vmin, vmax, outer_uv.len(), outer_u_span, raw_u_range, uv_area, expected_uv_area, uv_area / expected_uv_area);
-        // Print first 5 and last 5 vertices only
-        let n = outer_uv.len();
-        for i in 0..n.min(5) {
-            eprintln!("[SPHERE_AREA]   outer_uv[{}]: u={:.6} v={:.6}", i, outer_uv[i].x, outer_uv[i].y);
-        }
-        if n > 10 {
-            eprintln!("[SPHERE_AREA]   ... ({} vertices omitted)", n - 10);
-        }
-        for i in n.saturating_sub(5)..n {
-            eprintln!("[SPHERE_AREA]   outer_uv[{}]: u={:.6} v={:.6}", i, outer_uv[i].x, outer_uv[i].y);
-        }
+        let _ = (_uv_area * 0.5).abs();
     }
 
     Some(SphereHoledMaskCtx {
@@ -1749,6 +1732,159 @@ fn try_cone_trimmed_face_area(
     if total > 1e-14 { Some(total) } else { None }
 }
 
+/// Generic trimmed face area via UV-grid integration of |∂P/∂u × ∂P/∂v|.
+///
+/// Samples the wire boundary in 3D, projects to UV via [`closest_point_on_surface`],
+/// then rasterizes the UV polygon at ~200×200 grid resolution with winding-number
+/// point-in-polygon tests for outer/inner wires.  Handles any surface type (torus,
+/// BSpline, Bezier, …) where the existing per-surface optimisations don't apply.
+fn try_generic_trimmed_face_area(
+    surf: &Surface3,
+    brep: &BRep,
+    face: &Face,
+    _face_flat_idx: usize,
+) -> Option<f64> {
+    use crate::projection::closest_point_on_surface;
+    const TWO_PI: f64 = std::f64::consts::TAU;
+    const PER_WIRE: usize = 256;
+
+    let is_u_periodic = matches!(
+        surf,
+        Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_) | Surface3::Cone(_)
+    );
+    let is_v_periodic = matches!(surf, Surface3::Torus(_));
+
+    // Sample wire 3D points → project to UV → optionally unwrap U so that the
+    // winding-number test works correctly across the periodic seam.
+    let wire_to_uv = |wire: &Wire| -> Option<Vec<DVec2>> {
+        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, PER_WIRE);
+        trim_almost_closed_polyline(&mut pts_3d, 1e-5);
+        if pts_3d.len() < 3 {
+            return None;
+        }
+
+        let mut uvs: Vec<DVec2> = pts_3d
+            .iter()
+            .map(|&p| {
+                let proj = closest_point_on_surface(surf, p, 16);
+                DVec2::new(proj.params.0, proj.params.1)
+            })
+            .collect();
+
+        if is_u_periodic {
+            let n = uvs.len();
+            let mut uw = Vec::with_capacity(n);
+            uw.push(uvs[0].x);
+            for i in 1..n {
+                uw.push(uw[i - 1] + short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x));
+            }
+            for (i, u) in uw.into_iter().enumerate() {
+                uvs[i].x = u;
+            }
+        }
+
+        Some(uvs)
+    };
+
+    let outer_uv = wire_to_uv(&face.outer_wire)?;
+    if outer_uv.len() < 3 {
+        return None;
+    }
+
+    // UV bounding box from the outer wire.
+    let (mut umin, mut umax) = (f64::INFINITY, f64::NEG_INFINITY);
+    let (mut vmin, mut vmax) = (f64::INFINITY, f64::NEG_INFINITY);
+    for uv in &outer_uv {
+        umin = umin.min(uv.x);
+        umax = umax.max(uv.x);
+        vmin = vmin.min(uv.y);
+        vmax = vmax.max(uv.y);
+    }
+    if umin >= umax || vmin >= vmax || !umin.is_finite() {
+        return None;
+    }
+
+    // Pad bounds by 0.1 % so cells exactly on the boundary are inside.
+    let du_pad = (umax - umin) * 0.001;
+    let dv_pad = (vmax - vmin) * 0.001;
+    let b_umin = umin - du_pad;
+    let b_umax = umax + du_pad;
+    let b_vmin = vmin - dv_pad;
+    let b_vmax = vmax + dv_pad;
+
+    // Inner-hole UV polygons.
+    let inner_uvs: Vec<Vec<DVec2>> = face
+        .inner_wires
+        .iter()
+        .filter_map(|w| wire_to_uv(w))
+        .collect();
+
+    // Grid resolution: ~200 cells/axis, clamped to [16, 400].
+    let n_cells = 200usize;
+    let u_ext = b_umax - b_umin;
+    let v_ext = b_vmax - b_vmin;
+    let aspect = (v_ext / u_ext).abs();
+    let nu = if aspect > 1.0 {
+        (n_cells as f64 / aspect).ceil() as usize
+    } else {
+        n_cells
+    };
+    let nv = if aspect <= 1.0 {
+        (n_cells as f64 * aspect).ceil() as usize
+    } else {
+        n_cells
+    };
+    let nu = nu.max(16).min(400);
+    let nv = nv.max(16).min(400);
+
+    let du_cell = u_ext / nu as f64;
+    let dv_cell = v_ext / nv as f64;
+    let h = (du_cell * du_cell + dv_cell * dv_cell).sqrt().max(1e-12) * 1e-3;
+
+    let mut area = 0.0_f64;
+    for i in 0..nu {
+        for j in 0..nv {
+            let uc = b_umin + (i as f64 + 0.5) * du_cell;
+            let vc = b_vmin + (j as f64 + 0.5) * dv_cell;
+            let pt = DVec2::new(uc, vc);
+
+            if winding_number_2d(&outer_uv, pt) == 0 {
+                continue;
+            }
+            if inner_uvs
+                .iter()
+                .any(|poly| winding_number_2d(poly, pt) != 0)
+            {
+                continue;
+            }
+
+            // Map to surface-compatible parameters for point evaluation.
+            let uc_s = if is_u_periodic {
+                uc.rem_euclid(TWO_PI)
+            } else {
+                uc
+            };
+            let vc_s = if is_v_periodic {
+                vc.rem_euclid(TWO_PI)
+            } else {
+                vc
+            };
+
+            let pu =
+                (surf.point_at(uc_s + h, vc_s) - surf.point_at(uc_s - h, vc_s)) / (2.0 * h);
+            let pv =
+                (surf.point_at(uc_s, vc_s + h) - surf.point_at(uc_s, vc_s - h)) / (2.0 * h);
+            area += pu.cross(pv).length() * du_cell * dv_cell;
+        }
+    }
+
+    if area > 0.0 && area.is_finite() {
+        Some(area)
+    } else {
+        None
+    }
+}
+
 /// Prefer analytic / parametric area for `surface_area`: plane (shoelace); all sphere faces
 /// (UV polygon mask + `R² dΩ`); finite-UV rectangular patches on other surfaces without inner
 /// wires (cylinder exact; otherwise `‖Pu×Pv‖` midpoint rule on the same domain as tessellation).
@@ -1835,12 +1971,14 @@ fn try_analytic_face_surface_area(
                 }
                 Surface3::Torus(_) => {
                     if !face.inner_wires.is_empty() || (u1 - u0).abs() > std::f64::consts::TAU * 1.01 {
-                        None
+                        try_generic_trimmed_face_area(surf, brep, face, face_flat_idx)
                     } else {
                         param_rect_area_cross(surf, u0, u1, v0, v1)
                     }
                 }
-                _ if !face.inner_wires.is_empty() => None,
+                _ if !face.inner_wires.is_empty() => {
+                    try_generic_trimmed_face_area(surf, brep, face, face_flat_idx)
+                }
                 _ => param_rect_area_cross(surf, u0, u1, v0, v1),
             }
         }
@@ -2291,9 +2429,10 @@ fn face_triangles(
     // Fan from first sample (convex-ish outer loops only; holed cases handled above).
     let origin = wire_pts[0];
     if is_curved {
-        (1..wire_pts.len() - 1)
+        let tris: Vec<_> = (1..wire_pts.len() - 1)
             .map(|i| [origin, wire_pts[i], wire_pts[i + 1]])
-            .collect()
+            .collect();
+        return tris;
     } else {
         (1..wire_pts.len() - 1)
             .map(|i| orient_tri([origin, wire_pts[i], wire_pts[i + 1]], face.normal))

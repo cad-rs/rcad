@@ -24,7 +24,7 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, Surface3};
+use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -33,6 +33,7 @@ use rcad_modeling::{loft_with_history, make_box_brep, make_convex_polyhedron_fro
 use crate::BooleanOpType;
 
 use crate::brep_int_curve_surface::is_point_inside_by_ray;
+
 use crate::tolerance::*;
 
 const TOL: f64 = TOLERANCE_RETRY_LADDER_COARSE;
@@ -1335,6 +1336,618 @@ pub fn try_intersection_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<
     rcad_modeling::make_cylinder_brep(
         DVec3::new(0.0, 0.0, zm), DVec3::Z, DVec3::X, r1, h,
     ).ok()
+}
+
+/// Extract sphere center and radius from a sphere BRep (first SphericalSurface found).
+fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
+    for s in &sphere.solids {
+        for sh in &s.shells {
+            for fi in 0..sh.faces.len() {
+                if let Some(Some(si)) = sphere.geom.face_surface.get(fi) {
+                    if let Surface3::Sphere(sp) = sphere.geom.surfaces.get(*si)? {
+                        return Some((sp.center, sp.radius));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Build a BRep for the part of a sphere clipped between two Z-planes.
+///
+/// The sphere is axis-aligned with axis=Z so that z=constant → v=constant in the
+/// sphere's parameterization.  The result has a spherical lateral face and planar
+/// cap(s) at the clip planes (or none when the clip is at the sphere pole).
+///
+/// `z_min` and `z_max` are the clip planes in world Z (z_min < z_max), assumed
+/// to overlap the sphere's Z-range [center.z - radius, center.z + radius].
+fn build_sphere_clipped_by_z_planes(
+    center: DVec3,
+    radius: f64,
+    z_min: f64,
+    z_max: f64,
+) -> Option<BRep> {
+    use rcad_kernel::geom::{Curve2d, Line2d};
+    use std::f64::consts::PI;
+
+    let two_pi = 2.0 * PI;
+
+    // Colatitude v in sphere param (axis=Z): z = center.z + r*cos(v), v = acos((z-C.z)/r)
+    let cos_v_hi = ((z_max - center.z) / radius).clamp(-1.0, 1.0);
+    let cos_v_lo = ((z_min - center.z) / radius).clamp(-1.0, 1.0);
+    let v_hi = cos_v_hi.acos(); // smaller v, higher z  (equator → 0 at north pole)
+    let v_lo = cos_v_lo.acos(); // larger v, lower z  (equator → π at south pole)
+
+    let has_top_cap = (z_max - (center.z + radius)).abs() > 1e-12;
+    let has_bot_cap = (z_min - (center.z - radius)).abs() > 1e-12;
+
+    // Radii of the clip-plane circles
+    let r_hi = radius * v_hi.sin();
+    let r_lo = radius * v_lo.sin();
+
+    // Vertex positions: seam runs at u=0 from v_hi to v_lo
+    let v_hi_pt = center + radius * DVec3::new(v_hi.sin(), 0.0, v_hi.cos());
+    let v_lo_pt = center + radius * DVec3::new(v_lo.sin(), 0.0, v_lo.cos());
+
+    let mut brep = BRep::default();
+
+    let v_hi_idx = make_vertex(&mut brep, v_hi_pt);
+    let v_lo_idx = make_vertex(&mut brep, v_lo_pt);
+
+    // ── Edges ──────────────────────────────────────────────
+    // E0: circle at v_hi (higher z, smaller v)
+    let c_hi = DVec3::new(center.x, center.y, center.z + radius * v_hi.cos());
+    let e0_curve = Curve3::Circle(Circle3 { center: c_hi, normal: DVec3::Z, radius: r_hi });
+    let e0 = make_edge(&mut brep, e0_curve, 0.0, two_pi, v_hi_idx, v_hi_idx).ok()?;
+
+    // E1: circle at v_lo (lower z, larger v) — only needed when both caps exist
+    let e1 = if has_top_cap && has_bot_cap {
+        let c_lo = DVec3::new(center.x, center.y, center.z + radius * v_lo.cos());
+        let curve = Curve3::Circle(Circle3 { center: c_lo, normal: -DVec3::Z, radius: r_lo });
+        let idx = make_edge(&mut brep, curve, 0.0, two_pi, v_lo_idx, v_lo_idx).ok()?;
+        Some(idx)
+    } else {
+        None
+    };
+
+    // E2 (or E1 for single-cap): seam from v_hi to v_lo at u=0 (arc in XZ-plane)
+    let seam = {
+        let curve = Curve3::Circle(Circle3 { center, normal: DVec3::Y, radius });
+        make_edge(&mut brep, curve, v_hi, v_lo, v_hi_idx, v_lo_idx).ok()?
+    };
+
+    // ── Surfaces ───────────────────────────────────────────
+    let sphere_surf = Surface3::Sphere(SphericalSurface {
+        center,
+        axis: DVec3::Z,
+        radius,
+        ref_dir: DVec3::X,
+    });
+
+    let top_plane = if has_top_cap {
+        Some(Surface3::Plane(Plane {
+            origin: DVec3::new(center.x, center.y, z_max),
+            normal: DVec3::Z,
+        }))
+    } else {
+        None
+    };
+
+    let bot_plane = if has_bot_cap {
+        Some(Surface3::Plane(Plane {
+            origin: DVec3::new(center.x, center.y, z_min),
+            normal: -DVec3::Z,
+        }))
+    } else {
+        None
+    };
+
+    // ── Curve2Ds (pcurves) ─────────────────────────────────
+    // Sphere face pcurves
+    //   E0 on sphere: iso-v = v_hi
+    let e0_on_sphere = Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_hi), direction: glam::DVec2::new(1.0, 0.0) });
+    //   Seam fwd on sphere: u=0, v from v_hi to v_lo
+    let seam_fwd = Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_hi), direction: glam::DVec2::new(0.0, 1.0) });
+    //   Seam rev on sphere: u=2π, v from v_lo to v_hi
+    let seam_rev = Curve2d::Line(Line2d { origin: glam::DVec2::new(two_pi, v_lo), direction: glam::DVec2::new(0.0, -1.0) });
+    //   E1 on sphere (if present): iso-v = v_lo
+    let e1_on_sphere = if has_top_cap && has_bot_cap {
+        Some(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_lo), direction: glam::DVec2::new(1.0, 0.0) }))
+    } else {
+        None
+    };
+
+    // Planar cap pcurves
+    let e0_on_plane = if has_top_cap {
+        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, radius: r_hi }))
+    } else {
+        None
+    };
+    let e1_on_bot_plane = if has_bot_cap && has_top_cap {
+        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, radius: r_lo }))
+    } else {
+        None
+    };
+
+    // ── Build geometry store ───────────────────────────────
+    let mut surf_idx_sphere = 0usize;
+    let mut surf_idx_top: Option<usize> = None;
+    let mut surf_idx_bot: Option<usize> = None;
+
+    brep.geom.surfaces.push(sphere_surf);
+    if let Some(tp) = top_plane {
+        surf_idx_top = Some(brep.geom.surfaces.len());
+        brep.geom.surfaces.push(tp);
+    }
+    if let Some(bp) = bot_plane {
+        surf_idx_bot = Some(brep.geom.surfaces.len());
+        brep.geom.surfaces.push(bp);
+    }
+
+    // Curve2D indices
+    let mut c2d = 0usize;
+    brep.geom.curve2ds.push(e0_on_sphere);
+    let e0_sphere_c2d = c2d; c2d += 1;
+    brep.geom.curve2ds.push(seam_fwd);
+    let seam_fwd_c2d = c2d; c2d += 1;
+    brep.geom.curve2ds.push(seam_rev);
+    let seam_rev_c2d = c2d; c2d += 1;
+
+    let e1_sphere_c2d = e1_on_sphere.map(|c| {
+        brep.geom.curve2ds.push(c);
+        let idx = c2d; c2d += 1; idx
+    });
+
+    let e0_plane_c2d = e0_on_plane.map(|c| {
+        brep.geom.curve2ds.push(c);
+        let idx = c2d; c2d += 1; idx
+    });
+
+    let e1_bot_c2d = e1_on_bot_plane.map(|c| {
+        brep.geom.curve2ds.push(c);
+        let idx = c2d; c2d += 1; idx
+    });
+
+    // Edge pcurves — align vecs
+    while brep.geom.edge_pcurves.len() <= seam.max(e0).max(e1.unwrap_or(0)) {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+
+    // E0 pcurves: on sphere always; on top plane if cap exists
+    {
+        let ep = &mut brep.geom.edge_pcurves[e0];
+        ep.push(rcad_kernel::PCurve { surface_idx: surf_idx_sphere, curve2d_idx: e0_sphere_c2d });
+        if let Some(si) = surf_idx_top {
+            if let Some(ci) = e0_plane_c2d {
+                ep.push(rcad_kernel::PCurve { surface_idx: si, curve2d_idx: ci });
+            }
+        }
+    }
+
+    // E1 pcurves: on sphere + bot plane if both caps
+    if let Some(e1i) = e1 {
+        let ep = &mut brep.geom.edge_pcurves[e1i];
+        if let Some(ci) = e1_sphere_c2d {
+            ep.push(rcad_kernel::PCurve { surface_idx: surf_idx_sphere, curve2d_idx: ci });
+        }
+        if let Some(si) = surf_idx_bot {
+            if let Some(ci) = e1_bot_c2d {
+                ep.push(rcad_kernel::PCurve { surface_idx: si, curve2d_idx: ci });
+            }
+        }
+    }
+
+    // Seam pcurves: two on sphere (fwd and rev)
+    {
+        let ep = &mut brep.geom.edge_pcurves[seam];
+        ep.push(rcad_kernel::PCurve { surface_idx: surf_idx_sphere, curve2d_idx: seam_fwd_c2d });
+        ep.push(rcad_kernel::PCurve { surface_idx: surf_idx_sphere, curve2d_idx: seam_rev_c2d });
+    }
+
+    // ── Faces ──────────────────────────────────────────────
+    // Initialize solid/shell structure
+    if brep.solids.is_empty() {
+        brep.solids.push(rcad_kernel::Solid {
+            shells: vec![rcad_kernel::Shell { faces: Vec::new() }],
+        });
+    }
+
+    let mut face_wires_sphere: Vec<WireEdge> = Vec::new();
+
+    if has_top_cap && has_bot_cap {
+        // Both caps: pattern = bottom_fwd → seam_fwd → top_rev → seam_rev
+        // where bottom = v_lo (lower z), top = v_hi (higher z)
+        face_wires_sphere.push(WireEdge::fwd(e1.unwrap())); // E1 fwd at v_lo
+        face_wires_sphere.push(WireEdge::fwd(seam));        // seam fwd v_lo→v_hi
+        face_wires_sphere.push(WireEdge::rev(e0));           // E0 rev at v_hi
+        face_wires_sphere.push(WireEdge::rev(seam));         // seam rev v_hi→v_lo
+    } else if has_top_cap {
+        // Only top cap (v_bot is at south pole): pattern = E0_rev → seam_fwd → seam_rev
+        face_wires_sphere.push(WireEdge::rev(e0));
+        face_wires_sphere.push(WireEdge::fwd(seam));
+        face_wires_sphere.push(WireEdge::rev(seam));
+    } else if has_bot_cap {
+        // Only bottom cap (v_hi is at north pole): pattern = seam_fwd → E0_rev → seam_rev
+        // Actually: bottom circle fwd → seam fwd → seam_rev (no top circle since at pole)
+        // Since E0 is at v_hi=north pole and E1 is at v_lo:
+        //   lateral = E0_fwd → seam_fwd → seam_rev
+        face_wires_sphere.push(WireEdge::fwd(e0));
+        face_wires_sphere.push(WireEdge::fwd(seam));
+        face_wires_sphere.push(WireEdge::rev(seam));
+    } else {
+        // No caps — sphere entirely inside cylinder, entire z-range inside
+        return None; // Should have been caught by containment
+    }
+
+    let sphere_wire = make_wire(face_wires_sphere);
+    let sphere_face = Face {
+        outer_wire: sphere_wire,
+        inner_wires: vec![],
+        normal: DVec3::X,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+
+    // Push sphere face
+    let sphere_face_idx = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(sphere_face);
+    while brep.geom.face_surface.len() <= sphere_face_idx {
+        brep.geom.face_surface.push(None);
+    }
+    brep.geom.face_surface[sphere_face_idx] = Some(surf_idx_sphere);
+    // Set face_surface_range to restrict to [0,2π] × [v_hi, v_lo]
+    while brep.geom.face_surface_range.len() <= sphere_face_idx {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep.geom.face_surface_range[sphere_face_idx] = Some([0.0, two_pi, v_hi, v_lo]);
+
+    // Top cap face
+    if let Some(si) = surf_idx_top {
+        let cap_wire = make_wire(vec![WireEdge::fwd(e0)]);
+        let cap_face = Face {
+            outer_wire: cap_wire,
+            inner_wires: vec![],
+            normal: DVec3::Z,
+            triangles: vec![],
+            sample_point: None,
+            mesh_dirty: true,
+        };
+        let fi = brep.solids[0].shells[0].faces.len();
+        brep.solids[0].shells[0].faces.push(cap_face);
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(si);
+    }
+
+    // Bottom cap face
+    if let Some(si) = surf_idx_bot {
+        let cap_wire = make_wire(vec![WireEdge::rev(e1.unwrap())]);
+        let cap_face = Face {
+            outer_wire: cap_wire,
+            inner_wires: vec![],
+            normal: -DVec3::Z,
+            triangles: vec![],
+            sample_point: None,
+            mesh_dirty: true,
+        };
+        let fi = brep.solids[0].shells[0].faces.len();
+        brep.solids[0].shells[0].faces.push(cap_face);
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(si);
+    }
+
+    Some(brep)
+}
+
+/// Build the intersection BRep for a coaxial Z-aligned cylinder ∩ sphere with R_s > R_c.
+///
+/// The cylinder wall cuts the sphere at z = s_z ± √(r_s² - r_c²).  This handles the
+/// sub-case where only the LOWER intersection circle lies in the overlap Z-range and
+/// the upper boundary is the cylinder end cap (sphere center above cylinder center).
+///
+/// Result faces:
+///   — Spherical face (bottom): south pole → intersection circle
+///   — Cylindrical wall face (middle): intersection circle → cylinder top (z_hi)
+///   — Cylinder top cap (top): planar disk at z = z_hi
+fn build_cylinder_sphere_intersection_brep(
+    z_lo: f64,
+    z_hi: f64,
+    r_c: f64,
+    s_center: DVec3,
+    r_s: f64,
+) -> Option<BRep> {
+    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::PCurve;
+    use std::f64::consts::PI;
+
+    let two_pi = 2.0 * PI;
+
+    // Overlap Z-range
+    let z_min = z_lo.max(s_center.z - r_s);
+    let z_max = z_hi.min(s_center.z + r_s);
+
+    let dz = (r_s * r_s - r_c * r_c).sqrt();
+    let z_isect = s_center.z - dz;
+
+    // Lower intersection circle must be in range
+    if z_isect < z_min - 1e-12 || z_isect > z_max + 1e-12 {
+        return None;
+    }
+
+    let h_cyl = z_hi - z_isect;
+
+    // Sphere colatitude at intersection circle
+    let cos_v = ((z_isect - s_center.z) / r_s).clamp(-1.0, 1.0);
+    let v_isect = cos_v.acos();
+
+    let mut brep = BRep::default();
+
+    // ── Vertices ──────────────────────────────────────────────
+    // V0: intersection circle at u=0 (= cylinder seam origin)
+    let v0 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_isect));
+    // V1: sphere south pole
+    let v1 = make_vertex(&mut brep, DVec3::new(0.0, 0.0, s_center.z - r_s));
+    // V2: cylinder top circle at u=0
+    let v2 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_hi));
+
+    // ── Edges ────────────────────────────────────────────────
+    // E0: intersection circle (shared: sphere rev / cyl fwd)
+    let e0 = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, z_isect),
+            normal: DVec3::Z,
+            radius: r_c,
+        }),
+        0.0, two_pi, v0, v0,
+    )
+    .ok()?;
+
+    // E1: sphere seam, meridian at u=0: V0 (u=0,v=v_isect) → V1 (south pole, v=π)
+    // Circle3(normal=Y) param: point_at(t)=center+r_s*(-sin(t), 0, -cos(t))
+    // because any_perpendicular(Y) = (0,0,-1) and y_ax = Y × (0,0,-1) = (-1,0,0).
+    //   V0: -r_s*sin(t)=r_c, -r_s*cos(t)=z_isect-s_center.z=-dz → t=atan2(-r_c, dz)
+    //   V1: -r_s*sin(t)=0, -r_s*cos(t)=-r_s → t=0 (south pole)
+    let t_v0 = f64::atan2(-r_c, dz);
+    let e1 = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 {
+            center: s_center,
+            normal: DVec3::Y,
+            radius: r_s,
+        }),
+        t_v0, 0.0, v0, v1,
+    )
+    .ok()?;
+
+    // E2: cylinder generator (u=0 seam) from z_isect to z_hi
+    let e2 = make_edge(
+        &mut brep,
+        Curve3::Line(Line3 {
+            origin: DVec3::new(r_c, 0.0, z_isect),
+            direction: DVec3::Z,
+        }),
+        0.0, h_cyl, v0, v2,
+    )
+    .ok()?;
+
+    // E3: cylinder top circle
+    let e3 = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, z_hi),
+            normal: DVec3::Z,
+            radius: r_c,
+        }),
+        0.0, two_pi, v2, v2,
+    )
+    .ok()?;
+
+    // ── Surfaces ─────────────────────────────────────────────
+    let sph_surf = Surface3::Sphere(SphericalSurface {
+        center: s_center,
+        axis: DVec3::Z,
+        radius: r_s,
+        ref_dir: DVec3::X,
+    });
+    let cyl_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(0.0, 0.0, z_isect),
+        axis: DVec3::Z,
+        radius: r_c,
+        ref_dir: DVec3::X,
+    });
+    let top_plane = Surface3::Plane(Plane {
+        origin: DVec3::new(0.0, 0.0, z_hi),
+        normal: DVec3::Z,
+    });
+
+    // ── PCurves ──────────────────────────────────────────────
+    // Sphere face pcurves
+    let e0_on_sph = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, v_isect),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    let e1_fwd = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, v_isect),
+        direction: glam::DVec2::new(0.0, 1.0),
+    });
+    let e1_rev = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(two_pi, PI),
+        direction: glam::DVec2::new(0.0, -1.0),
+    });
+
+    // Cylinder face pcurves
+    let e0_on_cyl = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, 0.0),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    let e2_fwd = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, 0.0),
+        direction: glam::DVec2::new(0.0, 1.0),
+    });
+    let e2_rev = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(two_pi, h_cyl),
+        direction: glam::DVec2::new(0.0, -1.0),
+    });
+    let e3_on_cyl = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, h_cyl),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+
+    // Top cap pcurve
+    let e3_on_plane = Curve2d::Circle(Circle2d {
+        center: glam::DVec2::ZERO,
+        radius: r_c,
+    });
+
+    // ── Geometry store ───────────────────────────────────────
+    let si_sph = 0usize;
+    brep.geom.surfaces.push(sph_surf);
+    let si_cyl = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(cyl_surf);
+    let si_plane = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(top_plane);
+
+    let mut c2d = 0usize;
+    brep.geom.curve2ds.push(e0_on_sph);
+    let c_e0_sph = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e1_fwd);
+    let c_e1_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e1_rev);
+    let c_e1_rev = c2d; c2d += 1;
+
+    brep.geom.curve2ds.push(e0_on_cyl);
+    let c_e0_cyl = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_fwd);
+    let c_e2_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_rev);
+    let c_e2_rev = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e3_on_cyl);
+    let c_e3_cyl = c2d; c2d += 1;
+
+    brep.geom.curve2ds.push(e3_on_plane);
+    let c_e3_plane = c2d; c2d += 1;
+
+    // Edge pcurves
+    let max_edge = e0.max(e1).max(e2).max(e3);
+    while brep.geom.edge_pcurves.len() <= max_edge {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_sph, curve2d_idx: c_e0_sph });
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e0_cyl });
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_sph, curve2d_idx: c_e1_fwd });
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_sph, curve2d_idx: c_e1_rev });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e2_fwd });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e2_rev });
+    brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e3_cyl });
+    brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_plane, curve2d_idx: c_e3_plane });
+
+    // ── Faces ────────────────────────────────────────────────
+    if brep.solids.is_empty() {
+        brep.solids.push(rcad_kernel::Solid {
+            shells: vec![rcad_kernel::Shell { faces: Vec::new() }],
+        });
+    }
+
+    // Sphere face: E0_rev → E1_fwd → E1_rev
+    let sph_face = Face {
+        outer_wire: make_wire(vec![WireEdge::rev(e0), WireEdge::fwd(e1), WireEdge::rev(e1)]),
+        inner_wires: vec![],
+        normal: DVec3::X,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+    let fi_sph = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(sph_face);
+    while brep.geom.face_surface.len() <= fi_sph { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi_sph] = Some(si_sph);
+    while brep.geom.face_surface_range.len() <= fi_sph { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi_sph] = Some([0.0, two_pi, v_isect, PI]);
+
+    // Cylinder face: E0_fwd → E2_fwd → E3_rev → E2_rev
+    let cyl_face = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::fwd(e0),
+            WireEdge::fwd(e2),
+            WireEdge::rev(e3),
+            WireEdge::rev(e2),
+        ]),
+        inner_wires: vec![],
+        normal: DVec3::Z,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+    let fi_cyl = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(cyl_face);
+    while brep.geom.face_surface.len() <= fi_cyl { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi_cyl] = Some(si_cyl);
+    while brep.geom.face_surface_range.len() <= fi_cyl { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi_cyl] = Some([0.0, two_pi, 0.0, h_cyl]);
+
+    // Top cap: E3_fwd
+    let cap_face = Face {
+        outer_wire: make_wire(vec![WireEdge::fwd(e3)]),
+        inner_wires: vec![],
+        normal: DVec3::Z,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+    let fi_cap = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(cap_face);
+    while brep.geom.face_surface.len() <= fi_cap { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi_cap] = Some(si_plane);
+
+    Some(brep)
+}
+
+/// Fast path: coaxial Z-aligned cylinder ∩ sphere.
+pub fn try_intersection_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings
+    try_intersection_coaxial_cylinder_sphere_pair(a, b)
+        .or_else(|| try_intersection_coaxial_cylinder_sphere_pair(b, a))
+}
+
+fn try_intersection_coaxial_cylinder_sphere_pair(cyl: &BRep, sphere: &BRep) -> Option<BRep> {
+    let (z_lo, z_hi, r_c) = z_axis_cylinder_z_span_r(cyl)?;
+    let (s_center, r_s) = sphere_center_r(sphere)?;
+
+    // Check coaxial: sphere center on Z axis
+    const XY: f64 = 2.0 * TOLERANCE_ADAPTIVE_MAX;
+    if s_center.x.abs() > XY || s_center.y.abs() > XY {
+        return None;
+    }
+
+    // Compute overlap Z-range
+    let sphere_z_lo = s_center.z - r_s;
+    let sphere_z_hi = s_center.z + r_s;
+    let z_min = z_lo.max(sphere_z_lo);
+    let z_max = z_hi.min(sphere_z_hi);
+
+    if z_max - z_min < TOLERANCE_MESH_LEGACY {
+        return None;
+    }
+
+    // If sphere is entirely inside the cylinder in Z, containment handles it
+    if z_min <= sphere_z_lo + TOLERANCE_MESH_LEGACY && z_max >= sphere_z_hi - TOLERANCE_MESH_LEGACY {
+        return None; // Let containment fast path handle it
+    }
+
+    if r_s <= r_c + TOLERANCE_ADAPTIVE_MAX {
+        // R_s ≤ R_c: sphere is radially inside cylinder → clip by Z-planes
+        build_sphere_clipped_by_z_planes(s_center, r_s, z_min, z_max)
+    } else {
+        // R_s > R_c: cylinder wall cuts sphere → composite sphere + cylinder + cap
+        build_cylinder_sphere_intersection_brep(z_lo, z_hi, r_c, s_center, r_s)
+    }
 }
 
 /// `cone \ cylinder` when the cylinder closes the cone base and contains the cone frustum up to `z_hi`:

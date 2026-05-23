@@ -2702,6 +2702,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_cylinder_box(a, b) {
             return Ok(r);
         }
