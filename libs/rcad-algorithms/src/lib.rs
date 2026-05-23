@@ -2586,7 +2586,9 @@ pub(crate) fn boolean_postprocess_pave_result(
     {
         return Ok(BRep::default());
     }
-    eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
+    if !result.solids.is_empty() && !result.solids[0].shells.is_empty() {
+        eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
+    }
     Ok(result)
 }
 
@@ -2700,6 +2702,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_intersection_cylinder_box(a, b) {
+            return Ok(r);
+        }
     }
 
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
@@ -2717,6 +2722,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             return Ok(r);
         }
         if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_difference_cylinder_box(a, b) {
             return Ok(r);
         }
         if let Some(r) = boolean_unit_octant::try_difference_box_cylinder(a, b) {

@@ -1178,6 +1178,13 @@ fn try_axis_aligned_world_rect_plane_area(
                     } else {
                     }
                 }
+                // When hull is NOT significantly larger than the dense-sample loop, the loop
+                // correctly traces the boundary (may be concave, e.g. a clipped cylinder cap
+                // with a circular arc → hull under-estimates).  Return the loop area when it
+                // is at least as large as the hull.
+                if a_loop > 1e-18 && a_loop + abs_eps >= a_hull {
+                    return Some(a_loop);
+                }
                 return Some(a_hull);
             }
         }

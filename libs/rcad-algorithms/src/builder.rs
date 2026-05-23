@@ -1190,7 +1190,9 @@ impl<'a> BooleanBuilder<'a> {
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
         let (brep, _) = self.build_with_history()?;
-        eprintln!("BooleanBuilder::build: {} faces", brep.solids[0].shells[0].faces.len());
+        if !brep.solids.is_empty() && !brep.solids[0].shells.is_empty() {
+            eprintln!("BooleanBuilder::build: {} faces", brep.solids[0].shells[0].faces.len());
+        }
         Ok(brep)
     }
 

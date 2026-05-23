@@ -24,8 +24,8 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::DVec3;
-use rcad_kernel::geom::{ConicalSurface, Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
+use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, Surface3};
+use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
@@ -768,7 +768,20 @@ pub fn try_intersection_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let info_b = try_as_box(b)?;
     let mut planes = info_a.planes();
     planes.extend(info_b.planes());
-    make_convex_polyhedron_from_half_spaces(&planes).ok()
+    let result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
+    // Reject zero-volume intersection (boxes adjacent/touching without overlap)
+    // such as the OCCT bopcommon_simple/N3 negative-dimension-box case.
+    if result.vertices.len() < 8 {
+        return None;
+    }
+    // Also check volume via bounding-box heuristic for thin slivers.
+    let vol = crate::total_volume(&result);
+    let scale = (a.bounding_box().map(|b| (b[1] - b[0]).length()).unwrap_or(1.0))
+        .max(b.bounding_box().map(|b| (b[1] - b[0]).length()).unwrap_or(1.0));
+    if vol <= crate::tolerance::TOLERANCE_LEN_MIN * scale {
+        return None;
+    }
+    Some(result)
 }
 
 /// Difference B - A for any two box BReps (axis-aligned or rotated).
@@ -935,7 +948,8 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     // If slab SA significantly exceeds B's SA, the slab decomposition is creating
     // excess internal faces (double-counted between adjacent slabs) that inflate SA.
     // Fall through to Pave-Filler for correct SA.
-    if slab_sa_sum > sa_b * 1.15 {
+    // Use 1.05 to catch cases like a rotated-box cut (L4) where slab_sa_sum/sa_b ≈ 1.118.
+    if slab_sa_sum > sa_b * 1.05 {
         let _ = writeln!(
             std::io::stderr(),
             "DEBUG_MULTI_SLAB SA_INFLATED slab_count={} slab_sa={:.6} sa_b={:.6}",
@@ -961,7 +975,7 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         "DEBUG_MULTI_SLAB slab_count={} slab_sa={:.6} fused_sa={:.6} slab_vol={:.12} ok={} vol_ok={} merged={}",
         result.len(), slab_sa_sum, fused_sa, slab_vol_sum, ok, vol_ok, merged,
     );
-    if vol_ok {
+    if vol_ok && (merged || result.len() == 1 || fused_sa <= sa_b * 1.05) {
         return Some(fused);
     }
     if !ok {
@@ -2592,6 +2606,919 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     result
 }
 
+/// Fast path: cylinder − box boolean difference.
+///
+/// When the box fully contains the cylinder cross-section in XY (at the Z-range
+/// of intersection), the result is simply the cylinder clipped to Z ranges not
+/// covered by the box — avoiding the Pave-Filler which can produce hundreds
+/// of unnecessary faces for symmetric configurations (e.g. bopcut_simple V5/V6).
+pub fn try_difference_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    let ca = try_cylinder_center_axis_radius_height(a)?;
+    let (cyl_center, cyl_axis, cyl_r, cyl_height) = ca;
+    let bx = try_as_box(b)?;
+
+    // Only handle Z-aligned cylinders.
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+
+    let z_idx = find_z_axis_index(&bx)?;
+    let (u_idx, v_idx) = match z_idx {
+        0 => (1, 2),
+        1 => (2, 0),
+        _ => (0, 1),
+    };
+    let u_ax = bx.axes[u_idx];
+    let v_ax = bx.axes[v_idx];
+    let eu = bx.extents[u_idx];
+    let ev = bx.extents[v_idx];
+    let ew = bx.extents[z_idx];
+    let bc = bx.center;
+
+    // Cylinder Z range.
+    let cyl_z_lo = cyl_center.z - cyl_height / 2.0;
+    let cyl_z_hi = cyl_center.z + cyl_height / 2.0;
+
+    // Box Z range.
+    let box_z_lo = bc.z - ew;
+    let box_z_hi = bc.z + ew;
+
+    // If no Z overlap, the box doesn't cut the cylinder — fall through.
+    let tol = TOL * 10.0;
+    if box_z_hi <= cyl_z_lo + tol || box_z_lo >= cyl_z_hi - tol {
+        return None;
+    }
+
+    // Cylinder center in box UV coordinates.
+    let cu = (cyl_center - bc).dot(u_ax);
+    let cv = (cyl_center - bc).dot(v_ax);
+
+    // Only handle full XY containment: box fully contains cylinder cross-section.
+    if cu - cyl_r < -eu - tol || cu + cyl_r > eu + tol
+        || cv - cyl_r < -ev - tol || cv + cyl_r > ev + tol
+    {
+        return None; // Partial — let Pave-Filler handle it.
+    }
+
+    // Full XY containment: build sub-cylinder(s) for Z ranges outside the box.
+    let mut pieces: Vec<BRep> = Vec::new();
+
+    if box_z_lo > cyl_z_lo + tol {
+        let h = box_z_lo - cyl_z_lo;
+        let cz = cyl_z_lo + h / 2.0;
+        let sub = make_cylinder_brep(
+            DVec3::new(cyl_center.x, cyl_center.y, cz),
+            cyl_axis, u_ax, cyl_r, h,
+        ).ok()?;
+        pieces.push(sub);
+    }
+
+    if box_z_hi < cyl_z_hi - tol {
+        let h = cyl_z_hi - box_z_hi;
+        let cz = box_z_hi + h / 2.0;
+        let sub = make_cylinder_brep(
+            DVec3::new(cyl_center.x, cyl_center.y, cz),
+            cyl_axis, u_ax, cyl_r, h,
+        ).ok()?;
+        pieces.push(sub);
+    }
+
+    if pieces.is_empty() {
+        // Entire cylinder is inside the box → empty result.
+        return Some(BRep::default());
+    }
+
+    if pieces.len() == 1 {
+        return Some(pieces.into_iter().next().unwrap());
+    }
+
+    // Multiple pieces (box cuts out middle section) — need fuse. Fall through.
+    None
+}
+
+/// Fast path: cylinder ∩ box boolean intersection.
+///
+/// When the box fully contains the cylinder cross-section in XY (at the Z-range
+/// of intersection), the result is simply the cylinder clipped to the box's
+/// Z range — avoiding the Pave-Filler which produces hundreds of unnecessary
+/// faces for symmetric configurations (e.g. bopcommon_simple V5/V6).
+pub fn try_intersection_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings.
+    try_intersect_cylinder_box_one_dir(a, b)
+        .or_else(|| try_intersect_cylinder_box_one_dir(b, a))
+}
+
+/// Helper: find which theta values in [0, 2π) satisfy all clip-plane constraints.
+/// For clip plane (inward_normal n, cut_dist d): valid where cos(θ−φ) ≥ −d/r.
+/// Returns sorted disjoint intervals within [0, 2π).
+fn compute_valid_theta_ranges(r: f64, clip_planes: &[(DVec3, f64)]) -> Vec<(f64, f64)> {
+    let pi = std::f64::consts::PI;
+    let two_pi = 2.0 * pi;
+
+    let mut valid = vec![(0.0, two_pi)];
+
+    for &(n, d) in clip_planes {
+        let cd = (-d / r).clamp(-1.0, 1.0);
+        let alpha = cd.acos();
+        if alpha >= pi - 1e-12 {
+            continue; // full circle, no constraint
+        }
+        let phi = n.y.atan2(n.x);
+
+        // Constraint: θ ∈ [φ−α, φ+α] mod 2π
+        let lo = phi - alpha;
+        let hi = phi + alpha;
+
+        let constraint = {
+            let lo_norm = lo.rem_euclid(two_pi);
+            let hi_norm = hi.rem_euclid(two_pi);
+            if lo_norm <= hi_norm {
+                vec![(lo_norm, hi_norm)]
+            } else {
+                vec![(lo_norm, two_pi), (0.0, hi_norm)]
+            }
+        };
+
+        let mut next = Vec::new();
+        for &(vl, vr) in &valid {
+            for &(cl, cr) in &constraint {
+                let l = f64::max(vl, cl);
+                let r = f64::min(vr, cr);
+                if r > l + 1e-12 {
+                    next.push((l, r));
+                }
+            }
+        }
+        valid = next;
+        if valid.is_empty() {
+            break;
+        }
+    }
+    valid
+}
+
+/// On which clip-plane boundary (index into `info`) does `theta` lie?
+fn find_plane_for_theta(theta: f64, info: &[(f64, f64, DVec3, f64)], r: f64) -> Option<usize> {
+    for (i, &(phi, alpha, _n, d)) in info.iter().enumerate() {
+        if alpha >= std::f64::consts::PI - 1e-12 {
+            continue;
+        }
+        let diff = (theta - phi).cos() + d / r;
+        if diff.abs() < 1e-8 {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Solve for the XY corner where two clip planes intersect.
+/// Each plane's line: n·(p−center.xy) = −d  →  n·p = n·center.xy − d
+fn corner_of_planes(
+    n1: DVec3, d1: f64,
+    n2: DVec3, d2: f64,
+    center: DVec3,
+) -> DVec3 {
+    // 2×2 system: [n1.x n1.y; n2.x n2.y] * p = [n1·c_xy − d1; n2·c_xy − d2]
+    let cx = center.x;
+    let cy = center.y;
+    let a = n1.x; let b = n1.y;
+    let c = n2.x; let d = n2.y;
+    let rhs1 = cx * n1.x + cy * n1.y - d1;
+    let rhs2 = cx * n2.x + cy * n2.y - d2;
+    let det = a * d - b * c;
+    if det.abs() < 1e-15 {
+        // Fallback: average the two plane origins
+        let o1 = DVec3::new(cx - n1.x * d1, cy - n1.y * d1, 0.0);
+        let o2 = DVec3::new(cx - n2.x * d2, cy - n2.y * d2, 0.0);
+        return (o1 + o2) * 0.5;
+    }
+    let inv = 1.0 / det;
+    DVec3::new(
+        (rhs1 * d - rhs2 * b) * inv,
+        (a * rhs2 - c * rhs1) * inv,
+        0.0,
+    )
+}
+
+/// Build a BRep for the intersection of a Z-aligned cylinder with up to 4
+/// vertical clip planes (box faces parallel to the cylinder axis).
+///
+/// Each clip plane is `(inward_normal, cut_dist)`.  The result is the portion
+/// of the cylinder that satisfies ALL clip-plane constraints simultaneously.
+///
+/// The result may have multiple cylindrical-wall faces (one per valid θ run),
+/// top/bottom planar caps with wire boundaries that alternate between circle
+/// arcs and clip-plane chord segments, and one rectangular side face per
+/// clip plane.
+fn build_cylinder_box_intersection_brep(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_planes: &[(DVec3, f64)],
+) -> BRep {
+    let pi = std::f64::consts::PI;
+    let two_pi = 2.0 * pi;
+    let half_h = h * 0.5;
+    let cz_lo = center.z - half_h;
+    let cz_hi = center.z + half_h;
+
+    let mut brep = BRep::new();
+    brep.solids.push(Solid {
+        shells: vec![Shell { faces: Vec::new() }],
+    });
+
+    // ---- 1. compute valid θ intervals & plane info ----
+    let mut intervals = compute_valid_theta_ranges(r, clip_planes);
+    intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    if intervals.is_empty() {
+        return brep;
+    }
+
+    // Pre-compute (phi, alpha, normal, cut_dist) for each plane
+    let info: Vec<(f64, f64, DVec3, f64)> = clip_planes.iter().map(|&(n, d)| {
+        let alpha = (-d / r).clamp(-1.0, 1.0).acos();
+        let phi = n.y.atan2(n.x);
+        (phi, alpha, n, d)
+    }).collect();
+
+    // ---- 2. vertices — one pair (lo, hi) per unique θ ----
+    // Canonicalize: θ near 0 or 2π → 0
+    let canon = |t: f64| if t >= two_pi - 1e-12 { 0.0 } else { t };
+
+    fn push_vertex(brep: &mut BRep, p: DVec3) -> usize {
+        let idx = brep.vertices.len();
+        brep.vertices.push(Vertex { point: p });
+        idx
+    }
+
+    struct VEntry { theta: f64, lo: usize, hi: usize }
+    let mut vtab: Vec<VEntry> = Vec::new();
+    let mut interval_verts: Vec<(usize, usize)> = Vec::new(); // (s_entry, e_entry)
+
+    for &(s_raw, e_raw) in &intervals {
+        let s = canon(s_raw);
+        let e = canon(e_raw);
+        for t in [s, e] {
+            if !vtab.iter().any(|ve| (ve.theta - t).abs() < 1e-12) {
+                let (c, sn) = (t.cos(), t.sin());
+                let lo = push_vertex(&mut brep, DVec3::new(center.x + r * c, center.y + r * sn, cz_lo));
+                let hi = push_vertex(&mut brep, DVec3::new(center.x + r * c, center.y + r * sn, cz_hi));
+                vtab.push(VEntry { theta: t, lo, hi });
+            }
+        }
+        let sidx = vtab.iter().position(|ve| (ve.theta - s).abs() < 1e-12).unwrap();
+        let eidx = vtab.iter().position(|ve| (ve.theta - e).abs() < 1e-12).unwrap();
+        interval_verts.push((sidx, eidx));
+    }
+
+    // Quick helpers
+    let v_lo = |entry: usize| vtab[entry].lo;
+    let v_hi = |entry: usize| vtab[entry].hi;
+
+    // ---- 3. edge helper (same pattern as build_half_cylinder_intersection_brep) ----
+    let mut next_curve = |c: Curve3, t0: f64, t1: f64, start: usize, end: usize| -> usize {
+        let idx = brep.edges.len();
+        brep.edges.push(Edge { start, end });
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(c);
+        while brep.geom.edge_curve.len() <= idx {
+            brep.geom.edge_curve.push(None);
+            brep.geom.edge_curve_range.push(None);
+            brep.geom.edge_degenerated.push(false);
+        }
+        brep.geom.edge_curve[idx] = Some(ci);
+        brep.geom.edge_curve_range[idx] = Some([t0, t1]);
+        brep.geom.edge_pcurves.push(Vec::new());
+        idx
+    };
+
+    // ---- 4. cylindrical wall faces (one per interval) ----
+    // We also collect generator edges & chord edges needed for cap / side faces.
+    let n_int = intervals.len();
+
+    // Store per-interval edges: (bottom_arc, right_gen, top_arc, left_gen)
+    struct IntervalEdges { ba: usize, rg: usize, ta: usize, lg: usize }
+    let mut interval_edges: Vec<IntervalEdges> = Vec::with_capacity(n_int);
+
+    for (i, &(s_raw, e_raw)) in intervals.iter().enumerate() {
+        let s = canon(s_raw);
+        let e = canon(e_raw);
+        let si = interval_verts[i].0;
+        let ei = interval_verts[i].1;
+
+        // Bottom circle (normal = −Z)
+        // Circle3(normal=-Z): C(t) = center + r*(-sin(t), -cos(t), 0)
+        // For vertex at standard CCW angle θ: P = center + r*(cos(θ), sin(θ), 0)
+        // Mapping: (-sin(t), -cos(t)) = (cos(θ), sin(θ)) → t = -π/2 - θ
+        let circle_bot = Curve3::Circle(Circle3 {
+            center: DVec3::new(center.x, center.y, cz_lo),
+            normal: -DVec3::Z,
+            radius: r,
+        });
+        // Stored as V_e → V_s, used as rev in wires → effective V_s → V_e (CCW)
+        let ba = next_curve(circle_bot, -pi / 2.0 - e_raw, -pi / 2.0 - s_raw, v_lo(ei), v_lo(si));
+
+        // Right generator at θ = e
+        let p_e_lo = DVec3::new(center.x + r * e.cos(), center.y + r * e.sin(), cz_lo);
+        let rg = next_curve(
+            Curve3::Line(Line3 { origin: p_e_lo, direction: DVec3::Z }),
+            0.0, h, v_lo(ei), v_hi(ei),
+        );
+
+        // Top circle (normal = +Z)
+        // Circle3(normal=+Z): C(t) = center + r*(-sin(t), cos(t), 0)
+        // Mapping: (-sin(t), cos(t)) = (cos(θ), sin(θ)) → t = θ - π/2
+        let circle_top = Curve3::Circle(Circle3 {
+            center: DVec3::new(center.x, center.y, cz_hi),
+            normal: DVec3::Z,
+            radius: r,
+        });
+        // Stored as V_s → V_e (fwd in cap wire = θ_s→θ_e CCW; rev in cyl wall = θ_e→θ_s)
+        let ta = next_curve(circle_top, s_raw - pi / 2.0, e_raw - pi / 2.0, v_hi(si), v_hi(ei));
+
+        // Left generator at θ = s
+        let p_s_lo = DVec3::new(center.x + r * s.cos(), center.y + r * s.sin(), cz_lo);
+        let lg = next_curve(
+            Curve3::Line(Line3 { origin: p_s_lo, direction: DVec3::Z }),
+            0.0, h, v_lo(si), v_hi(si),
+        );
+
+        // Cylindrical wall face
+        let cyl_wire = Wire {
+            edges: vec![
+                WireEdge::rev(ba),  // V_s_lo → V_e_lo
+                WireEdge::fwd(rg),  // V_e_lo → V_e_hi
+                WireEdge::rev(ta),  // V_e_hi → V_s_hi
+                WireEdge::rev(lg),  // V_s_hi → V_s_lo
+            ],
+        };
+
+        let si_cyl = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::new(center.x, center.y, cz_lo),
+            axis: DVec3::Z,
+            radius: r,
+            ref_dir: DVec3::X,
+        }));
+
+        let fi = brep.solids[0].shells[0].faces.len();
+        brep.solids[0].shells[0].faces.push(Face {
+            outer_wire: cyl_wire,
+            inner_wires: Vec::new(),
+            normal: DVec3::new(0.0, 0.0, 0.0), // will be set later (same for all cyl faces)
+            triangles: Vec::new(),
+            sample_point: None,
+            mesh_dirty: true,
+        });
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(si_cyl);
+        while brep.geom.face_surface_range.len() <= fi {
+            brep.geom.face_surface_range.push(None);
+        }
+        // UV range: u ∈ [θ_s, θ_e], v ∈ [0, h]
+        brep.geom.face_surface_range[fi] = Some([s_raw, e_raw, 0.0, h]);
+
+        interval_edges.push(IntervalEdges { ba, rg, ta, lg });
+    }
+
+    // Fix the normal on all cylindrical wall faces (they all point the same way)
+    let cyl_face_normal = if clip_planes.is_empty() {
+        DVec3::Z
+    } else {
+        // Average of clip-plane inward normals (all horizontal → result is horizontal)
+        let mut avg = DVec3::ZERO;
+        for &(n, _) in clip_planes { avg += n; }
+        avg.normalize()
+    };
+    for fi in 0..brep.solids[0].shells[0].faces.len() {
+        brep.solids[0].shells[0].faces[fi].normal = cyl_face_normal;
+    }
+
+    // ---- 5. chord edges between interval endpoints (on clip planes) ----
+    // Each gap from interval[i].e → interval[i+1].s (mod n_int) may have 1+
+    // segments (one per clip plane traversed).  We record gaps per interval as
+    // a list of segments, each with bottom/top chord edges and the generator
+    // edges at their endpoints (needed later for side faces).
+
+    struct GapSeg {
+        bot_chord: usize,
+        top_chord: usize,
+        plane: usize,
+        gen_from: usize, // V_from_lo → V_from_hi (stored direction)
+        gen_to: usize,   // V_to_lo → V_to_hi (stored direction)
+    }
+
+    let mut gap_segs: Vec<Vec<GapSeg>> = Vec::with_capacity(n_int);
+
+    for gi in 0..n_int {
+        let i0 = gi;
+        let i1 = if gi + 1 < n_int { gi + 1 } else { 0 };
+        let theta_from = intervals[i0].1; // e of interval i0
+        let theta_to = intervals[i1].0;   // s of interval i1
+
+        if (canon(theta_from) - canon(theta_to)).abs() < 1e-12 {
+            gap_segs.push(Vec::new());
+            continue;
+        }
+
+        let p_from = find_plane_for_theta(theta_from, &info, r);
+        let p_to = find_plane_for_theta(theta_to, &info, r);
+
+        match (p_from, p_to) {
+            (Some(pidx), Some(pidx2)) if pidx == pidx2 => {
+                // Same plane → single chord
+                let vi_fr = interval_verts[i0].1;
+                let vi_to = interval_verts[i1].0;
+
+                let chord_bot = Curve3::Line(Line3 {
+                    origin: brep.vertices[v_lo(vi_fr)].point,
+                    direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[v_lo(vi_fr)].point,
+                });
+                let eb = next_curve(chord_bot, 0.0, 1.0, v_lo(vi_fr), v_lo(vi_to));
+
+                let chord_top = Curve3::Line(Line3 {
+                    origin: brep.vertices[v_hi(vi_fr)].point,
+                    direction: brep.vertices[v_hi(vi_to)].point - brep.vertices[v_hi(vi_fr)].point,
+                });
+                let et = next_curve(chord_top, 0.0, 1.0, v_hi(vi_fr), v_hi(vi_to));
+
+                gap_segs.push(vec![GapSeg {
+                    bot_chord: eb,
+                    top_chord: et,
+                    plane: pidx,
+                    gen_from: interval_edges[i0].rg,
+                    gen_to: interval_edges[i1].lg,
+                }]);
+            }
+            (Some(p1), Some(p2)) if p1 != p2 => {
+                // Different planes → path via corner of the two planes
+                let (n1, d1) = (clip_planes[p1].0, clip_planes[p1].1);
+                let (n2, d2) = (clip_planes[p2].0, clip_planes[p2].1);
+                let corner_xy = corner_of_planes(n1, d1, n2, d2, center);
+
+                // Inline push_vertex (avoid borrow conflict with next_curve closure)
+                let corner_lo = brep.vertices.len();
+                brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
+                let corner_hi = brep.vertices.len();
+                brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
+
+                // Generator (vertical line) at the corner
+                let cor_gen = next_curve(
+                    Curve3::Line(Line3 { origin: brep.vertices[corner_lo].point, direction: DVec3::Z }),
+                    0.0, h, corner_lo, corner_hi,
+                );
+
+                let vi_fr = interval_verts[i0].1;
+                let vi_to = interval_verts[i1].0;
+
+                // Segment 1: V_e_i0 → corner on plane p1
+                let seg1_bot = Curve3::Line(Line3 {
+                    origin: brep.vertices[v_lo(vi_fr)].point,
+                    direction: brep.vertices[corner_lo].point - brep.vertices[v_lo(vi_fr)].point,
+                });
+                let e1b = next_curve(seg1_bot, 0.0, 1.0, v_lo(vi_fr), corner_lo);
+
+                let seg1_top = Curve3::Line(Line3 {
+                    origin: brep.vertices[v_hi(vi_fr)].point,
+                    direction: brep.vertices[corner_hi].point - brep.vertices[v_hi(vi_fr)].point,
+                });
+                let e1t = next_curve(seg1_top, 0.0, 1.0, v_hi(vi_fr), corner_hi);
+
+                // Segment 2: corner → V_s_i1 on plane p2
+                let seg2_bot = Curve3::Line(Line3 {
+                    origin: brep.vertices[corner_lo].point,
+                    direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[corner_lo].point,
+                });
+                let e2b = next_curve(seg2_bot, 0.0, 1.0, corner_lo, v_lo(vi_to));
+
+                let seg2_top = Curve3::Line(Line3 {
+                    origin: brep.vertices[corner_hi].point,
+                    direction: brep.vertices[v_hi(vi_to)].point - brep.vertices[corner_hi].point,
+                });
+                let e2t = next_curve(seg2_top, 0.0, 1.0, corner_hi, v_hi(vi_to));
+
+                gap_segs.push(vec![
+                    GapSeg {
+                        bot_chord: e1b, top_chord: e1t, plane: p1,
+                        gen_from: interval_edges[i0].rg,
+                        gen_to: cor_gen,
+                    },
+                    GapSeg {
+                        bot_chord: e2b, top_chord: e2t, plane: p2,
+                        gen_from: cor_gen,
+                        gen_to: interval_edges[i1].lg,
+                    },
+                ]);
+            }
+            _ => {
+                gap_segs.push(Vec::new());
+            }
+        }
+    }
+
+    // ---- 6. bottom & top planar cap faces ----
+    let bot_surf_idx = {
+        let si = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::new(center.x, center.y, cz_lo),
+            normal: -DVec3::Z,
+        }));
+        si
+    };
+    let top_surf_idx = {
+        let si = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(Surface3::Plane(Plane {
+            origin: DVec3::new(center.x, center.y, cz_hi),
+            normal: DVec3::Z,
+        }));
+        si
+    };
+
+    // Bottom cap: V_s_lo → V_e_lo (arc) → V_s_{i+1}_lo (chords) → ...
+    let mut bot_wire_edges: Vec<WireEdge> = Vec::new();
+    let mut top_wire_edges: Vec<WireEdge> = Vec::new();
+    for i in 0..n_int {
+        // Arc from start-vertex to end-vertex (bottom: V_s_lo→V_e_lo, top: V_s_hi→V_e_hi)
+        bot_wire_edges.push(WireEdge::rev(interval_edges[i].ba));
+        top_wire_edges.push(WireEdge::fwd(interval_edges[i].ta));
+        // Gap chord segments from end-i to start-(i+1)
+        for seg in &gap_segs[i] {
+            bot_wire_edges.push(WireEdge::fwd(seg.bot_chord));
+            top_wire_edges.push(WireEdge::fwd(seg.top_chord));
+        }
+    }
+
+    let push_face = |brep: &mut BRep, wire: Wire, surf_idx: usize, normal: DVec3| {
+        let fi = brep.solids[0].shells[0].faces.len();
+        brep.solids[0].shells[0].faces.push(Face {
+            outer_wire: wire,
+            inner_wires: Vec::new(),
+            normal,
+            triangles: Vec::new(),
+            sample_point: None,
+            mesh_dirty: true,
+        });
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(surf_idx);
+    };
+    push_face(&mut brep, Wire { edges: bot_wire_edges }, bot_surf_idx, -DVec3::Z);
+    push_face(&mut brep, Wire { edges: top_wire_edges }, top_surf_idx, DVec3::Z);
+
+    // ---- 7. side faces on each clip-plane segment ----
+    // Each segment lies on a single clip plane.  The face wire runs:
+    //   bot_chord_fwd → trailing_gen_fwd → top_chord_rev → leading_gen_rev
+    for segs in &gap_segs {
+        for seg in segs {
+            let (n, d) = clip_planes[seg.plane];
+            let si_side = {
+                let si = brep.geom.surfaces.len();
+                brep.geom.surfaces.push(Surface3::Plane(Plane {
+                    origin: center - n * d,
+                    normal: -n,
+                }));
+                si
+            };
+            let side_wire = Wire {
+                edges: vec![
+                    WireEdge::fwd(seg.bot_chord),
+                    WireEdge::fwd(seg.gen_to),
+                    WireEdge::rev(seg.top_chord),
+                    WireEdge::rev(seg.gen_from),
+                ],
+            };
+            push_face(&mut brep, side_wire, si_side, -n);
+        }
+    }
+
+    brep
+}
+/// bounded by a vertical plane parallel to the cylinder axis.
+///
+/// The result is a portion of the cylinder cut lengthwise by a plane parallel to
+/// its axis. Only the side where `(P - center)·clip_n ≥ -cut_dist` is kept.
+/// `clip_n` must be a horizontal unit vector (z=0) pointing into the kept half.
+/// `cut_dist` is the distance from the cylinder center to the cut plane (measured
+/// in the direction opposite to `clip_n`, i.e., into the kept half).
+///
+/// When cut_dist=0, the cut plane passes through the cylinder axis and the result
+/// is a clean half-cylinder. When cut_dist > 0, the cut plane is offset outward
+/// from the axis, and more than half the cylinder is kept.
+///
+/// This is used when a box fully contains the cylinder in one XY axis but only
+/// partially contains it in the other.
+fn build_half_cylinder_intersection_brep(
+    center: DVec3,   // cylinder center (cx, cy, cz)
+    r: f64,          // radius
+    h: f64,          // height
+    clip_n: DVec3,   // horizontal unit normal pointing into the kept half
+    cut_dist: f64,   // distance from center to cut plane (≥0, into kept half)
+) -> BRep {
+    debug_assert!(cut_dist >= 0.0 && cut_dist <= r + 1e-12,
+        "cut_dist must be in [0, r]. Got {cut_dist} for r={r}");
+
+    let half_h = h * 0.5;
+    let cz_lo = center.z - half_h;
+    let cz_hi = center.z + half_h;
+
+    // Azimuth angle of clip_n in XY plane.
+    let phi = clip_n.y.atan2(clip_n.x);
+
+    // Half-angle of the kept arc: α = arccos(-cut_dist/r).
+    // For cut_dist=0 (center cut): α = π/2 → Δu = π (half-cylinder).
+    // For cut_dist=r (full cylinder): α = arccos(-1) = π → Δu = 2π (full cylinder).
+    let alpha = (-cut_dist / r).acos();
+
+    // Vertices at the intersection of the cut plane with the cylinder surface.
+    // V0/V3 at u = φ - α (left generator), V1/V2 at u = φ + α (right generator).
+    let (sa, ca) = alpha.sin_cos();
+    let (sp, cp) = phi.sin_cos();
+
+    // (cos(φ±α), sin(φ±α)) = (cp*ca ∓ sp*sa, sp*ca ± cp*sa)
+    let cos_phi_minus_alpha = cp * ca + sp * sa;
+    let sin_phi_minus_alpha = sp * ca - cp * sa;
+    let cos_phi_plus_alpha = cp * ca - sp * sa;
+    let sin_phi_plus_alpha = sp * ca + cp * sa;
+
+    let v0_p = DVec3::new(center.x + r * cos_phi_minus_alpha, center.y + r * sin_phi_minus_alpha, cz_lo);
+    let v1_p = DVec3::new(center.x + r * cos_phi_plus_alpha, center.y + r * sin_phi_plus_alpha, cz_lo);
+    let v2_p = DVec3::new(center.x + r * cos_phi_plus_alpha, center.y + r * sin_phi_plus_alpha, cz_hi);
+    let v3_p = DVec3::new(center.x + r * cos_phi_minus_alpha, center.y + r * sin_phi_minus_alpha, cz_hi);
+
+    // --- Build BRep directly ---
+    let mut brep = BRep::new();
+
+    // Vertices
+    let v0 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v0_p });
+    let v1 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v1_p });
+    let v2 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v2_p });
+    let v3 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v3_p });
+
+    // Edge index helpers — push an edge and return its index.
+    let mut next_curve = |c: Curve3, t0: f64, t1: f64, start: usize, end: usize| -> usize {
+        let idx = brep.edges.len();
+        brep.edges.push(Edge { start, end });
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(c);
+        // Ensure parallel vecs
+        while brep.geom.edge_curve.len() <= idx {
+            brep.geom.edge_curve.push(None);
+            brep.geom.edge_curve_range.push(None);
+            brep.geom.edge_degenerated.push(false);
+        }
+        brep.geom.edge_curve[idx] = Some(ci);
+        brep.geom.edge_curve_range[idx] = Some([t0, t1]);
+        brep.geom.edge_pcurves.push(Vec::new());
+        idx
+    };
+
+    // E0: bottom arc (V1→V0 along kept side of bottom circle).
+    // Circle3 with normal=-Z maps CylSurf u → Circle3 -u, so V1(CylSurf u=φ+α)
+    // → Circle3 u=-(φ+α) and V0(CylSurf u=φ-α) → Circle3 u=-(φ-α).
+    let circle_bot = Curve3::Circle(Circle3 {
+        center: DVec3::new(center.x, center.y, cz_lo),
+        normal: -DVec3::Z,
+        radius: r,
+    });
+    let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
+
+    // E1: right generator (V1→V2)
+    let line_r = Curve3::Line(Line3 {
+        origin: v1_p,
+        direction: DVec3::Z,
+    });
+    let e1 = next_curve(line_r, 0.0, h, v1, v2);
+
+    // E2: top arc (V3→V2 along kept side of top circle).
+    // Circle3 with normal=Z uses the same param as CylSurf, so V3(CylSurf u=φ-α)
+    // → Circle3 u=φ-α and V2(CylSurf u=φ+α) → Circle3 u=φ+α.
+    let circle_top = Curve3::Circle(Circle3 {
+        center: DVec3::new(center.x, center.y, cz_hi),
+        normal: DVec3::Z,
+        radius: r,
+    });
+    let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
+
+    // E3: left generator (V0→V3)
+    let line_l = Curve3::Line(Line3 {
+        origin: v0_p,
+        direction: DVec3::Z,
+    });
+    let e3 = next_curve(line_l, 0.0, h, v0, v3);
+
+    // E4: cut bottom (V0→V1)
+    let line_cb = Curve3::Line(Line3 {
+        origin: v0_p,
+        direction: v1_p - v0_p,
+    });
+    let e4 = next_curve(line_cb, 0.0, 1.0, v0, v1);
+
+    // E5: cut top (V2→V3)
+    let line_ct = Curve3::Line(Line3 {
+        origin: v2_p,
+        direction: v3_p - v2_p,
+    });
+    let e5 = next_curve(line_ct, 0.0, 1.0, v2, v3);
+
+    // --- Surfaces ---
+    let cyl_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(center.x, center.y, cz_lo),
+        axis: DVec3::Z,
+        radius: r,
+        ref_dir: DVec3::X,
+    });
+    let top_plane = Surface3::Plane(Plane {
+        origin: DVec3::new(center.x, center.y, cz_hi),
+        normal: DVec3::Z,
+    });
+    let bot_plane = Surface3::Plane(Plane {
+        origin: DVec3::new(center.x, center.y, cz_lo),
+        normal: -DVec3::Z,
+    });
+    let cut_plane = Surface3::Plane(Plane {
+        origin: center - clip_n * cut_dist,
+        normal: -clip_n, // outward from the solid
+    });
+
+    // Push surfaces and register face-surface mapping.
+    let si_cyl = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(cyl_surf);
+    let si_top = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(top_plane);
+    let si_bot = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(bot_plane);
+    let si_cut = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(cut_plane);
+
+    // Helper to push a face.
+    let mut push_face = |outer: Wire, surf_idx: usize, normal: DVec3| -> usize {
+        let fi = if brep.solids.is_empty() {
+            brep.solids.push(Solid {
+                shells: vec![Shell { faces: Vec::new() }],
+            });
+            0
+        } else {
+            brep.solids[0].shells[0].faces.len()
+        };
+        brep.solids[0].shells[0].faces.push(Face {
+            outer_wire: outer,
+            inner_wires: Vec::new(),
+            normal,
+            triangles: Vec::new(),
+            sample_point: None,
+            mesh_dirty: true,
+        });
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(surf_idx);
+        fi
+    };
+
+    // F0: Cylindrical face — wire V0→V1→V2→V3→V0
+    // E0 stored as V1→V0 → E0_rev = V0→V1
+    // E1 stored as V1→V2 → E1_fwd = V1→V2
+    // E2 stored as V3→V2 → E2_rev = V2→V3
+    // E3 stored as V0→V3 → E3_rev = V3→V0
+    let cyl_wire = Wire {
+        edges: vec![
+            WireEdge::rev(e0),
+            WireEdge::fwd(e1),
+            WireEdge::rev(e2),
+            WireEdge::rev(e3),
+        ],
+    };
+    let _f0 = push_face(cyl_wire, si_cyl, clip_n);
+    // Set face_surface_range for analytic SA: u ∈ [φ-α, φ+α], v ∈ [0, h]
+    while brep.geom.face_surface_range.len() <= _f0 {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep.geom.face_surface_range[_f0] = Some([phi - alpha, phi + alpha, 0.0, h]);
+
+    // F1: Top half-disk (normal=+Z). Wire: V2→V3 (cut top) → V3→V2 (top arc)
+    // E5_fwd: V2→V3, E2_fwd: V3→V2
+    let top_wire = Wire {
+        edges: vec![WireEdge::fwd(e5), WireEdge::fwd(e2)],
+    };
+    let _f1 = push_face(top_wire, si_top, DVec3::Z);
+
+    // F2: Bottom half-disk (normal=-Z). Wire: V0→V1 (cut bottom) → V1→V0 (bottom arc)
+    // E4_fwd: V0→V1, E0_fwd: V1→V0
+    let bot_wire = Wire {
+        edges: vec![WireEdge::fwd(e4), WireEdge::fwd(e0)],
+    };
+    let _f2 = push_face(bot_wire, si_bot, -DVec3::Z);
+
+    // F3: Cut face (normal=-clip_n). Wire: V0→V1→V2→V3→V0
+    // E4_fwd: V0→V1, E1_fwd: V1→V2, E5_fwd: V2→V3, E3_rev: V3→V0
+    let cut_wire = Wire {
+        edges: vec![
+            WireEdge::fwd(e4),
+            WireEdge::fwd(e1),
+            WireEdge::fwd(e5),
+            WireEdge::rev(e3),
+        ],
+    };
+    let _f3 = push_face(cut_wire, si_cut, -clip_n);
+
+    brep
+}
+
+/// Shared helper for intersection: cyl_brep is the cylinder, box_brep is the box.
+fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Option<BRep> {
+    let ca = try_cylinder_center_axis_radius_height(cyl_brep)?;
+    let (cyl_bottom, cyl_axis, cyl_r, cyl_height) = ca;
+    // try_cylinder_center_axis_radius_height returns the CylindricalSurface origin
+    // (bottom of cylinder), not the geometric center. Compute the actual center.
+    let cyl_center = cyl_bottom + cyl_axis * (cyl_height / 2.0);
+    let bx = try_as_box(box_brep)?;
+
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+
+    let z_idx = find_z_axis_index(&bx)?;
+    let (u_idx, v_idx) = match z_idx {
+        0 => (1, 2),
+        1 => (2, 0),
+        _ => (0, 1),
+    };
+    let u_ax = bx.axes[u_idx];
+    let v_ax = bx.axes[v_idx];
+    let eu = bx.extents[u_idx];
+    let ev = bx.extents[v_idx];
+    let ew = bx.extents[z_idx];
+    let bc = bx.center;
+
+    let cyl_z_lo = cyl_center.z - cyl_height / 2.0;
+    let cyl_z_hi = cyl_center.z + cyl_height / 2.0;
+    let box_z_lo = bc.z - ew;
+    let box_z_hi = bc.z + ew;
+
+    let tol = TOL * 10.0;
+
+    // Intersection Z range.
+    let inter_lo = cyl_z_lo.max(box_z_lo);
+    let inter_hi = cyl_z_hi.min(box_z_hi);
+    if inter_hi <= inter_lo + tol {
+        return Some(BRep::default());
+    }
+
+    // Check XY containment.
+    let cu = (cyl_center - bc).dot(u_ax);
+    let cv = (cyl_center - bc).dot(v_ax);
+    let full_u = cu - cyl_r >= -eu - tol && cu + cyl_r <= eu + tol;
+    let full_v = cv - cyl_r >= -ev - tol && cv + cyl_r <= ev + tol;
+
+    if full_u && full_v {
+        // Full XY containment: build sub-cylinder for the intersection Z range.
+        let h = inter_hi - inter_lo;
+        let cz = inter_lo + h / 2.0;
+        return make_cylinder_brep(
+            DVec3::new(cyl_center.x, cyl_center.y, cz),
+            cyl_axis, u_ax, cyl_r, h,
+        ).ok();
+    }
+
+    // Collect clip planes from all partially-contained axes.
+    // Each partial axis may have 0, 1, or 2 clipped sides.
+    let mut clip_planes: Vec<(DVec3, f64)> = Vec::new();
+    for &(full_axis, cp, ax, ext) in &[(full_u, cu, u_ax, eu), (full_v, cv, v_ax, ev)] {
+        if !full_axis {
+            if cp - cyl_r < -ext - tol {
+                clip_planes.push((ax, cp + ext));
+            }
+            if cp + cyl_r > ext + tol {
+                clip_planes.push((-ax, ext - cp));
+            }
+        }
+    }
+
+    if clip_planes.is_empty() {
+        return None;
+    }
+
+    let h = inter_hi - inter_lo;
+    let cz = inter_lo + h / 2.0;
+    let adj_center = DVec3::new(cyl_center.x, cyl_center.y, cz);
+
+    // Single clip plane → existing half-cylinder builder (backward compat, efficient).
+    if clip_planes.len() == 1 {
+        let (clip_dir, cut_dist) = clip_planes[0];
+        return Some(build_half_cylinder_intersection_brep(adj_center, cyl_r, h, clip_dir, cut_dist));
+    }
+
+    // Multiple clip planes → general multi-plane builder.
+    Some(build_cylinder_box_intersection_brep(adj_center, cyl_r, h, &clip_planes))
+}
+
 /// Build box − cylinder difference when the cylinder center is inside the box UV
 /// rect.  The merged-segment cap polygon fails for some configurations (cylinder
 /// extends beyond edges while center is inside).  Instead, use a face-with-hole
@@ -3385,5 +4312,31 @@ mod tests {
         let s = make_sphere_brep(DVec3::new(0.5, 0.5, 0.5), 1.0).unwrap();
         let r = boolean_op(BooleanOpType::Intersection, &b, &s).expect("box-sphere intersection");
         assert!(r.solids.len() >= 1 || r.vertices.is_empty());
+    }
+
+    #[test]
+    fn debug_half_cylinder_sa() {
+        // U5 case: cylinder r=1, h=2, center (0,0,1), clip X≥0
+        let brep = build_half_cylinder_intersection_brep(
+            DVec3::new(0.0, 0.0, 1.0), 1.0, 2.0, DVec3::X, 0.0,
+        );
+        let total = rcad_kernel::surface_area(&brep);
+        println!("DEBUG half-cylinder: total SA = {total}");
+
+        // Per-face SA
+        for (si, solid) in brep.solids.iter().enumerate() {
+            for (fi, face) in solid.shells[0].faces.iter().enumerate() {
+                let a = rcad_kernel::face_surface_area(&brep, face, fi);
+                let n_edges = face.outer_wire.edges.len();
+                println!("  Solid {si} Face {fi} ({n_edges} edges): SA = {a}");
+            }
+        }
+
+        let expected = 3.0 * std::f64::consts::PI + 4.0; // 2π + π/2 + π/2 + 4 = 3π+4
+        println!("DEBUG expected = {expected}");
+        assert!(
+            (total - expected).abs() < 0.01,
+            "Expected ~{expected}, got {total}"
+        );
     }
 }
