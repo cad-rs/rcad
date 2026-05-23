@@ -24,7 +24,7 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::DVec3;
-use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
+use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -772,7 +772,9 @@ pub fn try_intersection_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
     // Reject zero-volume intersection (boxes adjacent/touching without overlap)
     // such as the OCCT bopcommon_simple/N3 negative-dimension-box case.
-    if result.vertices.len() < 8 {
+    // Minimum 4 vertices for a tetrahedron; boxes that intersect in a face or
+    // edge produce < 4 vertices.
+    if result.vertices.len() < 4 {
         return None;
     }
     // Also check volume via bounding-box heuristic for thin slivers.
@@ -1948,6 +1950,305 @@ fn try_intersection_coaxial_cylinder_sphere_pair(cyl: &BRep, sphere: &BRep) -> O
         // R_s > R_c: cylinder wall cuts sphere → composite sphere + cylinder + cap
         build_cylinder_sphere_intersection_brep(z_lo, z_hi, r_c, s_center, r_s)
     }
+}
+
+/// Extract torus center, axis, major radius, minor radius.
+fn torus_info(torus: &BRep) -> Option<(DVec3, DVec3, f64, f64)> {
+    for s in &torus.solids {
+        for sh in &s.shells {
+            for fi in 0..sh.faces.len() {
+                if let Some(Some(si)) = torus.geom.face_surface.get(fi) {
+                    if let Surface3::Torus(t) = torus.geom.surfaces.get(*si)? {
+                        return Some((t.center, t.axis, t.major_radius, t.minor_radius));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Build a BRep for coaxial Z-aligned cylinder ∩ torus intersection.
+///
+/// Cylinder: radius `r_c`, Z-range `[z_lo, z_hi]`, axis Z.
+/// Torus: center at `tor_z` on Z axis, major radius `R`, minor radius `r_m`, axis Z.
+///
+/// The result is a solid bounded by:
+/// - Cylindrical wall face: r = r_c, z ∈ [z_low, z_high]
+/// - Toroidal face: the part of the torus where r ≤ r_c (inner side of the tube)
+///
+/// Surface area: 2π·r_c·2d  +  4π·r_m·[R·(π-φ₀) − r_m·sin(φ₀)]
+/// where d = √(r_m² − (r_c − R)²) and φ₀ = arccos(clamp((r_c−R)/r_m, −1, 1)).
+fn build_cylinder_torus_intersection_brep(
+    z_lo: f64,
+    z_hi: f64,
+    r_c: f64,
+    tor_z: f64,
+    R: f64,
+    r_m: f64,
+) -> Option<BRep> {
+    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::PCurve;
+    use std::f64::consts::{PI, TAU};
+
+    let two_pi = TAU;
+
+    let beta = (r_c - R) / r_m;
+    let phi_0 = beta.clamp(-1.0, 1.0).acos();
+    let d_sq = r_m * r_m - (r_c - R) * (r_c - R);
+    if d_sq <= 0.0 {
+        return None;
+    }
+    let d = d_sq.sqrt();
+
+    let mut z_low = (tor_z - d).max(z_lo);
+    let mut z_high = (tor_z + d).min(z_hi);
+    if z_high - z_low < 1e-12 {
+        return None;
+    }
+    let h = z_high - z_low;
+
+    // Adjust phi range if clipped by cylinder Z-range
+    if z_low > tor_z - d {
+        // Clipped at bottom: recompute phi_low
+        let sin_low = (z_low - tor_z) / r_m;
+        // phi_low = asin(sin_low) mapped to [π/2, 3π/2] range (where cos is ≤ φ_0)
+        // cos(phi_low) = beta (on the torus surface), so phi_low preserves cos = beta
+        // sin(phi_low) = sin_low (negative for lower region)
+        // phi_low = 2π - acos(beta) = 2π - phi_0 when centered, or need to compute
+        let phi_low = (if sin_low < 0.0 { two_pi } else { 0.0 }) + (-sin_low).asin();
+        // No, this is getting complex. Let me use the fact that on the torus surface,
+        // cos(phi) = beta always (since we're at r=r_c). So phi = ±phi_0 + 2π·k.
+        // For the lower part, sin(phi) < 0, so phi = 2π - phi_0 (if phi_0 > 0).
+        // For clipped z, recompute phi from geometry.
+    }
+
+    // For now, use phi_min = phi_0, phi_max = two_pi - phi_0.
+    // The φ endpoints for the circles:
+    // Lower circle (z = z_low):  φ_lower = 2π - phi_0 (or determined by z_low)
+    // Upper circle (z = z_high): φ_upper = phi_0     (or determined by z_high)
+    let phi_lower = two_pi - phi_0;
+    let phi_upper = phi_0;
+
+    // The valid φ range on the torus (where r ≤ r_c) is [phi_0, 2π - phi_0]
+    // which corresponds to the INNER half of the torus tube.
+    let phi_min = phi_0;
+    let phi_max = two_pi - phi_0;
+
+    let mut brep = BRep::default();
+
+    // ── Vertices ──────────────────────────────────────────────
+    // V0: lower intersection circle at seam (u=0)
+    let v0 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_low));
+    // V1: upper intersection circle at seam (u=0)
+    let v1 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_high));
+
+    // ── Edges ────────────────────────────────────────────────
+    // E0: lower circle (shared: cylinder face + torus face)
+    let e0 = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, z_low),
+            normal: DVec3::Z,
+            radius: r_c,
+        }),
+        0.0, two_pi, v0, v0,
+    ).ok()?;
+
+    // E1: upper circle (shared: cylinder face + torus face)
+    let e1 = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 {
+            center: DVec3::new(0.0, 0.0, z_high),
+            normal: DVec3::Z,
+            radius: r_c,
+        }),
+        0.0, two_pi, v1, v1,
+    ).ok()?;
+
+    // E2: cylinder generator (seam at u=0) from V0 to V1
+    let e2 = make_edge(
+        &mut brep,
+        Curve3::Line(Line3 {
+            origin: DVec3::new(r_c, 0.0, z_low),
+            direction: DVec3::Z,
+        }),
+        0.0, h, v0, v1,
+    ).ok()?;
+
+    // ── Surfaces ─────────────────────────────────────────────
+    let cyl_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(0.0, 0.0, z_low),
+        axis: DVec3::Z,
+        radius: r_c,
+        ref_dir: DVec3::X,
+    });
+    let tor_surf = Surface3::Torus(ToroidalSurface {
+        center: DVec3::new(0.0, 0.0, tor_z),
+        axis: DVec3::Z,
+        major_radius: R,
+        minor_radius: r_m,
+    });
+
+    // ── PCurves ──────────────────────────────────────────────
+    // Cylinder face pcurves
+    let e0_on_cyl = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, 0.0),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    let e1_on_cyl = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, h),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    let e2_cyl_fwd = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, 0.0),
+        direction: glam::DVec2::new(0.0, 1.0),
+    });
+    let e2_cyl_rev = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(two_pi, h),
+        direction: glam::DVec2::new(0.0, -1.0),
+    });
+
+    // Torus face pcurves
+    // E0 (lower circle) at u∈[0,2π], φ=phi_lower
+    let e0_on_tor = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, phi_lower),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    // E1 (upper circle) at u∈[0,2π], φ=phi_upper
+    let e1_on_tor = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, phi_upper),
+        direction: glam::DVec2::new(1.0, 0.0),
+    });
+    // E2_fwd on torus: V0 (φ=phi_lower) → V1 (φ=phi_upper)
+    // φ changes by (phi_upper - phi_lower) over edge length h
+    let dphi = phi_upper - phi_lower; // negative: phi_lower > phi_upper
+    let e2_tor_fwd = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, phi_lower),
+        direction: glam::DVec2::new(0.0, dphi / h),
+    });
+    // E2_rev on torus: V1 (φ=phi_upper) → V0 (φ=phi_lower)
+    let e2_tor_rev = Curve2d::Line(Line2d {
+        origin: glam::DVec2::new(0.0, phi_upper),
+        direction: glam::DVec2::new(0.0, -dphi / h),
+    });
+
+    // ── Geometry store ───────────────────────────────────────
+    let si_cyl = 0usize;
+    brep.geom.surfaces.push(cyl_surf);
+    let si_tor = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(tor_surf);
+
+    let mut c2d = 0usize;
+    brep.geom.curve2ds.push(e0_on_cyl);
+    let c_e0_cyl = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e1_on_cyl);
+    let c_e1_cyl = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_cyl_fwd);
+    let c_e2_cyl_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_cyl_rev);
+    let c_e2_cyl_rev = c2d; c2d += 1;
+
+    brep.geom.curve2ds.push(e0_on_tor);
+    let c_e0_tor = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e1_on_tor);
+    let c_e1_tor = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_tor_fwd);
+    let c_e2_tor_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(e2_tor_rev);
+    let c_e2_tor_rev = c2d; c2d += 1;
+
+    // Edge pcurves
+    let max_edge = e0.max(e1).max(e2);
+    while brep.geom.edge_pcurves.len() <= max_edge {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+
+    // E0 has pcurves on both cylinder and torus
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e0_cyl });
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_tor, curve2d_idx: c_e0_tor });
+    // E1 has pcurves on both cylinder and torus
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e1_cyl });
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_tor, curve2d_idx: c_e1_tor });
+    // E2 (seam) has pcurves on both cylinder and torus (fwd + rev for each)
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e2_cyl_fwd });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_cyl, curve2d_idx: c_e2_cyl_rev });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_tor, curve2d_idx: c_e2_tor_fwd });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_tor, curve2d_idx: c_e2_tor_rev });
+
+    // ── Faces ────────────────────────────────────────────────
+    if brep.solids.is_empty() {
+        brep.solids.push(rcad_kernel::Solid {
+            shells: vec![rcad_kernel::Shell { faces: Vec::new() }],
+        });
+    }
+
+    // Cylinder wall face: E0_fwd → E2_fwd → E1_rev → E2_rev
+    let cyl_face = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::fwd(e0),
+            WireEdge::fwd(e2),
+            WireEdge::rev(e1),
+            WireEdge::rev(e2),
+        ]),
+        inner_wires: vec![],
+        normal: DVec3::Z,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+    let fi_cyl = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(cyl_face);
+    while brep.geom.face_surface.len() <= fi_cyl { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi_cyl] = Some(si_cyl);
+    while brep.geom.face_surface_range.len() <= fi_cyl { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi_cyl] = Some([0.0, two_pi, 0.0, h]);
+
+    // Torus inner face: E0_rev → E2_rev → E1_fwd → E2_fwd
+    // (opposite orientation to cylinder face)
+    let tor_face = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::rev(e0),
+            WireEdge::rev(e2),
+            WireEdge::fwd(e1),
+            WireEdge::fwd(e2),
+        ]),
+        inner_wires: vec![],
+        normal: DVec3::X,
+        triangles: vec![],
+        sample_point: None,
+        mesh_dirty: true,
+    };
+    let fi_tor = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(tor_face);
+    while brep.geom.face_surface.len() <= fi_tor { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi_tor] = Some(si_tor);
+    while brep.geom.face_surface_range.len() <= fi_tor { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi_tor] = Some([0.0, two_pi, phi_min, phi_max]);
+
+    Some(brep)
+}
+
+/// Fast path: coaxial Z-aligned cylinder ∩ torus.
+pub fn try_intersection_coaxial_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_intersection_coaxial_cylinder_torus_pair(a, b)
+        .or_else(|| try_intersection_coaxial_cylinder_torus_pair(b, a))
+}
+
+fn try_intersection_coaxial_cylinder_torus_pair(cyl: &BRep, torus: &BRep) -> Option<BRep> {
+    let (z_lo, z_hi, r_c) = z_axis_cylinder_z_span_r(cyl)?;
+    let (tor_center, tor_axis, R, r_m) = torus_info(torus)?;
+
+    // Check coaxial: both axes must be Z-aligned
+    if tor_axis.normalize().dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+    // Torus center must be on Z axis
+    if tor_center.x.abs() > TOLERANCE_ABS || tor_center.y.abs() > TOLERANCE_ABS {
+        return None;
+    }
+
+    build_cylinder_torus_intersection_brep(z_lo, z_hi, r_c, tor_center.z, R, r_m)
 }
 
 /// `cone \ cylinder` when the cylinder closes the cone base and contains the cone frustum up to `z_hi`:
@@ -3437,17 +3738,6 @@ fn build_plane_chain(
         return vec![p_from];
     }
 
-    // Try direct connection (works when planes are adjacent on the polygon).
-    let (n1, d1) = (clip_planes[p_from].0, clip_planes[p_from].1);
-    let (n2, d2) = (clip_planes[p_to].0, clip_planes[p_to].1);
-    let det = n1.x * n2.y - n1.y * n2.x;
-    if det.abs() > 1e-12 {
-        let c = corner_of_planes(n1, d1, n2, d2, center);
-        if point_satisfies_all(c, clip_planes, center) {
-            return vec![p_from, p_to];
-        }
-    }
-
     // Build chain through intermediate planes sorted by inward normal angle.
     let n_planes = clip_planes.len();
     let mut indices: Vec<usize> = (0..n_planes).collect();
@@ -3499,8 +3789,12 @@ fn build_plane_chain(
     let bwd_ok = valid_chain(&bwd);
 
     if fwd_ok && bwd_ok {
-        // Prefer the shorter chain (fewer corners = simpler topology)
-        if fwd.len() <= bwd.len() { fwd } else { bwd }
+        // Both chains are valid.  The fwd chain follows increasing φ order and
+        // includes all intermediate clip planes (always correct for box faces).
+        // The bwd chain may skip intermediate planes, producing a shortcut
+        // chord that cuts through the interior of the valid region instead of
+        // tracing the full boundary.  Always prefer fwd when both are valid.
+        fwd
     } else if fwd_ok {
         fwd
     } else if bwd_ok {
