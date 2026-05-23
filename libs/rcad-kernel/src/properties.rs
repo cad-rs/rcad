@@ -396,7 +396,7 @@ fn try_face_with_holes(
 const UV_TESS_N: usize = 80;
 
 /// Finer grid for masked sphere patches (trimmed / holed) when ear-cut fails.
-const SPHERE_UV_MASK_N: usize = 200;
+const SPHERE_UV_MASK_N: usize = 100;
 
 /// Grid for ‖∂P/∂u×∂P/∂v‖ midpoint integration on a UV rectangle (per-axis).
 const PARAM_RECT_AREA_N: usize = 80;

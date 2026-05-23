@@ -2676,6 +2676,13 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             }
             // Fall through to fuse below (the slab result was inflated).
         }
+        // Last resort for non-overlapping shapes with touching bboxes
+        // (e.g. sphere-box where bboxes touch but shapes don't overlap).
+        // MUST come AFTER box-box paths so that face-touching box fusion
+        // is handled first by try_union_axis_aligned_box_box.
+        if let Some(r) = boolean_unit_octant::try_union_disjoint_or_touching(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 

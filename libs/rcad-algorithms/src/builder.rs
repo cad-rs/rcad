@@ -903,6 +903,98 @@ enum SourceSide {
     B,
 }
 
+/// Fast path: if the opposite solid is an axis-aligned box, check all sub-face
+/// boundary vertices against the box AABB. For tessellated faces (cone/cylinder
+/// UV grid), individual grid cells can straddle the box boundary even when their
+/// sample point falls inside. Requiring ALL boundary vertices to be on the correct
+/// side ensures straddling cells are conservatively classified.
+///
+/// - Intersection (any side): sub-face is kept only when ENTIRELY inside the box.
+/// - Difference B-side: sub-face is kept only when ENTIRELY inside the box.
+/// - Union/Difference A-side: sub-face is kept only when ENTIRELY outside the box.
+fn classify_subface_against_box(
+    sub: &SubFace,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    op: BooleanOpType,
+    source: SourceSide,
+) -> Option<Classification> {
+    // Skip planar sub-faces — `classify_point` correctly classifies them as On
+    // when they're coplanar with a box face, allowing the coplanar dedup in
+    // `build_with_history` to avoid double-counting the shared area.  The AABB
+    // boundary-vertex check was designed for tessellated curved surfaces
+    // (cone/cylinder UV grid) where individual grid cells straddle the boundary.
+    if matches!(sub.surface, rcad_kernel::geom::Surface3::Plane(_)) {
+        return None;
+    }
+    let tol = TOLERANCE_MESH_LEGACY;
+    let mut min_x = f64::NEG_INFINITY;
+    let mut max_x = f64::INFINITY;
+    let mut min_y = f64::NEG_INFINITY;
+    let mut max_y = f64::INFINITY;
+    let mut min_z = f64::NEG_INFINITY;
+    let mut max_z = f64::INFINITY;
+
+    for &fi in solid_face_indices {
+        let Surface3::Plane(pl) = &ds.faces[fi].surface else {
+            return None;
+        };
+        let n = pl.normal;
+        let d = pl.origin;
+
+        if n.x.abs() > 1.0 - tol {
+            if n.x > 0.0 { max_x = max_x.min(d.x); }
+            else { min_x = min_x.max(d.x); }
+        } else if n.y.abs() > 1.0 - tol {
+            if n.y > 0.0 { max_y = max_y.min(d.y); }
+            else { min_y = min_y.max(d.y); }
+        } else if n.z.abs() > 1.0 - tol {
+            if n.z > 0.0 { max_z = max_z.min(d.z); }
+            else { min_z = min_z.max(d.z); }
+        } else {
+            return None; // non-axis-aligned plane → not a simple box
+        }
+    }
+
+    if min_x.is_infinite() || max_x.is_infinite()
+        || min_y.is_infinite() || max_y.is_infinite()
+        || min_z.is_infinite() || max_z.is_infinite()
+    {
+        return None; // incomplete bounds → not a full box
+    }
+
+    let require_all_inside = op == BooleanOpType::Intersection
+        || (op == BooleanOpType::Difference && source == SourceSide::B);
+
+    let (bmin_x, bmax_x) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.x), mx.max(v.x)));
+    let (bmin_y, bmax_y) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.y), mx.max(v.y)));
+    let (bmin_z, bmax_z) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.z), mx.max(v.z)));
+
+    for &v in &sub.boundary {
+        let inside = v.x >= min_x - tol && v.x <= max_x + tol
+            && v.y >= min_y - tol && v.y <= max_y + tol
+            && v.z >= min_z - tol && v.z <= max_z + tol;
+
+        if require_all_inside {
+            if !inside {
+                return Some(Classification::Out);
+            }
+        } else {
+            if inside {
+                return Some(Classification::In);
+            }
+        }
+    }
+
+    // All vertices satisfy the condition → uniform classification
+    let result = if require_all_inside {
+        Classification::In  // all inside → keep for Intersection / Difference B-side
+    } else {
+        Classification::Out // all outside → keep for Union / Difference A-side
+    };
+    Some(result)
+}
+
 /// Classify a sub-face against the solid described by `solid_face_indices`.
 ///
 /// For [`BooleanOpType::Intersection`], [`SubFace::sample_point`] can land outside the
@@ -918,12 +1010,26 @@ enum SourceSide {
 /// surface). In that case we probe boundary and interior samples to break the tie.
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
+    source: SourceSide,
     sub: &SubFace,
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
+
+    // Fast path: axis-aligned box solid — check each boundary vertex of the
+    // sub-face against the box AABB.  For tessellated faces (cone/cylinder UV
+    // grid), individual grid cells can straddle the box boundary even when
+    // their sample point falls inside, inflating the surface area.
+    //
+    // Returning early with the correct classification avoids the asymmetric
+    // probe grid (aggressive when primary=Out, conservative when primary=In)
+    // which otherwise interferes with box-solid classification.
+    if let Some(class) = classify_subface_against_box(sub, solid_face_indices, ds, op, source) {
+        return class;
+    }
+
     // For non-Intersection ops, only probe when primary is In or On — the UV centroid
     // of a large sub-face can fall inside the other solid even when portions of
     // the sub-face extend outside (e.g. offset cylinder-cylinder where the trim
@@ -1240,7 +1346,7 @@ impl<'a> BooleanBuilder<'a> {
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             for (si, sub) in sub_faces.iter().enumerate() {
-                let class = classify_against_solid_for_boolean(self.op, sub, &b_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, SourceSide::A, sub, &b_faces, self.ds);
                 let keep = if self.op == BooleanOpType::Union
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
@@ -1293,7 +1399,7 @@ impl<'a> BooleanBuilder<'a> {
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             for (si, sub) in sub_faces.iter().enumerate() {
-                let class = classify_against_solid_for_boolean(self.op, sub, &a_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
                     && self.op == BooleanOpType::Union
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
@@ -1420,7 +1526,7 @@ impl<'a> BooleanBuilder<'a> {
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let class = classify_against_solid_for_boolean(self.op, &sub, &b_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, SourceSide::A, &sub, &b_faces, self.ds);
 
                         let keep = if !face_split
                             && self.op == BooleanOpType::Difference
@@ -1451,7 +1557,7 @@ impl<'a> BooleanBuilder<'a> {
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let class = classify_against_solid_for_boolean(self.op, &sub, &a_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &sub, &a_faces, self.ds);
 
                         let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
@@ -3934,6 +4040,7 @@ mod tests {
         for sub in &subs {
             let class = super::classify_against_solid_for_boolean(
                 BooleanOpType::Intersection,
+                SourceSide::A,
                 sub,
                 &b_face_indices,
                 &ds,
