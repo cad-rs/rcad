@@ -2800,6 +2800,105 @@ fn corner_of_planes(
     )
 }
 
+/// Check if a point in XY satisfies all clip-plane constraints (within tolerance).
+fn point_satisfies_all(p: DVec3, clip_planes: &[(DVec3, f64)], center: DVec3) -> bool {
+    let tol = 1e-8;
+    for &(n, d) in clip_planes {
+        if n.dot(p - center) < -d - tol {
+            return false;
+        }
+    }
+    true
+}
+
+/// Build the shortest sequence of plane indices from `p_from` to `p_to`
+/// where each consecutive pair has a valid (non-parallel, constraint-satisfying) corner.
+///
+/// The chain is used to route the gap boundary path through intermediate clip planes.
+fn build_plane_chain(
+    p_from: usize, p_to: usize,
+    clip_planes: &[(DVec3, f64)],
+    center: DVec3,
+) -> Vec<usize> {
+    if p_from == p_to {
+        return vec![p_from];
+    }
+
+    // Try direct connection (works when planes are adjacent on the polygon).
+    let (n1, d1) = (clip_planes[p_from].0, clip_planes[p_from].1);
+    let (n2, d2) = (clip_planes[p_to].0, clip_planes[p_to].1);
+    let det = n1.x * n2.y - n1.y * n2.x;
+    if det.abs() > 1e-12 {
+        let c = corner_of_planes(n1, d1, n2, d2, center);
+        if point_satisfies_all(c, clip_planes, center) {
+            return vec![p_from, p_to];
+        }
+    }
+
+    // Build chain through intermediate planes sorted by inward normal angle.
+    let n_planes = clip_planes.len();
+    let mut indices: Vec<usize> = (0..n_planes).collect();
+    indices.sort_by(|&i, &j| {
+        let ai = clip_planes[i].0.y.atan2(clip_planes[i].0.x);
+        let aj = clip_planes[j].0.y.atan2(clip_planes[j].0.x);
+        ai.partial_cmp(&aj).unwrap()
+    });
+
+    let pos_from = indices.iter().position(|&i| i == p_from).unwrap();
+    let pos_to = indices.iter().position(|&i| i == p_to).unwrap();
+
+    // Build forward chain (increasing angle, wraps around)
+    let mut fwd: Vec<usize> = Vec::new();
+    let mut i = pos_from;
+    loop {
+        fwd.push(indices[i]);
+        if indices[i] == p_to { break; }
+        i = (i + 1) % n_planes;
+        if i == pos_from { break; } // full circle
+    }
+
+    // Build backward chain (decreasing angle, wraps around)
+    let mut bwd: Vec<usize> = Vec::new();
+    let mut i = pos_from;
+    loop {
+        bwd.push(indices[i]);
+        if indices[i] == p_to { break; }
+        i = if i == 0 { n_planes - 1 } else { i - 1 };
+        if i == pos_from { break; }
+    }
+
+    // Validate a chain: every consecutive pair must have a non-parallel
+    // corner that satisfies all constraints.
+    let valid_chain = |chain: &[usize]| -> bool {
+        for w in chain.windows(2) {
+            let (pa, pb) = (w[0], w[1]);
+            let (na, da) = (clip_planes[pa].0, clip_planes[pa].1);
+            let (nb, db) = (clip_planes[pb].0, clip_planes[pb].1);
+            let det = na.x * nb.y - na.y * nb.x;
+            if det.abs() < 1e-12 { return false; }
+            let c = corner_of_planes(na, da, nb, db, center);
+            if !point_satisfies_all(c, clip_planes, center) { return false; }
+        }
+        true
+    };
+
+    let fwd_ok = valid_chain(&fwd);
+    let bwd_ok = valid_chain(&bwd);
+
+    if fwd_ok && bwd_ok {
+        // Prefer the shorter chain (fewer corners = simpler topology)
+        if fwd.len() <= bwd.len() { fwd } else { bwd }
+    } else if fwd_ok {
+        fwd
+    } else if bwd_ok {
+        bwd
+    } else {
+        // No valid chain found — fall back to direct (may produce wrong geometry,
+        // but prevents a crash / empty gap).
+        vec![p_from, p_to]
+    }
+}
+
 /// Build a BRep for the intersection of a Z-aligned cylinder with up to 4
 /// vertical clip planes (box faces parallel to the cylinder axis).
 ///
@@ -3053,64 +3152,97 @@ fn build_cylinder_box_intersection_brep(
                 }]);
             }
             (Some(p1), Some(p2)) if p1 != p2 => {
-                // Different planes → path via corner of the two planes
-                let (n1, d1) = (clip_planes[p1].0, clip_planes[p1].1);
-                let (n2, d2) = (clip_planes[p2].0, clip_planes[p2].1);
-                let corner_xy = corner_of_planes(n1, d1, n2, d2, center);
-
-                // Inline push_vertex (avoid borrow conflict with next_curve closure)
-                let corner_lo = brep.vertices.len();
-                brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
-                let corner_hi = brep.vertices.len();
-                brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
-
-                // Generator (vertical line) at the corner
-                let cor_gen = next_curve(
-                    Curve3::Line(Line3 { origin: brep.vertices[corner_lo].point, direction: DVec3::Z }),
-                    0.0, h, corner_lo, corner_hi,
-                );
-
+                // Build the chain of planes from p1 to p2, routing through
+                // intermediate planes when a direct corner is degenerate
+                // (parallel planes) or invalid.
+                let chain = build_plane_chain(p1, p2, clip_planes, center);
                 let vi_fr = interval_verts[i0].1;
                 let vi_to = interval_verts[i1].0;
+                let n_segs = chain.len(); // one segment per plane in the chain
 
-                // Segment 1: V_e_i0 → corner on plane p1
-                let seg1_bot = Curve3::Line(Line3 {
-                    origin: brep.vertices[v_lo(vi_fr)].point,
-                    direction: brep.vertices[corner_lo].point - brep.vertices[v_lo(vi_fr)].point,
-                });
-                let e1b = next_curve(seg1_bot, 0.0, 1.0, v_lo(vi_fr), corner_lo);
+                // Step 1: Create corner vertices and generator edges between
+                // each consecutive pair of planes in the chain.
+                // corner_data[j] = corner between chain[j] and chain[j+1]
+                let n_corners = n_segs.saturating_sub(1);
+                struct CornerData { lo: usize, hi: usize, gen_edge: usize }
+                let mut corner_data: Vec<Option<CornerData>> = Vec::new();
+                corner_data.resize_with(n_corners, || None);
+                for j in 0..n_corners {
+                    let (pa, pb) = (chain[j], chain[j + 1]);
+                    let (na, da) = (clip_planes[pa].0, clip_planes[pa].1);
+                    let (nb, db) = (clip_planes[pb].0, clip_planes[pb].1);
+                    let corner_xy = corner_of_planes(na, da, nb, db, center);
+                    let lo = brep.vertices.len();
+                    brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
+                    let hi = brep.vertices.len();
+                    brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
+                    let gen_edge = next_curve(
+                        Curve3::Line(Line3 { origin: brep.vertices[lo].point, direction: DVec3::Z }),
+                        0.0, h, lo, hi,
+                    );
+                    corner_data[j] = Some(CornerData { lo, hi, gen_edge });
+                }
 
-                let seg1_top = Curve3::Line(Line3 {
-                    origin: brep.vertices[v_hi(vi_fr)].point,
-                    direction: brep.vertices[corner_hi].point - brep.vertices[v_hi(vi_fr)].point,
-                });
-                let e1t = next_curve(seg1_top, 0.0, 1.0, v_hi(vi_fr), corner_hi);
+                // Step 2: Build one segment per plane in the chain.  Each
+                // segment traces along that plane's boundary from the previous
+                // corner (or circle endpoint) to the next corner (or circle
+                // endpoint).
+                let mut segs: Vec<GapSeg> = Vec::with_capacity(n_segs);
+                for j in 0..n_segs {
+                    let plane = chain[j];
+                    let is_first = j == 0;
+                    let is_last = j == n_segs - 1;
 
-                // Segment 2: corner → V_s_i1 on plane p2
-                let seg2_bot = Curve3::Line(Line3 {
-                    origin: brep.vertices[corner_lo].point,
-                    direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[corner_lo].point,
-                });
-                let e2b = next_curve(seg2_bot, 0.0, 1.0, corner_lo, v_lo(vi_to));
+                    let (start_lo, start_hi) = if is_first {
+                        (v_lo(vi_fr), v_hi(vi_fr))
+                    } else {
+                        let c = corner_data[j - 1].as_ref().unwrap();
+                        (c.lo, c.hi)
+                    };
+                    let (end_lo, end_hi) = if is_last {
+                        (v_lo(vi_to), v_hi(vi_to))
+                    } else {
+                        let c = corner_data[j].as_ref().unwrap();
+                        (c.lo, c.hi)
+                    };
+                    let gen_from = if is_first {
+                        interval_edges[i0].rg
+                    } else {
+                        corner_data[j - 1].as_ref().unwrap().gen_edge
+                    };
+                    let gen_to = if is_last {
+                        interval_edges[i1].lg
+                    } else {
+                        corner_data[j].as_ref().unwrap().gen_edge
+                    };
 
-                let seg2_top = Curve3::Line(Line3 {
-                    origin: brep.vertices[corner_hi].point,
-                    direction: brep.vertices[v_hi(vi_to)].point - brep.vertices[corner_hi].point,
-                });
-                let e2t = next_curve(seg2_top, 0.0, 1.0, corner_hi, v_hi(vi_to));
+                    // Copy vertex positions before the mutable borrow in next_curve.
+                    let p_s_lo = brep.vertices[start_lo].point;
+                    let p_s_hi = brep.vertices[start_hi].point;
+                    let p_e_lo = brep.vertices[end_lo].point;
+                    let p_e_hi = brep.vertices[end_hi].point;
 
-                gap_segs.push(vec![
-                    GapSeg {
-                        bot_chord: e1b, top_chord: e1t, plane: p1,
-                        gen_from: interval_edges[i0].rg,
-                        gen_to: cor_gen,
-                    },
-                    GapSeg {
-                        bot_chord: e2b, top_chord: e2t, plane: p2,
-                        gen_from: cor_gen,
-                        gen_to: interval_edges[i1].lg,
-                    },
-                ]);
+                    let bot_chord = Curve3::Line(Line3 {
+                        origin: p_s_lo,
+                        direction: p_e_lo - p_s_lo,
+                    });
+                    let eb = next_curve(bot_chord, 0.0, 1.0, start_lo, end_lo);
+
+                    let top_chord = Curve3::Line(Line3 {
+                        origin: p_s_hi,
+                        direction: p_e_hi - p_s_hi,
+                    });
+                    let et = next_curve(top_chord, 0.0, 1.0, start_hi, end_hi);
+
+                    segs.push(GapSeg {
+                        bot_chord: eb,
+                        top_chord: et,
+                        plane,
+                        gen_from,
+                        gen_to,
+                    });
+                }
+                gap_segs.push(segs);
             }
             _ => {
                 gap_segs.push(Vec::new());
@@ -3512,6 +3644,13 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
     // Single clip plane → existing half-cylinder builder (backward compat, efficient).
     if clip_planes.len() == 1 {
         let (clip_dir, cut_dist) = clip_planes[0];
+        // When cut_dist < -r the cylinder center is so far outside the box
+        // that the cylinder doesn't reach the box face → empty intersection.
+        // (The multi-plane builder below handles this via zero-range valid θ
+        // intervals, but the half-cylinder builder asserts cut_dist ≥ 0.)
+        if cut_dist < -cyl_r + 1e-12 {
+            return Some(BRep::default());
+        }
         return Some(build_half_cylinder_intersection_brep(adj_center, cyl_r, h, clip_dir, cut_dist));
     }
 
