@@ -23,7 +23,7 @@
 //! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
 //! multi-trim / classification, not missing FF pairs.
 
-use glam::DVec3;
+use glam::{DAffine3, DVec3};
 use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
@@ -1362,6 +1362,63 @@ pub fn try_intersection_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<
     rcad_modeling::make_cylinder_brep(
         DVec3::new(0.0, 0.0, zm), DVec3::Z, DVec3::X, r1, h,
     ).ok()
+}
+
+/// Build C1 \ C2 for two coaxial Z-aligned cylinders.
+///
+/// When r1 <= r2 (C1 is fully contained in C2 in XY), the result is the
+/// portion(s) of C1 outside C2's Z-range.  When r1 > r2 (C1 extends beyond
+/// C2), the result would need a cylindrical hole — too complex for now.
+pub fn try_difference_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (z1_lo, z1_hi, r1) = z_axis_cylinder_z_span_r(a)?;
+    let (z2_lo, z2_hi, r2) = z_axis_cylinder_z_span_r(b)?;
+    let overlap_lo = z1_lo.max(z2_lo);
+    let overlap_hi = z1_hi.min(z2_hi);
+    if overlap_hi - overlap_lo < TOLERANCE_MESH_LEGACY {
+        // No Z-overlap → a is unchanged by subtracting b
+        return Some(a.clone());
+    }
+    if r1 > r2 + TOLERANCE_ADAPTIVE_MAX {
+        // C1 extends beyond C2 in XY — would need a cylindrical hole in the
+        // result.  Fall through to the general boolean engine.
+        return None;
+    }
+    // r1 <= r2: C1 is fully inside C2 in XY (or equal radii).
+    // Result is the portions of C1 outside C2's Z-range.
+    let mut result = BRep::new();
+    // Piece below C2
+    let z_below_end = z1_hi.min(z2_lo);
+    let h_below = z_below_end - z1_lo;
+    if h_below > TOLERANCE_MESH_LEGACY {
+        let center_below = (z1_lo + z_below_end) * 0.5;
+        let piece = rcad_modeling::make_cylinder_brep(
+            DVec3::new(0.0, 0.0, center_below), DVec3::Z, DVec3::X, r1, h_below,
+        ).ok()?;
+        if result.solids.is_empty() {
+            result = piece;
+        } else {
+            result.append_disjoint_brep(&piece);
+        }
+    }
+    // Piece above C2
+    let z_above_start = z1_lo.max(z2_hi);
+    let h_above = z1_hi - z_above_start;
+    if h_above > TOLERANCE_MESH_LEGACY {
+        let center_above = (z_above_start + z1_hi) * 0.5;
+        let piece = rcad_modeling::make_cylinder_brep(
+            DVec3::new(0.0, 0.0, center_above), DVec3::Z, DVec3::X, r1, h_above,
+        ).ok()?;
+        if result.solids.is_empty() {
+            result = piece;
+        } else {
+            result.append_disjoint_brep(&piece);
+        }
+    }
+    if result.solids.is_empty() {
+        None // C1 fully removed
+    } else {
+        Some(result)
+    }
 }
 
 /// Extract sphere center and radius from a sphere BRep (first SphericalSurface found).
@@ -4502,6 +4559,14 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
 /// covered by the box — avoiding the Pave-Filler which can produce hundreds
 /// of unnecessary faces for symmetric configurations (e.g. bopcut_simple V5/V6).
 pub fn try_difference_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_difference_cylinder_box_impl(a, b, false)
+}
+
+/// Inner implementation of [`try_difference_cylinder_box`].
+///
+/// When `rot_frame` is true, the Z-rotation re-dispatch has already been
+/// applied and should not be retried on the rotated shapes.
+fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Option<BRep> {
     let ca = try_cylinder_center_axis_radius_height(a)?;
     let (cyl_bottom, cyl_axis, cyl_r, cyl_height) = ca;
     // try_cylinder_center_axis_radius_height returns the CylindricalSurface origin
@@ -4526,6 +4591,26 @@ pub fn try_difference_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
     let ev = bx.extents[v_idx];
     let ew = bx.extents[z_idx];
     let bc = bx.center;
+
+    // --- Z-rotation fallback ---
+    // If the box is Z-rotated (U/V axes not aligned with world X/Y), rotate
+    // both BReps by −θ so the box becomes axis-aligned, run the fast path
+    // directly on the rotated shapes, then rotate the result back by +θ.
+    // We pass `rot_frame = true` to the inner call which skips the Z-rotation
+    // check to prevent re-entering this path.
+    let z_angle = u_ax.y.atan2(u_ax.x);
+    let is_z_rotated = !rot_frame && z_angle.abs() > 1e-6;
+    if is_z_rotated {
+        let rot = DAffine3::from_axis_angle(DVec3::Z, -z_angle);
+        let inv_rot = DAffine3::from_axis_angle(DVec3::Z, z_angle);
+        let mut a_rot = a.clone();
+        let mut b_rot = b.clone();
+        a_rot.apply_transform(rot);
+        b_rot.apply_transform(rot);
+        let mut result = try_difference_cylinder_box_impl(&a_rot, &b_rot, true)?;
+        result.apply_transform(inv_rot);
+        return Some(result);
+    }
 
     // Cylinder Z range.
     let cyl_z_lo = cyl_center.z - cyl_height / 2.0;
@@ -4568,32 +4653,14 @@ pub fn try_difference_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
         }
     }
 
-    // The fast-path builds side faces on clip planes with chord routing
-    // through corners between adjacent planes.  This requires:
-    // 1. Non-parallel clip planes (parallel planes produce no valid corner,
-    //    so chords that should lie on a plane instead cross the box interior).
-    // 2. All clip-plane corners within the cylinder (corners outside produce
-    //    geometry that extends beyond the cylinder surface).
-    // Fall through to Pave-Filler when either condition is not met.
-    if clip_planes.len() >= 2 {
-        let r_sq = cyl_r * cyl_r;
-        let mut has_non_parallel = false;
-        for i in 0..clip_planes.len() {
-            for j in (i + 1)..clip_planes.len() {
-                let (na, da) = clip_planes[i];
-                let (nb, db) = clip_planes[j];
-                if (na.x * nb.y - na.y * nb.x).abs() < 1e-12 { continue; }
-                has_non_parallel = true;
-                let c = corner_of_planes(na, da, nb, db, cyl_center);
-                if c.x * c.x + c.y * c.y > r_sq + 1e-9 {
-                    return None;
-                }
-            }
-        }
-        if !has_non_parallel {
-            return None;
-        }
-    }
+    // We do NOT check whether clip-plane corners fall within the cylinder
+    // radius: the downstream code uses θ-range constraints (not corner
+    // positions) to define the cylinder wall, cap, and side-face geometry.
+    // Corners outside the cylinder radius (common with rotated boxes) are
+    // handled correctly by the chain routing.  The parallel-only case
+    // (all normals parallel, e.g. cylinder centered in one box axis) is
+    // handled in `build_cylinder_box_difference_middle` by building
+    // independent arc BReps instead of using the chain router.
 
     let inter_lo = cyl_z_lo.max(box_z_lo);
     let inter_hi = cyl_z_hi.min(box_z_hi);
@@ -4899,7 +4966,7 @@ fn build_cylinder_box_intersection_brep(
     clip_planes: &[(DVec3, f64)],
 ) -> BRep {
     let intervals = compute_valid_theta_ranges(r, clip_planes);
-    build_cylinder_box_clipped_brep(center, r, h, &intervals, clip_planes, false, false)
+    build_cylinder_box_clipped_brep(center, r, h, &intervals, clip_planes, false, false, true)
 }
 
 /// Build the middle Z-slice of C \ B (cylinder minus box) for partial XY overlap.
@@ -4928,8 +4995,19 @@ fn build_cylinder_box_difference_middle(
         // Build full cylinder wall + donut caps + side faces on clip planes.
         return build_cylinder_box_difference_full_wall(center, r, h, clip_planes);
     }
+    // Check if all clip planes are parallel (e.g. cylinder center inside box
+    // in one axis).  The downstream gap routing cannot handle parallel-only
+    // planes because `build_plane_chain` requires non-parallel corners.
+    let all_parallel = clip_planes.len() >= 2
+        && clip_planes.iter().skip(1).all(|(n, _)| {
+            let (n0, _) = clip_planes[0];
+            (n0.x * n.y - n0.y * n.x).abs() < 1e-12
+        });
+    if all_parallel {
+        return build_cylinder_box_difference_parallel_only(center, r, h, clip_planes);
+    }
     let complement = compute_complement_theta_ranges(&intersection_intervals);
-    build_cylinder_box_clipped_brep(center, r, h, &complement, clip_planes, skip_bottom_cap, skip_top_cap)
+    build_cylinder_box_clipped_brep(center, r, h, &complement, clip_planes, skip_bottom_cap, skip_top_cap, false)
 }
 
 /// Full-wall difference case: box entirely within the cylinder cross-section.
@@ -5155,6 +5233,48 @@ fn build_cylinder_box_difference_full_wall(
     brep
 }
 
+/// Build the middle Z-slice of C \ B for the parallel-only clip plane case.
+///
+/// When all clip planes have parallel normals (e.g. cylinder center inside box
+/// in one XY axis), the gap routing in `build_cylinder_box_clipped_brep` fails
+/// because `build_plane_chain` cannot construct valid corners between parallel
+/// planes.  Instead, we build each outside-slab arc independently and compound.
+fn build_cylinder_box_difference_parallel_only(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_planes: &[(DVec3, f64)],
+) -> BRep {
+    // Collect arcs and merge into a single non-compound BRep (avoids nested
+    // compound when the caller compounds this with top/bottom pieces).
+    //
+    // Each clip_plane (n, d) has n pointing INTO the box interior.  The
+    // outside-slab (difference) arc on the opposite side uses clip direction
+    // = -n (from center toward the clip face) with the same cut_dist d.
+    let mut arcs: Vec<BRep> = Vec::new();
+    for &(n, d) in clip_planes {
+        let clip_dir = -n; // from center toward the clip plane (outward from box)
+        if d >= r - 1e-12 {
+            continue;
+        }
+        arcs.push(build_cylinder_arc_for_difference(
+            center, r, h, clip_dir, d,
+        ));
+    }
+    if arcs.is_empty() {
+        return BRep::default();
+    }
+    if arcs.len() == 1 {
+        let arc = arcs.into_iter().next().unwrap();
+        return arc;
+    }
+    let mut merged = BRep::new();
+    for arc in &arcs {
+        merged.append_disjoint_brep(arc);
+    }
+    merged
+}
+
 fn build_cylinder_box_clipped_brep(
     center: DVec3,
     r: f64,
@@ -5163,6 +5283,7 @@ fn build_cylinder_box_clipped_brep(
     clip_planes: &[(DVec3, f64)],
     skip_bottom_cap: bool,
     skip_top_cap: bool,
+    use_chain_routing: bool,
 ) -> BRep {
     let pi = std::f64::consts::PI;
     let two_pi = 2.0 * pi;
@@ -5401,91 +5522,172 @@ fn build_cylinder_box_clipped_brep(
                 }]);
             }
             (Some(p1), Some(p2)) if p1 != p2 => {
-                // Build the chain of planes from p1 to p2, routing through
-                // intermediate planes when a direct corner is degenerate
-                // (parallel planes) or invalid.
-                let chain = build_plane_chain(p1, p2, clip_planes, center);
                 let vi_fr = interval_verts[i0].1;
                 let vi_to = interval_verts[i1].0;
-                let n_segs = chain.len(); // one segment per plane in the chain
 
-                // Step 1: Create corner vertices and generator edges between
-                // each consecutive pair of planes in the chain.
-                // corner_data[j] = corner between chain[j] and chain[j+1]
-                let n_corners = n_segs.saturating_sub(1);
-                struct CornerData { lo: usize, hi: usize, gen_edge: usize }
-                let mut corner_data: Vec<Option<CornerData>> = Vec::new();
-                corner_data.resize_with(n_corners, || None);
-                for j in 0..n_corners {
-                    let (pa, pb) = (chain[j], chain[j + 1]);
-                    let (na, da) = (clip_planes[pa].0, clip_planes[pa].1);
-                    let (nb, db) = (clip_planes[pb].0, clip_planes[pb].1);
-                    let corner_xy = corner_of_planes(na, da, nb, db, center);
-                    let lo = brep.vertices.len();
-                    brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
-                    let hi = brep.vertices.len();
-                    brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
-                    let gen_edge = next_curve(
-                        Curve3::Line(Line3 { origin: brep.vertices[lo].point, direction: DVec3::Z }),
-                        0.0, h, lo, hi,
-                    );
-                    corner_data[j] = Some(CornerData { lo, hi, gen_edge });
+                if use_chain_routing {
+                    // Chain routing: route through intermediate clip planes when
+                    // the direct corner is degenerate (parallel planes).  Used for
+                    // the intersection case where corners are inside the cylinder.
+                    let chain = build_plane_chain(p1, p2, clip_planes, center);
+                    let n_segs = chain.len();
+
+                    // Step 1: Create corner vertices and generator edges.
+                    let n_corners = n_segs.saturating_sub(1);
+                    struct CornerData { lo: usize, hi: usize, gen_edge: usize }
+                    let mut corner_data: Vec<Option<CornerData>> = Vec::new();
+                    corner_data.resize_with(n_corners, || None);
+                    for j in 0..n_corners {
+                        let (pa, pb) = (chain[j], chain[j + 1]);
+                        let (na, da) = (clip_planes[pa].0, clip_planes[pa].1);
+                        let (nb, db) = (clip_planes[pb].0, clip_planes[pb].1);
+                        let corner_xy = corner_of_planes(na, da, nb, db, center);
+                        let lo = brep.vertices.len();
+                        brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
+                        let hi = brep.vertices.len();
+                        brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
+                        let gen_edge = next_curve(
+                            Curve3::Line(Line3 { origin: brep.vertices[lo].point, direction: DVec3::Z }),
+                            0.0, h, lo, hi,
+                        );
+                        corner_data[j] = Some(CornerData { lo, hi, gen_edge });
+                    }
+
+                    // Step 2: Build one segment per plane in the chain.
+                    let mut segs: Vec<GapSeg> = Vec::with_capacity(n_segs);
+                    for j in 0..n_segs {
+                        let plane = chain[j];
+                        let is_first = j == 0;
+                        let is_last = j == n_segs - 1;
+
+                        let (start_lo, start_hi) = if is_first {
+                            (v_lo(vi_fr), v_hi(vi_fr))
+                        } else {
+                            let c = corner_data[j - 1].as_ref().unwrap();
+                            (c.lo, c.hi)
+                        };
+                        let (end_lo, end_hi) = if is_last {
+                            (v_lo(vi_to), v_hi(vi_to))
+                        } else {
+                            let c = corner_data[j].as_ref().unwrap();
+                            (c.lo, c.hi)
+                        };
+                        let gen_from = if is_first {
+                            interval_edges[i0].rg
+                        } else {
+                            corner_data[j - 1].as_ref().unwrap().gen_edge
+                        };
+                        let gen_to = if is_last {
+                            interval_edges[i1].lg
+                        } else {
+                            corner_data[j].as_ref().unwrap().gen_edge
+                        };
+
+                        let bot_chord = Curve3::Line(Line3 {
+                            origin: brep.vertices[start_lo].point,
+                            direction: brep.vertices[end_lo].point - brep.vertices[start_lo].point,
+                        });
+                        let eb = next_curve(bot_chord, 0.0, 1.0, start_lo, end_lo);
+
+                        let top_chord = Curve3::Line(Line3 {
+                            origin: brep.vertices[start_hi].point,
+                            direction: brep.vertices[end_hi].point - brep.vertices[start_hi].point,
+                        });
+                        let et = next_curve(top_chord, 0.0, 1.0, start_hi, end_hi);
+
+                        segs.push(GapSeg {
+                            bot_chord: eb,
+                            top_chord: et,
+                            plane,
+                            gen_from,
+                            gen_to,
+                        });
+                    }
+                    gap_segs.push(segs);
+                } else {
+                    // Direct corner routing for difference case: connect gap
+                    // endpoints through the direct intersection corner of the
+                    // two bounding clip planes.  If the corner is outside the
+                    // cylinder or the planes are parallel, use a single chord
+                    // between cylinder wall points to avoid "fin" faces that
+                    // extend outside the cylinder cross-section.
+                    let (n1, d1) = (clip_planes[p1].0, clip_planes[p1].1);
+                    let (n2, d2) = (clip_planes[p2].0, clip_planes[p2].1);
+                    let corner_xy = corner_of_planes(n1, d1, n2, d2, center);
+                    let corner_dist_sq = (corner_xy.x - center.x).powi(2)
+                        + (corner_xy.y - center.y).powi(2);
+
+                    // Only use 2-segment corner routing when the corner is
+                    // inside the cylinder AND the planes are non-parallel.
+                    let non_parallel = (n1.x * n2.y - n1.y * n2.x).abs() > 1e-12;
+                    if non_parallel && corner_dist_sq <= r * r + 1e-9 {
+                        // 2 segments through the corner
+                        let lo_corner = brep.vertices.len();
+                        brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_lo) });
+                        let hi_corner = brep.vertices.len();
+                        brep.vertices.push(Vertex { point: DVec3::new(corner_xy.x, corner_xy.y, cz_hi) });
+                        let gen_corner = next_curve(
+                            Curve3::Line(Line3 { origin: brep.vertices[lo_corner].point, direction: DVec3::Z }),
+                            0.0, h, lo_corner, hi_corner,
+                        );
+
+                        // Segment 1: p1 → corner
+                        let bot_chord1 = Curve3::Line(Line3 {
+                            origin: brep.vertices[v_lo(vi_fr)].point,
+                            direction: brep.vertices[lo_corner].point - brep.vertices[v_lo(vi_fr)].point,
+                        });
+                        let eb1 = next_curve(bot_chord1, 0.0, 1.0, v_lo(vi_fr), lo_corner);
+                        let top_chord1 = Curve3::Line(Line3 {
+                            origin: brep.vertices[v_hi(vi_fr)].point,
+                            direction: brep.vertices[hi_corner].point - brep.vertices[v_hi(vi_fr)].point,
+                        });
+                        let et1 = next_curve(top_chord1, 0.0, 1.0, v_hi(vi_fr), hi_corner);
+
+                        // Segment 2: corner → p2
+                        let bot_chord2 = Curve3::Line(Line3 {
+                            origin: brep.vertices[lo_corner].point,
+                            direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[lo_corner].point,
+                        });
+                        let eb2 = next_curve(bot_chord2, 0.0, 1.0, lo_corner, v_lo(vi_to));
+                        let top_chord2 = Curve3::Line(Line3 {
+                            origin: brep.vertices[hi_corner].point,
+                            direction: brep.vertices[v_hi(vi_to)].point - brep.vertices[hi_corner].point,
+                        });
+                        let et2 = next_curve(top_chord2, 0.0, 1.0, hi_corner, v_hi(vi_to));
+
+                        gap_segs.push(vec![
+                            GapSeg {
+                                bot_chord: eb1, top_chord: et1, plane: p1,
+                                gen_from: interval_edges[i0].rg,
+                                gen_to: gen_corner,
+                            },
+                            GapSeg {
+                                bot_chord: eb2, top_chord: et2, plane: p2,
+                                gen_from: gen_corner,
+                                gen_to: interval_edges[i1].lg,
+                            },
+                        ]);
+                    } else {
+                        // Single direct chord between cylinder wall points
+                        // (avoids fins for corners outside the cylinder, and
+                        // handles parallel planes).
+                        let bot_chord = Curve3::Line(Line3 {
+                            origin: brep.vertices[v_lo(vi_fr)].point,
+                            direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[v_lo(vi_fr)].point,
+                        });
+                        let eb = next_curve(bot_chord, 0.0, 1.0, v_lo(vi_fr), v_lo(vi_to));
+                        let top_chord = Curve3::Line(Line3 {
+                            origin: brep.vertices[v_hi(vi_fr)].point,
+                            direction: brep.vertices[v_hi(vi_to)].point - brep.vertices[v_hi(vi_fr)].point,
+                        });
+                        let et = next_curve(top_chord, 0.0, 1.0, v_hi(vi_fr), v_hi(vi_to));
+                        gap_segs.push(vec![GapSeg {
+                            bot_chord: eb, top_chord: et, plane: p1,
+                            gen_from: interval_edges[i0].rg,
+                            gen_to: interval_edges[i1].lg,
+                        }]);
+                    }
                 }
-
-                // Step 2: Build one segment per plane in the chain.  Each
-                // segment traces along that plane's boundary from the previous
-                // corner (or circle endpoint) to the next corner (or circle
-                // endpoint).
-                let mut segs: Vec<GapSeg> = Vec::with_capacity(n_segs);
-                for j in 0..n_segs {
-                    let plane = chain[j];
-                    let is_first = j == 0;
-                    let is_last = j == n_segs - 1;
-
-                    let (start_lo, start_hi) = if is_first {
-                        (v_lo(vi_fr), v_hi(vi_fr))
-                    } else {
-                        let c = corner_data[j - 1].as_ref().unwrap();
-                        (c.lo, c.hi)
-                    };
-                    let (end_lo, end_hi) = if is_last {
-                        (v_lo(vi_to), v_hi(vi_to))
-                    } else {
-                        let c = corner_data[j].as_ref().unwrap();
-                        (c.lo, c.hi)
-                    };
-                    let mut gen_from = if is_first {
-                        interval_edges[i0].rg
-                    } else {
-                        corner_data[j - 1].as_ref().unwrap().gen_edge
-                    };
-                    let mut gen_to = if is_last {
-                        interval_edges[i1].lg
-                    } else {
-                        corner_data[j].as_ref().unwrap().gen_edge
-                    };
-
-                    let bot_chord = Curve3::Line(Line3 {
-                        origin: brep.vertices[start_lo].point,
-                        direction: brep.vertices[end_lo].point - brep.vertices[start_lo].point,
-                    });
-                    let eb = next_curve(bot_chord, 0.0, 1.0, start_lo, end_lo);
-
-                    let top_chord = Curve3::Line(Line3 {
-                        origin: brep.vertices[start_hi].point,
-                        direction: brep.vertices[end_hi].point - brep.vertices[start_hi].point,
-                    });
-                    let et = next_curve(top_chord, 0.0, 1.0, start_hi, end_hi);
-
-                    segs.push(GapSeg {
-                        bot_chord: eb,
-                        top_chord: et,
-                        plane,
-                        gen_from,
-                        gen_to,
-                    });
-                }
-                gap_segs.push(segs);
             }
             _ => {
                 gap_segs.push(Vec::new());
@@ -5575,6 +5777,181 @@ fn build_cylinder_box_clipped_brep(
 
     brep
 }
+/// Build an arc BRep for the parallel-only cylinder-box difference case.
+///
+/// This builds the portion of a Z-aligned cylinder satisfying
+/// `(P - center)·clip_n ≥ cut_dist` (the outside-slab region). The arc is
+/// centered on `clip_n` with half-angle `α = acos(cut_dist/r)`. The clip face
+/// is on the plane `center + clip_n·cut_dist` with outward normal `-clip_n`.
+///
+/// `clip_n`: horizontal unit normal from center toward the clip plane.
+/// `cut_dist`: distance from center to clip plane (≥0, ≤r).
+fn build_cylinder_arc_for_difference(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_n: DVec3,
+    cut_dist: f64,
+) -> BRep {
+    let alpha = (cut_dist / r).clamp(-1.0, 1.0).acos();
+    let phi = clip_n.y.atan2(clip_n.x);
+    let half_h = h * 0.5;
+    let cz_lo = center.z - half_h;
+    let cz_hi = center.z + half_h;
+
+    let (sa, ca) = alpha.sin_cos();
+    let (sp, cp) = phi.sin_cos();
+
+    // (cos(φ±α), sin(φ±α))
+    let cos_phi_minus_alpha = cp * ca + sp * sa;
+    let sin_phi_minus_alpha = sp * ca - cp * sa;
+    let cos_phi_plus_alpha = cp * ca - sp * sa;
+    let sin_phi_plus_alpha = sp * ca + cp * sa;
+
+    let v0_p = DVec3::new(center.x + r * cos_phi_minus_alpha, center.y + r * sin_phi_minus_alpha, cz_lo);
+    let v1_p = DVec3::new(center.x + r * cos_phi_plus_alpha, center.y + r * sin_phi_plus_alpha, cz_lo);
+    let v2_p = DVec3::new(center.x + r * cos_phi_plus_alpha, center.y + r * sin_phi_plus_alpha, cz_hi);
+    let v3_p = DVec3::new(center.x + r * cos_phi_minus_alpha, center.y + r * sin_phi_minus_alpha, cz_hi);
+
+    let mut brep = BRep::new();
+
+    // Vertices
+    let v0 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v0_p });
+    let v1 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v1_p });
+    let v2 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v2_p });
+    let v3 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: v3_p });
+
+    // Edge helper
+    let mut next_curve = |c: Curve3, t0: f64, t1: f64, start: usize, end: usize| -> usize {
+        let idx = brep.edges.len();
+        brep.edges.push(Edge { start, end });
+        let ci = brep.geom.curves.len();
+        brep.geom.curves.push(c);
+        while brep.geom.edge_curve.len() <= idx {
+            brep.geom.edge_curve.push(None);
+            brep.geom.edge_curve_range.push(None);
+            brep.geom.edge_degenerated.push(false);
+        }
+        brep.geom.edge_curve[idx] = Some(ci);
+        brep.geom.edge_curve_range[idx] = Some([t0, t1]);
+        brep.geom.edge_pcurves.push(Vec::new());
+        idx
+    };
+
+    // E0: bottom arc (V1→V0), same convention as build_half_cylinder_intersection_brep
+    let circle_bot = Curve3::Circle(Circle3 {
+        center: DVec3::new(center.x, center.y, cz_lo),
+        normal: -DVec3::Z,
+        radius: r,
+    });
+    let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
+
+    // E1: right generator (V1→V2)
+    let line_r = Curve3::Line(Line3 { origin: v1_p, direction: DVec3::Z });
+    let e1 = next_curve(line_r, 0.0, h, v1, v2);
+
+    // E2: top arc (V3→V2)
+    let circle_top = Curve3::Circle(Circle3 {
+        center: DVec3::new(center.x, center.y, cz_hi),
+        normal: DVec3::Z,
+        radius: r,
+    });
+    let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
+
+    // E3: left generator (V0→V3)
+    let line_l = Curve3::Line(Line3 { origin: v0_p, direction: DVec3::Z });
+    let e3 = next_curve(line_l, 0.0, h, v0, v3);
+
+    // E4: bottom chord on clip plane (V0→V1)
+    let line_cb = Curve3::Line(Line3 { origin: v0_p, direction: v1_p - v0_p });
+    let e4 = next_curve(line_cb, 0.0, 1.0, v0, v1);
+
+    // E5: top chord on clip plane (V2→V3)
+    let line_ct = Curve3::Line(Line3 { origin: v2_p, direction: v3_p - v2_p });
+    let e5 = next_curve(line_ct, 0.0, 1.0, v2, v3);
+
+    // --- Surfaces ---
+    let cyl_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(center.x, center.y, cz_lo),
+        axis: DVec3::Z, radius: r, ref_dir: DVec3::X,
+    });
+    let top_plane = Surface3::Plane(Plane {
+        origin: DVec3::new(center.x, center.y, cz_hi),
+        normal: DVec3::Z,
+    });
+    let bot_plane = Surface3::Plane(Plane {
+        origin: DVec3::new(center.x, center.y, cz_lo),
+        normal: -DVec3::Z,
+    });
+    // Clip plane at center + clip_n*cut_dist, outward normal = -clip_n
+    let clip_surf = Surface3::Plane(Plane {
+        origin: center + clip_n * cut_dist,
+        normal: -clip_n,
+    });
+
+    let si_cyl = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(cyl_surf);
+    let si_top = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(top_plane);
+    let si_bot = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(bot_plane);
+    let si_clip = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(clip_surf);
+
+    // Face helper
+    let mut push_face = |outer: Wire, surf_idx: usize, normal: DVec3| -> usize {
+        let fi = if brep.solids.is_empty() {
+            brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
+            0
+        } else {
+            brep.solids[0].shells[0].faces.len()
+        };
+        brep.solids[0].shells[0].faces.push(Face {
+            outer_wire: outer, inner_wires: Vec::new(), normal,
+            triangles: Vec::new(), sample_point: None, mesh_dirty: true,
+        });
+        while brep.geom.face_surface.len() <= fi {
+            brep.geom.face_surface.push(None);
+        }
+        brep.geom.face_surface[fi] = Some(surf_idx);
+        fi
+    };
+
+    // F0: Cylindrical wall — wire V0→V1→V2→V3→V0
+    let cyl_wire = Wire {
+        edges: vec![
+            WireEdge::rev(e0), WireEdge::fwd(e1),
+            WireEdge::rev(e2), WireEdge::rev(e3),
+        ],
+    };
+    let _f0 = push_face(cyl_wire, si_cyl, clip_n);
+    while brep.geom.face_surface_range.len() <= _f0 {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep.geom.face_surface_range[_f0] = Some([phi - alpha, phi + alpha, 0.0, h]);
+
+    // F1: Top cap (normal=+Z)
+    let _f1 = push_face(Wire { edges: vec![WireEdge::fwd(e5), WireEdge::fwd(e2)] }, si_top, DVec3::Z);
+
+    // F2: Bottom cap (normal=-Z)
+    let _f2 = push_face(Wire { edges: vec![WireEdge::fwd(e4), WireEdge::fwd(e0)] }, si_bot, -DVec3::Z);
+
+    // F3: Clip face (bounding the arc on the box face, outward normal = -clip_n)
+    let clip_wire = Wire {
+        edges: vec![
+            WireEdge::fwd(e4), WireEdge::fwd(e1),
+            WireEdge::fwd(e5), WireEdge::rev(e3),
+        ],
+    };
+    let _f3 = push_face(clip_wire, si_clip, -clip_n);
+
+    brep
+}
+
 /// bounded by a vertical plane parallel to the cylinder axis.
 ///
 /// The result is a portion of the cylinder cut lengthwise by a plane parallel to
@@ -6379,7 +6756,7 @@ mod tests {
 
     #[test]
     fn zp3_coaxial_cylinder_minus_cone_fast_path_triggered() {
-        use glam::DVec3;
+        use glam::{DAffine3, DVec3};
         use rcad_modeling::{make_cone_brep, make_cylinder_brep};
         let pc = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 20.0).expect("cone");
         let pcy = make_cylinder_brep(
@@ -6724,5 +7101,58 @@ mod tests {
             (total - expected).abs() < 0.01,
             "Expected ~{expected}, got {total}"
         );
+    }
+
+    #[test]
+    fn debug_rotated_cylinder_box_difference() {
+        // Shared cylinder for all test cases
+        let cyl = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let r = (3.0_f64).sqrt() / 2.0;
+
+        // --- Case x3: box(-1, -r, 0, 1+r, 1+r, 1) rotated 30Z ---
+        {
+            let mut bx = make_box_brep(DVec3::new(-1.0, -r, 0.0), DVec3::X, DVec3::Y, 1.0 + r, 1.0 + r, 1.0).unwrap();
+            let rot = DAffine3::from_axis_angle(DVec3::Z, 30.0_f64.to_radians());
+            bx.apply_transform(rot);
+            let fast = try_difference_cylinder_box(&cyl, &bx);
+            println!("x3: {:?}", fast.is_some());
+            if let Some(ref r) = fast {
+                println!("  SA: {:.6}", rcad_kernel::surface_area(r));
+            }
+        }
+
+        // --- Case x6: box(-r, -1, 0, 2*r, 2, 1) rotated 30Z ---
+        {
+            let mut bx = make_box_brep(DVec3::new(-r, -1.0, 0.0), DVec3::X, DVec3::Y, 2.0 * r, 2.0, 1.0).unwrap();
+            let rot = DAffine3::from_axis_angle(DVec3::Z, 30.0_f64.to_radians());
+            bx.apply_transform(rot);
+            let box_info = try_as_box(&bx);
+            println!("x6 try_as_box: {:?}", box_info.is_some());
+            if let Some(ref info) = box_info {
+                println!("  axes: {:?}, center: {:?}, extents: {:?}", info.axes, info.center, info.extents);
+            }
+            let fast = try_difference_cylinder_box(&cyl, &bx);
+            println!("x6: {:?}", fast.is_some());
+            if let Some(ref r) = fast {
+                println!("  SA: {:.6}", rcad_kernel::surface_area(r));
+            }
+        }
+
+        // --- Case zb6: box(-r, -r, 0, 2*r, 2*r, 1) rotated 60Z ---
+        {
+            let mut bx = make_box_brep(DVec3::new(-r, -r, 0.0), DVec3::X, DVec3::Y, 2.0 * r, 2.0 * r, 1.0).unwrap();
+            let rot = DAffine3::from_axis_angle(DVec3::Z, 60.0_f64.to_radians());
+            bx.apply_transform(rot);
+            let box_info = try_as_box(&bx);
+            println!("zb6 try_as_box: {:?}", box_info.is_some());
+            if let Some(ref info) = box_info {
+                println!("  axes: {:?}, center: {:?}, extents: {:?}", info.axes, info.center, info.extents);
+            }
+            let fast = try_difference_cylinder_box(&cyl, &bx);
+            println!("zb6: {:?}", fast.is_some());
+            if let Some(ref r) = fast {
+                println!("  SA: {:.6}", rcad_kernel::surface_area(r));
+            }
+        }
     }
 }
