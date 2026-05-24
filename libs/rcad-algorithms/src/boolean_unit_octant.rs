@@ -4759,8 +4759,8 @@ fn build_box_minus_cone_tessellated(
     let z1 = z_hi.min(bmax.z);
     if z1 <= z0 + tol { return None; }
 
-    let n_slices = 64usize;
-    let n_boundary = 128usize;
+    let n_slices = 128usize;
+    let n_boundary = 256usize;
     let dz = (z1 - z0) / n_slices as f64;
     let dr = (r_hi - r_lo) / (z_hi - z_lo);
 
@@ -5161,24 +5161,14 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
     let bc = bx.center;
 
     // --- Z-rotation fallback ---
-    // If the box is Z-rotated (U/V axes not aligned with world X/Y), rotate
-    // both BReps by −θ so the box becomes axis-aligned, run the fast path
-    // directly on the rotated shapes, then rotate the result back by +θ.
-    // We pass `rot_frame = true` to the inner call which skips the Z-rotation
-    // check to prevent re-entering this path.
-    let z_angle = u_ax.y.atan2(u_ax.x);
-    let is_z_rotated = !rot_frame && z_angle.abs() > 1e-6;
-    if is_z_rotated {
-        let rot = DAffine3::from_axis_angle(DVec3::Z, -z_angle);
-        let inv_rot = DAffine3::from_axis_angle(DVec3::Z, z_angle);
-        let mut a_rot = a.clone();
-        let mut b_rot = b.clone();
-        a_rot.apply_transform(rot);
-        b_rot.apply_transform(rot);
-        let mut result = try_difference_cylinder_box_impl(&a_rot, &b_rot, true)?;
-        result.apply_transform(inv_rot);
-        return Some(result);
-    }
+    // The clip-plane logic below is axis-independent: clip planes are
+    // expressed in the box's local UV axes, theta ranges are computed
+    // from clip-plane normals in world space, and the cylinder is
+    // rotationally symmetric around Z.  No un-rotate/re-rotate step
+    // is needed — it would corrupt `face_surface_range` UV domains,
+    // causing `tessellate_curved_face` to produce wrong areas.
+    let _is_z_rotated = !rot_frame && u_ax.y.atan2(u_ax.x).abs() > 1e-6;
+    // (Z-rotation handling intentionally skipped — see explanation above.)
 
     // Cylinder Z range.
     let cyl_z_lo = cyl_center.z - cyl_height / 2.0;
