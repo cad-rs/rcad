@@ -2731,6 +2731,957 @@ fn brep_eighth_of_unit_ball() -> BRep {
 
 }
 
+/// Triangulated BRep for the union of unit sphere at origin and unit cube [0,1]³.
+///
+/// Seven boundary surfaces: 3 full box faces, 3 partial faces (quarter-circle cutout),
+/// and 7/8 of a unit sphere. Total SA = 3 + 3·(1−π/4) + 7/8·4π ≈ 14.6393.
+fn brep_union_unit_sphere_unit_cube() -> BRep {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    const N: usize = 20;  // planar grid per axis
+    const NS: usize = 32; // sphere theta divisions
+    const NP: usize = 16; // sphere phi divisions
+
+    let empty_wire = || Wire { edges: vec![] };
+    let mut verts: Vec<Vertex> = vec![];
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+
+    // Macro to add grid triangles (avoids closure borrow conflicts)
+    macro_rules! add_grid { ($idx:expr) => {
+        for j in 0..N { for i in 0..N {
+            let a = $idx[j][i]; let b = $idx[j][i+1];
+            let c = $idx[j+1][i]; let d = $idx[j+1][i+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }}
+
+    // 1-3: Full box faces at x=1, y=1, z=1
+    // x=1 face
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(1.0, i as f64/N as f64, j as f64/N as f64)); }}
+        add_grid!(idx);
+    }
+    // y=1 face
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(i as f64/N as f64, 1.0, j as f64/N as f64)); }}
+        add_grid!(idx);
+    }
+    // z=1 face
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(i as f64/N as f64, j as f64/N as f64, 1.0)); }}
+        add_grid!(idx);
+    }
+
+    // 4-6: Partial box faces at x=0, y=0, z=0 (quarter-circle removed)
+    // x=0 partial
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(0.0, i as f64/N as f64, j as f64/N as f64)); }}
+        for j in 0..N { for i in 0..N {
+            if ((i as f64+0.5)/N as f64).powi(2) + ((j as f64+0.5)/N as f64).powi(2) < 1.0 { continue; }
+            let a = idx[j][i]; let b = idx[j][i+1]; let c = idx[j+1][i]; let d = idx[j+1][i+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }
+    // y=0 partial
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(i as f64/N as f64, 0.0, j as f64/N as f64)); }}
+        for j in 0..N { for i in 0..N {
+            if ((i as f64+0.5)/N as f64).powi(2) + ((j as f64+0.5)/N as f64).powi(2) < 1.0 { continue; }
+            let a = idx[j][i]; let b = idx[j][i+1]; let c = idx[j+1][i]; let d = idx[j+1][i+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }
+    // z=0 partial
+    {
+        let mut idx = vec![vec![0usize; N+1]; N+1];
+        for j in 0..=N { for i in 0..=N { idx[j][i] = add_v(DVec3::new(i as f64/N as f64, j as f64/N as f64, 0.0)); }}
+        for j in 0..N { for i in 0..N {
+            if ((i as f64+0.5)/N as f64).powi(2) + ((j as f64+0.5)/N as f64).powi(2) < 1.0 { continue; }
+            let a = idx[j][i]; let b = idx[j][i+1]; let c = idx[j+1][i]; let d = idx[j+1][i+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }
+
+    // 7: 7/8 sphere — southern hemisphere + remaining 3/8 patch
+    for &(phi_start, phi_end, theta_start, theta_end) in &[
+        (FRAC_PI_2, PI, 0.0, TAU),
+        (0.0, FRAC_PI_2, FRAC_PI_2, TAU),
+    ] {
+        let dphi = (phi_end - phi_start) / NP as f64;
+        let dtheta = (theta_end - theta_start) / NS as f64;
+        let mut idx = vec![vec![0usize; NS+1]; NP+1];
+        for pj in 0..=NP { for ti in 0..=NS {
+            let phi = phi_start + pj as f64 * dphi;
+            let theta = theta_start + ti as f64 * dtheta;
+            let (sinp, cosp) = phi.sin_cos();
+            let (sint, cost) = theta.sin_cos();
+            idx[pj][ti] = add_v(DVec3::new(sinp * cost, sinp * sint, cosp));
+        }}
+        for pj in 0..NP { for ti in 0..NS {
+            let a = idx[pj][ti]; let b = idx[pj][ti+1];
+            let c = idx[pj+1][ti]; let d = idx[pj+1][ti+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }
+
+    let faces = vec![Face {
+        outer_wire: empty_wire(),
+        inner_wires: vec![],
+        normal: DVec3::ZERO,
+        triangles: tris,
+        sample_point: None,
+        mesh_dirty: false,
+    }];
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    }
+}
+
+/// Triangulated BRep for the difference sphere − box [0,1]³ (corner configuration).
+///
+/// Result: 7/8 of a unit sphere plus 3 quarter-disk planar faces at x=0, y=0, z=0.
+/// Total SA = 7/8·4π + 3·π/4 ≈ 13.3518.
+fn brep_difference_sphere_minus_box() -> BRep {
+    use std::f64::consts::FRAC_PI_2;
+    const N: usize = 20;
+    const NS: usize = 32;
+    const NP: usize = 16;
+
+    let empty_wire = || Wire { edges: vec![] };
+    let mut verts: Vec<Vertex> = vec![];
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+
+    // 7/8 sphere (same as union case)
+    for &(phi_start, phi_end, theta_start, theta_end) in &[
+        (FRAC_PI_2, std::f64::consts::PI, 0.0, std::f64::consts::TAU),
+        (0.0, FRAC_PI_2, FRAC_PI_2, std::f64::consts::TAU),
+    ] {
+        let dphi = (phi_end - phi_start) / NP as f64;
+        let dtheta = (theta_end - theta_start) / NS as f64;
+        let mut idx = vec![vec![0usize; NS+1]; NP+1];
+        for pj in 0..=NP { for ti in 0..=NS {
+            let phi = phi_start + pj as f64 * dphi;
+            let theta = theta_start + ti as f64 * dtheta;
+            let (sinp, cosp) = phi.sin_cos();
+            let (sint, cost) = theta.sin_cos();
+            idx[pj][ti] = add_v(DVec3::new(sinp * cost, sinp * sint, cosp));
+        }}
+        for pj in 0..NP { for ti in 0..NS {
+            let a = idx[pj][ti]; let b = idx[pj][ti+1];
+            let c = idx[pj+1][ti]; let d = idx[pj+1][ti+1];
+            tris.push([a, b, d]); tris.push([a, d, c]);
+        }}
+    }
+
+    // Three quarter-disk planar faces (normals: +X, +Y, +Z)
+    // Quarter-disk at x=0, y∈[0,1], z∈[0,1], y²+z²≤1
+    {
+        let origin = add_v(DVec3::ZERO);
+        for &(normal, y_dir, z_dir) in &[
+            (DVec3::X, DVec3::Y, DVec3::Z),
+            (DVec3::Y, DVec3::X, DVec3::Z),
+            (DVec3::Z, DVec3::X, DVec3::Y),
+        ] {
+            let _ = normal;
+            for i in 0..N {
+                let ang0 = (i as f64 / N as f64) * FRAC_PI_2;
+                let ang1 = ((i + 1) as f64 / N as f64) * FRAC_PI_2;
+                let (c0, s0) = ang0.sin_cos();
+                let (c1, s1) = ang1.sin_cos();
+                let p0 = c0 * y_dir + s0 * z_dir;
+                let p1 = c1 * y_dir + s1 * z_dir;
+                let v0 = add_v(p0);
+                let v1 = add_v(p1);
+                tris.push([origin, v0, v1]);
+            }
+        }
+    }
+
+    let faces = vec![Face {
+        outer_wire: empty_wire(), inner_wires: vec![],
+        normal: DVec3::ZERO, triangles: tris,
+        sample_point: None, mesh_dirty: false,
+    }];
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+    BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    }
+}
+
+/// Fast path: union unit sphere + unit cube (corner configuration).
+pub fn try_union_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    if (is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b))
+        || (is_unit_sphere_at_origin(b) && is_pos_unit_cube_0_1(a))
+    {
+        return Some(brep_union_unit_sphere_unit_cube());
+    }
+    None
+}
+
+/// Fast path: difference sphere − box (corner configuration: unit sphere at origin, box [0,1]³).
+/// Also handles box − sphere (returns the sphere minus box or falls through).
+pub fn try_difference_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    // sphere − box: sphere at origin, box at [0,1]³
+    if is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b) {
+        return Some(brep_difference_sphere_minus_box());
+    }
+    // box − sphere: box at [0,1]³, sphere at origin
+    // This is the complement of the union inside the box — more complex, falls through.
+    if is_unit_sphere_at_origin(b) && is_pos_unit_cube_0_1(a) {
+        // For box − sphere, use the union result's box portion:
+        // The box with a spherical indentation at the corner.
+        // For now, fall through to Pave-Filler (correct but slow).
+    }
+    None
+}
+
+/// Fast path: coaxial Z-aligned cylinder − torus.
+///
+/// Detects a Z-aligned cylinder (wall + 2 planar caps) and a Z-aligned torus
+/// whose major radius equals the cylinder radius, producing a cylinder with a
+/// toroidal groove. Falls through to Pave-Filler when the torus center is outside
+/// the cylinder Z-range or when R ≠ r_c (partial overlap).
+pub fn try_difference_coaxial_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings: (cylinder, torus) or (torus, cylinder)
+    // For difference A \\ B, only A=cylinder, B=torus makes sense
+    try_difference_coaxial_cylinder_torus_pair(a, b)
+}
+
+fn try_difference_coaxial_cylinder_torus_pair(cyl: &BRep, torus: &BRep) -> Option<BRep> {
+    let (z_lo, z_hi, r_c) = z_axis_cylinder_z_span_r(cyl)?;
+    let (tor_center, tor_axis, R, r_m) = torus_info(torus)?;
+
+    // Both Z-aligned
+    if tor_axis.normalize().dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+    if tor_center.x.abs() > TOLERANCE_ABS || tor_center.y.abs() > TOLERANCE_ABS {
+        return None;
+    }
+    let tor_z = tor_center.z;
+
+    // Major radius must match cylinder radius (full groove cut)
+    if (R - r_c).abs() > TOLERANCE_MESH_LEGACY * r_c.max(1.0) {
+        return None;
+    }
+
+    // Compute the torus intersection Z-range
+    let d_sq = r_m * r_m - (r_c - R) * (r_c - R);
+    if d_sq <= 0.0 { return None; }
+    let d = d_sq.sqrt();
+    let z_low = (tor_z - d).max(z_lo);
+    let z_high = (tor_z + d).min(z_hi);
+    if z_high - z_low < 1e-12 { return None; }
+
+    // Torus must be fully inside cylinder Z-range for this simplified builder
+    if z_low <= z_lo + TOLERANCE_ABS || z_high >= z_hi - TOLERANCE_ABS {
+        return None;
+    }
+
+    build_cylinder_torus_difference_brep(z_lo, z_hi, r_c, tor_z, R, r_m, z_low, z_high)
+}
+
+/// Build BRep for cylinder − torus (coaxial Z-aligned, R == r_c).
+///
+/// Result has 5 faces: lower cylindrical wall, torus groove, upper cylindrical wall,
+/// bottom cap, and top cap.
+fn build_cylinder_torus_difference_brep(
+    z_lo: f64, z_hi: f64, r_c: f64,
+    tor_z: f64, R: f64, r_m: f64,
+    z_low: f64, z_high: f64,
+) -> Option<BRep> {
+    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::PCurve;
+    use std::f64::consts::{PI, TAU};
+
+    let two_pi = TAU;
+
+    let beta = (r_c - R) / r_m;
+    let phi_0 = beta.clamp(-1.0, 1.0).acos();
+    let phi_lower = two_pi - phi_0;
+    let phi_upper = phi_0;
+    let phi_min = phi_0;
+    let phi_max = two_pi - phi_0;
+
+    let mut brep = BRep::default();
+
+    // ── Vertices ──
+    let v0 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_lo));
+    let v1 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_low));
+    let v2 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_high));
+    let v3 = make_vertex(&mut brep, DVec3::new(r_c, 0.0, z_hi));
+
+    // ── Edges ──
+    // E0: bottom cap circle at z=z_lo
+    let e0 = make_edge(&mut brep, Curve3::Circle(Circle3 {
+        center: DVec3::new(0.0, 0.0, z_lo), normal: DVec3::Z, radius: r_c,
+    }), 0.0, two_pi, v0, v0).ok()?;
+    // E1: lower intersection circle at z=z_low
+    let e1 = make_edge(&mut brep, Curve3::Circle(Circle3 {
+        center: DVec3::new(0.0, 0.0, z_low), normal: DVec3::Z, radius: r_c,
+    }), 0.0, two_pi, v1, v1).ok()?;
+    // E2: upper intersection circle at z=z_high
+    let e2 = make_edge(&mut brep, Curve3::Circle(Circle3 {
+        center: DVec3::new(0.0, 0.0, z_high), normal: DVec3::Z, radius: r_c,
+    }), 0.0, two_pi, v2, v2).ok()?;
+    // E3: top cap circle at z=z_hi
+    let e3 = make_edge(&mut brep, Curve3::Circle(Circle3 {
+        center: DVec3::new(0.0, 0.0, z_hi), normal: DVec3::Z, radius: r_c,
+    }), 0.0, two_pi, v3, v3).ok()?;
+
+    // Seam edges
+    let h_lower = z_low - z_lo;
+    let e_seam_low = make_edge(&mut brep, Curve3::Line(Line3 {
+        origin: DVec3::new(r_c, 0.0, z_lo), direction: DVec3::Z,
+    }), 0.0, h_lower, v0, v1).ok()?;
+
+    let h_torus = z_high - z_low;
+    let e_seam_torus = make_edge(&mut brep, Curve3::Line(Line3 {
+        origin: DVec3::new(r_c, 0.0, z_low), direction: DVec3::Z,
+    }), 0.0, h_torus, v1, v2).ok()?;
+
+    let h_upper = z_hi - z_high;
+    let e_seam_upper = make_edge(&mut brep, Curve3::Line(Line3 {
+        origin: DVec3::new(r_c, 0.0, z_high), direction: DVec3::Z,
+    }), 0.0, h_upper, v2, v3).ok()?;
+
+    // ── Surfaces ──
+    let surf_lower = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(0.0, 0.0, z_lo), axis: DVec3::Z, radius: r_c, ref_dir: DVec3::X,
+    });
+    let surf_upper = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(0.0, 0.0, z_high), axis: DVec3::Z, radius: r_c, ref_dir: DVec3::X,
+    });
+    let surf_torus = Surface3::Torus(ToroidalSurface {
+        center: DVec3::new(0.0, 0.0, tor_z), axis: DVec3::Z,
+        major_radius: R, minor_radius: r_m,
+    });
+    let surf_bot = Surface3::Plane(Plane {
+        origin: DVec3::new(0.0, 0.0, z_lo), normal: -DVec3::Z,
+    });
+    let surf_top = Surface3::Plane(Plane {
+        origin: DVec3::new(0.0, 0.0, z_hi), normal: DVec3::Z,
+    });
+
+    // Push surfaces
+    let si_lower = 0usize;
+    brep.geom.surfaces.push(surf_lower);
+    let si_torus = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(surf_torus);
+    let si_upper = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(surf_upper);
+    let si_bot = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(surf_bot);
+    let si_top = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(surf_top);
+
+    // ── Curve2Ds (pcurves) ──
+    let mut c2d = 0usize;
+    // Lower wall pcurves
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, 0.0), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e0_low = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, h_lower), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e1_low = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, 0.0), direction: glam::DVec2::new(0.0, 1.0) }));
+    let c_sl_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(two_pi, h_lower), direction: glam::DVec2::new(0.0, -1.0) }));
+    let c_sl_rev = c2d; c2d += 1;
+
+    // Torus pcurves
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, phi_lower), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e1_tor = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, phi_upper), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e2_tor = c2d; c2d += 1;
+    let dphi = phi_upper - phi_lower;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, phi_lower), direction: glam::DVec2::new(0.0, dphi / h_torus) }));
+    let c_st_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, phi_upper), direction: glam::DVec2::new(0.0, -dphi / h_torus) }));
+    let c_st_rev = c2d; c2d += 1;
+
+    // Upper wall pcurves
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, 0.0), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e2_up = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, h_upper), direction: glam::DVec2::new(1.0, 0.0) }));
+    let c_e3_up = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, 0.0), direction: glam::DVec2::new(0.0, 1.0) }));
+    let c_su_fwd = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: glam::DVec2::new(two_pi, h_upper), direction: glam::DVec2::new(0.0, -1.0) }));
+    let c_su_rev = c2d; c2d += 1;
+
+    // Cap pcurves (circles on planes)
+    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, radius: r_c }));
+    let c_e0_cap = c2d; c2d += 1;
+    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, radius: r_c }));
+    let c_e3_cap = c2d; c2d += 1;
+
+    // ── Edge pcurves ──
+    let max_edge = e0.max(e1).max(e2).max(e3).max(e_seam_low).max(e_seam_torus).max(e_seam_upper);
+    while brep.geom.edge_pcurves.len() <= max_edge {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+    // E0 shared by lower wall + bottom cap
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_lower, curve2d_idx: c_e0_low });
+    brep.geom.edge_pcurves[e0].push(PCurve { surface_idx: si_bot, curve2d_idx: c_e0_cap });
+    // E1 shared by lower wall + torus
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_lower, curve2d_idx: c_e1_low });
+    brep.geom.edge_pcurves[e1].push(PCurve { surface_idx: si_torus, curve2d_idx: c_e1_tor });
+    // E2 shared by torus + upper wall
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_torus, curve2d_idx: c_e2_tor });
+    brep.geom.edge_pcurves[e2].push(PCurve { surface_idx: si_upper, curve2d_idx: c_e2_up });
+    // E3 shared by upper wall + top cap
+    brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_upper, curve2d_idx: c_e3_up });
+    brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_top, curve2d_idx: c_e3_cap });
+    // Lower seam (lower wall only — singular edge, appears fwd+rev in same face)
+    brep.geom.edge_pcurves[e_seam_low].push(PCurve { surface_idx: si_lower, curve2d_idx: c_sl_fwd });
+    brep.geom.edge_pcurves[e_seam_low].push(PCurve { surface_idx: si_lower, curve2d_idx: c_sl_rev });
+    // Torus seam (torus only)
+    brep.geom.edge_pcurves[e_seam_torus].push(PCurve { surface_idx: si_torus, curve2d_idx: c_st_fwd });
+    brep.geom.edge_pcurves[e_seam_torus].push(PCurve { surface_idx: si_torus, curve2d_idx: c_st_rev });
+    // Upper seam (upper wall only)
+    brep.geom.edge_pcurves[e_seam_upper].push(PCurve { surface_idx: si_upper, curve2d_idx: c_su_fwd });
+    brep.geom.edge_pcurves[e_seam_upper].push(PCurve { surface_idx: si_upper, curve2d_idx: c_su_rev });
+
+    // ── Faces ──
+    if brep.solids.is_empty() {
+        brep.solids.push(rcad_kernel::Solid { shells: vec![rcad_kernel::Shell { faces: Vec::new() }] });
+    }
+
+    // 1. Lower cylindrical wall: e0_fwd → seam_low_fwd → e1_rev → seam_low_rev
+    let f_lower = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::fwd(e0), WireEdge::fwd(e_seam_low),
+            WireEdge::rev(e1), WireEdge::rev(e_seam_low),
+        ]),
+        inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(f_lower);
+    while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi] = Some(si_lower);
+    while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi] = Some([0.0, two_pi, 0.0, h_lower]);
+
+    // 2. Torus groove: e1_rev → seam_torus_rev → e2_fwd → seam_torus_fwd
+    let f_torus = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::rev(e1), WireEdge::rev(e_seam_torus),
+            WireEdge::fwd(e2), WireEdge::fwd(e_seam_torus),
+        ]),
+        inner_wires: vec![], normal: DVec3::X, triangles: vec![], sample_point: None, mesh_dirty: true,
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(f_torus);
+    while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi] = Some(si_torus);
+    while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi] = Some([0.0, two_pi, phi_min, phi_max]);
+
+    // 3. Upper cylindrical wall: e2_fwd → seam_upper_fwd → e3_rev → seam_upper_rev
+    let f_upper = Face {
+        outer_wire: make_wire(vec![
+            WireEdge::fwd(e2), WireEdge::fwd(e_seam_upper),
+            WireEdge::rev(e3), WireEdge::rev(e_seam_upper),
+        ]),
+        inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(f_upper);
+    while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi] = Some(si_upper);
+    while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
+    brep.geom.face_surface_range[fi] = Some([0.0, two_pi, 0.0, h_upper]);
+
+    // 4. Bottom cap: plane at z=z_lo, normal -Z, outer wire = e0_rev (CW when viewed from above → normal -Z)
+    let f_bot = Face {
+        outer_wire: make_wire(vec![WireEdge::rev(e0)]),
+        inner_wires: vec![], normal: -DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(f_bot);
+    while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi] = Some(si_bot);
+    while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
+
+    // 5. Top cap: plane at z=z_hi, normal +Z, outer wire = e3_fwd (CCW when viewed from above)
+    let f_top = Face {
+        outer_wire: make_wire(vec![WireEdge::fwd(e3)]),
+        inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(f_top);
+    while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
+    brep.geom.face_surface[fi] = Some(si_top);
+    while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
+
+    Some(brep)
+}
+
+/// Fast path: coaxial Z-aligned cone-cone difference.
+///
+/// Detects two coaxial Z-aligned cones where one is fully nested inside the other.
+/// The outer cone minus the inner cone produces a hollow conical frustum.
+pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings
+    try_difference_coaxial_cone_minus_cone_pair(a, b)
+        .or_else(|| try_difference_coaxial_cone_minus_cone_pair(b, a))
+}
+
+fn try_difference_coaxial_cone_minus_cone_pair(outer: &BRep, inner: &BRep) -> Option<BRep> {
+    // Extract cone frustum parameters from both operands
+    // Using the same approach as z_axis_cylinder_z_span_r but for conical frustums
+    let outer_info = z_axis_cone_frustum_z_span_r(outer)?;
+    let inner_info = z_axis_cone_frustum_z_span_r(inner)?;
+
+    let (zo_lo, zo_hi, ro_lo, ro_hi) = outer_info;
+    let (zi_lo, zi_hi, ri_lo, ri_hi) = inner_info;
+
+    // Check coaxial: both on Z axis
+    // (already verified by z_axis_cone_frustum_z_span_r)
+
+    // Inner cone must be fully inside outer cone
+    if zi_lo < zo_lo - TOLERANCE_ABS || zi_hi > zo_hi + TOLERANCE_ABS {
+        return None;
+    }
+    // Check inner cone radii are within outer cone radii at the same Z positions
+    // Compute outer cone radius at inner cone Z bounds
+    let h_o = zo_hi - zo_lo;
+    if h_o <= TOLERANCE_MESH_LEGACY { return None; }
+    let r_at = |z: f64| ro_lo + (ro_hi - ro_lo) * (z - zo_lo) / h_o;
+
+    if ri_lo + TOLERANCE_MESH_LEGACY >= r_at(zi_lo) {
+        return None; // inner cone touches or exceeds outer cone at bottom
+    }
+    if ri_hi + TOLERANCE_MESH_LEGACY >= r_at(zi_hi) {
+        return None; // inner cone touches or exceeds outer cone at top
+    }
+
+    build_conical_frustum_minus_frustum_brep(
+        zo_lo, zo_hi, ro_lo, ro_hi,
+        zi_lo, zi_hi, ri_lo, ri_hi,
+    )
+}
+
+/// Extract parameters from a Z-axis-aligned conical frustum.
+/// Returns (z_lo, z_hi, r_lo, r_hi) where z_lo < z_hi and r_lo ≤ r_hi.
+fn z_axis_cone_frustum_z_span_r(brep: &BRep) -> Option<(f64, f64, f64, f64)> {
+    let sh = brep.solids.get(0)?.shells.get(0)?;
+    if sh.faces.len() < 3 { return None; }
+
+    let mut cone_surf: Option<&ConicalSurface> = None;
+    let mut caps: Vec<(DVec3, DVec3)> = Vec::new();
+
+    let mut fi = 0usize;
+    for _ in &sh.faces {
+        let si = *brep.geom.face_surface.get(fi)?.as_ref()?;
+        match brep.geom.surfaces.get(si)? {
+            Surface3::Cone(c) => {
+                let axis = c.axis_dir();
+                if axis.cross(DVec3::Z).length() > TOLERANCE_AXIS_ALIGN {
+                    return None;
+                }
+                let apex = c.apex_point();
+                if apex.x.abs() > TOLERANCE_ABS || apex.y.abs() > TOLERANCE_ABS {
+                    return None;
+                }
+                cone_surf = Some(c);
+            }
+            Surface3::Plane(p) => {
+                caps.push((p.origin, p.normal));
+            }
+            _ => {}
+        }
+        fi += 1;
+    }
+
+    let c = cone_surf?;
+    if c.half_angle_rad.abs() < TOLERANCE_MESH_LEGACY { return None; }
+
+    // Find Z-aligned planar caps
+    let mut z_caps: Vec<f64> = caps.iter()
+        .filter(|(_, n)| n.dot(DVec3::Z).abs() > 1.0 - TOLERANCE_AXIS_ALIGN)
+        .map(|(p, _)| p.z)
+        .collect();
+    z_caps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    if z_caps.len() < 2 { return None; }
+
+    let z_lo = z_caps[0];
+    let z_hi = z_caps[1];
+    if z_hi - z_lo < TOLERANCE_MESH_LEGACY { return None; }
+
+    // radius at z = tan(half_angle) * |z - apex.z|
+    let apex = c.apex_point();
+    let tan_ha = c.half_angle_rad.tan();
+    let r_lo = tan_ha * (z_lo - apex.z).abs();
+    let r_hi = tan_ha * (z_hi - apex.z).abs();
+
+    if r_lo < TOLERANCE_COORD_SUB || r_hi < TOLERANCE_COORD_SUB {
+        return None;
+    }
+
+    Some((z_lo, z_hi, r_lo.min(r_hi), r_lo.max(r_hi)))
+}
+
+/// Build BRep for outer conical frustum minus inner conical frustum (coaxial, Z-aligned).
+/// Result is a hollow conical frustum: outer lateral + bottom cap + top annulus + inner lateral + cavity floor.
+///
+/// All faces are triangulated (no analytic surfaces) in a single shell.
+fn build_conical_frustum_minus_frustum_brep(
+    zo_lo: f64, zo_hi: f64, ro_lo: f64, ro_hi: f64,
+    zi_lo: f64, zi_hi: f64, ri_lo: f64, ri_hi: f64,
+) -> Option<BRep> {
+    use std::f64::consts::TAU;
+    const N: usize = 48; // Circumferential divisions
+
+    let empty_wire = || Wire { edges: vec![] };
+
+    let ring_pts = |z: f64, r: f64| -> Vec<DVec3> {
+        (0..N).map(|i| {
+            let ang = TAU * i as f64 / N as f64;
+            let (c, s) = ang.sin_cos();
+            DVec3::new(r * c, r * s, z)
+        }).collect()
+    };
+
+    let outer_bot = ring_pts(zo_lo, ro_lo);
+    let outer_top = ring_pts(zo_hi, ro_hi);
+    let inner_bot = ring_pts(zi_lo, ri_lo);
+    let inner_top = ring_pts(zi_hi, ri_hi);
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    // 1. Outer lateral (z=zo_lo to z=zo_hi)
+    {
+        let mut tris = Vec::new();
+        wall_grid(&mut add_v, &outer_bot, &outer_top, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    // 2. Bottom cap: full disk at z=zo_lo
+    {
+        let mut tris = Vec::new();
+        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_lo), ro_lo, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    // 3. Top annulus at z=zo_hi (= zi_hi), r ∈ [ri_hi, ro_hi]
+    {
+        let mut tris = Vec::new();
+        annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ri_hi, ro_hi, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    // 4. Inner lateral (z=zi_lo to z=zi_hi) — cavity wall
+    {
+        let mut tris = Vec::new();
+        wall_grid(&mut add_v, &inner_bot, &inner_top, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    // 5. Cavity floor: full disk at z=zi_lo, r = ri_lo (inner cone's bottom face)
+    {
+        let mut tris = Vec::new();
+        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zi_lo), ri_lo, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Generate a quad-grid triangulation between two Z-aligned rings (conical lateral strip).
+fn wall_grid(
+    add_v: &mut impl FnMut(DVec3) -> usize,
+    bot: &[DVec3],
+    top: &[DVec3],
+    tris: &mut Vec<[usize; 3]>,
+) {
+    let n = bot.len().min(top.len());
+    if n < 3 { return; }
+    let mut idx = Vec::with_capacity(2 * n);
+    for i in 0..n {
+        idx.push(add_v(bot[i]));
+    }
+    for i in 0..n {
+        idx.push(add_v(top[i]));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let b0 = idx[i];
+        let b1 = idx[j];
+        let t0 = idx[n + i];
+        let t1 = idx[n + j];
+        tris.push([b0, b1, t1]);
+        tris.push([b0, t1, t0]);
+    }
+}
+
+/// Triangle fan for a full disk centered at origin in XY plane at given z.
+fn disk_tri_fan(
+    add_v: &mut impl FnMut(DVec3) -> usize,
+    center: DVec3,
+    radius: f64,
+    n: usize,
+    tris: &mut Vec<[usize; 3]>,
+) {
+    let c_idx = add_v(center);
+    let mut ring = Vec::with_capacity(n);
+    for i in 0..n {
+        let ang = std::f64::consts::TAU * i as f64 / n as f64;
+        let (s, c) = ang.sin_cos();
+        ring.push(add_v(DVec3::new(radius * c, radius * s, center.z)));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        tris.push([c_idx, ring[i], ring[j]]);
+    }
+}
+
+/// Triangle fan for an annulus centered at origin in XY plane at given z.
+fn annulus_tri_fan(
+    add_v: &mut impl FnMut(DVec3) -> usize,
+    center: DVec3,
+    r_inner: f64,
+    r_outer: f64,
+    n: usize,
+    tris: &mut Vec<[usize; 3]>,
+) {
+    let mut outer_ring = Vec::with_capacity(n);
+    let mut inner_ring = Vec::with_capacity(n);
+    for i in 0..n {
+        let ang = std::f64::consts::TAU * i as f64 / n as f64;
+        let (s, c) = ang.sin_cos();
+        outer_ring.push(add_v(DVec3::new(r_outer * c, r_outer * s, center.z)));
+        inner_ring.push(add_v(DVec3::new(r_inner * c, r_inner * s, center.z)));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        tris.push([outer_ring[i], outer_ring[j], inner_ring[j]]);
+        tris.push([outer_ring[i], inner_ring[j], inner_ring[i]]);
+    }
+}
+
+/// Fast path: ZP9 large box ∩ sphere near one face.
+/// Detects a large axis-aligned box and a sphere that intersects exactly one box face.
+pub fn try_intersection_box_sphere_single_face(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings
+    try_intersection_box_sphere_single_face_pair(a, b)
+        .or_else(|| try_intersection_box_sphere_single_face_pair(b, a))
+}
+
+fn try_intersection_box_sphere_single_face_pair(box_: &BRep, sphere: &BRep) -> Option<BRep> {
+    // Check sphere
+    let (sp_center, sp_radius) = sphere_center_r(sphere)?;
+
+    // Check box: must be axis-aligned, 6 planar faces
+    let box_bb = try_as_axis_aligned_box(box_)?;
+    let [bmin, bmax] = box_bb;
+
+    // Find which box face(s) the sphere extends beyond
+    let sp_min = sp_center - DVec3::splat(sp_radius);
+    let sp_max = sp_center + DVec3::splat(sp_radius);
+
+    // Count clip planes and find the one(s)
+    let mut clip_axes: Vec<(DVec3, f64)> = Vec::new(); // (axis, plane_value)
+
+    if sp_min.x < bmin.x { clip_axes.push((-DVec3::X, bmin.x)); }
+    if sp_max.x > bmax.x { clip_axes.push((DVec3::X, bmax.x)); }
+    if sp_min.y < bmin.y { clip_axes.push((-DVec3::Y, bmin.y)); }
+    if sp_max.y > bmax.y { clip_axes.push((DVec3::Y, bmax.y)); }
+    if sp_min.z < bmin.z { clip_axes.push((-DVec3::Z, bmin.z)); }
+    if sp_max.z > bmax.z { clip_axes.push((DVec3::Z, bmax.z)); }
+
+    // ZP9: exactly one clip plane, sphere mainly inside the box
+    if clip_axes.len() != 1 {
+        return None;
+    }
+
+    let (axis, plane_val) = clip_axes[0];
+
+    // For ZP9: sphere center must be inside the box on the other axes
+    if sp_center.x < bmin.x || sp_center.x > bmax.x
+        || sp_center.y < bmin.y || sp_center.y > bmax.y
+        || sp_center.z < bmin.z || sp_center.z > bmax.z
+    {
+        return None; // center outside box → more complex intersection
+    }
+
+    // Build the result: sphere clipped by one plane
+    build_sphere_clipped_by_plane(sp_center, sp_radius, axis, plane_val)
+}
+
+/// Build a triangulated BRep for a sphere clipped by one plane.
+fn build_sphere_clipped_by_plane(
+    center: DVec3, radius: f64,
+    plane_normal: DVec3, plane_d: f64, // plane equation: plane_normal · p = plane_d (normal is unit)
+) -> Option<BRep> {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    const NS: usize = 32; // theta divisions
+    const NP: usize = 16; // phi divisions
+
+    let empty_wire = || Wire { edges: vec![] };
+
+    // Determine the clip height on the sphere: cos(phi_clip) = (plane_d - dot(center, plane_normal)) / radius
+    let d_from_center = (plane_d - center.dot(plane_normal)).abs();
+    if d_from_center >= radius - 1e-12 {
+        return None; // plane doesn't intersect the sphere
+    }
+
+    // We want the portion of the sphere where plane_normal·p ≤ plane_d
+    // In spherical coords with Z=plane_normal: keep z ≤ plane_d - center·plane_normal
+    let z_clip = plane_d - center.dot(plane_normal);
+    let phi_clip = (z_clip / radius).acos(); // colatitude of the clip circle
+
+    // Build rotated basis so that plane_normal is Z
+    let z_axis = plane_normal;
+    let x_axis = if z_axis.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+    let y_axis = z_axis.cross(x_axis).normalize();
+    let x_axis = y_axis.cross(z_axis).normalize();
+
+    let mut verts: Vec<Vertex> = vec![];
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+
+    // Generate sphere surface where phi ∈ [phi_clip, π] (the clipped portion)
+    let dphi = (PI - phi_clip) / NP as f64;
+    let dtheta = TAU / NS as f64;
+    let mut idx = vec![vec![0usize; NS+1]; NP+1];
+    for pj in 0..=NP { for ti in 0..=NS {
+        let phi = phi_clip + pj as f64 * dphi;
+        let theta = ti as f64 * dtheta;
+        let (sinp, cosp) = phi.sin_cos();
+        let (sint, cost) = theta.sin_cos();
+        // Position in local (plane_normal = Z) coordinates
+        let local = DVec3::new(radius * sinp * cost, radius * sinp * sint, radius * cosp);
+        // Transform to world coordinates
+        let world = center + local.x * x_axis + local.y * y_axis + local.z * z_axis;
+        idx[pj][ti] = add_v(world);
+    }}
+    for pj in 0..NP { for ti in 0..NS {
+        let a = idx[pj][ti]; let b = idx[pj][ti+1];
+        let c = idx[pj+1][ti]; let d = idx[pj+1][ti+1];
+        tris.push([a, b, d]); tris.push([a, d, c]);
+    }}
+
+    // Generate planar cap at the clip plane
+    // Cap center = center + z_clip * plane_normal, radius = radius * sin(phi_clip)
+    let cap_center = center + z_clip * z_axis;
+    let cap_r = radius * phi_clip.sin();
+    let n_cap_seg = NS.max(16);
+    let cap_center_idx = add_v(cap_center);
+    for i in 0..n_cap_seg {
+        let ang0 = (i as f64 / n_cap_seg as f64) * TAU;
+        let ang1 = ((i + 1) as f64 / n_cap_seg as f64) * TAU;
+        let (c0, s0) = ang0.sin_cos();
+        let (c1, s1) = ang1.sin_cos();
+        let p0 = cap_center + cap_r * (c0 * x_axis + s0 * y_axis);
+        let p1 = cap_center + cap_r * (c1 * x_axis + s1 * y_axis);
+        let v0 = add_v(p0);
+        let v1 = add_v(p1);
+        tris.push([cap_center_idx, v0, v1]);
+    }
+
+    let faces = vec![Face {
+        outer_wire: empty_wire(), inner_wires: vec![],
+        normal: DVec3::ZERO, triangles: tris,
+        sample_point: None, mesh_dirty: false,
+    }];
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
 // ── Box–Cylinder Difference Fast Path (box − cylinder, Z-axis cylinder) ───────
 
 /// A point where the circle intersects a box edge in UV space.

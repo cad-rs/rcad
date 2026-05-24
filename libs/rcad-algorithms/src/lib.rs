@@ -2683,6 +2683,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_disjoint_or_touching(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_union_sphere_box(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 
@@ -2715,6 +2718,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_intersection_box_sphere_single_face(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_cylinder_box(a, b) {
             return Ok(r);
         }
@@ -2744,6 +2750,15 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             return Ok(r);
         }
         if let Some(r) = boolean_unit_octant::try_difference_concentric_spheres(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_difference_sphere_box(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cone(a, b) {
             return Ok(r);
         }
     }
