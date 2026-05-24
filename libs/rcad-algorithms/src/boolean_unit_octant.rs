@@ -23,7 +23,7 @@
 //! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
 //! multi-trim / classification, not missing FF pairs.
 
-use glam::{DAffine3, DVec3};
+use glam::{DAffine3, DVec2, DVec3};
 use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
@@ -3324,6 +3324,19 @@ fn build_cylinder_torus_difference_brep(
 /// Detects two coaxial Z-aligned cones where one is fully nested inside the other.
 /// The outer cone minus the inner cone produces a hollow conical frustum.
 pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Fast path: non-overlapping Z ranges → no volume intersection.
+    // Coaxial conical frustums with disjoint Z ranges cannot overlap in 3D,
+    // so a - b = a (even if the coincident face at the boundary would confuse
+    // the Pave-Filler into removing it, e.g. bopcut_simple ZM7-ZN1).
+    if let (Some(ai), Some(bi)) = (
+        z_axis_cone_frustum_z_span_r(a),
+        z_axis_cone_frustum_z_span_r(b),
+    ) {
+        if ai.1 <= bi.0 || ai.0 >= bi.1 {
+            return Some(a.clone());
+        }
+    }
+
     // Try both orderings
     try_difference_coaxial_cone_minus_cone_pair(a, b)
         .or_else(|| try_difference_coaxial_cone_minus_cone_pair(b, a))
@@ -3422,6 +3435,62 @@ fn z_axis_cone_frustum_z_span_r(brep: &BRep) -> Option<(f64, f64, f64, f64)> {
     }
 
     Some((z_lo, z_hi, r_lo.min(r_hi), r_lo.max(r_hi)))
+}
+
+/// Like `z_axis_cone_frustum_z_span_r` but handles arbitrary XY translation.
+/// Returns `(center_xy, z_lo, z_hi, r_lo, r_hi)` where `center_xy` is the cone's XY center.
+fn detect_z_axis_cone_frustum(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)> {
+    let sh = brep.solids.get(0)?.shells.get(0)?;
+    if sh.faces.len() < 3 { return None; }
+
+    let mut cone_surf: Option<&ConicalSurface> = None;
+    let mut caps: Vec<(DVec3, DVec3)> = Vec::new();
+
+    let mut fi = 0usize;
+    for _ in &sh.faces {
+        let si = *brep.geom.face_surface.get(fi)?.as_ref()?;
+        match brep.geom.surfaces.get(si)? {
+            Surface3::Cone(c) => {
+                let axis = c.axis_dir();
+                if axis.cross(DVec3::Z).length() > TOLERANCE_AXIS_ALIGN {
+                    return None;
+                }
+                cone_surf = Some(c);
+            }
+            Surface3::Plane(p) => {
+                caps.push((p.origin, p.normal));
+            }
+            _ => {}
+        }
+        fi += 1;
+    }
+
+    let c = cone_surf?;
+    if c.half_angle_rad.abs() < TOLERANCE_MESH_LEGACY { return None; }
+
+    // Find Z-aligned planar caps
+    let mut z_caps: Vec<f64> = caps.iter()
+        .filter(|(_, n)| n.dot(DVec3::Z).abs() > 1.0 - TOLERANCE_AXIS_ALIGN)
+        .map(|(p, _)| p.z)
+        .collect();
+    z_caps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    if z_caps.len() < 2 { return None; }
+
+    let z_lo = z_caps[0];
+    let z_hi = z_caps[1];
+    if z_hi - z_lo < TOLERANCE_MESH_LEGACY { return None; }
+
+    let apex = c.apex_point();
+    let tan_ha = c.half_angle_rad.tan();
+    let r_lo = tan_ha * (z_lo - apex.z).abs();
+    let r_hi = tan_ha * (z_hi - apex.z).abs();
+
+    if r_lo < TOLERANCE_COORD_SUB || r_hi < TOLERANCE_COORD_SUB {
+        return None;
+    }
+
+    let center_xy = DVec2::new(apex.x, apex.y);
+    Some((center_xy, z_lo, z_hi, r_lo, r_hi))
 }
 
 /// Build BRep for outer conical frustum minus inner conical frustum (coaxial, Z-aligned).
@@ -4466,6 +4535,505 @@ fn build_box_cylinder_full_containment(
     Some(sewn.brep)
 }
 
+/// Compute the closed boundary of `rect - circle` at one Z-level as a sequence of 2D points.
+///
+/// The boundary is traced clockwise. For the typical case (single closed curve), returns
+/// a polygon with `n` sample points. For special cases:
+/// - rect fully inside circle → returns empty (no boundary, void removes entire cross-section)
+/// - circle fully inside rect → returns full rect perimeter (outer boundary only; the inner
+///   circle hole is handled as a separate inner loop by the caller)
+/// - circle outside rect (no overlap) → returns full rect perimeter (no void)
+fn rect_minus_circle_boundary(
+    bmin: DVec2, bmax: DVec2,
+    cx: f64, cy: f64, r: f64,
+    n: usize,
+) -> Vec<DVec2> {
+    let tol = TOLERANCE_LEN_MIN;
+    if n < 4 { return vec![]; }
+
+    let edges = [
+        (DVec2::new(bmin.x, bmin.y), DVec2::new(bmax.x, bmin.y)), // bottom
+        (DVec2::new(bmax.x, bmin.y), DVec2::new(bmax.x, bmax.y)), // right
+        (DVec2::new(bmax.x, bmax.y), DVec2::new(bmin.x, bmax.y)), // top
+        (DVec2::new(bmin.x, bmax.y), DVec2::new(bmin.x, bmin.y)), // left
+    ];
+
+    // ---- Step 1: Find circle-rect intersection t-values on each edge ----
+    struct Intersection { t: f64, edge: usize, pt: DVec2 }
+    let mut ints: Vec<Intersection> = Vec::new();
+
+    for (ei, (p0, p1)) in edges.iter().enumerate() {
+        let d = *p1 - *p0;
+        let a0 = *p0 - DVec2::new(cx, cy);
+        // Quadratic: (d·d)*t² + 2*(a0·d)*t + (a0·a0 - r²) = 0
+        let A = d.dot(d);
+        if A < 1e-30 { continue; }
+        let B = 2.0 * a0.dot(d);
+        let C = a0.dot(a0) - r * r;
+        let disc = B * B - 4.0 * A * C;
+        if disc < 0.0 { continue; }
+        let sqrt_disc = disc.sqrt();
+        for t in [(-B - sqrt_disc) / (2.0 * A), (-B + sqrt_disc) / (2.0 * A)] {
+            if t >= -tol && t <= 1.0 + tol {
+                let tc = t.clamp(0.0, 1.0);
+                let pt = *p0 + d * tc;
+                ints.push(Intersection { t: tc, edge: ei, pt });
+            }
+        }
+    }
+
+    // Deduplicate near-identical intersections (same edge and t)
+    ints.sort_by(|a, b| a.edge.cmp(&b.edge).then(a.t.partial_cmp(&b.t).unwrap()));
+    ints.dedup_by(|a, b| a.edge == b.edge && (a.t - b.t).abs() < tol);
+
+    // Deduplicate by spatial proximity — a corner may appear as an intersection
+    // on two adjacent edges when the circle passes exactly through the corner.
+    // Keeping both creates zero-length perimeter segments that produce full-wrap
+    // rect loops and self-intersecting polygons.
+    ints.sort_by(|a, b| a.pt.x.partial_cmp(&b.pt.x).unwrap()
+        .then(a.pt.y.partial_cmp(&b.pt.y).unwrap()));
+    ints.dedup_by(|a, b| (a.pt - b.pt).length_squared() < tol * tol);
+
+    // ---- Step 2: Handle no-intersection cases ----
+    if ints.is_empty() {
+        // Check if the rect center is inside the circle
+        let rect_center = (bmin + bmax) * 0.5;
+        let inside = (rect_center - DVec2::new(cx, cy)).length_squared() <= r * r + tol;
+        if inside {
+            // Rect is entirely inside the circle → empty cross-section
+            return vec![];
+        }
+        // No overlap → full rect perimeter
+        let mut result = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = i as f64 / n as f64;
+            let total_perim = 2.0 * ((bmax.x - bmin.x) + (bmax.y - bmin.y));
+            let t_abs = t * total_perim;
+            result.push(rect_perimeter_point(bmin, bmax, t_abs));
+        }
+        return result;
+    }
+
+    // ---- Step 3: Sort intersections along clockwise perimeter ----
+    // Clockwise perimeter parameterization: edge 0: t∈[0,1), edge 1: t∈[1,2), edge 2: t∈[2,3), edge 3: t∈[3,4)
+    let perim_pos = |ei: usize, t: f64| -> f64 { ei as f64 + t };
+    ints.sort_by(|a, b| perim_pos(a.edge, a.t).partial_cmp(&perim_pos(b.edge, b.t)).unwrap());
+
+    let total_perim = 2.0 * ((bmax.x - bmin.x) + (bmax.y - bmin.y));
+    let n_per_edge = n / 4;
+    let mut result = Vec::new();
+    result.reserve(n);
+    let tau = std::f64::consts::TAU;
+    let pi = std::f64::consts::PI;
+
+    // Test if a 2D point is inside the rectangle
+    let point_in_rect = |p: DVec2| -> bool {
+        p.x >= bmin.x - tol && p.x <= bmax.x + tol
+            && p.y >= bmin.y - tol && p.y <= bmax.y + tol
+    };
+
+    // ---- Step 4: Trace boundary ----
+    // Walk clockwise along the rect perimeter. Between consecutive intersections,
+    // the rect segment is either outside the circle (→ keep rect points) or
+    // inside the circle (→ replace with circle arc).
+    let m = ints.len();
+    for i in 0..m {
+        let j = (i + 1) % m;
+        let ei = &ints[i];
+        let ej = &ints[j];
+
+        // Compute midpoint of the rect segment between these intersections
+        let pi_pos = perim_pos(ei.edge, ei.t);
+        let pj_pos = perim_pos(ej.edge, ej.t);
+        let pm = if pj_pos > pi_pos {
+            (pi_pos + pj_pos) * 0.5
+        } else {
+            // Wraps around (across the 0/4 boundary)
+            let wrapped = (pi_pos + pj_pos + 4.0) * 0.5;
+            if wrapped >= 4.0 { wrapped - 4.0 } else { wrapped }
+        };
+        let mid_pt = rect_perimeter_point(bmin, bmax, pm * total_perim / 4.0);
+        let mid_inside = (mid_pt - DVec2::new(cx, cy)).length_squared() <= r * r + tol;
+
+        if mid_inside {
+            // Rect segment is inside the circle → follow circle arc from ei to ej
+            // The arc must stay inside the rect. Test both possible arcs and pick
+            // the one whose midpoint is inside the rect.
+            let v1 = ei.pt - DVec2::new(cx, cy);
+            let v2 = ej.pt - DVec2::new(cx, cy);
+            let a1 = f64::atan2(v1.y, v1.x);
+            let a2 = f64::atan2(v2.y, v2.x);
+
+            // Positive (CCW) delta from a1 to a2, in [0, τ)
+            let da_ccw = (a2 - a1).rem_euclid(tau);
+
+            // Midpoint of CCW arc
+            let mid_ccw = a1 + da_ccw * 0.5;
+            let mid_ccw_pt = DVec2::new(cx + r * mid_ccw.cos(), cy + r * mid_ccw.sin());
+
+            // Midpoint of CW arc (negative sweep)
+            let mid_cw = a1 + (da_ccw - tau) * 0.5;
+            let mid_cw_pt = DVec2::new(cx + r * mid_cw.cos(), cy + r * mid_cw.sin());
+
+            // Pick the arc whose midpoint is inside the rect
+            let sweep = if point_in_rect(mid_ccw_pt) {
+                da_ccw
+            } else {
+                da_ccw - tau // negative → clockwise
+            };
+
+            // Number of arc sample points (at least 4, scale with arc size)
+            let arc_pts = (n_per_edge as f64 * sweep.abs() / pi).ceil().max(2.0) as usize;
+            let arc_pts = arc_pts.min(64);
+
+            // Add points along the arc (include start ei, exclude end ej)
+            if i == 0 { result.push(ei.pt); }
+            for k in 1..arc_pts {
+                let frac = k as f64 / arc_pts as f64;
+                let ang = a1 + sweep * frac;
+                let (s, c) = ang.sin_cos();
+                result.push(DVec2::new(cx + r * c, cy + r * s));
+            }
+        } else {
+            // Rect segment is outside the circle → follow rect perimeter from ei to ej
+            // Walk along the clockwise perimeter from position pi to pj
+            let p_start = pi_pos * (total_perim / 4.0);
+            let p_end = pj_pos * (total_perim / 4.0);
+            let (t_start, t_end) = if p_end > p_start {
+                (p_start, p_end)
+            } else {
+                (p_start, p_end + total_perim)
+            };
+            let seg_len = t_end - t_start;
+            let n_pts = (n_per_edge as f64 * seg_len / total_perim).ceil().max(2.0) as usize;
+            let n_pts = n_pts.min(64);
+
+            if i == 0 { result.push(ei.pt); }
+            for k in 1..n_pts {
+                let frac = k as f64 / n_pts as f64;
+                let t_abs = t_start + frac * seg_len;
+                result.push(rect_perimeter_point(bmin, bmax, t_abs));
+            }
+        }
+    }
+
+    if result.len() < 3 { return vec![]; }
+    result
+}
+
+/// Get a point on the rect perimeter at a given absolute position.
+/// `t_abs` ranges from 0 to `total_perim = 2*(w+h)`.
+fn rect_perimeter_point(bmin: DVec2, bmax: DVec2, t_abs: f64) -> DVec2 {
+    let w = bmax.x - bmin.x;
+    let h = bmax.y - bmin.y;
+    let perim = 2.0 * (w + h);
+    let t = t_abs.rem_euclid(perim);
+    if t <= w {
+        DVec2::new(bmin.x + t, bmin.y)
+    } else if t <= w + h {
+        DVec2::new(bmax.x, bmin.y + (t - w))
+    } else if t <= 2.0 * w + h {
+        DVec2::new(bmax.x - (t - w - h), bmax.y)
+    } else {
+        DVec2::new(bmin.x, bmax.y - (t - 2.0 * w - h))
+    }
+}
+
+/// Build a triangulated BRep for `box - cone` using Z-slice tessellation.
+///
+/// The box is axis-aligned `[bmin, bmax]`. The cone is a Z-aligned conical frustum
+/// with center at `(cx, cy)` in XY, extending from Z `z_lo` to `z_hi`, with bottom
+/// radius `r_lo` and top radius `r_hi`.
+fn build_box_minus_cone_tessellated(
+    bmin: DVec3, bmax: DVec3,
+    cx: f64, cy: f64,
+    z_lo: f64, z_hi: f64,
+    r_lo: f64, r_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if z_hi <= z_lo + tol { return None; }
+    if r_lo < tol && r_hi < tol { return None; }
+
+    // Adjust to box Z-range
+    let z0 = z_lo.max(bmin.z);
+    let z1 = z_hi.min(bmax.z);
+    if z1 <= z0 + tol { return None; }
+
+    let n_slices = 64usize;
+    let n_boundary = 128usize;
+    let dz = (z1 - z0) / n_slices as f64;
+    let dr = (r_hi - r_lo) / (z_hi - z_lo);
+
+    let bmin2 = DVec2::new(bmin.x, bmin.y);
+    let bmax2 = DVec2::new(bmax.x, bmax.y);
+
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    // ---- Generate Z-slice boundary polygons ----
+    let mut slices: Vec<Vec<DVec2>> = Vec::with_capacity(n_slices + 1);
+    for i in 0..=n_slices {
+        let z = z0 + dz * i as f64;
+        let r = r_lo + dr * (z - z_lo);
+        if r <= tol {
+            slices.push(vec![]);
+        } else {
+            let poly = rect_minus_circle_boundary(bmin2, bmax2, cx, cy, r, n_boundary);
+            slices.push(poly);
+        }
+    }
+
+    // ---- Remap each boundary to n_boundary equally-spaced, aligned points ----
+    // This ensures boundaries at all Z-levels have the same length and start
+    // from the same physical reference point (bottom-left rect corner).
+    let ref_pt = DVec2::new(bmin.x, bmin.y);
+    for poly in &mut slices {
+        if poly.len() < 3 { continue; }
+
+        // Find the index of the point closest to the reference
+        let mut best_idx = 0;
+        let mut best_dist = (poly[0] - ref_pt).length_squared();
+        for (idx, p) in poly.iter().enumerate() {
+            let d = (*p - ref_pt).length_squared();
+            if d < best_dist { best_dist = d; best_idx = idx; }
+        }
+
+        // Rotate the array to start from best_idx
+        poly.rotate_left(best_idx);
+
+        // Resample to exactly n_boundary equally-spaced points via arc-length
+        let n_bnd = n_boundary.max(4);
+        // Compute cumulative arc length
+        let mut arc_len = vec![0.0_f64; poly.len() + 1];
+        for i in 1..=poly.len() {
+            let j = i % poly.len();
+            let k = (i - 1) % poly.len();
+            arc_len[i] = arc_len[i - 1] + (*poly)[k].distance((*poly)[j]);
+        }
+        let total = arc_len[poly.len()];
+        if total <= tol { continue; }
+
+        let mut new_poly = Vec::with_capacity(n_bnd);
+        let mut src_idx = 0;
+        for i in 0..n_bnd {
+            let target = total * i as f64 / n_bnd as f64;
+            while src_idx < poly.len() && arc_len[src_idx + 1] < target {
+                src_idx += 1;
+            }
+            let t0 = arc_len[src_idx];
+            let t1 = arc_len[(src_idx + 1) % (poly.len() + 1)];
+            if (t1 - t0).abs() < 1e-15 {
+                new_poly.push(poly[src_idx % poly.len()]);
+            } else {
+                let frac = (target - t0) / (t1 - t0);
+                let a = src_idx % poly.len();
+                let b = (src_idx + 1) % poly.len();
+                new_poly.push(poly[a].lerp(poly[b], frac));
+            }
+        }
+        *poly = new_poly;
+    }
+
+    // ---- Build wall faces between adjacent Z-slices ----
+    for i in 0..n_slices {
+        let bot = &slices[i];
+        let top = &slices[i + 1];
+        let z_bot = z0 + dz * i as f64;
+        let z_top = z0 + dz * (i + 1) as f64;
+
+        // Both slices have boundaries → build wall
+        if !bot.is_empty() && !top.is_empty() {
+            let n = bot.len().min(top.len());
+            let mut idx = Vec::with_capacity(2 * n);
+            for p in bot.iter() { idx.push(add_v(DVec3::new(p.x, p.y, z_bot))); }
+            for p in top.iter() { idx.push(add_v(DVec3::new(p.x, p.y, z_top))); }
+
+            let mut tris = Vec::with_capacity(n * 2);
+            for j in 0..n {
+                let k = (j + 1) % n;
+                let b0 = idx[j];
+                let b1 = idx[k];
+                let t0 = idx[n + j];
+                let t1 = idx[n + k];
+                tris.push([b0, b1, t1]);
+                tris.push([b0, t1, t0]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        } else if !bot.is_empty() {
+            // Top is empty (cone closed off at this Z) → cap the top
+            // Build a triangle fan from the last valid boundary to a center point
+            let n = bot.len();
+            let center_z = (z_bot + z_top) * 0.5;
+            // Compute the center of the remaining region
+            let mut center = DVec3::ZERO;
+            for p in bot.iter() { center += DVec3::new(p.x, p.y, z_bot); }
+            center /= n as f64;
+            center.z = center_z;
+
+            let mut tris = Vec::new();
+            let c_idx = add_v(center);
+            let mut ring = Vec::with_capacity(n);
+            for p in bot.iter() { ring.push(add_v(DVec3::new(p.x, p.y, z_bot))); }
+            for j in 0..n {
+                let k = (j + 1) % n;
+                tris.push([c_idx, ring[j], ring[k]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        } else if !top.is_empty() {
+            // Bottom is empty (cone opened at this Z) → cap the bottom
+            let n = top.len();
+            let center_z = (z_bot + z_top) * 0.5;
+            let mut center = DVec3::ZERO;
+            for p in top.iter() { center += DVec3::new(p.x, p.y, z_top); }
+            center /= n as f64;
+            center.z = center_z;
+
+            let mut tris = Vec::new();
+            let c_idx = add_v(center);
+            let mut ring = Vec::with_capacity(n);
+            for p in top.iter() { ring.push(add_v(DVec3::new(p.x, p.y, z_top))); }
+            for j in 0..n {
+                let k = (j + 1) % n;
+                tris.push([c_idx, ring[j], ring[k]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // ---- Build cap faces at z0 and z1 if boundary is non-empty ----
+    // Bottom cap at z0 — triangulated via ear-clipping
+    if !slices[0].is_empty() && slices[0].len() >= 3 {
+        let empty_wire = || Wire { edges: vec![] };
+        let poly_3d: Vec<DVec3> = slices[0].iter()
+            .map(|p| DVec3::new(p.x, p.y, z0))
+            .collect();
+        let tris = crate::triangulate::triangulate_polygon(&poly_3d, -DVec3::Z);
+
+        // Remap vertex indices
+        let mut remapped_tris = Vec::with_capacity(tris.len());
+        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        for t in &tris {
+            remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
+        }
+        faces.push(Face {
+            outer_wire: empty_wire(), inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: remapped_tris,
+            sample_point: None, mesh_dirty: false,
+        });
+    }
+
+    // Top cap at z1 — triangulated via ear-clipping
+    if !slices[n_slices].is_empty() && slices[n_slices].len() >= 3 {
+        let empty_wire = || Wire { edges: vec![] };
+        let poly_3d: Vec<DVec3> = slices[n_slices].iter()
+            .map(|p| DVec3::new(p.x, p.y, z1))
+            .collect();
+        let tris = crate::triangulate::triangulate_polygon(&poly_3d, DVec3::Z);
+
+        let mut remapped_tris = Vec::with_capacity(tris.len());
+        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        for t in &tris {
+            remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
+        }
+        faces.push(Face {
+            outer_wire: empty_wire(), inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: remapped_tris,
+            sample_point: None, mesh_dirty: false,
+        });
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Fast path for `box − cone` boolean difference.
+///
+/// Detects an axis-aligned box minus a Z-aligned conical frustum (possibly Z-rotated
+/// and translated in XY). Builds the result via Z-slice tessellation.
+pub fn try_difference_box_cone(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Detect axis-aligned box (a)
+    let [bmin, bmax] = try_as_axis_aligned_box(a)?;
+
+    // Detect Z-aligned cone frustum (b)
+    let (center_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone_frustum(b)?;
+
+    // Compute Z overlap
+    let z_lo = cz_lo.max(bmin.z);
+    let z_hi = cz_hi.min(bmax.z);
+    if z_hi <= z_lo + TOLERANCE_LEN_MIN {
+        return Some(a.clone());
+    }
+
+    let cx = center_xy.x;
+    let cy = center_xy.y;
+
+    // Check if there's any XY overlap at all Z levels in the range
+    // (quick check: if the cone is entirely outside the box XY at all Z)
+    let max_dist_xy = (bmax.x - cx).max(cx - bmin.x)
+        .max((bmax.y - cy).max(cy - bmin.y));
+    let min_r = if cr_lo < cr_hi { cr_lo } else { cr_hi };
+    if min_r < TOLERANCE_LEN_MIN {
+        // Sharp cone (radius near zero) — can't form a proper void
+        return None;
+    }
+    let r_at_zlo = cr_lo + (cr_hi - cr_lo) * (z_lo - cz_lo) / (cz_hi - cz_lo);
+    let r_at_zhi = cr_lo + (cr_hi - cr_lo) * (z_hi - cz_lo) / (cz_hi - cz_lo);
+    let min_overlap_r = if r_at_zlo < r_at_zhi { r_at_zlo } else { r_at_zhi };
+
+    // If the cone is always outside the box XY, no void
+    let box_half_diag = ((bmax.x - bmin.x).powi(2) + (bmax.y - bmin.y).powi(2)).sqrt() * 0.5;
+    let box_center_xy = DVec2::new((bmin.x + bmax.x) * 0.5, (bmin.y + bmax.y) * 0.5);
+    let dist_center = (box_center_xy - DVec2::new(cx, cy)).length();
+    if dist_center > box_half_diag + min_overlap_r + TOLERANCE_LEN_MIN {
+        return Some(a.clone());
+    }
+
+    // Clamp radii to non-negative
+    let r_lo = r_at_zlo.max(TOLERANCE_COORD_SUB);
+    let r_hi = r_at_zhi.max(TOLERANCE_COORD_SUB);
+
+    build_box_minus_cone_tessellated(bmin, bmax, cx, cy, z_lo, z_hi, r_lo, r_hi)
+}
+
 /// Entry point for box − cylinder boolean difference.
 pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     // Detect which BRep is the box and which is the cylinder.
@@ -4653,6 +5221,20 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
         }
     }
 
+    // Check that the box actually overlaps the cylinder in XY.
+    // Without this, a tangent configuration (box face touching the cylinder
+    // at a single line with zero overlap area) produces a degenerate middle
+    // piece in build_cylinder_box_difference_full_wall (< 2 vertices → empty).
+    // And even the Pave-Filler path miscounts SA when cylinder caps are
+    // coplanar with box faces.  Fix: return the full cylinder directly.
+    let du = f64::max(0.0, f64::max(cu - eu, -eu - cu));
+    let dv = f64::max(0.0, f64::max(cv - ev, -ev - cv));
+    if du * du + dv * dv >= cyl_r * cyl_r - 1e-12 {
+        // No XY overlap (tangent or outside) — the box removes nothing from
+        // the cylinder.  Return the original cylinder directly.
+        return Some(a.clone());
+    }
+
     // We do NOT check whether clip-plane corners fall within the cylinder
     // radius: the downstream code uses θ-range constraints (not corner
     // positions) to define the cylinder wall, cap, and side-face geometry.
@@ -4668,6 +5250,29 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
     let has_above = cyl_z_hi > box_z_hi + tol;
     let has_below = cyl_z_lo < box_z_lo - tol;
     let has_middle = inter_hi > inter_lo + tol && !clip_planes.is_empty();
+
+    // For full-height difference (no above/below), check if any adjacent
+    // clip-plane corner falls outside the cylinder.  The "single direct chord"
+    // gap-routing fallback in build_cylinder_box_clipped_brep creates incorrect
+    // cap boundaries in this case — fall through to the Pave-Filler.
+    if has_middle && !has_above && !has_below && clip_planes.len() >= 2 {
+        let n = clip_planes.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (n1, d1) = clip_planes[i];
+            let (n2, d2) = clip_planes[j];
+            // Parallel pairs handled by parallel-only path, not gap routing.
+            if (n1.x * n2.y - n1.y * n2.x).abs() <= 1e-12 {
+                continue;
+            }
+            let corner_xy = corner_of_planes(n1, d1, n2, d2, cyl_center);
+            let dist_sq = (corner_xy.x - cyl_center.x).powi(2)
+                + (corner_xy.y - cyl_center.y).powi(2);
+            if dist_sq > cyl_r * cyl_r + 1e-9 {
+                return None;
+            }
+        }
+    }
 
     // When the cylinder extends beyond the box Z-range AND XY clipping is
     // needed, we build a middle (clipped) piece plus top/bottom full-cylinder
@@ -5749,12 +6354,44 @@ fn build_cylinder_box_clipped_brep(
         push_face(&mut brep, Wire { edges: top_wire_edges }, top_surf_idx, DVec3::Z);
     }
 
-    // ---- 7. side faces on each clip-plane segment ----
-    // Each segment lies on a single clip plane.  The face wire runs:
-    //   bot_chord_fwd → trailing_gen_fwd → top_chord_rev → leading_gen_rev
+    // ---- 7. side faces (one per gap segment, on the segment's clip plane) ----
+    // The face wire runs: bot_chord_fwd → gen_to_fwd → top_chord_rev → gen_from_rev
     for segs in &gap_segs {
         for seg in segs {
-            let (n, d) = clip_planes[seg.plane];
+            // Determine the plane for this side face.
+            // Most gap segments lie on a clip-plane, but the "single direct chord"
+            // fallback for parallel clip planes (bopcut_simple t6/v4) creates a
+            // chord on the cylinder wall that does NOT lie on the assigned plane.
+            // In that case we infer the correct vertical plane from the chord.
+            let (n, d) = {
+                let (n0, d0) = clip_planes[seg.plane];
+                let bot_e = &brep.edges[seg.bot_chord];
+                let s_pt = brep.vertices[bot_e.start].point;
+                let e_pt = brep.vertices[bot_e.end].point;
+                // Check whether both endpoints lie on the assigned clip plane.
+                let tol = 1e-8;
+                let on_p0 = (n0.dot(s_pt - center) - (-d0)).abs() < tol
+                         && (n0.dot(e_pt - center) - (-d0)).abs() < tol;
+                if on_p0 {
+                    (n0, d0)
+                } else {
+                    // Chord endpoints don't lie on the assigned clip plane.
+                    // Compute a vertical plane through the chord: the face
+                    // winding normal is cross(chord_dir, Z), and we need -n
+                    // to match it (since push_face stores outward = -n).
+                    let chord_dir = e_pt - s_pt;
+                    let cross_z = chord_dir.cross(DVec3::Z);
+                    let len = cross_z.length();
+                    if len < 1e-15 {
+                        // Degenerate chord — fall back to original plane.
+                        (n0, d0)
+                    } else {
+                        let n = -cross_z / len; // so that -n = winding normal
+                        let d = -n.dot(s_pt - center);
+                        (n, d)
+                    }
+                }
+            };
             let si_side = {
                 let si = brep.geom.surfaces.len();
                 brep.geom.surfaces.push(Surface3::Plane(Plane {
@@ -6572,19 +7209,6 @@ fn build_box_cylinder_result_partial_with_holes(
     Some(sewn.brep)
 }
 
-/// Print surface area of each piece for debugging.
-#[allow(dead_code)]
-fn debug_piece_sas(label: &str, pieces: &[BRep]) {
-    for (i, p) in pieces.iter().enumerate() {
-        if let Some(sol) = p.solids.first() {
-            if let Some(sh) = sol.shells.first() {
-                let sa = surface_area(p);
-                eprintln!("  [{label} piece {i}] sa={sa}");
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 
 mod tests {
@@ -6756,7 +7380,7 @@ mod tests {
 
     #[test]
     fn zp3_coaxial_cylinder_minus_cone_fast_path_triggered() {
-        use glam::{DAffine3, DVec3};
+        use glam::{DAffine3, DVec2, DVec3};
         use rcad_modeling::{make_cone_brep, make_cylinder_brep};
         let pc = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 10.0, 20.0).expect("cone");
         let pcy = make_cylinder_brep(
