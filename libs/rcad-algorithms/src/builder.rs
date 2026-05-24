@@ -1935,7 +1935,56 @@ impl<'a> BooleanBuilder<'a> {
         // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
         // sub-face whose sample point correctly represents the region.
+        //
+        // However, if all intersection curves are at the V boundary (or entirely
+        // outside the face V range), skip tessellation.  The parallel-offset
+        // cylinder-cone intersection algorithm computes intersection of the infinite
+        // mathematical surfaces, which may produce branches outside the cone frustum
+        // face (e.g. g9: pcyl (1,9) offset 5 from cone (r=7→6, h=4) — intersection
+        // branches at z≥4 are above the cone's actual face boundary).  These spurious
+        // curves_in would trigger unnecessary 32×32 tessellation, inflating SA from
+        // 727.5 to 922.7.
         if matches!(&face.surface, Surface3::Cone(_)) {
+            if let Some(uv_bnd) = &face.uv_boundary {
+                if uv_bnd.len() >= 3 {
+                    let bnd_v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                    let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                    let bnd_v_span = bnd_v_max - bnd_v_min;
+                    let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
+                    let all_at_boundary = fi.curves_in.iter().all(|&ci| {
+                        self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
+                            let ic = &self.ds.intersection_curves[ci];
+                            let [t0, t1] = ic.t_range;
+                            let pts = [t0, 0.5*(t0+t1), t1].map(|t| pcurve.point_at(t));
+                            let v_min = pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                            let v_max = pts.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                            // Skip phantom curves entirely outside the face V range
+                            // (e.g. intersection of extended cone surface beyond frustum).
+                            if v_max < bnd_v_min - vb_tol || v_min > bnd_v_max + vb_tol {
+                                return true;
+                            }
+                            // For line pcurves, clip t_range to face V bounds.
+                            let is_line = matches!(pcurve, Curve2d::Line(_));
+                            let v_min_f = if is_line { v_min.max(bnd_v_min) } else { v_min };
+                            let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
+                            if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
+                                // Horizontal line pcurve (constant V).  Interior
+                                // horizontal lines are NOT at the boundary.
+                                let at_v_top_line = (v_max_f - bnd_v_max).abs() <= vb_tol;
+                                let at_v_bot_line = (v_min_f - bnd_v_min).abs() <= vb_tol;
+                                return at_v_top_line || at_v_bot_line;
+                            }
+                            // Check if the curve is at the V boundary (top or bottom).
+                            let at_v_top = (v_max_f - bnd_v_max).abs() <= vb_tol;
+                            let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
+                            at_v_top || at_v_bot
+                        })
+                    });
+                    if all_at_boundary {
+                        return self.single_subface_from_whole_face(face_idx);
+                    }
+                }
+            }
             return self.tessellate_cone_face_2d(face_idx, 32, 32);
         }
 
