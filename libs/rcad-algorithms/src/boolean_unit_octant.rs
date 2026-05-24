@@ -970,13 +970,15 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     use std::io::Write;
     let slab_vol_sum: f64 = result.iter().map(|s| volume(s)).sum();
     let slab_sa_sum: f64 = result.iter().map(|s| surface_area(s)).sum();
-    let sa_b = surface_area(a); // SA of the input box B (being cut).
+
+let sa_b = surface_area(a); // SA of the input box B (being cut).
 
     // If slab SA significantly exceeds B's SA, the slab decomposition is creating
     // excess internal faces (double-counted between adjacent slabs) that inflate SA.
     // Fall through to Pave-Filler for correct SA.
-    // Use 1.05 to catch cases like a rotated-box cut (L4) where slab_sa_sum/sa_b ≈ 1.118.
-    if slab_sa_sum > sa_b * 1.05 {
+    // Use 1.15 to catch cases like a rotated-box cut (L4) where slab_sa_sum/sa_b ≈ 1.118.
+    // boptuc F8 has ratio 1.071 — fusion correctly merges it.
+    if slab_sa_sum > sa_b * 1.15 {
         let _ = writeln!(
             std::io::stderr(),
             "DEBUG_MULTI_SLAB SA_INFLATED slab_count={} slab_sa={:.6} sa_b={:.6}",
@@ -986,10 +988,12 @@ pub fn try_difference_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     }
 
     // Try boolean union to merge adjacent slabs (removes shared internal faces, G4-like).
+    // Use `fuse` directly (not `boolean_op`) to avoid `try_union_disjoint_or_touching`
+    // which returns a compound for face-touching slabs with adjacent bboxes (H4).
     let mut fused = result[0].clone();
     let mut ok = true;
     for slab in &result[1..] {
-        match crate::boolean_op(crate::BooleanOpType::Union, &fused, slab) {
+        match crate::bop_occt_union::fuse(&fused, slab) {
             Ok(u) => { fused = u; }
             Err(_) => { ok = false; break; }
         }
