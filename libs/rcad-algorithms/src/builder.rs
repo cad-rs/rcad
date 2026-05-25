@@ -1129,8 +1129,37 @@ fn classify_against_solid_for_boolean(
         // centroid, biasing toward In).
         let total = in_count + out_count;
         let min_out = if matches!(sub.surface, Surface3::Plane(_)) { in_count * 2 } else { in_count };
-        if total >= 3 && out_count >= min_out {
+        let on_coincident = c0 == Classification::On && total >= 2 && in_count == 0;
+        if (total >= 3 || on_coincident) && out_count >= min_out {
             return Classification::Out;
+        }
+
+        // Fallback for On faces where ALL probe points are also On (total == 0),
+        // indicating the entire sub-face is coincident with the other solid's face.
+        // Micro-offset probe points in the normal direction to break the tie.
+        if c0 == Classification::On && total == 0 && !probe_pts.is_empty()
+            && matches!(sub.surface, Surface3::Plane(_))
+        {
+            let mut off_in = 0usize;
+            let mut off_out = 0usize;
+            let eps = TOLERANCE_LEN_MIN * 10.0;
+            for &p in &probe_pts {
+                let above = classify_point(p + sub.normal * eps, solid_face_indices, ds);
+                let below = classify_point(p - sub.normal * eps, solid_face_indices, ds);
+                if matches!(above, Classification::In) { off_in += 1; }
+                if matches!(above, Classification::Out) { off_out += 1; }
+                if matches!(below, Classification::In) { off_in += 1; }
+                if matches!(below, Classification::Out) { off_out += 1; }
+            }
+            let off_total = off_in + off_out;
+            // If offsets show a clear signal, use it. For Difference A-side:
+            // Out means the face separates solids → kept by base policy.
+            if off_total >= 2 && off_out >= off_in * 2 {
+                return Classification::Out;
+            }
+            if off_total >= 2 && off_in >= off_out * 2 {
+                return Classification::In;
+            }
         }
         if probe_pts.len() > 1 || total > 0 {
             let sp = sub.sample_point();
@@ -1220,6 +1249,55 @@ impl<'a> BooleanBuilder<'a> {
         None
     }
 
+    /// Fallback when `coplanar_ff_normals_opposite` returns None (e.g. after
+    /// `recompute_plane_surfaces` alters plane equations so the PaveFiller
+    /// didn't detect coplanarity).  Directly checks B-faces for a coplanar
+    /// Plane and, if found, returns whether face normals point opposite.
+    ///
+    /// When `sub_opt` is `Some(sub)` uses the sub-face's normal and centroid
+    /// to construct the A-plane — these are more reliable than the face-level
+    /// surface after multi-step booleans (the face surface may be stale while
+    /// the sub-face captures the actual clipped boundary).
+    fn fallback_coplanar_normals_opposite(
+        &self,
+        a_fi: usize,
+        sub_opt: Option<&SubFace>,
+        b_faces: &[usize],
+    ) -> Option<bool> {
+        // Construct the A-plane from sub-face data (preferred) or face surface.
+        let (a_origin, a_normal_vec) = if let Some(sub) = sub_opt {
+            (sub.sample_point(), sub.normal)
+        } else {
+            let a_face = &self.ds.faces[a_fi];
+            let Surface3::Plane(p) = &a_face.surface else { return None; };
+            (p.origin, p.normal)
+        };
+        let na = a_normal_vec.normalize();
+
+        for &b_fi in b_faces {
+            let b_face = &self.ds.faces[b_fi];
+            let Surface3::Plane(b_plane) = &b_face.surface else { continue; };
+            let nb = b_plane.normal.normalize();
+
+            // Check normals are parallel (dot product near ±1).
+            if na.dot(nb).abs() < 0.999 {
+                continue;
+            }
+
+            // Check planes are coincident: signed distance from A-origin
+            // to B-plane along the normal should be near zero.
+            if (a_origin - b_plane.origin).dot(na).abs() > TOLERANCE_ABS * 10000.0 {
+                continue;
+            }
+
+            // Found a coplanar B-face.  Return whether face normals point opposite.
+            let a_face = &self.ds.faces[a_fi];
+            return Some(a_face.normal.dot(b_face.normal) < 0.0);
+        }
+
+        None
+    }
+
     fn keep_subface(
         &self,
         source: SourceSide,
@@ -1227,7 +1305,6 @@ impl<'a> BooleanBuilder<'a> {
         class: Classification,
         other_faces: &[usize],
     ) -> bool {
-        let _ = (source, fi, other_faces);
         // For Difference A-side On faces with a coplanar FaceFace: keep only
         // when the two face normals point in OPPOSITE directions (the face
         // separates kept material from removed material).  When normals point
@@ -1237,7 +1314,9 @@ impl<'a> BooleanBuilder<'a> {
             && source == SourceSide::A
             && class == Classification::On
         {
-            if let Some(opposite) = self.coplanar_ff_normals_opposite(fi) {
+            if let Some(opposite) = self.coplanar_ff_normals_opposite(fi)
+                .or_else(|| self.fallback_coplanar_normals_opposite(fi, None, other_faces))
+            {
                 return opposite;
             }
         }
@@ -1366,7 +1445,9 @@ impl<'a> BooleanBuilder<'a> {
                     // (the face separates kept material from removed material).
                     // When normals point the same direction, both solids are on the
                     // same side and the face should be removed.
-                    self.coplanar_ff_normals_opposite(fi).unwrap_or(false)
+                    self.coplanar_ff_normals_opposite(fi)
+                        .or_else(|| self.fallback_coplanar_normals_opposite(fi, Some(sub), &b_faces))
+                        .unwrap_or(false)
                 } else {
                     self.keep_subface(SourceSide::A, fi, class, &b_faces)
                 };
