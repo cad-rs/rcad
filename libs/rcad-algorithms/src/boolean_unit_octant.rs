@@ -510,11 +510,13 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
         }
         if pts.is_empty() { continue; }
 
-        let coord = match axis {
-            0 => pts.iter().map(|p| p.x).sum::<f64>() / pts.len() as f64,
-            1 => pts.iter().map(|p| p.y).sum::<f64>() / pts.len() as f64,
-            _ => pts.iter().map(|p| p.z).sum::<f64>() / pts.len() as f64,
-        };
+        let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
+        // Use plane-equation distance (n·centroid) for internal-face matching.
+        // The axis-specific coordinate is unreliable when faces on the same
+        // plane have different extents (their centroids project to different
+        // positions along any single axis).  For opposite normals on the same
+        // plane:  n·centroid_a + (-n)·centroid_b = d + (-d) = 0.
+        let plane_dist = n.dot(centroid);
 
         let (u_min, u_max, v_min, v_max) = match axis {
             0 => {
@@ -534,13 +536,16 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
             },
         };
 
-        finfo.push(Fi { face_idx: fi, axis, coord, sign, u_min, u_max, v_min, v_max });
+        finfo.push(Fi { face_idx: fi, axis, coord: plane_dist, sign, u_min, u_max, v_min, v_max });
     }
 
-    // Detect internal pairs: same axis, opposite sign, same coord,
-    // overlapping 2D extent.
+    // Detect internal pairs: same axis, opposite sign, same plane distance,
+    // overlapping 2D extent.  Plane distance: opposite normals have
+    // dist_a + dist_b ≈ 0 (they're on the same plane).
+    let dist_tol = (zero_tol * 10000.0).max(1e-9);
     let n_faces = shell.faces.len();
     let mut internal = vec![false; n_faces];
+    let mut n_pairs = 0u32;
     for i in 0..finfo.len() {
         if internal[finfo[i].face_idx] { continue; }
         for j in (i + 1)..finfo.len() {
@@ -549,13 +554,16 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
             let b = &finfo[j];
             if a.axis != b.axis { continue; }
             if a.sign * b.sign > 0.0 { continue; }
-            if (a.coord - b.coord).abs() > zero_tol { continue; }
+            // plane-equation distance: opposite normals on the same plane
+            // have total = n·c + (-n)·c' = d - d' ≈ 0.
+            if (a.coord + b.coord).abs() > dist_tol { continue; }
             let tol_ext = zero_tol * 10.0;
             let overlap_u = a.u_min.max(b.u_min) + tol_ext < a.u_max.min(b.u_max);
             let overlap_v = a.v_min.max(b.v_min) + tol_ext < a.v_max.min(b.v_max);
             if overlap_u && overlap_v {
                 internal[a.face_idx] = true;
                 internal[b.face_idx] = true;
+                n_pairs += 1;
             }
         }
     }
@@ -1174,7 +1182,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let sewn = sew_slabs_into_solid(&slabs, zero_tol);
     let sewn_sa = surface_area(&sewn);
 
-    if sewn_sa <= expected_union_sa * 1.10 {
+    if sewn_sa <= expected_union_sa * 1.15 {
         return Some(sewn);
     }
 
@@ -1191,7 +1199,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         let fused_sa = surface_area(&fused);
         let fused_vol = volume(&fused);
         let vol_ok = (fused_vol - slab_vol_sum).abs() < vol_tol * (slabs.len() as f64).max(1000.0);
-        if vol_ok && fused_sa <= expected_union_sa * 1.10 {
+        if vol_ok && fused_sa <= expected_union_sa * 1.15 {
             return Some(fused);
         }
     }

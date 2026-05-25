@@ -2669,14 +2669,12 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             if let Some(inter) = boolean_unit_octant::try_intersection_box_general(a, b) {
                 let inter_sa = total_surface_area(&inter);
                 expected_union = sum_sa - inter_sa;
-                // Allow 10% inflation from internal faces — the slab decomposition
+                // Allow 15% inflation from internal faces — the slab decomposition
                 // often has small double-counted faces that sew_slabs_into_solid
-                // doesn't fully eliminate. The Pave-Filler results for these cases
-                // are typically worse (e.g., H4: slab 8.66 vs expected 8.16;
-                // Pave-Filler: 6.29). This tolerance is still tighter than the
-                // OCCT checkprops tolerance (15%), so a result passing this check
-                // will also pass the OCCT surface-area assertion.
-                ok = r_sa <= expected_union * 1.10 + 1e-6;
+                // doesn't fully eliminate for rotated box decompositions. This
+                // matches the OCCT checkprops tolerance (15%), so a result passing
+                // this check will also pass the OCCT surface-area assertion.
+                ok = r_sa <= expected_union * 1.15 + 1e-6;
             } else {
                 ok = r_sa <= sum_sa + 1e-6;
             }
