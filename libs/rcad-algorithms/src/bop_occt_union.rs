@@ -480,7 +480,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     };
     let suspicious_planar_snarl = (pen_after > pen_before
         && (n_after <= 10 || n_after.saturating_add(12) < n_before))
-        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before);
+        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before)
+        || (large_sa_change && (sa_after - sa_before).abs() > 0.10 * sa_before.max(1.0));
     if suspicious_planar_snarl {
         result = checkpoint;
         geom_populate::recompute_plane_surfaces(&mut result);

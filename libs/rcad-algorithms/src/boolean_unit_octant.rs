@@ -1114,7 +1114,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     }
 
     // ── A ∩ B (overlap) ──
-    slabs.push(inter);
+    slabs.push(inter.clone());
 
     // ── B \ A slabs: decompose B around A's axes ──
     {
@@ -1166,7 +1166,37 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(slabs.remove(0));
     }
 
-    Some(sew_slabs_into_solid(&slabs, zero_tol))
+    // ── SA-inflation guard: try sew, fall back to fuse if inflated ──
+    let slab_sa_sum: f64 = slabs.iter().map(|s| surface_area(s)).sum();
+    let slab_vol_sum: f64 = slabs.iter().map(|s| volume(s)).sum();
+    let expected_union_sa = surface_area(a) + surface_area(b) - surface_area(&inter);
+
+    let sewn = sew_slabs_into_solid(&slabs, zero_tol);
+    let sewn_sa = surface_area(&sewn);
+
+    if sewn_sa <= expected_union_sa * 1.10 {
+        return Some(sewn);
+    }
+
+    // SA inflated — try fuse-based sequential merge to remove shared internal faces.
+    let mut fused = slabs[0].clone();
+    let mut ok = true;
+    for slab in &slabs[1..] {
+        match crate::bop_occt_union::fuse(&fused, slab) {
+            Ok(u) => { fused = u; }
+            Err(_) => { ok = false; break; }
+        }
+    }
+    if ok {
+        let fused_sa = surface_area(&fused);
+        let fused_vol = volume(&fused);
+        let vol_ok = (fused_vol - slab_vol_sum).abs() < vol_tol * (slabs.len() as f64).max(1000.0);
+        if vol_ok && fused_sa <= expected_union_sa * 1.10 {
+            return Some(fused);
+        }
+    }
+
+    Some(sewn)
 }
 
 /// Kernel analytic sphere primitive: one spherical face (`Surface3::Sphere`).
@@ -1180,6 +1210,234 @@ fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
         Surface3::Sphere(s) => Some((s.center, s.radius)),
         _ => None,
     }
+}
+
+/// Fast path for coaxial cylinder-sphere difference: `sphere - cylinder`.
+///
+/// When a sphere is coaxial with a Z-aligned cylinder and the sphere's
+/// cross-section fits entirely inside the cylinder's radius over every Z in
+/// the overlap range, the overlap region is completely removed. The result is
+/// the spherical portion(s) outside the cylinder's Z range, built as a
+/// Z-slice triangle mesh.
+pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try both orderings: (sphere, cylinder) and (cylinder, sphere)
+    let (sphere_brep, cyl_brep) = if let Some((sp, cyl)) =
+        try_sphere_primitive_center_radius(a)
+            .and_then(|sp| z_axis_cylinder_z_span_r(b).map(|cyl| (sp, cyl)))
+    {
+        (sp, cyl)
+    } else if let Some((sp, cyl)) =
+        try_sphere_primitive_center_radius(b)
+            .and_then(|sp| z_axis_cylinder_z_span_r(a).map(|cyl| (sp, cyl)))
+    {
+        (sp, cyl)
+    } else {
+        return None;
+    };
+
+    let (center, radius) = sphere_brep;
+    let (cyl_z_lo, cyl_z_hi, cyl_r) = cyl_brep;
+
+    // Check sphere center is on Z axis (coaxial with cylinder)
+    if center.x.abs() > TOLERANCE_ABS || center.y.abs() > TOLERANCE_ABS {
+        return None;
+    }
+
+    let sz = center.z;
+    let sphere_z_lo = sz - radius;
+    let sphere_z_hi = sz + radius;
+
+    // Z overlap
+    let overlap_lo = sphere_z_lo.max(cyl_z_lo);
+    let overlap_hi = sphere_z_hi.min(cyl_z_hi);
+    if overlap_hi <= overlap_lo + TOLERANCE_LEN_MIN {
+        return None; // No overlap — not the case we handle
+    }
+
+    // Check sphere cross-section is inside cylinder at both overlap boundaries
+    for z in [overlap_lo, overlap_hi] {
+        let dz = z - sz;
+        let r_at = (radius.powi(2) - dz.powi(2)).sqrt();
+        if r_at > cyl_r + TOLERANCE_LEN_MIN {
+            return None; // Sphere extends beyond cylinder → fall through
+        }
+    }
+
+    // Build portion(s) of sphere outside cylinder Z range
+    let mut parts: Vec<BRep> = Vec::new();
+
+    if sphere_z_lo < cyl_z_lo - TOLERANCE_LEN_MIN {
+        let z_to = cyl_z_lo.min(sphere_z_hi);
+        if z_to - sphere_z_lo > TOLERANCE_LEN_MIN {
+            if let Some(p) = build_spherical_slice_solid(center, radius, sphere_z_lo, z_to) {
+                parts.push(p);
+            }
+        }
+    }
+
+    if sphere_z_hi > cyl_z_hi + TOLERANCE_LEN_MIN {
+        let z_from = cyl_z_hi.max(sphere_z_lo);
+        if sphere_z_hi - z_from > TOLERANCE_LEN_MIN {
+            if let Some(p) = build_spherical_slice_solid(center, radius, z_from, sphere_z_hi) {
+                parts.push(p);
+            }
+        }
+    }
+
+    match parts.len() {
+        0 => Some(BRep::default()),
+        1 => Some(parts.swap_remove(0)),
+        _ => {
+            let mut base = parts.swap_remove(0);
+            for p in parts {
+                append_frustum_brep(&mut base, p);
+            }
+            Some(base)
+        }
+    }
+}
+
+/// Build a Z-slice triangle-mesh solid representing a spherical slice (portion
+/// of a sphere between two parallel Z planes). The solid is built with
+/// pre-triangulated faces and no analytic surfaces — SA computation reads
+/// the stored triangles directly.
+fn build_spherical_slice_solid(center: DVec3, radius: f64, z_lo: f64, z_hi: f64) -> Option<BRep> {
+    const N_RINGS: usize = 32;
+    const N_CIRC: usize = 48;
+
+    let h = z_hi - z_lo;
+    if h <= TOLERANCE_LEN_MIN {
+        return None;
+    }
+    let dz = h / N_RINGS as f64;
+
+    let mut brep = BRep::new();
+
+    // Generate ring vertices
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut ring_start: Vec<usize> = Vec::with_capacity(N_RINGS + 2);
+
+    for i in 0..=N_RINGS {
+        let z = z_lo + dz * i as f64;
+        let dz_c = z - center.z;
+        let r_sq = radius.powi(2) - dz_c.powi(2);
+        ring_start.push(verts.len());
+
+        if r_sq <= 0.0 {
+            verts.push(Vertex { point: DVec3::new(center.x, center.y, z) });
+        } else {
+            let r = r_sq.sqrt();
+            for j in 0..N_CIRC {
+                let ang = std::f64::consts::TAU * j as f64 / N_CIRC as f64;
+                let (s, c) = ang.sin_cos();
+                verts.push(Vertex { point: DVec3::new(center.x + r * c, center.y + r * s, z) });
+            }
+        }
+    }
+    ring_start.push(verts.len());
+
+    let v_off = brep.vertices.len();
+    brep.vertices = verts;
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    // Lateral faces: triangle strips between adjacent rings
+    for i in 0..N_RINGS {
+        let b_s = ring_start[i];
+        let b_e = ring_start[i + 1];
+        let t_s = ring_start[i + 1];
+        let t_e = ring_start[i + 2];
+        let bn = b_e - b_s;
+        let tn = t_e - t_s;
+
+        let tris: Vec<[usize; 3]> = if bn == 1 && tn > 1 {
+            (0..tn).flat_map(|j| {
+                let k = (j + 1) % tn;
+                vec![[v_off + b_s, v_off + t_s + j, v_off + t_s + k]]
+            }).collect()
+        } else if tn == 1 && bn > 1 {
+            (0..bn).flat_map(|j| {
+                let k = (j + 1) % bn;
+                vec![[v_off + b_s + j, v_off + b_s + k, v_off + t_s]]
+            }).collect()
+        } else if bn > 1 && tn > 1 {
+            let n = bn.min(tn);
+            (0..n).flat_map(|j| {
+                let k = (j + 1) % n;
+                let b0 = v_off + b_s + j;
+                let b1 = v_off + b_s + k;
+                let t0 = v_off + t_s + j;
+                let t1 = v_off + t_s + k;
+                vec![[b0, b1, t1], [b0, t1, t0]]
+            }).collect()
+        } else {
+            Vec::new()
+        };
+
+        if !tris.is_empty() {
+            faces.push(Face {
+                outer_wire: Wire { edges: vec![] },
+                inner_wires: vec![],
+                normal: DVec3::ZERO,
+                triangles: tris,
+                sample_point: None,
+                mesh_dirty: false,
+            });
+        }
+    }
+
+    // Cap disks at exposed planar ends (skip if at pole)
+    let bot_n = ring_start[1] - ring_start[0];
+    if bot_n > 1 {
+        let r_sq = radius.powi(2) - (z_lo - center.z).powi(2);
+        if r_sq > 0.0 {
+            let r = r_sq.sqrt();
+            push_cap_disk(&mut brep, &mut faces, center, r, z_lo,
+                if z_lo > center.z { DVec3::Z } else { -DVec3::Z });
+        }
+    }
+
+    let top_n = ring_start[N_RINGS + 1] - ring_start[N_RINGS];
+    if top_n > 1 {
+        let r_sq = radius.powi(2) - (z_hi - center.z).powi(2);
+        if r_sq > 0.0 {
+            let r = r_sq.sqrt();
+            push_cap_disk(&mut brep, &mut faces, center, r, z_hi,
+                if z_hi > center.z { DVec3::Z } else { -DVec3::Z });
+        }
+    }
+
+    brep.solids.push(Solid { shells: vec![Shell { faces }] });
+    Some(brep)
+}
+
+/// Push a triangulated planar disk face (center + rim at given z) into `faces`.
+fn push_cap_disk(brep: &mut BRep, faces: &mut Vec<Face>, center: DVec3, r: f64, z: f64, normal: DVec3) {
+    const N_CIRC: usize = 48;
+    let mut rim: Vec<usize> = Vec::with_capacity(N_CIRC);
+    for j in 0..N_CIRC {
+        let ang = std::f64::consts::TAU * j as f64 / N_CIRC as f64;
+        let (s, c) = ang.sin_cos();
+        let idx = brep.vertices.len();
+        brep.vertices.push(Vertex { point: DVec3::new(center.x + r * c, center.y + r * s, z) });
+        rim.push(idx);
+    }
+    let ctr_idx = brep.vertices.len();
+    brep.vertices.push(Vertex { point: DVec3::new(center.x, center.y, z) });
+
+    let tris: Vec<[usize; 3]> = (0..N_CIRC).map(|j| {
+        let k = (j + 1) % N_CIRC;
+        [rim[j], rim[k], ctr_idx]
+    }).collect();
+
+    faces.push(Face {
+        outer_wire: Wire { edges: vec![] },
+        inner_wires: vec![],
+        normal,
+        triangles: tris,
+        sample_point: None,
+        mesh_dirty: false,
+    });
 }
 
 /// [`BooleanOpType::Difference`] for nested analytic spheres sharing a center.
@@ -2340,6 +2598,88 @@ fn try_intersection_coaxial_cylinder_torus_pair(cyl: &BRep, torus: &BRep) -> Opt
 /// remainder is the sharp sub-cone from `z_hi` to the apex (OCCT `bopcut_simple`/ZP8).
 pub fn try_difference_coaxial_cone_minus_cylinder(cone: &BRep, cyl: &BRep) -> Option<BRep> {
     use rcad_modeling::make_cone_brep;
+    use rcad_modeling::make_conical_frustum_brep;
+
+    // Frustum-aware Z non-overlap check: handle frustums (3 faces) and sharp
+    // cones (2 faces) for the tangent case where the cone is entirely above or
+    // below the cylinder's Z range (boptuc_simple ZK1-ZK4).
+    // Reconstruct rather than clone: after apply_transform the cloned BRep may
+    // carry stale triangulation that inflates surface area.
+    if let Some((zlo_c, zhi_c, r_at_zlo, r_at_zhi)) = z_axis_cone_frustum_z_span_r(cone) {
+        let (zlo_y, zhi_y, _) = z_axis_cylinder_z_span_r(cyl)?;
+        if zhi_y <= zlo_c + TOLERANCE_MESH_LEGACY || zlo_y >= zhi_c - TOLERANCE_MESH_LEGACY {
+            return make_conical_frustum_brep(
+                DVec3::new(0.0, 0.0, (zlo_c + zhi_c) * 0.5),
+                DVec3::Z,
+                DVec3::X,
+                r_at_zlo,
+                r_at_zhi,
+                zhi_c - zlo_c,
+            ).ok();
+        }
+
+        // Phase 4a: coaxial cone extends below/above the cylinder.
+        // The overlap region is entirely removed (cone inside cylinder radius).
+        // Result is the cone portion(s) outside the cylinder Z range.
+        let (_, _, rc) = z_axis_cylinder_z_span_r(cyl)?;
+        let dr_dz = (r_at_zhi - r_at_zlo) / (zhi_c - zlo_c);
+        let r_at_zlo_y = (r_at_zlo + dr_dz * (zlo_y - zlo_c)).max(0.0);
+        let r_at_zhi_y = (r_at_zlo + dr_dz * (zhi_y - zlo_c)).max(0.0);
+
+        // Cone must be entirely inside cylinder radius at both Z boundaries
+        if r_at_zlo_y <= rc + TOLERANCE_LEN_MIN
+            && r_at_zhi_y <= rc + TOLERANCE_LEN_MIN
+        {
+            let mut result: Option<BRep> = None;
+
+            // Below cylinder
+            if zlo_c < zlo_y - TOLERANCE_LEN_MIN {
+                let z_to = zlo_y.min(zhi_c);
+                let h = z_to - zlo_c;
+                if h > TOLERANCE_LEN_MIN {
+                    let r_at_z_to = r_at_zlo + dr_dz * (z_to - zlo_c);
+                    result = make_conical_frustum_brep(
+                        DVec3::new(0.0, 0.0, (zlo_c + z_to) * 0.5),
+                        DVec3::Z,
+                        DVec3::X,
+                        r_at_zlo,
+                        r_at_z_to,
+                        h,
+                    ).ok();
+                }
+            }
+
+            // Above cylinder
+            if zhi_c > zhi_y + TOLERANCE_LEN_MIN {
+                let z_from = zhi_y.max(zlo_c);
+                let h = zhi_c - z_from;
+                if h > TOLERANCE_LEN_MIN {
+                    let r_at_z_from = r_at_zlo + dr_dz * (z_from - zlo_c);
+                    let above = make_conical_frustum_brep(
+                        DVec3::new(0.0, 0.0, (z_from + zhi_c) * 0.5),
+                        DVec3::Z,
+                        DVec3::X,
+                        r_at_z_from,
+                        r_at_zhi,
+                        h,
+                    ).ok();
+                    if let Some(mut base) = result.take() {
+                        if let Some(ab) = above {
+                            append_frustum_brep(&mut base, ab);
+                        }
+                        result = Some(base);
+                    } else {
+                        result = above;
+                    }
+                }
+            }
+
+            if result.is_some() {
+                return result;
+            }
+        }
+    }
+
     let (za, zb, rb) = z_axis_sharp_cone_z_span(cone)?;
     let (zlo, zhi, rc) = z_axis_cylinder_z_span_r(cyl)?;
     if za <= zb + TOLERANCE_MESH_LEGACY {
@@ -2375,6 +2715,117 @@ pub fn try_difference_coaxial_cone_minus_cylinder(cone: &BRep, cyl: &BRep) -> Op
         h_rem,
     )
     .ok()
+}
+
+/// Append a conical frustum BRep (as returned by `make_conical_frustum_brep`) into `dst`,
+/// remapping all vertex, edge, and geometry store indices so the two solids can coexist
+/// in a single BRep (e.g. for returning both below-cylinder and above-cylinder portions).
+fn append_frustum_brep(dst: &mut BRep, src: BRep) {
+    let vertex_offset = dst.vertices.len();
+    let edge_offset = dst.edges.len();
+    let curve_offset = dst.geom.curves.len();
+    let surface_offset = dst.geom.surfaces.len();
+    let src_face_surface = src.geom.face_surface.clone();
+
+    dst.vertices.extend(src.vertices);
+    dst.edges.extend(src.edges.into_iter().map(|edge| Edge {
+        start: edge.start + vertex_offset,
+        end: edge.end + vertex_offset,
+    }));
+
+    dst.geom.curves.extend(src.geom.curves);
+    dst.geom.surfaces.extend(src.geom.surfaces);
+    dst.geom.edge_curve.extend(
+        src.geom
+            .edge_curve
+            .into_iter()
+            .map(|curve| curve.map(|idx| idx + curve_offset)),
+    );
+    dst.geom
+        .edge_curve_range
+        .extend(src.geom.edge_curve_range);
+    dst.geom
+        .edge_degenerated
+        .extend(src.geom.edge_degenerated);
+
+    let mut face_counter = 0usize;
+    for solid in src.solids {
+        let mut new_shells = Vec::with_capacity(solid.shells.len());
+        for shell in solid.shells {
+            let mut new_faces = Vec::with_capacity(shell.faces.len());
+            for face in shell.faces {
+                let surface = src_face_surface
+                    .get(face_counter)
+                    .copied()
+                    .flatten()
+                    .map(|idx| idx + surface_offset);
+                dst.geom.face_surface.push(surface);
+                face_counter += 1;
+
+                new_faces.push(Face {
+                    outer_wire: Wire {
+                        edges: face
+                            .outer_wire
+                            .edges
+                            .into_iter()
+                            .map(|we| WireEdge {
+                                idx: we.idx + edge_offset,
+                                forward: we.forward,
+                            })
+                            .collect(),
+                    },
+                    inner_wires: face
+                        .inner_wires
+                        .into_iter()
+                        .map(|wire| Wire {
+                            edges: wire
+                                .edges
+                                .into_iter()
+                                .map(|we| WireEdge {
+                                    idx: we.idx + edge_offset,
+                                    forward: we.forward,
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    normal: face.normal,
+                    triangles: face
+                        .triangles
+                        .into_iter()
+                        .map(|tri| {
+                            [tri[0] + vertex_offset, tri[1] + vertex_offset, tri[2] + vertex_offset]
+                        })
+                        .collect(),
+                    sample_point: face.sample_point,
+                    mesh_dirty: true,
+                });
+            }
+            new_shells.push(Shell { faces: new_faces });
+        }
+        dst.solids.push(Solid { shells: new_shells });
+    }
+
+    dst.geom.curve2ds.extend(src.geom.curve2ds);
+    dst.geom.edge_pcurves.extend(src.geom.edge_pcurves);
+    dst.geom
+        .vertex_tolerance
+        .extend(src.geom.vertex_tolerance);
+    dst.geom.edge_tolerance.extend(src.geom.edge_tolerance);
+    dst.geom
+        .face_tolerance
+        .extend(src.geom.face_tolerance);
+    dst.geom
+        .curve2d_range
+        .extend(src.geom.curve2d_range);
+    dst.geom
+        .face_surface_range
+        .extend(src.geom.face_surface_range);
+    dst.geom
+        .edge_same_parameter
+        .extend(src.geom.edge_same_parameter);
+    dst.geom
+        .edge_same_range
+        .extend(src.geom.edge_same_range);
 }
 
 /// Strip loft bottom/top planar caps; keeps ruled lateral faces only (must match [`LoftHistory`]).
@@ -2614,6 +3065,10 @@ fn cyl_minus_cone_inner(maybe_cyl: &BRep, maybe_cone: &BRep) -> Option<BRep> {
     let hc = za - zb;
     if hc.abs() < TOLERANCE_MESH_LEGACY {
         return None;
+    }
+    // No Z overlap: cone doesn't cut the cylinder.
+    if zhi <= zb + TOLERANCE_MESH_LEGACY || zlo >= za - TOLERANCE_MESH_LEGACY {
+        return Some(cyl.clone());
     }
     let r_at = |z: f64| rb * (za - z) / hc;
     if (zlo - zb).abs() > TOLERANCE_AXIS_CORNER_SLACK {
@@ -3503,6 +3958,7 @@ fn build_torus_minus_cylinder_brep(
 /// Detects two coaxial Z-aligned cones where one is fully nested inside the other.
 /// The outer cone minus the inner cone produces a hollow conical frustum.
 pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
+    use rcad_modeling::make_conical_frustum_brep;
     // Fast path: non-overlapping Z ranges → no volume intersection.
     // Coaxial conical frustums with disjoint Z ranges cannot overlap in 3D,
     // so a - b = a (even if the coincident face at the boundary would confuse
@@ -3511,14 +3967,117 @@ pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep
         z_axis_cone_frustum_z_span_r(a),
         z_axis_cone_frustum_z_span_r(b),
     ) {
-        if ai.1 <= bi.0 || ai.0 >= bi.1 {
-            return Some(a.clone());
+        if ai.1 <= bi.0 + TOLERANCE_MESH_LEGACY || ai.0 + TOLERANCE_MESH_LEGACY >= bi.1 {
+            // Reconstruct from scratch rather than cloning — a cloned BRep that
+            // went through apply_transform may carry stale triangulation that
+            // inflates surface area (boptuc_simple ZN1).
+            return make_conical_frustum_brep(
+                DVec3::new(0.0, 0.0, (ai.0 + ai.1) * 0.5),
+                DVec3::Z,
+                DVec3::X,
+                ai.2,
+                ai.3,
+                ai.1 - ai.0,
+            ).ok();
+        }
+
+        // Phase 4b: extending-past check — one cone extends below/above the
+        // other but is completely inside the other's radius over the overlap.
+        // Try both orderings: (a - b) and (b - a).
+        if let Some(r) = try_extending_cone_minus_cone(
+            ai.0, ai.1, ai.2, ai.3,
+            bi.0, bi.1, bi.2, bi.3,
+        ) {
+            return Some(r);
+        }
+        if let Some(r) = try_extending_cone_minus_cone(
+            bi.0, bi.1, bi.2, bi.3,
+            ai.0, ai.1, ai.2, ai.3,
+        ) {
+            return Some(r);
+        }
+    }
+    try_difference_coaxial_cone_minus_cone_pair(a, b)
+        .or_else(|| try_difference_coaxial_cone_minus_cone_pair(b, a))
+}
+
+/// Try extending-past case for cone-cone difference: when `inner` extends below
+/// or above `outer` and is completely inside `outer`'s radius at every Z in the
+/// overlap, the overlap region is entirely removed. The result is the truncated
+/// inner frustum portion(s) outside the outer Z range.
+fn try_extending_cone_minus_cone(
+    zi_lo: f64, zi_hi: f64, ri_lo: f64, ri_hi: f64,
+    zo_lo: f64, zo_hi: f64, ro_lo: f64, ro_hi: f64,
+) -> Option<BRep> {
+    // Must extend below or above outer
+    if zi_lo >= zo_lo - TOLERANCE_ABS && zi_hi <= zo_hi + TOLERANCE_ABS {
+        return None;
+    }
+
+    // Must have Z overlap (non-overlap is handled by the caller)
+    let overlap_lo = zi_lo.max(zo_lo);
+    let overlap_hi = zi_hi.min(zo_hi);
+    if overlap_hi <= overlap_lo + TOLERANCE_LEN_MIN {
+        return None;
+    }
+
+    // Inner radius at overlap boundaries
+    let dr_i = (ri_hi - ri_lo) / (zi_hi - zi_lo);
+    let ri_at_olo = ri_lo + dr_i * (overlap_lo - zi_lo);
+    let ri_at_ohi = ri_lo + dr_i * (overlap_hi - zi_lo);
+
+    // Outer radius at overlap boundaries
+    let dr_o = (ro_hi - ro_lo) / (zo_hi - zo_lo);
+    let ro_at_olo = ro_lo + dr_o * (overlap_lo - zo_lo);
+    let ro_at_ohi = ro_lo + dr_o * (overlap_hi - zo_lo);
+
+    // Inner must be inside outer at both overlap boundaries
+    if ri_at_olo > ro_at_olo + TOLERANCE_LEN_MIN
+        || ri_at_ohi > ro_at_ohi + TOLERANCE_LEN_MIN
+    {
+        return None;
+    }
+
+    use rcad_modeling::make_conical_frustum_brep;
+    let mut result: Option<BRep> = None;
+
+    // Portion below outer
+    if zi_lo < zo_lo - TOLERANCE_LEN_MIN {
+        let z_to = zo_lo.min(zi_hi);
+        let h = z_to - zi_lo;
+        if h > TOLERANCE_LEN_MIN {
+            let ri_at_z_to = ri_lo + dr_i * (z_to - zi_lo);
+            result = make_conical_frustum_brep(
+                DVec3::new(0.0, 0.0, (zi_lo + z_to) * 0.5),
+                DVec3::Z, DVec3::X,
+                ri_lo, ri_at_z_to, h,
+            ).ok();
         }
     }
 
-    // Try both orderings
-    try_difference_coaxial_cone_minus_cone_pair(a, b)
-        .or_else(|| try_difference_coaxial_cone_minus_cone_pair(b, a))
+    // Portion above outer
+    if zi_hi > zo_hi + TOLERANCE_LEN_MIN {
+        let z_from = zo_hi.max(zi_lo);
+        let h = zi_hi - z_from;
+        if h > TOLERANCE_LEN_MIN {
+            let ri_at_z_from = ri_lo + dr_i * (z_from - zi_lo);
+            let above = make_conical_frustum_brep(
+                DVec3::new(0.0, 0.0, (z_from + zi_hi) * 0.5),
+                DVec3::Z, DVec3::X,
+                ri_at_z_from, ri_hi, h,
+            ).ok();
+            if let Some(mut base) = result.take() {
+                if let Some(ab) = above {
+                    append_frustum_brep(&mut base, ab);
+                }
+                result = Some(base);
+            } else {
+                result = above;
+            }
+        }
+    }
+
+    result
 }
 
 fn try_difference_coaxial_cone_minus_cone_pair(outer: &BRep, inner: &BRep) -> Option<BRep> {
@@ -3557,7 +4116,10 @@ fn try_difference_coaxial_cone_minus_cone_pair(outer: &BRep, inner: &BRep) -> Op
 }
 
 /// Extract parameters from a Z-axis-aligned conical frustum.
-/// Returns (z_lo, z_hi, r_lo, r_hi) where z_lo < z_hi and r_lo ≤ r_hi.
+/// Returns (z_lo, z_hi, r_at_zlo, r_at_zhi) where z_lo < z_hi.
+/// The radii preserve the Z mapping (r_at_zlo is the radius at z_lo,
+/// r_at_zhi is the radius at z_hi), unlike the old behavior that swapped
+/// to r_lo <= r_hi.
 fn z_axis_cone_frustum_z_span_r(brep: &BRep) -> Option<(f64, f64, f64, f64)> {
     let sh = brep.solids.get(0)?.shells.get(0)?;
     if sh.faces.len() < 3 { return None; }
@@ -3613,7 +4175,7 @@ fn z_axis_cone_frustum_z_span_r(brep: &BRep) -> Option<(f64, f64, f64, f64)> {
         return None;
     }
 
-    Some((z_lo, z_hi, r_lo.min(r_hi), r_lo.max(r_hi)))
+    Some((z_lo, z_hi, r_lo, r_hi))
 }
 
 /// Like `z_axis_cone_frustum_z_span_r` but handles arbitrary XY translation.
@@ -6437,6 +6999,71 @@ pub fn try_difference_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(a.clone());
     }
 
+    // Phase 3: Check if cone cross-section circle is fully inside the box XY rect
+    // at every Z level in the overlap range. Since radius varies linearly with Z and
+    // containment is convex, checking at both Z boundaries is sufficient.
+    if cx - r_lo >= bmin.x - TOLERANCE_LEN_MIN
+        && cx + r_lo <= bmax.x + TOLERANCE_LEN_MIN
+        && cy - r_lo >= bmin.y - TOLERANCE_LEN_MIN
+        && cy + r_lo <= bmax.y + TOLERANCE_LEN_MIN
+        && cx - r_hi >= bmin.x - TOLERANCE_LEN_MIN
+        && cx + r_hi <= bmax.x + TOLERANCE_LEN_MIN
+        && cy - r_hi >= bmin.y - TOLERANCE_LEN_MIN
+        && cy + r_hi <= bmax.y + TOLERANCE_LEN_MIN
+    {
+        use rcad_modeling::make_conical_frustum_brep;
+        let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+        let mut parts: Vec<BRep> = Vec::new();
+
+        // Cone portion below the box Z range
+        if cz_lo < bmin.z - TOLERANCE_LEN_MIN {
+            let z_to = bmin.z.min(cz_hi);
+            let h = z_to - cz_lo;
+            if h > TOLERANCE_LEN_MIN {
+                let r_at_z_to = cr_lo + dr_dz * (z_to - cz_lo);
+                if let Ok(f) = make_conical_frustum_brep(
+                    DVec3::new(cx, cy, (cz_lo + z_to) * 0.5),
+                    DVec3::Z,
+                    DVec3::X,
+                    cr_lo,
+                    r_at_z_to,
+                    h,
+                ) {
+                    parts.push(f);
+                }
+            }
+        }
+
+        // Cone portion above the box Z range
+        if cz_hi > bmax.z + TOLERANCE_LEN_MIN {
+            let z_from = bmax.z.max(cz_lo);
+            let h = cz_hi - z_from;
+            if h > TOLERANCE_LEN_MIN {
+                let r_at_z_from = cr_lo + dr_dz * (z_from - cz_lo);
+                if let Ok(f) = make_conical_frustum_brep(
+                    DVec3::new(cx, cy, (z_from + cz_hi) * 0.5),
+                    DVec3::Z,
+                    DVec3::X,
+                    r_at_z_from,
+                    cr_hi,
+                    h,
+                ) {
+                    parts.push(f);
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            // Cone is entirely inside the box → empty result
+            return Some(BRep::default());
+        }
+        if parts.len() == 1 {
+            return Some(parts.swap_remove(0));
+        }
+        // Multiple portions (both below and above) — fall through to tessellated path
+        // which handles the compound case.
+    }
+
     build_cone_minus_box_tessellated(bmin, bmax, cx, cy, z_lo, z_hi, r_lo, r_hi)
 }
 
@@ -6584,10 +7211,10 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
     let box_z_lo = bc.z - ew;
     let box_z_hi = bc.z + ew;
 
-    // If no Z overlap, the box doesn't cut the cylinder — fall through.
+    // If no Z overlap, the box doesn't cut the cylinder — return the cylinder.
     let tol = TOL * 10.0;
     if box_z_hi <= cyl_z_lo + tol || box_z_lo >= cyl_z_hi - tol {
-        return None;
+        return Some(a.clone());
     }
 
     // Cylinder center in box UV coordinates.
