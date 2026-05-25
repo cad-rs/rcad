@@ -6966,6 +6966,380 @@ pub fn try_union_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
     try_union_cylinder_box_one_dir(a, b).or_else(|| try_union_cylinder_box_one_dir(b, a))
 }
 
+// ──── Cone-box union fast path ────
+
+/// Remap a closed polygon to `n` equally-spaced arc-length points,
+/// starting from the point closest to `ref_pt`.
+fn remap_polygon_arclength(poly: &[DVec2], n: usize, ref_pt: DVec2) -> Vec<DVec2> {
+    let tol = TOLERANCE_LEN_MIN;
+    if poly.len() < 3 || n < 3 { return poly.to_vec(); }
+
+    // Rotate to start from the point closest to ref_pt
+    let mut best_idx = 0;
+    let mut best_dist = (poly[0] - ref_pt).length_squared();
+    for (i, p) in poly.iter().enumerate() {
+        let d = (*p - ref_pt).length_squared();
+        if d < best_dist { best_dist = d; best_idx = i; }
+    }
+    let m = poly.len();
+    let mut aligned = poly[best_idx..].to_vec();
+    aligned.extend_from_slice(&poly[..best_idx]);
+
+    // Compute cumulative arc length
+    let mut arc_len = vec![0.0_f64; m + 1];
+    for i in 1..=m {
+        let j = i % m;
+        let k = (i - 1) % m;
+        arc_len[i] = arc_len[i - 1] + aligned[k].distance(aligned[j]);
+    }
+    let total = arc_len[m];
+    if total <= tol { return poly.to_vec(); }
+
+    // Resample to n equally-spaced points
+    let mut result = Vec::with_capacity(n);
+    let mut src_idx = 0;
+    for i in 0..n {
+        let target = total * i as f64 / n as f64;
+        while src_idx < m && arc_len[src_idx + 1] < target {
+            src_idx += 1;
+        }
+        let t0 = arc_len[src_idx];
+        let t1 = arc_len[(src_idx + 1) % (m + 1)];
+        if (t1 - t0).abs() < 1e-15 {
+            result.push(aligned[src_idx % m]);
+        } else {
+            let frac = (target - t0) / (t1 - t0);
+            let a = src_idx % m;
+            let b = (src_idx + 1) % m;
+            result.push(aligned[a].lerp(aligned[b], frac));
+        }
+    }
+    result
+}
+
+/// Build a tessellated BRep for `cone ∪ box` via Z-slice tessellation.
+///
+/// The cone is a Z-aligned conical frustum with center at `(cx, cy)` in XY,
+/// extending from Z `cz_lo` to `cz_hi`, with bottom radius `cr_lo` and top
+/// radius `cr_hi`. The box is axis-aligned `[bmin, bmax]`.
+///
+/// Builds three sections: below-box (circle), overlap (circle ∪ rect), above-box (circle).
+fn build_cone_box_union_tessellated(
+    bmin: DVec3, bmax: DVec3,
+    cx: f64, cy: f64,
+    cz_lo: f64, cz_hi: f64,
+    cr_lo: f64, cr_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if cz_hi <= cz_lo + tol { return None; }
+    if cr_lo < tol && cr_hi < tol { return None; }
+
+    let box_z_lo = bmin.z;
+    let box_z_hi = bmax.z;
+    let box_center = (bmin + bmax) * 0.5;
+    let eu = (bmax.x - bmin.x) * 0.5;
+    let ev = (bmax.y - bmin.y) * 0.5;
+    let cu = cx - box_center.x;
+    let cv = cy - box_center.y;
+
+    let n_slices = 64usize;
+    let n_slices_circ = 16usize;
+    let n_boundary = 256usize;
+    let n_arc = 128usize;
+    let tau = std::f64::consts::TAU;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(box_center.x + u, box_center.y + v, z)
+    };
+
+    let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+
+    // ---- Section 1: Below box (circle cross-section) ----
+    if box_z_lo > cz_lo + tol {
+        let z0 = cz_lo;
+        let z1 = box_z_lo;
+        let n = n_slices_circ;
+        let dz = (z1 - z0) / n as f64;
+        for i in 0..n {
+            let za = z0 + dz * i as f64;
+            let zb = z0 + dz * (i + 1) as f64;
+            let ra = (cr_lo + dr_dz * (za - cz_lo)).max(0.0);
+            let rb = (cr_lo + dr_dz * (zb - cz_lo)).max(0.0);
+            if ra < tol && rb < tol { continue; }
+
+            let nn = n_arc;
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(cu + ra * c, cv + ra * s, za)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(cu + rb * c, cv + rb * s, zb)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // ---- Section 2: Overlap (circle ∪ rect cross-section) ----
+    if box_z_hi > box_z_lo + tol {
+        let z0 = box_z_lo;
+        let z1 = box_z_hi;
+        let n = n_slices;
+        let dz = (z1 - z0) / n as f64;
+        let ref_pt = DVec2::new(-eu, -ev);
+
+        // Pre-compute and remap all slice polygons
+        let mut slices: Vec<Vec<DVec2>> = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let z = z0 + dz * i as f64;
+            let r = (cr_lo + dr_dz * (z - cz_lo)).max(0.0);
+            if r < tol {
+                slices.push(vec![]);
+            } else {
+                let poly = build_circle_union_rect_polygon(cu, cv, r, eu, ev);
+                if poly.len() >= 3 {
+                    slices.push(remap_polygon_arclength(&poly, n_boundary, ref_pt));
+                } else {
+                    slices.push(vec![]);
+                }
+            }
+        }
+
+        // Build wall faces between adjacent remapped slices
+        for i in 0..n {
+            let bot = &slices[i];
+            let top = &slices[i + 1];
+            if bot.len() < 3 || top.len() < 3 { continue; }
+
+            let n_pts = bot.len().min(top.len());
+            let z_bot = z0 + dz * i as f64;
+            let z_top = z0 + dz * (i + 1) as f64;
+
+            let mut idx = Vec::with_capacity(2 * n_pts);
+            for p in bot.iter() { idx.push(add_v(to_world(p.x, p.y, z_bot))); }
+            for p in top.iter() { idx.push(add_v(to_world(p.x, p.y, z_top))); }
+
+            let mut tris = Vec::with_capacity(n_pts * 2);
+            for j in 0..n_pts {
+                let k = (j + 1) % n_pts;
+                tris.push([idx[j], idx[k], idx[n_pts + k]]);
+                tris.push([idx[j], idx[n_pts + k], idx[n_pts + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // ---- Section 3: Above box (circle cross-section) ----
+    if cz_hi > box_z_hi + tol {
+        let z0 = box_z_hi;
+        let z1 = cz_hi;
+        let n = n_slices_circ;
+        let dz = (z1 - z0) / n as f64;
+        for i in 0..n {
+            let za = z0 + dz * i as f64;
+            let zb = z0 + dz * (i + 1) as f64;
+            let ra = (cr_lo + dr_dz * (za - cz_lo)).max(0.0);
+            let rb = (cr_lo + dr_dz * (zb - cz_lo)).max(0.0);
+            if ra < tol && rb < tol { continue; }
+
+            let nn = n_arc;
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(cu + ra * c, cv + ra * s, za)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(cu + rb * c, cv + rb * s, zb)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // ---- Interface face at box top (ring between union and circle) ----
+    if cz_hi > box_z_hi + tol {
+        let r_at = (cr_lo + dr_dz * (box_z_hi - cz_lo)).max(0.0);
+        let union_poly = build_circle_union_rect_polygon(cu, cv, r_at, eu, ev);
+        if union_poly.len() >= 3 {
+            add_interface_face(
+                &mut add_v, &mut faces,
+                &union_poly, box_z_hi, DVec3::Z,
+                DVec2::new(cu, cv), r_at,
+                &to_world, &empty_wire,
+            );
+        }
+    }
+
+    // ---- Bottom cap ----
+    let r_bottom = (cr_lo + dr_dz * (cz_lo - cz_lo)).max(0.0);
+    if box_z_lo <= cz_lo + tol {
+        let poly = build_circle_union_rect_polygon(cu, cv, r_bottom, eu, ev);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, cz_lo, -DVec3::Z, &to_world, &empty_wire);
+        }
+    } else if r_bottom > tol {
+        let poly = build_circle_polygon(cu, cv, r_bottom);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, cz_lo, -DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    // ---- Top cap ----
+    let r_top = (cr_lo + dr_dz * (cz_hi - cz_lo)).max(0.0);
+    if box_z_hi >= cz_hi - tol {
+        let poly = build_circle_union_rect_polygon(cu, cv, r_top, eu, ev);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, cz_hi, DVec3::Z, &to_world, &empty_wire);
+        }
+    } else if r_top > tol {
+        let poly = build_circle_polygon(cu, cv, r_top);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, cz_hi, DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Detect one direction of cone-box union.
+fn try_union_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Option<BRep> {
+    let (center_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone_frustum(cone_brep)?;
+    let [bmin, bmax] = try_as_axis_aligned_box(box_brep)?;
+
+    let cx = center_xy.x;
+    let cy = center_xy.y;
+    let box_z_lo = bmin.z;
+    let box_z_hi = bmax.z;
+    let eu = (bmax.x - bmin.x) * 0.5;
+    let ev = (bmax.y - bmin.y) * 0.5;
+    let tol = TOLERANCE_LEN_MIN;
+
+    // Check Z overlap
+    let inter_lo = cz_lo.max(box_z_lo);
+    let inter_hi = cz_hi.min(box_z_hi);
+    if inter_hi <= inter_lo + tol { return None; }
+
+    // Compute radii at overlap boundaries
+    let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+    let r_at_inter_lo = (cr_lo + dr_dz * (inter_lo - cz_lo)).max(0.0);
+    let r_at_inter_hi = (cr_lo + dr_dz * (inter_hi - cz_lo)).max(0.0);
+
+    // Quick check: cone XY reach at overlap Z must reach the box XY
+    let box_center_xy = DVec2::new((bmin.x + bmax.x) * 0.5, (bmin.y + bmax.y) * 0.5);
+    let box_half_diag = ((bmax.x - bmin.x).powi(2) + (bmax.y - bmin.y).powi(2)).sqrt() * 0.5;
+    let dist_center = (box_center_xy - DVec2::new(cx, cy)).length();
+    let min_r = r_at_inter_lo.min(r_at_inter_hi);
+    if dist_center > box_half_diag + min_r + tol {
+        return None; // Disjoint in XY
+    }
+
+    // Check containment: box entirely inside cone → union is the cone
+    let corners = [
+        DVec2::new(bmin.x, bmin.y),
+        DVec2::new(bmax.x, bmin.y),
+        DVec2::new(bmax.x, bmax.y),
+        DVec2::new(bmin.x, bmax.y),
+    ];
+    let all_corners_inside_at_lo = corners.iter().all(|c| {
+        (c.x - cx).powi(2) + (c.y - cy).powi(2) <= (r_at_inter_lo + tol).powi(2)
+    });
+    let all_corners_inside_at_hi = corners.iter().all(|c| {
+        (c.x - cx).powi(2) + (c.y - cy).powi(2) <= (r_at_inter_hi + tol).powi(2)
+    });
+    let box_z_inside_cone = box_z_lo >= cz_lo - tol && box_z_hi <= cz_hi + tol;
+    if all_corners_inside_at_lo && all_corners_inside_at_hi && box_z_inside_cone {
+        return Some(cone_brep.clone());
+    }
+
+    // Check containment: cone entirely inside box → union is the box
+    let cone_inside_box_xy_at_lo = cx - r_at_inter_lo >= bmin.x - tol
+        && cx + r_at_inter_lo <= bmax.x + tol
+        && cy - r_at_inter_lo >= bmin.y - tol
+        && cy + r_at_inter_lo <= bmax.y + tol;
+    let cone_inside_box_xy_at_hi = cx - r_at_inter_hi >= bmin.x - tol
+        && cx + r_at_inter_hi <= bmax.x + tol
+        && cy - r_at_inter_hi >= bmin.y - tol
+        && cy + r_at_inter_hi <= bmax.y + tol;
+    let cone_z_inside_box = cz_lo >= box_z_lo - tol && cz_hi <= box_z_hi + tol;
+    if cone_inside_box_xy_at_lo && cone_inside_box_xy_at_hi && cone_z_inside_box {
+        return Some(box_brep.clone());
+    }
+
+    // Need the tessellated path: verify the cross-section is non-empty
+    let test_r = r_at_inter_lo.max(r_at_inter_hi);
+    let test_poly = build_circle_union_rect_polygon(
+        cx - box_center_xy.x, cy - box_center_xy.y,
+        test_r, eu, ev,
+    );
+    if test_poly.len() < 3 { return None; }
+
+    build_cone_box_union_tessellated(bmin, bmax, cx, cy, cz_lo, cz_hi, cr_lo, cr_hi)
+}
+
+/// Fast path: cone-box Union via Z-slice tessellation.
+pub fn try_union_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_union_cone_box_one_dir(a, b).or_else(|| try_union_cone_box_one_dir(b, a))
+}
+
 /// Fast path for `cone − box` boolean difference.
 ///
 /// Detects a Z-aligned conical frustum (possibly Z-rotated and translated in XY)

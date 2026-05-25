@@ -17,7 +17,7 @@ pub fn intersect_plane_plane(p1: &Plane, p2: &Plane) -> PlanePlaneResult {
 
     if is_zero_vec(cross) {
         let d = (p2.origin - p1.origin).dot(n1);
-        if d.abs() < TOLERANCE_ABS {
+        if d.abs() < TOLERANCE_PLANE_DIST_RELAX {
             return PlanePlaneResult::Coincident;
         }
         return PlanePlaneResult::Parallel;

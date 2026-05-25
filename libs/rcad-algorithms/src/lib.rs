@@ -2696,6 +2696,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_cylinder_box(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_union_cone_box(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 

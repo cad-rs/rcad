@@ -140,6 +140,14 @@ path = "step_occt_export.rs"
 name = "diag_intersect"
 path = "diag_intersect.rs"
 
+[[example]]
+name = "test_ze1"
+path = "test_ze1.rs"
+
+[[example]]
+name = "diag_no_external"
+path = "diag_no_external.rs"
+
 
 
 

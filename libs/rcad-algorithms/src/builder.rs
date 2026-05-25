@@ -1161,6 +1161,18 @@ fn classify_against_solid_for_boolean(
                 return Classification::In;
             }
         }
+        // For On-classified planar faces with mixed In/Out probe results, reclassify
+        // based on majority. The sample point fell on an edge/vertex of the other
+        // solid (hence On), but the face itself straddles the boundary — probe
+        // points on either side reveal which side the face predominantly belongs to.
+        if c0 == Classification::On && in_count > 0 && out_count > 0 {
+            return if out_count >= in_count {
+                Classification::Out
+            } else {
+                Classification::In
+            };
+        }
+
         if probe_pts.len() > 1 || total > 0 {
             let sp = sub.sample_point();
             eprintln!("[PROBE] face_class={:?} n_probe={} n_classified={} in={} out={} sample=({:.4},{:.4},{:.4})",
