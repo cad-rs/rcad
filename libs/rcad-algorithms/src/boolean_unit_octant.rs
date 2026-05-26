@@ -233,6 +233,304 @@ pub fn try_union_disjoint_or_touching(a: &BRep, b: &BRep) -> Option<BRep> {
 ///
 /// This matches OCCT behavior with `nurbsconvert`: touching boxes remain as
 /// separate solids in a compound rather than being fused into one (bfuse_simple/A9).
+/// Compute the CW outline of the 2D union of axis-aligned rectangles.
+/// Returns `None` when the rectangles are disconnected (no single union outline).
+fn rect_union_outline_cw(rects: &[(f64, f64, f64, f64)]) -> Option<Vec<(f64, f64)>> {
+    if rects.is_empty() {
+        return None;
+    }
+    if rects.len() == 1 {
+        let (x0, x1, y0, y1) = rects[0];
+        return Some(vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]);
+    }
+
+    // Collect unique coordinates
+    let mut xs: Vec<f64> = rects.iter().flat_map(|r| vec![r.0, r.1]).collect();
+    let mut ys: Vec<f64> = rects.iter().flat_map(|r| vec![r.2, r.3]).collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup();
+    ys.dedup();
+
+    let nx = xs.len() - 1;
+    let ny = ys.len() - 1;
+
+    // Mark grid cells as filled if their centre is inside any rectangle
+    let mut filled = vec![false; nx * ny];
+    for &(x0, x1, y0, y1) in rects {
+        for xi in 0..nx {
+            let cx = (xs[xi] + xs[xi + 1]) * 0.5;
+            if cx < x0 - 1e-12 || cx > x1 + 1e-12 { continue; }
+            for yi in 0..ny {
+                let cy = (ys[yi] + ys[yi + 1]) * 0.5;
+                if cx >= x0 - 1e-12 && cx <= x1 + 1e-12
+                    && cy >= y0 - 1e-12 && cy <= y1 + 1e-12
+                {
+                    filled[yi * nx + xi] = true;
+                }
+            }
+        }
+    }
+
+    if filled.iter().all(|&f| !f) { return None; }
+
+    // Collect boundary edges (grid edges between filled and empty cells).
+    #[derive(Clone)]
+    struct BEdge { x0: f64, y0: f64, x1: f64, y1: f64 }
+
+    let mut edges: Vec<BEdge> = Vec::new();
+    let cell = |xi: isize, yi: isize| -> bool {
+        xi >= 0 && xi < nx as isize && yi >= 0 && yi < ny as isize
+            && filled[yi as usize * nx + xi as usize]
+    };
+
+    // Horizontal edges at y = ys[yi] between xs[xi] and xs[xi+1]
+    for yi in 0..=ny {
+        for xi in 0..nx {
+            let above = cell(xi as isize, yi as isize - 1);
+            let below = cell(xi as isize, yi as isize);
+            if above != below {
+                edges.push(BEdge { x0: xs[xi], y0: ys[yi], x1: xs[xi + 1], y1: ys[yi] });
+            }
+        }
+    }
+    // Vertical edges at x = xs[xi] between ys[yi] and ys[yi+1]
+    for xi in 0..=nx {
+        for yi in 0..ny {
+            let right = cell(xi as isize, yi as isize);
+            let left = cell(xi as isize - 1, yi as isize);
+            if right != left {
+                edges.push(BEdge { x0: xs[xi], y0: ys[yi], x1: xs[xi], y1: ys[yi + 1] });
+            }
+        }
+    }
+
+    if edges.is_empty() { return None; }
+
+    // Walk the edges into a closed loop. Start with the first edge.
+    let eps = 1e-12;
+    let mut outline: Vec<(f64, f64)> = Vec::new();
+    outline.push((edges[0].x0, edges[0].y0));
+    outline.push((edges[0].x1, edges[0].y1));
+    let mut used = vec![false; edges.len()];
+    used[0] = true;
+
+    loop {
+        let (lx, ly) = *outline.last().unwrap();
+        let mut found = false;
+        for (ei, be) in edges.iter().enumerate() {
+            if used[ei] { continue; }
+            let match_start = (be.x0 - lx).abs() < eps && (be.y0 - ly).abs() < eps;
+            if match_start {
+                outline.push((be.x1, be.y1));
+                used[ei] = true;
+                found = true;
+                break;
+            }
+            let match_end = (be.x1 - lx).abs() < eps && (be.y1 - ly).abs() < eps;
+            if match_end {
+                outline.push((be.x0, be.y0));
+                used[ei] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found { break; }
+        // Check if we closed the loop (back at the second point → avoid duplicating start)
+        let (nx, ny) = *outline.last().unwrap();
+        if outline.len() > 2 && (nx - outline[0].0).abs() < eps && (ny - outline[0].1).abs() < eps {
+            outline.pop();
+            break;
+        }
+    }
+
+    if outline.len() < 3 { return None; }
+
+    // Ensure CW winding (negative signed area). Reverse if CCW.
+    let signed_area: f64 = outline.iter()
+        .zip(outline.iter().cycle().skip(1))
+        .take(outline.len())
+        .map(|(&(x0, y0), &(x1, y1))| x0 * y1 - x1 * y0)
+        .sum();
+    if signed_area > 0.0 {
+        outline.reverse();
+    }
+
+    // Remove collinear points (intermediate grid vertices on straight segments).
+    let mut cleaned: Vec<(f64, f64)> = Vec::with_capacity(outline.len());
+    for i in 0..outline.len() {
+        let prev = outline[(i + outline.len() - 1) % outline.len()];
+        let cur = outline[i];
+        let next = outline[(i + 1) % outline.len()];
+        let dx1 = cur.0 - prev.0;
+        let dy1 = cur.1 - prev.1;
+        let dx2 = next.0 - cur.0;
+        let dy2 = next.1 - cur.1;
+        if (dx1 * dy2 - dy1 * dx2).abs() > 1e-12 {
+            cleaned.push(cur);
+        }
+    }
+
+    Some(cleaned)
+}
+
+/// Build a BRep by extruding a 2D CW polygon in Z.
+/// `outline_cw` — vertices in CW order on the XY plane at z=z_min.
+/// The top face is generated by reversing the outline (CCW) at z=z_max.
+fn build_extruded_brep(outline_cw: &[(f64, f64)], z_min: f64, z_max: f64) -> Option<BRep> {
+    use rcad_kernel::geom::Line3;
+    use rcad_modeling::builder::brep_builder::{make_vertex, make_edge, make_wire, make_face};
+    use rcad_kernel::topology::WireEdge;
+
+    let n = outline_cw.len();
+    if n < 3 { return None; }
+
+    let mut brep = BRep::default();
+
+    // 1. Create all 2n vertices: 0..n at z_min, n..2n at z_max
+    let mut bv = Vec::with_capacity(n);  // bottom vertices
+    let mut tv = Vec::with_capacity(n);  // top vertices
+    for &(x, y) in outline_cw {
+        bv.push(make_vertex(&mut brep, DVec3::new(x, y, z_min)));
+        tv.push(make_vertex(&mut brep, DVec3::new(x, y, z_max)));
+    }
+
+    // 2. Create edges
+    // Bottom edges (CW): bv[i] → bv[i+1]
+    let mut be = Vec::with_capacity(n);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let p0 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z_min);
+        let p1 = DVec3::new(outline_cw[j].0, outline_cw[j].1, z_min);
+        let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
+        be.push(make_edge(&mut brep, curve, 0.0, 1.0, bv[i], bv[j]).ok()?);
+    }
+
+    // Top edges (CCW — reversed from CW): tv[i+1] → tv[i]
+    let mut te = Vec::with_capacity(n);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        // Reverse: i→j in the outline corresponds to j→i for the top face
+        // Actually, for the top face, the wire goes in the OPPOSITE direction
+        // around the outline. So edge at top position i connects tv[next] → tv[i]
+        // where next follows the REVERSE of the CW outline.
+        //
+        // CW outline: 0→1→2→...→n-1→0
+        // Reverse (CCW): 0→n-1→n-2→...→1→0
+        //
+        // So top edge i connects tv[(n-i) % n] → tv[(n-1-i) % n]
+        let src = (n - i) % n;
+        let dst = (n - 1 - i) % n;
+        let p0 = DVec3::new(outline_cw[src].0, outline_cw[src].1, z_max);
+        let p1 = DVec3::new(outline_cw[dst].0, outline_cw[dst].1, z_max);
+        let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
+        te.push(make_edge(&mut brep, curve, 0.0, 1.0, tv[src], tv[dst]).ok()?);
+    }
+
+    // Vertical edges: bv[i] → tv[i]
+    let mut ve = Vec::with_capacity(n);
+    for i in 0..n {
+        let p0 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z_min);
+        let p1 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z_max);
+        let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
+        ve.push(make_edge(&mut brep, curve, 0.0, 1.0, bv[i], tv[i]).ok()?);
+    }
+
+    // 3. Create faces
+
+    // Bottom face (CW winding → normal (0,0,-1))
+    {
+        let mut wire_edges = Vec::with_capacity(n);
+        for i in 0..n {
+            wire_edges.push(WireEdge { idx: be[i], forward: true });
+        }
+        let wire = make_wire(wire_edges);
+        let surface = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(0.0, 0.0, z_min),
+            normal: DVec3::new(0.0, 0.0, -1.0),
+        });
+        make_face(&mut brep, surface, wire, vec![]).ok()?;
+    }
+
+    // Top face (CCW winding → normal (0,0,1))
+    {
+        let mut wire_edges = Vec::with_capacity(n);
+        for i in 0..n {
+            wire_edges.push(WireEdge { idx: te[i], forward: true });
+        }
+        let wire = make_wire(wire_edges);
+        let surface = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(0.0, 0.0, z_max),
+            normal: DVec3::new(0.0, 0.0, 1.0),
+        });
+        make_face(&mut brep, surface, wire, vec![]).ok()?;
+    }
+
+    // Side faces: one per outline edge
+    for i in 0..n {
+        let j = (i + 1) % n;
+        // Outline segment i: outline_cw[i] → outline_cw[j]
+        let dx = outline_cw[j].0 - outline_cw[i].0;
+        let dy = outline_cw[j].1 - outline_cw[i].1;
+
+        // Determine the surface plane for this side face.
+        // For CW polygon, interior is to the RIGHT of the directed edge.
+        // Outward normal = direction pointing LEFT.
+        // dir +X (dx>0): left = +Y,   right = -Y,  outward = -Y
+        // dir -X (dx<0): left = -Y,   right = +Y,  outward = +Y
+        // dir +Y (dy>0): left = -X,   right = +X,  outward = +X
+        // dir -Y (dy<0): left = +X,   right = -X,  outward = -X
+        let (plane_coord, plane_normal) = if dx.abs() > dy.abs() {
+            // Horizontal edge — plane is y = const
+            if dx > 0.0 {
+                // Going right: outward is -Y
+                (outline_cw[i].1, DVec3::new(0.0, -1.0, 0.0))
+            } else {
+                // Going left: outward is +Y
+                (outline_cw[i].1, DVec3::new(0.0, 1.0, 0.0))
+            }
+        } else {
+            // Vertical edge — plane is x = const
+            if dy > 0.0 {
+                // Going up: outward is +X
+                (outline_cw[i].0, DVec3::new(1.0, 0.0, 0.0))
+            } else {
+                // Going down: outward is -X
+                (outline_cw[i].0, DVec3::new(-1.0, 0.0, 0.0))
+            }
+        };
+
+        // Side face winding (CCW from outside):
+        // bv[i] → bv[j] → tv[j] → tv[i] → bv[i]
+        //
+        // Verify: for edge (0,0)→(10,0) going right, outward = -Y
+        // bv[0]=(0,0,z_min), bv[1]=(10,0,z_min)
+        // bv[1]-bv[0] = (10,0,0)
+        // tv[0]-bv[0] = (0,0,z_max-z_min)
+        // cross((10,0,0), (0,0,1)) = (0,-10,0) → -Y ✓
+
+        let side_edges = vec![
+            WireEdge { idx: be[i], forward: true },    // bv[i] → bv[j]
+            WireEdge { idx: ve[j], forward: true },    // bv[j] → tv[j]
+            WireEdge { idx: te[(n - 1 - i) % n], forward: true }, // tv[j] → tv[i]
+            WireEdge { idx: ve[i], forward: false },   // tv[i] → bv[i]
+        ];
+        let wire = make_wire(side_edges);
+        let origin = if dx.abs() > dy.abs() {
+            DVec3::new(0.0, plane_coord, 0.0)
+        } else {
+            DVec3::new(plane_coord, 0.0, 0.0)
+        };
+        let surface = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin,
+            normal: plane_normal,
+        });
+        make_face(&mut brep, surface, wire, vec![]).ok()?;
+    }
+
+    Some(brep)
+}
+
 pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     if a.compound.is_some() || b.compound.is_some() {
         return None;
@@ -304,8 +602,68 @@ pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(b.clone());
     }
 
-    // Partial overlap: build the union from A\B slabs, the overlap slab, and
-    // B\A slabs, then sew and remove internal face pairs.
+    // Partial overlap.
+    // Try direct extrusion when the boxes share a full axis range.
+    if (amin.z - bmin.z).abs() < zero_tol && (amax.z - bmax.z).abs() < zero_tol {
+        let rects = [(amin.x, amax.x, amin.y, amax.y), (bmin.x, bmax.x, bmin.y, bmax.y)];
+        if let Some(outline) = rect_union_outline_cw(&rects) {
+            if let Some(brep) = build_extruded_brep(&outline, amin.z, amax.z) {
+                return Some(brep);
+            }
+        }
+    }
+    if (amin.y - bmin.y).abs() < zero_tol && (amax.y - bmax.y).abs() < zero_tol {
+        let rects = [(amin.x, amax.x, amin.z, amax.z), (bmin.x, bmax.x, bmin.z, bmax.z)];
+        if let Some(outline) = rect_union_outline_cw(&rects) {
+            // Extrude in Y: map (x,z) → outline, then remap to 3D
+            if let Some(mut brep) = build_extruded_brep(&outline, amin.y, amax.y) {
+                // Transform the BRep: swap Y and Z so that the extrusion
+                // (which was done along Z) becomes the Y-axis.
+                // build_extruded_brep extrudes in Z, so the outline is in XY.
+                // We want outline in XZ with extrusion in Y.
+                // Remap: (x_outline, y_outline, z_extrude) → (x_outline, z_extrude, y_outline)
+                // Actually, build_extruded_brep takes outline as (x,y) and extrudes to z.
+                // To extrude in Y: I want outline as (x,z) → becomes (x,y,z) with y being z.
+                // The simplest approach: rename vertices by swapping Y ↔ Z.
+                for v in &mut brep.vertices {
+                    v.point = DVec3::new(v.point.x, v.point.z, v.point.y);
+                }
+                // Also swap normals on the top/bottom faces
+                for solid in &mut brep.solids {
+                    for shell in &mut solid.shells {
+                        for face in &mut shell.faces {
+                            face.normal = DVec3::new(face.normal.x, face.normal.z, face.normal.y);
+                        }
+                    }
+                }
+                return Some(brep);
+            }
+        }
+    }
+    if (amin.x - bmin.x).abs() < zero_tol && (amax.x - bmax.x).abs() < zero_tol {
+        let rects = [(amin.y, amax.y, amin.z, amax.z), (bmin.y, bmax.y, bmin.z, bmax.z)];
+        if let Some(outline) = rect_union_outline_cw(&rects) {
+            // Extrude in X: map (y,z) → outline, then remap to 3D
+            if let Some(mut brep) = build_extruded_brep(&outline, amin.x, amax.x) {
+                // build_extruded_brep extrudes in Z, so the outline is in XY.
+                // We want outline in YZ with extrusion in X.
+                // Remap: (x_outline, y_outline, z_extrude) → (z_extrude, x_outline, y_outline)
+                for v in &mut brep.vertices {
+                    v.point = DVec3::new(v.point.z, v.point.x, v.point.y);
+                }
+                for solid in &mut brep.solids {
+                    for shell in &mut solid.shells {
+                        for face in &mut shell.faces {
+                            face.normal = DVec3::new(face.normal.z, face.normal.x, face.normal.y);
+                        }
+                    }
+                }
+                return Some(brep);
+            }
+        }
+    }
+
+    // Fallback: slab decomposition + sew + internal face removal.
     let a_slabs = decompose_slabs(amin, amax, rmin, rmax, zero_tol)?;
     let b_slabs = decompose_slabs(bmin, bmax, rmin, rmax, zero_tol)?;
     let overlap = make_box_brep(
@@ -584,6 +942,81 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
     brep.solids.retain(|s| {
         s.shells.iter().any(|sh| !sh.faces.is_empty())
     });
+
+    // Collect vertices and edges still referenced by remaining faces.
+    let mut used_verts = vec![false; brep.vertices.len()];
+    let mut used_edges = vec![false; brep.edges.len()];
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    if we.idx < brep.edges.len() {
+                        used_edges[we.idx] = true;
+                        let e = &brep.edges[we.idx];
+                        if e.start < brep.vertices.len() { used_verts[e.start] = true; }
+                        if e.end < brep.vertices.len() { used_verts[e.end] = true; }
+                    }
+                }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        if we.idx < brep.edges.len() {
+                            used_edges[we.idx] = true;
+                            let e = &brep.edges[we.idx];
+                            if e.start < brep.vertices.len() { used_verts[e.start] = true; }
+                            if e.end < brep.vertices.len() { used_verts[e.end] = true; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build remap for vertices
+    let mut v_remap: Vec<Option<usize>> = vec![None; brep.vertices.len()];
+    let mut new_verts: Vec<Vertex> = Vec::new();
+    for (i, v) in brep.vertices.iter().enumerate() {
+        if used_verts[i] {
+            v_remap[i] = Some(new_verts.len());
+            new_verts.push(*v);
+        }
+    }
+
+    // Build remap for edges
+    let mut e_remap: Vec<Option<usize>> = vec![None; brep.edges.len()];
+    let mut new_edges: Vec<Edge> = Vec::new();
+    for (i, e) in brep.edges.iter().enumerate() {
+        if used_edges[i] {
+            e_remap[i] = Some(new_edges.len());
+            new_edges.push(Edge {
+                start: v_remap[e.start].unwrap_or(e.start),
+                end: v_remap[e.end].unwrap_or(e.end),
+            });
+        }
+    }
+
+    brep.vertices = new_verts;
+    brep.edges = new_edges;
+
+    // Remap edge indices in face wires.
+    let remap_edge_idx = |idx: &mut usize| {
+        if let Some(new_idx) = e_remap.get(*idx).copied().flatten() {
+            *idx = new_idx;
+        }
+    };
+    for solid in &mut brep.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                for we in &mut face.outer_wire.edges {
+                    remap_edge_idx(&mut we.idx);
+                }
+                for wire in &mut face.inner_wires {
+                    for we in &mut wire.edges {
+                        remap_edge_idx(&mut we.idx);
+                    }
+                }
+            }
+        }
+    }
 
     brep
 }
@@ -11582,5 +12015,4 @@ mod tests {
                 println!("  SA: {:.6}", rcad_kernel::surface_area(r));
             }
         }
-    }
-}
+    }}
