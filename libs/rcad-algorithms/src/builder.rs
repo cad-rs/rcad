@@ -1431,6 +1431,29 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+        // Collect cylinder surfaces from B faces for potential cylinder-wall trimming
+        let b_cylinders: Vec<CylindricalSurface> = b_faces.iter()
+            .filter_map(|&fi| {
+                if let Surface3::Cylinder(c) = &self.ds.faces[fi].surface {
+                    Some(*c)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Collect cylinder surfaces from A faces for potential cylinder-wall trimming
+        // in Intersection (used when B-side planar faces are inside an A-side cylinder).
+        let a_cylinders: Vec<CylindricalSurface> = a_faces.iter()
+            .filter_map(|&fi| {
+                if let Surface3::Cylinder(c) = &self.ds.faces[fi].surface {
+                    Some(*c)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
@@ -1482,6 +1505,26 @@ impl<'a> BooleanBuilder<'a> {
                     // Track A-face planes for coplanar dedup with B faces
                     if let Surface3::Plane(p) = &sub.surface {
                         a_on_planes.push((p.normal, p.origin));
+                    }
+                } else if class == Classification::In
+                    && self.op == BooleanOpType::Difference
+                    && !b_cylinders.is_empty()
+                    && matches!(sub.surface, Surface3::Plane(_))
+                {
+                    // In-classified planar sub-face: try to keep the portion
+                    // outside the B-cylinder wall (the inside-cylinder portion
+                    // would be removed material in Difference).
+                    if let Surface3::Plane(plane) = &sub.surface {
+                        for cyl in &b_cylinders {
+                            if let Some(trimmed) = try_trim_planar_subface_by_cylinder(
+                                sub, plane.normal, plane.origin, cyl, false,
+                            ) {
+                                let src = self.ds.faces[fi].source_face_idx;
+                                result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromA(src));
+                                a_on_planes.push((plane.normal, plane.origin));
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -1549,9 +1592,35 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     }
-                    let flip = self.op == BooleanOpType::Difference;
-                    let src = self.ds.faces[fi].source_face_idx;
-                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+                    // For Intersection, trim In-classified planar B-sub-faces to the
+                    // inside-cylinder-wall portion to prevent SA inflation from
+                    // Pave-Filler's imprecise cylinder-box intersection boundary.
+                    let trimmed_opt = if self.op == BooleanOpType::Intersection
+                        && class == Classification::In
+                        && !a_cylinders.is_empty()
+                        && matches!(sub.surface, Surface3::Plane(_))
+                    {
+                        if let Surface3::Plane(plane) = &sub.surface {
+                            a_cylinders.iter().find_map(|cyl| {
+                                try_trim_planar_subface_by_cylinder(
+                                    sub, plane.normal, plane.origin, cyl, true,
+                                )
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(trimmed) = trimmed_opt {
+                        let src = self.ds.faces[fi].source_face_idx;
+                        result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
+                    } else {
+                        let flip = self.op == BooleanOpType::Difference;
+                        let src = self.ds.faces[fi].source_face_idx;
+                        result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+                    }
                 }
             }
         }
@@ -6987,6 +7056,232 @@ pub fn compute_adaptive_glue_tolerance(
     };
 
     adaptive_tol.max(TOLERANCE_ABS)
+}
+
+/// When a planar A-sub-face is classified as Inside (for Difference), but the B solid
+/// is a cylinder, the sub-face may straddle the cylinder wall. This function detects
+/// exactly 2 crossings of the cylinder wall on the sub-face boundary, then constructs
+/// a trimmed polygon keeping only the outside-cylinder-wall portion.
+fn try_trim_planar_subface_by_cylinder(
+    sub: &SubFace,
+    _plane_normal: DVec3,
+    _plane_origin: DVec3,
+    cylinder: &CylindricalSurface,
+    keep_inside: bool, // true → keep inside-cylinder portion (Intersection), false → keep outside-cylinder portion (Difference)
+) -> Option<SubFace> {
+    let tol = TOLERANCE_MESH_LEGACY;
+    let cyl_axis = cylinder.axis;
+    let cyl_origin = cylinder.origin;
+    let cyl_r = cylinder.radius;
+    let boundary = &sub.boundary;
+    let n = boundary.len();
+    if n < 3 {
+        return None;
+    }
+
+    // Signed distance to cylinder wall (negative = inside, positive = outside)
+    let dists: Vec<f64> = boundary
+        .iter()
+        .map(|p| {
+            let v = *p - cyl_origin;
+            let proj = v.dot(cyl_axis);
+            let radial = (v - cyl_axis * proj).length();
+            radial - cyl_r
+        })
+        .collect();
+
+    let ins: Vec<bool> = dists.iter().map(|&d| d < -tol).collect();
+    let outs: Vec<bool> = dists.iter().map(|&d| d > tol).collect();
+
+    let n_inside = ins.iter().filter(|&&b| b).count();
+    if n_inside == 0 {
+        return None;
+    }
+
+    // Find crossing edges (Inside ↔ Outside transitions)
+    let mut crossing_edges: Vec<usize> = Vec::new();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        if (ins[i] && outs[j]) || (outs[i] && ins[j]) {
+            crossing_edges.push(i);
+        }
+    }
+    if crossing_edges.len() != 2 {
+        return None;
+    }
+
+    let e1 = crossing_edges[0];
+    let e2 = crossing_edges[1];
+    let j1 = (e1 + 1) % n;
+    let j2 = (e2 + 1) % n;
+
+    let cp1 = edge_cylinder_crossing(boundary[e1], boundary[j1], cyl_origin, cyl_axis, cyl_r)?;
+    let cp2 = edge_cylinder_crossing(boundary[e2], boundary[j2], cyl_origin, cyl_axis, cyl_r)?;
+
+    // Determine traversal direction based on which side of the cylinder wall to keep.
+    //
+    // For the outside chain (keep_inside = false):
+    //   O→I: outside at i, inside at j → start at i, step backward
+    //   I→O: inside at i, outside at j → start at j, step forward
+    //
+    // For the inside chain (keep_inside = true):
+    //   O→I: outside at i, inside at j → start at j, step forward
+    //   I→O: inside at i, outside at j → start at i, step backward
+    let (start1, step1, start2) = if keep_inside {
+        // Inside chain: walk through inside vertices
+        let (s1, st1) = if outs[e1] && ins[j1] {
+            (j1 as i32, 1i32)     // O→I: inside at j, step forward
+        } else if ins[e1] && outs[j1] {
+            (e1 as i32, -1i32)    // I→O: inside at e, step backward
+        } else {
+            return None;
+        };
+        let s2 = if outs[e2] && ins[j2] {
+            j2 as i32             // O→I: inside at j
+        } else if ins[e2] && outs[j2] {
+            e2 as i32             // I→O: inside at e
+        } else {
+            return None;
+        };
+        (s1, st1, s2)
+    } else {
+        // Outside chain (original Difference behavior)
+        let (s1, st1) = if outs[e1] && ins[j1] {
+            (e1 as i32, -1i32)
+        } else if ins[e1] && outs[j1] {
+            (j1 as i32, 1i32)
+        } else {
+            return None;
+        };
+        let s2 = if outs[e2] && ins[j2] {
+            e2 as i32
+        } else if ins[e2] && outs[j2] {
+            j2 as i32
+        } else {
+            return None;
+        };
+        (s1, st1, s2)
+    };
+
+    // Walk from cp1 through selected chain vertices to cp2
+    let ni = n as i32;
+    let mut result_boundary: Vec<DVec3> = Vec::new();
+    result_boundary.push(cp1);
+    let mut idx = start1;
+    loop {
+        result_boundary.push(boundary[idx as usize]);
+        if idx == start2 {
+            break;
+        }
+        idx = (idx + step1).rem_euclid(ni);
+    }
+    result_boundary.push(cp2);
+
+    // Close with cylinder-plane intersection arc from cp2 back to cp1.
+    // This traces the ellipse formed by the intersection of the cylinder
+    // wall with the sub-face plane, so the arc lies on the plane.
+    add_plane_cylinder_intersection_arc(
+        &mut result_boundary, cp2, cp1, cylinder,
+        _plane_normal, _plane_origin, 24,
+    );
+
+    Some(SubFace {
+        boundary: result_boundary,
+        surface: sub.surface.clone(),
+        normal: sub.normal,
+        uv_centroid: None,
+        sample_override: None,
+        uv_domain: None,
+        inner_wires: vec![],
+    })
+}
+
+/// Find the point where line segment `a`–`b` crosses the cylinder wall.
+fn edge_cylinder_crossing(
+    a: DVec3,
+    b: DVec3,
+    cyl_origin: DVec3,
+    cyl_axis: DVec3,
+    cyl_r: f64,
+) -> Option<DVec3> {
+    let d = b - a;
+    let v0 = a - cyl_origin;
+    let v0_ax = v0.dot(cyl_axis);
+    let d_ax = d.dot(cyl_axis);
+    let r0 = v0 - cyl_axis * v0_ax;
+    let rd = d - cyl_axis * d_ax;
+
+    // Solve |r0 + t·rd|² = cyl_r²
+    let a_c = rd.dot(rd);
+    let b_c = 2.0 * r0.dot(rd);
+    let c_c = r0.dot(r0) - cyl_r * cyl_r;
+
+    let disc = b_c * b_c - 4.0 * a_c * c_c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sqrt_disc = disc.sqrt();
+    let t1 = (-b_c + sqrt_disc) / (2.0 * a_c);
+    let t2 = (-b_c - sqrt_disc) / (2.0 * a_c);
+
+    // One root must be in [0, 1]
+    let t = if (0.0..=1.0).contains(&t1) { t1 } else { t2 };
+    if !(0.0..=1.0).contains(&t) {
+        return None;
+    }
+    Some(a + d * t)
+}
+
+/// Add points along the cylinder-plane intersection arc from `from` to `to`.
+/// Each arc point lies on BOTH the cylinder surface and the sub-face plane,
+/// tracing the ellipse formed by their intersection.
+fn add_plane_cylinder_intersection_arc(
+    result: &mut Vec<DVec3>,
+    from: DVec3,
+    to: DVec3,
+    cyl: &CylindricalSurface,
+    plane_normal: DVec3,
+    plane_origin: DVec3,
+    n_arc: usize,
+) {
+    let v_from = from - cyl.origin;
+    let v_to = to - cyl.origin;
+    let proj_from = v_from.dot(cyl.axis);
+    let proj_to = v_to.dot(cyl.axis);
+
+    let radial_from = (v_from - cyl.axis * proj_from).normalize();
+    let radial_to = (v_to - cyl.axis * proj_to).normalize();
+
+    // Short arc angle
+    let dot = radial_from.dot(radial_to).clamp(-1.0, 1.0);
+    let angle = dot.acos();
+    let cross = radial_from.cross(radial_to);
+    let sign = if cross.dot(cyl.axis) >= 0.0 { 1.0 } else { -1.0 };
+
+    // Precompute plane-projection coefficients.
+    // For a point on the cylinder: p(θ,h) = origin + r·r̂(θ) + axis·h
+    // Plane equation: n·(p - plane_origin) = 0
+    // Solve for h:  h = -(n·(origin - plane_origin) + r·n·r̂(θ)) / (n·axis)
+    let denom = plane_normal.dot(cyl.axis);
+    let cyl_offset = plane_normal.dot(cyl.origin - plane_origin);
+
+    for i in 1..n_arc {
+        let frac = i as f64 / n_arc as f64;
+        let theta = sign * frac * angle;
+        let rotated = radial_from * theta.cos() + cyl.axis.cross(radial_from) * theta.sin();
+
+        // Height on cylinder axis that satisfies the plane equation.
+        // When the plane is nearly parallel to the axis (denom ≈ 0), the
+        // intersection approaches a straight line; fall back to linear
+        // height interpolation between the two crossing points.
+        let h = if denom.abs() > 1e-10 {
+            -(cyl_offset + cyl.radius * plane_normal.dot(rotated)) / denom
+        } else {
+            proj_from * (1.0 - frac) + proj_to * frac
+        };
+
+        result.push(cyl.origin + cyl.radius * rotated + cyl.axis * h);
+    }
 }
 
 #[cfg(test)]
