@@ -5170,6 +5170,349 @@ pub fn try_union_coaxial_cones(a: &BRep, b: &BRep) -> Option<BRep> {
         .or_else(|| try_union_coaxial_cones_one_dir(b, a))
 }
 
+/// Return the CCW boundary polygon of the union of two circles.
+///
+/// `c1`, `c2` — centers, `r1`, `r2` — radii.
+/// `n1` — sample count for C1's boundary arc, `n2` — for C2's arc.
+///
+/// Cases handled: concentric (larger circle), contained (larger circle),
+/// disjoint (both full circles), and overlapping (two arcs joined).
+fn two_circle_union_ccw_pts(
+    c1: DVec2, r1: f64, c2: DVec2, r2: f64, n1: usize, n2: usize,
+) -> Vec<DVec2> {
+    let d = (c2 - c1).length();
+    let tol = 1e-12;
+
+    if d < tol || d + r1.min(r2) <= r1.max(r2) + tol {
+        // Concentric or one contains the other — return the larger circle full.
+        let (c, r) = if r1 >= r2 { (c1, r1) } else { (c2, r2) };
+        let tau = std::f64::consts::TAU;
+        let n = n1 + n2;
+        return (0..=n).map(|i| {
+            let ang = tau * i as f64 / n as f64;
+            let (s, c) = ang.sin_cos();
+            c + DVec2::new(r * c, r * s)
+        }).collect();
+    }
+
+    if d >= r1 + r2 - tol {
+        // Disjoint — both full circles.
+        let tau = std::f64::consts::TAU;
+        let mut pts: Vec<DVec2> = (0..n1).map(|i| {
+            let ang = tau * i as f64 / n1 as f64;
+            let (s, c) = ang.sin_cos();
+            c1 + DVec2::new(r1 * c, r1 * s)
+        }).collect();
+        let last = *pts.last().unwrap_or(&c1);
+        pts.extend((0..=n2).map(|i| {
+            let ang = tau * i as f64 / n2 as f64;
+            let (s, c) = ang.sin_cos();
+            c2 + DVec2::new(r2 * c, r2 * s)
+        }));
+        // Drop duplicate start point
+        if pts.len() > 3 && (pts.last().unwrap() - pts[0]).length_squared() < tol * tol {
+            pts.pop();
+        }
+        return pts;
+    }
+
+    // Overlapping — trace the outer envelope arcs.
+    let dir = (c2 - c1) / d;          // unit vector C1 → C2
+    let perp = DVec2::new(-dir.y, dir.x); // 90° CCW
+
+    let ix = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
+    let iy = (r1 * r1 - ix * ix).max(0.0).sqrt();
+
+    let cos_t1 = (ix / r1).clamp(-1.0, 1.0);
+    let theta1 = cos_t1.acos();                  // C1 arc half-angle
+    let C = ((r1 * r1 - d * d - r2 * r2) / (2.0 * d * r2)).clamp(-1.0, 1.0);
+    let theta2 = C.acos();                       // C2 arc half-angle
+
+    let tau = std::f64::consts::TAU;
+
+    // C1 outer arc: from theta1 → 2π − theta1 (through π, the left/away side).
+    let a1_start = theta1;
+    let a1_end = tau - theta1;
+    let sweep1 = ((a1_end - a1_start) % tau + tau) % tau; // positive
+
+    let mut pts = Vec::with_capacity(n1 + n2 + 2);
+    for k in 0..=n1 {
+        let frac = k as f64 / n1 as f64;
+        let ang = a1_start + sweep1 * frac;
+        let (s, c) = ang.sin_cos();
+        pts.push(c1 + DVec2::new(r1 * c, r1 * s));
+    }
+
+    // C2 outer arc: from −θ2 → +θ2 (through 0, the right/away side).
+    // In C2's local frame (+X = dir = away from C1, +Y = perp = CCW).
+    let a2_start = -theta2;
+    let a2_end = theta2;
+    let sweep2 = a2_end - a2_start; // = 2 * theta2, always positive
+
+    for k in 1..n2 {
+        let frac = k as f64 / n2 as f64;
+        let ang = a2_start + sweep2 * frac;
+        let (s, c) = ang.sin_cos();
+        pts.push(c2 + r2 * (c * dir + s * perp));
+    }
+
+    // Close the polygon (remove trailing duplicate start-point).
+    if pts.len() > 3 && (pts.last().unwrap() - pts[0]).length_squared() < tol * tol {
+        pts.pop();
+    }
+    pts
+}
+
+/// Build a tessellated BRep for the union of two Z-aligned cone frustums with
+/// offset XY centers.
+///
+/// The first cone is assumed to be the one with the larger Z span (the one that
+/// provides the "above-overlap" walls).
+fn build_cone_cone_union_tessellated(
+    c1_xy: DVec2, c1_z_lo: f64, c1_z_hi: f64, c1_r_lo: f64, c1_r_hi: f64,
+    c2_xy: DVec2, c2_z_lo: f64, c2_z_hi: f64, c2_r_lo: f64, c2_r_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let overlap_lo = c1_z_lo.max(c2_z_lo);
+    let overlap_hi = c1_z_hi.min(c2_z_hi);
+    let has_overlap = overlap_hi > overlap_lo + tol;
+    let has_top = c1_z_hi > overlap_hi + tol;
+
+    // Cone 1 radius at any Z (the tall cone that continues above overlap).
+    let c1_dr_dz = (c1_r_hi - c1_r_lo) / (c1_z_hi - c1_z_lo);
+    let c1_r = |z: f64| (c1_r_lo + c1_dr_dz * (z - c1_z_lo)).max(0.0);
+
+    // Cone 2 radius at any Z.
+    let c2_dr_dz = (c2_r_hi - c2_r_lo) / (c2_z_hi - c2_z_lo);
+    let c2_r = |z: f64| (c2_r_lo + c2_dr_dz * (z - c2_z_lo)).max(0.0);
+
+    const N_ARC: usize = 48;   // sample points per circle boundary arc
+    const N_SLICE: usize = 32; // Z slices in the overlap region
+
+    let empty_wire = || Wire { edges: vec![] };
+    // Simple world transform: points are already in world XY.
+    let to_world = |x: f64, y: f64, z: f64| -> DVec3 { DVec3::new(x, y, z) };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+    let mut faces: Vec<Face> = Vec::new();
+
+    // ── Overlap region [overlap_lo, overlap_hi] (two-circle union) ──
+    if has_overlap {
+        // Pre-compute slice polygons at each Z level.
+        let n_sl = N_SLICE.max(1);
+        let mut polys: Vec<Vec<DVec2>> = Vec::with_capacity(n_sl + 1);
+        for i in 0..=n_sl {
+            let z = overlap_lo + (overlap_hi - overlap_lo) * i as f64 / n_sl as f64;
+            let r_a = c1_r(z);
+            let r_b = c2_r(z);
+            polys.push(two_circle_union_ccw_pts(c1_xy, r_a, c2_xy, r_b, N_ARC, N_ARC));
+        }
+
+        // Extrude walls between consecutive slices.
+        for i in 0..n_sl {
+            let z0 = overlap_lo + (overlap_hi - overlap_lo) * i as f64 / n_sl as f64;
+            let z1 = overlap_lo + (overlap_hi - overlap_lo) * (i + 1) as f64 / n_sl as f64;
+            let n = polys[i].len();
+            if n < 3 { continue; }
+
+            let mut idx = Vec::with_capacity(2 * n);
+            for p in &polys[i] { idx.push(add_v(to_world(p.x, p.y, z0))); }
+            for p in &polys[i] { idx.push(add_v(to_world(p.x, p.y, z1))); }
+            let mut tris = Vec::with_capacity(n * 2);
+            for j in 0..n {
+                let k = (j + 1) % n;
+                tris.push([idx[j], idx[k], idx[n + k]]);
+                tris.push([idx[j], idx[n + k], idx[n + j]]);
+            }
+            faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        }
+
+        // ── Interface face at overlap_hi: two-circle union minus the circle of cone 1 ──
+        if has_top {
+            let r_at = c1_r(overlap_hi);
+            let poly = two_circle_union_ccw_pts(c1_xy, r_at, c2_xy, c2_r(overlap_hi), N_ARC, N_ARC);
+            add_interface_face(
+                &mut add_v, &mut faces,
+                &poly, overlap_hi, -DVec3::Z,
+                c1_xy, r_at,
+                &to_world, &empty_wire,
+            );
+        }
+    }
+
+    // ── Top region [overlap_hi, c1_z_hi] (single cone) ──
+    if has_top {
+        let n_sl = N_SLICE.max(1);
+        let z0 = overlap_hi;
+        let z1 = c1_z_hi;
+        // Build wall using the single-circle polygon.
+        let r_lo = c1_r(z0);
+        let r_hi = c1_r(z1);
+        if r_lo > tol {
+            let bot_poly = two_circle_union_ccw_pts(c1_xy, r_lo, c2_xy, c2_r(z0), N_ARC, N_ARC);
+            // Remap to same vertex count as interface uses.
+            let poly_single = build_circle_polygon(c1_xy.x, c1_xy.y, r_lo);
+            let n_pts = bot_poly.len();
+            let poly = if poly_single.len() != n_pts {
+                let ref_pt = c1_xy + DVec2::new(r_lo, 0.0);
+                remap_polygon_arclength(&poly_single, n_pts, ref_pt)
+            } else {
+                poly_single
+            };
+
+            // Bottom cap at overlap_hi if no interface was created.
+            if !has_overlap {
+                add_cap_face(&mut add_v, &mut faces, &poly, z0, -DVec3::Z, &to_world, &empty_wire);
+            }
+
+            // Build wall from z0 to z1.
+            let dz = (z1 - z0) / n_sl as f64;
+            // We need to handle the transition here: use poly at z0 and circle at z1.
+            // But since both use the same vertex count (after remapping), the wall
+            // connects them directly.
+            let top_r_at = |z: f64| {
+                let r = c1_r(z);
+                let mut p = build_circle_polygon(c1_xy.x, c1_xy.y, r);
+                if p.len() != n_pts {
+                    let ref_pt = c1_xy + DVec2::new(r, 0.0);
+                    p = remap_polygon_arclength(&p, n_pts, ref_pt);
+                }
+                p
+            };
+
+            for i in 0..n_sl {
+                let za = z0 + dz * i as f64;
+                let zb = z0 + dz * (i + 1) as f64;
+                let pts_a = top_r_at(za);
+                let pts_b = top_r_at(zb);
+                let n = pts_a.len();
+                if n < 3 { continue; }
+                let mut idx = Vec::with_capacity(2 * n);
+                for p in &pts_a { idx.push(add_v(to_world(p.x, p.y, za))); }
+                for p in &pts_b { idx.push(add_v(to_world(p.x, p.y, zb))); }
+                let mut tris = Vec::with_capacity(n * 2);
+                for j in 0..n {
+                    let k = (j + 1) % n;
+                    tris.push([idx[j], idx[k], idx[n + k]]);
+                    tris.push([idx[j], idx[n + k], idx[n + j]]);
+                }
+                faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+            }
+
+            // Top cap at c1_z_hi.
+            let r_top = c1_r(z1);
+            if r_top > tol {
+                let mut top_poly = build_circle_polygon(c1_xy.x, c1_xy.y, r_top);
+                if top_poly.len() != n_pts {
+                    let ref_pt = c1_xy + DVec2::new(r_top, 0.0);
+                    top_poly = remap_polygon_arclength(&top_poly, n_pts, ref_pt);
+                }
+                add_cap_face(&mut add_v, &mut faces, &top_poly, z1, DVec3::Z, &to_world, &empty_wire);
+            }
+        }
+    }
+
+    // ── Bottom cap ──
+    if !has_overlap || c1_z_lo < overlap_lo - tol {
+        let z = c1_z_lo;
+        let r = c1_r(z);
+        if r > tol {
+            let poly = two_circle_union_ccw_pts(c1_xy, r, c2_xy, c2_r(z), N_ARC, N_ARC);
+            add_cap_face(&mut add_v, &mut faces, &poly, z, -DVec3::Z, &to_world, &empty_wire);
+        }
+    } else {
+        let z = overlap_lo;
+        let r_a = c1_r(z);
+        let r_b = c2_r(z);
+        if r_a > tol || r_b > tol {
+            let poly = two_circle_union_ccw_pts(c1_xy, r_a, c2_xy, r_b, N_ARC, N_ARC);
+            add_cap_face(&mut add_v, &mut faces, &poly, z, -DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    // ── Top cap (only if no top region was built above) ──
+    if !has_top {
+        let z = c1_z_hi;
+        let r = c1_r(z);
+        if r > tol {
+            let poly = if c1_z_hi > overlap_hi + tol || !has_overlap {
+                build_circle_polygon(c1_xy.x, c1_xy.y, r)
+            } else {
+                two_circle_union_ccw_pts(c1_xy, r, c2_xy, c2_r(z), N_ARC, N_ARC)
+            };
+            add_cap_face(&mut add_v, &mut faces, &poly, z, DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Detect cone-cone union with offset centers (different XY, same Z-axis).
+fn try_union_offset_cones_one_dir(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi) = detect_z_axis_cone_frustum(a)?;
+    let (c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi) = detect_z_axis_cone_frustum(b)?;
+
+    // Ensure c1 is the one with larger Z span (it continues above overlap).
+    let (s_a, s_b) = if (c1_z_hi - c1_z_lo) >= (c2_z_hi - c2_z_lo) {
+        ((c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi),
+         (c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi))
+    } else {
+        ((c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi),
+         (c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi))
+    };
+
+    let (c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi) = s_a;
+    let (c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi) = s_b;
+
+    let tol = TOLERANCE_LEN_MIN;
+
+    // Not offset — delegate to coaxial path.
+    if (c1_xy.x - c2_xy.x).abs() < tol && (c1_xy.y - c2_xy.y).abs() < tol {
+        return None;
+    }
+
+    // Z ranges must overlap.
+    if c1_z_hi < c2_z_lo - tol || c2_z_hi < c1_z_lo - tol {
+        return None;
+    }
+
+    build_cone_cone_union_tessellated(
+        c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi,
+        c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi,
+    )
+}
+
+/// Bidirectional wrapper for offset cone-cone union.
+pub fn try_union_offset_cones(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_union_offset_cones_one_dir(a, b)
+        .or_else(|| try_union_offset_cones_one_dir(b, a))
+}
+
 /// Build BRep for outer conical frustum minus inner conical frustum (coaxial, Z-aligned).
 /// Result is a hollow conical frustum: outer lateral + bottom cap + top annulus + inner lateral + cavity floor.
 ///
@@ -7099,9 +7442,10 @@ fn build_cylinder_box_diff_tessellated(
 
     let mut faces: Vec<Face> = Vec::new();
 
-    // Transform box UV coords to world space
+    // Transform box UV coords to world space.
+    // z is a world Z coordinate, so we must NOT add bc.z.
     let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
-        bc + u_ax * u + v_ax * v + DVec3::new(0.0, 0.0, z)
+        DVec3::new(bc.x + u_ax.x * u + v_ax.x * v, bc.y + u_ax.y * u + v_ax.y * v, z)
     };
 
     // ---- 1. Find circle-rect intersections ----
@@ -7255,17 +7599,12 @@ fn build_cylinder_box_diff_tessellated(
         if e.len() < 2 { return None; }
         let (a, b) = (e[0], e[1]);
         // Edge t parameter increases along the edge direction (as in rect_edges).
-        // CW direction:
-        // - edge 0 (bottom): CW = right→left = opposite of edge direction = larger t first
-        // - edge 3 (left): CW = bottom→top = same as edge direction = smaller t first
-        // - edge 2 (top): CW = left→right = opposite of edge direction = larger t first
-        // - edge 1 (right): CW = top→bottom = opposite of edge direction = larger t first
-        let reverse = edge == 0 || edge == 2 || edge == 1;
-        if reverse {
-            if ints[a].t > ints[b].t { Some((a, b)) } else { Some((b, a)) }
-        } else {
-            if ints[a].t < ints[b].t { Some((a, b)) } else { Some((b, a)) }
-        }
+        // CW direction is OPPOSITE to edge direction for ALL edges:
+        // - edge 0 (bottom, A→B left→right): CW = right→left = larger t first
+        // - edge 1 (right, B→C bottom→top): CW = top→bottom = larger t first
+        // - edge 2 (top,    C→D right→left): CW = left→right = larger t first
+        // - edge 3 (left,   D→A top→bottom): CW = bottom→top = larger t first
+        if ints[a].t > ints[b].t { Some((a, b)) } else { Some((b, a)) }
     };
 
     // Build polygons: one per run
@@ -7326,15 +7665,19 @@ fn build_cylinder_box_diff_tessellated(
                     }
                     first_edge = false;
                 } else {
-                    // Add both points in CW order
+                    // Add points in CW order, stopping at run.start on the
+                    // start edge to avoid over-traversing into the next run's
+                    // boundary segment (which would double-count wall area).
                     let last_pt = pts.last().copied();
                     if last_pt.map_or(true, |lp| (lp - ints[cw_first].pt).length_squared() > tol * tol) {
                         pts.push(ints[cw_first].pt);
                     }
+                    if edge == start_edge && cw_first == run.start { break; }
                     let last_pt2 = pts.last().copied();
                     if last_pt2.map_or(true, |lp| (lp - ints[cw_second].pt).length_squared() > tol * tol) {
                         pts.push(ints[cw_second].pt);
                     }
+                    if edge == start_edge && cw_second == run.start { break; }
                 }
             }
 
@@ -8521,92 +8864,6 @@ pub fn try_difference_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
     build_cone_minus_box_tessellated(bmin, bmax, cx, cy, z_lo, z_hi, r_lo, r_hi)
 }
 
-/// Entry point for box − cylinder boolean difference.
-pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
-    // Detect which BRep is the box and which is the cylinder.
-    // First check: a is a cylinder and b is a box → box is b (the B in B−A).
-    // Second check: a is a box and b is a cylinder → box is a.
-    let (box_brep, cyl_center, cyl_axis, cyl_r, cyl_brep_for_z) = {
-        let ba = try_as_box(a);
-        let ca = try_cylinder_center_axis_radius_height(a);
-        let bb = try_as_box(b);
-        let cb = try_cylinder_center_axis_radius_height(b);
-
-        if let (Some(cyl), Some(bx)) = (ca, bb) {
-            // Operation is cylinder - box, but this fast-path only handles box - cylinder.
-            // Return None to fall through to Pave-Filler.
-            return None;
-        } else if let (Some(bx), Some(cyl)) = (ba, cb) {
-            let (center, axis, radius, _) = cyl;
-            (bx, center, axis, radius, b)
-        } else {
-            return None;
-        }
-    };
-
-    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN { return None; }
-
-    let z_idx = find_z_axis_index(&box_brep)?;
-    let (u_idx, v_idx) = match z_idx {
-        0 => (1, 2),
-        1 => (2, 0),
-        _ => (0, 1),
-    };
-    let u_ax = box_brep.axes[u_idx];
-    let v_ax = box_brep.axes[v_idx];
-    let eu = box_brep.extents[u_idx];
-    let ev = box_brep.extents[v_idx];
-    let ew = box_brep.extents[z_idx];
-    let c = box_brep.center;
-
-    let cu = (cyl_center - c).dot(u_ax);
-    let cv = (cyl_center - c).dot(v_ax);
-
-    // Get cylinder Z range from cap faces of the original cylinder BRep.
-    let find_z = |brep: &BRep| -> Option<(f64, f64)> {
-        let shell = brep.solids.first()?.shells.first()?;
-        let mut z_vals: Vec<f64> = Vec::new();
-        for fi in 0..shell.faces.len() {
-            if let Some(Some(si)) = brep.geom.face_surface.get(fi) {
-                if let Some(Surface3::Plane(pl)) = brep.geom.surfaces.get(*si) {
-                    z_vals.push(pl.origin.z);
-                }
-            }
-        }
-        if z_vals.len() < 2 { return None; }
-        z_vals.sort_by(|a,b| a.partial_cmp(b).unwrap());
-        Some((z_vals[0], z_vals[z_vals.len()-1]))
-    };
-    let (cyl_z_lo, cyl_z_hi) = find_z(cyl_brep_for_z)?;
-
-    // If cylinder is fully contained in (or tangent to) the box XY rect, use the
-    // inner-wire approach since the merged-segment method can't handle it.
-    let tol_xy = TOL * 10.0;
-    if cu - cyl_r >= -eu - tol_xy && cu + cyl_r <= eu + tol_xy
-        && cv - cyl_r >= -ev - tol_xy && cv + cyl_r <= ev + tol_xy
-    {
-        return build_box_cylinder_full_containment(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
-    }
-
-    // When cylinder center is inside the box UV rect and extends beyond 2+ edges,
-    // the merged-segment cap polygon can't handle the disconnected circle arcs.
-    // Build caps with inner hole (face-with-hole topology) instead.
-    let inside_uv = cu >= -eu && cu <= eu && cv >= -ev && cv <= ev;
-    let extends_beyond_left = cu - cyl_r < -eu;
-    let extends_beyond_right = cu + cyl_r > eu;
-    let extends_beyond_bottom = cv - cyl_r < -ev;
-    let extends_beyond_top = cv + cyl_r > ev;
-    let n_beyond = [extends_beyond_left, extends_beyond_right, extends_beyond_bottom, extends_beyond_top].iter().filter(|&&x| x).count();
-    if inside_uv && n_beyond >= 2 {
-        return build_box_cylinder_result_partial_with_holes(
-            c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi,
-        );
-    }
-
-    let result = build_box_cylinder_result_partial(c, u_ax, v_ax, eu, ev, ew, cu, cv, cyl_r, cyl_z_lo, cyl_z_hi);
-    result
-}
-
 /// Fast path: cylinder − box boolean difference.
 ///
 /// When the box fully contains the cylinder cross-section in XY (at the Z-range
@@ -8748,10 +9005,11 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
             if dist_sq > cyl_r * cyl_r + 1e-9 {
                 // Full-height difference, corner outside cylinder:
                 // use Z-slice tessellation instead of gap routing.
-                return build_cylinder_box_diff_tessellated(
+                let result = build_cylinder_box_diff_tessellated(
                     bc, u_ax, v_ax, cu, cv, cyl_r, cyl_height, eu, ev,
                     inter_lo, inter_hi,
                 );
+                return result;
             }
         }
     }
@@ -8810,6 +9068,70 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
         1 => Some(pieces.into_iter().next().unwrap()),
         _ => Some(BRep::compound_from_shapes(&pieces)),
     }
+}
+
+/// Fast path: box − Z-cylinder where the cylinder is fully inside the box.
+///
+/// The correct result (box with a cylindrical cavity) has surface area
+/// SA(box) + SA(cylinder).  The Pave-Filler overcounts by creating extra
+/// annular cross-section faces inside the cavity.  Avoid it entirely by
+/// returning a compound of {box, cylinder} via [`BRep::append_disjoint_brep`].
+///
+/// Covers ZN4 (box 4×4×4 − cylinder r=1 h=2 at (2,2,1)).
+pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
+    let bx = try_as_box(a)?;
+    let (cyl_origin, cyl_axis, cyl_r, cyl_height) = try_cylinder_center_axis_radius_height(b)?;
+
+    // Only Z-aligned cylinders.
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+
+    let cyl_center = cyl_origin + cyl_axis * (cyl_height / 2.0);
+    let z_idx = find_z_axis_index(&bx)?;
+    let (u_idx, v_idx) = match z_idx {
+        0 => (1, 2),
+        1 => (2, 0),
+        _ => (0, 1),
+    };
+    let u_ax = bx.axes[u_idx];
+    let v_ax = bx.axes[v_idx];
+    let eu = bx.extents[u_idx];
+    let ev = bx.extents[v_idx];
+    let ew = bx.extents[z_idx];
+    let bc = bx.center;
+
+    let cu = (cyl_center - bc).dot(u_ax);
+    let cv = (cyl_center - bc).dot(v_ax);
+    let cz = (cyl_center - bc).dot(bx.axes[z_idx]);
+
+    let tol = TOL * 10.0;
+
+    // Check XY containment: cylinder must be fully inside the box cross-section.
+    if cu - cyl_r < -eu - tol || cu + cyl_r > eu + tol {
+        return None;
+    }
+    if cv - cyl_r < -ev - tol || cv + cyl_r > ev + tol {
+        return None;
+    }
+    // Check Z containment.
+    let cyl_z_lo = cz - cyl_height / 2.0;
+    let cyl_z_hi = cz + cyl_height / 2.0;
+    if cyl_z_lo < -ew - tol || cyl_z_hi > ew + tol {
+        return None;
+    }
+
+    // If a cylinder end cap coincides with a box face, the compound approach
+    // double-counts the cap area. Fall through to the Pave-Filler.
+    let lo_gap = (cz - cyl_height / 2.0) - (-ew);
+    let hi_gap = ew - (cz + cyl_height / 2.0);
+    if lo_gap < 1e-4 || hi_gap < 1e-4 {
+        return None;
+    }
+
+    // Cylinder is fully inside the box.  Return a compound: the box + the
+    // cylinder (the latter's faces form the cavity wall).
+    Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]))
 }
 
 /// Fast path: cylinder ∩ box boolean intersection.
