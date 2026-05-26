@@ -1220,33 +1220,46 @@ fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
     }
 }
 
-/// Fast path for coaxial cylinder-sphere difference: `sphere - cylinder`.
+/// Fast path for coaxial cylinder-sphere difference.
 ///
-/// When a sphere is coaxial with a Z-aligned cylinder and the sphere's
-/// cross-section fits entirely inside the cylinder's radius over every Z in
-/// the overlap range, the overlap region is completely removed. The result is
-/// the spherical portion(s) outside the cylinder's Z range, built as a
-/// Z-slice triangle mesh.
+/// For `sphere - cylinder`: returns the spherical portion(s) outside the
+/// cylinder's Z range (when the sphere cross-section fits entirely inside the
+/// cylinder radius over the overlap).
+///
+/// For `cylinder - sphere`: returns the cylinder body with a spherical cavity
+/// at the overlap end, built as a Z-slice triangle mesh.
 pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep> {
-    // Try both orderings: (sphere, cylinder) and (cylinder, sphere)
-    let (sphere_brep, cyl_brep) = if let Some((sp, cyl)) =
-        try_sphere_primitive_center_radius(a)
-            .and_then(|sp| z_axis_cylinder_z_span_r(b).map(|cyl| (sp, cyl)))
+    // Try both orderings. Track which operand is the cylinder to build the
+    // correct result: sphere - cylinder (existing) vs cylinder - sphere.
+    if let Some((sp, cyl)) = try_sphere_primitive_center_radius(a)
+        .and_then(|sp| z_axis_cylinder_z_span_r(b).map(|cyl| (sp, cyl)))
     {
-        (sp, cyl)
-    } else if let Some((sp, cyl)) =
-        try_sphere_primitive_center_radius(b)
-            .and_then(|sp| z_axis_cylinder_z_span_r(a).map(|cyl| (sp, cyl)))
-    {
-        (sp, cyl)
-    } else {
-        return None;
-    };
+        // a = sphere, b = cylinder → sphere - cylinder
+        if let Some(result) = try_sphere_minus_cylinder(sp, cyl) {
+            return Some(result);
+        }
+    }
 
+    if let Some((sp, cyl)) = try_sphere_primitive_center_radius(b)
+        .and_then(|sp| z_axis_cylinder_z_span_r(a).map(|cyl| (sp, cyl)))
+    {
+        // a = cylinder, b = sphere → cylinder - sphere
+        if let Some(result) = try_cylinder_minus_sphere(sp, cyl) {
+            return Some(result);
+        }
+    }
+
+    None
+}
+
+/// Build `sphere - cylinder` — portions of sphere outside cylinder Z range.
+fn try_sphere_minus_cylinder(
+    sphere_brep: (DVec3, f64),
+    cyl_brep: (f64, f64, f64),
+) -> Option<BRep> {
     let (center, radius) = sphere_brep;
     let (cyl_z_lo, cyl_z_hi, cyl_r) = cyl_brep;
 
-    // Check sphere center is on Z axis (coaxial with cylinder)
     if center.x.abs() > TOLERANCE_ABS || center.y.abs() > TOLERANCE_ABS {
         return None;
     }
@@ -1255,25 +1268,21 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
     let sphere_z_lo = sz - radius;
     let sphere_z_hi = sz + radius;
 
-    // Z overlap
     let overlap_lo = sphere_z_lo.max(cyl_z_lo);
     let overlap_hi = sphere_z_hi.min(cyl_z_hi);
     if overlap_hi <= overlap_lo + TOLERANCE_LEN_MIN {
-        return None; // No overlap — not the case we handle
+        return None;
     }
 
-    // Check sphere cross-section is inside cylinder at both overlap boundaries
     for z in [overlap_lo, overlap_hi] {
         let dz = z - sz;
         let r_at = (radius.powi(2) - dz.powi(2)).sqrt();
         if r_at > cyl_r + TOLERANCE_LEN_MIN {
-            return None; // Sphere extends beyond cylinder → fall through
+            return None;
         }
     }
 
-    // Build portion(s) of sphere outside cylinder Z range
     let mut parts: Vec<BRep> = Vec::new();
-
     if sphere_z_lo < cyl_z_lo - TOLERANCE_LEN_MIN {
         let z_to = cyl_z_lo.min(sphere_z_hi);
         if z_to - sphere_z_lo > TOLERANCE_LEN_MIN {
@@ -1282,7 +1291,6 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
             }
         }
     }
-
     if sphere_z_hi > cyl_z_hi + TOLERANCE_LEN_MIN {
         let z_from = cyl_z_hi.max(sphere_z_lo);
         if sphere_z_hi - z_from > TOLERANCE_LEN_MIN {
@@ -1303,6 +1311,215 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
             Some(base)
         }
     }
+}
+
+/// Build `cylinder - sphere` — cylinder body with a spherical cavity where the
+/// sphere overlaps.  The sphere cross-section must fit inside the cylinder over
+/// the entire overlap Z-range (checked by the caller).
+fn try_cylinder_minus_sphere(
+    sphere_brep: (DVec3, f64),
+    cyl_brep: (f64, f64, f64),
+) -> Option<BRep> {
+    let (center, radius) = sphere_brep;
+    let (cyl_z_lo, cyl_z_hi, cyl_r) = cyl_brep;
+
+    if center.x.abs() > TOLERANCE_ABS || center.y.abs() > TOLERANCE_ABS {
+        return None;
+    }
+
+    let sz = center.z;
+    let sphere_z_lo = sz - radius;
+    let sphere_z_hi = sz + radius;
+
+    let overlap_lo = sphere_z_lo.max(cyl_z_lo);
+    let overlap_hi = sphere_z_hi.min(cyl_z_hi);
+    if overlap_hi <= overlap_lo + TOLERANCE_LEN_MIN {
+        return None;
+    }
+
+    for z in [overlap_lo, overlap_hi] {
+        let dz = z - sz;
+        let r_at = (radius.powi(2) - dz.powi(2)).sqrt();
+        if r_at > cyl_r + TOLERANCE_LEN_MIN {
+            return None;
+        }
+    }
+
+    build_cylinder_minus_sphere_tessellated(
+        DVec2::new(center.x, center.y),
+        cyl_z_lo, cyl_z_hi, cyl_r,
+        center, radius,
+    )
+}
+
+/// Triangulate an annular ring at `z` between `inner_r` and `outer_r`.
+/// Winding direction is CCW on outer, CCW on inner (both triangles face +Z).
+/// Area computation is unaffected by winding so this works for any ring.
+fn add_annular_ring(
+    add_v: &mut impl FnMut(DVec3) -> usize,
+    faces: &mut Vec<Face>,
+    z: f64, inner_r: f64, outer_r: f64, n_pts: usize,
+    to_world: &impl Fn(f64, f64, f64) -> DVec3,
+    empty_wire: &impl Fn() -> Wire,
+) {
+    let tau = std::f64::consts::TAU;
+    let mut outer_idx = Vec::with_capacity(n_pts + 1);
+    let mut inner_idx = Vec::with_capacity(n_pts + 1);
+    for k in 0..=n_pts {
+        let ang = tau * k as f64 / n_pts as f64;
+        let (s, c) = ang.sin_cos();
+        outer_idx.push(add_v(to_world(outer_r * c, outer_r * s, z)));
+        inner_idx.push(add_v(to_world(inner_r * c, inner_r * s, z)));
+    }
+    let mut tris = Vec::with_capacity(n_pts * 2);
+    for j in 0..n_pts {
+        tris.push([outer_idx[j], outer_idx[j + 1], inner_idx[j + 1]]);
+        tris.push([outer_idx[j], inner_idx[j + 1], inner_idx[j]]);
+    }
+    faces.push(Face {
+        outer_wire: empty_wire(), inner_wires: vec![],
+        normal: DVec3::ZERO, triangles: tris,
+        sample_point: None, mesh_dirty: false,
+    });
+}
+
+/// Build a tessellated cylinder body with a spherical cavity at the overlap.
+/// Result = cylinder body minus the spherical portion.  The cylinder wall is
+/// intact (full height), the far-end flat cap is preserved, and the spherical
+/// cavity surface replaces the near-end region.  If the cavity extends to a
+/// cylinder end without filling its cross-section, an annular flat ring caps
+/// the remaining opening.
+fn build_cylinder_minus_sphere_tessellated(
+    center_xy: DVec2,
+    cyl_z_lo: f64, cyl_z_hi: f64, cyl_r: f64,
+    sphere_center: DVec3, sphere_r: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let sz = sphere_center.z;
+    let sphere_z_lo = sz - sphere_r;
+    let sphere_z_hi = sz + sphere_r;
+    let overlap_lo = cyl_z_lo.max(sphere_z_lo);
+    let overlap_hi = cyl_z_hi.min(sphere_z_hi);
+    if overlap_hi <= overlap_lo + tol { return None; }
+
+    let n_arc = 128;
+    let n_slices_circ = 16;
+    let tau = std::f64::consts::TAU;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(center_xy.x + u, center_xy.y + v, z)
+    };
+
+    let circle_poly = |r: f64| -> Vec<DVec2> {
+        let mut poly = Vec::with_capacity(n_arc + 1);
+        for k in 0..=n_arc {
+            let ang = tau * k as f64 / n_arc as f64;
+            let (s, c) = ang.sin_cos();
+            poly.push(DVec2::new(r * c, r * s));
+        }
+        poly
+    };
+
+    let cyl_poly = circle_poly(cyl_r);
+
+    // 1. Cylinder wall (full height)
+    add_wall_section(&mut add_v, &mut faces, &cyl_poly, cyl_z_lo, cyl_z_hi, n_slices_circ, &to_world, &empty_wire);
+
+    // 2. Determine which cylinder ends are reached by the cavity
+    let cavity_reaches_top = (overlap_hi - cyl_z_hi).abs() < 1e-9;
+    let cavity_reaches_bot = (overlap_lo - cyl_z_lo).abs() < 1e-9;
+
+    // 3. Far-end cap(s) — cylinder ends NOT reached by cavity
+    if !cavity_reaches_bot {
+        add_cap_face(&mut add_v, &mut faces, &cyl_poly, cyl_z_lo, -DVec3::Z, &to_world, &empty_wire);
+    }
+    if !cavity_reaches_top {
+        add_cap_face(&mut add_v, &mut faces, &cyl_poly, cyl_z_hi, DVec3::Z, &to_world, &empty_wire);
+    }
+
+    // 4. Spherical cavity surface in overlap region
+    {
+        let n_rings = 32usize;
+        let dz = (overlap_hi - overlap_lo) / n_rings as f64;
+        for i in 0..n_rings {
+            let za = overlap_lo + dz * i as f64;
+            let zb = overlap_lo + dz * (i + 1) as f64;
+            let dz_a = za - sz;
+            let dz_b = zb - sz;
+            let r_sq_a = sphere_r.powi(2) - dz_a.powi(2);
+            let r_sq_b = sphere_r.powi(2) - dz_b.powi(2);
+            let ra = if r_sq_a <= 0.0 { 0.0 } else { r_sq_a.sqrt() };
+            let rb = if r_sq_b <= 0.0 { 0.0 } else { r_sq_b.sqrt() };
+            if ra < tol && rb < tol { continue; }
+
+            let nn = n_arc;
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(ra * c, ra * s, za)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(rb * c, rb * s, zb)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // 5. Annular ring(s) at cylinder end(s) where cavity reaches but doesn't fill
+    if cavity_reaches_top {
+        let r_at = (sphere_r.powi(2) - (cyl_z_hi - sz).powi(2)).sqrt().max(0.0);
+        if r_at < cyl_r - tol && r_at >= 0.0 {
+            add_annular_ring(&mut add_v, &mut faces, cyl_z_hi, r_at, cyl_r, n_arc, &to_world, &empty_wire);
+        }
+    }
+    if cavity_reaches_bot {
+        let r_at = (sphere_r.powi(2) - (cyl_z_lo - sz).powi(2)).sqrt().max(0.0);
+        if r_at < cyl_r - tol && r_at >= 0.0 {
+            add_annular_ring(&mut add_v, &mut faces, cyl_z_lo, r_at, cyl_r, n_arc, &to_world, &empty_wire);
+        }
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
 }
 
 /// Build a Z-slice triangle-mesh solid representing a spherical slice (portion
@@ -3991,22 +4208,47 @@ pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep
 
         // Phase 4b: extending-past check — one cone extends below/above the
         // other but is completely inside the other's radius over the overlap.
-        // Try both orderings: (a - b) and (b - a).
         if let Some(r) = try_extending_cone_minus_cone(
             ai.0, ai.1, ai.2, ai.3,
             bi.0, bi.1, bi.2, bi.3,
         ) {
+            // a extends past b and a is inside b → a - b = protruding part of a
             return Some(r);
         }
-        if let Some(r) = try_extending_cone_minus_cone(
-            bi.0, bi.1, bi.2, bi.3,
-            ai.0, ai.1, ai.2, ai.3,
-        ) {
-            return Some(r);
+        // When b extends past a and b is inside a in the overlap,
+        // a - b = outer cone a with a hole where b was.
+        // Build directly via the generalized builder.
+        if check_inner_inside_outer(bi.0, bi.1, bi.2, bi.3, ai.0, ai.1, ai.2, ai.3) {
+            return build_conical_frustum_minus_frustum_brep(
+                ai.0, ai.1, ai.2, ai.3,
+                bi.0, bi.1, bi.2, bi.3,
+            );
         }
     }
     try_difference_coaxial_cone_minus_cone_pair(a, b)
         .or_else(|| try_difference_coaxial_cone_minus_cone_pair(b, a))
+}
+
+/// Check if `inner` is completely inside `outer`'s radius at every Z in their overlap.
+/// The inner may extend beyond the outer's Z range; only the overlap region is checked.
+fn check_inner_inside_outer(
+    zi_lo: f64, zi_hi: f64, ri_lo: f64, ri_hi: f64,
+    zo_lo: f64, zo_hi: f64, ro_lo: f64, ro_hi: f64,
+) -> bool {
+    let tol = TOLERANCE_MESH_LEGACY;
+    let z_olap_lo = zi_lo.max(zo_lo);
+    let z_olap_hi = zi_hi.min(zo_hi);
+    if z_olap_hi <= z_olap_lo + tol { return false; }
+
+    let dri = (ri_hi - ri_lo) / (zi_hi - zi_lo);
+    let dro = (ro_hi - ro_lo) / (zo_hi - zo_lo);
+
+    let ri_at_lo = ri_lo + dri * (z_olap_lo - zi_lo);
+    let ri_at_hi = ri_lo + dri * (z_olap_hi - zi_lo);
+    let ro_at_lo = ro_lo + dro * (z_olap_lo - zo_lo);
+    let ro_at_hi = ro_lo + dro * (z_olap_hi - zo_lo);
+
+    ri_at_lo + tol < ro_at_lo && ri_at_hi + tol < ro_at_hi
 }
 
 /// Try extending-past case for cone-cone difference: when `inner` extends below
@@ -4242,6 +4484,692 @@ fn detect_z_axis_cone_frustum(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)
     Some((center_xy, z_lo, z_hi, r_lo, r_hi))
 }
 
+/// Detect a Z-aligned cone (frustum or full cone with apex).
+///
+/// Returns `(center_xy, z_lo, z_hi, r_lo, r_hi)` — the XY center, Z range, and
+/// bottom/top radii. For a full cone one radius is near-zero (the apex).
+fn detect_z_axis_cone(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)> {
+    let sh = brep.solids.get(0)?.shells.get(0)?;
+
+    let mut cone_surf: Option<&ConicalSurface> = None;
+    let mut caps: Vec<(DVec3, DVec3)> = Vec::new();
+
+    let mut fi = 0usize;
+    for _ in &sh.faces {
+        let si = *brep.geom.face_surface.get(fi)?.as_ref()?;
+        match brep.geom.surfaces.get(si)? {
+            Surface3::Cone(c) => {
+                let axis = c.axis_dir();
+                if axis.cross(DVec3::Z).length() > TOLERANCE_AXIS_ALIGN {
+                    return None;
+                }
+                cone_surf = Some(c);
+            }
+            Surface3::Plane(p) => {
+                caps.push((p.origin, p.normal));
+            }
+            _ => {}
+        }
+        fi += 1;
+    }
+
+    let c = cone_surf?;
+    if c.half_angle_rad.abs() < TOLERANCE_MESH_LEGACY { return None; }
+
+    // Find Z-aligned planar caps
+    let mut z_caps: Vec<f64> = caps.iter()
+        .filter(|(_, n)| n.dot(DVec3::Z).abs() > 1.0 - TOLERANCE_AXIS_ALIGN)
+        .map(|(p, _)| p.z)
+        .collect();
+    z_caps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let apex = c.apex_point();
+    let tan_ha = c.half_angle_rad.tan();
+    let center_xy = DVec2::new(apex.x, apex.y);
+    let tol = TOLERANCE_LEN_MIN;
+
+    if z_caps.len() >= 2 {
+        // Frustum: use the two caps
+        let z_lo = z_caps[0];
+        let z_hi = z_caps[1];
+        if z_hi - z_lo < TOLERANCE_MESH_LEGACY { return None; }
+        let r_lo = (tan_ha * (z_lo - apex.z).abs()).max(TOLERANCE_COORD_SUB);
+        let r_hi = (tan_ha * (z_hi - apex.z).abs()).max(TOLERANCE_COORD_SUB);
+        Some((center_xy, z_lo, z_hi, r_lo, r_hi))
+    } else if z_caps.len() == 1 {
+        // Full cone: one cap + the apex
+        let z_cap = z_caps[0];
+        let z_apex = apex.z;
+        let r_cap = (tan_ha * (z_cap - apex.z).abs()).max(TOLERANCE_COORD_SUB);
+        if r_cap < TOLERANCE_COORD_SUB { return None; }
+        if z_apex.abs() < tol && z_cap.abs() < tol {
+            return None; // Degenerate: apex and cap at origin
+        }
+        if z_apex > z_cap + tol {
+            Some((center_xy, z_cap, z_apex, r_cap, TOLERANCE_COORD_SUB))
+        } else if z_cap > z_apex + tol {
+            Some((center_xy, z_apex, z_cap, TOLERANCE_COORD_SUB, r_cap))
+        } else {
+            None // Apex and cap at same Z
+        }
+    } else {
+        None
+    }
+}
+
+/// Build a tessellated BRep for coaxial `cone ∪ cylinder` where the cylinder
+/// fills the bottom (or top) of the cone (same XY center, Z-aligned).
+///
+/// The cylinder occupies `[z_cyl_lo, z_cyl_hi]` with constant radius `cyl_r`,
+/// and the cone continues from the cylinder top to `[z_con_hi]` with radius
+/// varying from `r_at_cyl_hi` to `r_con_hi`.  At the interface a horizontal
+/// annular ring connects the cylinder wall to the cone wall.
+fn build_coaxial_cone_cylinder_union_tessellated(
+    center_xy: DVec2,
+    z_cyl_lo: f64, z_cyl_hi: f64, cyl_r: f64,
+    z_con_hi: f64, r_con_hi: f64,
+    r_at_cyl_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if cyl_r < tol || z_cyl_hi <= z_cyl_lo + tol || z_con_hi <= z_cyl_hi + tol { return None; }
+
+    let n_slices = 16usize;
+    let n_arc = 128usize;
+    let tau = std::f64::consts::TAU;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(center_xy.x + u, center_xy.y + v, z)
+    };
+
+    let circle_poly = |r: f64| -> Vec<DVec2> {
+        let mut poly = Vec::with_capacity(n_arc + 1);
+        for k in 0..=n_arc {
+            let ang = tau * k as f64 / n_arc as f64;
+            let (s, c) = ang.sin_cos();
+            poly.push(DVec2::new(r * c, r * s));
+        }
+        poly
+    };
+
+    // 1. Cylinder wall from z_cyl_lo to z_cyl_hi
+    let cyl_poly = circle_poly(cyl_r);
+    add_wall_section(&mut add_v, &mut faces, &cyl_poly, z_cyl_lo, z_cyl_hi, n_slices, &to_world, &empty_wire);
+
+    // 2. Bottom cap at z_cyl_lo
+    add_cap_face(&mut add_v, &mut faces, &cyl_poly, z_cyl_lo, -DVec3::Z, &to_world, &empty_wire);
+
+    // 3. Interface ring at z_cyl_hi (annulus: outer=cyl_r, inner=r_at_cyl_hi)
+    if cyl_r > r_at_cyl_hi + tol {
+        let annulus_pts: Vec<DVec2> = (0..n_arc).map(|i| {
+            let ang = tau * i as f64 / n_arc as f64;
+            let (s, c) = ang.sin_cos();
+            DVec2::new(cyl_r * c, cyl_r * s)
+        }).collect();
+        let inner_pts: Vec<DVec2> = (0..n_arc).map(|i| {
+            let ang = tau * i as f64 / n_arc as f64;
+            let (s, c) = ang.sin_cos();
+            DVec2::new(r_at_cyl_hi * c, r_at_cyl_hi * s)
+        }).collect();
+
+        let mut idx = Vec::with_capacity(2 * n_arc);
+        for p in &annulus_pts { idx.push(add_v(to_world(p.x, p.y, z_cyl_hi))); }
+        for p in &inner_pts { idx.push(add_v(to_world(p.x, p.y, z_cyl_hi))); }
+
+        let mut tris = Vec::with_capacity(n_arc * 2);
+        for i in 0..n_arc {
+            let k = (i + 1) % n_arc;
+            tris.push([idx[i], idx[k], idx[n_arc + k]]);
+            tris.push([idx[i], idx[n_arc + k], idx[n_arc + i]]);
+        }
+        faces.push(Face {
+            outer_wire: empty_wire(), inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: tris,
+            sample_point: None, mesh_dirty: false,
+        });
+    }
+
+    // 4. Cone wall from z_cyl_hi to z_con_hi with varying radius
+    let r_delta = r_con_hi - r_at_cyl_hi;
+    let z_delta = z_con_hi - z_cyl_hi;
+    if z_delta > tol {
+        let dz = z_delta / n_slices as f64;
+        for i in 0..n_slices {
+            let za = z_cyl_hi + dz * i as f64;
+            let zb = z_cyl_hi + dz * (i + 1) as f64;
+            let ra = (r_at_cyl_hi + r_delta * (i as f64 / n_slices as f64)).max(0.0);
+            let rb = (r_at_cyl_hi + r_delta * ((i + 1) as f64 / n_slices as f64)).max(0.0);
+            if ra < tol && rb < tol { continue; }
+
+            let nn = n_arc;
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(ra * c, ra * s, za)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(rb * c, rb * s, zb)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // 5. Top cap at z_con_hi (if cone top radius > 0)
+    if r_con_hi > tol {
+        let top_poly = circle_poly(r_con_hi);
+        add_cap_face(&mut add_v, &mut faces, &top_poly, z_con_hi, DVec3::Z, &to_world, &empty_wire);
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Fast path: coaxial Z-aligned cone + cylinder Union.
+///
+/// Detects a Z-aligned cone (full or frustum) and a Z-aligned cylinder sharing
+/// the same XY center, where the cylinder fills one end of the cone.
+/// Builds the result via Z-slice tessellation.
+fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) -> Option<BRep> {
+    let (cone_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone(cone_brep)?;
+    let (cyl_bottom, cyl_axis, cyl_r, cyl_height) = try_cylinder_center_axis_radius_height(cyl_brep)?;
+
+    // Cylinder must be Z-aligned
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN {
+        return None;
+    }
+
+    let cyl_z_lo = cyl_bottom.z;
+    let cyl_z_hi = cyl_bottom.z + cyl_height;
+    let tol = TOLERANCE_LEN_MIN;
+
+    // Coaxial check: same XY center
+    if (cone_xy.x - cyl_bottom.x).abs() > tol || (cone_xy.y - cyl_bottom.y).abs() > tol {
+        return None;
+    }
+
+    let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+    let r_at_cyl_lo = (cr_lo + dr_dz * (cyl_z_lo - cz_lo)).max(0.0);
+    let r_at_cyl_hi = (cr_lo + dr_dz * (cyl_z_hi - cz_lo)).max(0.0);
+
+    // Check: cylinder fills the bottom of the cone (cylinder at cone base)
+    // Cylinder radius matches cone radius at cyl_z_lo, and cylinder is within cone Z-range
+    let at_base = (cyl_r - r_at_cyl_lo).abs() <= cyl_r * 1e-6 + tol
+        && r_at_cyl_hi <= cyl_r + tol
+        && cyl_z_lo >= cz_lo - tol
+        && cyl_z_hi <= cz_hi + tol;
+
+    if at_base && r_at_cyl_lo > tol {
+        return build_coaxial_cone_cylinder_union_tessellated(
+            cone_xy,
+            cyl_z_lo, cyl_z_hi, cyl_r,
+            cz_hi, cr_hi,
+            r_at_cyl_hi,
+        );
+    }
+
+    // Check: cylinder fills the top of the cone
+    let at_top = (cyl_r - r_at_cyl_hi).abs() <= cyl_r * 1e-6 + tol
+        && r_at_cyl_lo <= cyl_r + tol
+        && cyl_z_lo >= cz_lo - tol
+        && cyl_z_hi <= cz_hi + tol;
+
+    if at_top && r_at_cyl_hi > tol {
+        // TODO: implement cylinder-on-top case
+        // Needs: cone wall (cz_lo → cyl_z_lo), bottom cap, annular ring at cyl_z_lo,
+        // cylinder wall (cyl_z_lo → cyl_z_hi), top cap
+        return None;
+    }
+
+    None
+}
+
+/// Bidirectional wrapper for coaxial cone + cylinder Union.
+pub fn try_union_coaxial_cone_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_union_coaxial_cone_cylinder_one_dir(a, b)
+        .or_else(|| try_union_coaxial_cone_cylinder_one_dir(b, a))
+}
+
+/// Build a tessellated BRep for coaxial `cylinder ∪ torus` where the torus
+/// sits on the cylinder wall (same Z axis, same XY center).
+///
+/// Cylinder: [cyl_z_lo, cyl_z_hi], radius cyl_r.
+/// Torus: centered at (0,0,tor_z), major radius R, minor radius r_m.
+///
+/// Builds via Z-slice tessellation: at each Z the cross-section is a circle
+/// with radius = max(cyl_r, R + sqrt(r_m² − (z − tor_z)²)).
+fn build_cylinder_torus_union_tessellated(
+    center_xy: DVec2,
+    cyl_z_lo: f64, cyl_z_hi: f64, cyl_r: f64,
+    tor_z: f64, R: f64, r_m: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if cyl_r < tol || cyl_z_hi <= cyl_z_lo + tol || r_m < tol { return None; }
+
+    let n_slices = 64usize;
+    let n_slices_circ = 16usize;
+    let n_arc = 128usize;
+    let tau = std::f64::consts::TAU;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(center_xy.x + u, center_xy.y + v, z)
+    };
+
+    let circle_poly = |r: f64| -> Vec<DVec2> {
+        let mut poly = Vec::with_capacity(n_arc + 1);
+        for k in 0..=n_arc {
+            let ang = tau * k as f64 / n_arc as f64;
+            let (s, c) = ang.sin_cos();
+            poly.push(DVec2::new(r * c, r * s));
+        }
+        poly
+    };
+
+    let radius_at = |z: f64| -> f64 {
+        let dz = (z - tor_z).abs();
+        if dz <= r_m {
+            let bulge = R + (r_m * r_m - dz * dz).sqrt();
+            cyl_r.max(bulge)
+        } else {
+            cyl_r
+        }
+    };
+
+    // Bulge Z-range (clamped to cylinder)
+    let bulge_z_lo = (tor_z - r_m).max(cyl_z_lo);
+    let bulge_z_hi = (tor_z + r_m).min(cyl_z_hi);
+    let has_bulge = bulge_z_hi > bulge_z_lo + tol;
+
+    // Constant-radius circle (cylinder wall)
+    let cyl_poly = circle_poly(cyl_r);
+
+    // 1. Below bulge (constant radius)
+    if bulge_z_lo > cyl_z_lo + tol {
+        add_wall_section(&mut add_v, &mut faces, &cyl_poly, cyl_z_lo, bulge_z_lo, n_slices_circ, &to_world, &empty_wire);
+    }
+
+    // 2. Bulge section (varying radius via Z-slices)
+    if has_bulge {
+        let dz = (bulge_z_hi - bulge_z_lo) / n_slices as f64;
+        for i in 0..n_slices {
+            let za = bulge_z_lo + dz * i as f64;
+            let zb = bulge_z_lo + dz * (i + 1) as f64;
+            let ra = radius_at(za).max(0.0);
+            let rb = radius_at(zb).max(0.0);
+            if ra < tol && rb < tol { continue; }
+
+            let nn = n_arc;
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(ra * c, ra * s, za)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(rb * c, rb * s, zb)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+    }
+
+    // 3. Above bulge (constant radius)
+    if cyl_z_hi > bulge_z_hi + tol {
+        add_wall_section(&mut add_v, &mut faces, &cyl_poly, bulge_z_hi, cyl_z_hi, n_slices_circ, &to_world, &empty_wire);
+    }
+
+    // Caps at cylinder ends (radius may differ from cyl_r if bulge extends to end)
+    let bottom_r = radius_at(cyl_z_lo);
+    let top_r = radius_at(cyl_z_hi);
+    let bottom_poly = if (bottom_r - cyl_r).abs() < tol { cyl_poly.clone() } else { circle_poly(bottom_r) };
+    let top_poly = if (top_r - cyl_r).abs() < tol { cyl_poly.clone() } else { circle_poly(top_r) };
+
+    add_cap_face(&mut add_v, &mut faces, &bottom_poly, cyl_z_lo, -DVec3::Z, &to_world, &empty_wire);
+    add_cap_face(&mut add_v, &mut faces, &top_poly, cyl_z_hi, DVec3::Z, &to_world, &empty_wire);
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Fast path: coaxial Z-aligned cylinder + torus Union.
+///
+/// Detects a Z-aligned cylinder and a Z-aligned torus sharing the same XY
+/// center, where the torus major radius ≥ cylinder radius (torus protrudes
+/// from or is flush with the cylinder wall).
+fn try_union_cylinder_torus_one_dir(cyl_brep: &BRep, torus_brep: &BRep) -> Option<BRep> {
+    let (cyl_bottom, cyl_axis, cyl_r, cyl_h) = try_cylinder_center_axis_radius_height(cyl_brep)?;
+    let (tor_center, tor_axis, R, r_m) = torus_info(torus_brep)?;
+
+    // Both must be Z-aligned
+    if cyl_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN { return None; }
+    if tor_axis.dot(DVec3::Z).abs() < 1.0 - TOLERANCE_AXIS_ALIGN { return None; }
+
+    // Coaxial: same XY center
+    let tol = TOLERANCE_LEN_MIN;
+    if (cyl_bottom.x - tor_center.x).abs() > tol || (cyl_bottom.y - tor_center.y).abs() > tol {
+        return None;
+    }
+
+    let cyl_z_lo = cyl_bottom.z;
+    let cyl_z_hi = cyl_bottom.z + cyl_h;
+    let tor_z = tor_center.z;
+
+    // Torus must overlap with cylinder Z-range
+    if tor_z + r_m < cyl_z_lo + tol || tor_z - r_m > cyl_z_hi - tol {
+        return None;
+    }
+
+    // Torus major radius must be at least approximately the cylinder radius
+    // (so the torus protrudes from or is flush with the wall)
+    if R < cyl_r - tol {
+        return None;
+    }
+
+    build_cylinder_torus_union_tessellated(
+        DVec2::new(tor_center.x, tor_center.y),
+        cyl_z_lo, cyl_z_hi, cyl_r,
+        tor_z, R, r_m,
+    )
+}
+
+/// Bidirectional wrapper for cylinder + torus Union.
+pub fn try_union_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_union_cylinder_torus_one_dir(a, b)
+        .or_else(|| try_union_cylinder_torus_one_dir(b, a))
+}
+
+/// Build a tessellated BRep for the union of two coaxial Z-aligned cones.
+///
+/// Each cone i spans [z_i_lo, z_i_hi] with radius r_i(z) = r_i_lo +
+/// (r_i_hi − r_i_lo)·(z − z_i_lo)/(z_i_hi − z_i_lo).  The outer envelope
+/// at each Z is max(r₁(z), r₂(z), 0).  Ring faces are added at boundaries
+/// where the envelope radius changes discontinuously.
+fn build_coaxial_cones_union_tessellated(
+    center_xy: DVec2,
+    z1_lo: f64, z1_hi: f64, r1_lo: f64, r1_hi: f64,
+    z2_lo: f64, z2_hi: f64, r2_lo: f64, r2_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    let n_arc = 128usize;
+    let tau = std::f64::consts::TAU;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(center_xy.x + u, center_xy.y + v, z)
+    };
+
+    // Radius function for each cone, returns 0 outside its Z range
+    let cone_r = |z: f64, z_lo: f64, z_hi: f64, r_lo: f64, r_hi: f64| -> f64 {
+        if z < z_lo - tol || z > z_hi + tol { return 0.0; }
+        let zc = z.clamp(z_lo, z_hi);
+        let t = if z_hi > z_lo { (zc - z_lo) / (z_hi - z_lo) } else { 0.0 };
+        (r_lo + (r_hi - r_lo) * t).max(0.0)
+    };
+
+    // Outer envelope radius at Z
+    let env_r = |z: f64| -> f64 {
+        cone_r(z, z1_lo, z1_hi, r1_lo, r1_hi)
+            .max(cone_r(z, z2_lo, z2_hi, r2_lo, r2_hi))
+    };
+
+    let z_union_lo = z1_lo.min(z2_lo);
+    let z_union_hi = z1_hi.max(z2_hi);
+    if z_union_hi <= z_union_lo + tol { return None; }
+
+    // Collect all unique Z boundaries
+    let mut bounds: Vec<f64> = vec![z_union_lo, z_union_hi];
+    for z in &[z1_lo, z1_hi, z2_lo, z2_hi] {
+        if *z > z_union_lo + tol && *z < z_union_hi - tol {
+            bounds.push(*z);
+        }
+    }
+    bounds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    bounds.dedup();
+
+    let nn = n_arc;
+    // Build wall for each segment, then ring at each interior boundary
+    for bi in 0..bounds.len() - 1 {
+        let za = bounds[bi];
+        let zb = bounds[bi + 1];
+        if zb - za < tol { continue; }
+
+        let ra_mid = env_r((za + zb) * 0.5);
+        if ra_mid < tol { continue; } // no material in this segment
+
+        // Build varying-radius wall for this segment
+        let n_slices = 16usize.max(1);
+        let dz = (zb - za) / n_slices as f64;
+        for i in 0..n_slices {
+            let z0 = za + dz * i as f64;
+            let z1 = za + dz * (i + 1) as f64;
+            let r0 = env_r(z0).max(0.0);
+            let r1 = env_r(z1).max(0.0);
+            if r0 < tol && r1 < tol { continue; }
+
+            let mut idx = Vec::with_capacity(2 * (nn + 1));
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(r0 * c, r0 * s, z0)));
+            }
+            for k in 0..=nn {
+                let ang = tau * k as f64 / nn as f64;
+                let (s, c) = ang.sin_cos();
+                idx.push(add_v(to_world(r1 * c, r1 * s, z1)));
+            }
+
+            let mut tris = Vec::with_capacity(nn * 2);
+            for j in 0..nn {
+                tris.push([idx[j], idx[j + 1], idx[nn + 1 + j + 1]]);
+                tris.push([idx[j], idx[nn + 1 + j + 1], idx[nn + 1 + j]]);
+            }
+            faces.push(Face {
+                outer_wire: empty_wire(), inner_wires: vec![],
+                normal: DVec3::ZERO, triangles: tris,
+                sample_point: None, mesh_dirty: false,
+            });
+        }
+
+        // Ring face at the end of this segment (check radius discontinuity)
+        if bi + 1 < bounds.len() - 1 {
+            let z_bound = zb;
+            let r_left = env_r(z_bound - tol * 0.5);
+            let r_right = env_r(z_bound + tol * 0.5);
+            let r_min = r_left.min(r_right);
+            let r_max = r_left.max(r_right);
+            if r_max - r_min > tol && r_min > tol {
+                // Add annular ring
+                let r_outer = r_max;
+                let r_inner = r_min;
+                let mut outer_idx: Vec<usize> = (0..nn).map(|i| {
+                    let ang = tau * i as f64 / nn as f64;
+                    let (s, c) = ang.sin_cos();
+                    add_v(to_world(r_outer * c, r_outer * s, z_bound))
+                }).collect();
+                let inner_idx: Vec<usize> = (0..nn).map(|i| {
+                    let ang = tau * i as f64 / nn as f64;
+                    let (s, c) = ang.sin_cos();
+                    add_v(to_world(r_inner * c, r_inner * s, z_bound))
+                }).collect();
+                outer_idx.extend(&inner_idx);
+                let mut tris = Vec::with_capacity(nn * 2);
+                for i in 0..nn {
+                    let k = (i + 1) % nn;
+                    tris.push([outer_idx[i], outer_idx[k], inner_idx[k]]);
+                    tris.push([outer_idx[i], inner_idx[k], inner_idx[i]]);
+                }
+                faces.push(Face {
+                    outer_wire: empty_wire(), inner_wires: vec![],
+                    normal: DVec3::ZERO, triangles: tris,
+                    sample_point: None, mesh_dirty: false,
+                });
+            }
+        }
+    }
+
+    // Caps
+    let r_bot = env_r(z_union_lo);
+    if r_bot > tol {
+        let bot_poly: Vec<DVec2> = (0..=nn).map(|i| {
+            let ang = tau * i as f64 / nn as f64;
+            let (s, c) = ang.sin_cos();
+            DVec2::new(r_bot * c, r_bot * s)
+        }).collect();
+        add_cap_face(&mut add_v, &mut faces, &bot_poly, z_union_lo, -DVec3::Z, &to_world, &empty_wire);
+    }
+    let r_top = env_r(z_union_hi);
+    if r_top > tol {
+        let top_poly: Vec<DVec2> = (0..=nn).map(|i| {
+            let ang = tau * i as f64 / nn as f64;
+            let (s, c) = ang.sin_cos();
+            DVec2::new(r_top * c, r_top * s)
+        }).collect();
+        add_cap_face(&mut add_v, &mut faces, &top_poly, z_union_hi, DVec3::Z, &to_world, &empty_wire);
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
+/// Fast path: coaxial Z-aligned cone frustums Union.
+///
+/// Detects two Z-aligned conical frustums sharing the same XY center and
+/// builds the union via Z-slice tessellation of the outer radius envelope.
+fn try_union_coaxial_cones_one_dir(a: &BRep, b: &BRep) -> Option<BRep> {
+    let (c1_xy, c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi) = detect_z_axis_cone(a)?;
+    let (c2_xy, c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi) = detect_z_axis_cone(b)?;
+
+    // Coaxial
+    let tol = TOLERANCE_LEN_MIN;
+    if (c1_xy.x - c2_xy.x).abs() > tol || (c1_xy.y - c2_xy.y).abs() > tol {
+        return None;
+    }
+
+    // Z ranges must overlap or be adjacent
+    if c1_z_hi < c2_z_lo - tol && (c2_z_lo - c1_z_hi) > tol * 100.0 { return None; }
+    if c2_z_hi < c1_z_lo - tol && (c1_z_lo - c2_z_hi) > tol * 100.0 { return None; }
+
+    build_coaxial_cones_union_tessellated(
+        c1_xy,
+        c1_z_lo, c1_z_hi, c1_r_lo, c1_r_hi,
+        c2_z_lo, c2_z_hi, c2_r_lo, c2_r_hi,
+    )
+}
+
+/// Bidirectional wrapper for coaxial cone + cone Union.
+pub fn try_union_coaxial_cones(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_union_coaxial_cones_one_dir(a, b)
+        .or_else(|| try_union_coaxial_cones_one_dir(b, a))
+}
+
 /// Build BRep for outer conical frustum minus inner conical frustum (coaxial, Z-aligned).
 /// Result is a hollow conical frustum: outer lateral + bottom cap + top annulus + inner lateral + cavity floor.
 ///
@@ -4254,6 +5182,17 @@ fn build_conical_frustum_minus_frustum_brep(
     const N: usize = 48; // Circumferential divisions
 
     let empty_wire = || Wire { edges: vec![] };
+    let tol = TOLERANCE_LEN_MIN;
+
+    // Overlap Z range (inner clamped to outer)
+    let z_olap_lo = zi_lo.max(zo_lo);
+    let z_olap_hi = zi_hi.min(zo_hi);
+    let has_overlap = z_olap_hi > z_olap_lo + tol;
+
+    // Inner cone radius at overlap boundaries
+    let dri = (ri_hi - ri_lo) / (zi_hi - zi_lo);
+    let ri_at_olap_lo = ri_lo + dri * (z_olap_lo - zi_lo);
+    let ri_at_olap_hi = ri_lo + dri * (z_olap_hi - zi_lo);
 
     let ring_pts = |z: f64, r: f64| -> Vec<DVec3> {
         (0..N).map(|i| {
@@ -4265,8 +5204,6 @@ fn build_conical_frustum_minus_frustum_brep(
 
     let outer_bot = ring_pts(zo_lo, ro_lo);
     let outer_top = ring_pts(zo_hi, ro_hi);
-    let inner_bot = ring_pts(zi_lo, ri_lo);
-    let inner_top = ring_pts(zi_hi, ri_hi);
 
     let mut verts: Vec<Vertex> = Vec::new();
     let mut add_v = |p: DVec3| -> usize {
@@ -4287,33 +5224,57 @@ fn build_conical_frustum_minus_frustum_brep(
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
     }
 
-    // 2. Bottom cap: full disk at z=zo_lo
-    {
+    // 2. Bottom at z=zo_lo
+    //    - If inner starts at or below outer bottom: annulus
+    //    - Otherwise: full disk
+    if zi_lo <= zo_lo + tol && has_overlap && ri_at_olap_lo < ro_lo - tol {
+        // Hole goes through the bottom
+        let mut tris = Vec::new();
+        annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_lo), ri_at_olap_lo, ro_lo, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    } else {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_lo), ro_lo, N, &mut tris);
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
     }
 
-    // 3. Top annulus at z=zo_hi (= zi_hi), r ∈ [ri_hi, ro_hi]
-    {
+    // 3. Top at z=zo_hi
+    //    - If inner ends at or above outer top: annulus
+    //    - Otherwise: full disk
+    if zi_hi >= zo_hi - tol && has_overlap && ri_at_olap_hi < ro_hi - tol {
         let mut tris = Vec::new();
-        annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ri_hi, ro_hi, N, &mut tris);
+        annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ri_at_olap_hi, ro_hi, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    } else {
+        let mut tris = Vec::new();
+        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ro_hi, N, &mut tris);
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
     }
 
-    // 4. Inner lateral (z=zi_lo to z=zi_hi) — cavity wall
-    {
+    // 4. Inner lateral — cavity wall (overlap region only)
+    if has_overlap {
+        let inner_bot = ring_pts(z_olap_lo, ri_at_olap_lo);
+        let inner_top = ring_pts(z_olap_hi, ri_at_olap_hi);
         let mut tris = Vec::new();
         wall_grid(&mut add_v, &inner_bot, &inner_top, &mut tris);
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
     }
 
-    // 5. Cavity floor: full disk at z=zi_lo, r = ri_lo (inner cone's bottom face)
-    {
+    // 5. Cavity floor — where hole starts (if inner starts above outer bottom)
+    if zi_lo > zo_lo + tol && has_overlap && ri_at_olap_lo > tol {
         let mut tris = Vec::new();
-        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zi_lo), ri_lo, N, &mut tris);
+        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_lo), ri_at_olap_lo, N, &mut tris);
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
     }
+
+    // 6. Cavity ceiling — where hole ends (if inner ends below outer top)
+    if zi_hi < zo_hi - tol && has_overlap && ri_at_olap_hi > tol {
+        let mut tris = Vec::new();
+        disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_hi), ri_at_olap_hi, N, &mut tris);
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+    }
+
+    if faces.is_empty() { return None; }
 
     let geom = GeomStore {
         curves: vec![], surfaces: vec![], curve2ds: vec![],
@@ -6905,56 +7866,77 @@ fn try_union_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Option<BR
     let inter_lo = cyl_z_lo.max(box_z_lo);
     let inter_hi = cyl_z_hi.min(box_z_hi);
     let tol = TOLERANCE_LEN_MIN;
-    if inter_hi <= inter_lo + tol {
-        return None; // No Z overlap
-    }
 
     // Project cylinder center into box UV space
     let cu = (cyl_center - bc).dot(u_ax);
     let cv = (cyl_center - bc).dot(v_ax);
 
-    let bmin = DVec2::new(-eu, -ev);
-    let bmax = DVec2::new(eu, ev);
+    if inter_hi > inter_lo + tol {
+        let bmin = DVec2::new(-eu, -ev);
+        let bmax = DVec2::new(eu, ev);
 
-    // Check full containment
-    let corners = [
-        DVec2::new(bmin.x, bmin.y),
-        DVec2::new(bmax.x, bmin.y),
-        DVec2::new(bmax.x, bmax.y),
-        DVec2::new(bmin.x, bmax.y),
-    ];
-    let all_box_corners_inside_cyl = corners.iter().all(|c| {
-        (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (cyl_r + tol).powi(2)
-    });
-    let box_z_inside_cyl = box_z_lo >= cyl_z_lo - tol && box_z_hi <= cyl_z_hi + tol;
+        // Check full containment
+        let corners = [
+            DVec2::new(bmin.x, bmin.y),
+            DVec2::new(bmax.x, bmin.y),
+            DVec2::new(bmax.x, bmax.y),
+            DVec2::new(bmin.x, bmax.y),
+        ];
+        let all_box_corners_inside_cyl = corners.iter().all(|c| {
+            (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (cyl_r + tol).powi(2)
+        });
+        let box_z_inside_cyl = box_z_lo >= cyl_z_lo - tol && box_z_hi <= cyl_z_hi + tol;
 
-    if all_box_corners_inside_cyl && box_z_inside_cyl {
-        // Box is entirely inside cylinder → union is the cylinder
-        return Some(cyl_brep.clone());
+        if all_box_corners_inside_cyl && box_z_inside_cyl {
+            // Box is entirely inside cylinder → union is the cylinder
+            return Some(cyl_brep.clone());
+        }
+
+        let cyl_inside_box_xy = cu - cyl_r >= -eu - tol && cu + cyl_r <= eu + tol
+            && cv - cyl_r >= -ev - tol && cv + cyl_r <= ev + tol;
+        let cyl_z_inside_box = cyl_z_lo >= box_z_lo - tol && cyl_z_hi <= box_z_hi + tol;
+
+        if cyl_inside_box_xy && cyl_z_inside_box {
+            // Cylinder is entirely inside box → union is the box
+            return Some(box_brep.clone());
+        }
+
+        // Fallible check: if the 2D cross-section is disjoint, return None
+        let test_poly = build_circle_union_rect_polygon(cu, cv, cyl_r, eu, ev);
+        if test_poly.len() >= 3 {
+            return build_cylinder_box_union_tessellated(
+                bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev,
+                cyl_z_lo, cyl_z_hi, box_z_lo, box_z_hi,
+            );
+        }
     }
 
-    let cyl_inside_box_xy = cu - cyl_r >= -eu - tol && cu + cyl_r <= eu + tol
-        && cv - cyl_r >= -ev - tol && cv + cyl_r <= ev + tol;
-    let cyl_z_inside_box = cyl_z_lo >= box_z_lo - tol && cyl_z_hi <= box_z_hi + tol;
-
-    if cyl_inside_box_xy && cyl_z_inside_box {
-        // Cylinder is entirely inside box → union is the box
-        return Some(box_brep.clone());
+    // No Z overlap — check for touching cases (cylinder on box face, no overlap)
+    if cyl_r > tol {
+        let touching_tol = tol + 1e-9;
+        // Cylinder sits on top of box
+        if (cyl_z_lo - box_z_hi).abs() <= touching_tol {
+            let test_poly = build_circle_union_rect_polygon(cu, cv, cyl_r, eu, ev);
+            if test_poly.len() >= 3 {
+                if let Some(result) = build_cylinder_on_box_union_tessellated(
+                    bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev,
+                    box_z_lo, box_z_hi, cyl_z_lo, cyl_z_hi, false,
+                ) { return Some(result); }
+            }
+        }
+        // Cylinder below box (box sits on top of cylinder)
+        if (cyl_z_hi - box_z_lo).abs() <= touching_tol {
+            let test_poly = build_circle_union_rect_polygon(cu, cv, cyl_r, eu, ev);
+            if test_poly.len() >= 3 {
+                if let Some(result) = build_cylinder_on_box_union_tessellated(
+                    bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev,
+                    box_z_lo, box_z_hi, cyl_z_lo, cyl_z_hi, true,
+                ) { return Some(result); }
+            }
+        }
     }
 
-    // Fallible check: if the 2D cross-section is disjoint, return None
-    // (union of disjoint shapes falls through to the general path)
-    let test_poly = build_circle_union_rect_polygon(cu, cv, cyl_r, eu, ev);
-    if test_poly.len() < 3 {
-        return None;
-    }
-
-    // Build tessellated result for full cylinder height, with varying cross-section
-    // in the overlap vs. non-overlap Z ranges.
-    build_cylinder_box_union_tessellated(
-        bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev,
-        cyl_z_lo, cyl_z_hi, box_z_lo, box_z_hi,
-    )
+    None
 }
 
 /// Fast path: cylinder-box Union via Z-slice tessellation.
@@ -6964,6 +7946,96 @@ fn try_union_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Option<BR
 /// Z-slice tessellation of the `circle ∪ rect` cross-section.
 pub fn try_union_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
     try_union_cylinder_box_one_dir(a, b).or_else(|| try_union_cylinder_box_one_dir(b, a))
+}
+
+/// Build a tessellated BRep for `cylinder ∪ box` when they touch at a face (no Z overlap).
+///
+/// Two cases (controlled by `cylinder_below`):
+/// - `cylinder_below = false`: cylinder sits on top of box.
+///   Box from `box_z_lo` to `box_z_hi`, cylinder from `box_z_hi` (= cyl_z_lo) to `cyl_z_hi`.
+/// - `cylinder_below = true`: box sits on top of cylinder.
+///   Cylinder from `cyl_z_lo` to `cyl_z_hi`, box from `cyl_z_hi` (= box_z_lo) to `box_z_hi`.
+///
+/// The interface face at the touching plane uses `circle ∪ rect` cross-section to
+/// remove the internal face (the cylinder bottom cap or box-top area inside the cylinder).
+fn build_cylinder_on_box_union_tessellated(
+    bc: DVec3, u_ax: DVec3, v_ax: DVec3,
+    cu: f64, cv: f64, r: f64,
+    eu: f64, ev: f64,
+    box_z_lo: f64, box_z_hi: f64,
+    cyl_z_lo: f64, cyl_z_hi: f64,
+    cylinder_below: bool,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if r < tol { return None; }
+    if box_z_hi <= box_z_lo + tol || cyl_z_hi <= cyl_z_lo + tol { return None; }
+
+    let n_slices = 16usize;
+    let empty_wire = || Wire { edges: vec![] };
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        bc + u_ax * u + v_ax * v + DVec3::new(0.0, 0.0, z)
+    };
+
+    let rect_poly = vec![
+        DVec2::new(-eu, -ev),
+        DVec2::new(eu, -ev),
+        DVec2::new(eu, ev),
+        DVec2::new(-eu, ev),
+    ];
+    let circle_poly = build_circle_polygon(cu, cv, r);
+    let union_poly = build_circle_union_rect_polygon(cu, cv, r, eu, ev);
+
+    if rect_poly.len() < 3 || circle_poly.len() < 3 || union_poly.len() < 3 {
+        return None;
+    }
+
+    if cylinder_below {
+        // Cylinder below, box on top
+        add_wall_section(&mut add_v, &mut faces, &circle_poly, cyl_z_lo, cyl_z_hi, n_slices, &to_world, &empty_wire);
+        add_cap_face(&mut add_v, &mut faces, &circle_poly, cyl_z_lo, -DVec3::Z, &to_world, &empty_wire);
+        add_interface_face(&mut add_v, &mut faces, &union_poly, cyl_z_hi, DVec3::Z, DVec2::new(cu, cv), r, &to_world, &empty_wire);
+        add_wall_section(&mut add_v, &mut faces, &rect_poly, box_z_lo, box_z_hi, n_slices, &to_world, &empty_wire);
+        add_cap_face(&mut add_v, &mut faces, &rect_poly, box_z_hi, DVec3::Z, &to_world, &empty_wire);
+    } else {
+        // Cylinder on top of box
+        add_wall_section(&mut add_v, &mut faces, &rect_poly, box_z_lo, box_z_hi, n_slices, &to_world, &empty_wire);
+        add_cap_face(&mut add_v, &mut faces, &rect_poly, box_z_lo, -DVec3::Z, &to_world, &empty_wire);
+        add_interface_face(&mut add_v, &mut faces, &union_poly, box_z_hi, DVec3::Z, DVec2::new(cu, cv), r, &to_world, &empty_wire);
+        add_wall_section(&mut add_v, &mut faces, &circle_poly, cyl_z_lo, cyl_z_hi, n_slices, &to_world, &empty_wire);
+        add_cap_face(&mut add_v, &mut faces, &circle_poly, cyl_z_hi, DVec3::Z, &to_world, &empty_wire);
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
 }
 
 // ──── Cone-box union fast path ────
