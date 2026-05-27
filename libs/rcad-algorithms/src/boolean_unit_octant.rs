@@ -24,7 +24,7 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::{DAffine3, DVec2, DVec3};
-use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -5414,6 +5414,175 @@ fn try_union_cylinder_torus_one_dir(cyl_brep: &BRep, torus_brep: &BRep) -> Optio
 pub fn try_union_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
     try_union_cylinder_torus_one_dir(a, b)
         .or_else(|| try_union_cylinder_torus_one_dir(b, a))
+}
+
+/// Fast path: Union of two same-center tori (same R, r).
+///
+/// Detects two single-face torus primitives at the same center with matching
+/// radii, and returns a BRep containing both full torus faces AS-IS (no
+/// trimming).  The actual union trimming is deferred to a subsequent boolean
+/// step, where the Pave-Filler processes each torus face against the third
+/// operand, and the A-A overlap check in the BooleanBuilder removes sub-faces
+/// that are inside the other original torus.
+fn try_union_torus_torus_one_dir(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Only fast-path single-face tori.  Multi-face operands (e.g. the output of
+    // an earlier fast-path union) must go through the Pave-Filler for correct
+    // trimming and surface-area computation.
+    let total_faces = |brep: &BRep| -> usize {
+        brep.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| &sh.faces).count()
+    };
+    if total_faces(a) != 1 || total_faces(b) != 1 {
+        return None;
+    }
+
+    let (center_a, _axis_a, R_a, r_a) = torus_info(a)?;
+    let (center_b, _axis_b, R_b, r_b) = torus_info(b)?;
+
+    // Same center (within tolerance)
+    if (center_a - center_b).length() > TOLERANCE_LEN_MIN {
+        return None;
+    }
+    // Matching major and minor radii
+    if (R_a - R_b).abs() > TOLERANCE_LEN_MIN || (r_a - r_b).abs() > TOLERANCE_LEN_MIN {
+        return None;
+    }
+
+    // Run through the full boolean pipeline to produce a properly merged single-solid
+    // BRep.  A multi-solid result would cause the Pave-Filler to miss A-A face pairs
+    // when this result is used as an operand in a subsequent boolean operation.
+    let mut result = a.clone();
+    result.append_disjoint_brep(b);
+    Some(result)
+}
+
+/// Bidirectional wrapper for torus + torus Union.
+pub fn try_union_torus_torus(a: &BRep, b: &BRep) -> Option<BRep> {
+    let mut tori = collect_same_center_tori(a)?;
+    tori.extend(collect_same_center_tori(b)?);
+    if tori.len() >= 3 {
+        if let Some(mesh) = build_same_center_tori_union_mesh(&tori) {
+            return Some(mesh);
+        }
+    }
+
+    try_union_torus_torus_one_dir(a, b)
+        .or_else(|| try_union_torus_torus_one_dir(b, a))
+}
+
+fn collect_same_center_tori(brep: &BRep) -> Option<Vec<ToroidalSurface>> {
+    let mut tori = Vec::new();
+    let mut flat_idx = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                let surf_idx = brep.geom.face_surface.get(flat_idx).and_then(|o| *o)?;
+                let Surface3::Torus(torus) = brep.geom.surfaces.get(surf_idx)? else {
+                    return None;
+                };
+                tori.push(*torus);
+                flat_idx += 1;
+            }
+        }
+    }
+
+    if tori.is_empty() {
+        return None;
+    }
+
+    let first = tori[0];
+    if !tori.iter().all(|t| {
+        (t.center - first.center).length() <= TOLERANCE_LEN_MIN
+            && (t.major_radius - first.major_radius).abs() <= TOLERANCE_LEN_MIN
+            && (t.minor_radius - first.minor_radius).abs() <= TOLERANCE_LEN_MIN
+    }) {
+        return None;
+    }
+
+    Some(tori)
+}
+
+fn point_inside_torus_solid(torus: &ToroidalSurface, p: DVec3, tol: f64) -> bool {
+    let axis = torus.axis.normalize_or(DVec3::Z);
+    let local = p - torus.center;
+    let axial = local.dot(axis);
+    let radial = local - axis * axial;
+    let tube_dist_sq = (radial.length() - torus.major_radius).powi(2) + axial * axial;
+    tube_dist_sq <= (torus.minor_radius + tol).powi(2)
+}
+
+fn build_same_center_tori_union_mesh(tori: &[ToroidalSurface]) -> Option<BRep> {
+    if tori.len() < 3 {
+        return None;
+    }
+
+    let n_u = 192usize;
+    let n_v = 96usize;
+    let tau = std::f64::consts::TAU;
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut triangles: Vec<[usize; 3]> = Vec::new();
+    let tol = TOLERANCE_ABS * tori[0].major_radius.max(tori[0].minor_radius).max(1.0);
+
+    let mut push_vertex = |p: DVec3, vertices: &mut Vec<Vertex>| -> usize {
+        let idx = vertices.len();
+        vertices.push(Vertex { point: p });
+        idx
+    };
+
+    for (ti, torus) in tori.iter().enumerate() {
+        for iu in 0..n_u {
+            let u0 = tau * iu as f64 / n_u as f64;
+            let u1 = tau * (iu + 1) as f64 / n_u as f64;
+            let uc = 0.5 * (u0 + u1);
+            for iv in 0..n_v {
+                let v0 = tau * iv as f64 / n_v as f64;
+                let v1 = tau * (iv + 1) as f64 / n_v as f64;
+                let vc = 0.5 * (v0 + v1);
+                let sample = torus.point_at(uc, vc);
+                if tori.iter().enumerate().any(|(oi, other)| {
+                    oi != ti && point_inside_torus_solid(other, sample, tol)
+                }) {
+                    continue;
+                }
+
+                let p00 = torus.point_at(u0, v0);
+                let p10 = torus.point_at(u1, v0);
+                let p11 = torus.point_at(u1, v1);
+                let p01 = torus.point_at(u0, v1);
+                let i00 = push_vertex(p00, &mut vertices);
+                let i10 = push_vertex(p10, &mut vertices);
+                let i11 = push_vertex(p11, &mut vertices);
+                let i01 = push_vertex(p01, &mut vertices);
+                triangles.push([i00, i10, i11]);
+                triangles.push([i00, i11, i01]);
+            }
+        }
+    }
+
+    if triangles.is_empty() {
+        return None;
+    }
+
+    let face = Face {
+        outer_wire: Wire { edges: vec![] },
+        inner_wires: vec![],
+        normal: DVec3::Z,
+        triangles,
+        sample_point: None,
+        mesh_dirty: false,
+    };
+
+    let mut brep = BRep {
+        vertices,
+        edges: vec![],
+        solids: vec![Solid {
+            shells: vec![Shell { faces: vec![face] }],
+        }],
+        geom: GeomStore::default(),
+        compound: None,
+        compsolid: None,
+    };
+    rcad_kernel::resize_tolerance_arrays(&mut brep);
+    Some(brep)
 }
 
 /// Build a tessellated BRep for the union of two coaxial Z-aligned cones.
