@@ -632,30 +632,38 @@ pub fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
         }
 
         Surface3::Cone(c) => {
-            // Cone offset: adjust radius and apex position
-            // The parallel surface to a cone is another cone with the same half-angle
-            // but shifted apex position and different radius at the reference point.
+            // Cone offset: the parallel surface to a cone is another cone with the
+            // same half-angle but its true apex shifts by d/sin(α) along the axis
+            // toward the smaller-radius end (opposite to the cone axis direction).
             let sin_a = c.half_angle_rad.sin();
-            let cos_a = c.half_angle_rad.cos();
 
-            // Axial shift of the apex along the cone axis
-            let axial_shift = if sin_a.abs() > TOLERANCE_LINEAR_ULTRA_STRICT { d / sin_a } else { d };
-
-            // New radius at the reference point (apex field)
-            let new_radius = c.radius + d * cos_a;
-
-            if new_radius <= 0.0 && d > 0.0 {
-                // Positive offset would make radius negative at reference
-                return None;
+            // Near-cylinder case
+            if sin_a.abs() <= TOLERANCE_LINEAR_ULTRA_STRICT {
+                let new_radius = c.radius + d;
+                if new_radius <= 0.0 {
+                    return None;
+                }
+                return Some(Surface3::Cone(ConicalSurface {
+                    radius: new_radius,
+                    ..*c
+                }));
             }
 
-            // For cones, we need to shift the apex to maintain the same half-angle
-            let new_apex = c.apex - c.axis.normalize_or(DVec3::Y) * axial_shift;
+            let tan_a = c.half_angle_rad.tan();
+            let axis_dir = c.axis.normalize_or(DVec3::Y);
 
+            // The true apex (where radius=0) of the original cone
+            let true_apex = c.apex - axis_dir * (c.radius / tan_a);
+
+            // Offset shifts the true apex by d/sin(α) in the outward direction
+            // (toward smaller end, opposite to cone axis)
+            let new_true_apex = true_apex - axis_dir * (d / sin_a);
+
+            // Represent with reference apex at the new true apex, radius=0
             Some(Surface3::Cone(ConicalSurface {
-                apex: new_apex,
+                apex: new_true_apex,
                 axis: c.axis,
-                radius: new_radius.max(0.0),
+                radius: 0.0,
                 half_angle_rad: c.half_angle_rad,
             }))
         }
@@ -1074,17 +1082,38 @@ pub fn intersect_offset_cylinder_sphere(
 // ── Cone offset helper ─────────────────────────────────────────────────
 fn offset_conical_surface(c: &ConicalSurface, d: f64) -> Option<ConicalSurface> {
     let sin_a = c.half_angle_rad.sin();
-    let cos_a = c.half_angle_rad.cos();
-    let axial_shift = if sin_a.abs() > TOLERANCE_LINEAR_ULTRA_STRICT { d / sin_a } else { d };
-    let new_radius = c.radius + d * cos_a;
-    if new_radius <= 0.0 && d > 0.0 {
-        return None;
+
+    // Near-cylinder: just offset the radius
+    if sin_a.abs() <= TOLERANCE_LINEAR_ULTRA_STRICT {
+        let new_radius = c.radius + d;
+        if new_radius <= 0.0 {
+            return None;
+        }
+        return Some(ConicalSurface {
+            radius: new_radius,
+            ..*c
+        });
     }
-    let new_apex = c.apex - c.axis.normalize_or(DVec3::Y) * axial_shift;
+
+    let tan_a = c.half_angle_rad.tan();
+    let axis_dir = c.axis.normalize_or(DVec3::Y);
+
+    // The true apex (where radius=0) of the original cone
+    let true_apex = c.apex - axis_dir * (c.radius / tan_a);
+
+    // Offsetting the conical surface along its outward normal shifts the true
+    // apex by d/sin(α) toward the smaller-radius end (opposite to the cone
+    // axis direction, since the outward normal's axial component always points
+    // toward the smaller end of the frustum).
+    let new_true_apex = true_apex - axis_dir * (d / sin_a);
+
+    // Represent the offset cone with the reference apex at the new true apex.
+    // The radius at the reference apex depends only on the distance from the
+    // true apex along the axis (which is zero here), so radius=0.
     Some(ConicalSurface {
-        apex: new_apex,
+        apex: new_true_apex,
         axis: c.axis,
-        radius: new_radius.max(0.0),
+        radius: 0.0,
         half_angle_rad: c.half_angle_rad,
     })
 }
@@ -2271,15 +2300,23 @@ fn project_point_to_line(point: DVec3, line: &Line3) -> f64 {
 ///
 /// The offset edge is the intersection of the two adjacent offset surfaces.
 /// For manifold edges (shared by two faces), we compute the intersection.
-/// For boundary edges, we project the edge onto the single offset surface.
+/// For boundary edges, we use the offset vertex positions (which account for
+/// all adjacent faces' offset surfaces, e.g., caps trimming a cylinder seam).
 fn offset_edge(
     brep: &BRep,
     edge_idx: usize,
-    face_indices: &[usize],
+    raw_face_indices: &[usize],
     distance: f64,
     offset_surfaces: &[Option<Surface3>],
+    offset_vertex_positions: &[DVec3],
 ) -> Option<(Curve3, f64, f64)> {
     let edge = &brep.edges[edge_idx];
+
+    // Deduplicate — seam edges can list the same face twice in one wire,
+    // which would make them look like manifold edges with 2 different faces.
+    let mut face_indices: Vec<usize> = raw_face_indices.to_vec();
+    face_indices.sort();
+    face_indices.dedup();
 
     if face_indices.is_empty() {
         return None;
@@ -2291,26 +2328,30 @@ fn offset_edge(
     let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
 
     if face_indices.len() == 1 {
-        // Boundary edge: project onto single offset surface
-        let _surf = offset_surfaces.get(face_indices[0]).and_then(|s| s.as_ref())?;
+        // Single-face edge: use offset vertex positions (which account for
+        // all adjacent faces' offsets, e.g., caps trimming a cylinder seam).
+        let off_p0 = if edge.start < offset_vertex_positions.len() {
+            offset_vertex_positions[edge.start]
+        } else {
+            let [t0, _] = range.unwrap_or_else(|| curve.default_domain());
+            let p0 = curve.point_at(t0);
+            let n0 = compute_vertex_normal_on_face(brep, edge.start, face_indices[0]);
+            p0 + n0 * distance
+        };
+        let off_p1 = if edge.end < offset_vertex_positions.len() {
+            offset_vertex_positions[edge.end]
+        } else {
+            let [_, t1] = range.unwrap_or_else(|| curve.default_domain());
+            let p1 = curve.point_at(t1);
+            let n1 = compute_vertex_normal_on_face(brep, edge.end, face_indices[0]);
+            p1 + n1 * distance
+        };
 
-        // Compute offset points at edge endpoints
-        let [t0, t1] = range.unwrap_or_else(|| curve.default_domain());
-        let p0 = curve.point_at(t0);
-        let p1 = curve.point_at(t1);
-
-        // Compute vertex normals at these points
-        let n0 = compute_vertex_normal_on_face(brep, edge.start, face_indices[0]);
-        let n1 = compute_vertex_normal_on_face(brep, edge.end, face_indices[0]);
-
-        // Offset points
-        let off_p0 = p0 + n0 * distance;
-        let off_p1 = p1 + n1 * distance;
-
-        // Create a line between offset points
         let dir = (off_p1 - off_p0).normalize_or(DVec3::X);
         let len = (off_p1 - off_p0).length();
-
+        if len < 1e-12 {
+            return None;
+        }
         Some((Curve3::Line(Line3 {
             origin: off_p0,
             direction: dir,
@@ -2333,6 +2374,13 @@ fn offset_edge(
 
         // Try analytical intersection if we have original surfaces
         if let (Some(orig0), Some(orig1)) = (orig_surf0, orig_surf1) {
+            // When both faces are planar, the offset vertex positions are exact,
+            // so let the caller create a line between them (the vertex positions
+            // are now computed via plane intersection rather than normal averaging).
+            if matches!(orig0, Surface3::Plane(_)) && matches!(orig1, Surface3::Plane(_)) {
+                return None;
+            }
+
             let intersection = intersect_offset_surfaces(orig0, orig1, distance, distance);
 
             // Convert intersection to curve with parameter range
@@ -2408,35 +2456,193 @@ fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize
 // Vertex Offset
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+/// Compute offset vertex position for a vertex shared by a curved surface (cylinder/cone)
+/// and one or more planes.
+///
+/// Instead of normal averaging (which is wrong for curved surfaces), computes the exact
+/// intersection of the offset surfaces.
+fn offset_vertex_curved_plane(
+    original_point: DVec3,
+    brep: &BRep,
+    curved_face_idx: usize,
+    plane_face_indices: &[usize],
+    distance: f64,
+    shell: &Shell,
+) -> Option<DVec3> {
+    let surf_idx = brep.geom.face_surface.get(curved_face_idx).and_then(|s| *s)?;
+    let curved_surf = brep.geom.surfaces.get(surf_idx)?;
+
+    let (x_ax, y_ax, axis, origin) = match curved_surf {
+        Surface3::Cylinder(cyl) => {
+            let axis = cyl.axis.normalize_or(DVec3::Z);
+            let x_ax = any_perpendicular(axis);
+            let y_ax = axis.cross(x_ax).normalize();
+            (x_ax, y_ax, axis, cyl.origin)
+        }
+        Surface3::Cone(con) => {
+            let axis = con.axis_dir();
+            let x_ax = any_perpendicular(axis);
+            let y_ax = axis.cross(x_ax).normalize();
+            (x_ax, y_ax, axis, con.apex)
+        }
+        _ => return None,
+    };
+
+    // Angular parameter u of the original vertex on the curved surface.
+    let radial = original_point - origin - (original_point - origin).dot(axis) * axis;
+    let u = radial.dot(y_ax).atan2(radial.dot(x_ax));
+
+    // Collect offset-plane constraints from all adjacent planar faces.
+    // For a vertex at the intersection of a cylinder and a plane, the correct
+    // offset position is the intersection of the offset surfaces.
+    // For 2+ planes, constrain by all of them; for 1 plane, use the single plane.
+    let mut best: Option<DVec3> = None;
+
+    for &pfi in plane_face_indices {
+        let p_surf_idx = brep.geom.face_surface.get(pfi).and_then(|s| *s)?;
+        let plane_surf = match brep.geom.surfaces.get(p_surf_idx) {
+            Some(Surface3::Plane(p)) => p,
+            _ => continue,
+        };
+
+        let n = plane_surf.normal;
+        let plane_off = plane_surf.origin + n * distance;
+
+        match curved_surf {
+            Surface3::Cylinder(cyl) => {
+                let r_new = cyl.radius + distance;
+                if r_new <= 0.0 { continue; }
+                let base = origin + r_new * (u.cos() * x_ax + u.sin() * y_ax);
+                let denom = n.dot(axis);
+                if denom.abs() < 1e-12 { continue; }
+                let v = n.dot(plane_off - base) / denom;
+                best = Some(base + v * axis);
+            }
+            Surface3::Cone(con) => {
+                let sin_a = con.half_angle_rad.sin();
+                let cos_a = con.half_angle_rad.cos();
+                let axial_shift_base = if sin_a.abs() > 1e-12 { distance / sin_a } else { distance };
+                let new_radius = con.radius + distance * cos_a;
+                let new_apex = con.apex - axis * axial_shift_base;
+                let r_dir = u.cos() * x_ax + u.sin() * y_ax;
+                let R = n.dot(r_dir);
+                let denom = cos_a * n.dot(axis) + sin_a * R;
+                if denom.abs() < 1e-12 { continue; }
+                let v = (n.dot(plane_off - new_apex) - new_radius * R) / denom;
+                if v < -1e-10 { continue; }
+                best = Some(new_apex + v * cos_a * axis + (new_radius + v * sin_a) * r_dir);
+            }
+            _ => {}
+        }
+    }
+
+    best
+}
+
 /// Compute offset position for a vertex.
 ///
-/// The offset vertex is the intersection of all offset edges meeting at the vertex,
-/// or equivalently, the original vertex translated along the average normal.
+/// When all adjacent faces are planar, computes the vertex as the intersection
+/// of the offset planes (the exact result).  When one surface is curved (cylinder/cone)
+/// and adjacent to planar faces, computes the intersection of the offset surfaces.
+/// Otherwise, falls back to translating the original vertex along the average
+/// face normal (a smooth-surface approximation).
 fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell) -> DVec3 {
     let original_point = brep.vertices[vertex_idx].point;
 
     // Collect all faces using this vertex
+    let mut face_indices: Vec<usize> = Vec::new();
     let mut normal_sum = DVec3::ZERO;
-    let mut count = 0;
 
-    for face in &shell.faces {
+    for (fi, face) in shell.faces.iter().enumerate() {
         let uses_vertex = face.outer_wire.edges.iter().any(|we| {
             let e = &brep.edges[we.idx];
             e.start == vertex_idx || e.end == vertex_idx
         });
 
         if uses_vertex {
+            face_indices.push(fi);
             normal_sum += face.normal;
-            count += 1;
         }
     }
 
-    if count > 0 {
-        let avg_normal = normal_sum.normalize_or(DVec3::Z);
-        original_point + avg_normal * distance
-    } else {
-        original_point
+    if face_indices.is_empty() {
+        return original_point;
     }
+
+    // Check whether all adjacent faces are planar
+    let all_planar = face_indices.iter().all(|fi| {
+        brep.geom
+            .face_surface
+            .get(*fi)
+            .and_then(|s| *s)
+            .and_then(|si| brep.geom.surfaces.get(si))
+            .is_some_and(|surf| matches!(surf, Surface3::Plane(_)))
+    });
+
+    if all_planar && face_indices.len() >= 3 {
+        // Build a 3×3 linear system from the offset planes of the first three faces.
+        // Each plane:  n·x = n·v0 + distance   (v0 is the original vertex, which
+        // lies on all three faces, so n·v0 is the plane constant before offset).
+        let mut m = [[0.0_f64; 3]; 3];
+        let mut rhs = [0.0_f64; 3];
+
+        for (i, fi) in face_indices.iter().take(3).enumerate() {
+            let n = shell.faces[*fi].normal;
+            m[i] = [n.x, n.y, n.z];
+            rhs[i] = n.dot(original_point) + distance;
+        }
+
+        // Solve via Cramer's rule
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+        if det.abs() > 1e-12 {
+            let col = |j: usize| -> [f64; 3] { [m[0][j], m[1][j], m[2][j]] };
+
+            // Replace column j of m with rhs → determinant gives coordinate j.
+            let det_x = rhs[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                      - m[0][1] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
+                      + m[0][2] * (rhs[1] * m[2][1] - m[1][1] * rhs[2]);
+
+            let det_y = m[0][0] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
+                      - rhs[0] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                      + m[0][2] * (m[1][0] * rhs[2] - rhs[1] * m[2][0]);
+
+            let det_z = m[0][0] * (m[1][1] * rhs[2] - rhs[1] * m[2][1])
+                      - m[0][1] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])
+                      + rhs[0] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+            return DVec3::new(det_x / det, det_y / det, det_z / det);
+        }
+    }
+
+    // If one face is curved (cylinder/cone) and at least one face is planar,
+    // use exact offset-surface intersection.
+    let curved_idx = face_indices.iter().position(|fi| {
+        let s = brep.geom.face_surface.get(*fi).and_then(|s| *s)
+            .and_then(|si| brep.geom.surfaces.get(si));
+        matches!(s, Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
+    });
+    let plane_indices: Vec<usize> = face_indices.iter().filter(|fi| {
+        let s = brep.geom.face_surface.get(**fi).and_then(|s| *s)
+            .and_then(|si| brep.geom.surfaces.get(si));
+        matches!(s, Some(Surface3::Plane(_)))
+    }).copied().collect();
+
+    if let Some(cfi) = curved_idx {
+        if !plane_indices.is_empty() {
+            if let Some(pt) = offset_vertex_curved_plane(
+                original_point, brep, face_indices[cfi], &plane_indices, distance, shell,
+            ) {
+                return pt;
+            }
+        }
+    }
+
+    // Fallback: translate along average normal
+    let avg_normal = normal_sum.normalize_or(DVec3::Z);
+    original_point + avg_normal * distance
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -3294,7 +3500,7 @@ fn offset_shell_with_options_impl(
             let ve = vertex_map[e.end];
 
             let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
-            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces)
+            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
                 .unwrap_or_else(|| {
                     let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
                     let len = (result.vertices[ve].point - result.vertices[vs].point).length();
@@ -3302,7 +3508,7 @@ fn offset_shell_with_options_impl(
                 });
 
             let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
-            wire_edges.push(WireEdge::fwd(eidx));
+            wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 
         add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
@@ -3420,7 +3626,7 @@ pub fn offset_shell_with_options(
             let ve = vertex_map[e.end];
 
             let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
-            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces)
+            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
                 .unwrap_or_else(|| {
                     let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
                     let len = (result.vertices[ve].point - result.vertices[vs].point).length();
@@ -3428,7 +3634,7 @@ pub fn offset_shell_with_options(
                 });
 
             let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
-            wire_edges.push(WireEdge::fwd(eidx));
+            wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 
         add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
@@ -3691,7 +3897,7 @@ pub fn hollow_solid_with_options(
             });
 
             let eidx = add_edge(&mut result, curve, 0.0, len, vs, ve);
-            wire_edges.push(WireEdge::fwd(eidx));
+            wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 
         add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
