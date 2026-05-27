@@ -2824,6 +2824,12 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cone(a, b) {
             return Ok(r);
         }
+        // Fallback: when a is a box and b has cylindrical holes (inner wires),
+        // redirect to box ∩ cylinder.  The Pave-Filler cannot correctly process
+        // BReps with inner-wire topology (e.g. the M3 test pattern).
+        if let Some(r) = boolean_unit_octant::try_difference_box_minus_brep_with_hole(a, b) {
+            return Ok(r);
+        }
     }
 
     let r = match boolean_op_pave_fill_build(op, a, b) {

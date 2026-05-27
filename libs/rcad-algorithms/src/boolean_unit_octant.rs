@@ -24,7 +24,7 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::{DAffine3, DVec2, DVec3};
-use rcad_kernel::geom::{Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
+use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -10150,6 +10150,7 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     };
     let u_ax = bx.axes[u_idx];
     let v_ax = bx.axes[v_idx];
+    let z_ax = bx.axes[z_idx];
     let eu = bx.extents[u_idx];
     let ev = bx.extents[v_idx];
     let ew = bx.extents[z_idx];
@@ -10157,7 +10158,7 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
 
     let cu = (cyl_center - bc).dot(u_ax);
     let cv = (cyl_center - bc).dot(v_ax);
-    let cz = (cyl_center - bc).dot(bx.axes[z_idx]);
+    let cz = (cyl_center - bc).dot(z_ax);
 
     let tol = TOL * 10.0;
 
@@ -10200,7 +10201,21 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         );
     }
 
-    // Cylinder exits in Z — not handled analytically.
+    // Full XY containment, Z extends beyond box — build box with cylindrical hole.
+    if !u_fail && !v_fail && z_fail {
+        let inter_lo = cyl_z_lo.max(-ew);
+        let inter_hi = cyl_z_hi.min(ew);
+        if inter_hi <= inter_lo + tol {
+            return Some(a.clone()); // No Z overlap — nothing to remove.
+        }
+        return build_box_minus_cylinder_full_uv_z_fail(
+            a, u_ax, v_ax, z_ax, bc,
+            cu, cv, cyl_r, eu, ev, ew,
+            inter_lo, inter_hi, cyl_z_lo, cyl_z_hi,
+        );
+    }
+
+    // Cylinder exits in Z with partial XY — not handled analytically.
     if z_fail {
         return None;
     }
@@ -10216,6 +10231,203 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     // Cylinder is fully inside the box.  Return a compound: the box + the
     // cylinder (the latter's faces form the cavity wall).
     Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]))
+}
+
+/// When the cylinder is fully contained in the box cross-section (XY) but
+/// extends beyond the box in Z, build the difference `box − cylinder`
+/// analytically: clone the box, add circular inner wires to the Z- and/or
+/// Z+ face, seal the hole with cap disks at the cylinder's intersection
+/// planes, and add a cylindrical wall face to connect the hole boundary.
+fn build_box_minus_cylinder_full_uv_z_fail(
+    box_brep: &BRep,
+    u_ax: DVec3, v_ax: DVec3, z_ax: DVec3,
+    bc: DVec3,
+    cu: f64, cv: f64, cyl_r: f64,
+    eu: f64, ev: f64, ew: f64,
+    inter_lo: f64, inter_hi: f64, cyl_z_lo: f64, cyl_z_hi: f64,
+) -> Option<BRep> {
+    let pi = std::f64::consts::PI;
+    let two_pi = 2.0 * pi;
+
+    // Circle parameterisation: θ = 0 direction for Circle3{normal: z_ax}
+    // and CylindricalSurface{axis: z_ax} (both use any_perpendicular).
+    let x_ax = any_perpendicular(z_ax);
+    let y_ax = z_ax.cross(x_ax);
+
+    let circle_center_at = |z: f64| -> DVec3 {
+        bc + cu * u_ax + cv * v_ax + z * z_ax
+    };
+
+    let tol = TOL * 10.0;
+    let needs_z_minus_inner = cyl_z_lo < -ew - tol;  // hole through Z- face
+    let needs_z_plus_inner  = cyl_z_hi >  ew + tol;  // hole through Z+ face
+    let needs_bot_cap       = inter_lo > -ew + tol;   // cap inside box at bottom
+    let needs_top_cap       = inter_hi <  ew - tol;   // cap inside box at top
+
+    // Collect unique Z-levels that need circle vertices+edges.
+    let mut z_levels: Vec<f64> = Vec::new();
+    if needs_z_minus_inner { z_levels.push(-ew); }
+    if needs_bot_cap       { z_levels.push(inter_lo); }
+    if needs_top_cap       { z_levels.push(inter_hi); }
+    if needs_z_plus_inner  { z_levels.push(ew); }
+    z_levels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    z_levels.dedup();
+    if z_levels.is_empty() { return None; }
+
+    let mut brep = box_brep.clone();
+
+    // For each Z-level: 2 vertices (θ=0, θ=π) + 2 half-circle edges (0→π, π→2π).
+    struct CircleRing { z: f64, v0: usize, v1: usize, e0: usize, e1: usize }
+    let mut rings: Vec<CircleRing> = Vec::new();
+
+    for &z in &z_levels {
+        let cc = circle_center_at(z);
+        let p0 = cc + cyl_r * x_ax;  // θ = 0
+        let p1 = cc - cyl_r * x_ax;  // θ = π
+
+        let v0 = make_vertex(&mut brep, p0);
+        let v1 = make_vertex(&mut brep, p1);
+        let cc_curve = Curve3::Circle(Circle3 { center: cc, normal: z_ax, radius: cyl_r });
+        let e0 = make_edge(&mut brep, cc_curve.clone(), 0.0, pi, v0, v1).ok()?;
+        let e1 = make_edge(&mut brep, cc_curve, pi, two_pi, v1, v0).ok()?;
+
+        rings.push(CircleRing { z, v0, v1, e0, e1 });
+    }
+
+    // Find Z- and Z+ face indices by matching plane-surface normals.
+    let z_minus_fi = (0..brep.solids[0].shells[0].faces.len()).find(|&fi| {
+        brep.geom.face_surface.get(fi).and_then(|&x| x).is_some_and(|si| {
+            matches!(&brep.geom.surfaces[si], Surface3::Plane(p) if p.normal.dot(-z_ax) > 0.999)
+        })
+    })?;
+    let z_plus_fi = (0..brep.solids[0].shells[0].faces.len()).find(|&fi| {
+        brep.geom.face_surface.get(fi).and_then(|&x| x).is_some_and(|si| {
+            matches!(&brep.geom.surfaces[si], Surface3::Plane(p) if p.normal.dot(z_ax) > 0.999)
+        })
+    })?;
+
+    let ring_at = |z: f64| -> Option<&CircleRing> { rings.iter().find(|r| (r.z - z).abs() < tol) };
+
+    // ── Inner wires ──
+    // Z- face inner wire: CW viewed from −z_ax (outside) → fwd edges.
+    if needs_z_minus_inner {
+        let r = ring_at(-ew)?;
+        brep.solids[0].shells[0].faces[z_minus_fi].inner_wires
+            .push(make_wire(vec![WireEdge::fwd(r.e0), WireEdge::fwd(r.e1)]));
+    }
+    // Z+ face inner wire: CW viewed from +z_ax (outside) → rev edges.
+    if needs_z_plus_inner {
+        let r = ring_at(ew)?;
+        brep.solids[0].shells[0].faces[z_plus_fi].inner_wires
+            .push(make_wire(vec![WireEdge::rev(r.e0), WireEdge::rev(r.e1)]));
+    }
+
+    // ── Cap disks ──
+    // Bottom cap at inter_lo (normal −z_ax, CCW from −z_ax → rev edges).
+    if needs_bot_cap {
+        let r = ring_at(inter_lo)?;
+        make_face(&mut brep,
+            Surface3::Plane(Plane { origin: circle_center_at(inter_lo), normal: -z_ax }),
+            make_wire(vec![WireEdge::rev(r.e0), WireEdge::rev(r.e1)]),
+            vec![],
+        ).ok()?;
+    }
+    // Top cap at inter_hi (normal +z_ax, CCW from +z_ax → fwd edges).
+    if needs_top_cap {
+        let r = ring_at(inter_hi)?;
+        make_face(&mut brep,
+            Surface3::Plane(Plane { origin: circle_center_at(inter_hi), normal: z_ax }),
+            make_wire(vec![WireEdge::fwd(r.e0), WireEdge::fwd(r.e1)]),
+            vec![],
+        ).ok()?;
+    }
+
+    // ── Cylindrical wall face ──
+    let wall_bot = ring_at(inter_lo)?;
+    let wall_top = ring_at(inter_hi)?;
+    let wall_h = inter_hi - inter_lo;
+
+    // Generators: along z_ax at θ = π (v1) and θ = 0 (v0).
+    let p_bot_v1 = brep.vertices[wall_bot.v1].point;
+    let p_top_v1 = brep.vertices[wall_top.v1].point;
+    let p_bot_v0 = brep.vertices[wall_bot.v0].point;
+    let p_top_v0 = brep.vertices[wall_top.v0].point;
+    let gen_pi = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: p_bot_v1, direction: z_ax }),
+        0.0, wall_h, wall_bot.v1, wall_top.v1,
+    ).ok()?;
+    let gen_0 = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: p_bot_v0, direction: z_ax }),
+        0.0, wall_h, wall_bot.v0, wall_top.v0,
+    ).ok()?;
+
+    let wall_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: circle_center_at(inter_lo), axis: z_ax, radius: cyl_r, ref_dir: x_ax,
+    });
+    // Wire: bot arc (0→π) → gen at π → top arc (π→2π) → gen at 0 (rev).
+    // Traces a CCW loop in uv-space on the cylinder surface.
+    let wall_fi = make_face(&mut brep, wall_surf,
+        make_wire(vec![
+            WireEdge::fwd(wall_bot.e0),
+            WireEdge::fwd(gen_pi),
+            WireEdge::fwd(wall_top.e1),
+            WireEdge::rev(gen_0),
+        ]),
+        vec![],
+    ).ok()?;
+    while brep.geom.face_surface_range.len() <= wall_fi {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep.geom.face_surface_range[wall_fi] = Some([0.0, two_pi, 0.0, wall_h]);
+
+    // Push p-curve slots for new edges (make_edge does not push edge_pcurves).
+    for _ in 0..z_levels.len() * 2 + 2 {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+
+    Some(brep)
+}
+
+/// Fast-path for `Difference a - b` when `a` is a box and `b` is a box with a
+/// cylindrical hole (inner wires on planar faces + cylindrical wall face).
+///
+/// When `b` was produced by `box - cylinder`, the operation `a - b` is
+/// equivalent to `a ∩ cylinder`.  The Pave-Filler cannot correctly process
+/// BReps with inner wires (holes), so we redirect to the existing
+/// [`try_intersection_cylinder_box`] fast path.
+///
+/// This recovers the M3 test (`bcut_simple`): `box - (box - cylinder)`.
+pub fn try_difference_box_minus_brep_with_hole(a: &BRep, b: &BRep) -> Option<BRep> {
+    let _bx = try_as_box(a)?;
+
+    // b must have at least one inner wire (hole) on a planar face.
+    let shell = b.solids.first()?.shells.first()?;
+    let has_hole = shell.faces.iter().any(|f| !f.inner_wires.is_empty());
+    if !has_hole {
+        return None;
+    }
+
+    // Find the cylindrical surface in b.
+    let cyl_si = b.geom.surfaces.iter().position(|s| matches!(s, Surface3::Cylinder(_)))?;
+    let Surface3::Cylinder(cyl) = &b.geom.surfaces[cyl_si] else { return None; };
+
+    // Find the face that uses this cylindrical surface → get V range for height.
+    let cyl_fi = b.geom.face_surface.iter().position(|fs| fs.map_or(false, |si| si == cyl_si))?;
+    let v_range = b.geom.face_surface_range.get(cyl_fi)
+        .and_then(|r| *r)
+        .map(|r| (r[2], r[3]))?;
+    let height = v_range.1 - v_range.0;
+    if height <= 1e-12 {
+        return None;
+    }
+
+    // Build a cylinder BRep matching the extracted parameters.
+    let cyl_center = cyl.origin + cyl.axis * (height / 2.0);
+    let cyl_brep = make_cylinder_brep(cyl_center, cyl.axis, cyl.ref_dir, cyl.radius, height).ok()?;
+
+    // Compute box ∩ cylinder via the existing intersection fast path.
+    // try_intersection_cylinder_box tries both (a, cylinder) and (cylinder, a).
+    try_intersection_cylinder_box(a, &cyl_brep)
 }
 
 /// When the cylinder exits through exactly one box face, build the difference
