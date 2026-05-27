@@ -2636,11 +2636,31 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         };
     }
     if b_empty {
-        return match op {
-            BooleanOpType::Union => Ok(a.clone()),
-            BooleanOpType::Intersection => Ok(BRep::default()),
-            BooleanOpType::Difference => Ok(a.clone()),
-        };
+        // For Union with an empty B, A is normally the identity. But if A has
+        // internal faces (SA > bbox SA), returning A directly includes those
+        // faces and inflates the result. Fall through to union-specific fast
+        // paths (e.g. try_union_fill_box_cavity) which can produce a clean result.
+        if matches!(op, BooleanOpType::Union) {
+            let sa = crate::brep_algo::total_surface_area(a);
+            if let Some(bb) = a.bounding_box() {
+                let [amin, amax] = bb;
+                let (bw, bh, bd) = (amax.x - amin.x, amax.y - amin.y, amax.z - amin.z);
+                let bbox_sa = 2.0 * (bw * bh + bw * bd + bh * bd);
+                if sa > bbox_sa * 1.01 {
+                    // Fall through to union fast paths — don't return a.clone() here.
+                } else {
+                    return Ok(a.clone());
+                }
+            } else {
+                return Ok(a.clone());
+            }
+        } else {
+            return match op {
+                BooleanOpType::Intersection => Ok(BRep::default()),
+                BooleanOpType::Difference => Ok(a.clone()),
+                BooleanOpType::Union => unreachable!(),
+            };
+        }
     }
 
     // Fast-path: containment (one solid fully inside another).
@@ -2711,6 +2731,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_union_offset_cones(a, b) {
             return Ok(r);
         }
+        if let Some(r) = boolean_unit_octant::try_union_fill_box_cavity(a, b) {
+            return Ok(r);
+        }
         return bop_occt_union::fuse(a, b);
     }
 
@@ -2747,6 +2770,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             return Ok(r);
         }
         if let Some(r) = boolean_unit_octant::try_intersection_cylinder_box(a, b) {
+            return Ok(r);
+        }
+        if let Some(r) = boolean_unit_octant::try_intersection_cone_box(a, b) {
             return Ok(r);
         }
     }

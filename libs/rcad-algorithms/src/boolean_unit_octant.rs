@@ -137,6 +137,31 @@ pub fn try_identical_operands(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<B
 /// For Difference B inside A: not handled (falls through to generic Pave-Filler).
 pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
     for (outer, inner, swapped) in [(a, b, false), (b, a, true)] {
+        // If the outer solid has internal cavities (multiple shells) and this is Union,
+        // containment is ambiguous: the inner shape could be filling a cavity rather than
+        // being truly embedded in solid material. Let union-specific fast paths
+        // (e.g. try_union_fill_box_cavity) handle this case.
+        if matches!(op, BooleanOpType::Union) && outer.solids.len() == 1 && outer.solids[0].shells.len() > 1
+        {
+            continue;
+        }
+
+        // Also skip containment for Union when the outer shape's SA exceeds its
+        // bounding-box SA — this indicates internal cavity faces. This catches the
+        // case where extract_solids collapsed multiple shells into one (ZG5 test
+        // pattern: union of extract_solids result + cavity wall).
+        if matches!(op, BooleanOpType::Union) {
+            let sa = crate::total_surface_area(outer);
+            if let Some(bb) = outer.bounding_box() {
+                let [omin, omax] = bb;
+                let (bw, bh, bd) = (omax.x - omin.x, omax.y - omin.y, omax.z - omin.z);
+                let bbox_sa = 2.0 * (bw * bh + bw * bd + bh * bd);
+                if sa > bbox_sa * 1.01 {
+                    continue;
+                }
+            }
+        }
+
         // Use vertices+curves bbox (excluding surface expansion) for the pre-check.
         // Surface expansion inflates bboxes for shapes like cone frustums (apex extends
         // past the solid), causing false containment positives (ZM1).
@@ -8363,6 +8388,196 @@ fn build_circle_union_rect_polygon(
     pts
 }
 
+/// Compute the 2D boundary polygon for `circle ∩ rect` (CCW closed polygon).
+///
+/// Returns empty `Vec` if the shapes are disjoint.
+fn build_circle_intersect_rect_polygon(
+    cu: f64, cv: f64, r: f64,
+    eu: f64, ev: f64,
+) -> Vec<DVec2> {
+    let tol = TOLERANCE_LEN_MIN;
+    let tau = std::f64::consts::TAU;
+    let n_arc = 128usize;
+    let bmin = DVec2::new(-eu, -ev);
+    let bmax = DVec2::new(eu, ev);
+
+    let point_in_rect = |p: DVec2| -> bool {
+        p.x >= bmin.x - tol && p.x <= bmax.x + tol
+            && p.y >= bmin.y - tol && p.y <= bmax.y + tol
+    };
+
+    let raw_ints = circle_rect_intersections_uv(cu, cv, r, eu, ev);
+
+    if raw_ints.is_empty() {
+        // No intersections — check containment
+        let corners = [
+            DVec2::new(bmin.x, bmin.y),
+            DVec2::new(bmax.x, bmin.y),
+            DVec2::new(bmax.x, bmax.y),
+            DVec2::new(bmin.x, bmax.y),
+        ];
+        let all_inside_circle = corners.iter().all(|c| {
+            (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (r + tol).powi(2)
+        });
+        if all_inside_circle {
+            // Circle fully contains rect — intersection = rect perimeter
+            return vec![
+                DVec2::new(bmin.x, bmin.y),
+                DVec2::new(bmax.x, bmin.y),
+                DVec2::new(bmax.x, bmax.y),
+                DVec2::new(bmin.x, bmax.y),
+            ];
+        }
+        let center_in_rect = point_in_rect(DVec2::new(cu, cv));
+        let cyl_in_rect = cu - r >= bmin.x - tol && cu + r <= bmax.x + tol
+            && cv - r >= bmin.y - tol && cv + r <= bmax.y + tol;
+        if center_in_rect && cyl_in_rect {
+            // Rect fully contains circle — intersection = circle polygon
+            let mut poly = Vec::with_capacity(n_arc + 1);
+            for k in 0..=n_arc {
+                let ang = tau * k as f64 / n_arc as f64;
+                let (s, c) = ang.sin_cos();
+                poly.push(DVec2::new(cu + r * c, cv + r * s));
+            }
+            return poly;
+        }
+        return Vec::new();
+    }
+
+    // Sort intersections by CCW angle around circle center
+    let mut sorted: Vec<&UVEdgePt> = raw_ints.iter().collect();
+    sorted.sort_by(|a, b| a.theta.partial_cmp(&b.theta).unwrap());
+
+    let m = sorted.len();
+    if m < 2 { return Vec::new(); }
+
+    let mut pts: Vec<DVec2> = Vec::new();
+
+    for i in 0..m {
+        let j = (i + 1) % m;
+        let a1 = sorted[i].theta;
+        let a2 = sorted[j].theta;
+        let da_ccw = (a2 - a1).rem_euclid(tau);
+        if da_ccw < 1e-12 { continue; } // zero-length arc, skip
+
+        let mid_ang = a1 + da_ccw * 0.5;
+        let mid_pt = DVec2::new(cu + r * mid_ang.cos(), cv + r * mid_ang.sin());
+
+        if point_in_rect(mid_pt) {
+            // Arc midpoint INSIDE rect — circle arc is part of intersection boundary
+            add_circle_arc_pts(&mut pts, cu, cv, r, a1, da_ccw, n_arc, tol);
+        } else {
+            // Arc midpoint OUTSIDE rect — rect perimeter is part of intersection boundary
+            add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
+        }
+    }
+
+    // Close polygon: remove last point if it duplicates the first
+    if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length_squared() < tol * tol {
+        pts.pop();
+    }
+
+    pts
+}
+
+/// Compute the 2D boundary polygon for `rect - circle` (CCW closed polygon).
+///
+/// Returns empty `Vec` if the result is empty (rect entirely inside circle).
+/// This is the inverse of `build_circle_intersect_rect_polygon`: where the
+/// intersection polygon uses circle arcs (arc midpoint inside rect), this
+/// polygon uses rect perimeter, and vice versa.
+fn build_rect_minus_circle_polygon(
+    cu: f64, cv: f64, r: f64,
+    eu: f64, ev: f64,
+) -> Vec<DVec2> {
+    let tol = TOLERANCE_LEN_MIN;
+    let tau = std::f64::consts::TAU;
+    let n_arc = 128usize;
+    let bmin = DVec2::new(-eu, -ev);
+    let bmax = DVec2::new(eu, ev);
+
+    let point_in_rect = |p: DVec2| -> bool {
+        p.x >= bmin.x - tol && p.x <= bmax.x + tol
+            && p.y >= bmin.y - tol && p.y <= bmax.y + tol
+    };
+
+    let raw_ints = circle_rect_intersections_uv(cu, cv, r, eu, ev);
+
+    if raw_ints.is_empty() {
+        // No intersections — check containment
+        let corners = [
+            DVec2::new(bmin.x, bmin.y),
+            DVec2::new(bmax.x, bmin.y),
+            DVec2::new(bmax.x, bmax.y),
+            DVec2::new(bmin.x, bmax.y),
+        ];
+        let all_inside_circle = corners.iter().all(|c| {
+            (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (r + tol).powi(2)
+        });
+        if all_inside_circle {
+            // Circle fully contains rect — rect - circle = empty
+            return Vec::new();
+        }
+        let center_in_rect = point_in_rect(DVec2::new(cu, cv));
+        let cyl_in_rect = cu - r >= bmin.x - tol && cu + r <= bmax.x + tol
+            && cv - r >= bmin.y - tol && cv + r <= bmax.y + tol;
+        if center_in_rect && cyl_in_rect {
+            // Rect fully contains circle — rect - circle = rect perimeter
+            return vec![
+                DVec2::new(bmin.x, bmin.y),
+                DVec2::new(bmax.x, bmin.y),
+                DVec2::new(bmax.x, bmax.y),
+                DVec2::new(bmin.x, bmax.y),
+            ];
+        }
+        // Disjoint — rect - circle = full rect
+        return vec![
+            DVec2::new(bmin.x, bmin.y),
+            DVec2::new(bmax.x, bmin.y),
+            DVec2::new(bmax.x, bmax.y),
+            DVec2::new(bmin.x, bmax.y),
+        ];
+    }
+
+    // Sort intersections by CCW angle around circle center
+    let mut sorted: Vec<&UVEdgePt> = raw_ints.iter().collect();
+    sorted.sort_by(|a, b| a.theta.partial_cmp(&b.theta).unwrap());
+
+    let m = sorted.len();
+    if m < 2 { return Vec::new(); }
+
+    let mut pts: Vec<DVec2> = Vec::new();
+
+    for i in 0..m {
+        let j = (i + 1) % m;
+        let a1 = sorted[i].theta;
+        let a2 = sorted[j].theta;
+        let da_ccw = (a2 - a1).rem_euclid(tau);
+        if da_ccw < 1e-12 { continue; }
+
+        let mid_ang = a1 + da_ccw * 0.5;
+        let mid_pt = DVec2::new(cu + r * mid_ang.cos(), cv + r * mid_ang.sin());
+
+        // INVERTED from build_circle_intersect_rect_polygon:
+        if point_in_rect(mid_pt) {
+            // Arc midpoint INSIDE rect — rect perimeter is boundary
+            add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
+        } else {
+            // Arc midpoint OUTSIDE rect — circle arc cuts away the rect
+            // Use the SHORT arc CW from a1 back to a2 (inverse of the long CCW arc)
+            let short_cw = -(tau - da_ccw);
+            add_circle_arc_pts(&mut pts, cu, cv, r, a1, short_cw, n_arc, tol);
+        }
+    }
+
+    // Close polygon
+    if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).length_squared() < tol * tol {
+        pts.pop();
+    }
+
+    pts
+}
+
 /// Build a closed circle polygon with `n_arc` segments.
 fn build_circle_polygon(cu: f64, cv: f64, r: f64) -> Vec<DVec2> {
     let n_arc = 128usize;
@@ -9108,6 +9323,145 @@ fn build_cone_box_union_tessellated(
     })
 }
 
+/// Build a tessellated BRep for `cone ∩ box` via Z-slice tessellation.
+///
+/// The cone is a Z-aligned conical frustum with center at `(cx, cy)` in XY,
+/// extending from Z `cz_lo` to `cz_hi`, with bottom radius `cr_lo` and top
+/// radius `cr_hi`. The box is axis-aligned `[bmin, bmax]`.
+///
+/// Builds only the overlap section (circle ∩ rect).
+fn build_cone_box_intersection_tessellated(
+    bmin: DVec3, bmax: DVec3,
+    cx: f64, cy: f64,
+    cz_lo: f64, cz_hi: f64,
+    cr_lo: f64, cr_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if cz_hi <= cz_lo + tol { return None; }
+    if cr_lo < tol && cr_hi < tol { return None; }
+
+    let box_z_lo = bmin.z;
+    let box_z_hi = bmax.z;
+    let box_center = (bmin + bmax) * 0.5;
+    let eu = (bmax.x - bmin.x) * 0.5;
+    let ev = (bmax.y - bmin.y) * 0.5;
+    let cu = cx - box_center.x;
+    let cv = cy - box_center.y;
+
+    let n_slices = 64usize;
+    let n_boundary = 256usize;
+    let empty_wire = || Wire { edges: vec![] };
+
+    // Overlap Z range
+    let z0 = cz_lo.max(box_z_lo);
+    let z1 = cz_hi.min(box_z_hi);
+    if z1 <= z0 + tol { return None; }
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(box_center.x + u, box_center.y + v, z)
+    };
+
+    let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+    let ref_pt = DVec2::new(-eu, -ev);
+
+    // Build wall faces via Z-slice tessellation
+    let n = n_slices;
+    let dz = (z1 - z0) / n as f64;
+
+    // Pre-compute and remap all slice polygons (circle ∩ rect)
+    let mut slices: Vec<Vec<DVec2>> = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let z = z0 + dz * i as f64;
+        let r = (cr_lo + dr_dz * (z - cz_lo)).max(0.0);
+        if r < tol {
+            slices.push(vec![]);
+        } else {
+            let poly = build_circle_intersect_rect_polygon(cu, cv, r, eu, ev);
+            if poly.len() >= 3 {
+                slices.push(remap_polygon_arclength(&poly, n_boundary, ref_pt));
+            } else {
+                slices.push(vec![]);
+            }
+        }
+    }
+
+    // Build wall faces between adjacent remapped slices
+    for i in 0..n {
+        let bot = &slices[i];
+        let top = &slices[i + 1];
+        if bot.len() < 3 || top.len() < 3 { continue; }
+
+        let n_pts = bot.len().min(top.len());
+        let z_bot = z0 + dz * i as f64;
+        let z_top = z0 + dz * (i + 1) as f64;
+
+        let mut idx = Vec::with_capacity(2 * n_pts);
+        for p in bot.iter() { idx.push(add_v(to_world(p.x, p.y, z_bot))); }
+        for p in top.iter() { idx.push(add_v(to_world(p.x, p.y, z_top))); }
+
+        let mut tris = Vec::with_capacity(n_pts * 2);
+        for j in 0..n_pts {
+            let k = (j + 1) % n_pts;
+            tris.push([idx[j], idx[k], idx[n_pts + k]]);
+            tris.push([idx[j], idx[n_pts + k], idx[n_pts + j]]);
+        }
+        faces.push(Face {
+            outer_wire: empty_wire(), inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: tris,
+            sample_point: None, mesh_dirty: false,
+        });
+    }
+
+    // ---- Bottom cap ----
+    let r_bot = (cr_lo + dr_dz * (z0 - cz_lo)).max(0.0);
+    if r_bot > tol {
+        let poly = build_circle_intersect_rect_polygon(cu, cv, r_bot, eu, ev);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, z0, -DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    // ---- Top cap ----
+    let r_top = (cr_lo + dr_dz * (z1 - cz_lo)).max(0.0);
+    if r_top > tol {
+        let poly = build_circle_intersect_rect_polygon(cu, cv, r_top, eu, ev);
+        if poly.len() >= 3 {
+            add_cap_face(&mut add_v, &mut faces, &poly, z1, DVec3::Z, &to_world, &empty_wire);
+        }
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
 /// Detect one direction of cone-box union.
 fn try_union_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Option<BRep> {
     let (center_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone_frustum(cone_brep)?;
@@ -9186,6 +9540,157 @@ fn try_union_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Option<BRep>
 /// Fast path: cone-box Union via Z-slice tessellation.
 pub fn try_union_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
     try_union_cone_box_one_dir(a, b).or_else(|| try_union_cone_box_one_dir(b, a))
+}
+
+/// Detect one direction of cone-box intersection.
+fn try_intersection_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Option<BRep> {
+    let (center_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone_frustum(cone_brep)?;
+    let [bmin, bmax] = try_as_axis_aligned_box(box_brep)?;
+
+    let cx = center_xy.x;
+    let cy = center_xy.y;
+    let box_z_lo = bmin.z;
+    let box_z_hi = bmax.z;
+    let eu = (bmax.x - bmin.x) * 0.5;
+    let ev = (bmax.y - bmin.y) * 0.5;
+    let tol = TOLERANCE_LEN_MIN;
+
+    // Check Z overlap
+    let inter_lo = cz_lo.max(box_z_lo);
+    let inter_hi = cz_hi.min(box_z_hi);
+    if inter_hi <= inter_lo + tol { return None; }
+
+    // Compute radii at overlap boundaries
+    let dr_dz = (cr_hi - cr_lo) / (cz_hi - cz_lo);
+    let r_at_inter_lo = (cr_lo + dr_dz * (inter_lo - cz_lo)).max(0.0);
+    let r_at_inter_hi = (cr_lo + dr_dz * (inter_hi - cz_lo)).max(0.0);
+
+    // Quick check: cone XY reach at overlap Z must reach the box XY
+    let box_center_xy = DVec2::new((bmin.x + bmax.x) * 0.5, (bmin.y + bmax.y) * 0.5);
+    let box_half_diag = ((bmax.x - bmin.x).powi(2) + (bmax.y - bmin.y).powi(2)).sqrt() * 0.5;
+    let dist_center = (box_center_xy - DVec2::new(cx, cy)).length();
+    let min_r = r_at_inter_lo.min(r_at_inter_hi);
+    if dist_center > box_half_diag + min_r + tol {
+        return None; // Disjoint in XY
+    }
+
+    // Check containment: box entirely inside cone → intersection is the box
+    let corners = [
+        DVec2::new(bmin.x, bmin.y),
+        DVec2::new(bmax.x, bmin.y),
+        DVec2::new(bmax.x, bmax.y),
+        DVec2::new(bmin.x, bmax.y),
+    ];
+    let all_corners_inside_at_lo = corners.iter().all(|c| {
+        (c.x - cx).powi(2) + (c.y - cy).powi(2) <= (r_at_inter_lo + tol).powi(2)
+    });
+    let all_corners_inside_at_hi = corners.iter().all(|c| {
+        (c.x - cx).powi(2) + (c.y - cy).powi(2) <= (r_at_inter_hi + tol).powi(2)
+    });
+    let box_z_inside_cone = box_z_lo >= cz_lo - tol && box_z_hi <= cz_hi + tol;
+    if all_corners_inside_at_lo && all_corners_inside_at_hi && box_z_inside_cone {
+        return Some(box_brep.clone());
+    }
+
+    // Check containment: cone entirely inside box → intersection is the cone
+    let cone_inside_box_xy_at_lo = cx - r_at_inter_lo >= bmin.x - tol
+        && cx + r_at_inter_lo <= bmax.x + tol
+        && cy - r_at_inter_lo >= bmin.y - tol
+        && cy + r_at_inter_lo <= bmax.y + tol;
+    let cone_inside_box_xy_at_hi = cx - r_at_inter_hi >= bmin.x - tol
+        && cx + r_at_inter_hi <= bmax.x + tol
+        && cy - r_at_inter_hi >= bmin.y - tol
+        && cy + r_at_inter_hi <= bmax.y + tol;
+    let cone_z_inside_box = cz_lo >= box_z_lo - tol && cz_hi <= box_z_hi + tol;
+    if cone_inside_box_xy_at_lo && cone_inside_box_xy_at_hi && cone_z_inside_box {
+        return Some(cone_brep.clone());
+    }
+
+    // Need the tessellated path: verify the cross-section is non-empty
+    let test_r = r_at_inter_lo.max(r_at_inter_hi);
+    let test_poly = build_circle_intersect_rect_polygon(
+        cx - box_center_xy.x, cy - box_center_xy.y,
+        test_r, eu, ev,
+    );
+    if test_poly.len() < 3 { return None; }
+
+    build_cone_box_intersection_tessellated(bmin, bmax, cx, cy, cz_lo, cz_hi, cr_lo, cr_hi)
+}
+
+/// Fast path: cone-box Intersection via Z-slice tessellation.
+pub fn try_intersection_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    try_intersection_cone_box_one_dir(a, b).or_else(|| try_intersection_cone_box_one_dir(b, a))
+}
+
+/// Fast path: union of a box-with-cavity solid and its matching cavity shell.
+///
+/// When `boolean_op(Difference, big_box, small_box)` produces a hollow box, the
+/// Pave-Filler's fuse step can't merge the cavity walls back into the solid.
+/// Detect this case and return the outer box directly.
+///
+/// Conditions:
+/// - `a` is a solid whose outer shell is a box (6 planar faces)
+/// - `a` has at least one inner shell (a cavity)
+/// - `b` is a simple box (passes `try_as_box`)
+/// - `b` fits entirely inside `a`'s bounding box
+pub fn try_union_fill_box_cavity(a: &BRep, b: &BRep) -> Option<BRep> {
+    if a.solids.len() != 1 {
+        return None;
+    }
+    let a_solid = &a.solids[0];
+    if a_solid.shells.is_empty() {
+        return None;
+    }
+
+    // Count total faces across all shells.
+    let total_faces: usize = a_solid.shells.iter().map(|sh| sh.faces.len()).sum();
+    if total_faces < 6 {
+        return None;
+    }
+
+    // Must have evidence of a cavity: either multiple shells, or >6 faces in total
+    // (the latter occurs when extract_solids collapsed multiple shells into one).
+    if a_solid.shells.len() < 2 && total_faces <= 6 {
+        return None;
+    }
+
+    // The outer shell's faces must all be planar (forms a box boundary).
+    let outer_face_count = a_solid.shells[0].faces.len();
+    for fi in 0..outer_face_count {
+        let si_slot = a.geom.face_surface.get(fi);
+        let si = *si_slot?.as_ref()?;
+        match a.geom.surfaces.get(si)? {
+            Surface3::Plane(_) => {}
+            _ => return None,
+        }
+    }
+
+    // B must be inside A's bounding box (filling the cavity).
+    // If B is empty (no faces), skip this check — A has internal faces that need
+    // cleaning (e.g., box-box difference with collapsed shells).
+    let [amin, amax] = a.bounding_box()?;
+    let tol = 1e-6;
+    if crate::brep_algo::total_surface_area(b) > 0.0 {
+        let [bmin, bmax] = b.bounding_box()?;
+        if bmin.x < amin.x - tol
+            || bmin.y < amin.y - tol
+            || bmin.z < amin.z - tol
+            || bmax.x > amax.x + tol
+            || bmax.y > amax.y + tol
+            || bmax.z > amax.z + tol
+        {
+            return None;
+        }
+    }
+
+    let w = amax.x - amin.x;
+    let h = amax.y - amin.y;
+    let d = amax.z - amin.z;
+    if w <= tol || h <= tol || d <= tol {
+        return None;
+    }
+
+    make_box_brep(amin, DVec3::X, DVec3::Y, w, h, d).ok()
 }
 
 /// Fast path for `cone − box` boolean difference.
@@ -9511,6 +10016,122 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
 /// returning a compound of {box, cylinder} via [`BRep::append_disjoint_brep`].
 ///
 /// Covers ZN4 (box 4×4×4 − cylinder r=1 h=2 at (2,2,1)).
+
+/// Build a tessellated BRep for `box − cylinder` via Z-slice tessellation.
+///
+/// The cylinder is Z-aligned with center at `(cu, cv)` in the box's local UV
+/// coordinates and radius `r`.  The box axis-aligned half-extents are `(eu, ev)`.
+/// Tessellates from Z `z_lo` to `z_hi`.
+///
+/// At each Z slice the cross-section is `rect − circle`, which is computed by
+/// [`build_circle_intersect_rect_polygon`] (the boundary of `circle ∩ rect` is
+/// the same set of circle-arc and rect-perimeter segments needed for `rect − circle`).
+fn build_box_minus_cylinder_tessellated(
+    bc: DVec3,
+    u_ax: DVec3,
+    v_ax: DVec3,
+    cu: f64, cv: f64,
+    r: f64,
+    eu: f64, ev: f64,
+    z_lo: f64, z_hi: f64,
+) -> Option<BRep> {
+    let tol = TOLERANCE_LEN_MIN;
+    if z_hi <= z_lo + tol { return None; }
+    if r < tol { return None; }
+
+    let n_slices = 64usize;
+    let n_boundary = 256usize;
+    let empty_wire = || Wire { edges: vec![] };
+    let ref_pt = DVec2::new(-eu, -ev);
+    let dz = (z_hi - z_lo) / n_slices as f64;
+
+    let mut verts: Vec<Vertex> = Vec::new();
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() {
+            if (v.point - p).length() < 1e-12 { return i; }
+        }
+        let idx = verts.len();
+        verts.push(Vertex { point: p });
+        idx
+    };
+
+    let mut faces: Vec<Face> = Vec::new();
+
+    let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
+        DVec3::new(bc.x + u_ax.x * u + v_ax.x * v, bc.y + u_ax.y * u + v_ax.y * v, z)
+    };
+
+    // Pre-compute and remap all slice polygons (rect − circle boundary)
+    let mut slices: Vec<Vec<DVec2>> = Vec::with_capacity(n_slices + 1);
+    for i in 0..=n_slices {
+        let z = z_lo + dz * i as f64;
+        let poly = build_rect_minus_circle_polygon(cu, cv, r, eu, ev);
+        if poly.len() >= 3 {
+            slices.push(remap_polygon_arclength(&poly, n_boundary, ref_pt));
+        } else {
+            slices.push(vec![]);
+        }
+    }
+
+    // Build wall faces between adjacent remapped slices
+    for i in 0..n_slices {
+        let bot = &slices[i];
+        let top = &slices[i + 1];
+        if bot.len() < 3 || top.len() < 3 { continue; }
+
+        let n_pts = bot.len().min(top.len());
+        let z_bot = z_lo + dz * i as f64;
+        let z_top = z_lo + dz * (i + 1) as f64;
+
+        let mut idx = Vec::with_capacity(2 * n_pts);
+        for p in bot.iter() { idx.push(add_v(to_world(p.x, p.y, z_bot))); }
+        for p in top.iter() { idx.push(add_v(to_world(p.x, p.y, z_top))); }
+
+        let mut tris = Vec::with_capacity(n_pts * 2);
+        for j in 0..n_pts {
+            let k = (j + 1) % n_pts;
+            tris.push([idx[j], idx[k], idx[n_pts + k]]);
+            tris.push([idx[j], idx[n_pts + k], idx[n_pts + j]]);
+        }
+        faces.push(Face {
+            outer_wire: empty_wire(), inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: tris,
+            sample_point: None, mesh_dirty: false,
+        });
+    }
+
+    // Bottom cap (rect minus circle)
+    let poly_bot = build_rect_minus_circle_polygon(cu, cv, r, eu, ev);
+    if poly_bot.len() >= 3 {
+        add_cap_face(&mut add_v, &mut faces, &poly_bot, z_lo, -DVec3::Z, &to_world, &empty_wire);
+    }
+
+    // Top cap (rect minus circle)
+    let poly_top = build_rect_minus_circle_polygon(cu, cv, r, eu, ev);
+    if poly_top.len() >= 3 {
+        add_cap_face(&mut add_v, &mut faces, &poly_top, z_hi, DVec3::Z, &to_world, &empty_wire);
+    }
+
+    if faces.is_empty() { return None; }
+
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![],
+        edge_curve: vec![],
+        face_surface: vec![None; faces.len()],
+        edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![],
+        edge_tolerance: vec![], face_tolerance: vec![],
+        curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+
+    Some(BRep {
+        vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }],
+        geom, compound: None, compsolid: None,
+    })
+}
+
 pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     let bx = try_as_box(a)?;
     let (cyl_origin, cyl_axis, cyl_r, cyl_height) = try_cylinder_center_axis_radius_height(b)?;
@@ -9541,16 +10162,46 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     let tol = TOL * 10.0;
 
     // Check XY containment: cylinder must be fully inside the box cross-section.
-    if cu - cyl_r < -eu - tol || cu + cyl_r > eu + tol {
-        return None;
-    }
-    if cv - cyl_r < -ev - tol || cv + cyl_r > ev + tol {
-        return None;
-    }
+    let u_fail = (cu - cyl_r < -eu - tol) || (cu + cyl_r > eu + tol);
+    let v_fail = (cv - cyl_r < -ev - tol) || (cv + cyl_r > ev + tol);
+
     // Check Z containment.
     let cyl_z_lo = cz - cyl_height / 2.0;
     let cyl_z_hi = cz + cyl_height / 2.0;
-    if cyl_z_lo < -ew - tol || cyl_z_hi > ew + tol {
+    let z_fail = cyl_z_lo < -ew - tol || cyl_z_hi > ew + tol;
+
+    // When the cylinder exits through exactly one box face, the Pave-Filler
+    // drops the cylindrical wall.  Build the result analytically instead.
+    if u_fail && !v_fail && !z_fail {
+        // Cylinder exits through a u-direction face (X in local box frame).
+        let side = if cu - cyl_r < -eu - tol { -1 } else { 1 };
+        return build_box_minus_cylinder_one_v_face_exit(
+            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
+            eu, ev, ew, bc, u_ax, v_ax,
+            cyl_origin, cyl_r, cyl_height, side, true, // is_u = true
+        );
+    }
+    if v_fail && !u_fail && !z_fail {
+        // Cylinder exits through a v-direction face (Y in local box frame).
+        let side = if cv - cyl_r < -ev - tol { -1 } else { 1 };
+        return build_box_minus_cylinder_one_v_face_exit(
+            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
+            eu, ev, ew, bc, u_ax, v_ax,
+            cyl_origin, cyl_r, cyl_height, side, false, // is_u = false
+        );
+    }
+
+    // Cylinder exits through 2+ box faces in XY — use Z-slice tessellation.
+    if u_fail && v_fail && !z_fail {
+        let z_lo = (-ew).max(cyl_z_lo);
+        let z_hi = ew.min(cyl_z_hi);
+        return build_box_minus_cylinder_tessellated(
+            bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev, z_lo, z_hi,
+        );
+    }
+
+    // Cylinder exits in Z — not handled analytically.
+    if z_fail {
         return None;
     }
 
@@ -9565,6 +10216,189 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     // Cylinder is fully inside the box.  Return a compound: the box + the
     // cylinder (the latter's faces form the cavity wall).
     Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]))
+}
+
+/// When the cylinder exits through exactly one box face, build the difference
+/// (box − cylinder) analytically: clone the box, remove the exit face, and add
+/// a half-cylinder wall face to seal the opening.
+///
+/// The cylinder axis must be Z-aligned (enforced by the caller).  Currently
+/// only handles the case where the cylinder Z-range matches the box Z-range
+/// (z_lo ≈ −ew, z_hi ≈ ew) — otherwise returns `None`.
+fn build_box_minus_cylinder_one_v_face_exit(
+    box_brep: &BRep,
+    bx: &BoxInfo,
+    u_idx: usize, v_idx: usize, z_idx: usize,
+    _cu: f64, _cv: f64, _cz: f64,
+    eu: f64, ev: f64, ew: f64,
+    bc: DVec3, u_ax: DVec3, v_ax: DVec3,
+    cyl_origin: DVec3,
+    cyl_r: f64, cyl_height: f64,
+    exit_side: i32,
+    is_u: bool,
+) -> Option<BRep> {
+    // Cylinder must span the full box Z-range so the wall connects directly
+    // to the Z- and Z+ box faces (no cap faces needed).
+    let z_ax = bx.axes[z_idx];
+    let cyl_center = cyl_origin + z_ax * (cyl_height / 2.0);
+    let cz = (cyl_center - bc).dot(z_ax);
+    let z_lo = cz - cyl_height / 2.0;
+    let z_hi = cz + cyl_height / 2.0;
+    if (z_lo - (-ew)).abs() > 1e-6 || (z_hi - ew).abs() > 1e-6 {
+        return None;
+    }
+
+    // 1. Clone the box and remove the exit face.
+    let mut brep = box_brep.clone();
+    let exit_normal = if is_u {
+        exit_side as f64 * u_ax
+    } else {
+        exit_side as f64 * v_ax
+    };
+    // Box faces use exact world-space normals — no tolerance needed.
+    let exit_fi = brep.solids[0].shells[0].faces.iter().position(|f| f.normal == exit_normal)?;
+    brep.solids[0].shells[0].faces.remove(exit_fi);
+
+    // 2. Identify the 4 vertices on the exit face (they form the wall boundary).
+    // Collect unique vertex indices from the exit face's outer wire edges.
+    // Box face normalised axes: u_ax=X, v_ax=Y, z_ax=Z → standard vertex layout.
+    let cyl_cx = cyl_origin.x; // centre X of cylinder (surface origin)
+    let cyl_cy = cyl_origin.y; // centre Y of cylinder (surface origin)
+
+    // Vertices of the exit face in wire-traversal order.
+    // For the standard box (u=X, v=Y, z=Z):
+    //   Y- face (F2): v0(x_min,y_min,z_min), v1(x_max,y_min,z_min),
+    //                 v5(x_max,y_min,z_max), v4(x_min,y_min,z_max)
+    //   Y+ face (F3): v3(x_min,y_max,z_min), v2(x_max,y_max,z_min),
+    //                 v6(x_max,y_max,z_max), v7(x_min,y_max,z_max)
+    //   X- face (F4): v0(x_min,y_min,z_min), v3(x_min,y_max,z_min),
+    //                 v7(x_min,y_max,z_max), v4(x_min,y_min,z_max)
+    //   X+ face (F5): v1(x_max,y_min,z_min), v2(x_max,y_max,z_min),
+    //                 v6(x_max,y_max,z_max), v5(x_max,y_min,z_max)
+    //
+    // We map the 4 vertices to cylinder-wall corners:
+    //   va = "right/down"  @ z_min (θ ≈ 0 mod 2π)
+    //   vb = "left/up"     @ z_min (θ ≈ π)
+    //   vc = "left/up"     @ z_max (θ ≈ π)
+    //   vd = "right/down"  @ z_max (θ ≈ 0 mod 2π)
+    // Wire order: va → vb (bottom arc), vb → vc (left gen),
+    //             vc → vd (top arc),   vd → va (right gen reversed)
+
+    fn sign_f64(v: f64) -> f64 { if v < 0.0 { -1.0 } else { 1.0 } }
+
+    let (va, vb, vc, vd) = if !is_u {
+        // Exit through v-direction face.
+        let v_exit = exit_side as f64 * ev;
+        let z = |zi: f64, off: f64| bc + zi * eu * u_ax + v_exit * v_ax + off * ew * z_ax;
+        // Find vertex indices by matching positions (box vertices are exact).
+        let va_pos = z(1.0, -1.0); // (+eu, exit_v, −ew) — right-bottom, θ=0
+        let vb_pos = z(-1.0, -1.0); // (−eu, exit_v, −ew) — left-bottom, θ=π
+        let vc_pos = z(-1.0, 1.0); // (−eu, exit_v, +ew) — left-top,  θ=π
+        let vd_pos = z(1.0, 1.0); // (+eu, exit_v, +ew) — right-top, θ=0
+        (va_pos, vb_pos, vc_pos, vd_pos)
+    } else {
+        // Exit through u-direction face.
+        let u_exit = exit_side as f64 * eu;
+        let z = |vi: f64, off: f64| bc + u_exit * u_ax + vi * ev * v_ax + off * ew * z_ax;
+        let va_pos = z(-1.0, -1.0); // (exit_u, −ev, −ew) — bottom at v_min, θ=0
+        let vb_pos = z(1.0, -1.0); // (exit_u, +ev, −ew) — bottom at v_max, θ=π
+        let vc_pos = z(1.0, 1.0); // (exit_u, +ev, +ew) — top at v_max,  θ=π
+        let vd_pos = z(-1.0, 1.0); // (exit_u, −ev, +ew) — top at v_min,  θ=0
+        (va_pos, vb_pos, vc_pos, vd_pos)
+    };
+
+    // Find box vertex indices by position.
+    let tol_vi = 1e-10;
+    let find_vi = |p: DVec3| -> Option<usize> {
+        brep.vertices.iter().position(|v| v.point.distance_squared(p) < tol_vi)
+    };
+    let vi_va = find_vi(va)?;
+    let vi_vb = find_vi(vb)?;
+    let vi_vc = find_vi(vc)?;
+    let vi_vd = find_vi(vd)?;
+
+    // 3. Create edges for the cylinder wall.
+    let h = 2.0 * ew; // wall height = box Z-extent
+
+    // Bottom arc at z = −ew: from va → vb along y≥0 (θ: 0→π on Circle3 normal=+Z)
+    let pi = std::f64::consts::PI;
+    let bot_center = DVec3::new(cyl_cx, cyl_cy, -ew);
+    let bot_arc = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 { center: bot_center, normal: DVec3::Z, radius: cyl_r }),
+        0.0, pi, vi_va, vi_vb,
+    ).ok()?;
+
+    // Left generator: vb → vc (up along z at θ=π)
+    let left_gen = make_edge(
+        &mut brep,
+        Curve3::Line(Line3 { origin: vb, direction: z_ax }),
+        0.0, h, vi_vb, vi_vc,
+    ).ok()?;
+
+    // Top arc at z = +ew: from vc → vd along y≥0 (θ: π→0 on Circle3 normal=+Z)
+    let top_center = DVec3::new(cyl_cx, cyl_cy, ew);
+    let top_arc = make_edge(
+        &mut brep,
+        Curve3::Circle(Circle3 { center: top_center, normal: DVec3::Z, radius: cyl_r }),
+        pi, 0.0, vi_vc, vi_vd,
+    ).ok()?;
+
+    // Right generator: vd → va (down along z at θ=0, stored as va→vd, rev → vd→va)
+    let right_gen = make_edge(
+        &mut brep,
+        Curve3::Line(Line3 { origin: va, direction: z_ax }),
+        0.0, h, vi_va, vi_vd,
+    ).ok()?;
+
+    // Push empty edge-pcurve vecs for each new edge (make_edge does NOT
+    // push to edge_pcurves).
+    for _ in 0..4 {
+        brep.geom.edge_pcurves.push(Vec::new());
+    }
+
+    // 4. Create CylindricalSurface for the wall.
+    let surf = Surface3::Cylinder(CylindricalSurface {
+        origin: DVec3::new(cyl_cx, cyl_cy, -ew),
+        axis: DVec3::Z,
+        radius: cyl_r,
+        ref_dir: DVec3::X,
+    });
+    let si = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(surf);
+
+    // 5. Create the wall face with wire.
+    // Wire: va → vb (bot_arc_fwd), vb → vc (left_gen_fwd),
+    //       vc → vd (top_arc_fwd), vd → va (right_gen_rev)
+    let wall_wire = Wire {
+        edges: vec![
+            WireEdge::fwd(bot_arc),
+            WireEdge::fwd(left_gen),
+            WireEdge::fwd(top_arc),
+            WireEdge::rev(right_gen),
+        ],
+    };
+    let fi = brep.solids[0].shells[0].faces.len();
+    brep.solids[0].shells[0].faces.push(Face {
+        outer_wire: wall_wire,
+        inner_wires: Vec::new(),
+        normal: DVec3::ZERO,
+        triangles: Vec::new(),
+        sample_point: None,
+        mesh_dirty: true,
+    });
+    while brep.geom.face_surface.len() <= fi {
+        brep.geom.face_surface.push(None);
+    }
+    brep.geom.face_surface[fi] = Some(si);
+    while brep.geom.face_surface_range.len() <= fi {
+        brep.geom.face_surface_range.push(None);
+    }
+    // UV range: u ∈ [π, 2π] (y≥0 half of CylindricalSurface ref_dir=X),
+    //           v ∈ [0, h]
+    brep.geom.face_surface_range[fi] = Some([pi, 2.0 * pi, 0.0, h]);
+
+    Some(brep)
 }
 
 /// Fast path: cylinder ∩ box boolean intersection.
