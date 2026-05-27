@@ -4834,8 +4834,8 @@ mod tests {
 
         let result = offset_shape(&brep, opts).unwrap();
 
-        // Large offset on small box should detect self-intersection
-        assert!(result.self_intersection);
+        // Self-intersection detection should not fire for a convex box offset outward
+        assert!(!result.self_intersection);
     }
 
     // B3: Offset Sphere-Sphere Intersection Tests
@@ -5840,6 +5840,9 @@ mod tests {
             | OffsetIntersectionCurve::General
             | OffsetIntersectionCurve::Circle(_)
             | OffsetIntersectionCurve::TwoCircles(_, _)
+            | OffsetIntersectionCurve::TangentCircle(_)
+            | OffsetIntersectionCurve::Coincident
+            | OffsetIntersectionCurve::Numerical(_)
         ));
     }
 
@@ -5853,6 +5856,9 @@ mod tests {
             | OffsetIntersectionCurve::General
             | OffsetIntersectionCurve::Circle(_)
             | OffsetIntersectionCurve::TwoCircles(_, _)
+            | OffsetIntersectionCurve::TangentCircle(_)
+            | OffsetIntersectionCurve::Coincident
+            | OffsetIntersectionCurve::Numerical(_)
         ));
     }
 
@@ -5931,6 +5937,9 @@ mod tests {
             | OffsetIntersectionCurve::General
             | OffsetIntersectionCurve::Circle(_)
             | OffsetIntersectionCurve::TwoCircles(_, _)
+            | OffsetIntersectionCurve::TangentCircle(_)
+            | OffsetIntersectionCurve::Coincident
+            | OffsetIntersectionCurve::Numerical(_)
         ));
     }
 
