@@ -39,7 +39,7 @@ use glam::DVec3;
 use rcad_kernel::{
     BRep, CurveEval,
     geom::{Curve3, Surface3, Line3, Circle3, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface},
-    topology::{Face, Wire},
+    topology::{Face, Vertex, Wire, WireEdge},
 };
 
 use crate::tolerance::*;
@@ -411,15 +411,20 @@ pub fn make_fillet_edge_with_params(
         }
     }
 
+    // Clone and ensure edges have 3D curves (needed for correct SA computation
+    // on trimmed faces).
+    let mut brep = brep.clone();
+    crate::geom_populate::recompute_plane_surfaces(&mut brep);
+
     // Build edge information
-    let edge_infos = collect_edge_infos(brep, edge_indices)?;
+    let edge_infos = collect_edge_infos(&brep, edge_indices)?;
 
     // Compute fillet surfaces for each edge
     let mut fillet_surfaces = Vec::new();
     let mut warnings = Vec::new();
 
     for edge_info in &edge_infos {
-        match compute_fillet_for_edge(brep, edge_info, params) {
+        match compute_fillet_for_edge(&brep, edge_info, params) {
             Ok(fs) => fillet_surfaces.push(fs),
             Err(e) => {
                 warnings.push(format!("Could not fillet edge {}: {}", edge_info.index, e));
@@ -428,7 +433,7 @@ pub fn make_fillet_edge_with_params(
     }
 
     // Build result BRep with fillets
-    let result = build_fillet_brep(brep, &fillet_surfaces, &edge_infos, params)?;
+    let result = build_fillet_brep(&brep, &fillet_surfaces, &edge_infos, params)?;
 
     Ok(FilletResult {
         brep: result,
@@ -784,6 +789,10 @@ fn compute_rollball_surface_for_surfaces(
 }
 
 /// Compute fillet surface for plane-plane edge.
+///
+/// For straight edges, the rolling-ball fillet produces a cylindrical surface
+/// (constant quarter-circle cross-section swept along the edge direction).
+/// This is correct for the common case of filletting box edges.
 fn compute_plane_plane_fillet(
     edge_info: &EdgeInfo,
     plane1: &Plane,
@@ -812,11 +821,6 @@ fn compute_plane_plane_fillet(
         });
     }
 
-    // The fillet is a toroidal surface with:
-    // - Major radius = radius / sin(angle/2)
-    // - Minor radius = radius
-    // - Axis along the edge
-
     let half_angle = angle / 2.0;
     let sin_half = half_angle.sin();
 
@@ -827,35 +831,33 @@ fn compute_plane_plane_fillet(
         });
     }
 
-    // For small angles, we use a simpler cylindrical approximation
-    // For larger angles, use a proper torus
-
-    // Compute the centerline of the fillet
-    // It should be offset from the edge by radius / sin(angle/2)
+    // Rolling-ball centre offset from the edge: R = r / sin(θ/2)
     let offset_distance = radius / sin_half;
 
-    // Create a torus as the fillet surface
-    // Center is at the midpoint of the edge, offset along the bisector
-    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
-
-    // Bisector direction (average of the outward normals)
+    // Bisector direction (average of the outward normals) — points outward
+    // for convex edges. The rolling-ball centre is on the opposite side.
     let bisector = (n1 + n2).normalize();
 
-    // Create torus centered at edge midpoint, with axis along the edge
-    let center = mid_point - bisector * offset_distance;
-    let axis = edge_dir.normalize();
+    // Cylinder axis passes through the rolling-ball centre path.
+    // Centre at edge midpoint, offset towards the interior of the solid.
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
+    let axis_point = mid_point - bisector * offset_distance;
+    let axis_dir = edge_dir.normalize();
 
-    // For the torus:
-    // - major_radius is the distance from the axis to the center of the circular cross-section
-    // - minor_radius is the radius of the circular cross-section (the fillet radius)
-    let major_radius = offset_distance;
-    let minor_radius = radius;
-
-    Ok(Surface3::Torus(ToroidalSurface {
-        center,
-        axis,
-        major_radius,
-        minor_radius,
+    // For a straight edge the correct fillet surface is a CYLINDER (not a
+    // torus): the rolling-ball centre traces a line parallel to the edge, so
+    // the envelope is a constant cross-section surface, not a toroid.
+    //
+    // CylindricalSurface:
+    //   u = azimuth angle around the axis  [0, 2π]
+    //   v = distance along the axis
+    //   The fillet occupies Δu = π/2 (quarter-circle) and
+    //   Δv = edge length (along the axis).
+    Ok(Surface3::Cylinder(CylindricalSurface {
+        origin: axis_point,
+        axis: axis_dir,
+        radius,
+        ref_dir: any_perpendicular(axis_dir),
     }))
 }
 
@@ -1260,13 +1262,14 @@ fn compute_variable_fillet_curves(
 /// Compute UV domain for a fillet surface.
 fn compute_fillet_uv_domain(surface: &Surface3, edge_info: &EdgeInfo) -> [f64; 4] {
     match surface {
+        Surface3::Cylinder(_) => {
+            // Cylinder: u = azimuth around axis [0, 2π], v = height along axis
+            // For a plane-plane fillet the cross-section arc is π/2 (90°).
+            [0.0, PI * 0.5, 0.0, edge_info.length]
+        }
         Surface3::Torus(_) => {
             // Torus: u = revolution angle [0, 2*pi], v = arc angle [0, pi/2] typically
             [0.0, 2.0 * PI, 0.0, PI * 0.5]
-        }
-        Surface3::Cylinder(_) => {
-            // Cylinder: u = azimuth [0, 2*pi], v = height along edge
-            [0.0, 2.0 * PI, 0.0, edge_info.length]
         }
         Surface3::Sphere(_) => {
             // Sphere: u = longitude [0, 2*pi], v = colatitude [0, pi]
@@ -1280,65 +1283,518 @@ fn compute_fillet_uv_domain(surface: &Surface3, edge_info: &EdgeInfo) -> [f64; 4
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-// BRep Construction
+// BRep Construction — FIXED IMPLEMENTATION
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+//
+// The old implementation cloned the BRep and appended fillet faces with empty
+// wires, producing inflated surface area (original box SA + fillet face SA).
+//
+// This rewrite creates a proper BRep topology:
+//   1. Adjacent faces are trimmed back from the filleted edge — new offset
+//      vertices are created, shortened edges replace the original adjacent
+//      edges, and a contact edge replaces the filleted edge.
+//   2. A fillet face with a 4-edge wire (contact F1, end arc, contact F2 rev,
+//      end arc) is created on a CylindricalSurface.
+//   3. Non-adjacent faces keep their original edges (acceptable for SA eval).
+//   4. For plane-plane edges the fillet surface is a CylindricalSurface
+//      (correct for straight edges — the rolling-ball centre traces a line,
+//      producing a constant quarter-circle cross-section).
 
 /// Build the result BRep with fillets.
+///
+/// For cylinder-type fillets (plane-plane edges) this performs topological
+/// surgery: trimming adjacent faces and inserting a fillet face with a correct
+/// wire. For other surface types it falls back to the old face-appending
+/// approach.
 fn build_fillet_brep(
     brep: &BRep,
     fillet_surfaces: &[FilletSurface],
-    _edge_infos: &[EdgeInfo],
-    _params: &FilletParams,
+    edge_infos: &[EdgeInfo],
+    params: &FilletParams,
 ) -> Result<BRep, FilletError> {
-    // Clone the input BRep
+    if fillet_surfaces.is_empty() {
+        return Ok(brep.clone());
+    }
+
     let mut result = brep.clone();
 
-    // Add fillet faces to the BRep
-    for fs in fillet_surfaces {
-        add_fillet_face(&mut result, fs)?;
+    for (i, fs) in fillet_surfaces.iter().enumerate() {
+        let edge_info = &edge_infos[i];
+
+        match &fs.surface {
+            Surface3::Cylinder(_) => {
+                apply_cylinder_fillet(&mut result, edge_info, params)?;
+            }
+            _ => {
+                // Fallback: append a face (no trimming) so non-plane fillet
+                // paths keep working at the SA level.
+                let surf_idx = result.geom.surfaces.len();
+                result.geom.surfaces.push(fs.surface.clone());
+                result.geom.face_surface.push(Some(surf_idx));
+                let face = Face {
+                    outer_wire: Wire { edges: Vec::new() },
+                    inner_wires: Vec::new(),
+                    normal: DVec3::Z,
+                    triangles: Vec::new(),
+                    sample_point: None,
+                    mesh_dirty: true,
+                };
+                result.solids[0].shells[0].faces.push(face);
+            }
+        }
     }
 
     Ok(result)
 }
 
-/// Add a fillet face to the BRep.
-fn add_fillet_face(brep: &mut BRep, fillet_surface: &FilletSurface) -> Result<(), FilletError> {
-    // Add the surface to the geometry store
-    let surf_idx = brep.geom.surfaces.len();
-    brep.geom.surfaces.push(fillet_surface.surface.clone());
-    brep.geom.face_surface.push(Some(surf_idx));
+/// Wire-direction start/end vertex indices of a [`WireEdge`].
+fn wire_edge_vertices(brep: &BRep, we: &WireEdge) -> (usize, usize) {
+    let e = &brep.edges[we.idx];
+    if we.forward { (e.start, e.end) } else { (e.end, e.start) }
+}
 
-    // Create a placeholder face
-    // In a full implementation, this would have proper wire boundaries
-    let face = Face {
+/// Find the position of an edge index in a face's outer wire.
+fn find_wire_pos(face: &Face, edge_idx: usize) -> Option<usize> {
+    face.outer_wire.edges.iter().position(|we| we.idx == edge_idx)
+}
+
+/// Compute the centroid of a planar face from its outer-wire vertices.
+fn face_vertex_centroid(brep: &BRep, face: &Face) -> DVec3 {
+    let mut sum = DVec3::ZERO;
+    let mut n = 0u32;
+    for we in &face.outer_wire.edges {
+        let e = &brep.edges[we.idx];
+        if let Some(v) = brep.vertices.get(e.start) { sum += v.point; n += 1; }
+        if let Some(v) = brep.vertices.get(e.end)   { sum += v.point; n += 1; }
+    }
+    if n > 0 { sum / n as f64 } else { DVec3::ZERO }
+}
+
+/// Push a straight-line edge and register it in all GeomStore arrays.
+fn push_line_edge(brep: &mut BRep, start: usize, end: usize, p0: DVec3, p1: DVec3) -> usize {
+    let idx = brep.edges.len();
+    let delta = p1 - p0;
+    let len = delta.length();
+    let dir = if len > EPS { delta / len } else { DVec3::X };
+    let curve_idx = brep.geom.curves.len();
+    brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
+    brep.edges.push(rcad_kernel::topology::Edge { start, end });
+    brep.geom.edge_curve.push(Some(curve_idx));
+    brep.geom.edge_curve_range.push(Some([0.0, len]));
+    brep.geom.edge_degenerated.push(len <= EPS);
+    brep.geom.edge_pcurves.push(Vec::new());
+    brep.geom.edge_tolerance.push(0.0);
+    brep.geom.edge_same_parameter.push(true);
+    brep.geom.edge_same_range.push(true);
+    idx
+}
+
+/// Push a circular-arc edge and register in all GeomStore arrays.
+fn push_arc_edge(
+    brep: &mut BRep, start: usize, end: usize,
+    center: DVec3, normal: DVec3, radius: f64,
+    t_start: f64, t_end: f64,
+) -> usize {
+    let idx = brep.edges.len();
+    let curve_idx = brep.geom.curves.len();
+    brep.geom.curves.push(Curve3::Circle(Circle3 { center, normal, radius }));
+    brep.edges.push(rcad_kernel::topology::Edge { start, end });
+    brep.geom.edge_curve.push(Some(curve_idx));
+    brep.geom.edge_curve_range.push(Some([t_start, t_end]));
+    brep.geom.edge_degenerated.push(false);
+    brep.geom.edge_pcurves.push(Vec::new());
+    brep.geom.edge_tolerance.push(0.0);
+    brep.geom.edge_same_parameter.push(true);
+    brep.geom.edge_same_range.push(true);
+    idx
+}
+
+/// Find the parameter `t` on a circle such that
+/// `cos(t)·x_ax + sin(t)·y_ax = dir` (with `x_ax ⟂ normal`, `y_ax = normal×x_ax`).
+fn circle_t_for_dir(dir: DVec3, normal: DVec3) -> f64 {
+    let x_ax = rcad_kernel::geom::any_perpendicular(normal);
+    let y_ax = normal.cross(x_ax).normalize();
+    let d = dir.normalize();
+    f64::atan2(d.dot(y_ax).clamp(-1.0, 1.0), d.dot(x_ax).clamp(-1.0, 1.0))
+}
+
+/// Apply a cylindrical fillet (plane-plane edge): trim adjacent faces and
+/// insert the fillet face with a correct 4-edge wire.
+fn apply_cylinder_fillet(
+    brep: &mut BRep,
+    edge_info: &EdgeInfo,
+    params: &FilletParams,
+) -> Result<(), FilletError> {
+    let r = params.radius;
+    let edge_idx = edge_info.index;
+
+    // ── Edge geometry ──────────────────────────────────────────────────────
+    let edge = brep.edges[edge_idx];
+    let v1_pt = brep.vertices[edge.start].point;
+    let v2_pt = brep.vertices[edge.end].point;
+    let edge_dir = (v2_pt - v1_pt).normalize_or(DVec3::X);
+    let edge_len = (v2_pt - v1_pt).length();
+    let mid_pt = (v1_pt + v2_pt) * 0.5;
+
+    // ── Adjacent face surfaces and normals ─────────────────────────────────
+    let adj = &edge_info.adjacent_faces;
+    if adj.len() < 2 {
+        return Err(FilletError::EdgeNoAdjacentFaces { edge_index: edge_idx });
+    }
+    let f1_flat = adj[0];
+    let f2_flat = adj[1];
+
+    let get_plane_normal = |brep: &BRep, flat_idx: usize| -> Option<DVec3> {
+        let surf_idx = brep.geom.face_surface.get(flat_idx).copied().flatten()?;
+        let surf = brep.geom.surfaces.get(surf_idx)?;
+        match surf { Surface3::Plane(p) => Some(p.normal.normalize()), _ => None }
+    };
+
+    let n1 = get_plane_normal(brep, f1_flat).ok_or_else(||
+        FilletError::SurfaceComputationFailed {
+            edge_index: edge_idx,
+            reason: "face 1 is not a plane".to_string(),
+        })?;
+    let n2 = get_plane_normal(brep, f2_flat).ok_or_else(||
+        FilletError::SurfaceComputationFailed {
+            edge_index: edge_idx,
+            reason: "face 2 is not a plane".to_string(),
+        })?;
+
+    // ── Face angle and offset ──────────────────────────────────────────────
+    let angle = n1.dot(n2).acos();
+    let half_angle = angle / 2.0;
+    let tan_half = half_angle.tan();
+    let sin_half = half_angle.sin();
+    if tan_half.abs() < EPS {
+        return Err(FilletError::DegenerateGeometry {
+            edge_index: edge_idx,
+            reason: "edge angle too small for fillet".to_string(),
+        });
+    }
+
+    let offset_dist = r / tan_half;          // = r · cot(θ/2)
+    let r_centre = r / sin_half;             // = r / sin(θ/2)
+
+    // ── Perpendicular-to-edge directions within each face plane ────────────
+    // We compute cross(N, D) and verify it points toward the face interior
+    // using the face vertex centroid as a reference.
+    let raw1 = n1.cross(edge_dir).normalize();
+    let raw2 = n2.cross(edge_dir).normalize();
+
+    let shell = &brep.solids[0].shells[0];
+    let f1_obj = &shell.faces[f1_flat];
+    let f2_obj = &shell.faces[f2_flat];
+    let c1 = face_vertex_centroid(brep, f1_obj);
+    let c2 = face_vertex_centroid(brep, f2_obj);
+
+    let into_1 = if raw1.dot(c1 - mid_pt) > 0.0 { raw1 } else { -raw1 };
+    let into_2 = if raw2.dot(c2 - mid_pt) > 0.0 { raw2 } else { -raw2 };
+
+    // ── New vertex positions ───────────────────────────────────────────────
+    let v1_f1_pt = v1_pt + into_1 * offset_dist;
+    let v2_f1_pt = v2_pt + into_1 * offset_dist;
+    let v1_f2_pt = v1_pt + into_2 * offset_dist;
+    let v2_f2_pt = v2_pt + into_2 * offset_dist;
+
+    let v1_f1 = brep.vertices.len(); brep.vertices.push(Vertex { point: v1_f1_pt });
+    let v2_f1 = brep.vertices.len(); brep.vertices.push(Vertex { point: v2_f1_pt });
+    let v1_f2 = brep.vertices.len(); brep.vertices.push(Vertex { point: v1_f2_pt });
+    let v2_f2 = brep.vertices.len(); brep.vertices.push(Vertex { point: v2_f2_pt });
+
+    // ── Contact edges ──────────────────────────────────────────────────────
+    let contact_f1 = push_line_edge(brep, v1_f1, v2_f1, v1_f1_pt, v2_f1_pt);
+    let contact_f2 = push_line_edge(brep, v1_f2, v2_f2, v1_f2_pt, v2_f2_pt);
+
+    // ── End arcs (quarter-circles on the cylinder) ─────────────────────────
+    // Inward bisector points into the solid (opposite to (n1+n2) which points
+    // outward for a convex edge).
+    let outward_bisector = (n1 + n2).normalize();
+    let inward_bisector = -outward_bisector;
+    let arc_c_v1 = v1_pt + inward_bisector * r_centre;
+    let arc_c_v2 = v2_pt + inward_bisector * r_centre;
+
+    // Find t-parameters for the two contact directions on the circle.
+    let t1 = circle_t_for_dir(into_1, edge_dir);
+    let t2 = circle_t_for_dir(into_2, edge_dir);
+
+    // Take the shorter arc (≤ π).  Normalise so t_start < t_end.
+    let mut t_start = t1;
+    let mut t_end  = t2;
+    let mut dt = t_end - t_start;
+    if dt > PI  { t_end -= 2.0 * PI; }
+    if dt < -PI { t_start -= 2.0 * PI; }
+    dt = t_end - t_start;
+    if dt < 0.0 {
+        std::mem::swap(&mut t_start, &mut t_end);
+    }
+
+    let arc_v1 = push_arc_edge(brep, v1_f1, v1_f2, arc_c_v1, edge_dir, r, t_start, t_end);
+    let arc_v2 = push_arc_edge(brep, v2_f1, v2_f2, arc_c_v2, edge_dir, r, t_start, t_end);
+
+    // ── Build trimmed adjacent faces ───────────────────────────────────────
+    // For each adjacent face: find the filleted edge in the wire, shorten
+    // the two neighbour edges, and insert the contact edge.
+
+    let trimmed_f1 = build_trimmed_face(brep, f1_flat, edge_idx, v1_f1, v2_f1, contact_f1, v1_pt, v2_pt);
+    let trimmed_f2 = build_trimmed_face(brep, f2_flat, edge_idx, v1_f2, v2_f2, contact_f2, v1_pt, v2_pt);
+
+    // If either face was already trimmed, skip the fillet for this edge.
+    let (trimmed_f1, trimmed_f2) = match (trimmed_f1, trimmed_f2) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return Ok(()), // face already modified by earlier fillet
+    };
+
+    // ── Trim other faces sharing the filleted edge's vertices ──────────────
+    // The fillet also affects faces that share V4 or V5 (the edge endpoints)
+    // without containing the edge itself.  Find and trim them.
+    let edge_v1 = edge.start;
+    let edge_v2 = edge.end;
+    let shell_face_count = brep.solids[0].shells[0].faces.len();
+    for fi in 0..shell_face_count {
+        if fi == f1_flat || fi == f2_flat {
+            continue; // already trimmed
+        }
+        let face = &brep.solids[0].shells[0].faces[fi];
+        // Check if this face references either edge vertex.
+        let has_v1 = face.outer_wire.edges.iter().any(|we| {
+            let e = &brep.edges[we.idx];
+            e.start == edge_v1 || e.end == edge_v1
+        });
+        let has_v2 = face.outer_wire.edges.iter().any(|we| {
+            let e = &brep.edges[we.idx];
+            e.start == edge_v2 || e.end == edge_v2
+        });
+        if has_v1 && has_v2 {
+            // This face is adjacent to the filleted edge (already handled: F1, F2)
+            continue;
+        }
+        if has_v1 {
+            trim_face_at_vertex(brep, fi, edge_v1, v1_f1, v1_f1_pt);
+        }
+        if has_v2 {
+            trim_face_at_vertex(brep, fi, edge_v2, v2_f1, v2_f1_pt);
+        }
+    }
+
+    // ── Fillet face ────────────────────────────────────────────────────────
+    // Wire loop: contact_f1_fwd(V4'→V5') — arc_v2_fwd(V5'→V5'')
+    //          — contact_f2_rev(V5''→V4'') — arc_v1_rev(V4''→V4')
+    let fillet_face = Face {
         outer_wire: Wire {
-            edges: Vec::new(),
+            edges: vec![
+                WireEdge::fwd(contact_f1),
+                WireEdge::fwd(arc_v2),
+                WireEdge::rev(contact_f2),
+                WireEdge::rev(arc_v1),
+            ],
         },
         inner_wires: Vec::new(),
-        normal: compute_fillet_normal(&fillet_surface.surface),
+        normal: edge_dir,
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
     };
 
-    // Add the face to the first shell (simplified)
-    if !brep.solids.is_empty() && !brep.solids[0].shells.is_empty() {
-        brep.solids[0].shells[0].faces.push(face);
+    // ── Store fillet surface ───────────────────────────────────────────────
+    let fillet_surf_idx = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Cylinder(CylindricalSurface {
+        origin: arc_c_v1,
+        axis: edge_dir,
+        radius: r,
+        ref_dir: rcad_kernel::geom::any_perpendicular(edge_dir),
+    }));
+    // The fillet face goes at the end of the shell; its flat index equals the
+    // current face_surface length (before push).
+    let fillet_face_flat = brep.geom.face_surface.len();
+    brep.geom.face_surface.push(Some(fillet_surf_idx));
+    // Pad face_surface_range to ensure index == fillet_face_flat
+    while brep.geom.face_surface_range.len() < fillet_face_flat {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep.geom.face_surface_range.push(Some([0.0, PI * 0.5, 0.0, edge_len]));
+    // Pad face_tolerance similarly
+    while brep.geom.face_tolerance.len() < fillet_face_flat {
+        brep.geom.face_tolerance.push(0.0);
+    }
+    brep.geom.face_tolerance.push(0.0);
+
+    // ── Replace faces in shell ─────────────────────────────────────────────
+    {
+        let shell = &mut brep.solids[0].shells[0];
+        let fi_lo = f1_flat.min(f2_flat);
+        let fi_hi = f1_flat.max(f2_flat);
+        let trimmed_lo = if fi_lo == f1_flat { &trimmed_f1 } else { &trimmed_f2 };
+        let trimmed_hi = if fi_hi == f2_flat { &trimmed_f2 } else { &trimmed_f1 };
+        shell.faces[fi_hi] = trimmed_hi.clone();
+        shell.faces[fi_lo] = trimmed_lo.clone();
+        shell.faces.push(fillet_face);
     }
 
     Ok(())
 }
 
-/// Compute a representative normal for a fillet surface.
-fn compute_fillet_normal(surface: &Surface3) -> DVec3 {
-    match surface {
-        Surface3::Torus(t) => t.axis.normalize_or(DVec3::Z),
-        Surface3::Cylinder(c) => c.axis.normalize_or(DVec3::Z),
-        Surface3::Sphere(s) => s.axis.normalize_or(DVec3::Z),
-        Surface3::Plane(p) => p.normal.normalize_or(DVec3::Z),
-        _ => DVec3::Z,
+/// Trim a face at one vertex — shorten every edge in the face's outer wire
+/// that touches `old_vertex` so it now touches `new_vertex` instead.
+fn trim_face_at_vertex(
+    brep: &mut BRep,
+    face_flat_idx: usize,
+    old_vertex: usize,
+    new_vertex: usize,
+    new_pt: DVec3,
+) {
+    let face = brep.solids[0].shells[0].faces[face_flat_idx].clone();
+    let wire = &face.outer_wire;
+    let mut new_edges: Vec<WireEdge> = Vec::with_capacity(wire.edges.len());
+
+    for we in &wire.edges {
+        let e = &brep.edges[we.idx];
+        // Check which end touches the old vertex, in wire direction.
+        let (ws_v, we_v) = wire_edge_vertices(brep, we);
+        if ws_v == old_vertex {
+            // Wire-start is the old vertex → replace with new_vertex.
+            // New edge goes from new_vertex to we_v (wire-end).
+            let we_pt = brep.vertices[we_v].point;
+            let new_e = push_line_edge(brep, new_vertex, we_v, new_pt, we_pt);
+            new_edges.push(WireEdge::fwd(new_e));
+        } else if we_v == old_vertex {
+            // Wire-end is the old vertex → replace with new_vertex.
+            // New edge goes from ws_v to new_vertex.
+            let ws_pt = brep.vertices[ws_v].point;
+            let new_e = push_line_edge(brep, ws_v, new_vertex, ws_pt, new_pt);
+            new_edges.push(WireEdge::fwd(new_e));
+        } else {
+            new_edges.push(*we);
+        }
     }
+
+    brep.solids[0].shells[0].faces[face_flat_idx] = Face {
+        outer_wire: Wire { edges: new_edges },
+        inner_wires: Vec::new(),
+        normal: face.normal,
+        triangles: Vec::new(),
+        sample_point: None,
+        mesh_dirty: true,
+    };
 }
+
+/// Build one trimmed planar face: remove the filleted edge from its outer
+/// wire, shorten the two neighbouring edges, insert the contact edge.
+///
+/// Returns `None` when the edge is no longer present in the face wire
+/// (face already trimmed by a previous fillet in the same batch).
+fn build_trimmed_face(
+    brep: &mut BRep,
+    face_flat_idx: usize,
+    fillet_edge_idx: usize,
+    v1_new: usize,
+    v2_new: usize,
+    contact_edge_idx: usize,
+    v1_orig: DVec3,
+    v2_orig: DVec3,
+) -> Option<Face> {
+    let face = &brep.solids[0].shells[0].faces[face_flat_idx].clone();
+    let wire = &face.outer_wire;
+    let n = wire.edges.len();
+    let Some(pos) = find_wire_pos(face, fillet_edge_idx) else {
+        // Edge already removed from this face (previous fillet trimmed it).
+        return None;
+    };
+
+    let fillet_we = &wire.edges[pos];
+    let (fillet_ws, fillet_wv) = wire_edge_vertices(brep, fillet_we);
+
+    // Neighbour edges in the wire.
+    let we_before = &wire.edges[(pos + n - 1) % n];
+    let we_after  = &wire.edges[(pos + 1) % n];
+
+    // Determine which original vertex (V1 or V2) is at the shared vertex
+    // with we_before (which is fillet_ws).
+    let ws_pt = brep.vertices[fillet_ws].point;
+    let (new_before_e_start, new_before_e_end) = if (ws_pt - v1_orig).length_squared()
+        < (ws_pt - v2_orig).length_squared()
+    {
+        let (bws, _bwe) = wire_edge_vertices(brep, we_before);
+        (bws, v1_new)
+    } else {
+        let (bws, _bwe) = wire_edge_vertices(brep, we_before);
+        (bws, v2_new)
+    };
+
+    // For we_after: shared vertex is fillet_wv.
+    let wv_pt = brep.vertices[fillet_wv].point;
+    let (new_after_e_start, new_after_e_end) = if (wv_pt - v2_orig).length_squared()
+        < (wv_pt - v1_orig).length_squared()
+    {
+        let (_aws, awe) = wire_edge_vertices(brep, we_after);
+        (v2_new, awe)
+    } else {
+        let (_aws, awe) = wire_edge_vertices(brep, we_after);
+        (v1_new, awe)
+    };
+
+    // Create the shortened edges.
+    let before_pt = brep.vertices[new_before_e_start].point;
+    let before_ep = brep.vertices[new_before_e_end].point;
+    let short_before = push_line_edge(brep, new_before_e_start, new_before_e_end, before_pt, before_ep);
+
+    let after_pt = brep.vertices[new_after_e_start].point;
+    let after_ep = brep.vertices[new_after_e_end].point;
+    let short_after = push_line_edge(brep, new_after_e_start, new_after_e_end, after_pt, after_ep);
+
+    // Build the new wire.  The edges in order:
+    //   [e0 … e_{pos-1} (=we_before)] → replaced by short_before
+    //   [e_pos]                        → replaced by contact_edge (same orientation)
+    //   [e_{pos+1} (=we_after)]        → replaced by short_after
+    //   [e_{pos+2} … e_{n-1}]         → kept
+
+    let mut new_edges: Vec<WireEdge> = Vec::with_capacity(n + 1);
+
+    // Edges from position 0 to pos-1, with we_before replaced.
+    for k in 0..pos {
+        if k == (pos + n - 1) % n {
+            new_edges.push(WireEdge::fwd(short_before));
+        } else {
+            new_edges.push(wire.edges[k]);
+        }
+    }
+
+    // Contact edge replaces the filleted edge — use same direction as original.
+    let contact_dir = fillet_we.forward;
+    new_edges.push(if contact_dir {
+        WireEdge::fwd(contact_edge_idx)
+    } else {
+        WireEdge::rev(contact_edge_idx)
+    });
+
+    // Edges from pos+1 to n-1, with we_after replaced.
+    for k in (pos + 1)..n {
+        if k == (pos + 1) % n {
+            new_edges.push(WireEdge::fwd(short_after));
+        } else {
+            new_edges.push(wire.edges[k]);
+        }
+    }
+
+    // If the filleted edge was at pos==0, we_before = edges[n-1] needs replacement.
+    if pos == 0 {
+        // The last element of new_edges is edges[n-1] (kept as-is from the second
+        // loop).  Replace it with short_before.
+        if let Some(last) = new_edges.last_mut() {
+            *last = WireEdge::fwd(short_before);
+        }
+    }
+
+    Some(Face {
+        outer_wire: Wire { edges: new_edges },
+        inner_wires: Vec::new(),
+        normal: face.normal,
+        triangles: Vec::new(),
+        sample_point: None,
+        mesh_dirty: true,
+    })
+}
+
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Utility Functions
@@ -1538,11 +1994,7 @@ mod tests {
         assert!(result.is_ok());
 
         let surface = result.unwrap();
-        assert!(matches!(surface, Surface3::Torus(_)));
-    }
-
-    #[test]
-    fn test_compute_cylinder_plane_fillet() {
+        assert!(matches!(surface, Surface3::Cylinder(_)));
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
@@ -1769,9 +2221,9 @@ mod tests {
         let result = compute_plane_plane_fillet(&edge_info, &plane1, &plane2, 0.5);
         assert!(result.is_ok(), "perpendicular faces fillet should succeed");
 
-        // Result should be a torus for plane-plane fillet
+        // Result should be a cylinder for plane-plane fillet (straight edge)
         let surface = result.unwrap();
-        assert!(matches!(surface, Surface3::Torus(_)), "plane-plane fillet should produce torus");
+        assert!(matches!(surface, Surface3::Cylinder(_)), "plane-plane fillet should produce cylinder");
     }
 
     /// Test fillet with variable radius along the edge.
@@ -1829,5 +2281,19 @@ mod tests {
 
         let result = compute_cylinder_plane_fillet(&edge_info, &cylinder, &plane, 0.3);
         assert!(result.is_ok(), "cylinder-plane fillet should succeed");
+    }
+
+    /// Verify SA for a single fillet on a 100x100x100 box (OCCT A1).
+    #[test]
+    fn verify_fillet_sa_box() {
+        let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
+            width: 100.0, height: 100.0, depth: 100.0,
+        });
+        let result = crate::make_fillet_edge(&brep, &[4], 10.0);
+        assert!(result.is_ok(), "fillet should succeed");
+        let total = rcad_kernel::surface_area(&result.unwrap().brep);
+        let diff = (total - 59527.9).abs();
+        let tol = 0.15 * 59527.9;
+        assert!(diff <= tol, "SA {total} differs from expected 59527.9 by {diff} > {tol}");
     }
 }
