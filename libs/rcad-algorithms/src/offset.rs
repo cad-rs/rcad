@@ -2607,11 +2607,16 @@ fn offset_vertex_curved_plane(
 /// and adjacent to planar faces, computes the intersection of the offset surfaces.
 /// Otherwise, falls back to translating the original vertex along the average
 /// face normal (a smooth-surface approximation).
-fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell) -> DVec3 {
+fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, exclude_faces: Option<&HashSet<usize>>) -> DVec3 {
     let pt = brep.vertices[vertex_idx].point;
     let mut faces: Vec<usize> = Vec::new();
     let mut normal_sum = DVec3::ZERO;
     for (fi, face) in shell.faces.iter().enumerate() {
+        if let Some(exclude) = exclude_faces {
+            if exclude.contains(&fi) {
+                continue;
+            }
+        }
         let uses = face.outer_wire.edges.iter().any(|we| {
             let e = &brep.edges[we.idx];
             e.start == vertex_idx || e.end == vertex_idx
@@ -4051,7 +4056,7 @@ fn offset_shell_with_options_impl(
             } else {
                 distance
             };
-            offset_vertex(brep, vi, avg_distance, shell)
+            offset_vertex(brep, vi, avg_distance, shell, None)
         })
         .collect();
 
@@ -4727,8 +4732,10 @@ pub fn hollow_solid_with_options(
     }
 
     // Step 3: Compute offset vertex positions
+    // Exclude open-set (stopper) faces so their normals don't influence
+    // boundary vertex positions (e.g., bottom-face vertex at z=0 stays at z=0).
     let offset_vertices: Vec<DVec3> = (0..brep.vertices.len())
-        .map(|vi| offset_vertex(brep, vi, inward_offset, shell))
+        .map(|vi| offset_vertex(brep, vi, inward_offset, shell, Some(&open_set)))
         .collect();
 
     // Step 4: Build result BRep
@@ -4747,6 +4754,40 @@ pub fn hollow_solid_with_options(
     let mut off_vertex_map: Vec<usize> = Vec::new();
     for &p in &offset_vertices {
         off_vertex_map.push(add_vertex(&mut result, p));
+    }
+
+    // Step 4.5: Create original kept faces (outer boundary of the thickened wall)
+    for (fi, face) in shell.faces.iter().enumerate() {
+        if open_set.contains(&fi) {
+            continue;
+        }
+        let surf_idx = match brep.geom.face_surface.get(fi).and_then(|s| *s) {
+            Some(s) => s,
+            None => continue,
+        };
+        let surf = &brep.geom.surfaces[surf_idx];
+
+        let mut wire_edges = Vec::new();
+        for we in &face.outer_wire.edges {
+            let e = &brep.edges[we.idx];
+            let vs = orig_vertex_map[e.start];
+            let ve = orig_vertex_map[e.end];
+            let p0 = result.vertices[vs].point;
+            let p1 = result.vertices[ve].point;
+            let dir = (p1 - p0).normalize_or(DVec3::X);
+            let len = (p1 - p0).length();
+            let curve = Curve3::Line(Line3 {
+                origin: p0,
+                direction: dir,
+            });
+            let eidx = add_edge(&mut result, curve, 0.0, len, vs, ve);
+            wire_edges.push(if we.forward {
+                WireEdge::fwd(eidx)
+            } else {
+                WireEdge::rev(eidx)
+            });
+        }
+        add_face(&mut result, surf.clone(), Wire { edges: wire_edges }, Vec::new());
     }
 
     // Step 5: Create offset faces for kept faces
@@ -4784,7 +4825,13 @@ pub fn hollow_solid_with_options(
             wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 
-        add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
+        let reversed_edges: Vec<WireEdge> = wire_edges.iter().rev()
+            .map(|we| WireEdge { idx: we.idx, forward: !we.forward })
+            .collect();
+        let off_face_idx = add_face(&mut result, off_surf, Wire { edges: reversed_edges }, Vec::new());
+        // Negate the stored normal so face_triangles' orient_tri produces
+        // reversed (inward-pointing) triangle winding for the inner boundary.
+        result.solids[0].shells[0].faces[off_face_idx].normal *= -1.0;
         offset_face_count += 1;
     }
 
