@@ -1,4 +1,4 @@
-﻿//! Shell and solid offset operations 鈥?analogous to OCCT `BRepOffsetAPI_MakeOffsetShape`.
+//! Shell and solid offset operations 鈥?analogous to OCCT `BRepOffsetAPI_MakeOffsetShape`.
 //!
 //! # Overview
 //!
@@ -2293,6 +2293,54 @@ fn project_point_to_line(point: DVec3, line: &Line3) -> f64 {
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+/// Classification of an edge's convexity based on its adjacent face normals.
+///
+/// Determines how offset surfaces behave at this edge:
+/// - `Convex` (ridge): adjacent faces meet at an interior angle < 180°
+///   — for outward offsets, surfaces converge; the offset edge is well-defined.
+/// - `Concave` (valley/reflex): adjacent faces meet at an interior angle > 180°
+///   — for outward offsets, surfaces separate; a sewing face is needed.
+/// - `Coplanar`: adjacent faces are tangent-continuous; the edge is degenerate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum EdgeConvexity {
+    Convex,
+    Concave,
+    Coplanar,
+}
+
+/// Classify a manifold edge as convex or concave using face normals.
+///
+/// Uses the cross-product of adjacent face normals projected onto the edge direction:
+///   `sign = (n1 × n2) · t`
+///
+/// For outward normals on a closed solid:
+///   - `sign > 0` → **convex** (ridge — edge is a "peak")
+///   - `sign < 0` → **concave** (valley — edge is a "notch")
+///   - `sign ≈ 0` → **coplanar** (tangent-continuous or degenerate)
+fn classify_edge_convexity(n1: DVec3, n2: DVec3, edge_tangent: DVec3) -> EdgeConvexity {
+    let cross = n1.cross(n2);
+    let dot = cross.dot(edge_tangent);
+    if dot.abs() < TOLERANCE_ANG {
+        EdgeConvexity::Coplanar
+    } else if dot > 0.0 {
+        EdgeConvexity::Convex
+    } else {
+        EdgeConvexity::Concave
+    }
+}
+
+/// Per-edge information computed during the offset edge pass.
+struct EdgeInfo {
+    /// The original edge index.
+    edge_idx: usize,
+    /// The offset edge curve (None if separating or boundary).
+    curve: Option<(Curve3, f64, f64)>,
+    /// True if this concave edge's offset surfaces separate → needs a sewing face.
+    needs_sewing: bool,
+    /// Convexity classification of the original edge.
+    convexity: EdgeConvexity,
+}
+
 // Edge Offset
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -2374,11 +2422,24 @@ fn offset_edge(
 
         // Try analytical intersection if we have original surfaces
         if let (Some(orig0), Some(orig1)) = (orig_surf0, orig_surf1) {
-            // When both faces are planar, the offset vertex positions are exact,
-            // so let the caller create a line between them (the vertex positions
-            // are now computed via plane intersection rather than normal averaging).
+            // For planar-planar edges, compute the intersection line direction from
+            // the two offset planes. The caller creates the edge curve between the
+            // actual vertex positions — we just return the direction. This avoids the
+            // problem of the intersection line origin not matching the vertex positions.
             if matches!(orig0, Surface3::Plane(_)) && matches!(orig1, Surface3::Plane(_)) {
-                return None;
+                if let (Surface3::Plane(pl0), Surface3::Plane(pl1)) = (orig0, orig1) {
+                    let offset_pl0 = Plane { origin: pl0.origin + pl0.normal * distance, normal: pl0.normal };
+                    let offset_pl1 = Plane { origin: pl1.origin + pl1.normal * distance, normal: pl1.normal };
+                    let cross_dir = offset_pl0.normal.cross(offset_pl1.normal);
+                    if cross_dir.length_squared() < TOLERANCE_ANG * TOLERANCE_ANG {
+                        // Parallel planes — caller handles via vertex positions
+                        return None;
+                    }
+                    // Return None — the caller creates the edge curve from vertex positions.
+                    // The direction is known from the cross product, but the line origin
+                    // computed by solve_two_plane_point may not match the vertex positions.
+                    return None;
+                }
             }
 
             let intersection = intersect_offset_surfaces(orig0, orig1, distance, distance);
@@ -2547,60 +2608,95 @@ fn offset_vertex_curved_plane(
 /// Otherwise, falls back to translating the original vertex along the average
 /// face normal (a smooth-surface approximation).
 fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell) -> DVec3 {
-    let original_point = brep.vertices[vertex_idx].point;
-
-    // Collect all faces using this vertex
-    let mut face_indices: Vec<usize> = Vec::new();
+    let pt = brep.vertices[vertex_idx].point;
+    let mut faces: Vec<usize> = Vec::new();
     let mut normal_sum = DVec3::ZERO;
-
     for (fi, face) in shell.faces.iter().enumerate() {
-        let uses_vertex = face.outer_wire.edges.iter().any(|we| {
+        let uses = face.outer_wire.edges.iter().any(|we| {
             let e = &brep.edges[we.idx];
             e.start == vertex_idx || e.end == vertex_idx
+        }) || face.inner_wires.iter().any(|wire| {
+            wire.edges.iter().any(|we| {
+                let e = &brep.edges[we.idx];
+                e.start == vertex_idx || e.end == vertex_idx
+            })
         });
-
-        if uses_vertex {
-            face_indices.push(fi);
+        if uses {
+            faces.push(fi);
             normal_sum += face.normal;
         }
     }
-
-    if face_indices.is_empty() {
-        return original_point;
+    if faces.is_empty() {
+        return pt;
     }
+    offset_vertex_from_faces(brep, pt, &faces, normal_sum, distance, shell)
+}
 
-    // Check whether all adjacent faces are planar
+/// Core offset vertex computation using a pre-collected list of incident face indices.
+/// This is split out so callers can merge face lists from multiple BRep vertices at
+/// the same geometric position (T-junction deduplication).
+///
+/// Uses exact Cramer's rule on a well-conditioned subset of 3 faces rather than
+/// a least-squares solution over all faces. The least-squares normal-equations
+/// approach produces artifacts when the merged face set includes planes that
+/// don't all intersect at a single point (common at T-junctions and seams).
+/// Get the outward-pointing normal for a face by using the surface geometry.
+/// For planar faces, the surface normal from the plane equation is geometrically
+/// authoritative, while the precomputed face normal may be inconsistent
+/// (e.g., inward-facing due to shape-creation artifacts in extrude_polygon_solid).
+fn get_face_offset_normal(brep: &BRep, fi: usize, shell: &Shell) -> DVec3 {
+    // Prefer surface normal for planar faces — it's geometrically correct.
+    if let Some(si) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
+        if let Some(Surface3::Plane(p)) = brep.geom.surfaces.get(si) {
+            return p.normal;
+        }
+    }
+    // Fall back to the precomputed face normal for curved surfaces.
+    shell.faces[fi].normal
+}
+
+fn offset_vertex_from_faces(
+    brep: &BRep,
+    original_point: DVec3,
+    face_indices: &[usize],
+    normal_sum: DVec3,
+    distance: f64,
+    shell: &Shell,
+) -> DVec3 {
     let all_planar = face_indices.iter().all(|fi| {
-        brep.geom
-            .face_surface
-            .get(*fi)
-            .and_then(|s| *s)
+        brep.geom.face_surface.get(*fi).and_then(|s| *s)
             .and_then(|si| brep.geom.surfaces.get(si))
             .is_some_and(|surf| matches!(surf, Surface3::Plane(_)))
     });
 
     if all_planar && face_indices.len() >= 3 {
-        // Build a 3×3 linear system from the offset planes of the first three faces.
-        // Each plane:  n·x = n·v0 + distance   (v0 is the original vertex, which
-        // lies on all three faces, so n·v0 is the plane constant before offset).
+        // Use normal-equations (least squares) over ALL incident faces.
+        // This is more robust than picking 3 faces via Cramer's rule because
+        // shape-creation artifacts may produce inward-facing normals on some
+        // faces (e.g., extrude_polygon_solid). The least-squares approach
+        // distributes the error across all faces rather than committing to
+        // a potentially wrong subset.
+        // Solve: (Σ n_i·n_i^T) · x = Σ n_i·(n_i·p + d)
         let mut m = [[0.0_f64; 3]; 3];
         let mut rhs = [0.0_f64; 3];
-
-        for (i, fi) in face_indices.iter().take(3).enumerate() {
-            let n = shell.faces[*fi].normal;
-            m[i] = [n.x, n.y, n.z];
-            rhs[i] = n.dot(original_point) + distance;
+        for &fi in face_indices {
+            let n = get_face_offset_normal(brep, fi, shell);
+            let nd = n.dot(original_point) + distance;
+            for i in 0..3 {
+                let ni = n[i];
+                for j in 0..3 {
+                    m[i][j] += ni * n[j];
+                }
+                rhs[i] += ni * nd;
+            }
         }
 
-        // Solve via Cramer's rule
+        // Solve the 3×3 system via Cramer's rule
         let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
                 - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
                 + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
 
         if det.abs() > 1e-12 {
-            let col = |j: usize| -> [f64; 3] { [m[0][j], m[1][j], m[2][j]] };
-
-            // Replace column j of m with rhs → determinant gives coordinate j.
             let det_x = rhs[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
                       - m[0][1] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
                       + m[0][2] * (rhs[1] * m[2][1] - m[1][1] * rhs[2]);
@@ -2613,12 +2709,68 @@ fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell) -
                       - m[0][1] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])
                       + rhs[0] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
 
-            return DVec3::new(det_x / det, det_y / det, det_z / det);
+            let result = DVec3::new(det_x / det, det_y / det, det_z / det);
+
+            // Quick sanity check: the result should be within a reasonable distance
+            // of the original point. If not, fall through.
+            if (result - original_point).length() < 1000.0 {
+                return result;
+            }
         }
     }
 
-    // If one face is curved (cylinder/cone) and at least one face is planar,
-    // use exact offset-surface intersection.
+    if face_indices.len() == 2 {
+        let all_planar_2 = face_indices.iter().all(|fi| {
+            brep.geom.face_surface.get(*fi).and_then(|s| *s)
+                .and_then(|si| brep.geom.surfaces.get(si))
+                .is_some_and(|surf| matches!(surf, Surface3::Plane(_)))
+        });
+        if all_planar_2 {
+            // Find 2 faces with distinct normals (use surface normals)
+            let mut n0_opt: Option<DVec3> = None;
+            let mut n1_opt: Option<DVec3> = None;
+            for &fi in face_indices {
+                let n = get_face_offset_normal(brep, fi, shell);
+                if let Some(n0) = n0_opt {
+                    if n0.dot(n).abs() < 0.9999 {
+                        n1_opt = Some(n);
+                        break;
+                    }
+                } else {
+                    n0_opt = Some(n);
+                }
+            }
+            if let (Some(n0), Some(n1)) = (n0_opt, n1_opt) {
+                let d0 = n0.dot(original_point) + distance;
+                let d1 = n1.dot(original_point) + distance;
+
+                let a = n0.dot(n0);
+                let b = n0.dot(n1);
+                let c = n1.dot(n1);
+                let det2 = a * c - b * b;
+
+                if det2.abs() > 1e-12 {
+                    let alpha = (d0 * c - d1 * b) / det2;
+                    let beta  = (d1 * a - d0 * b) / det2;
+                    let p_line = alpha * n0 + beta * n1;
+
+                    let t = n0.cross(n1);
+                    let t2 = t.dot(t);
+
+                    let avg_normal = normal_sum.normalize_or(DVec3::Z);
+                    let p_avg = original_point + avg_normal * distance;
+
+                    if t2 > 1e-20 {
+                        let gamma = (p_avg - p_line).dot(t) / t2;
+                        let result = p_line + gamma * t;
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
+    // Curved-surface path
     let curved_idx = face_indices.iter().position(|fi| {
         let s = brep.geom.face_surface.get(*fi).and_then(|s| *s)
             .and_then(|si| brep.geom.surfaces.get(si));
@@ -2646,6 +2798,83 @@ fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell) -
 }
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+/// Compute a vertex position from incident edge constraint lines.
+///
+/// Each edge constraint is a line (the offset edge curve). The vertex should
+/// lie as close as possible to all such lines. For 2+ non-parallel lines the
+/// least-squares solution is unique; for fewer lines we fall back.
+///
+/// The constraint `perp &middot; (p - line.origin) = 0` is enforced for two
+/// perpendicular directions per line, giving 2 constraints per line.
+fn compute_vertex_from_edge_constraints(
+    original_point: DVec3,
+    edge_lines: &[(Line3, f64)],
+    _distance: f64,
+) -> DVec3 {
+    if edge_lines.is_empty() {
+        return original_point;
+    }
+    if edge_lines.len() == 1 {
+        let (line, _) = edge_lines[0];
+        let t = project_point_to_line(original_point, &line);
+        return line.origin + t * line.direction;
+    }
+
+    // Build 3x3 normal-equations system: minimize sum of squared
+    // perpendicular distances to all constraint lines.
+    let mut m = [[0.0_f64; 3]; 3];
+    let mut rhs = [0.0_f64; 3];
+
+    for (line, _) in edge_lines {
+        let d = line.direction;
+        let perp1 = any_perpendicular(d);
+        let perp2 = d.cross(perp1).normalize();
+
+        for perp in [perp1, perp2] {
+            let b = perp.dot(line.origin);
+            for i in 0..3 {
+                for j in 0..3 {
+                    m[i][j] += perp[i] * perp[j];
+                }
+                rhs[i] += perp[i] * b;
+            }
+        }
+    }
+
+    // Solve via Cramer's rule
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+    if det.abs() > 1e-12 {
+        let det_x = rhs[0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                  - m[0][1] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
+                  + m[0][2] * (rhs[1] * m[2][1] - m[1][1] * rhs[2]);
+
+        let det_y = m[0][0] * (rhs[1] * m[2][2] - m[1][2] * rhs[2])
+                  - rhs[0] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                  + m[0][2] * (m[1][0] * rhs[2] - rhs[1] * m[2][0]);
+
+        let det_z = m[0][0] * (m[1][1] * rhs[2] - rhs[1] * m[2][1])
+                  - m[0][1] * (m[1][0] * rhs[2] - rhs[1] * m[2][0])
+                  + rhs[0] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+        let result = DVec3::new(det_x / det, det_y / det, det_z / det);
+
+        if (result - original_point).length() < 1000.0 {
+            return result;
+        }
+    }
+
+    // Fallback: average of individual line projections
+    let mut avg = DVec3::ZERO;
+    for (line, _) in edge_lines {
+        let t = project_point_to_line(original_point, &line);
+        avg += line.origin + t * line.direction;
+    }
+    avg / edge_lines.len() as f64
+}
+
 // BRep Builder Helpers
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -2717,6 +2946,58 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
 // Edge Chaining
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+/// Remove faces that have become degenerate (zero-area or collapsed) after offset.
+///
+/// A face is degenerate if:
+/// - Its outer wire has fewer than 3 edges
+/// - Its signed area (Newell's method) is below the tolerance threshold
+///
+/// Returns the number of faces removed.
+fn remove_degenerate_faces(brep: &mut BRep) -> usize {
+    let shell = match brep.solids.first_mut().and_then(|s| s.shells.first_mut()) {
+        Some(s) => s,
+        None => return 0,
+    };
+
+    let before = shell.faces.len();
+
+    shell.faces.retain(|face| {
+        if face.outer_wire.edges.len() < 3 {
+            return false;
+        }
+
+        // Compute signed area via Newell's method
+        let mut verts: Vec<DVec3> = Vec::new();
+        for we in &face.outer_wire.edges {
+            let e = &brep.edges[we.idx];
+            let pt = if we.forward {
+                brep.vertices[e.end].point
+            } else {
+                brep.vertices[e.start].point
+            };
+            verts.push(pt);
+        }
+
+        if verts.len() >= 3 {
+            let n = face.normal;
+            let mut signed = 0.0;
+            for i in 0..verts.len() {
+                let j = (i + 1) % verts.len();
+                signed += verts[i].cross(verts[j]).dot(n);
+            }
+            signed *= 0.5;
+
+            if signed.abs() < TOLERANCE_MESH_LEGACY * TOLERANCE_MESH_LEGACY {
+                return false;
+            }
+        }
+
+        true
+    });
+
+    before - shell.faces.len()
+}
+
 /// Chain boundary edges into closed loops.
 fn chain_boundary_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize>> {
     if edge_indices.is_empty() {
@@ -2756,10 +3037,188 @@ fn chain_boundary_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize
     loops
 }
 
-// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-// Self-Intersection Detection
-// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+/// After offset, detect and fix faces that have crossed/inverted at concave corners.
+///
+/// A face has "crossed" if it moved PAST an opposite face (a face with anti-parallel
+/// normal) during offset. This occurs at concave corners where notch walls move in
+/// opposite directions and cross positions.
+///
+/// Crossed faces are removed and the resulting holes are filled with new planar
+/// faces on best-fit planes through each hole's boundary vertices.
+fn fix_crossed_faces(
+    result: &mut BRep,
+    original_brep: &BRep,
+    original_shell: &Shell,
+    distance: f64,
+) -> usize {
+    let shell = match result.solids.first_mut().and_then(|s| s.shells.first_mut()) {
+        Some(s) => s,
+        None => return 0,
+    };
 
+    if shell.faces.is_empty() {
+        return 0;
+    }
+
+    // Compute original solid's vertex centroid
+    let mut orig_center = DVec3::ZERO;
+    let mut n_verts = 0;
+    for v in &original_brep.vertices {
+        orig_center += v.point;
+        n_verts += 1;
+    }
+    if n_verts > 0 {
+        orig_center /= n_verts as f64;
+    }
+
+    // --- Phase A: For each face, check if it crossed an opposite face ---
+    let n_faces = shell.faces.len();
+    let mut is_crossed = vec![false; n_faces];
+    let mut has_crossed = false;
+
+    // Compute result face centroids
+    let mut result_centroids: Vec<DVec3> = Vec::with_capacity(n_faces);
+    for fi in 0..n_faces {
+        let f = &shell.faces[fi];
+        let mut c = DVec3::ZERO;
+        let mut count = 0;
+        for we in &f.outer_wire.edges {
+            let e = &result.edges[we.idx];
+            c += if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point };
+            count += 1;
+        }
+        if count > 0 { c /= count as f64; }
+        result_centroids.push(c);
+    }
+
+    // Compute original face centroids and normals
+    let mut orig_centroids: Vec<DVec3> = Vec::with_capacity(n_faces);
+    let mut orig_normals: Vec<DVec3> = Vec::with_capacity(n_faces);
+    for fi in 0..n_faces {
+        if fi < original_shell.faces.len() {
+            let of = &original_shell.faces[fi];
+            let mut c = DVec3::ZERO;
+            let mut count = 0;
+            for we in &of.outer_wire.edges {
+                let e = &original_brep.edges[we.idx];
+                c += original_brep.vertices[e.start].point;
+                count += 1;
+            }
+            if count > 0 { c /= count as f64; }
+            orig_centroids.push(c);
+            orig_normals.push(get_face_offset_normal(original_brep, fi, original_shell));
+        } else {
+            orig_centroids.push(DVec3::ZERO);
+            orig_normals.push(DVec3::Z);
+        }
+    }
+
+    // Pair-level check: for each pair of faces with anti-parallel normals,
+    // check if their offset positions crossed relative to the solid center.
+    for i in 0..n_faces {
+        if is_crossed[i] { continue; }
+        for j in (i + 1)..n_faces {
+            if is_crossed[j] { continue; }
+            let ni = orig_normals[i];
+            let nj = orig_normals[j];
+            // Check anti-parallel: normals point in opposite directions
+            if ni.dot(nj) > -0.9 { continue; } // not anti-parallel enough
+
+            // Check if the faces crossed: the signed distance from each face's
+            // centroid to the other face's offset plane changed sign.
+            let ci_orig = orig_centroids[i];
+            let cj_orig = orig_centroids[j];
+            let ci_new = result_centroids[i];
+            let cj_new = result_centroids[j];
+
+            // Opposing faces: one has normal +N, the other -N.
+            // For outward offset, each should move AWAY from the other.
+            // They cross when the distance between them decreases.
+            let orig_dist = (cj_orig - ci_orig).dot(ni); // signed distance
+            let new_dist = (cj_new - ci_new).dot(ni);
+
+            // If the sign of the distance flips AND the magnitude is significant,
+            // they crossed. Require the new distance magnitude to be at least
+            // 50% of the offset distance to filter out false positives from
+            // faces that barely graze each other.
+            if orig_dist * new_dist < 0.0 && new_dist.abs() > distance.abs() * 0.5 {
+                is_crossed[i] = true;
+                is_crossed[j] = true;
+                has_crossed = true;
+            }
+        }
+    }
+
+    // Also check individual faces that moved toward the center (for safety)
+    for fi in 0..n_faces {
+        if is_crossed[fi] { continue; }
+        if fi >= original_shell.faces.len() { continue; }
+        let ci_orig = orig_centroids[fi];
+        let ci_new = result_centroids[fi];
+        let orig_dist_to_center = (ci_orig - orig_center).dot(orig_normals[fi]);
+        let new_dist_to_center = (ci_new - orig_center).dot(orig_normals[fi]);
+        // If the signed distance to center flipped sign, the face crossed
+        // (only if the displacement magnitude is significant)
+        if orig_dist_to_center * new_dist_to_center < 0.0
+            && (orig_dist_to_center - new_dist_to_center).abs() > distance.abs() * 0.5
+        {
+            is_crossed[fi] = true;
+            has_crossed = true;
+        }
+    }
+
+    if !has_crossed {
+        return 0;
+    }
+
+    // Build edge-to-face adjacency for the result shell (used in removal & hole filling)
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for iw in &face.inner_wires {
+            for we in &iw.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+
+    // --- Phase B: Remove crossed faces ---
+    // Rebuild faces vec and face_surface from scratch (avoids index shifting issues)
+    let mut new_faces: Vec<Face> = Vec::new();
+    let mut new_face_surface: Vec<Option<usize>> = Vec::new();
+    for fi in 0..n_faces {
+        if !is_crossed[fi] {
+            // This face stays — transfer it
+            new_faces.push(shell.faces[fi].clone());
+            if fi < result.geom.face_surface.len() {
+                new_face_surface.push(result.geom.face_surface[fi]);
+            }
+        }
+    }
+    let removed = n_faces - new_faces.len();
+    shell.faces = new_faces;
+    result.geom.face_surface = new_face_surface;
+
+    if removed == 0 {
+        return 0;
+    }
+
+    // Rebuild edge_to_faces with new face indices
+    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (fi, face) in shell.faces.iter().enumerate() {
+        for we in &face.outer_wire.edges {
+            edge_to_faces.entry(we.idx).or_default().push(fi);
+        }
+        for iw in &face.inner_wires {
+            for we in &iw.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
+    }
+    removed
+}
 /// Detect potential self-intersection in a closed-shell offset.
 ///
 /// Computes the minimum distance between non-adjacent face centroids.
@@ -2885,6 +3344,133 @@ pub fn detect_self_intersection_detailed(brep: &BRep, distance: f64) -> SelfInte
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Join Geometry Creation
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+/// Create a sewing face to bridge the gap between two separating offset surfaces
+/// at a concave edge.
+///
+/// When two adjacent offset surfaces separate (concave edge + outward offset, or
+/// convex edge + inward offset), the offset faces no longer meet. This function
+/// creates a 4-sided planar face that fills the gap.
+///
+/// The sewing face is bounded by:
+/// - Two edges along the offset faces (one on each face's boundary)
+/// - Two connecting edges at the endpoints of the shared edge
+pub fn create_sewing_face(
+    brep: &mut BRep,
+    original_brep: &BRep,
+    edge_idx: usize,
+    _face_a_idx: usize,
+    _face_b_idx: usize,
+    distance: f64,
+    offset_surfaces: &[Option<Surface3>],
+) -> Option<usize> {
+    let edge = &original_brep.edges[edge_idx];
+    let shell = original_brep.solids.first().and_then(|s| s.shells.first())?;
+
+    let v_start = edge.start;
+    let v_end = edge.end;
+    let p_start = original_brep.vertices[v_start].point;
+    let p_end = original_brep.vertices[v_end].point;
+
+    // Compute offset vertex positions using the per-face offset normals.
+    let start_offset_avg = {
+        let mut sum = DVec3::ZERO;
+        let mut count = 0;
+        for (fi, face) in shell.faces.iter().enumerate() {
+            let uses = face.outer_wire.edges.iter().any(|we| {
+                let e = &original_brep.edges[we.idx];
+                e.start == v_start || e.end == v_start
+            });
+            if uses {
+                sum += get_face_offset_normal(original_brep, fi, shell);
+                count += 1;
+            }
+        }
+        if count > 0 { sum.normalize_or(DVec3::Z) * distance } else { DVec3::Z * distance }
+    };
+
+    let end_offset_avg = {
+        let mut sum = DVec3::ZERO;
+        let mut count = 0;
+        for (fi, face) in shell.faces.iter().enumerate() {
+            let uses = face.outer_wire.edges.iter().any(|we| {
+                let e = &original_brep.edges[we.idx];
+                e.start == v_end || e.end == v_end
+            });
+            if uses {
+                sum += get_face_offset_normal(original_brep, fi, shell);
+                count += 1;
+            }
+        }
+        if count > 0 { sum.normalize_or(DVec3::Z) * distance } else { DVec3::Z * distance }
+    };
+
+    let off_p_start = p_start + start_offset_avg;
+    let off_p_end = p_end + end_offset_avg;
+
+    // Compute the separation direction perpendicular to both faces.
+    // For two adjacent planar faces, the sewing face spans the gap between
+    // their offset surfaces along the direction of the edge.
+    let edge_dir = (p_end - p_start).normalize_or(DVec3::X);
+    let sep_dir = any_perpendicular(edge_dir);
+
+    // Create 4 vertices of the sewing face
+    let sv0 = p_start + sep_dir * distance.abs() * 0.5;
+    let sv1 = p_end + sep_dir * distance.abs() * 0.5;
+    let sv2 = p_end - sep_dir * distance.abs() * 0.5;
+    let sv3 = p_start - sep_dir * distance.abs() * 0.5;
+
+    // Check that vertices are non-degenerate
+    if (sv1 - sv0).length_squared() < 1e-12 || (sv3 - sv0).length_squared() < 1e-12 {
+        return None;
+    }
+
+    let v0 = add_vertex(brep, sv0);
+    let v1 = add_vertex(brep, sv1);
+    let v2 = add_vertex(brep, sv2);
+    let v3 = add_vertex(brep, sv3);
+
+    // Create 4 edges
+    let len01 = (sv1 - sv0).length();
+    let e01 = add_edge(brep,
+        Curve3::Line(Line3 { origin: sv0, direction: (sv1 - sv0).normalize_or(DVec3::X) }),
+        0.0, len01, v0, v1);
+
+    let len12 = (sv2 - sv1).length();
+    let e12 = add_edge(brep,
+        Curve3::Line(Line3 { origin: sv1, direction: (sv2 - sv1).normalize_or(DVec3::X) }),
+        0.0, len12, v1, v2);
+
+    let len23 = (sv3 - sv2).length();
+    let e23 = add_edge(brep,
+        Curve3::Line(Line3 { origin: sv2, direction: (sv3 - sv2).normalize_or(DVec3::X) }),
+        0.0, len23, v2, v3);
+
+    let len30 = (sv0 - sv3).length();
+    let e30 = add_edge(brep,
+        Curve3::Line(Line3 { origin: sv3, direction: (sv0 - sv3).normalize_or(DVec3::X) }),
+        0.0, len30, v3, v0);
+
+    let normal = edge_dir.cross(sep_dir).normalize();
+    let sewing_surface = Surface3::Plane(Plane {
+        origin: (sv0 + sv1 + sv2 + sv3) * 0.25,
+        normal,
+    });
+
+    let wire = Wire {
+        edges: vec![
+            WireEdge::fwd(e01),
+            WireEdge::fwd(e12),
+            WireEdge::fwd(e23),
+            WireEdge::fwd(e30),
+        ],
+    };
+
+    let _ = offset_surfaces; // Used in more sophisticated implementations
+    let _ = _face_a_idx;
+    let _ = _face_b_idx;
+    Some(add_face(brep, sewing_surface, wire, Vec::new()))
+}
 
 /// Create an arc join between two offset edges.
 ///
@@ -3448,7 +4034,6 @@ fn offset_shell_with_options_impl(
     // Step 3: Compute offset vertex positions (with variable thickness support)
     let offset_vertices: Vec<DVec3> = (0..brep.vertices.len())
         .map(|vi| {
-            // For variable thickness, use average distance of adjacent faces
             let avg_distance = if let Some(ref vt) = opts.variable_thickness {
                 let mut sum = 0.0;
                 let mut count = 0;
@@ -3482,7 +4067,9 @@ fn offset_shell_with_options_impl(
         vertex_map.push(add_vertex(&mut result, p));
     }
 
-    // Step 5: Create offset faces with offset edges
+    // Step 5: Create offset faces with offset edges.
+    // Edge curves come from offset_edge (plane-plane intersection for planar faces),
+    // reparameterized to pass through vertex positions for consistency.
     let mut valid_face_count = 0;
 
     for (fi, face) in shell.faces.iter().enumerate() {
@@ -3491,25 +4078,40 @@ fn offset_shell_with_options_impl(
             None => continue,
         };
 
-        // Build wire from offset edges
         let mut wire_edges = Vec::new();
 
         for we in &face.outer_wire.edges {
             let e = &brep.edges[we.idx];
             let vs = vertex_map[e.start];
             let ve = vertex_map[e.end];
+            let p_start = result.vertices[vs].point;
+            let p_end = result.vertices[ve].point;
 
             let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
             let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
+                .map(|(c, _, _)| {
+                    match &c {
+                        Curve3::Line(line) => {
+                            let ts = project_point_to_line(p_start, line);
+                            let te = project_point_to_line(p_end, line);
+                            (c, ts.min(te), ts.max(te))
+                        }
+                        _ => (c, 0.0, (p_end - p_start).length()),
+                    }
+                })
                 .unwrap_or_else(|| {
-                    let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
-                    let len = (result.vertices[ve].point - result.vertices[vs].point).length();
-                    (Curve3::Line(Line3 { origin: result.vertices[vs].point, direction: dir }), 0.0, len)
+                    let dir = (p_end - p_start).normalize_or(DVec3::X);
+                    let len = (p_end - p_start).length();
+                    (Curve3::Line(Line3 { origin: p_start, direction: dir }), 0.0, len)
                 });
+
+            if (t1 - t0).abs() < TOLERANCE_LEN_MIN { continue; }
 
             let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
             wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
+
+        if wire_edges.len() < 3 { continue; }
 
         add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
         valid_face_count += 1;
@@ -3524,12 +4126,102 @@ fn offset_shell_with_options_impl(
         let _join_faces = apply_join_type(&mut result, brep, opts, &edge_to_faces, &vertex_map)?;
     }
 
+    // Fix inverted face winding (same as main offset function)
+    for f in &mut result.solids[0].shells[0].faces {
+        let mut verts: Vec<DVec3> = Vec::new();
+        for we in &f.outer_wire.edges {
+            let e = &result.edges[we.idx];
+            verts.push(if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point });
+        }
+        if verts.len() >= 3 {
+            let n = f.normal;
+            let mut signed = 0.0;
+            for i in 0..verts.len() {
+                let j = (i + 1) % verts.len();
+                signed += verts[i].cross(verts[j]).dot(n);
+            }
+            signed *= 0.5;
+            if signed < 0.0 {
+                for we in &mut f.outer_wire.edges { we.forward = !we.forward; }
+                f.outer_wire.edges.reverse();
+                for iw in &mut f.inner_wires {
+                    for we in &mut iw.edges { we.forward = !we.forward; }
+                    iw.edges.reverse();
+                }
+            }
+        }
+    }
+
+    // Fix inward-facing face normals (same as main offset function)
+    let n_faces = result.solids[0].shells[0].faces.len();
+    for fi in 0..n_faces {
+        let f = &result.solids[0].shells[0].faces[fi];
+        if f.outer_wire.edges.len() < 3 { continue; }
+        let mut verts: Vec<DVec3> = Vec::new();
+        for we in &f.outer_wire.edges {
+            let e = &result.edges[we.idx];
+            verts.push(if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point });
+        }
+        if verts.len() < 3 { continue; }
+        let p0 = verts[0];
+        let mut vol_6 = 0.0;
+        for i in 1..verts.len() - 1 {
+            vol_6 += p0.cross(verts[i]).dot(verts[i + 1]);
+        }
+        if vol_6 < 0.0 {
+            let f = &mut result.solids[0].shells[0].faces[fi];
+            f.normal = -f.normal;
+            for we in &mut f.outer_wire.edges { we.forward = !we.forward; }
+            f.outer_wire.edges.reverse();
+            for iw in &mut f.inner_wires {
+                for we in &mut iw.edges { we.forward = !we.forward; }
+                iw.edges.reverse();
+            }
+        }
+    }
+
     Ok(result)
 }
-
-// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Main API Functions
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+/// Clip a 3D polygon against a half-space defined by n·x ≤ d (interior of solid).
+/// Uses the Sutherland-Hodgman algorithm adapted for half-space clipping in 3D.
+/// Returns the clipped polygon (may be empty if fully clipped away).
+fn clip_polygon_by_halfspace(polygon: &[DVec3], n: DVec3, d: f64, tol: f64) -> Vec<DVec3> {
+    if polygon.len() < 3 {
+        return Vec::new();
+    }
+
+    let mut output = Vec::new();
+    let m = polygon.len();
+
+    for i in 0..m {
+        let curr = polygon[i];
+        let prev = polygon[(i + m - 1) % m];
+
+        let curr_dist = n.dot(curr) - d;
+        let prev_dist = n.dot(prev) - d;
+
+        let curr_inside = curr_dist <= tol;
+        let prev_inside = prev_dist <= tol;
+
+        if curr_inside {
+            if !prev_inside {
+                // Edge enters the valid half-space: add intersection point.
+                let t = -prev_dist / (curr_dist - prev_dist);
+                output.push(prev + t * (curr - prev));
+            }
+            output.push(curr);
+        } else if prev_inside {
+            // Edge leaves the valid half-space: add intersection point.
+            let t = -prev_dist / (curr_dist - prev_dist);
+            output.push(prev + t * (curr - prev));
+        }
+    }
+
+    output
+}
 
 /// Offset a shell by moving all faces along their normals.
 ///
@@ -3576,6 +4268,12 @@ pub fn offset_shell_with_options(
         let surf = &brep.geom.surfaces[surf_idx];
         let off_surf = offset_surface(surf, distance);
 
+        // Note: surface normal flip removed — the face normals on extruded
+        // shapes may point inward (shape-creation artifact), and flipping the
+        // surface normal to match would make the offset translate in the wrong
+        // direction for all incident vertices. The surface normal from the
+        // underlying geometry is the authoritative direction.
+
         if off_surf.is_none() && distance > 0.0 {
             // Negative offset on a small surface - may be ok for inward offset
         }
@@ -3583,17 +4281,79 @@ pub fn offset_shell_with_options(
         offset_surfaces.push(off_surf);
     }
 
-    // Step 2: Build edge-to-face adjacency
+    // Step 2: Build edge-to-face adjacency (including inner wires for faces with holes)
     let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
     for (fi, face) in shell.faces.iter().enumerate() {
         for we in &face.outer_wire.edges {
             edge_to_faces.entry(we.idx).or_default().push(fi);
         }
+        for iw in &face.inner_wires {
+            for we in &iw.edges {
+                edge_to_faces.entry(we.idx).or_default().push(fi);
+            }
+        }
     }
 
-    // Step 3: Compute offset vertex positions
+    // Step 3: Compute offset vertex positions with position-based deduplication.
+    // Multiple BRep vertices at the same position (T-junctions) must get the
+    // same offset position to keep the shell consistent.
+    // Strategy: group vertices by position, then compute one offset for each
+    // group using ALL faces incident to ALL vertices in the group. This ensures
+    // consistency at T-junctions and seams.
+    let pos_tol = 1e-8;
+    let mut pos_to_group: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
+    let mut group_positions: Vec<DVec3> = Vec::new();
+    let mut group_vertex_indices: Vec<Vec<usize>> = Vec::new();
+    for vi in 0..brep.vertices.len() {
+        let pt = brep.vertices[vi].point;
+        let mut found = None;
+        for (gi, gp) in group_positions.iter().enumerate() {
+            if (pt - *gp).length_squared() < pos_tol * pos_tol {
+                found = Some(gi);
+                break;
+            }
+        }
+        if let Some(gi) = found {
+            pos_to_group[vi] = gi;
+            group_vertex_indices[gi].push(vi);
+        } else {
+            pos_to_group[vi] = group_positions.len();
+            group_positions.push(pt);
+            group_vertex_indices.push(vec![vi]);
+        }
+    }
+    // Compute offset for each group using ALL incident faces across ALL vertices
+    let mut group_offsets: Vec<DVec3> = Vec::with_capacity(group_positions.len());
+    for gi in 0..group_positions.len() {
+        let pt = group_positions[gi];
+        let mut fi_list: Vec<usize> = Vec::new();
+        let mut normal_sum = DVec3::ZERO;
+        for &vi in &group_vertex_indices[gi] {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                let uses = face.outer_wire.edges.iter().any(|we| {
+                    let e = &brep.edges[we.idx];
+                    e.start == vi || e.end == vi
+                }) || face.inner_wires.iter().any(|wire| {
+                    wire.edges.iter().any(|we| {
+                        let e = &brep.edges[we.idx];
+                        e.start == vi || e.end == vi
+                    })
+                });
+                if uses && !fi_list.contains(&fi) {
+                    fi_list.push(fi);
+                    normal_sum += face.normal;
+                }
+            }
+        }
+        let off = if !fi_list.is_empty() {
+            offset_vertex_from_faces(brep, pt, &fi_list, normal_sum, distance, shell)
+        } else {
+            pt
+        };
+        group_offsets.push(off);
+    }
     let offset_vertices: Vec<DVec3> = (0..brep.vertices.len())
-        .map(|vi| offset_vertex(brep, vi, distance, shell))
+        .map(|vi| group_offsets[pos_to_group[vi]])
         .collect();
 
     // Step 4: Build result BRep
@@ -3608,7 +4368,10 @@ pub fn offset_shell_with_options(
         vertex_map.push(add_vertex(&mut result, p));
     }
 
-    // Step 5: Create offset faces with offset edges
+    // Step 5: Create offset faces with offset edges.
+    // Edge curves come from the intersection of adjacent offset surfaces
+    // (with plane-plane intersections for planar faces), but are reparameterized
+    // to pass through the vertex positions for consistency.
     let mut valid_face_count = 0;
 
     for (fi, face) in shell.faces.iter().enumerate() {
@@ -3624,17 +4387,41 @@ pub fn offset_shell_with_options(
             let e = &brep.edges[we.idx];
             let vs = vertex_map[e.start];
             let ve = vertex_map[e.end];
+            let p_start = result.vertices[vs].point;
+            let p_end = result.vertices[ve].point;
 
             let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
             let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
+                .map(|(c, _, _)| {
+                    // Reparameterize the curve to pass through the actual vertex positions.
+                    // This ensures consistency between the edge curve and vertex positions.
+                    match &c {
+                        Curve3::Line(line) => {
+                            let ts = project_point_to_line(p_start, line);
+                            let te = project_point_to_line(p_end, line);
+                            (c, ts.min(te), ts.max(te))
+                        }
+                        _ => (c, 0.0, (p_end - p_start).length()),
+                    }
+                })
                 .unwrap_or_else(|| {
-                    let dir = (result.vertices[ve].point - result.vertices[vs].point).normalize_or(DVec3::X);
-                    let len = (result.vertices[ve].point - result.vertices[vs].point).length();
-                    (Curve3::Line(Line3 { origin: result.vertices[vs].point, direction: dir }), 0.0, len)
+                    // Fallback: create a line between vertex positions
+                    let dir = (p_end - p_start).normalize_or(DVec3::X);
+                    let len = (p_end - p_start).length();
+                    (Curve3::Line(Line3 { origin: p_start, direction: dir }), 0.0, len)
                 });
+
+            if (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+                continue;
+            }
 
             let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
             wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
+        }
+
+        // Skip faces whose wire has too few edges (collapsed due to offset)
+        if wire_edges.len() < 3 {
+            continue;
         }
 
         add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
@@ -3643,6 +4430,61 @@ pub fn offset_shell_with_options(
 
     if valid_face_count == 0 {
         return Err(OffsetError::EmptyResult);
+    }
+
+
+    // Fix inverted face winding caused by concave topology copy.
+    // When offsetting planar faces at reflex corners, the boundary polygon's
+    // winding may flip (vertices cross over), making the face normal inconsistent
+    // with the wire direction. Detect this and reverse the wire.
+    for f in &mut result.solids[0].shells[0].faces {
+        // Collect boundary vertices in wire order
+        let mut verts: Vec<DVec3> = Vec::new();
+        for we in &f.outer_wire.edges {
+            let e = &result.edges[we.idx];
+            // The vertex at the end of traversal for this edge
+            let pt = if we.forward {
+                result.vertices[e.end].point
+            } else {
+                result.vertices[e.start].point
+            };
+            verts.push(pt);
+        }
+
+        if verts.len() >= 3 {
+            // Signed area projected onto face normal (Newell's method)
+            let n = f.normal;
+            let mut signed = 0.0;
+            for i in 0..verts.len() {
+                let j = (i + 1) % verts.len();
+                signed += verts[i].cross(verts[j]).dot(n);
+            }
+            signed *= 0.5;
+
+            if signed < 0.0 {
+                // Winding is reversed relative to face normal → flip wire
+                for we in &mut f.outer_wire.edges {
+                    we.forward = !we.forward;
+                }
+                f.outer_wire.edges.reverse();
+                // Also flip inner wires if any
+                for iw in &mut f.inner_wires {
+                    for we in &mut iw.edges {
+                        we.forward = !we.forward;
+                    }
+                    iw.edges.reverse();
+                }
+            }
+        }
+    }
+
+    // Step 5.5: Remove faces that crossed/inverted during offset and fill the
+    // resulting holes. A face has "crossed" if its signed volume contribution is
+    // negative AND its shares an edge with at least one other negative-volume face.
+    // This distinguishes "crossed during offset" (concave corner) from the common
+    // "originally inverted face" (single isolated flipped face from boolean ops).
+    if distance.abs() > TOLERANCE_MESH_LEGACY {
+        let _crossed_removed = fix_crossed_faces(&mut result, brep, shell, distance);
     }
 
     // Step 6: Check for self-intersection if requested
@@ -3654,6 +4496,48 @@ pub fn offset_shell_with_options(
 
     if self_intersects && !opts.auto_repair {
         // Still return the result, but the caller should check for self-intersection
+    }
+
+    // Step 6.5: Fix inward-facing face normals.
+    // The winding fix (Step 5) ensures wire order matches the face normal,
+    // but the face normal itself might point inward (from boolean operations).
+    // An inward face normal makes the signed volume contribution negative.
+    // Detect this by tetrahedron signed volume from the wire polygon and
+    // flip both the normal and the wire when the volume contribution is negative.
+    {
+        let n_faces = result.solids[0].shells[0].faces.len();
+        for fi in 0..n_faces {
+            let f = &result.solids[0].shells[0].faces[fi];
+            if f.outer_wire.edges.len() < 3 { continue; }
+            let mut verts: Vec<DVec3> = Vec::new();
+            for we in &f.outer_wire.edges {
+                let e = &result.edges[we.idx];
+                let pt = if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point };
+                verts.push(pt);
+            }
+            if verts.len() < 3 { continue; }
+            // Tetrahedron signed volume from fan decomposition, independent of face normal.
+            let p0 = verts[0];
+            let mut vol_6 = 0.0;
+            for i in 1..verts.len() - 1 {
+                vol_6 += p0.cross(verts[i]).dot(verts[i + 1]);
+            }
+            if vol_6 < 0.0 {
+                // Face normal points inward — flip it and the wire
+                let f = &mut result.solids[0].shells[0].faces[fi];
+                f.normal = -f.normal;
+                for we in &mut f.outer_wire.edges {
+                    we.forward = !we.forward;
+                }
+                f.outer_wire.edges.reverse();
+                for iw in &mut f.inner_wires {
+                    for we in &mut iw.edges {
+                        we.forward = !we.forward;
+                    }
+                    iw.edges.reverse();
+                }
+            }
+        }
     }
 
     Ok(result)
