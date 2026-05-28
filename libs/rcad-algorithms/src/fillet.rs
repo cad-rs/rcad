@@ -326,6 +326,10 @@ struct EdgeInfo {
     start_vertex: usize,
     /// End vertex index.
     end_vertex: usize,
+    /// Start vertex 3D position.
+    start_point: DVec3,
+    /// End vertex 3D position.
+    end_point: DVec3,
     /// Adjacent face indices (usually 2).
     adjacent_faces: Vec<usize>,
     /// Edge tangent at start.
@@ -600,10 +604,16 @@ fn collect_edge_infos(
         // Compute tangents
         let (tangent_start, tangent_end) = compute_edge_tangents(brep, edge_idx, &curve, &curve_range);
 
+        // Look up vertex positions for midpoint computation.
+        let start_point = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or_default();
+        let end_point = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or_default();
+
         infos.push(EdgeInfo {
             index: edge_idx,
             start_vertex: edge.start,
             end_vertex: edge.end,
+            start_point,
+            end_point,
             adjacent_faces,
             tangent_start,
             tangent_end,
@@ -826,7 +836,7 @@ fn compute_plane_plane_fillet(
 
     // Create a torus as the fillet surface
     // Center is at the midpoint of the edge, offset along the bisector
-    let mid_point = DVec3::ZERO; // Will be transformed
+    let mid_point = (edge_info.start_point + edge_info.end_point) * 0.5;
 
     // Bisector direction (average of the outward normals)
     let bisector = (n1 + n2).normalize();
@@ -1514,6 +1524,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::NEG_Y * 0.5,
+            end_point: DVec3::Y * 0.5,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::Y,
             tangent_end: DVec3::Y,
@@ -1546,6 +1558,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::ZERO,
+            end_point: DVec3::Z,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::Z,
             tangent_end: DVec3::Z,
@@ -1570,6 +1584,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::NEG_X,
+            end_point: DVec3::X,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::X,
             tangent_end: DVec3::X,
@@ -1600,6 +1616,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::ZERO,
+            end_point: DVec3::Z,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::Z,
             tangent_end: DVec3::Z,
@@ -1726,6 +1744,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::NEG_Y,
+            end_point: DVec3::Y,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::Y,  // Edge along Y axis
             tangent_end: DVec3::Y,
@@ -1797,6 +1817,8 @@ mod tests {
             index: 0,
             start_vertex: 0,
             end_vertex: 1,
+            start_point: DVec3::NEG_Z,
+            end_point: DVec3::Z,
             adjacent_faces: vec![0, 1],
             tangent_start: DVec3::Z,
             tangent_end: DVec3::Z,
