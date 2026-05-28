@@ -10340,31 +10340,11 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     let cyl_z_hi = cz + cyl_height / 2.0;
     let z_fail = cyl_z_lo < -ew - tol || cyl_z_hi > ew + tol;
 
-    // When the cylinder exits through exactly one box face, the Pave-Filler
-    // drops the cylindrical wall.  Build the result analytically instead.
-    if u_fail && !v_fail && !z_fail {
-        // Cylinder exits through a u-direction face (X in local box frame).
-        let side = if cu - cyl_r < -eu - tol { -1 } else { 1 };
-        return build_box_minus_cylinder_one_v_face_exit(
-            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
-            eu, ev, ew, bc, u_ax, v_ax,
-            cyl_origin, cyl_r, cyl_height, side, true, // is_u = true
-        );
-    }
-    if v_fail && !u_fail && !z_fail {
-        // Cylinder exits through a v-direction face (Y in local box frame).
-        let side = if cv - cyl_r < -ev - tol { -1 } else { 1 };
-        return build_box_minus_cylinder_one_v_face_exit(
-            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
-            eu, ev, ew, bc, u_ax, v_ax,
-            cyl_origin, cyl_r, cyl_height, side, false, // is_u = false
-        );
-    }
-
-    // Cylinder exits through 2+ box faces in XY — use Z-slice tessellation.
-    if u_fail && v_fail && !z_fail {
+    // Cylinder exits through one or more box faces in XY — use Z-slice tessellation.
+    if (u_fail || v_fail) && !z_fail {
         let z_lo = (-ew).max(cyl_z_lo);
         let z_hi = ew.min(cyl_z_hi);
+        if z_hi <= z_lo + tol { return Some(a.clone()); }
         return build_box_minus_cylinder_tessellated(
             bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev, z_lo, z_hi,
         );
