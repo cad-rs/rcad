@@ -10370,8 +10370,9 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         );
     }
 
-    // Full XY containment, Z extends beyond box — build box with cylindrical hole.
-    if !u_fail && !v_fail && z_fail {
+    // Full XY containment — build box with cylindrical hole analytically.
+    // Handles Z-exit, coincident end-caps, and fully-inside cases.
+    if !u_fail && !v_fail {
         let inter_lo = cyl_z_lo.max(-ew);
         let inter_hi = cyl_z_hi.min(ew);
         if inter_hi <= inter_lo + tol {
@@ -10389,17 +10390,8 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
         return None;
     }
 
-    // If a cylinder end cap coincides with a box face, the compound approach
-    // double-counts the cap area. Fall through to the Pave-Filler.
-    let lo_gap = (cz - cyl_height / 2.0) - (-ew);
-    let hi_gap = ew - (cz + cyl_height / 2.0);
-    if lo_gap < 1e-4 || hi_gap < 1e-4 {
-        return None;
-    }
-
-    // Cylinder is fully inside the box.  Return a compound: the box + the
-    // cylinder (the latter's faces form the cavity wall).
-    Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]))
+    // Fall through to Pave-Filler for partial-XY-exit with coincident caps.
+    None
 }
 
 /// When the cylinder is fully contained in the box cross-section (XY) but
@@ -10428,20 +10420,21 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     };
 
     let tol = TOL * 10.0;
-    let needs_z_minus_inner = cyl_z_lo < -ew - tol;  // hole through Z- face
-    let needs_z_plus_inner  = cyl_z_hi >  ew + tol;  // hole through Z+ face
-    let needs_bot_cap       = inter_lo > -ew + tol;   // cap inside box at bottom
-    let needs_top_cap       = inter_hi <  ew - tol;   // cap inside box at top
+    let needs_z_minus_inner = cyl_z_lo <= -ew + tol;  // hole at/below Z- face
+    let needs_z_plus_inner  = cyl_z_hi >= ew - tol;    // hole at/above Z+ face
+    let needs_bot_cap       = inter_lo > -ew + tol;     // cap inside box at bottom
+    let needs_top_cap       = inter_hi < ew - tol;      // cap inside box at top
 
     // Collect unique Z-levels that need circle vertices+edges.
+    // inter_lo and inter_hi are always needed for the cylindrical wall.
     let mut z_levels: Vec<f64> = Vec::new();
+    z_levels.push(inter_lo);
+    z_levels.push(inter_hi);
     if needs_z_minus_inner { z_levels.push(-ew); }
-    if needs_bot_cap       { z_levels.push(inter_lo); }
-    if needs_top_cap       { z_levels.push(inter_hi); }
     if needs_z_plus_inner  { z_levels.push(ew); }
     z_levels.sort_by(|a, b| a.partial_cmp(b).unwrap());
     z_levels.dedup();
-    if z_levels.is_empty() { return None; }
+    if z_levels.len() < 2 { return None; }
 
     let mut brep = box_brep.clone();
 
