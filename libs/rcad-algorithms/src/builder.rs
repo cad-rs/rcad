@@ -1534,6 +1534,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
+            let mut kept_subs: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
@@ -1617,11 +1618,21 @@ impl<'a> BooleanBuilder<'a> {
                         let src = self.ds.faces[fi].source_face_idx;
                         result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
                     } else {
-                        let flip = self.op == BooleanOpType::Difference;
-                        let src = self.ds.faces[fi].source_face_idx;
-                        result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+                        // Collect for edge-based merge.
+                        kept_subs.push(sub.clone());
                     }
                 }
+            }
+
+            // Merge kept sub-faces from the same original face that share
+            // boundary edges. Disconnected UV intervals are not merged.
+            if kept_subs.len() > 1 {
+                merge_subfaces_of_same_face(&mut kept_subs);
+            }
+            let flip = self.op == BooleanOpType::Difference;
+            for sub in kept_subs {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(&sub, flip, FaceOrigin::FromB(src));
             }
         }
 
@@ -1716,7 +1727,7 @@ impl<'a> BooleanBuilder<'a> {
             .par_iter()
             .flat_map(|&fi| {
                 let sub_faces = self.split_face(fi);
-                sub_faces
+                let mut kept: Vec<(SubFace, bool, FaceOrigin)> = sub_faces
                     .into_iter()
                     .filter_map(|sub| {
                         let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &sub, &a_faces, self.ds);
@@ -1731,7 +1742,18 @@ impl<'a> BooleanBuilder<'a> {
                             None
                         }
                     })
-                    .collect::<Vec<_>>()
+                    .collect();
+
+                // Merge kept sub-faces from the same original face.
+                if kept.len() > 1 {
+                    let mut subs: Vec<SubFace> = kept.iter().map(|(s, _, _)| s.clone()).collect();
+                    merge_subfaces_of_same_face(&mut subs);
+                    let flip = kept[0].1;
+                    let origin = kept[0].2;
+                    kept = subs.into_iter().map(|s| (s, flip, origin)).collect();
+                }
+
+                kept
             })
             .collect();
 
@@ -4093,6 +4115,171 @@ impl<'a> BooleanBuilder<'a> {
             return Some(pcurve.clone());
         }
         None
+    }
+}
+
+// ── Sub-face edge-based merging helpers ──────────────────────────
+
+/// Find a shared edge between two sub-face boundaries.
+///
+/// Returns `(ai, bi, forward)` where:
+/// - `ai` — index in `a.boundary` where the shared edge's start vertex sits
+/// - `bi` — index in `b.boundary` where the shared edge's start vertex sits
+/// - `forward` — `true` if the shared edge runs in the same direction in both boundaries
+///
+/// Two sub-faces share an edge when they have 2+ consecutive boundary vertices in common
+/// (within `TOLERANCE_MESH_LEGACY` distance). This is the sub-face analogue of
+/// `unify_one_merge_pass`'s edge-to-faces adjacency detection.
+fn find_shared_edge_between_subfaces(a: &SubFace, b: &SubFace) -> Option<(usize, usize, bool)> {
+    let tol = TOLERANCE_MESH_LEGACY;
+    let an = a.boundary.len();
+    let bn = b.boundary.len();
+
+    for ai in 0..an {
+        let aj = (ai + 1) % an;
+        for bi in 0..bn {
+            let bj = (bi + 1) % bn;
+            // Same direction: A[ai]==B[bi] and A[aj]==B[bj]
+            if a.boundary[ai].distance(b.boundary[bi]) <= tol
+                && a.boundary[aj].distance(b.boundary[bj]) <= tol
+            {
+                return Some((ai, bi, true));
+            }
+            // Opposite direction: A[ai]==B[bj] (vs at bj) and A[aj]==B[bi] (ve at bi)
+            if a.boundary[ai].distance(b.boundary[bj]) <= tol
+                && a.boundary[aj].distance(b.boundary[bi]) <= tol
+            {
+                return Some((ai, bj, false));
+            }
+        }
+    }
+    None
+}
+
+/// Merge two sub-faces that share an edge into a single sub-face.
+///
+/// Parameters `ai`, `bi`, `forward` come from `find_shared_edge_between_subfaces`.
+///
+/// The merged boundary polygon is built by going from the shared start vertex `vs` along
+/// `b`'s non-shared perimeter to the shared end vertex `ve`, then along `a`'s non-shared
+/// perimeter back to `vs`. This removes the shared edge from both boundaries while
+/// preserving all other geometry.
+fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: bool) -> SubFace {
+    let an = a.boundary.len();
+    let bn = b.boundary.len();
+    let aj = (ai + 1) % an;
+
+    // B's non-shared path from vs (=A[ai]=B[bi]) to ve (=A[aj] = one vertex past shared
+    // edge in A). We walk the LONG way around B's boundary (opposite to the shared edge
+    // direction in B).
+    let b_non_shared = if forward {
+        // Shared edge goes bi → (bi+1)%bn = ve. Walk backward from bi to reach ve.
+        let end = (bi + 1) % bn;
+        let mut path = Vec::new();
+        let mut i = (bi + bn - 1) % bn;
+        while i != end {
+            path.push(b.boundary[i]);
+            i = (i + bn - 1) % bn;
+        }
+        path.push(b.boundary[end]);
+        path
+    } else {
+        // Shared edge goes bi → (bi-1+bn)%bn = ve (reversed direction).
+        // Walk forward from bi to reach ve.
+        let end = (bi + bn - 1) % bn;
+        let mut path = Vec::new();
+        let mut i = (bi + 1) % bn;
+        while i != end {
+            path.push(b.boundary[i]);
+            i = (i + 1) % bn;
+        }
+        path.push(b.boundary[end]);
+        path
+    };
+
+    // A's non-shared path from ve to vs (everything except the single shared edge).
+    let a_non_shared: Vec<DVec3> = {
+        let mut path = Vec::new();
+        let mut i = (aj + 1) % an;
+        while i != ai {
+            path.push(a.boundary[i]);
+            i = (i + 1) % an;
+        }
+        path
+    };
+
+    // Build merged boundary: vs → b_non_shared → a_non_shared.
+    // Closure back to vs is implicit (polygon representation).
+    let mut merged_boundary = Vec::with_capacity(1 + b_non_shared.len() + a_non_shared.len());
+    merged_boundary.push(a.boundary[ai]); // vs
+    merged_boundary.extend(b_non_shared);
+    merged_boundary.extend(a_non_shared);
+
+    // Concatenate inner wires (holes) from both sub-faces.
+    let mut merged_inner = a.inner_wires.clone();
+    merged_inner.extend(b.inner_wires.clone());
+
+    // Merge UV domains to cover both sub-faces' parametric extent.
+    let merged_uv_domain = match (a.uv_domain, b.uv_domain) {
+        (Some(ad), Some(bd)) => Some([
+            ad[0].min(bd[0]),
+            ad[1].max(bd[1]),
+            ad[2].min(bd[2]),
+            ad[3].max(bd[3]),
+        ]),
+        (Some(ad), None) => Some(ad),
+        (None, Some(bd)) => Some(bd),
+        (None, None) => None,
+    };
+
+    SubFace {
+        boundary: merged_boundary,
+        surface: a.surface.clone(),
+        normal: a.normal,
+        uv_centroid: None,
+        sample_override: a.sample_override.or(b.sample_override),
+        uv_domain: merged_uv_domain,
+        inner_wires: merged_inner,
+    }
+}
+
+/// Iteratively merge adjacent sub-faces from the same original face that share
+/// boundary edges. Modifies `sub_faces` in place, reducing its length by one per
+/// merge. Runs to a fixed point (no more pairs to merge).
+///
+/// This is the sub-face analogue of `unify_one_merge_pass`, operating on boundary
+/// vertex arrays instead of BRep edge indices. Only sub-faces that share 2+ consecutive
+/// boundary vertices (a shared edge) are merged — disconnected UV intervals on the same
+/// surface (e.g. two separated kept regions) will NOT be merged, preserving correct
+/// topology.
+fn merge_subfaces_of_same_face(sub_faces: &mut Vec<SubFace>) {
+    loop {
+        let n = sub_faces.len();
+        if n < 2 {
+            return;
+        }
+        let mut merged = false;
+        'search: for i in 0..n {
+            for j in (i + 1)..n {
+                if let Some((ai, bi, fwd)) =
+                    find_shared_edge_between_subfaces(&sub_faces[i], &sub_faces[j])
+                {
+                    let m = merge_two_subfaces(&sub_faces[i], &sub_faces[j], ai, bi, fwd);
+                    if i < j {
+                        sub_faces[i] = m;
+                        sub_faces.remove(j);
+                    } else {
+                        sub_faces[j] = m;
+                        sub_faces.remove(i);
+                    }
+                    merged = true;
+                    break 'search;
+                }
+            }
+        }
+        if !merged {
+            return;
+        }
     }
 }
 
