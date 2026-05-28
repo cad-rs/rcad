@@ -1164,58 +1164,19 @@ fn draft_vertex_displacement_occt(
 }
 
 /// Build a new BRep with drafted vertex positions.
+/// Clones the original BRep (preserving all surfaces, curves, and topology)
+/// and updates only the vertex positions.
 fn build_drafted_brep(
     original: &BRep,
     new_positions: &[DVec3],
-    faces: &[Face],
+    _faces: &[Face],
 ) -> Result<BRep, BRepFeatError> {
-    let mut brep = BRep::new();
-    brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
-
-    // Copy vertices with new positions
-    for &p in new_positions {
-        brep.vertices.push(Vertex { point: p });
-    }
-
-    // Copy edges with updated curves
-    for e in original.edges.iter() {
-        let p0 = new_positions.get(e.start).copied().unwrap_or(DVec3::ZERO);
-        let p1 = new_positions.get(e.end).copied().unwrap_or(DVec3::ZERO);
-        let d = p1 - p0;
-        let len = d.length();
-        let dir = if len > 0.0 { d / len } else { DVec3::X };
-
-        brep.edges.push(Edge { start: e.start, end: e.end });
-        let ci = brep.geom.curves.len();
-        brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
-        brep.geom.edge_curve.push(Some(ci));
-        brep.geom.edge_curve_range.push(Some([0.0, len]));
-        brep.geom.edge_degenerated.push(false);
-
-        // Preserve edge mapping
-        while brep.edges.len() > brep.geom.edge_curve.len() {
-            brep.geom.edge_curve.push(None);
-            brep.geom.edge_curve_range.push(None);
-            brep.geom.edge_degenerated.push(false);
+    let mut brep = original.clone();
+    for (i, p) in new_positions.iter().enumerate() {
+        if let Some(v) = brep.vertices.get_mut(i) {
+            v.point = *p;
         }
     }
-
-    // Copy faces
-    for face in faces {
-        let wire_edges: Vec<WireEdge> = face.outer_wire.edges.iter().map(|we| {
-            WireEdge { idx: we.idx, forward: we.forward }
-        }).collect();
-
-        brep.solids[0].shells[0].faces.push(Face {
-            outer_wire: Wire { edges: wire_edges },
-            inner_wires: face.inner_wires.clone(),
-            normal: face.normal,
-            triangles: vec![],
-            sample_point: None,
-            mesh_dirty: true,
-        });
-    }
-
     Ok(brep)
 }
 
