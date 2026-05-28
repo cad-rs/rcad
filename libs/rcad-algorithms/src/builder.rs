@@ -3733,7 +3733,73 @@ impl<'a> BooleanBuilder<'a> {
 
 
         // Split UV polygon by each trim polyline
-        let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary.clone()];
+        let mut uv_polygons: Vec<Vec<DVec2>> = {
+            // Pre-split at full-wrap constant-V trims (circles that span the full
+            // U-range on periodic surfaces).  These trims are horizontal isolines
+            // at an interior V — the general splitter creates overlapping polygons
+            // when they coincide with the periodic boundary.  Splitting the initial
+            // UV polygon at those V values makes them boundary edges instead.
+            let use_v_split = is_periodic_u && trim_polylines.iter().any(|trim| {
+                trim.len() >= 2
+                && (trim[0].y - trim[trim.len()-1].y).abs() <= TOLERANCE_COORD_SUB
+            });
+            if use_v_split {
+                let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let bnd_u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let bnd_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+                let mut v_cuts: Vec<f64> = Vec::new();
+                for trim in &trim_polylines {
+                    if trim.len() < 2 { continue; }
+                    let v0 = trim[0].y;
+                    let v1 = trim[trim.len()-1].y;
+                    if (v0 - v1).abs() > TOLERANCE_COORD_SUB { continue; }
+                    // Check if this trim spans the full u-range
+                    let tu_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                    let tu_max = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                    if (tu_max - tu_min) < (bnd_u_max - bnd_u_min) * 0.85 { continue; }
+                    // Interior (not at boundary) constant-V full-wrap trim
+                    if (v0 - bnd_v_min).abs() > TOLERANCE_COORD_SUB
+                        && (v0 - bnd_v_max).abs() > TOLERANCE_COORD_SUB
+                    {
+                        v_cuts.push(v0);
+                    }
+                }
+                v_cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                v_cuts.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_COORD_SUB);
+                if !v_cuts.is_empty() {
+                    let mut bands: Vec<Vec<DVec2>> = Vec::new();
+                    let mut prev_v = bnd_v_min;
+                    for &cut in &v_cuts {
+                        if cut <= prev_v + TOLERANCE_COORD_SUB { continue; }
+                        bands.push(vec![
+                            DVec2::new(bnd_u_min, prev_v),
+                            DVec2::new(bnd_u_max, prev_v),
+                            DVec2::new(bnd_u_max, cut),
+                            DVec2::new(bnd_u_min, cut),
+                        ]);
+                        prev_v = cut;
+                    }
+                    if prev_v < bnd_v_max - TOLERANCE_COORD_SUB {
+                        bands.push(vec![
+                            DVec2::new(bnd_u_min, prev_v),
+                            DVec2::new(bnd_u_max, prev_v),
+                            DVec2::new(bnd_u_max, bnd_v_max),
+                            DVec2::new(bnd_u_min, bnd_v_max),
+                        ]);
+                    }
+                    if !bands.is_empty() {
+                        bands
+                    } else {
+                        vec![uv_boundary.clone()]
+                    }
+                } else {
+                    vec![uv_boundary.clone()]
+                }
+            } else {
+                vec![uv_boundary.clone()]
+            }
+        };
         for trim in trim_polylines.iter() {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
@@ -6053,9 +6119,26 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                     _ => {} // Other ops: fall through to crossing-based split
                 }
             }
-            // Circle extends beyond polygon boundary — fall through to
-            // crossing-based split which handles same-edge crossings
-            // and produces correct non-overlapping regions for all ops.
+            // Circle extends beyond polygon boundary — clip the circle to the
+            // polygon and use the clipped region as an inner wire (hole).
+            // This avoids the N-crossing (N > 2) case in the crossing-based split,
+            // which only handles exactly 2 crossings correctly.
+            let clipped = clip_polygon_by_convex_polygon(&circle_poly, poly);
+            if clipped.len() >= 3 {
+                match op {
+                    Some(BooleanOpType::Union) | Some(BooleanOpType::Difference) => {
+                        // Outer polygon with clipped circle as hole.
+                        return (vec![poly.to_vec()], vec![clipped]);
+                    }
+                    Some(BooleanOpType::Intersection) => {
+                        // For Intersection, the clipped circle IS the result.
+                        return (vec![clipped], vec![]);
+                    }
+                    _ => {} // Fall through to crossing-based split as backup
+                }
+            }
+            // If clipping failed (degenerate result), fall through to
+            // crossing-based split with same-edge crossing detection.
         }
     }
 
@@ -6434,6 +6517,72 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     } else {
         (out, vec![])
     }
+}
+
+/// Clip a subject polygon against a convex clip polygon using Sutherland–Hodgman.
+///
+/// Both polygons are assumed to be in 2D, with vertices ordered CCW.
+/// The result is the intersection of the two polygons (also CCW).
+fn clip_polygon_by_convex_polygon(subject: &[DVec2], clip: &[DVec2]) -> Vec<DVec2> {
+    if subject.len() < 3 || clip.len() < 3 {
+        return Vec::new();
+    }
+    let tol = TOLERANCE_ABS;
+    let mut result: Vec<DVec2> = subject.to_vec();
+    let nclip = clip.len();
+    for ci in 0..nclip {
+        if result.is_empty() {
+            return Vec::new();
+        }
+        let cj = (ci + 1) % nclip;
+        let edge_start = clip[ci];
+        let edge_end = clip[cj];
+        let edge = edge_end - edge_start;
+
+        let mut next_ring: Vec<DVec2> = Vec::new();
+        let nsub = result.len();
+        for si in 0..nsub {
+            let sj = (si + 1) % nsub;
+            let current = result[si];
+            let next = result[sj];
+
+            // Inside test: cross product (edge × (P - edge_start)) >= 0
+            // For a CCW clip polygon, interior is to the LEFT of each edge.
+            let inside_curr = edge.perp_dot(current - edge_start) >= -tol;
+            let inside_next = edge.perp_dot(next - edge_start) >= -tol;
+
+            if inside_curr {
+                next_ring.push(current);
+            }
+            if inside_curr != inside_next {
+                // Edge crosses the clipping boundary — find intersection point
+                let delta = next - current;
+                let num = edge.perp_dot(current - edge_start);
+                let den = edge.perp_dot(delta);
+                if den.abs() > TOLERANCE_FLOAT_ULTRA {
+                    let t = -num / den;
+                    let t = t.clamp(0.0, 1.0);
+                    next_ring.push(current + delta * t);
+                }
+            }
+        }
+        result = next_ring;
+    }
+    // Dedup near-coincident consecutive vertices
+    let mut deduped: Vec<DVec2> = Vec::with_capacity(result.len());
+    for p in &result {
+        if deduped.is_empty()
+            || (*p - *deduped.last().unwrap()).length_squared() > TOLERANCE_FLOAT_ULTRA
+        {
+            deduped.push(*p);
+        }
+    }
+    if deduped.len() > 1
+        && (deduped[0] - *deduped.last().unwrap()).length_squared() < TOLERANCE_FLOAT_ULTRA
+    {
+        deduped.pop();
+    }
+    deduped
 }
 
 /// Check if a 2D point is inside a 2D polygon using ray casting.

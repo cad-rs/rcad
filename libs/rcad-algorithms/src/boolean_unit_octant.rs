@@ -10137,10 +10137,22 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
     if has_above {
         let h = cyl_z_hi - box_z_hi;
         let cz = box_z_hi + h / 2.0;
-        let sub = make_cylinder_brep(
-            DVec3::new(cyl_center.x, cyl_center.y, cz),
-            cyl_axis, u_ax, cyl_r, h,
-        ).ok()?;
+        let sub = if has_middle {
+            // Skip bottom cap — the middle piece already covers the shared
+            // Z-boundary (with clipped cap when XY clipping is needed, or
+            // no cap when the middle piece skips it for has_above).
+            build_cylinder_brep_caps(
+                DVec3::new(cyl_center.x, cyl_center.y, cz),
+                cyl_axis, u_ax, cyl_r, h,
+                false,  // include bottom cap? no — middle piece covers this
+                true,   // include top cap? yes
+            ).ok()?
+        } else {
+            make_cylinder_brep(
+                DVec3::new(cyl_center.x, cyl_center.y, cz),
+                cyl_axis, u_ax, cyl_r, h,
+            ).ok()?
+        };
         pieces.push(sub);
     }
 
@@ -10148,10 +10160,19 @@ fn try_difference_cylinder_box_impl(a: &BRep, b: &BRep, rot_frame: bool) -> Opti
     if has_below {
         let h = box_z_lo - cyl_z_lo;
         let cz = cyl_z_lo + h / 2.0;
-        let sub = make_cylinder_brep(
-            DVec3::new(cyl_center.x, cyl_center.y, cz),
-            cyl_axis, u_ax, cyl_r, h,
-        ).ok()?;
+        let sub = if has_middle {
+            build_cylinder_brep_caps(
+                DVec3::new(cyl_center.x, cyl_center.y, cz),
+                cyl_axis, u_ax, cyl_r, h,
+                true,   // include bottom cap? yes
+                false,  // include top cap? no — middle piece covers this
+            ).ok()?
+        } else {
+            make_cylinder_brep(
+                DVec3::new(cyl_center.x, cyl_center.y, cz),
+                cyl_axis, u_ax, cyl_r, h,
+            ).ok()?
+        };
         pieces.push(sub);
     }
 
@@ -11054,7 +11075,7 @@ fn build_cylinder_box_difference_middle(
             (n0.x * n.y - n0.y * n.x).abs() < 1e-12
         });
     if all_parallel {
-        return build_cylinder_box_difference_parallel_only(center, r, h, clip_planes);
+        return build_cylinder_box_difference_parallel_only_skip(center, r, h, clip_planes, skip_bottom_cap, skip_top_cap);
     }
     let complement = compute_complement_theta_ranges(&intersection_intervals);
     build_cylinder_box_clipped_brep(center, r, h, &complement, clip_planes, skip_bottom_cap, skip_top_cap, false)
@@ -11295,6 +11316,18 @@ fn build_cylinder_box_difference_parallel_only(
     h: f64,
     clip_planes: &[(DVec3, f64)],
 ) -> BRep {
+    build_cylinder_box_difference_parallel_only_skip(center, r, h, clip_planes, false, false)
+}
+
+/// Same as [`build_cylinder_box_difference_parallel_only`] but with optional cap skipping.
+fn build_cylinder_box_difference_parallel_only_skip(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_planes: &[(DVec3, f64)],
+    skip_bottom_cap: bool,
+    skip_top_cap: bool,
+) -> BRep {
     // Collect arcs and merge into a single non-compound BRep (avoids nested
     // compound when the caller compounds this with top/bottom pieces).
     //
@@ -11307,8 +11340,8 @@ fn build_cylinder_box_difference_parallel_only(
         if d >= r - 1e-12 {
             continue;
         }
-        arcs.push(build_cylinder_arc_for_difference(
-            center, r, h, clip_dir, d,
+        arcs.push(build_cylinder_arc_for_difference_skip(
+            center, r, h, clip_dir, d, skip_bottom_cap, skip_top_cap,
         ));
     }
     if arcs.is_empty() {
@@ -11875,6 +11908,19 @@ fn build_cylinder_arc_for_difference(
     clip_n: DVec3,
     cut_dist: f64,
 ) -> BRep {
+    build_cylinder_arc_for_difference_skip(center, r, h, clip_n, cut_dist, false, false)
+}
+
+/// Same as [`build_cylinder_arc_for_difference`] but with optional cap skipping.
+fn build_cylinder_arc_for_difference_skip(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_n: DVec3,
+    cut_dist: f64,
+    skip_bottom_cap: bool,
+    skip_top_cap: bool,
+) -> BRep {
     let alpha = (cut_dist / r).clamp(-1.0, 1.0).acos();
     let phi = clip_n.y.atan2(clip_n.x);
     let half_h = h * 0.5;
@@ -12017,10 +12063,14 @@ fn build_cylinder_arc_for_difference(
     brep.geom.face_surface_range[_f0] = Some([phi - alpha, phi + alpha, 0.0, h]);
 
     // F1: Top cap (normal=+Z)
-    let _f1 = push_face(Wire { edges: vec![WireEdge::fwd(e5), WireEdge::fwd(e2)] }, si_top, DVec3::Z);
+    if !skip_top_cap {
+        let _f1 = push_face(Wire { edges: vec![WireEdge::fwd(e5), WireEdge::fwd(e2)] }, si_top, DVec3::Z);
+    }
 
     // F2: Bottom cap (normal=-Z)
-    let _f2 = push_face(Wire { edges: vec![WireEdge::fwd(e4), WireEdge::fwd(e0)] }, si_bot, -DVec3::Z);
+    if !skip_bottom_cap {
+        let _f2 = push_face(Wire { edges: vec![WireEdge::fwd(e4), WireEdge::fwd(e0)] }, si_bot, -DVec3::Z);
+    }
 
     // F3: Clip face (bounding the arc on the box face, outward normal = -clip_n)
     let clip_wire = Wire {
@@ -12032,6 +12082,58 @@ fn build_cylinder_arc_for_difference(
     let _f3 = push_face(clip_wire, si_clip, -clip_n);
 
     brep
+}
+
+/// bounded by a vertical plane parallel to the cylinder axis.
+///
+/// The result is a portion of the cylinder cut lengthwise by a plane parallel to
+/// its axis. Only the side where `(P - center)·clip_n ≥ -cut_dist` is kept.
+/// `clip_n` must be a horizontal unit vector (z=0) pointing into the kept half.
+/// `cut_dist` is the distance from the cylinder center to the cut plane (measured
+/// in the direction opposite to `clip_n`, i.e., into the kept half).
+///
+/// Build a full Z-aligned cylinder BRep with selective inclusion of end caps.
+///
+/// When `include_bottom_cap` is false, the face at `center.z - height/2` is omitted.
+/// When `include_top_cap` is false, the face at `center.z + height/2` is omitted.
+/// The lateral face and the included cap faces are always created.
+fn build_cylinder_brep_caps(
+    center: DVec3,
+    axis: DVec3,
+    ref_dir: DVec3,
+    radius: f64,
+    height: f64,
+    include_bottom_cap: bool,
+    include_top_cap: bool,
+) -> Result<BRep, rcad_modeling::BuildError> {
+    let mut brep = make_cylinder_brep(center, axis, ref_dir, radius, height)?;
+    if include_bottom_cap && include_top_cap {
+        return Ok(brep);
+    }
+    let half_h = height * 0.5;
+    let z_lo = center.z - half_h;
+    let z_hi = center.z + half_h;
+    let shell = &mut brep.solids[0].shells[0];
+    shell.faces.retain(|face| {
+        // Determine if this face is a planar cap by checking its outer_wire
+        // vertex Z coordinates. A cap at z_lo has all vertices near z_lo.
+        let zs: Vec<f64> = face.outer_wire.edges.iter()
+            .filter_map(|we| brep.edges.get(we.idx))
+            .flat_map(|e| [brep.vertices.get(e.start).map(|v| v.point.z),
+                           brep.vertices.get(e.end).map(|v| v.point.z)])
+            .flatten()
+            .collect();
+        if zs.is_empty() {
+            return true;
+        }
+        let z_avg = zs.iter().sum::<f64>() / zs.len() as f64;
+        let is_bottom = (z_avg - z_lo).abs() < 0.1 * height;
+        let is_top = (z_avg - z_hi).abs() < 0.1 * height;
+        if is_bottom && !include_bottom_cap { return false; }
+        if is_top && !include_top_cap { return false; }
+        true
+    });
+    Ok(brep)
 }
 
 /// bounded by a vertical plane parallel to the cylinder axis.
