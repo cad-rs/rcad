@@ -10367,12 +10367,7 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
 
     // Cylinder exits in Z with partial XY — not handled analytically.
     if z_fail {
-        let z_lo = (-ew).max(cyl_z_lo);
-        let z_hi = ew.min(cyl_z_hi);
-        if z_hi <= z_lo + tol { return Some(a.clone()); }
-        return build_box_minus_cylinder_tessellated(
-            bc, u_ax, v_ax, cu, cv, cyl_r, eu, ev, z_lo, z_hi,
-        );
+        return None;
     }
 
     // Fall through to Pave-Filler for partial-XY-exit with coincident caps.
