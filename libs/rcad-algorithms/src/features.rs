@@ -411,8 +411,8 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
         let face_normal = {
             let ab = b - a;
             let ac = c - a;
-            let nv = ab.cross(ac);
-            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { -dir.cross(ab).normalize() }
+            let nv = ac.cross(ab);
+            if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { dir.cross(ab).normalize() }
         };
         // wire: bot[i]->bot[j], vert bot[j]->top[j], top[j]->top[i] (reversed), vert top[i]->bot[i] (reversed)
         let wire_edges = vec![
