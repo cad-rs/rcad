@@ -4158,29 +4158,42 @@ fn offset_shell_with_options_impl(
     }
 
     // Fix inward-facing face normals (same as main offset function)
+    // Use the centroid of all result vertices as the reference point,
+    // NOT the origin.  The origin-based check gives wrong answers for
+    // solids far from the origin (e.g., a box at (1,1,1)-(9,9,9) after
+    // inward offset has inward-correct normals but negative tet volume
+    // when measured from the origin).
     let n_faces = result.solids[0].shells[0].faces.len();
-    for fi in 0..n_faces {
-        let f = &result.solids[0].shells[0].faces[fi];
-        if f.outer_wire.edges.len() < 3 { continue; }
-        let mut verts: Vec<DVec3> = Vec::new();
-        for we in &f.outer_wire.edges {
-            let e = &result.edges[we.idx];
-            verts.push(if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point });
-        }
-        if verts.len() < 3 { continue; }
-        let p0 = verts[0];
-        let mut vol_6 = 0.0;
-        for i in 1..verts.len() - 1 {
-            vol_6 += p0.cross(verts[i]).dot(verts[i + 1]);
-        }
-        if vol_6 < 0.0 {
-            let f = &mut result.solids[0].shells[0].faces[fi];
-            f.normal = -f.normal;
-            for we in &mut f.outer_wire.edges { we.forward = !we.forward; }
-            f.outer_wire.edges.reverse();
-            for iw in &mut f.inner_wires {
-                for we in &mut iw.edges { we.forward = !we.forward; }
-                iw.edges.reverse();
+    if n_faces > 0 {
+        let mut center_sum = DVec3::ZERO;
+        for v in &result.vertices { center_sum += v.point; }
+        let center = center_sum / result.vertices.len() as f64;
+        for fi in 0..n_faces {
+            let f = &result.solids[0].shells[0].faces[fi];
+            if f.outer_wire.edges.len() < 3 { continue; }
+            let mut verts: Vec<DVec3> = Vec::new();
+            for we in &f.outer_wire.edges {
+                let e = &result.edges[we.idx];
+                verts.push(if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point });
+            }
+            if verts.len() < 3 { continue; }
+            // Center vertices around the solid centroid so the signed volume
+            // correctly reflects inward vs outward regardless of global position.
+            let centered: Vec<DVec3> = verts.iter().map(|v| *v - center).collect();
+            let p0 = centered[0];
+            let mut vol_6 = 0.0;
+            for i in 1..centered.len() - 1 {
+                vol_6 += p0.cross(centered[i]).dot(centered[i + 1]);
+            }
+            if vol_6 < 0.0 {
+                let f = &mut result.solids[0].shells[0].faces[fi];
+                f.normal = -f.normal;
+                for we in &mut f.outer_wire.edges { we.forward = !we.forward; }
+                f.outer_wire.edges.reverse();
+                for iw in &mut f.inner_wires {
+                    for we in &mut iw.edges { we.forward = !we.forward; }
+                    iw.edges.reverse();
+                }
             }
         }
     }
@@ -4506,40 +4519,45 @@ pub fn offset_shell_with_options(
     // Step 6.5: Fix inward-facing face normals.
     // The winding fix (Step 5) ensures wire order matches the face normal,
     // but the face normal itself might point inward (from boolean operations).
-    // An inward face normal makes the signed volume contribution negative.
-    // Detect this by tetrahedron signed volume from the wire polygon and
-    // flip both the normal and the wire when the volume contribution is negative.
+    // Use the centroid of all result vertices as the reference point so the
+    // check works correctly for solids at any position (not just at the origin).
     {
         let n_faces = result.solids[0].shells[0].faces.len();
-        for fi in 0..n_faces {
-            let f = &result.solids[0].shells[0].faces[fi];
-            if f.outer_wire.edges.len() < 3 { continue; }
-            let mut verts: Vec<DVec3> = Vec::new();
-            for we in &f.outer_wire.edges {
-                let e = &result.edges[we.idx];
-                let pt = if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point };
-                verts.push(pt);
-            }
-            if verts.len() < 3 { continue; }
-            // Tetrahedron signed volume from fan decomposition, independent of face normal.
-            let p0 = verts[0];
-            let mut vol_6 = 0.0;
-            for i in 1..verts.len() - 1 {
-                vol_6 += p0.cross(verts[i]).dot(verts[i + 1]);
-            }
-            if vol_6 < 0.0 {
-                // Face normal points inward — flip it and the wire
-                let f = &mut result.solids[0].shells[0].faces[fi];
-                f.normal = -f.normal;
-                for we in &mut f.outer_wire.edges {
-                    we.forward = !we.forward;
+        if n_faces > 0 {
+            let mut center_sum = DVec3::ZERO;
+            for v in &result.vertices { center_sum += v.point; }
+            let center = center_sum / result.vertices.len() as f64;
+            for fi in 0..n_faces {
+                let f = &result.solids[0].shells[0].faces[fi];
+                if f.outer_wire.edges.len() < 3 { continue; }
+                let mut verts: Vec<DVec3> = Vec::new();
+                for we in &f.outer_wire.edges {
+                    let e = &result.edges[we.idx];
+                    let pt = if we.forward { result.vertices[e.end].point } else { result.vertices[e.start].point };
+                    verts.push(pt);
                 }
-                f.outer_wire.edges.reverse();
-                for iw in &mut f.inner_wires {
-                    for we in &mut iw.edges {
+                if verts.len() < 3 { continue; }
+                // Centered tetrahedron signed volume (origin → solid center as reference)
+                let centered: Vec<DVec3> = verts.iter().map(|v| *v - center).collect();
+                let p0 = centered[0];
+                let mut vol_6 = 0.0;
+                for i in 1..centered.len() - 1 {
+                    vol_6 += p0.cross(centered[i]).dot(centered[i + 1]);
+                }
+                if vol_6 < 0.0 {
+                    // Face normal points inward — flip it and the wire
+                    let f = &mut result.solids[0].shells[0].faces[fi];
+                    f.normal = -f.normal;
+                    for we in &mut f.outer_wire.edges {
                         we.forward = !we.forward;
                     }
-                    iw.edges.reverse();
+                    f.outer_wire.edges.reverse();
+                    for iw in &mut f.inner_wires {
+                        for we in &mut iw.edges {
+                            we.forward = !we.forward;
+                        }
+                        iw.edges.reverse();
+                    }
                 }
             }
         }
