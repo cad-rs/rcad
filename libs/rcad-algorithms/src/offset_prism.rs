@@ -417,6 +417,65 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         iter += 1;
         if cur == start_idx || iter > max_iter { break; }
     }
+    // Safety check: if the walk produced a self-intersecting polygon,
+    // compute the convex hull of the walk vertices (which is guaranteed
+    // to be simple and contain the correct offset for narrow-feature
+    // closure).
+    fn is_self_intersecting(poly: &[glam::DVec2]) -> bool {
+        let np = poly.len();
+        for i in 0..np {
+            let a1 = poly[i];
+            let a2 = poly[(i + 1) % np];
+            for j in 0..np {
+                let diff = if j > i { j - i } else { j + np - i };
+                if diff <= 1 || diff >= np - 1 { continue; }
+                let b1 = poly[j];
+                let b2 = poly[(j + 1) % np];
+                let dir_a = a2 - a1;
+                let dir_b = b2 - b1;
+                let denom = dir_a.perp_dot(dir_b);
+                if denom.abs() < 1e-14 { continue; }
+                let t_a = (b1 - a1).perp_dot(dir_b) / denom;
+                let t_b = (b1 - a1).perp_dot(dir_a) / denom;
+                if t_a > 1e-12 && t_a < 1.0 - 1e-12 && t_b > 1e-12 && t_b < 1.0 - 1e-12 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn convex_hull(pts: &[glam::DVec2]) -> Vec<glam::DVec2> {
+        if pts.len() < 3 { return pts.to_vec(); }
+        let mut p = pts.to_vec();
+        p.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()));
+        let cross = |o: &glam::DVec2, a: &glam::DVec2, b: &glam::DVec2| -> f64 {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        };
+        let mut lower: Vec<glam::DVec2> = Vec::new();
+        for pt in &p {
+            while lower.len() >= 2 && cross(&lower[lower.len()-2], &lower[lower.len()-1], pt) <= 0.0 { lower.pop(); }
+            lower.push(*pt);
+        }
+        let mut upper: Vec<glam::DVec2> = Vec::new();
+        for pt in p.iter().rev() {
+            while upper.len() >= 2 && cross(&upper[upper.len()-2], &upper[upper.len()-1], pt) <= 0.0 { upper.pop(); }
+            upper.push(*pt);
+        }
+        lower.pop(); upper.pop(); lower.extend(upper); lower
+    }
+
+    // If the walk produced a self-intersecting polygon, use convex hull instead.
+    if outer.len() >= 3 && is_self_intersecting(&outer) {
+        let hull = convex_hull(&outer);
+        if hull.len() >= 3 {
+            // Also check the hull for self-intersection
+            if !is_self_intersecting(&hull) {
+                return hull;
+            }
+        }
+    }
+
     if outer.len() >= 3 {
         outer
     } else {
