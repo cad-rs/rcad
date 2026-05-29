@@ -10368,23 +10368,11 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
 
     // When the cylinder exits through exactly one box face, the Pave-Filler
     // drops the cylindrical wall.  Build the result analytically instead.
-    if u_fail && !v_fail && !z_fail {
-        // Cylinder exits through a u-direction face (X in local box frame).
-        let side = if cu - cyl_r < -eu - tol { -1 } else { 1 };
-        return build_box_minus_cylinder_one_v_face_exit(
-            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
-            eu, ev, ew, bc, u_ax, v_ax,
-            cyl_origin, cyl_r, cyl_height, side, true, // is_u = true
-        );
-    }
-    if v_fail && !u_fail && !z_fail {
-        // Cylinder exits through a v-direction face (Y in local box frame).
-        let side = if cv - cyl_r < -ev - tol { -1 } else { 1 };
-        return build_box_minus_cylinder_one_v_face_exit(
-            a, &bx, u_idx, v_idx, z_idx, cu, cv, cz,
-            eu, ev, ew, bc, u_ax, v_ax,
-            cyl_origin, cyl_r, cyl_height, side, false, // is_u = false
-        );
+    // TEMPORARILY DISABLED: the current implementation doesn't add inner wires
+    // to the Z-faces for the cylindrical hole, over-estimating SA by ~π per
+    // missing wire.  Route to Pave-Filler which now has OCCT-style classification.
+    if (u_fail && !v_fail && !z_fail) || (v_fail && !u_fail && !z_fail) {
+        return None;
     }
 
     // Cylinder exits through 2+ box faces in XY — use Z-slice tessellation.
