@@ -429,7 +429,9 @@ pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<BRep> {
     let bottom_origin = info.cap_origin + info.cap_normal * d;
     let offset_3d = map_to_3d(&offset_poly_2d, info.cap_normal, bottom_origin);
 
-    let extrusion_height = info.extrusion_height + 2.0 * d.abs();
+    let extrusion_height = info.extrusion_height + 2.0 * d;
+    // Height must remain positive for a valid extrusion
+    if extrusion_height <= 0.0 { return None; }
     let brep = crate::features::extrude_polygon_solid(
         &offset_3d, info.extrusion_dir, extrusion_height,
     ).ok()?;
@@ -651,6 +653,27 @@ mod tests {
     fn test_concave_offset_w5_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.5); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w5 fail"); eprintln!("w5: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
     #[test]
     fn test_concave_offset_w6_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.8); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w6 fail"); eprintln!("w6: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
+
+    #[test]
+    fn test_l_shape_offset() {
+        // L-shape offset: raw offset produces a simple 6-vertex polygon.
+        // Expected area from raw offset: 16.0 (not the Minkowski sum area
+        // which would have rounded corners via Arc join).
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(4.0, 0.0),
+            DVec2::new(4.0, 1.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(1.0, 4.0),
+            DVec2::new(0.0, 4.0),
+        ];
+        let result = offset_polygon_2d(&poly, 0.5);
+        assert!(result.len() >= 3, "L-shape: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "L-shape: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "L-shape: area should be positive, got {}", area);
+        assert!((area - 16.0).abs() < 1e-10, "L-shape d=0.5: expected area 16, got {:.6}", area);
+    }
 
     /// Polygon used by OCCT w7 test
     #[test]
