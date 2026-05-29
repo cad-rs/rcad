@@ -2307,6 +2307,74 @@ fn point_on_circle_angle(point: DVec3, circle: &Circle3) -> f64 {
     if angle < 0.0 { angle + std::f64::consts::TAU } else { angle }
 }
 
+/// Project a 3D point onto an `OffsetIntersectionCurve`, returning the closest
+/// point on the curve. This is the core geometric operation for OCCT-aligned
+/// vertex computation: instead of using Cramer's rule on face normals, project
+/// the original vertex onto each incident edge's offset intersection curve and
+/// combine the results.
+fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve) -> Option<DVec3> {
+    match curve {
+        OffsetIntersectionCurve::NoIntersection | OffsetIntersectionCurve::General | OffsetIntersectionCurve::Coincident => None,
+        OffsetIntersectionCurve::TangentPoint(pt) => Some(*pt),
+        OffsetIntersectionCurve::Line(line) => {
+            let t = project_point_to_line(point, line);
+            Some(line.origin + t * line.direction)
+        }
+        OffsetIntersectionCurve::TwoLines(l1, l2) => {
+            let p1 = l1.origin + project_point_to_line(point, l1) * l1.direction;
+            let p2 = l2.origin + project_point_to_line(point, l2) * l2.direction;
+            Some(if (p1 - point).length_squared() < (p2 - point).length_squared() { p1 } else { p2 })
+        }
+        OffsetIntersectionCurve::Circle(circle) => {
+            let to_center = point - circle.center;
+            let dir = to_center.normalize_or(DVec3::X);
+            Some(circle.center + dir * circle.radius)
+        }
+        OffsetIntersectionCurve::TangentCircle(circle) => {
+            let to_center = point - circle.center;
+            let dir = to_center.normalize_or(DVec3::X);
+            Some(circle.center + dir * circle.radius)
+        }
+        OffsetIntersectionCurve::TwoCircles(c1, c2) => {
+            let p1 = c1.center + (point - c1.center).normalize_or(DVec3::X) * c1.radius;
+            let p2 = c2.center + (point - c2.center).normalize_or(DVec3::X) * c2.radius;
+            Some(if (p1 - point).length_squared() < (p2 - point).length_squared() { p1 } else { p2 })
+        }
+        OffsetIntersectionCurve::Ellipse(ellipse) => {
+            let to_center = point - ellipse.center;
+            let y_axis = ellipse.normal.cross(ellipse.major_dir).normalize();
+            let tx = to_center.dot(ellipse.major_dir) / ellipse.major_radius.max(1e-30);
+            let ty = to_center.dot(y_axis) / ellipse.minor_radius.max(1e-30);
+            let angle = ty.atan2(tx);
+            Some(ellipse.center + ellipse.major_dir * ellipse.major_radius * angle.cos()
+                 + y_axis * ellipse.minor_radius * angle.sin())
+        }
+        OffsetIntersectionCurve::TwoEllipses(e1, e2) => {
+            let proj_ell = |e: &Ellipse3| -> DVec3 {
+                let tc = point - e.center;
+                let y_axis = e.normal.cross(e.major_dir).normalize();
+                let tx = tc.dot(e.major_dir) / e.major_radius.max(1e-30);
+                let ty = tc.dot(y_axis) / e.minor_radius.max(1e-30);
+                let ang = ty.atan2(tx);
+                e.center + e.major_dir * e.major_radius * ang.cos() + y_axis * e.minor_radius * ang.sin()
+            };
+            let p1 = proj_ell(e1);
+            let p2 = proj_ell(e2);
+            Some(if (p1 - point).length_squared() < (p2 - point).length_squared() { p1 } else { p2 })
+        }
+        OffsetIntersectionCurve::Numerical(pts) => {
+            if pts.is_empty() { return None; }
+            let mut best = pts[0];
+            let mut best_d = (pts[0] - point).length_squared();
+            for pt in pts.iter().skip(1) {
+                let d = (*pt - point).length_squared();
+                if d < best_d { best_d = d; best = *pt; }
+            }
+            Some(best)
+        }
+    }
+}
+
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 /// Classification of an edge's convexity based on its adjacent face normals.
 ///
@@ -4051,27 +4119,60 @@ fn offset_shell_with_options_impl(
         }
     }
 
-    // Step 3: Compute offset vertex positions (with variable thickness support)
+    // Step 3: Compute offset vertex positions (OCCT-aligned edge-first).
+    // For each vertex, project onto offset intersection curves of its incident
+    // edges, using the per-face distance if variable thickness is active.
+    let get_face_distance = |fi: usize| -> f64 {
+        if let Some(ref vt) = opts.variable_thickness {
+            vt.thickness_for_face(fi)
+        } else {
+            distance
+        }
+    };
     let offset_vertices: Vec<DVec3> = (0..brep.vertices.len())
         .map(|vi| {
-            let avg_distance = if let Some(ref vt) = opts.variable_thickness {
-                let mut sum = 0.0;
-                let mut count = 0;
-                for (fi, face) in shell.faces.iter().enumerate() {
-                    let uses_vertex = face.outer_wire.edges.iter().any(|we| {
-                        let e = &brep.edges[we.idx];
-                        e.start == vi || e.end == vi
-                    });
-                    if uses_vertex {
-                        sum += vt.thickness_for_face(fi);
-                        count += 1;
+            let pt = brep.vertices[vi].point;
+            // Find all incident edges for this vertex
+            let mut proj_sum = DVec3::ZERO;
+            let mut proj_count = 0usize;
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                if edge.start != vi && edge.end != vi { continue; }
+                let faces = match edge_to_faces.get(&ei) {
+                    Some(f) if f.len() >= 2 => f,
+                    _ => continue,
+                };
+                for pair in faces.windows(2) {
+                    let fi1 = pair[0];
+                    let fi2 = pair[1];
+                    let si1 = match brep.geom.face_surface.get(fi1).and_then(|s| *s) { Some(s) => s, None => continue };
+                    let si2 = match brep.geom.face_surface.get(fi2).and_then(|s| *s) { Some(s) => s, None => continue };
+                    let s1 = match brep.geom.surfaces.get(si1) { Some(s) => s, None => continue };
+                    let s2 = match brep.geom.surfaces.get(si2) { Some(s) => s, None => continue };
+                    let d1 = get_face_distance(fi1);
+                    let d2 = get_face_distance(fi2);
+                    let inter = intersect_offset_surfaces(s1, s2, d1, d2);
+                    if let Some(proj) = project_point_onto_intersection(pt, &inter) {
+                        proj_sum += proj;
+                        proj_count += 1;
+                        break;
                     }
                 }
-                if count > 0 { sum / count as f64 } else { distance }
+            }
+            if proj_count >= 1 {
+                proj_sum / proj_count as f64
             } else {
-                distance
-            };
-            offset_vertex(brep, vi, avg_distance, shell, None)
+                // Fallback: average-normal translation
+                let avg_dist = if let Some(ref vt) = opts.variable_thickness {
+                    let mut s = 0.0; let mut c = 0;
+                    for (fi, face) in shell.faces.iter().enumerate() {
+                        if face.outer_wire.edges.iter().any(|we| brep.edges[we.idx].start == vi || brep.edges[we.idx].end == vi) {
+                            s += vt.thickness_for_face(fi); c += 1;
+                        }
+                    }
+                    if c > 0 { s / c as f64 } else { distance }
+                } else { distance };
+                offset_vertex(brep, vi, avg_dist, shell, None)
+            }
         })
         .collect();
 
@@ -4328,12 +4429,20 @@ pub fn offset_shell_with_options(
         }
     }
 
-    // Step 3: Compute offset vertex positions with position-based deduplication.
-    // Multiple BRep vertices at the same position (T-junctions) must get the
-    // same offset position to keep the shell consistent.
-    // Strategy: group vertices by position, then compute one offset for each
-    // group using ALL faces incident to ALL vertices in the group. This ensures
-    // consistency at T-junctions and seams.
+    // Step 3: Compute offset vertex positions with position-based deduplication
+    // and OCCT-aligned edge-first computation.
+    //
+    // Strategy:
+    // 1. Group vertices by position (T-junction dedup).
+    // 2. For each group, find ALL incident edges across ALL vertices in the group.
+    // 3. For each incident edge, compute the offset intersection curve of its
+    //    two adjacent faces (intersect_offset_surfaces), then project the original
+    //    vertex onto that curve (project_point_onto_intersection).
+    // 4. Average the projections from all incident edges as the offset position.
+    //
+    // This differs from the old approach (Cramer's rule on face normals) and
+    // aligns with OCCT BRepOffset_Inter3d: edge curves come from surface-surface
+    // intersection, vertices come from projecting onto those curves.
     let pos_tol = 1e-8;
     let mut pos_to_group: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
     let mut group_positions: Vec<DVec3> = Vec::new();
@@ -4356,34 +4465,115 @@ pub fn offset_shell_with_options(
             group_vertex_indices.push(vec![vi]);
         }
     }
-    // Compute offset for each group using ALL incident faces across ALL vertices
+    // Compute offset for each group using edge-first projection (OCCT-aligned)
     let mut group_offsets: Vec<DVec3> = Vec::with_capacity(group_positions.len());
     for gi in 0..group_positions.len() {
         let pt = group_positions[gi];
-        let mut fi_list: Vec<usize> = Vec::new();
-        let mut normal_sum = DVec3::ZERO;
+        // Collect all incident edges across all vertices in the group
+        let mut incident_edges: Vec<usize> = Vec::new();
         for &vi in &group_vertex_indices[gi] {
-            for (fi, face) in shell.faces.iter().enumerate() {
-                let uses = face.outer_wire.edges.iter().any(|we| {
-                    let e = &brep.edges[we.idx];
-                    e.start == vi || e.end == vi
-                }) || face.inner_wires.iter().any(|wire| {
-                    wire.edges.iter().any(|we| {
-                        let e = &brep.edges[we.idx];
-                        e.start == vi || e.end == vi
-                    })
-                });
-                if uses && !fi_list.contains(&fi) {
-                    fi_list.push(fi);
-                    normal_sum += face.normal;
+            for (ei, edge) in brep.edges.iter().enumerate() {
+                if (edge.start == vi || edge.end == vi) && !incident_edges.contains(&ei) {
+                    incident_edges.push(ei);
                 }
             }
         }
-        let off = if !fi_list.is_empty() {
-            offset_vertex_from_faces(brep, pt, &fi_list, normal_sum, distance, shell)
+        // Check if ALL incident faces are planar — if so, use exact Cramer's rule.
+        let all_planar = incident_edges.iter().all(|ei| {
+            edge_to_faces.get(ei).map_or(true, |faces| {
+                faces.iter().all(|fi| {
+                    brep.geom.face_surface.get(*fi).and_then(|s| *s)
+                        .and_then(|si| brep.geom.surfaces.get(si))
+                        .is_some_and(|s| matches!(s, Surface3::Plane(_)))
+                })
+            })
+        });
+
+        let off = if all_planar {
+            // Planar-only vertex: use Cramer's rule (exact intersection of offset planes)
+            let mut fi_list: Vec<usize> = Vec::new();
+            let mut normal_sum = DVec3::ZERO;
+            for &vi in &group_vertex_indices[gi] {
+                for (fi, face) in shell.faces.iter().enumerate() {
+                    let uses = face.outer_wire.edges.iter().any(|we| {
+                        let e = &brep.edges[we.idx];
+                        e.start == vi || e.end == vi
+                    }) || face.inner_wires.iter().any(|wire| {
+                        wire.edges.iter().any(|we| {
+                            let e = &brep.edges[we.idx];
+                            e.start == vi || e.end == vi
+                        })
+                    });
+                    if uses && !fi_list.contains(&fi) {
+                        fi_list.push(fi);
+                        normal_sum += face.normal;
+                    }
+                }
+            }
+            if !fi_list.is_empty() {
+                offset_vertex_from_faces(brep, pt, &fi_list, normal_sum, distance, shell)
+            } else {
+                pt
+            }
         } else {
-            pt
-        };
+            // Curved-surface vertex: use OCCT-aligned edge-first projection.
+            // The edge curves come from the actual offset surface intersections,
+            // which is more accurate than the face-normal Cramer's rule.
+            let mut projections: Vec<DVec3> = Vec::new();
+            for &ei in &incident_edges {
+                let faces = match edge_to_faces.get(&ei) {
+                    Some(f) if f.len() >= 2 => f,
+                    _ => continue,
+                };
+                for pair in faces.windows(2) {
+                    let fi1 = pair[0];
+                    let fi2 = pair[1];
+                    let si1 = match brep.geom.face_surface.get(fi1).and_then(|s| *s) { Some(s) => s, None => continue };
+                    let si2 = match brep.geom.face_surface.get(fi2).and_then(|s| *s) { Some(s) => s, None => continue };
+                    let s1 = match brep.geom.surfaces.get(si1) { Some(s) => s, None => continue };
+                    let s2 = match brep.geom.surfaces.get(si2) { Some(s) => s, None => continue };
+                    let intersection = intersect_offset_surfaces(s1, s2, distance, distance);
+                    if let Some(proj) = project_point_onto_intersection(pt, &intersection) {
+                        projections.push(proj);
+                        break;
+                    }
+                }
+            }
+            if projections.len() >= 2 {
+                let mut sum = DVec3::ZERO;
+                for p in &projections { sum += *p; }
+                sum / projections.len() as f64
+            } else if projections.len() == 1 {
+                projections[0]
+            } else {
+                // Fallback: collect incident faces and use face-normal approach
+                let mut fi_list: Vec<usize> = Vec::new();
+                let mut normal_sum = DVec3::ZERO;
+                for &vi in &group_vertex_indices[gi] {
+                    for (fi, face) in shell.faces.iter().enumerate() {
+                        let uses = face.outer_wire.edges.iter().any(|we| {
+                            let e = &brep.edges[we.idx];
+                            e.start == vi || e.end == vi
+                        }) || face.inner_wires.iter().any(|wire| {
+                            wire.edges.iter().any(|we| {
+                                let e = &brep.edges[we.idx];
+                                e.start == vi || e.end == vi
+                            })
+                        });
+                        if uses && !fi_list.contains(&fi) {
+                            fi_list.push(fi);
+                            normal_sum += face.normal;
+                        }
+                    }
+                }
+                if !fi_list.is_empty() {
+                    offset_vertex_from_faces(brep, pt, &fi_list, normal_sum, distance, shell)
+                } else {
+                    pt
+                }
+            }
+        }
+        ;
         group_offsets.push(off);
     }
     let offset_vertices: Vec<DVec3> = (0..brep.vertices.len())
