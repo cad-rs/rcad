@@ -3201,12 +3201,25 @@ fn fix_crossed_faces(
         }
     }
 
+    // Helper: check if an original face is a curved surface (cylinder/cone).
+    // Curved surfaces (cone wall, cylinder wall) maintain their orientation type
+    // during offset — they cannot "cross" the way planar faces can. Skip them.
+    let is_curved_face = |fi: usize| -> bool {
+        if fi >= original_shell.faces.len() { return false; }
+        original_brep.geom.face_surface.get(fi)
+            .and_then(|s| *s)
+            .and_then(|si| original_brep.geom.surfaces.get(si))
+            .is_some_and(|s| matches!(s, Surface3::Cylinder(_) | Surface3::Cone(_)))
+    };
+
     // Pair-level check: for each pair of faces with anti-parallel normals,
     // check if their offset positions crossed relative to the solid center.
     for i in 0..n_faces {
         if is_crossed[i] { continue; }
+        if is_curved_face(i) { continue; }
         for j in (i + 1)..n_faces {
             if is_crossed[j] { continue; }
+            if is_curved_face(j) { continue; }
             let ni = orig_normals[i];
             let nj = orig_normals[j];
             // Check anti-parallel: normals point in opposite directions
@@ -3238,9 +3251,11 @@ fn fix_crossed_faces(
     }
 
     // Also check individual faces that moved toward the center (for safety)
+    // Skip curved surfaces (cylinder/cone) — they maintain orientation during offset.
     for fi in 0..n_faces {
         if is_crossed[fi] { continue; }
         if fi >= original_shell.faces.len() { continue; }
+        if is_curved_face(fi) { continue; }
         let ci_orig = orig_centroids[fi];
         let ci_new = result_centroids[fi];
         let orig_dist_to_center = (ci_orig - orig_center).dot(orig_normals[fi]);
@@ -4569,16 +4584,48 @@ pub fn offset_shell_with_options(
                     }
                 }
             }
-            // OCCT edge-first projection: use the average of ≥2 edge-curve
-            // projections (well-constrained). For 0-1 projections, the position
-            // is under-constrained by edge curves alone — fall back to the
-            // face-normal Cramer's rule which considers ALL incident faces.
+            // Try offset_vertex_curved_plane for cone+plane vertices.
+            // This analytically intersects the offset cone surface with each
+            // adjacent offset plane, giving an exact result that is more
+            // accurate than the edge-first projections or Cramer's rule fallback.
+            let cone_plane_result: Option<DVec3> = {
+                let mut all_fis: Vec<usize> = Vec::new();
+                for &vi in &group_vertex_indices[gi] {
+                    for (fi, face) in shell.faces.iter().enumerate() {
+                        let uses = face.outer_wire.edges.iter().any(|we| brep.edges[we.idx].start == vi || brep.edges[we.idx].end == vi)
+                            || face.inner_wires.iter().any(|wire| wire.edges.iter().any(|we| brep.edges[we.idx].start == vi || brep.edges[we.idx].end == vi));
+                        if uses && !all_fis.contains(&fi) { all_fis.push(fi); }
+                    }
+                }
+                let mut cone_fi = None;
+                let mut plane_fis: Vec<usize> = Vec::new();
+                for &fi in &all_fis {
+                    match brep.geom.face_surface.get(fi).and_then(|s| *s).and_then(|si| brep.geom.surfaces.get(si)) {
+                        Some(Surface3::Cone(_)) => cone_fi = Some(fi),
+                        Some(Surface3::Plane(_)) => plane_fis.push(fi),
+                        _ => {}
+                    }
+                }
+                match (cone_fi, plane_fis.is_empty()) {
+                    (Some(cfi), false) => offset_vertex_curved_plane(pt, brep, cfi, &plane_fis, distance, shell),
+                    _ => None,
+                }
+            };
+
+            // Decision: combine edge-first projections with cone+plane result.
+            // >=2 projections  -> average (optionally blend with cone+plane)
+            // <2 + cone+plane  -> use analytic cone+plane result
+            // otherwise        -> Cramer's rule fallback
             if projections.len() >= 2 {
                 let mut sum = DVec3::ZERO;
-                for p in &projections { sum += *p; }
-                sum / projections.len() as f64
+                let mut count = 0usize;
+                for p in &projections { sum += *p; count += 1; }
+                if let Some(cp) = cone_plane_result { sum += cp; count += 1; }
+                sum / count as f64
+            } else if let Some(cp) = cone_plane_result {
+                cp
             } else {
-                // Fallback: collect incident faces and use face-normal approach
+                // Fallback: Cramer's rule from all incident faces
                 let mut fi_list: Vec<usize> = Vec::new();
                 let mut normal_sum = DVec3::ZERO;
                 for &vi in &group_vertex_indices[gi] {
