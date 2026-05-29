@@ -4141,6 +4141,8 @@ fn offset_shell_with_options_impl(
         return Err(OffsetError::EmptyResult);
     }
 
+    eprintln!("[OFFSET_OK] valid={}", valid_face_count);
+
     // Step 6: Apply join type if needed
     if opts.join_type.requires_join_geometry() {
         let _join_faces = apply_join_type(&mut result, brep, opts, &edge_to_faces, &vertex_map)?;
@@ -4461,21 +4463,18 @@ pub fn offset_shell_with_options(
                                 * (u_axis * ta.cos() + v_axis * ta.sin());
                             let proj_end = off_circle.center + off_circle.radius
                                 * (u_axis * tb.cos() + v_axis * tb.sin());
-                            // Full-circle edges (cap faces) need distinct endpoint vertices.
-                            // Place start at 0 and end at pi so the self-loop split
-                            // below produces two half-circle edges.
+                            // Full-circle edges (cap faces) keep the merged vertex
+                            // so the edge is a self-loop detected and split below.
                             let is_self_loop = (tb - ta - std::f64::consts::TAU).abs() < 1e-12;
-                            let (lvs_pos, lve_pos) = if is_self_loop {
-                                (0.0, std::f64::consts::PI)
+                            let (lvs, lve) = if is_self_loop {
+                                (vs, vs)
                             } else {
-                                (ta, tb)
+                                let p_start = off_circle.center + off_circle.radius
+                                    * (u_axis * ta.cos() + v_axis * ta.sin());
+                                let p_end = off_circle.center + off_circle.radius
+                                    * (u_axis * tb.cos() + v_axis * tb.sin());
+                                (add_vertex(&mut result, p_start), add_vertex(&mut result, p_end))
                             };
-                            let proj_start = off_circle.center + off_circle.radius
-                                * (u_axis * lvs_pos.cos() + v_axis * lvs_pos.sin());
-                            let proj_end = off_circle.center + off_circle.radius
-                                * (u_axis * lve_pos.cos() + v_axis * lve_pos.sin());
-                            let lvs = add_vertex(&mut result, proj_start);
-                            let lve = add_vertex(&mut result, proj_end);
                             (c, ta, tb, lvs, lve)
                         }
                         _ => (c, 0.0, (p_end - p_start).length(), vs, ve),
@@ -4542,6 +4541,12 @@ pub fn offset_shell_with_options(
     if valid_face_count == 0 {
         return Err(OffsetError::EmptyResult);
     }
+
+    let n_result = result.solids.first()
+        .and_then(|s| s.shells.first())
+        .map(|sh| sh.faces.len())
+        .unwrap_or(0);
+    eprintln!("[OFFSET_OK] valid={} result_faces={}", valid_face_count, n_result);
 
 
     // Fix inverted face winding caused by concave topology copy.
