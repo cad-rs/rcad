@@ -46,7 +46,7 @@ use glam::DVec3;
 use rcad_kernel::{
     BRep,
     SurfaceEval, CurveEval, any_perpendicular,
-    geom::{Curve3, Surface3, Line3, Plane, Circle3, Ellipse3, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, OffsetSurface},
+    geom::{Curve3, Surface3, Line3, Plane, Circle3, Ellipse3, Parabola3, Hyperbola3, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, OffsetSurface},
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 use crate::tolerance::*;
@@ -745,6 +745,10 @@ pub enum OffsetIntersectionCurve {
     Ellipse(Ellipse3),
     /// Two ellipse intersections.
     TwoEllipses(Ellipse3, Ellipse3),
+    /// Parabola intersection (plane-cone edge case).
+    Parabola(Parabola3),
+    /// Hyperbola intersection (plane-cone edge case).
+    Hyperbola(Hyperbola3),
     /// Intersection requires numerical approximation.
     /// Contains a sampled polyline approximation.
     Numerical(Vec<DVec3>),
@@ -929,9 +933,18 @@ pub fn intersect_offset_cylinder_cylinder(
         crate::inttools::cylinder_cylinder::CylinderCylinderResult::TwoEllipses(e1, e2) => {
             OffsetIntersectionCurve::TwoEllipses(e1, e2)
         }
+        crate::inttools::cylinder_cylinder::CylinderCylinderResult::SkewQuartic(branches) => {
+            // Use analytical quartic solver output (Ferrari method) instead of marching.
+            let mut pts = Vec::new();
+            for branch in branches { pts.extend(branch); }
+            if pts.is_empty() {
+                OffsetIntersectionCurve::NoIntersection
+            } else {
+                OffsetIntersectionCurve::Numerical(pts)
+            }
+        }
         crate::inttools::cylinder_cylinder::CylinderCylinderResult::PerpendicularOffsetCurves { .. }
-        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General
-        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::SkewQuartic(_) => {
+        | crate::inttools::cylinder_cylinder::CylinderCylinderResult::General => {
             // Fall back to numerical approximation
             intersect_cylinders_numerical(&offset_cyl1, &offset_cyl2, d1, d2)
         }
@@ -1071,8 +1084,17 @@ pub fn intersect_offset_cylinder_sphere(
         crate::inttools::sphere_cylinder::SphereCylinderResult::TwoCircles(c1, c2) => {
             OffsetIntersectionCurve::TwoCircles(c1, c2)
         }
-        crate::inttools::sphere_cylinder::SphereCylinderResult::General
-        | crate::inttools::sphere_cylinder::SphereCylinderResult::SkewQuartic(_) => {
+        crate::inttools::sphere_cylinder::SphereCylinderResult::SkewQuartic(branches) => {
+            // Use analytical quartic solver output instead of marching.
+            let mut pts = Vec::new();
+            for branch in branches { pts.extend(branch); }
+            if pts.is_empty() {
+                OffsetIntersectionCurve::NoIntersection
+            } else {
+                OffsetIntersectionCurve::Numerical(pts)
+            }
+        }
+        crate::inttools::sphere_cylinder::SphereCylinderResult::General => {
             // Fall back to numerical approximation
             intersect_cylinder_sphere_numerical(&offset_cyl, &offset_sphere, d_cyl, d_sphere)
         }
@@ -1209,7 +1231,8 @@ pub fn intersect_offset_plane_cone(
         PlaneConicalResult::TwoLines(l1, l2) => OffsetIntersectionCurve::TwoLines(l1, l2),
         PlaneConicalResult::Circle(c) => OffsetIntersectionCurve::Circle(c),
         PlaneConicalResult::Ellipse(e) => OffsetIntersectionCurve::Ellipse(e),
-        PlaneConicalResult::Parabola(_) | PlaneConicalResult::Hyperbola(_) => OffsetIntersectionCurve::General,
+        PlaneConicalResult::Parabola(p) => OffsetIntersectionCurve::Parabola(p),
+        PlaneConicalResult::Hyperbola(h) => OffsetIntersectionCurve::Hyperbola(h),
     }
 }
 
@@ -2266,6 +2289,14 @@ pub fn intersection_curve_to_curve3(
             // Use the first ellipse
             Some((Curve3::Ellipse(*e1), 0.0, 2.0 * std::f64::consts::PI))
         }
+        OffsetIntersectionCurve::Parabola(p) => {
+            let domain = p.default_domain();
+            Some((Curve3::Parabola(*p), domain[0], domain[1]))
+        }
+        OffsetIntersectionCurve::Hyperbola(h) => {
+            let domain = h.default_domain();
+            Some((Curve3::Hyperbola(*h), domain[0], domain[1]))
+        }
         OffsetIntersectionCurve::Numerical(points) => {
             // Convert polyline to BSpline approximation
             if points.len() < 2 {
@@ -2375,6 +2406,38 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
             let p1 = proj_ell(e1);
             let p2 = proj_ell(e2);
             Some(if (p1 - point).length_squared() < (p2 - point).length_squared() { p1 } else { p2 })
+        }
+        OffsetIntersectionCurve::Parabola(parabola) => {
+            // Sample the parabola numerically and find closest point.
+            // P(t) = vertex + t²/(2p)*axis_dir + t*dir_perp
+            let n_samples = 256;
+            let domain = 1e3_f64;
+            let mut best = parabola.point_at(0.0);
+            let mut best_d = (best - point).length_squared();
+            for i in 0..=n_samples {
+                let frac = 2.0 * (i as f64 / n_samples as f64) - 1.0;
+                let t = domain * frac;
+                let pt = parabola.point_at(t);
+                let d = (pt - point).length_squared();
+                if d < best_d { best_d = d; best = pt; }
+            }
+            Some(best)
+        }
+        OffsetIntersectionCurve::Hyperbola(hyperbola) => {
+            // Sample the hyperbola numerically and find closest point.
+            // P(t) = center + a*cosh(t)*major_dir + b*sinh(t)*minor_dir
+            let n_samples = 256;
+            let domain = 5.0_f64;
+            let mut best = hyperbola.point_at(0.0);
+            let mut best_d = (best - point).length_squared();
+            for i in 0..=n_samples {
+                let frac = 2.0 * (i as f64 / n_samples as f64) - 1.0;
+                let t = domain * frac;
+                let pt = hyperbola.point_at(t);
+                let d = (pt - point).length_squared();
+                if d < best_d { best_d = d; best = pt; }
+            }
+            Some(best)
         }
         OffsetIntersectionCurve::Numerical(pts) => {
             if pts.is_empty() { return None; }
@@ -2495,6 +2558,19 @@ fn offset_edge(
         let dir = (off_p1 - off_p0).normalize_or(DVec3::X);
         let len = (off_p1 - off_p0).length();
         if len < 1e-12 {
+            // Self-loop edge (start == end, or vertices collapsed to same position).
+            // Instead of returning a degenerate zero-length line, preserve the
+            // original edge curve.  Self-loop edges on periodic surfaces (torus
+            // major/minor seams, cylinder seams at caps) keep their curve shape
+            // across offset — the offset vertex position accounts for the surface
+            // change.  The caller's self-loop splitting code handles Circle curves
+            // by splitting into two half-circles with a midpoint vertex.
+            if edge.start == edge.end {
+                let range = brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r);
+                if let Some([t0, t1]) = range {
+                    return Some((curve.clone(), t0, t1));
+                }
+            }
             return None;
         }
         Some((Curve3::Line(Line3 {
