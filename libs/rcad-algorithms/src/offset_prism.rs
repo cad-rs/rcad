@@ -288,20 +288,12 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
 
     // Step 4: Arrangement cycle extraction.
     //
-    // The raw offset polygon self-intersects for concave inputs.  Every
-    // intersection lies ON the Minkowski-sum boundary — there is no local
-    // criterion to distinguish boundary edges from interior edges.
-    //
-    // Solution: build a full planar undirected graph from all split edges,
-    // merge coincident vertices (intersection points that appear on two
-    // different raw edges), trace every simple cycle (face), then select
-    // the cycle with the largest positive signed area as the outer boundary.
-    // This is the standard computational-geometry approach (de Berg et al.
-    // "Computational Geometry" ch. 8, CGAL Arrangement_2).
+    // Build a full undirected arrangement graph from all split edges,
+    // merge coincident vertices, trace every face, and select the
+    // cycle with the largest positive signed area as the outer boundary.
+    // (de Berg et al. "Computational Geometry" ch. 8)
 
     // ---- 4a. Merge coincident vertices ----
-    // Intersection points between raw edges are duplicated in split_pts
-    // (once per raw edge).  Merge them into single arrangement vertices.
     let mut merge_map: Vec<usize> = (0..spn).collect();
     for i in 0..spn {
         for j in (i + 1)..spn {
@@ -310,13 +302,11 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
             }
         }
     }
-    // Path compression
     for i in 0..spn {
         let mut r = i;
         while merge_map[r] != r { r = merge_map[r]; }
         merge_map[i] = r;
     }
-    // Deduplicated vertex list
     let mut unique_pts: Vec<glam::DVec2> = Vec::new();
     let mut old_to_new: Vec<usize> = vec![0; spn];
     let mut seen_root: Vec<bool> = vec![false; spn];
@@ -334,11 +324,7 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     let upn = unique_pts.len();
     if upn < 3 { return raw2; }
 
-    // ---- 4b. Build undirected adjacency ----
-    // Forward edges from the raw split ordering become undirected
-    // arrangement edges.  After merging, an intersection vertex
-    // automatically connects to four neighbours (prev/next on each
-    // of the two intersecting raw edges).
+    // ---- 4b. Build undirected adjacency from forward edges ----
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); upn];
     for i in 0..spn {
         let j = (i + 1) % spn;
@@ -356,15 +342,13 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     for v in 0..upn {
         adj[v].sort_by(|&a, &b| {
             f64::atan2(unique_pts[a].y - unique_pts[v].y, unique_pts[a].x - unique_pts[v].x)
-                .partial_cmp(
-                    &f64::atan2(unique_pts[b].y - unique_pts[v].y, unique_pts[b].x - unique_pts[v].x)
-                ).unwrap()
+                .partial_cmp(&f64::atan2(unique_pts[b].y - unique_pts[v].y, unique_pts[b].x - unique_pts[v].x))
+                .unwrap()
         });
         adj[v].dedup();
     }
 
-    // ---- 4c. Half-edge data structure ----
-    // Map every directed edge (from→to) to an index.
+    // ---- 4c. Half-edge data structure + face tracing ----
     let mut half_edges: Vec<(usize, usize)> = Vec::new();
     let mut he_map: std::collections::HashMap<(usize, usize), usize> = std::collections::HashMap::new();
     for v in 0..upn {
@@ -378,9 +362,6 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     let hen = half_edges.len();
     if hen == 0 { return raw2; }
 
-    // For half-edge u→v, the next half-edge is the CCW successor of
-    // v→u at vertex v.  This traces the face to the LEFT of the
-    // traversal direction (CCW outer boundary → positive area).
     let mut next_he: Vec<usize> = vec![0; hen];
     for (he_idx, &(from, to)) in half_edges.iter().enumerate() {
         let pos = adj[to].iter().position(|&w| w == from).unwrap();
@@ -389,10 +370,8 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         next_he[he_idx] = he_map[&(to, next_to)];
     }
 
-    // ---- 4d. Trace all faces (cycle decomposition) ----
     let mut visited: Vec<bool> = vec![false; hen];
-    let mut cycles: Vec<(Vec<usize>, f64)> = Vec::new(); // (vertex indices, signed area)
-
+    let mut cycles: Vec<(Vec<usize>, f64)> = Vec::new();
     for start_he in 0..hen {
         if visited[start_he] { continue; }
         let mut he = start_he;
@@ -412,17 +391,22 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         }
     }
 
-    // ---- 4e. Select outer boundary (largest positive signed area) ----
+    // ---- 4d. Select outer boundary (largest positive signed area) ----
     if cycles.is_empty() { return raw2; }
-
     cycles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    let (best_cycle, best_area) = &cycles[0];
+    let (best_cycle, _best_area) = &cycles[0];
 
-    if *best_area > 1e-12 && best_cycle.len() >= 3 {
-        best_cycle.iter().map(|&vi| unique_pts[vi]).collect()
-    } else {
-        raw2
+    let mut result: Vec<glam::DVec2> = Vec::new();
+    for &vi in best_cycle {
+        let pt = unique_pts[vi];
+        if result.last().map_or(true, |last| (*last - pt).length_squared() > 1e-20) {
+            result.push(pt);
+        }
     }
+    if result.len() >= 2 && (result[0] - *result.last().unwrap()).length_squared() < 1e-20 {
+        result.pop();
+    }
+    if result.len() >= 3 { result } else { raw2 }
 }
 
 /// Build an offset BRep for a prismatic solid using the 2D polygon offset.
