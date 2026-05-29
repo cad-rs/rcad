@@ -1295,16 +1295,19 @@ fn classify_face_occt_style(
         return None;
     }
 
-    // Clear majority: ≥ 70% of classified samples agree.
-    let majority = (total as f64) * 0.7;
-    if in_count as f64 >= majority {
+    // Simple majority: whichever has more votes wins.  This is more reliable
+    // than the existing probe-grid fallback (which biases toward In for curved
+    // surfaces via out_count >= in_count threshold) because OCCT's approach of
+    // many interior sample points gives a truer picture of the sub-face's
+    // relationship with the other solid.
+    if in_count > out_count {
         return Some(Classification::In);
     }
-    if out_count as f64 >= majority {
+    if out_count > in_count {
         return Some(Classification::Out);
     }
 
-    // Ambiguous — let caller fall through to AABB / probe-grid fallbacks.
+    // Tie — let caller fall through to AABB / probe-grid fallbacks.
     None
 }
 
@@ -2385,7 +2388,7 @@ impl<'a> BooleanBuilder<'a> {
             return self.single_subface_from_whole_face(face_idx);
         }
 
-        const N_U: usize = 12;   // azimuth divisions
+        const N_U: usize = 32;   // azimuth divisions (increased from 12 for better boundary resolution)
         const N_SEG: usize = 16; // samples along each patch edge
 
         let mut subs = Vec::with_capacity(N_U);
