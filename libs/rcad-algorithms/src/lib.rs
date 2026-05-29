@@ -103,6 +103,7 @@ pub mod maker_volume;
 pub mod math_utils;
 pub mod medial_axis;
 pub mod offset;
+pub mod offset_prism;
 pub mod orthogonal_face_fuse;
 pub mod pave_filler;
 pub mod point_cloud;

@@ -4494,6 +4494,7 @@ pub fn offset_shell_with_options(
         return Err(OffsetError::InvalidInput("shell has no faces"));
     }
 
+
     // Step 1: Compute offset surfaces for each face
     let mut offset_surfaces: Vec<Option<Surface3>> = Vec::with_capacity(shell.faces.len());
     for (fi, _face) in shell.faces.iter().enumerate() {
