@@ -1021,6 +1021,17 @@ fn classify_against_solid_for_boolean(
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
+    // OCCT-style classification: use multi-point UV sampling with ray casting
+    // as the PRIMARY method, matching OCCT's ClassifyFaces approach.  Unlike
+    // the AABB boundary-vertex check below, this samples the sub-face INTERIOR
+    // using the UV domain, producing more reliable results for curved surfaces
+    // (cylinder/cone/torus) whose tessellation vertices straddle the solid
+    // boundary.  The AABB fast path and probe grid are retained as fallbacks
+    // when OCCT classification is ambiguous.
+    if let Some(class) = classify_face_occt_style(sub, solid_face_indices, ds, op) {
+        return class;
+    }
+
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
 
@@ -1235,6 +1246,66 @@ fn classify_against_solid_for_boolean(
         }
     }
     Classification::Out
+}
+
+/// OCCT-style face classification using multi-point interior sampling with
+/// ray casting.  Classifies a sub-face by sampling its UV interior at multiple
+/// points and using `classify_point` (ray casting) at each — matching OCCT's
+/// ClassifyFaces / BOPAlgo_FillIn3DParts approach of classifying the face
+/// interior rather than checking boundary vertices against AABB extents.
+///
+/// Returns `Some(In/Out/On)` when the UV-probe vote is clear (≥70% majority
+/// or any `On` hit), or `None` when the result is ambiguous (mixed In/Out
+/// without a clear majority) — letting the caller fall through to the existing
+/// AABB fast path and probe-grid fallbacks.
+fn classify_face_occt_style(
+    sub: &SubFace,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    _op: BooleanOpType,
+) -> Option<Classification> {
+    // OCCT uses interior points of the face — sample the UV domain.
+    let uv_domain = sub.uv_domain?;
+    let [u0, u1, v0, v1] = uv_domain;
+    if (u1 - u0).abs() < TOLERANCE_FLOAT_LOOSE || (v1 - v0).abs() < TOLERANCE_FLOAT_LOOSE {
+        return None;
+    }
+
+    let nu = 4usize;
+    let nv = 4usize;
+    let mut in_count = 0u32;
+    let mut out_count = 0u32;
+    let mut total = 0u32;
+
+    // Sample a 4×4 grid across the UV interior (not boundary edges).
+    for iu in 0..nu {
+        for iv in 0..nv {
+            let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / nu as f64;
+            let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / nv as f64;
+            let p = sub.surface.point_at(u, v);
+            match classify_point(p, solid_face_indices, ds) {
+                Classification::In => { in_count += 1; total += 1; }
+                Classification::Out => { out_count += 1; total += 1; }
+                Classification::On => return Some(Classification::On),
+            }
+        }
+    }
+
+    if total == 0 {
+        return None;
+    }
+
+    // Clear majority: ≥ 70% of classified samples agree.
+    let majority = (total as f64) * 0.7;
+    if in_count as f64 >= majority {
+        return Some(Classification::In);
+    }
+    if out_count as f64 >= majority {
+        return Some(Classification::Out);
+    }
+
+    // Ambiguous — let caller fall through to AABB / probe-grid fallbacks.
+    None
 }
 
 impl<'a> BooleanBuilder<'a> {
