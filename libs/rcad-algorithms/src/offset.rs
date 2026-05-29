@@ -4466,23 +4466,22 @@ pub fn offset_shell_with_options(
                             // so the edge is a self-loop detected and split below.
                             let is_self_loop = (tb - ta - std::f64::consts::TAU).abs() < 1e-12;
                             let vs_pt = result.vertices[vs].point;
-                            let (lvs, lve) = if is_self_loop {
-                                (vs, vs)
+                            let (lvs, lve, nta, ntb) = if is_self_loop {
+                                (vs, vs, ta, tb)
                             } else {
-                                let p_start = off_circle.center + off_circle.radius
-                                    * (u_axis * ta.cos() + v_axis * ta.sin());
+                                // Align angle 0 with the vertex_map seam position
+                                // so the Circle parameterization is consistent.
+                                let vu = (vs_pt - off_circle.center).normalize_or(u_axis);
+                                let vv = off_circle.normal.cross(vu).normalize();
+                                let ve_pt = result.vertices[ve].point;
+                                let local_e = ve_pt - off_circle.center;
+                                let ang_e = local_e.dot(vv).atan2(local_e.dot(vu));
+                                let ang_e = if ang_e < 0.0 { ang_e + std::f64::consts::TAU } else { ang_e };
                                 let p_end = off_circle.center + off_circle.radius
-                                    * (u_axis * tb.cos() + v_axis * tb.sin());
-                                // Share the vertex_map vertex when it lies on the
-                                // circle (seam position), create a new vertex for
-                                // the opposite side so face adjacency is manifold.
-                                let on_seam_s = (p_start - vs_pt).length_squared() < 1e-10;
-                                let on_seam_e = (p_end - vs_pt).length_squared() < 1e-10;
-                                let lvs = if on_seam_s { vs } else { add_vertex(&mut result, p_start) };
-                                let lve = if on_seam_e { vs } else { add_vertex(&mut result, p_end) };
-                                (lvs, lve)
+                                    * (vu * ang_e.cos() + vv * ang_e.sin());
+                                (vs, add_vertex(&mut result, p_end), 0.0, ang_e)
                             };
-                            (c, ta, tb, lvs, lve)
+                            (c, nta, ntb, lvs, lve)
                         }
                         _ => (c, 0.0, (p_end - p_start).length(), vs, ve),
                     }
@@ -4518,9 +4517,6 @@ pub fn offset_shell_with_options(
                     }
                 })();
                 if let Some((Curve3::Circle(circle), [t0, t1])) = circ_data {
-                    // Keep the vertex_map vertex (at the cylinder seam) as the
-                    // start/end.  Only the midpoint needs a fresh vertex so the
-                    // wall and cap share vertices for a closed manifold.
                     let vs = result.edges[ei].start;
                     let mid = (t0 + t1) * 0.5;
                     let n = circle.normal.normalize_or(DVec3::Z);
