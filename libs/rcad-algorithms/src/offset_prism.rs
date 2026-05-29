@@ -290,6 +290,12 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     }
 
     if split_pts.len() < 3 { return raw2; }
+    // Find the leftmost-bottommost vertex (guaranteed on outer boundary).
+    let start_idx = split_pts.iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     let spn = split_pts.len();
 
     // Build graph: for each vertex, list (next_vertex, outgoing_direction, is_cross)
@@ -360,63 +366,57 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         }
     }
 
-    // Step 4: Walk the outer boundary using the "most clockwise turn" rule.
-    // Start from the leftmost-bottommost vertex.
-    let start_idx = split_pts.iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()))
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+    // Step 4: Walk the outer boundary with cross-edge discipline.
+    // After taking a cross edge, disable further cross edges at the
+    // destination to prevent double-crossing into interior loops.
 
-    let mut outer: Vec<glam::DVec2> = Vec::new();
-    let mut current = start_idx;
-    let mut incoming_dir = split_pts[start_idx] - split_pts[(start_idx + spn - 1) % spn]; let incoming_len = incoming_dir.length(); if incoming_len > 1e-20 { incoming_dir /= incoming_len; } else { incoming_dir = glam::DVec2::new(0.0, -1.0); }
-    let mut visited_edges: Vec<Vec<bool>> = vec![Vec::new(); spn];
-    for i in 0..spn {
-        visited_edges[i] = vec![false; graph[i].len()];
-    }
-    let mut iter_count = 0;
+    let incoming_dir = if start_idx > 0 {
+        split_pts[start_idx] - split_pts[(start_idx + spn - 1) % spn]
+    } else {
+        glam::DVec2::new(0.0, -1.0)
+    };
+
+    let inc_len = incoming_dir.length();
+    let mut inc = if inc_len > 1e-20 { incoming_dir / inc_len } else { glam::DVec2::new(0.0, -1.0) };
+    let mut used_edges: Vec<Vec<bool>> = (0..spn).map(|i| vec![false; graph[i].len()]).collect();
+    let mut outer = Vec::new();
+    let mut cur = start_idx;
+    let mut just_crossed = false;
+    let mut iter = 0;
     let max_iter = spn * 8;
 
     loop {
-        outer.push(split_pts[current]);
+        outer.push(split_pts[cur]);
 
-        // Pick the best outgoing edge. Prefer crossing edges (which lead
-        // to the outer boundary). Among candidates, choose the most CW turn.
-        let mut best: Option<(usize, f64)> = None;
-        for (ei, (_, dir, is_cross)) in graph[current].iter().enumerate() {
-            if visited_edges[current][ei] { continue; }
-            if !is_cross { continue; }   // Prefer cross edges only
-            let angle = incoming_dir.perp_dot(*dir).atan2(incoming_dir.dot(*dir));
-            if best.map_or(true, |(_, a)| angle < a) {
-                best = Some((ei, angle));
+        // Among unvisited outgoing edges, pick the one with the most
+        // clockwise turn. If just_crossed, skip cross edges.
+        let mut best: Option<usize> = None;
+        let mut best_angle = f64::INFINITY;
+
+        for (ei, (next, dir, is_cross)) in graph[cur].iter().enumerate() {
+            if used_edges[cur][ei] { continue; }
+            if just_crossed && *is_cross { continue; }  // Prevent double-cross
+            if *next == start_idx && outer.len() >= 2 {
+                best = Some(ei);  // Prefer returning to start
+                break;
+            }
+            let angle = inc.perp_dot(*dir).atan2(inc.dot(*dir));
+            if angle < best_angle {
+                best_angle = angle;
+                best = Some(ei);
             }
         }
-        if best.is_none() {
-            for (ei, (_, dir, _)) in graph[current].iter().enumerate() {
-                if visited_edges[current][ei] { continue; }
-                let angle = incoming_dir.perp_dot(*dir).atan2(incoming_dir.dot(*dir));
-                if best.map_or(true, |(_, a)| angle < a) {
-                    best = Some((ei, angle));
-                }
-            }
-        }
 
-        let best_idx = match best { Some((ei, _)) => ei, None => break };
+        let best_idx = match best { Some(i) => i, None => break };
+        used_edges[cur][best_idx] = true;
+        let (next, dir, is_cross) = graph[cur][best_idx];
+        just_crossed = is_cross;
+        inc = dir;
+        cur = next;
 
-        // Mark all edges from this vertex as visited
-        for ei in 0..graph[current].len() {
-        }
-
-        let (next, next_dir, _) = graph[current][best_idx];
-        let (next, next_dir, _) = graph[current][best_idx];
-        incoming_dir = next_dir;
-        current = next;
-
-        iter_count += 1;
-        if current == start_idx || iter_count > max_iter { break; }
+        iter += 1;
+        if cur == start_idx || iter > max_iter { break; }
     }
-
     if outer.len() >= 3 {
         outer
     } else {
