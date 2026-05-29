@@ -4442,8 +4442,13 @@ pub fn offset_shell_with_options(
                                         let range = brep.geom.edge_curve_range.get(we.idx).and_then(|r| *r)?;
                                         let a0 = point_on_circle_angle(orig_curve.point_at(range[0]), orig_c);
                                         let a1 = point_on_circle_angle(orig_curve.point_at(range[1]), orig_c);
-                                        if a1 < a0 { Some((a0, a1 + std::f64::consts::TAU)) }
-                                        else { Some((a0, a1)) }
+                                        if (a1 - a0).abs() < 1e-12 && (range[1] - range[0]).abs() > std::f64::consts::PI {
+                                            Some((0.0, std::f64::consts::TAU)) // Full circle
+                                        } else if a1 < a0 {
+                                            Some((a0, a1 + std::f64::consts::TAU))
+                                        } else {
+                                            Some((a0, a1))
+                                        }
                                     }
                                     _ => None,
                                 })
@@ -4456,14 +4461,21 @@ pub fn offset_shell_with_options(
                                 * (u_axis * ta.cos() + v_axis * ta.sin());
                             let proj_end = off_circle.center + off_circle.radius
                                 * (u_axis * tb.cos() + v_axis * tb.sin());
-                            let mut lvs = vs;
-                            let mut lve = ve;
-                            if (proj_start - result.vertices[vs].point).length_squared() > VTX_TOL_SQ {
-                                lvs = add_vertex(&mut result, proj_start);
-                            }
-                            if (proj_end - result.vertices[ve].point).length_squared() > VTX_TOL_SQ {
-                                lve = add_vertex(&mut result, proj_end);
-                            }
+                            // Full-circle edges (cap faces) need distinct endpoint vertices.
+                            // Place start at 0 and end at pi so the self-loop split
+                            // below produces two half-circle edges.
+                            let is_self_loop = (tb - ta - std::f64::consts::TAU).abs() < 1e-12;
+                            let (lvs_pos, lve_pos) = if is_self_loop {
+                                (0.0, std::f64::consts::PI)
+                            } else {
+                                (ta, tb)
+                            };
+                            let proj_start = off_circle.center + off_circle.radius
+                                * (u_axis * lvs_pos.cos() + v_axis * lvs_pos.sin());
+                            let proj_end = off_circle.center + off_circle.radius
+                                * (u_axis * lve_pos.cos() + v_axis * lve_pos.sin());
+                            let lvs = add_vertex(&mut result, proj_start);
+                            let lve = add_vertex(&mut result, proj_end);
                             (c, ta, tb, lvs, lve)
                         }
                         _ => (c, 0.0, (p_end - p_start).length(), vs, ve),
@@ -4483,12 +4495,47 @@ pub fn offset_shell_with_options(
             wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 
+        // Fix self-loop Circle edges (cap faces with a single full-circle edge)
+        // by splitting into two half-circles with a midpoint vertex.
+        let mut split_wire: Vec<WireEdge> = Vec::new();
+        for we in &wire_edges {
+            let (ei, fwd) = (we.idx, we.forward);
+            if result.edges[ei].start == result.edges[ei].end {
+                let circ_data = (|| -> Option<(Curve3, [f64; 2])> {
+                    let ci = result.geom.edge_curve.get(ei).and_then(|c| *c)?;
+                    match result.geom.curves.get(ci)? {
+                        Curve3::Circle(c) => {
+                            let rng = result.geom.edge_curve_range.get(ei).and_then(|r| *r)?;
+                            Some((Curve3::Circle(*c), rng))
+                        }
+                        _ => None,
+                    }
+                })();
+                if let Some((Curve3::Circle(circle), [t0, t1])) = circ_data {
+                    let mid = (t0 + t1) * 0.5;
+                    let n = circle.normal.normalize_or(DVec3::Z);
+                    let rd = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                    let u = n.cross(rd).normalize();
+                    let v = n.cross(u).normalize();
+                    let mid_pt = circle.center + circle.radius * (u * mid.cos() + v * mid.sin());
+                    let mvi = add_vertex(&mut result, mid_pt);
+                    let vs = result.edges[ei].start;
+                    let e1 = add_edge(&mut result, Curve3::Circle(circle), t0, mid, vs, mvi);
+                    let e2 = add_edge(&mut result, Curve3::Circle(circle), mid, t1, mvi, vs);
+                    split_wire.push(WireEdge::fwd(e1));
+                    split_wire.push(WireEdge::fwd(e2));
+                    continue;
+                }
+            }
+            split_wire.push(if fwd { WireEdge::fwd(ei) } else { WireEdge::rev(ei) });
+        }
+
         // Skip faces whose wire has too few edges (collapsed due to offset)
-        if wire_edges.len() < 3 {
+        if split_wire.len() < 2 {
             continue;
         }
 
-        add_face(&mut result, off_surf, Wire { edges: wire_edges }, Vec::new());
+        add_face(&mut result, off_surf, Wire { edges: split_wire }, Vec::new());
         valid_face_count += 1;
     }
 
