@@ -4516,13 +4516,21 @@ pub fn offset_shell_with_options(
                     let rd = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
                     let u = n.cross(rd).normalize();
                     let v = n.cross(u).normalize();
+                    // Project ALL vertices onto the offset circle so edges
+                    // have correct positions (vertex_map positions are from
+                    // face-normal offset, not from the circle intersection).
+                    let start_pt = circle.center + circle.radius * (u * t0.cos() + v * t0.sin());
                     let mid_pt = circle.center + circle.radius * (u * mid.cos() + v * mid.sin());
+                    let end_pt = circle.center + circle.radius * (u * t1.cos() + v * t1.sin());
+                    let svi = add_vertex(&mut result, start_pt);
                     let mvi = add_vertex(&mut result, mid_pt);
-                    let vs = result.edges[ei].start;
-                    let e1 = add_edge(&mut result, Curve3::Circle(circle), t0, mid, vs, mvi);
-                    let e2 = add_edge(&mut result, Curve3::Circle(circle), mid, t1, mvi, vs);
-                    split_wire.push(WireEdge::fwd(e1));
-                    split_wire.push(WireEdge::fwd(e2));
+                    let evi = add_vertex(&mut result, end_pt);
+                    let e1 = add_edge(&mut result, Curve3::Circle(circle), t0, mid, svi, mvi);
+                    let e2 = add_edge(&mut result, Curve3::Circle(circle), mid, t1, mvi, evi);
+                    // Preserve original forward flag.  For a self-loop edge both
+                    // ends are the same vertex, so fwd determines the winding.
+                    split_wire.push(if fwd { WireEdge::fwd(e1) } else { WireEdge::rev(e1) });
+                    split_wire.push(if fwd { WireEdge::fwd(e2) } else { WireEdge::rev(e2) });
                     continue;
                 }
             }
