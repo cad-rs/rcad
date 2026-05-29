@@ -1681,6 +1681,25 @@ impl<'a> BooleanBuilder<'a> {
                     );
                 }
                 if keep {
+                    // For Difference, skip B-side In planar sub-faces that are coplanar with
+                    // already-emitted A-side faces.  The A-face already covers this plane
+                    // (e.g. cylinder bottom cap at z=0 coincident with box bottom face).
+                    if self.op == BooleanOpType::Difference && class == Classification::In {
+                        if let Surface3::Plane(bp) = &sub.surface {
+                            let bn = bp.normal.normalize_or_zero();
+                            let coplanar = a_on_planes.iter().any(|(an, ao)| {
+                                let dot = an.dot(bn);
+                                if dot <= 0.99 { return false; }
+                                let d_a = ao.dot(*an);
+                                let d_b = bp.origin.dot(bn);
+                                (d_a - d_b).abs() < 1e-6
+                            });
+                            if coplanar {
+                                continue;
+                            }
+                        }
+                    }
+
                     // For Intersection, skip B-side On subfaces that are coplanar with an
                     // already-emitted A-side face (e.g. cylinder cap 鈭?cube face 鈥?both produce
                     // On faces on the same plane; only the A-face should survive).
