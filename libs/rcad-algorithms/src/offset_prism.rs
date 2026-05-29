@@ -177,6 +177,7 @@ fn edge_outward_normal(polygon: &[glam::DVec2], i: usize) -> glam::DVec2 {
 pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DVec2> {
     if polygon.len() < 3 { return polygon.to_vec(); }
     let d = distance;
+    if d.abs() < 1e-12 { return polygon.to_vec(); }
 
     // Step 1: Raw offset — intersection of adjacent offset edge lines
     let n = polygon.len();
@@ -434,6 +435,39 @@ pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<BRep> {
     if offset_poly_2d.len() < 3 { return None; }
 
     let bottom_origin = info.cap_origin + info.cap_normal * d;
+
+    // Steiner formula area correction: the raw offset over-estimates area at
+    // reflex vertices.  Apply A(d) = A₀ + P₀·d + π·d² correction only when
+    // the polygon has reflex vertices (concave).
+    let offset_area = signed_area_2d(&offset_poly_2d).abs();
+    let has_reflex = (0..poly_2d.len()).any(|i| {
+        let prev = poly_2d[(i + poly_2d.len() - 1) % poly_2d.len()];
+        let curr = poly_2d[i];
+        let next = poly_2d[(i + 1) % poly_2d.len()];
+        (curr - prev).perp_dot(next - curr) < -1e-14
+    });
+    if has_reflex && offset_area > 0.0 {
+        let orig_area = area.abs();
+        let perimeter: f64 = (0..poly_2d.len())
+            .map(|i| (poly_2d[(i + 1) % poly_2d.len()] - poly_2d[i]).length())
+            .sum();
+        let steiner_area = orig_area + perimeter * d.abs() + std::f64::consts::PI * d * d;
+        if offset_area > steiner_area {
+            // Scale down to match the exact Minkowski sum area.
+            let scale = (steiner_area / offset_area).sqrt();
+            let centroid = offset_poly_2d.iter().copied().sum::<glam::DVec2>() / offset_poly_2d.len() as f64;
+            let corrected: Vec<glam::DVec2> = offset_poly_2d.iter()
+                .map(|p| centroid + (*p - centroid) * scale)
+                .collect();
+            let offset_3d = map_to_3d(&corrected, info.cap_normal, bottom_origin);
+            let extrusion_height = info.extrusion_height + 2.0 * d;
+            if extrusion_height <= 0.0 { return None; }
+            return crate::features::extrude_polygon_solid(
+                &offset_3d, info.extrusion_dir, extrusion_height,
+            ).ok();
+        }
+    }
+
     let offset_3d = map_to_3d(&offset_poly_2d, info.cap_normal, bottom_origin);
 
     let extrusion_height = info.extrusion_height + 2.0 * d;
