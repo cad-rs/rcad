@@ -2292,6 +2292,21 @@ fn project_point_to_line(point: DVec3, line: &Line3) -> f64 {
     v.dot(line.direction)
 }
 
+/// Compute the angular parameter of a 3D point on a circle.
+/// Returns the angle in radians in [0, 2pi).
+fn point_on_circle_angle(point: DVec3, circle: &Circle3) -> f64 {
+    let local = point - circle.center;
+    let normal = circle.normal.normalize_or(DVec3::Z);
+    let ref_dir = if normal.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+    let u_axis = normal.cross(ref_dir).normalize();
+    let v_axis = normal.cross(u_axis).normalize();
+    let x = local.dot(u_axis);
+    let y = local.dot(v_axis);
+    if x * x + y * y < 1e-16 { return 0.0; }
+    let angle = y.atan2(x);
+    if angle < 0.0 { angle + std::f64::consts::TAU } else { angle }
+}
+
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 /// Classification of an edge's convexity based on its adjacent face normals.
 ///
@@ -4409,31 +4424,62 @@ pub fn offset_shell_with_options(
             let p_end = result.vertices[ve].point;
 
             let faces = edge_to_faces.get(&we.idx).cloned().unwrap_or_default();
-            let (curve, t0, t1) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
+            let (curve, t0, t1, edge_vs, edge_ve) = offset_edge(brep, we.idx, &faces, distance, &offset_surfaces, &offset_vertices)
                 .map(|(c, _, _)| {
-                    // Reparameterize the curve to pass through the actual vertex positions.
-                    // This ensures consistency between the edge curve and vertex positions.
+                    const VTX_TOL_SQ: f64 = 1e-12;
                     match &c {
                         Curve3::Line(line) => {
                             let ts = project_point_to_line(p_start, line);
                             let te = project_point_to_line(p_end, line);
-                            (c, ts.min(te), ts.max(te))
+                            (c, ts.min(te), ts.max(te), vs, ve)
                         }
-                        _ => (c, 0.0, (p_end - p_start).length()),
+                        Curve3::Circle(off_circle) => {
+                            let (ta, tb) = brep.geom.edge_curve.get(we.idx)
+                                .and_then(|oc| *oc)
+                                .and_then(|ci| brep.geom.curves.get(ci))
+                                .and_then(|orig_curve| match orig_curve {
+                                    Curve3::Circle(orig_c) => {
+                                        let range = brep.geom.edge_curve_range.get(we.idx).and_then(|r| *r)?;
+                                        let a0 = point_on_circle_angle(orig_curve.point_at(range[0]), orig_c);
+                                        let a1 = point_on_circle_angle(orig_curve.point_at(range[1]), orig_c);
+                                        if a1 < a0 { Some((a0, a1 + std::f64::consts::TAU)) }
+                                        else { Some((a0, a1)) }
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or((0.0, std::f64::consts::TAU));
+                            let normal = off_circle.normal.normalize_or(DVec3::Z);
+                            let ref_dir = if normal.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                            let u_axis = normal.cross(ref_dir).normalize();
+                            let v_axis = normal.cross(u_axis).normalize();
+                            let proj_start = off_circle.center + off_circle.radius
+                                * (u_axis * ta.cos() + v_axis * ta.sin());
+                            let proj_end = off_circle.center + off_circle.radius
+                                * (u_axis * tb.cos() + v_axis * tb.sin());
+                            let mut lvs = vs;
+                            let mut lve = ve;
+                            if (proj_start - result.vertices[vs].point).length_squared() > VTX_TOL_SQ {
+                                lvs = add_vertex(&mut result, proj_start);
+                            }
+                            if (proj_end - result.vertices[ve].point).length_squared() > VTX_TOL_SQ {
+                                lve = add_vertex(&mut result, proj_end);
+                            }
+                            (c, ta, tb, lvs, lve)
+                        }
+                        _ => (c, 0.0, (p_end - p_start).length(), vs, ve),
                     }
                 })
                 .unwrap_or_else(|| {
-                    // Fallback: create a line between vertex positions
                     let dir = (p_end - p_start).normalize_or(DVec3::X);
                     let len = (p_end - p_start).length();
-                    (Curve3::Line(Line3 { origin: p_start, direction: dir }), 0.0, len)
+                    (Curve3::Line(Line3 { origin: p_start, direction: dir }), 0.0, len, vs, ve)
                 });
 
             if (t1 - t0).abs() < TOLERANCE_LEN_MIN {
                 continue;
             }
 
-            let eidx = add_edge(&mut result, curve, t0, t1, vs, ve);
+            let eidx = add_edge(&mut result, curve, t0, t1, edge_vs, edge_ve);
             wire_edges.push(if we.forward { WireEdge::fwd(eidx) } else { WireEdge::rev(eidx) });
         }
 

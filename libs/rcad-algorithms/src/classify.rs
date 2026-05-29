@@ -458,11 +458,17 @@ fn classify_point_internal(
         return class;
     }
 
-    // 2. Check if point is ON any face surface within face bounds
+    // 2. Check if point is ON any face surface within face bounds.
+    //    If so, do NOT return On — fall through to multi-ray voting
+    //    with ray perturbation (OCCT BRepClass3d_SolidClassifier
+    //    approach).  Ray perturbation fires rays from the fixed point
+    //    in perturbed directions; ray_cast_classify skips t ≈ 0
+    //    intersections, so the ray correctly clears the coplanar face
+    //    and determines In/Out by parity against the remaining faces.
     for &fi in solid_face_indices {
         let tol_f = relaxed_tol_for_face_geom(ds, tol, fi, wf);
-        if let Some(class) = check_point_on_face(point, fi, ds, tol_f) {
-            return class;
+        if check_point_on_face(point, fi, ds, tol_f).is_some() {
+            break;
         }
     }
 

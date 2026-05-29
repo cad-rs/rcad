@@ -1183,25 +1183,27 @@ fn classify_against_solid_for_boolean(
         if c0 == Classification::On && total == 0 && !probe_pts.is_empty()
             && matches!(sub.surface, Surface3::Plane(_))
         {
-            let mut off_in = 0usize;
-            let mut off_out = 0usize;
-            let eps = TOLERANCE_LEN_MIN * 10.0;
-            for &p in &probe_pts {
-                let above = classify_point(p + sub.normal * eps, solid_face_indices, ds);
-                let below = classify_point(p - sub.normal * eps, solid_face_indices, ds);
-                if matches!(above, Classification::In) { off_in += 1; }
-                if matches!(above, Classification::Out) { off_out += 1; }
-                if matches!(below, Classification::In) { off_in += 1; }
-                if matches!(below, Classification::Out) { off_out += 1; }
-            }
-            let off_total = off_in + off_out;
-            // If offsets show a clear signal, use it. For Difference A-side:
-            // Out means the face separates solids → kept by base policy.
-            if off_total >= 2 && off_out >= off_in * 2 {
-                return Classification::Out;
-            }
-            if off_total >= 2 && off_in >= off_out * 2 {
-                return Classification::In;
+            let eps = TOLERANCE_ABS * 10.0;
+            // Try offset in the INTERIOR direction (−normal), which moves the
+            // sample point INTO the parent solid. For a cap coplanar with the other
+            // solid's face, interior-offset pushes the point inside the other solid
+            // (if the (x,y) centroid lies within the other solid's XY footprint) or
+            // keeps it outside (if not).  The outward direction (+normal) would push
+            // ALL points outside, making all sub-faces appear "Out" regardless of
+            // their actual position.  We try both directions independently: pick the
+            // one where ALL probe points agree.
+            for &dir in &[-sub.normal, sub.normal] {
+                let mut all_in = true;
+                let mut all_out = true;
+                for &p in &probe_pts {
+                    match classify_point(p + dir * eps, solid_face_indices, ds) {
+                        Classification::In => all_out = false,
+                        Classification::Out => all_in = false,
+                        _ => { all_in = false; all_out = false; }
+                    }
+                }
+                if all_in { return Classification::In; }
+                if all_out { return Classification::Out; }
             }
         }
         // For On-classified planar faces with mixed In/Out probe results, reclassify
