@@ -6390,6 +6390,66 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         return (vec![poly.to_vec()], vec![]);
     }
 
+    // N > 2 crossings with all_outside + center_inside: the polygon completely
+    // encircles the circle.  Build the inner wire (clipped region) from crossings:
+    //   - polygon edge segments between crossings on the same edge (inside circle)
+    //   - circle arcs between crossings on different edges (inside polygon)
+    if crossings.len() > 2 && all_outside && point_in_polygon_2d(poly, center) {
+        // Group crossings by edge index.
+        let mut inner: Vec<DVec2> = Vec::new();
+        for ci in 0..crossings.len() {
+            let (e_i, pt_a) = crossings[ci];
+            let (e_j, pt_b) = crossings[(ci + 1) % crossings.len()];
+            if e_i == e_j {
+                // Both crossings on the same polygon edge — the edge segment
+                // between them is inside the circle. Add the polygon vertices
+                // on this segment, starting at pt_a and ending at pt_b.
+                inner.push(pt_a);
+                let e_end = poly[(e_i + 1) % n];
+                let e_start = poly[e_i];
+                let evec = e_end - e_start;
+                let elen2 = evec.length_squared();
+                let t_a = if elen2 > 1e-30 { (pt_a - e_start).dot(evec) / elen2 } else { 0.0 };
+                let t_b = if elen2 > 1e-30 { (pt_b - e_start).dot(evec) / elen2 } else { 0.0 };
+                // Add polygon vertices between pt_a and pt_b (sorted by t).
+                let (t_lo, t_hi, rev) = if t_a < t_b { (t_a, t_b, false) } else { (t_b, t_a, true) };
+                let mut mids: Vec<DVec2> = Vec::new();
+                // Check the polygon edge for interior vertices (not the crossing points).
+                let vi = e_i;
+                let vj = (e_i + 1) % n;
+                // Walk the polygon from vi to vj, collecting vertex parameters.
+                let mut verts_on_edge: Vec<(f64, DVec2)> = Vec::new();
+                // The endpoints are crossings — don't add them here.
+                verts_on_edge.push((t_lo, pt_a));
+                // Find interior vertices of the polygon edge.
+                // The polygon edge is from poly[vi] to poly[vj].
+                // Interior vertices would be at t between 0 and 1.
+                // For a polygon edge, the only vertices are vi and vj (no interior vertices).
+                verts_on_edge.push((t_hi, pt_b));
+                verts_on_edge.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                if rev { verts_on_edge.reverse(); }
+                for (_, p) in verts_on_edge.iter().skip(1) {
+                    inner.push(*p);
+                }
+            } else {
+                // Crossings on different edges — the circle arc between them is
+                // inside the polygon.  Sample 12 points on this arc.
+                let a1 = (pt_a - center).to_angle();
+                let a2 = (pt_b - center).to_angle();
+                let d_ccw = (a2 - a1 + std::f64::consts::TAU) % std::f64::consts::TAU;
+                const N_ARC: usize = 12;
+                for k in 1..=N_ARC {
+                    let t = k as f64 / N_ARC as f64;
+                    let ang = a1 + d_ccw * t;
+                    inner.push(center + DVec2::new(ang.cos(), ang.sin()) * radius);
+                }
+            }
+        }
+        if inner.len() >= 3 {
+            return (vec![poly.to_vec()], vec![inner]);
+        }
+    }
+
     // Take the first two crossings
     let (idx1, pt1) = crossings[0];
     let (idx2, pt2) = crossings[1];
