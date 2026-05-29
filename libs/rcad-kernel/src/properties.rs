@@ -2433,11 +2433,25 @@ fn face_triangles(
             .map(|i| [origin, wire_pts[i], wire_pts[i + 1]])
             .collect();
         return tris;
-    } else {
-        (1..wire_pts.len() - 1)
-            .map(|i| orient_tri([origin, wire_pts[i], wire_pts[i + 1]], face.normal))
-            .collect()
     }
+    // For planar faces, use ear-clipping on the polygon vertices (extracted
+    // from wire edges, not the dense 65-per-edge samples which include
+    // inter-edge duplicates that confuse earcut).  The fan-from-vertex-0
+    // approach fills the convex hull, inflating volume for concave caps.
+    let face_verts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
+        let edge = brep.edges.get(we.idx)?;
+        let vi = if we.forward { edge.start } else { edge.end };
+        brep.vertices.get(vi).map(|v| v.point)
+    }).collect();
+    if face_verts.len() >= 3 {
+        if let Some(ear_tris) = try_planar_earcut_simple_outer(&face_verts, face.normal) {
+            return ear_tris;
+        }
+    }
+    // Fallback: fan from first dense sample (convex or near-degenerate).
+    (1..wire_pts.len() - 1)
+        .map(|i| orient_tri([origin, wire_pts[i], wire_pts[i + 1]], face.normal))
+        .collect()
 }
 
 /// Ensure triangle [a,b,c] is oriented so its normal agrees with `face_normal`.
