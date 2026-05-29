@@ -2327,24 +2327,36 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
         }
         OffsetIntersectionCurve::Circle(circle) => {
             let to_center = point - circle.center;
-            let dir = to_center.normalize_or(DVec3::X);
+            // Project onto the circle's plane first (remove component along normal)
+            // so the radial direction stays in the plane of the circle.
+            let in_plane = to_center - to_center.dot(circle.normal) * circle.normal;
+            let dir = in_plane.normalize_or(DVec3::X);
             Some(circle.center + dir * circle.radius)
         }
         OffsetIntersectionCurve::TangentCircle(circle) => {
             let to_center = point - circle.center;
-            let dir = to_center.normalize_or(DVec3::X);
+            let in_plane = to_center - to_center.dot(circle.normal) * circle.normal;
+            let dir = in_plane.normalize_or(DVec3::X);
             Some(circle.center + dir * circle.radius)
         }
         OffsetIntersectionCurve::TwoCircles(c1, c2) => {
-            let p1 = c1.center + (point - c1.center).normalize_or(DVec3::X) * c1.radius;
-            let p2 = c2.center + (point - c2.center).normalize_or(DVec3::X) * c2.radius;
+            let proj_circle = |c: &Circle3| -> DVec3 {
+                let tc = point - c.center;
+                let in_plane = tc - tc.dot(c.normal) * c.normal;
+                let dir = in_plane.normalize_or(DVec3::X);
+                c.center + dir * c.radius
+            };
+            let p1 = proj_circle(c1);
+            let p2 = proj_circle(c2);
             Some(if (p1 - point).length_squared() < (p2 - point).length_squared() { p1 } else { p2 })
         }
         OffsetIntersectionCurve::Ellipse(ellipse) => {
             let to_center = point - ellipse.center;
+            // Project onto the ellipse's plane first
+            let in_plane = to_center - to_center.dot(ellipse.normal) * ellipse.normal;
             let y_axis = ellipse.normal.cross(ellipse.major_dir).normalize();
-            let tx = to_center.dot(ellipse.major_dir) / ellipse.major_radius.max(1e-30);
-            let ty = to_center.dot(y_axis) / ellipse.minor_radius.max(1e-30);
+            let tx = in_plane.dot(ellipse.major_dir) / ellipse.major_radius.max(1e-30);
+            let ty = in_plane.dot(y_axis) / ellipse.minor_radius.max(1e-30);
             let angle = ty.atan2(tx);
             Some(ellipse.center + ellipse.major_dir * ellipse.major_radius * angle.cos()
                  + y_axis * ellipse.minor_radius * angle.sin())
@@ -2352,9 +2364,11 @@ fn project_point_onto_intersection(point: DVec3, curve: &OffsetIntersectionCurve
         OffsetIntersectionCurve::TwoEllipses(e1, e2) => {
             let proj_ell = |e: &Ellipse3| -> DVec3 {
                 let tc = point - e.center;
+                // Project onto the ellipse's plane first
+                let in_plane = tc - tc.dot(e.normal) * e.normal;
                 let y_axis = e.normal.cross(e.major_dir).normalize();
-                let tx = tc.dot(e.major_dir) / e.major_radius.max(1e-30);
-                let ty = tc.dot(y_axis) / e.minor_radius.max(1e-30);
+                let tx = in_plane.dot(e.major_dir) / e.major_radius.max(1e-30);
+                let ty = in_plane.dot(y_axis) / e.minor_radius.max(1e-30);
                 let ang = ty.atan2(tx);
                 e.center + e.major_dir * e.major_radius * ang.cos() + y_axis * e.minor_radius * ang.sin()
             };
@@ -4541,6 +4555,7 @@ pub fn offset_shell_with_options(
             //      the 2-face intersection failed, project the vertex onto
             //      the offset face surface directly.
             let mut projections: Vec<DVec3> = Vec::new();
+            let mut seam_projection: Option<DVec3> = None;
             for &ei in &incident_edges {
                 let efaces = match edge_to_faces.get(&ei) {
                     Some(f) => f,
@@ -4578,7 +4593,7 @@ pub fn offset_shell_with_options(
                         let orig_surf = match brep.geom.surfaces.get(si) { Some(s) => s, None => continue };
                         let off_surf = match offset_surface(orig_surf, distance) { Some(s) => s, None => continue };
                         if let Some(uv) = project_point_to_surface_uv(pt, &off_surf, None) {
-                            projections.push(off_surf.point_at(uv[0], uv[1]));
+                            seam_projection = Some(off_surf.point_at(uv[0], uv[1]));
                             break;
                         }
                     }
@@ -4613,15 +4628,36 @@ pub fn offset_shell_with_options(
             };
 
             // Decision: combine edge-first projections with cone+plane result.
-            // >=2 projections  -> average (optionally blend with cone+plane)
-            // <2 + cone+plane  -> use analytic cone+plane result
-            // otherwise        -> Cramer's rule fallback
+            // Only manifold-edge (2-face) projections are averaged — OCCT uses the
+            // intersection of adjacent offset surfaces for each incident manifold edge.
+            // Single-face seam/silhouette edges only contribute a surface-projection
+            // fallback and are NOT averaged in, since their projection onto the offset
+            // surface alone lacks the constraint from the opposite face (e.g., a cylinder
+            // seam projects onto the wall at the original V coordinate, not at the
+            // offset-cap height).
+            //
+            // Order of preference:
+            //   1. ≥2 manifold projections → average (optionally blend with cone+plane)
+            //   2. 1 manifold projection    → use it directly (OCCT-correct intersection)
+            //   3. 0 manifold + seam        → use seam surface projection
+            //   4. otherwise               → Cramer's rule fallback
             if projections.len() >= 2 {
                 let mut sum = DVec3::ZERO;
                 let mut count = 0usize;
                 for p in &projections { sum += *p; count += 1; }
                 if let Some(cp) = cone_plane_result { sum += cp; count += 1; }
                 sum / count as f64
+            } else if projections.len() == 1 {
+                // Single manifold projection: use it directly (it is the exact
+                // intersection of the two offset surfaces for this edge).
+                if let Some(cp) = cone_plane_result {
+                    // Blend with analytic cone+plane result for better accuracy
+                    (projections[0] + cp) * 0.5
+                } else {
+                    projections[0]
+                }
+            } else if let Some(sp) = seam_projection {
+                sp
             } else if let Some(cp) = cone_plane_result {
                 cp
             } else {
@@ -4809,8 +4845,50 @@ pub fn offset_shell_with_options(
             continue;
         }
 
-        add_face(&mut result, off_surf, Wire { edges: split_wire }, Vec::new());
+        let fi = add_face(&mut result, off_surf.clone(), Wire { edges: split_wire }, Vec::new());
         valid_face_count += 1;
+
+        // For offset full-cylinder faces, set the face_surface_range to ensure the
+        // UV grid tessellation covers the full 2pi U-range.  Without pcurves
+        // on offset edges, estimate_uv_domain_from_wire can only infer the
+        // U-range from vertex positions (which span only a subset of the
+        // full cylinder circumference when vertices cluster at the seam and
+        // the cap split point), causing ~25% of the wall to be missing from
+        // the tessellation and the signed volume to drop correspondingly.
+        //
+        // Only apply this when the ORIGINAL face wire contains a seam edge
+        // (same edge index appearing more than once), indicating a full-wrap
+        // cylinder face.  Partial-cylinder faces should use the vertex-based
+        // estimate.  We check the original shell's wire, not the offset result
+        // wire (which has new edge indices after add_edge).
+        if let Surface3::Cylinder(cyl) = &off_surf {
+            let orig_seam = {
+                let mut seen = std::collections::HashSet::new();
+                face.outer_wire.edges.iter().any(|we| !seen.insert(we.idx))
+            };
+            if orig_seam {
+                let wire = &result.solids[0].shells[0].faces[fi].outer_wire;
+                let mut v_vals: Vec<f64> = Vec::new();
+                for we in &wire.edges {
+                    if let Some(edge) = result.edges.get(we.idx) {
+                        if let Some(v) = result.vertices.get(edge.start) {
+                            v_vals.push((v.point - cyl.origin).dot(cyl.axis));
+                        }
+                        if let Some(v) = result.vertices.get(edge.end) {
+                            v_vals.push((v.point - cyl.origin).dot(cyl.axis));
+                        }
+                    }
+                }
+                if !v_vals.is_empty() {
+                    let v0 = v_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let v1 = v_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    while result.geom.face_surface_range.len() <= fi {
+                        result.geom.face_surface_range.push(None);
+                    }
+                    result.geom.face_surface_range[fi] = Some([0.0, std::f64::consts::TAU, v0 - 1e-10, v1 + 1e-10]);
+                }
+            }
+        }
     }
 
     if valid_face_count == 0 {
