@@ -4516,26 +4516,56 @@ pub fn offset_shell_with_options(
                 pt
             }
         } else {
-            // Curved-surface vertex: use OCCT-aligned edge-first projection.
-            // The edge curves come from the actual offset surface intersections,
-            // which is more accurate than the face-normal Cramer's rule.
+            // Curved-surface vertex: OCCT edge-first projection.
+            //
+            // For each incident edge:
+            //   1. If the edge is manifold (2 adjacent faces), compute the
+            //      offset intersection curve of the two offset surfaces and
+            //      project the original vertex onto it.
+            //   2. If the edge is a single-face seam (periodic surface) or
+            //      the 2-face intersection failed, project the vertex onto
+            //      the offset face surface directly.
             let mut projections: Vec<DVec3> = Vec::new();
             for &ei in &incident_edges {
-                let faces = match edge_to_faces.get(&ei) {
-                    Some(f) if f.len() >= 2 => f,
-                    _ => continue,
+                let efaces = match edge_to_faces.get(&ei) {
+                    Some(f) => f,
+                    None => continue,
                 };
-                for pair in faces.windows(2) {
-                    let fi1 = pair[0];
-                    let fi2 = pair[1];
-                    let si1 = match brep.geom.face_surface.get(fi1).and_then(|s| *s) { Some(s) => s, None => continue };
-                    let si2 = match brep.geom.face_surface.get(fi2).and_then(|s| *s) { Some(s) => s, None => continue };
-                    let s1 = match brep.geom.surfaces.get(si1) { Some(s) => s, None => continue };
-                    let s2 = match brep.geom.surfaces.get(si2) { Some(s) => s, None => continue };
-                    let intersection = intersect_offset_surfaces(s1, s2, distance, distance);
-                    if let Some(proj) = project_point_onto_intersection(pt, &intersection) {
-                        projections.push(proj);
-                        break;
+                let mut found = false;
+                if efaces.len() >= 2 {
+                    // Try 2-face edge: offset intersection curve
+                    for pair in efaces.windows(2) {
+                        let fi1 = pair[0]; let fi2 = pair[1];
+                        let si1 = match brep.geom.face_surface.get(fi1).and_then(|s| *s) { Some(s) => s, None => continue };
+                        let si2 = match brep.geom.face_surface.get(fi2).and_then(|s| *s) { Some(s) => s, None => continue };
+                        let s1 = match brep.geom.surfaces.get(si1) { Some(s) => s, None => continue };
+                        let s2 = match brep.geom.surfaces.get(si2) { Some(s) => s, None => continue };
+                        let intersection = intersect_offset_surfaces(s1, s2, distance, distance);
+                        if let Some(proj) = project_point_onto_intersection(pt, &intersection) {
+                            projections.push(proj);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    // Single-face seam edge (periodic surface): project the vertex
+                    // onto the offset face surface.  This provides an additional
+                    // constraint for cylinder seam vertices (common in cap-face
+                    // cases).  Only do this for cylinder surfaces, where the
+                    // offset is simple (radius change only) and the projection
+                    // is accurate.  Cone seam projections are less reliable due
+                    // to the varying radius and apex shift.
+                    for &fi in efaces.iter().take(2) {
+                        let si = match brep.geom.face_surface.get(fi).and_then(|s| *s) { Some(s) => s, None => continue };
+                        let is_cylinder = matches!(brep.geom.surfaces.get(si), Some(Surface3::Cylinder(_)));
+                        if !is_cylinder { continue; }
+                        let orig_surf = match brep.geom.surfaces.get(si) { Some(s) => s, None => continue };
+                        let off_surf = match offset_surface(orig_surf, distance) { Some(s) => s, None => continue };
+                        if let Some(uv) = project_point_to_surface_uv(pt, &off_surf, None) {
+                            projections.push(off_surf.point_at(uv[0], uv[1]));
+                            break;
+                        }
                     }
                 }
             }
