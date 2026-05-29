@@ -394,6 +394,13 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     // ---- 4d. Select outer boundary (largest positive signed area) ----
     if cycles.is_empty() { return raw2; }
     cycles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    // Debug: print all cycles
+    if upn <= 12 {
+        eprintln!("  arrangement: {} unique verts, {} cycles", upn, cycles.len());
+        for (ci, (c, a)) in cycles.iter().enumerate() {
+            eprintln!("    cycle[{}]: {} verts, area={:.8}", ci, c.len(), a);
+        }
+    }
     let (best_cycle, _best_area) = &cycles[0];
 
     let mut result: Vec<glam::DVec2> = Vec::new();
@@ -666,18 +673,38 @@ mod tests {
 
     #[test]
     fn test_i4_prismatic_volume() {
-        // Verify the prismatic fast-path volume for i4 (corrected by
-        // ear-clipping triangulation in rcad-kernel face_triangles).
         let poly3d: Vec<DVec3> = concave_polygon().iter().map(|p| DVec3::new(p.x, 0.0, p.y)).collect();
         let brep = crate::features::extrude_polygon_solid(&poly3d, DVec3::Y, 5.0).expect("extrude");
         let info = detect_prismatic_solid(&brep).expect("prismatic");
         let result = build_offset_prism(&info, 0.6);
-        assert!(result.is_some(), "build_offset_prism should succeed");
+        assert!(result.is_some());
         let vol = crate::total_volume(&result.unwrap());
         let expected: f64 = 216.363;
         let tol: f64 = (5e-3_f64).max(0.05_f64 * expected.abs());
         assert!((vol - expected).abs() <= tol,
-            "i4 volume: expected {:.3}, got {:.3} (tol={:.3})", expected, vol, tol);
+            "i4: expected {:.3}, got {:.3}", expected, vol);
+    }
+
+    #[test]
+    fn test_i5_prismatic_volume() {
+        let poly3d: Vec<DVec3> = concave_polygon().iter().map(|p| DVec3::new(p.x, 0.0, p.y)).collect();
+        let brep = crate::features::extrude_polygon_solid(&poly3d, DVec3::Y, 5.0).expect("extrude");
+        let info = detect_prismatic_solid(&brep).expect("prismatic");
+        let poly_2d = project_to_2d(&info.polygon_3d, info.cap_normal);
+        let mut poly_ccw = poly_2d.clone();
+        if signed_area_2d(&poly_ccw) < 0.0 { poly_ccw.reverse(); }
+        let offset = offset_polygon_2d(&poly_ccw, 1.2);
+        let area = signed_area_2d(&offset);
+        let height = info.extrusion_height + 2.0 * 1.2;
+        eprintln!("i5: offset area={:.6}, height={:.4}, expected area ≈ {:.6}",
+            area, height, 394.982 / height);
+        let result = build_offset_prism(&info, 1.2);
+        assert!(result.is_some());
+        let vol = crate::total_volume(&result.unwrap());
+        let expected: f64 = 394.982;
+        let tol: f64 = (5e-3_f64).max(0.05_f64 * expected.abs());
+        assert!((vol - expected).abs() <= tol,
+            "i5: expected {:.3}, got {:.3}", expected, vol);
     }
 
     #[test]
