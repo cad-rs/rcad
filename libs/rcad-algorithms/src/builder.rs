@@ -977,7 +977,13 @@ fn classify_subface_against_box(
 
         if require_all_inside {
             if !inside {
-                return Some(Classification::Out);
+                // Boundary vertex outside the box → this sub-face straddles
+                // the boundary.  Don't immediately return Out — the tessellation
+                // vertices of a curved sub-face (cylinder wall near a box face)
+                // can fall outside the box even when most of the sub-face is
+                // inside.  Return None to fall through to the probe grid which
+                // correctly classifies partial overlap.
+                return None;
             }
         } else {
             if inside {
