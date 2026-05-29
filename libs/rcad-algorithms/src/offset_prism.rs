@@ -655,6 +655,32 @@ mod tests {
     fn test_concave_offset_w6_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.8); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w6 fail"); eprintln!("w6: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
 
     #[test]
+    fn test_extrude_volume_matches_area() {
+        // Verify extrude_polygon_solid gives volume = area × height
+        let poly = vec![DVec2::new(0.0, 0.0), DVec2::new(4.0, 0.0), DVec2::new(4.0, 4.0), DVec2::new(0.0, 4.0)];
+        let poly3d: Vec<DVec3> = poly.iter().map(|p| DVec3::new(p.x, 0.0, p.y)).collect();
+        let brep = crate::features::extrude_polygon_solid(&poly3d, DVec3::Y, 5.0).expect("extrude");
+        let vol = crate::total_volume(&brep);
+        assert!((vol - 80.0).abs() < 1e-10, "expected 80, got {}", vol);
+    }
+
+    #[test]
+    fn test_i4_prismatic_volume() {
+        // Verify the prismatic fast-path volume for i4 (corrected by
+        // ear-clipping triangulation in rcad-kernel face_triangles).
+        let poly3d: Vec<DVec3> = concave_polygon().iter().map(|p| DVec3::new(p.x, 0.0, p.y)).collect();
+        let brep = crate::features::extrude_polygon_solid(&poly3d, DVec3::Y, 5.0).expect("extrude");
+        let info = detect_prismatic_solid(&brep).expect("prismatic");
+        let result = build_offset_prism(&info, 0.6);
+        assert!(result.is_some(), "build_offset_prism should succeed");
+        let vol = crate::total_volume(&result.unwrap());
+        let expected: f64 = 216.363;
+        let tol: f64 = (5e-3_f64).max(0.05_f64 * expected.abs());
+        assert!((vol - expected).abs() <= tol,
+            "i4 volume: expected {:.3}, got {:.3} (tol={:.3})", expected, vol, tol);
+    }
+
+    #[test]
     fn test_l_shape_offset() {
         // L-shape offset: raw offset produces a simple 6-vertex polygon.
         // Expected area from raw offset: 16.0 (not the Minkowski sum area
