@@ -1,4 +1,3 @@
-use std::f64::consts::PI;
 use glam::DVec3;
 
 use rcad_kernel::{
@@ -267,14 +266,10 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     }
 
     let mut split_pts: Vec<glam::DVec2> = Vec::new();
-    // Track which raw edge each split point belongs to, and the t param.
-    struct PtInfo { edge: usize, t: f64, is_raw_start: bool }
-    let mut pt_info: Vec<PtInfo> = Vec::new();
 
     for i in 0..m {
         let start_pt = raw2[i];
         if split_pts.is_empty() || (start_pt - *split_pts.last().unwrap()).length_squared() > 1e-20 {
-            pt_info.push(PtInfo { edge: i, t: 0.0, is_raw_start: true });
             split_pts.push(start_pt);
         }
         if !edge_splits[i].is_empty() {
@@ -282,7 +277,6 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
             for (t, pt) in &edge_splits[i] {
                 let last = *split_pts.last().unwrap();
                 if (*pt - last).length_squared() > 1e-20 {
-                    pt_info.push(PtInfo { edge: i, t: *t, is_raw_start: false });
                     split_pts.push(*pt);
                 }
             }
@@ -290,194 +284,142 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     }
 
     if split_pts.len() < 3 { return raw2; }
-    // Find the leftmost-bottommost vertex (guaranteed on outer boundary).
-    let start_idx = split_pts.iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()))
-        .map(|(i, _)| i)
-        .unwrap_or(0);
     let spn = split_pts.len();
 
-    // Build graph: for each vertex, list (next_vertex, outgoing_direction, is_cross)
-    let mut graph: Vec<Vec<(usize, glam::DVec2, bool)>> = vec![Vec::new(); spn];
+    // Step 4: Arrangement cycle extraction.
+    //
+    // The raw offset polygon self-intersects for concave inputs.  Every
+    // intersection lies ON the Minkowski-sum boundary — there is no local
+    // criterion to distinguish boundary edges from interior edges.
+    //
+    // Solution: build a full planar undirected graph from all split edges,
+    // merge coincident vertices (intersection points that appear on two
+    // different raw edges), trace every simple cycle (face), then select
+    // the cycle with the largest positive signed area as the outer boundary.
+    // This is the standard computational-geometry approach (de Berg et al.
+    // "Computational Geometry" ch. 8, CGAL Arrangement_2).
 
-    // Forward edges: along raw polygon direction
+    // ---- 4a. Merge coincident vertices ----
+    // Intersection points between raw edges are duplicated in split_pts
+    // (once per raw edge).  Merge them into single arrangement vertices.
+    let mut merge_map: Vec<usize> = (0..spn).collect();
     for i in 0..spn {
-        let next = (i + 1) % spn;
-        let dir = split_pts[next] - split_pts[i];
-        if dir.length_squared() > 1e-20 {
-            graph[i].push((next, dir.normalize(), false));
-        }
-    }
-
-    // Cross edges: at intersection points, connect across the edges.
-    // For each intersection, the split_pts contains intersection points
-    // on both edges. Cross from the point on edge i to the vertex AFTER
-    // the intersection on edge j, and vice versa.
-    for x in &xs {
-        let pt_i = raw2[x.i] + (raw2[(x.i + 1) % m] - raw2[x.i]) * x.t_a;
-        let pt_j = raw2[x.j] + (raw2[(x.j + 1) % m] - raw2[x.j]) * x.t_b;
-        let cross_to_i = (x.i + 1) % m; // raw vertex at end of edge i
-        let cross_to_j = (x.j + 1) % m; // raw vertex at end of edge j
-
-        // Find split_pts indices
-        let mut spi_i = None;
-        let mut spi_j = None;
-        let mut spj_i = None;
-        let mut spj_j = None;
-
-        for sp in 0..spn {
-            let d = (split_pts[sp] - pt_i).length_squared();
-            if d < 1e-14 {
-                if pt_info[sp].edge == x.i { spi_i = Some(sp); }
-                if pt_info[sp].edge == x.j { spi_j = Some(sp); }
-            }
-            let d2 = (split_pts[sp] - pt_j).length_squared();
-            if d2 < 1e-14 {
-                if pt_info[sp].edge == x.i { spj_i = Some(sp); }
-                if pt_info[sp].edge == x.j { spj_j = Some(sp); }
-            }
-        }
-
-        // Find cross targets in split_pts
-        let mut cti = None;
-        let mut ctj = None;
-        for sp in 0..spn {
-            if pt_info[sp].is_raw_start && pt_info[sp].edge == cross_to_i {
-                cti = Some(sp);
-            }
-            if pt_info[sp].is_raw_start && pt_info[sp].edge == cross_to_j {
-                ctj = Some(sp);
-            }
-        }
-
-        // Add cross edges:
-        if let (Some(from_i), Some(to_j)) = (spi_i.or(spj_i), ctj) {
-            let dir = split_pts[to_j] - split_pts[from_i];
-            if dir.length_squared() > 1e-20 {
-                graph[from_i].push((to_j, dir.normalize(), true));
-            }
-        }
-        if let (Some(from_j), Some(to_i)) = (spi_j.or(spj_j), cti) {
-            let dir = split_pts[to_i] - split_pts[from_j];
-            if dir.length_squared() > 1e-20 {
-                graph[from_j].push((to_i, dir.normalize(), true));
+        for j in (i + 1)..spn {
+            if (split_pts[i] - split_pts[j]).length_squared() < 1e-14 {
+                merge_map[j] = i;
             }
         }
     }
-
-    // Step 4: Walk the outer boundary with cross-edge discipline.
-    // After taking a cross edge, disable further cross edges at the
-    // destination to prevent double-crossing into interior loops.
-
-    let incoming_dir = if start_idx > 0 {
-        split_pts[start_idx] - split_pts[(start_idx + spn - 1) % spn]
-    } else {
-        glam::DVec2::new(0.0, -1.0)
-    };
-
-    let inc_len = incoming_dir.length();
-    let mut inc = if inc_len > 1e-20 { incoming_dir / inc_len } else { glam::DVec2::new(0.0, -1.0) };
-    let mut used_edges: Vec<Vec<bool>> = (0..spn).map(|i| vec![false; graph[i].len()]).collect();
-    let mut outer = Vec::new();
-    let mut cur = start_idx;
-    let mut just_crossed = false;
-    let mut iter = 0;
-    let max_iter = spn * 8;
-
-    loop {
-        outer.push(split_pts[cur]);
-
-        // Among unvisited outgoing edges, pick the one with the most
-        // clockwise turn. If just_crossed, skip cross edges.
-        let mut best: Option<usize> = None;
-        let mut best_angle = f64::INFINITY;
-
-        for (ei, (next, dir, is_cross)) in graph[cur].iter().enumerate() {
-            if used_edges[cur][ei] { continue; }
-            if just_crossed && *is_cross { continue; }  // Prevent double-cross
-            if *next == start_idx && outer.len() >= 2 {
-                best = Some(ei);  // Prefer returning to start
-                break;
-            }
-            let angle = inc.perp_dot(*dir).atan2(inc.dot(*dir));
-            if angle < best_angle {
-                best_angle = angle;
-                best = Some(ei);
-            }
-        }
-
-        let best_idx = match best { Some(i) => i, None => break };
-        used_edges[cur][best_idx] = true;
-        let (next, dir, is_cross) = graph[cur][best_idx];
-        just_crossed = is_cross;
-        inc = dir;
-        cur = next;
-
-        iter += 1;
-        if cur == start_idx || iter > max_iter { break; }
+    // Path compression
+    for i in 0..spn {
+        let mut r = i;
+        while merge_map[r] != r { r = merge_map[r]; }
+        merge_map[i] = r;
     }
-    // Safety check: if the walk produced a self-intersecting polygon,
-    // compute the convex hull of the walk vertices (which is guaranteed
-    // to be simple and contain the correct offset for narrow-feature
-    // closure).
-    fn is_self_intersecting(poly: &[glam::DVec2]) -> bool {
-        let np = poly.len();
-        for i in 0..np {
-            let a1 = poly[i];
-            let a2 = poly[(i + 1) % np];
-            for j in 0..np {
-                let diff = if j > i { j - i } else { j + np - i };
-                if diff <= 1 || diff >= np - 1 { continue; }
-                let b1 = poly[j];
-                let b2 = poly[(j + 1) % np];
-                let dir_a = a2 - a1;
-                let dir_b = b2 - b1;
-                let denom = dir_a.perp_dot(dir_b);
-                if denom.abs() < 1e-14 { continue; }
-                let t_a = (b1 - a1).perp_dot(dir_b) / denom;
-                let t_b = (b1 - a1).perp_dot(dir_a) / denom;
-                if t_a > 1e-12 && t_a < 1.0 - 1e-12 && t_b > 1e-12 && t_b < 1.0 - 1e-12 {
-                    return true;
-                }
+    // Deduplicated vertex list
+    let mut unique_pts: Vec<glam::DVec2> = Vec::new();
+    let mut old_to_new: Vec<usize> = vec![0; spn];
+    let mut seen_root: Vec<bool> = vec![false; spn];
+    for i in 0..spn {
+        let r = merge_map[i];
+        if !seen_root[r] {
+            seen_root[r] = true;
+            old_to_new[i] = unique_pts.len();
+            unique_pts.push(split_pts[i]);
+        }
+    }
+    for i in 0..spn {
+        old_to_new[i] = old_to_new[merge_map[i]];
+    }
+    let upn = unique_pts.len();
+    if upn < 3 { return raw2; }
+
+    // ---- 4b. Build undirected adjacency ----
+    // Forward edges from the raw split ordering become undirected
+    // arrangement edges.  After merging, an intersection vertex
+    // automatically connects to four neighbours (prev/next on each
+    // of the two intersecting raw edges).
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); upn];
+    for i in 0..spn {
+        let j = (i + 1) % spn;
+        let u = old_to_new[i];
+        let v = old_to_new[j];
+        if u != v {
+            let d = unique_pts[v] - unique_pts[u];
+            if d.length_squared() > 1e-20 {
+                adj[u].push(v);
+                adj[v].push(u);
             }
         }
-        false
+    }
+    // Sort CCW and deduplicate
+    for v in 0..upn {
+        adj[v].sort_by(|&a, &b| {
+            f64::atan2(unique_pts[a].y - unique_pts[v].y, unique_pts[a].x - unique_pts[v].x)
+                .partial_cmp(
+                    &f64::atan2(unique_pts[b].y - unique_pts[v].y, unique_pts[b].x - unique_pts[v].x)
+                ).unwrap()
+        });
+        adj[v].dedup();
     }
 
-    fn convex_hull(pts: &[glam::DVec2]) -> Vec<glam::DVec2> {
-        if pts.len() < 3 { return pts.to_vec(); }
-        let mut p = pts.to_vec();
-        p.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()));
-        let cross = |o: &glam::DVec2, a: &glam::DVec2, b: &glam::DVec2| -> f64 {
-            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
-        };
-        let mut lower: Vec<glam::DVec2> = Vec::new();
-        for pt in &p {
-            while lower.len() >= 2 && cross(&lower[lower.len()-2], &lower[lower.len()-1], pt) <= 0.0 { lower.pop(); }
-            lower.push(*pt);
+    // ---- 4c. Half-edge data structure ----
+    // Map every directed edge (from→to) to an index.
+    let mut half_edges: Vec<(usize, usize)> = Vec::new();
+    let mut he_map: std::collections::HashMap<(usize, usize), usize> = std::collections::HashMap::new();
+    for v in 0..upn {
+        for &w in &adj[v] {
+            if !he_map.contains_key(&(v, w)) {
+                he_map.insert((v, w), half_edges.len());
+                half_edges.push((v, w));
+            }
         }
-        let mut upper: Vec<glam::DVec2> = Vec::new();
-        for pt in p.iter().rev() {
-            while upper.len() >= 2 && cross(&upper[upper.len()-2], &upper[upper.len()-1], pt) <= 0.0 { upper.pop(); }
-            upper.push(*pt);
-        }
-        lower.pop(); upper.pop(); lower.extend(upper); lower
+    }
+    let hen = half_edges.len();
+    if hen == 0 { return raw2; }
+
+    // For half-edge u→v, the next half-edge is the CCW successor of
+    // v→u at vertex v.  This traces the face to the LEFT of the
+    // traversal direction (CCW outer boundary → positive area).
+    let mut next_he: Vec<usize> = vec![0; hen];
+    for (he_idx, &(from, to)) in half_edges.iter().enumerate() {
+        let pos = adj[to].iter().position(|&w| w == from).unwrap();
+        let next_pos = (pos + 1) % adj[to].len();
+        let next_to = adj[to][next_pos];
+        next_he[he_idx] = he_map[&(to, next_to)];
     }
 
-    // If the walk produced a self-intersecting polygon, use convex hull instead.
-    if outer.len() >= 3 && is_self_intersecting(&outer) {
-        let hull = convex_hull(&outer);
-        if hull.len() >= 3 {
-            // Also check the hull for self-intersection
-            if !is_self_intersecting(&hull) {
-                return hull;
+    // ---- 4d. Trace all faces (cycle decomposition) ----
+    let mut visited: Vec<bool> = vec![false; hen];
+    let mut cycles: Vec<(Vec<usize>, f64)> = Vec::new(); // (vertex indices, signed area)
+
+    for start_he in 0..hen {
+        if visited[start_he] { continue; }
+        let mut he = start_he;
+        let mut cycle: Vec<usize> = Vec::new();
+        loop {
+            visited[he] = true;
+            cycle.push(half_edges[he].0);
+            he = next_he[he];
+            if he == start_he || visited[he] { break; }
+        }
+        if cycle.len() >= 3 {
+            let pts: Vec<glam::DVec2> = cycle.iter().map(|&vi| unique_pts[vi]).collect();
+            let area = signed_area_2d(&pts);
+            if area.abs() > 1e-12 {
+                cycles.push((cycle, area));
             }
         }
     }
 
-    if outer.len() >= 3 {
-        outer
+    // ---- 4e. Select outer boundary (largest positive signed area) ----
+    if cycles.is_empty() { return raw2; }
+
+    cycles.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let (best_cycle, best_area) = &cycles[0];
+
+    if *best_area > 1e-12 && best_cycle.len() >= 3 {
+        best_cycle.iter().map(|&vi| unique_pts[vi]).collect()
     } else {
         raw2
     }
@@ -568,4 +510,181 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
     brep.geom.face_surface[idx] = Some(si);
 
     idx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec2;
+
+    fn is_simple(poly: &[DVec2]) -> bool {
+        let n = poly.len();
+        if n < 3 { return false; }
+        for i in 0..n {
+            let a1 = poly[i];
+            let a2 = poly[(i + 1) % n];
+            for j in (i + 2)..n {
+                let b1 = poly[j];
+                let b2 = poly[(j + 1) % n];
+                // Skip adjacent edges (share a vertex)
+                if (j + 1) % n == i || (i + 1) % n == j { continue; }
+                let dir_a = a2 - a1;
+                let dir_b = b2 - b1;
+                let denom = dir_a.perp_dot(dir_b);
+                if denom.abs() < 1e-14 { continue; }
+                let t_a = (b1 - a1).perp_dot(dir_b) / denom;
+                let t_b = (b1 - a1).perp_dot(dir_a) / denom;
+                if t_a > 1e-12 && t_a < 1.0 - 1e-12 && t_b > 1e-12 && t_b < 1.0 - 1e-12 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Same polygon used by OCCT test cases i4 / i5
+    fn concave_polygon() -> Vec<DVec2> {
+        vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(5.0, 0.0),
+            DVec2::new(7.0, 3.0),
+            DVec2::new(3.0, 3.0),
+            DVec2::new(4.0, 1.0),
+            DVec2::new(1.0, 1.0),
+            DVec2::new(2.0, 3.0),
+            DVec2::new(-2.0, 3.0),
+        ]
+    }
+
+    #[test]
+    fn test_convex_offset_no_intersection() {
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(4.0, 0.0),
+            DVec2::new(4.0, 4.0),
+            DVec2::new(0.0, 4.0),
+        ];
+        let result = offset_polygon_2d(&poly, 1.0);
+        assert!(result.len() >= 3, "convex offset should have >= 3 vertices");
+        assert!(is_simple(&result), "convex offset result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "offset area should be positive: {}", area);
+        assert!((area - 36.0).abs() < 1e-10, "expected area ~36, got {}", area);
+    }
+
+    #[test]
+    fn test_concave_offset_i5_case() {
+        // i5 case: same polygon as i4 but with larger offset that triggers
+        // complex self-intersections the old heuristic couldn't handle.
+        let poly = concave_polygon();
+        let result = offset_polygon_2d(&poly, 1.2);
+        assert!(result.len() >= 3, "i5: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "i5: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "i5: area should be positive, got {}", area);
+        eprintln!("i5: {} vertices, area = {:.6}", result.len(), area);
+    }
+
+    #[test]
+    fn test_concave_offset_i4_case() {
+        let poly = concave_polygon();
+        let result = offset_polygon_2d(&poly, 0.6);
+        assert!(result.len() >= 3, "i4: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "i4: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "i4: area should be positive, got {}", area);
+        eprintln!("i4: {} vertices, area = {:.6}", result.len(), area);
+    }
+
+    #[test]
+    fn test_concave_offset_v5_case() {
+        // v5 polygon (box + prismatic wedge fused before offset)
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(10.0, 0.0),
+            DVec2::new(10.0, 10.0),
+            DVec2::new(0.0, 10.0),
+            DVec2::new(0.0, 0.5),
+            DVec2::new(0.0, 2.5),
+            DVec2::new(10.0, 9.5),
+            DVec2::new(10.0, 7.5),
+            DVec2::new(0.0, 0.5),
+        ];
+        let result = offset_polygon_2d(&poly, 3.0);
+        assert!(result.len() >= 3, "v5: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "v5: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "v5: area should be positive, got {}", area);
+        eprintln!("v5: {} vertices, area = {:.6}", result.len(), area);
+    }
+
+    #[test]
+    fn test_u_shape_offset() {
+        // U-shaped polygon — forces self-intersection cleanup
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(10.0, 0.0),
+            DVec2::new(10.0, 10.0),
+            DVec2::new(8.0, 10.0),
+            DVec2::new(8.0, 2.0),
+            DVec2::new(2.0, 2.0),
+            DVec2::new(2.0, 10.0),
+            DVec2::new(0.0, 10.0),
+        ];
+        let result = offset_polygon_2d(&poly, 1.5);
+        assert!(result.len() >= 3, "U-shape: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "U-shape: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "U-shape: area should be positive, got {}", area);
+        eprintln!("U-shape d=1.5: {} vertices, area = {:.6}", result.len(), area);
+    }
+
+    /// Wavy polygon used by OCCT w4/w5/w6 tests
+    fn wavy_polygon() -> Vec<DVec2> {
+        vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(11.0, 0.0),
+            DVec2::new(11.0, 4.0),
+            DVec2::new(10.0, 4.0),
+            DVec2::new(10.0, 3.0),
+            DVec2::new(9.0, 2.0),
+            DVec2::new(8.0, 2.0),
+            DVec2::new(7.0, 3.0),
+            DVec2::new(7.0, 4.0),
+            DVec2::new(4.0, 4.0),
+            DVec2::new(4.0, 3.0),
+            DVec2::new(3.0, 2.0),
+            DVec2::new(2.0, 2.0),
+            DVec2::new(1.0, 3.0),
+            DVec2::new(1.0, 4.0),
+            DVec2::new(0.0, 4.0),
+        ]
+    }
+
+    #[test]
+    fn test_concave_offset_w4_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.2); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w4 fail"); eprintln!("w4: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
+    #[test]
+    fn test_concave_offset_w5_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.5); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w5 fail"); eprintln!("w5: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
+    #[test]
+    fn test_concave_offset_w6_case() { let r = offset_polygon_2d(&wavy_polygon(), 1.8); assert!(r.len()>=3&&is_simple(&r)&&signed_area_2d(&r)>0.0, "w6 fail"); eprintln!("w6: {} verts, area={:.6}",r.len(),signed_area_2d(&r)); }
+
+    /// Polygon used by OCCT w7 test
+    #[test]
+    fn test_concave_offset_w7_case() {
+        let poly = vec![
+            DVec2::new(0.0, 0.0),
+            DVec2::new(4.0, 0.0),
+            DVec2::new(4.0, 3.0),
+            DVec2::new(3.0, 3.0),
+            DVec2::new(2.0, 1.0),
+            DVec2::new(1.0, 3.0),
+            DVec2::new(0.0, 3.0),
+        ];
+        let result = offset_polygon_2d(&poly, 3.0);
+        assert!(result.len() >= 3, "w7: offset should have >= 3 vertices (got {})", result.len());
+        assert!(is_simple(&result), "w7: result must be simple");
+        let area = signed_area_2d(&result);
+        assert!(area > 0.0, "w7: area should be positive, got {}", area);
+        eprintln!("w7: {} vertices, area = {:.6}", result.len(), area);
+    }
 }
