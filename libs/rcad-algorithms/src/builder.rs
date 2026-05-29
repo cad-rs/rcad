@@ -1036,7 +1036,33 @@ fn classify_against_solid_for_boolean(
     // curves don't fully enclose the intersection region on one surface).
     // On-classified sub-faces (e.g. cylinder wall sub-faces whose sample point
     // lands on a box corner) need probe grid fallback to disambiguate.
+    //
+    // For Difference B-side (In → keep), probe even when primary is Out, because
+    // cylinder wall sub-faces near the box boundary can have their UV centroid
+    // outside the box even though the sub-face is partially inside (tessellation
+    // vertices straddle the boundary).  Without this probe, the wall is discarded
+    // and SA is under-estimated.
     if op != BooleanOpType::Intersection && !matches!(c0, Classification::In | Classification::On) {
+        if op == BooleanOpType::Difference && source == SourceSide::B {
+            // Probe UV grid before concluding Out for B-side Difference.
+            if let Some([u0, u1, v0, v1]) = sub.uv_domain {
+                if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
+                    && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
+                {
+                    for iu in 0..7 {
+                        for iv in 0..7 {
+                            let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / 7.0;
+                            let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / 7.0;
+                            let p = sub.surface.point_at(u, v);
+                            let c = classify_point(p, solid_face_indices, ds);
+                            if matches!(c, Classification::In | Classification::On) {
+                                return c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         return c0;
     }
 

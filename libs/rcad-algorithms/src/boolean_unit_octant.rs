@@ -8732,10 +8732,15 @@ fn build_rect_minus_circle_polygon(
             // Arc midpoint INSIDE rect — rect perimeter is boundary
             add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
         } else {
-            // Arc midpoint OUTSIDE rect — circle arc cuts away the rect
-            // Use the SHORT arc CW from a1 back to a2 (inverse of the long CCW arc)
-            let short_cw = -(tau - da_ccw);
-            add_circle_arc_pts(&mut pts, cu, cv, r, a1, short_cw, n_arc, tol);
+            // Arc midpoint OUTSIDE rect — circle arc cuts away the rect.
+            // Use the SHORT arc between a1 and a2 (whichever of CCW and CW
+            // is shorter) to avoid overlapping complement arcs when the
+            // circle is larger than the rect (all midpoints outside rect).
+            if da_ccw < tau - da_ccw {
+                add_circle_arc_pts(&mut pts, cu, cv, r, a1, da_ccw, n_arc, tol);
+            } else {
+                add_circle_arc_pts(&mut pts, cu, cv, r, a1, -(tau - da_ccw), n_arc, tol);
+            }
         }
     }
 
@@ -10248,7 +10253,7 @@ fn build_box_minus_cylinder_tessellated(
     let mut faces: Vec<Face> = Vec::new();
 
     let to_world = |u: f64, v: f64, z: f64| -> DVec3 {
-        DVec3::new(bc.x + u_ax.x * u + v_ax.x * v, bc.y + u_ax.y * u + v_ax.y * v, z)
+        DVec3::new(bc.x + u_ax.x * u + v_ax.x * v, bc.y + u_ax.y * u + v_ax.y * v, bc.z + z)
     };
 
     // Pre-compute and remap all slice polygons (rect − circle boundary)
@@ -10383,7 +10388,19 @@ pub fn try_difference_box_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     }
 
     // Cylinder exits through 2+ box faces in XY — use Z-slice tessellation.
+    // BUT skip when the cylinder is wider than the box on both axes AND extends
+    // beyond ALL 4 rect edges: in this case the rect-minus-circle polygon algorithm
+    // produces overlapping circle arcs or disconnected regions, resulting in
+    // grossly over-estimated surface area. Fall through to Pave-Filler.
     if u_fail && v_fail && !z_fail {
+        // Check if cylinder extends beyond ALL 4 sides of the rect (both u AND
+        // both v directions).  When not all 4 sides are exceeded, the polygon
+        // algorithm has a single connected region and works correctly.
+        let both_u = cu - cyl_r < -eu && cu + cyl_r > eu;
+        let both_v = cv - cyl_r < -ev && cv + cyl_r > ev;
+        if both_u && both_v {
+            return None;
+        }
         let z_lo = (-ew).max(cyl_z_lo);
         let z_hi = ew.min(cyl_z_hi);
         return build_box_minus_cylinder_tessellated(
