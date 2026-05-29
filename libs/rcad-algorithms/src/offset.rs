@@ -4539,12 +4539,14 @@ pub fn offset_shell_with_options(
                     }
                 }
             }
+            // OCCT edge-first projection: use the average of ≥2 edge-curve
+            // projections (well-constrained). For 0-1 projections, the position
+            // is under-constrained by edge curves alone — fall back to the
+            // face-normal Cramer's rule which considers ALL incident faces.
             if projections.len() >= 2 {
                 let mut sum = DVec3::ZERO;
                 for p in &projections { sum += *p; }
                 sum / projections.len() as f64
-            } else if projections.len() == 1 {
-                projections[0]
             } else {
                 // Fallback: collect incident faces and use face-normal approach
                 let mut fi_list: Vec<usize> = Vec::new();
