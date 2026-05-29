@@ -4141,7 +4141,6 @@ fn offset_shell_with_options_impl(
         return Err(OffsetError::EmptyResult);
     }
 
-    eprintln!("[OFFSET_OK] valid={}", valid_face_count);
 
     // Step 6: Apply join type if needed
     if opts.join_type.requires_join_geometry() {
@@ -4466,6 +4465,7 @@ pub fn offset_shell_with_options(
                             // Full-circle edges (cap faces) keep the merged vertex
                             // so the edge is a self-loop detected and split below.
                             let is_self_loop = (tb - ta - std::f64::consts::TAU).abs() < 1e-12;
+                            let vs_pt = result.vertices[vs].point;
                             let (lvs, lve) = if is_self_loop {
                                 (vs, vs)
                             } else {
@@ -4473,7 +4473,14 @@ pub fn offset_shell_with_options(
                                     * (u_axis * ta.cos() + v_axis * ta.sin());
                                 let p_end = off_circle.center + off_circle.radius
                                     * (u_axis * tb.cos() + v_axis * tb.sin());
-                                (add_vertex(&mut result, p_start), add_vertex(&mut result, p_end))
+                                // Share the vertex_map vertex when it lies on the
+                                // circle (seam position), create a new vertex for
+                                // the opposite side so face adjacency is manifold.
+                                let on_seam_s = (p_start - vs_pt).length_squared() < 1e-10;
+                                let on_seam_e = (p_end - vs_pt).length_squared() < 1e-10;
+                                let lvs = if on_seam_s { vs } else { add_vertex(&mut result, p_start) };
+                                let lve = if on_seam_e { vs } else { add_vertex(&mut result, p_end) };
+                                (lvs, lve)
                             };
                             (c, ta, tb, lvs, lve)
                         }
@@ -4511,24 +4518,19 @@ pub fn offset_shell_with_options(
                     }
                 })();
                 if let Some((Curve3::Circle(circle), [t0, t1])) = circ_data {
+                    // Keep the vertex_map vertex (at the cylinder seam) as the
+                    // start/end.  Only the midpoint needs a fresh vertex so the
+                    // wall and cap share vertices for a closed manifold.
+                    let vs = result.edges[ei].start;
                     let mid = (t0 + t1) * 0.5;
                     let n = circle.normal.normalize_or(DVec3::Z);
                     let rd = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
                     let u = n.cross(rd).normalize();
                     let v = n.cross(u).normalize();
-                    // Project ALL vertices onto the offset circle so edges
-                    // have correct positions (vertex_map positions are from
-                    // face-normal offset, not from the circle intersection).
-                    let start_pt = circle.center + circle.radius * (u * t0.cos() + v * t0.sin());
                     let mid_pt = circle.center + circle.radius * (u * mid.cos() + v * mid.sin());
-                    let end_pt = circle.center + circle.radius * (u * t1.cos() + v * t1.sin());
-                    let svi = add_vertex(&mut result, start_pt);
                     let mvi = add_vertex(&mut result, mid_pt);
-                    let evi = add_vertex(&mut result, end_pt);
-                    let e1 = add_edge(&mut result, Curve3::Circle(circle), t0, mid, svi, mvi);
-                    let e2 = add_edge(&mut result, Curve3::Circle(circle), mid, t1, mvi, evi);
-                    // Preserve original forward flag.  For a self-loop edge both
-                    // ends are the same vertex, so fwd determines the winding.
+                    let e1 = add_edge(&mut result, Curve3::Circle(circle), t0, mid, vs, mvi);
+                    let e2 = add_edge(&mut result, Curve3::Circle(circle), mid, t1, mvi, vs);
                     split_wire.push(if fwd { WireEdge::fwd(e1) } else { WireEdge::rev(e1) });
                     split_wire.push(if fwd { WireEdge::fwd(e2) } else { WireEdge::rev(e2) });
                     continue;
@@ -4554,7 +4556,6 @@ pub fn offset_shell_with_options(
         .and_then(|s| s.shells.first())
         .map(|sh| sh.faces.len())
         .unwrap_or(0);
-    eprintln!("[OFFSET_OK] valid={} result_faces={}", valid_face_count, n_result);
 
 
     // Fix inverted face winding caused by concave topology copy.
