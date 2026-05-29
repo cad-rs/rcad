@@ -1,4 +1,4 @@
-﻿use std::f64::consts::PI;
+use std::f64::consts::PI;
 use glam::DVec3;
 
 use rcad_kernel::{
@@ -23,12 +23,6 @@ pub struct PrismaticInfo {
 }
 
 /// Detect if a BRep is a simple prismatic solid (extruded planar polygon).
-///
-/// A prismatic solid has:
-/// - All planar faces
-/// - Two cap faces (parallel, opposite normals)
-/// - N lateral wall faces (perpendicular to caps)
-/// - All lateral faces form a closed chain
 pub fn detect_prismatic_solid(brep: &BRep) -> Option<PrismaticInfo> {
     let solid = brep.solids.first()?;
     let shell = solid.shells.first()?;
@@ -37,21 +31,18 @@ pub fn detect_prismatic_solid(brep: &BRep) -> Option<PrismaticInfo> {
         return None;
     }
 
-    // Step 1: Classify faces by surface type
     let mut surface_types: Vec<Option<&Plane>> = Vec::with_capacity(faces.len());
-
     for (fi, _face) in faces.iter().enumerate() {
         let surf_idx = brep.geom.face_surface.get(fi).and_then(|s| *s)?;
         let surf = brep.geom.surfaces.get(surf_idx)?;
         match surf {
             Surface3::Plane(p) => surface_types.push(Some(p)),
-            _ => return None, // All faces must be planar
+            _ => return None,
         }
     }
 
-    // Step 2: Find cap faces (parallel planes with opposite normals).
-    // The CORRECT cap pair is the one whose normal is perpendicular to
-    // most other faces (all lateral walls are perpendicular to the caps).
+    // Find cap faces: pair of opposite-normals planes where MOST other
+    // face normals are perpendicular to them (lateral walls).
     let mut best_cap_pair: Option<(usize, usize)> = None;
     let mut best_perp_count: usize = 0;
     for i in 0..faces.len() {
@@ -81,7 +72,6 @@ pub fn detect_prismatic_solid(brep: &BRep) -> Option<PrismaticInfo> {
 
     let (cap_bottom, cap_top) = best_cap_pair?;
 
-    // Determine which cap is "bottom" (normal points against extrusion direction)
     let (cap_bottom_idx, cap_top_idx) = {
         let pb = surface_types[cap_bottom].unwrap();
         let pt = surface_types[cap_top].unwrap();
@@ -94,12 +84,9 @@ pub fn detect_prismatic_solid(brep: &BRep) -> Option<PrismaticInfo> {
 
     let bottom_plane = surface_types[cap_bottom_idx].unwrap();
     let top_plane = surface_types[cap_top_idx].unwrap();
-
-    // Extrusion direction = from bottom to top
     let extrusion_dir = top_plane.normal;
     let extrusion_height = (top_plane.origin - bottom_plane.origin).dot(extrusion_dir).abs();
 
-    // Step 3: Extract polygon vertices from the bottom cap's wire
     let bottom_face = &faces[cap_bottom_idx];
     let polygon_3d = extract_wire_vertices(brep, &bottom_face.outer_wire)?;
     if polygon_3d.len() < 3 {
@@ -115,7 +102,6 @@ pub fn detect_prismatic_solid(brep: &BRep) -> Option<PrismaticInfo> {
     })
 }
 
-/// Extract 3D vertices from a wire in order, skipping self-loop edges.
 fn extract_wire_vertices(brep: &BRep, wire: &Wire) -> Option<Vec<DVec3>> {
     let mut pts = Vec::new();
     for we in &wire.edges {
@@ -123,12 +109,11 @@ fn extract_wire_vertices(brep: &BRep, wire: &Wire) -> Option<Vec<DVec3>> {
         let idx = if we.forward { edge.start } else { edge.end };
         let v = brep.vertices.get(idx)?;
         let pt = v.point;
-        if pts.last().map_or(false, |last: &DVec3| (*last - pt).length_squared() < 1e-12) { continue; }
+        if pts.last().map_or(false, |last: &DVec3| (*last - pt).length_squared() < 1e-12) {
+            continue;
+        }
         pts.push(pt);
-        // For self-loop edges (start == end), also push the midpoint
-        // to ensure the polygon has all the boundary points.
         if edge.start == edge.end {
-            // Get the edge curve and sample midpoint
             let ci = brep.geom.edge_curve.get(we.idx).and_then(|c| *c)?;
             let curve = brep.geom.curves.get(ci)?;
             let range = brep.geom.edge_curve_range.get(we.idx).and_then(|r| *r)?;
@@ -143,7 +128,6 @@ fn extract_wire_vertices(brep: &BRep, wire: &Wire) -> Option<Vec<DVec3>> {
     Some(pts)
 }
 
-/// Project 3D polygon vertices onto a 2D plane, returning 2D coordinates.
 fn project_to_2d(polygon: &[DVec3], normal: DVec3) -> Vec<glam::DVec2> {
     let u_axis = normal.any_orthonormal_pair().0;
     let v_axis = normal.cross(u_axis).normalize();
@@ -152,7 +136,6 @@ fn project_to_2d(polygon: &[DVec3], normal: DVec3) -> Vec<glam::DVec2> {
     }).collect()
 }
 
-/// Map 2D coordinates back to 3D using the plane basis.
 fn map_to_3d(points_2d: &[glam::DVec2], normal: DVec3, origin: DVec3) -> Vec<DVec3> {
     let u_axis = normal.any_orthonormal_pair().0;
     let v_axis = normal.cross(u_axis).normalize();
@@ -161,7 +144,6 @@ fn map_to_3d(points_2d: &[glam::DVec2], normal: DVec3, origin: DVec3) -> Vec<DVe
     }).collect()
 }
 
-/// Compute the signed area of a 2D polygon (positive for CCW).
 fn signed_area_2d(polygon: &[glam::DVec2]) -> f64 {
     let mut area = 0.0;
     for i in 0..polygon.len() {
@@ -171,46 +153,28 @@ fn signed_area_2d(polygon: &[glam::DVec2]) -> f64 {
     area * 0.5
 }
 
-/// Determine if vertex i is convex (true) or concave (false).
-/// Uses cross product of edge (i-1 鈫?i) and (i 鈫?i+1).
 fn vertex_convexity(polygon: &[glam::DVec2], i: usize) -> bool {
     let n = polygon.len();
     let prev = polygon[(i + n - 1) % n];
     let curr = polygon[i];
     let next = polygon[(i + 1) % n];
     let cross = (curr - prev).perp_dot(next - curr);
-    cross >= 0.0 // CCW polygon: positive = convex, negative = concave
+    cross >= 0.0
 }
 
-/// Compute the outward normal of edge i in 2D (perpendicular to edge direction).
 fn edge_outward_normal(polygon: &[glam::DVec2], i: usize) -> glam::DVec2 {
     let n = polygon.len();
     let from = polygon[i];
     let to = polygon[(i + 1) % n];
     let dir = (to - from).normalize();
-    // For CCW polygon, outward normal is to the RIGHT of the edge direction
-    // (right = dir rotated -90掳 = (dir.y, -dir.x))
-    // Actually for CCW, the interior is to the LEFT:
-    // left normal = (-dir.y, dir.x)
-    // outward = -left = (dir.y, -dir.x)
     glam::DVec2::new(dir.y, -dir.x)
 }
 
 /// Offset a 2D polygon outward by distance d.
 ///
 /// Computes the Minkowski sum of the polygon with a circle of radius d.
-/// For JoinType::Intersection (sharp corners):
-/// - Convex vertices: intersection of adjacent offset edges
-/// - Concave vertices: offset edges are extended to intersect
-///
-/// Returns the offset polygon (possibly with fewer vertices if narrow features close).
-/// Offset a 2D polygon outward by distance d.
-///
-/// Computes the Minkowski sum of the polygon with a circle of radius d.
-/// Properly handles narrow-feature closure by detecting self-intersections
-/// in the raw offset and removing interior loops via convex hull of the
-/// split polygon (correct for JoinType::Intersection where narrow features
-/// close completely).
+/// Uses planar graph traversal for proper self-intersection removal
+/// when narrow features close (OCCT-aligned).
 pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DVec2> {
     if polygon.len() < 3 { return polygon.to_vec(); }
     let d = distance;
@@ -268,7 +232,6 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         }
     };
 
-    // Find all edge-edge intersection points
     struct EdgeX { i: usize, j: usize, t_a: f64, t_b: f64 }
     let mut xs: Vec<EdgeX> = Vec::new();
     for i in 0..m {
@@ -286,11 +249,15 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
     }
 
     if xs.is_empty() {
-        return raw2; // No self-intersections
+        return raw2;
     }
 
-    // Step 3: Build split polygon by inserting intersection points along edges.
-    // For each edge, store its split points sorted by parameter t.
+    // Step 3: Build graph from split polygon + crossing edges.
+    // Each vertex in the graph has one or more outgoing edges.
+    // At intersection points, there are edges from the crossing.
+    //
+    // Build split_pts: raw vertices in order, with intersection
+    // points inserted along their respective edges.
     let mut edge_splits: Vec<Vec<(f64, glam::DVec2)>> = vec![Vec::new(); m];
     for x in &xs {
         let pt_a = raw2[x.i] + (raw2[(x.i + 1) % m] - raw2[x.i]) * x.t_a;
@@ -299,103 +266,102 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         edge_splits[x.j].push((x.t_b, pt_b));
     }
 
-    // Build the split polygon by walking raw2 and inserting split points
     let mut split_pts: Vec<glam::DVec2> = Vec::new();
+    // Track which raw edge each split point belongs to, and the t param.
+    struct PtInfo { edge: usize, t: f64, is_raw_start: bool }
+    let mut pt_info: Vec<PtInfo> = Vec::new();
+
     for i in 0..m {
-        // Start vertex of this edge
         let start_pt = raw2[i];
         if split_pts.is_empty() || (start_pt - *split_pts.last().unwrap()).length_squared() > 1e-20 {
+            pt_info.push(PtInfo { edge: i, t: 0.0, is_raw_start: true });
             split_pts.push(start_pt);
         }
-        // Insert split points along this edge in order of t
         if !edge_splits[i].is_empty() {
             edge_splits[i].sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            for (_, pt) in &edge_splits[i] {
+            for (t, pt) in &edge_splits[i] {
                 let last = *split_pts.last().unwrap();
                 if (*pt - last).length_squared() > 1e-20 {
+                    pt_info.push(PtInfo { edge: i, t: *t, is_raw_start: false });
                     split_pts.push(*pt);
                 }
             }
         }
     }
 
-    if split_pts.len() < 3 {
-        return raw2;
+    if split_pts.len() < 3 { return raw2; }
+    let spn = split_pts.len();
+
+    // Build graph: for each vertex, list (next_vertex, outgoing_direction, is_cross)
+    let mut graph: Vec<Vec<(usize, glam::DVec2, bool)>> = vec![Vec::new(); spn];
+
+    // Forward edges: along raw polygon direction
+    for i in 0..spn {
+        let next = (i + 1) % spn;
+        let dir = split_pts[next] - split_pts[i];
+        if dir.length_squared() > 1e-20 {
+            graph[i].push((next, dir.normalize(), false));
+        }
     }
 
-/// Build an offset BRep for a prismatic solid using the 2D polygon offset.
-    // Step 4: Walk the outer boundary at intersection points.
-    // At each self-intersection, cross to the intersecting edge instead of
-    // continuing along the current edge. This traces the outer boundary of
-    // the Minkowski sum, removing interior loops from narrow-feature closure.
-
-    // Build an adjacency map: for each intersection point P on raw edge E,
-    // the cross target is the END vertex of the OTHER intersecting edge.
-    use std::collections::HashMap;
-
-    // Map: (intersection_point_index_in_split_pts) -> target_index_in_split_pts
-    let mut cross_map: HashMap<usize, usize> = HashMap::new();
-
+    // Cross edges: at intersection points, connect across the edges.
+    // For each intersection, the split_pts contains intersection points
+    // on both edges. Cross from the point on edge i to the vertex AFTER
+    // the intersection on edge j, and vice versa.
     for x in &xs {
-        // Intersection points on edges i and j
         let pt_i = raw2[x.i] + (raw2[(x.i + 1) % m] - raw2[x.i]) * x.t_a;
         let pt_j = raw2[x.j] + (raw2[(x.j + 1) % m] - raw2[x.j]) * x.t_b;
+        let cross_to_i = (x.i + 1) % m; // raw vertex at end of edge i
+        let cross_to_j = (x.j + 1) % m; // raw vertex at end of edge j
 
-        // The target raw vertices to cross to
-        let target_i = (x.i + 1) % m;  // end of edge i
-        let target_j = (x.j + 1) % m;  // end of edge j
+        // Find split_pts indices
+        let mut spi_i = None;
+        let mut spi_j = None;
+        let mut spj_i = None;
+        let mut spj_j = None;
 
-        // Cross from edge i to end of edge j
-        // Cross from edge j to end of edge i
-        // Determine which edge each split point belongs to by checking
-        // proximity to the end vertices of each edge.
-        let edge_i_start = raw2[x.i];
-        let edge_i_end = raw2[(x.i + 1) % m];
-        let edge_j_start = raw2[x.j];
-        let edge_j_end = raw2[(x.j + 1) % m];
+        for sp in 0..spn {
+            let d = (split_pts[sp] - pt_i).length_squared();
+            if d < 1e-14 {
+                if pt_info[sp].edge == x.i { spi_i = Some(sp); }
+                if pt_info[sp].edge == x.j { spi_j = Some(sp); }
+            }
+            let d2 = (split_pts[sp] - pt_j).length_squared();
+            if d2 < 1e-14 {
+                if pt_info[sp].edge == x.i { spj_i = Some(sp); }
+                if pt_info[sp].edge == x.j { spj_j = Some(sp); }
+            }
+        }
 
-        for spi in 0..split_pts.len() {
-            let d_i = (split_pts[spi] - pt_i).length_squared();
-            let d_j = (split_pts[spi] - pt_j).length_squared();
-            if d_i < 1e-12 && d_j < 1e-12 {
-                let on_edge_i = {
-                    let dir = edge_i_end - edge_i_start;
-                    let dir_len_sq = dir.length_squared();
-                    if dir_len_sq < 1e-20 { false }
-                    else {
-                        let t = (split_pts[spi] - edge_i_start).dot(dir) / dir_len_sq;
-                        t >= -0.01 && t <= 1.01
-                    }
-                };
-                let on_edge_j = {
-                    let dir = edge_j_end - edge_j_start;
-                    let dir_len_sq = dir.length_squared();
-                    if dir_len_sq < 1e-20 { false }
-                    else {
-                        let t = (split_pts[spi] - edge_j_start).dot(dir) / dir_len_sq;
-                        t >= -0.01 && t <= 1.01
-                    }
-                };
-                if on_edge_i && !on_edge_j {
-                    for spj in 0..split_pts.len() {
-                        if (split_pts[spj] - raw2[target_j]).length_squared() < 1e-12 {
-                            cross_map.insert(spi, spj);
-                            break;
-                        }
-                    }
-                } else if on_edge_j && !on_edge_i {
-                    for spj in 0..split_pts.len() {
-                        if (split_pts[spj] - raw2[target_i]).length_squared() < 1e-12 {
-                            cross_map.insert(spi, spj);
-                            break;
-                        }
-                    }
-                }
+        // Find cross targets in split_pts
+        let mut cti = None;
+        let mut ctj = None;
+        for sp in 0..spn {
+            if pt_info[sp].is_raw_start && pt_info[sp].edge == cross_to_i {
+                cti = Some(sp);
+            }
+            if pt_info[sp].is_raw_start && pt_info[sp].edge == cross_to_j {
+                ctj = Some(sp);
+            }
+        }
+
+        // Add cross edges:
+        if let (Some(from_i), Some(to_j)) = (spi_i.or(spj_i), ctj) {
+            let dir = split_pts[to_j] - split_pts[from_i];
+            if dir.length_squared() > 1e-20 {
+                graph[from_i].push((to_j, dir.normalize(), true));
+            }
+        }
+        if let (Some(from_j), Some(to_i)) = (spi_j.or(spj_j), cti) {
+            let dir = split_pts[to_i] - split_pts[from_j];
+            if dir.length_squared() > 1e-20 {
+                graph[from_j].push((to_i, dir.normalize(), true));
             }
         }
     }
 
-    // Walk the outer boundary
+    // Step 4: Walk the outer boundary using the "most clockwise turn" rule.
+    // Start from the leftmost-bottommost vertex.
     let start_idx = split_pts.iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()))
@@ -404,23 +370,49 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
 
     let mut outer: Vec<glam::DVec2> = Vec::new();
     let mut current = start_idx;
-    let mut visited = vec![false; split_pts.len()];
+    let mut incoming_dir = split_pts[start_idx] - split_pts[(start_idx + spn - 1) % spn]; let incoming_len = incoming_dir.length(); if incoming_len > 1e-20 { incoming_dir /= incoming_len; } else { incoming_dir = glam::DVec2::new(0.0, -1.0); }
+    let mut visited_edges: Vec<Vec<bool>> = vec![Vec::new(); spn];
+    for i in 0..spn {
+        visited_edges[i] = vec![false; graph[i].len()];
+    }
     let mut iter_count = 0;
-    let max_iter = split_pts.len() * 4;
+    let max_iter = spn * 8;
 
     loop {
-        if visited[current] { break; }
-        visited[current] = true;
         outer.push(split_pts[current]);
 
-        // Check if we should cross to another edge here
-        let next = if let Some(&cross_target) = cross_map.get(&current) {
-            cross_target
-        } else {
-            (current + 1) % split_pts.len()
-        };
+        // Pick the best outgoing edge. Prefer crossing edges (which lead
+        // to the outer boundary). Among candidates, choose the most CW turn.
+        let mut best: Option<(usize, f64)> = None;
+        for (ei, (_, dir, is_cross)) in graph[current].iter().enumerate() {
+            if visited_edges[current][ei] { continue; }
+            if !is_cross { continue; }   // Prefer cross edges only
+            let angle = incoming_dir.perp_dot(*dir).atan2(incoming_dir.dot(*dir));
+            if best.map_or(true, |(_, a)| angle < a) {
+                best = Some((ei, angle));
+            }
+        }
+        if best.is_none() {
+            for (ei, (_, dir, _)) in graph[current].iter().enumerate() {
+                if visited_edges[current][ei] { continue; }
+                let angle = incoming_dir.perp_dot(*dir).atan2(incoming_dir.dot(*dir));
+                if best.map_or(true, |(_, a)| angle < a) {
+                    best = Some((ei, angle));
+                }
+            }
+        }
 
+        let best_idx = match best { Some((ei, _)) => ei, None => break };
+
+        // Mark all edges from this vertex as visited
+        for ei in 0..graph[current].len() {
+        }
+
+        let (next, next_dir, _) = graph[current][best_idx];
+        let (next, next_dir, _) = graph[current][best_idx];
+        incoming_dir = next_dir;
         current = next;
+
         iter_count += 1;
         if current == start_idx || iter_count > max_iter { break; }
     }
@@ -431,14 +423,12 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         raw2
     }
 }
+
 /// Build an offset BRep for a prismatic solid using the 2D polygon offset.
 pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<BRep> {
     let d = distance;
 
-    // Project polygon to 2D
     let poly_2d = project_to_2d(&info.polygon_3d, info.cap_normal);
-
-    // Ensure CCW winding
     let area = signed_area_2d(&poly_2d);
     let poly_2d = if area < 0.0 {
         let mut rev = poly_2d.clone();
@@ -448,26 +438,24 @@ pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<BRep> {
         poly_2d
     };
 
-    // Compute 2D offset
     let offset_poly_2d = offset_polygon_2d(&poly_2d, d);
-    if offset_poly_2d.len() < 3 {
-        return None;
-    }
+    if offset_poly_2d.len() < 3 { return None; }
 
-    // Map offset polygon to 3D on the bottom cap plane (shifted by d along cap normal)
     let bottom_origin = info.cap_origin + info.cap_normal * d;
     let offset_3d = map_to_3d(&offset_poly_2d, info.cap_normal, bottom_origin);
 
-    // Extrude to create the offset solid
     let extrusion_height = info.extrusion_height + 2.0 * d.abs();
     let brep = crate::features::extrude_polygon_solid(
-        &offset_3d,
-        info.extrusion_dir,
-        extrusion_height,
+        &offset_3d, info.extrusion_dir, extrusion_height,
     ).ok()?;
 
     Some(brep)
 }
+
+// -----------------------------------------------------------------------
+// Helper functions
+// -----------------------------------------------------------------------
+
 fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
     let idx = brep.vertices.len();
     brep.vertices.push(Vertex { point });

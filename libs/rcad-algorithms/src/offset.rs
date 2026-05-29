@@ -4493,6 +4493,15 @@ pub fn offset_shell_with_options(
     if shell.faces.is_empty() {
         return Err(OffsetError::InvalidInput("shell has no faces"));
     }
+    // Early path: for prismatic solids (extruded planar polygons), compute
+    // the offset analytically via 2D polygon offset + extrusion.
+    if opts.join_type == JoinType::Intersection {
+        if let Some(prism_info) = crate::offset_prism::detect_prismatic_solid(brep) {
+            if let Some(result) = crate::offset_prism::build_offset_prism(&prism_info, distance) {
+                return Ok(result);
+            }
+        }
+    }
 
 
     // Step 1: Compute offset surfaces for each face
