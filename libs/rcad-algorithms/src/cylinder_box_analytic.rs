@@ -390,12 +390,17 @@ fn build_box_faces_with_cylinder_cutouts(
         let perp_half = match perp_ax == u_ax { true => eu, false => ev };
 
         // Does the cylinder protrude through this face?
-        // The cylinder center must be close enough that the cylinder radius
-        // extends outward past the face, OR the center is already beyond the face.
+        // Check only the direction that matches the face normal.
+        // +u/+v face: check protrusion in the +direction.
+        // -u/-v face: check protrusion in the -direction.
+        let normal_pos = if is_u_face { normal.dot(ua) > 0.0 } else { normal.dot(va) > 0.0 };
         let protrudes = cyl_in_box_z
             && inter_z_hi > inter_z_lo + tol
-            && (center_on_normal + cyl_r > half_ext + tol
-                || center_on_normal - cyl_r < -half_ext - tol)
+            && if normal_pos {
+                center_on_normal + cyl_r > half_ext + tol
+            } else {
+                center_on_normal - cyl_r < -half_ext - tol
+            }
             && perp_center.abs() < perp_half + cyl_r + tol;
 
         if !protrudes {
@@ -404,12 +409,16 @@ fn build_box_faces_with_cylinder_cutouts(
         }
 
         // ── Build the rectangular slot (inner wire) ──
-        // The slot is the cylinder's projection onto this face.
-        // Its horizontal bounds are the cylinder radius range projected onto
-        // the perpendicular axis.  Its vertical bounds are the overlap Z range.
+        // The slot is the cylinder's intersection chord on this face.
+        // Its horizontal bounds are the chord half-width (not the full
+        // diameter) projected onto the perpendicular axis.
+        // Its vertical bounds are the overlap Z range.
+        let face_plane = half_ext * if is_u_face { normal.dot(ua).signum() } else { normal.dot(va).signum() };
+        let offset = (center_on_normal - face_plane).abs();
+        let chord_half = (cyl_r * cyl_r - offset * offset).sqrt().max(0.0);
 
-        let perp_min = (perp_center - cyl_r).max(-perp_half);
-        let perp_max = (perp_center + cyl_r).min(perp_half);
+        let perp_min = (perp_center - chord_half).max(-perp_half);
+        let perp_max = (perp_center + chord_half).min(perp_half);
 
         if perp_max <= perp_min + tol || inter_z_hi <= inter_z_lo + tol {
             push_planar_face(&mut brep, outer_wes, vec![], normal, DVec3::new(0.0, 0.0, 0.0))?;
