@@ -1708,6 +1708,15 @@ fn try_sphere_primitive_center_radius(brep: &BRep) -> Option<(DVec3, f64)> {
 /// For `cylinder - sphere`: returns the cylinder body with a spherical cavity
 /// at the overlap end, built as a Z-slice triangle mesh.
 pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Try analytic fast paths first (exact geometry, no tessellation).
+    if let Some(result) = crate::cylinder_sphere_analytic::build_sphere_minus_cylinder_analytic(a, b) {
+        return Some(result);
+    }
+    if let Some(result) = crate::cylinder_sphere_analytic::build_cylinder_minus_sphere_analytic(a, b) {
+        return Some(result);
+    }
+
+    // Fall through to mesh-backed detection logic.
     // Try both orderings. Track which operand is the cylinder to build the
     // correct result: sphere - cylinder (existing) vs cylinder - sphere.
     if let Some((sp, cyl)) = try_sphere_primitive_center_radius(a)
@@ -2240,7 +2249,7 @@ fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
     Some((apex.z, b.z, rb))
 }
 
-fn z_axis_cylinder_z_span_r(cyl: &BRep) -> Option<(f64, f64, f64)> {
+pub(crate) fn z_axis_cylinder_z_span_r(cyl: &BRep) -> Option<(f64, f64, f64)> {
     const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
     const XY: f64 = 2.0 * TOLERANCE_ADAPTIVE_MAX;
     let sh = cyl.solids.get(0)?.shells.get(0)?;
@@ -2600,7 +2609,7 @@ pub fn try_difference_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<BR
 }
 
 /// Extract sphere center and radius from a sphere BRep (first SphericalSurface found).
-fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
+pub(crate) fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
     for s in &sphere.solids {
         for sh in &s.shells {
             for fi in 0..sh.faces.len() {
@@ -2623,7 +2632,7 @@ fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
 ///
 /// `z_min` and `z_max` are the clip planes in world Z (z_min < z_max), assumed
 /// to overlap the sphere's Z-range [center.z - radius, center.z + radius].
-fn build_sphere_clipped_by_z_planes(
+pub(crate) fn build_sphere_clipped_by_z_planes(
     center: DVec3,
     radius: f64,
     z_min: f64,
