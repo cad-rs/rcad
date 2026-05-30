@@ -2528,27 +2528,49 @@ struct CylParams {
     any_perp: DVec3,
 }
 
-/// Fast-path for two perpendicular cylinders with equal radius.
+/// Fast-path for two perpendicular cylinders.
 ///
-/// Detects when both operands are cylinders, share the same radius (within
-/// tolerance), and have perpendicular axes.  Builds a mesh-based BRep by
-/// sampling each cylinder surface and keeping points inside the other.
-/// OCCT has no equivalent 鈥?this is a pure rcad optimization that avoids
-/// the PaveFiller (5.3s 鈫?<0.01s) for the I9 test case.
+/// Uses `inttools::cylinder_cylinder::intersect_cylinder_cylinder` for analytic
+/// intersection curve classification, then builds a mesh-based BRep via
+/// `build_perpendicular_cylinder_intersection` for both equal-radii (Steinmetz)
+/// and unequal-radii cases.  Falls through to PaveFiller for non-perpendicular
+/// or non-cylinder operands.
+///
+/// OCCT has no equivalent -- this is a pure rcad optimization that avoids
+/// the PaveFiller (5.3s -> <0.01s) for the I9 test case.
 pub fn try_intersection_cylinder_cylinder_perpendicular(a: &BRep, b: &BRep) -> Option<BRep> {
+    use crate::inttools::cylinder_cylinder::{intersect_cylinder_cylinder, CylinderCylinderResult};
+
     let c1 = try_cylinder_any_axis(a)?;
     let c2 = try_cylinder_any_axis(b)?;
-
-    // Equal radius (index 2 = radius)
-    if (c1.2 - c2.2).abs() > 1e-4 { return None; }
 
     // Perpendicular axes (index 1 = axis)
     if c1.1.dot(c2.1).abs() > 1e-3 { return None; }
 
-    let p1 = CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5 };
-    let p2 = CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5 };
+    // Construct CylindricalSurface from extracted params for analytic intersection
+    let surf1 = CylindricalSurface {
+        origin: c1.4,
+        axis: c1.1,
+        ref_dir: c1.5,
+        radius: c1.2,
+    };
+    let surf2 = CylindricalSurface {
+        origin: c2.4,
+        axis: c2.1,
+        ref_dir: c2.5,
+        radius: c2.2,
+    };
 
-    build_perpendicular_cylinder_intersection(p1, p2)
+    let result = intersect_cylinder_cylinder(&surf1, &surf2);
+    match result {
+        CylinderCylinderResult::TwoEllipses(..)
+        | CylinderCylinderResult::PerpendicularOffsetCurves { .. } => {
+            let p1 = CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5 };
+            let p2 = CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5 };
+            build_perpendicular_cylinder_intersection(p1, p2)
+        }
+        _ => None, // Fall through to PaveFiller
+    }
 }
 
 /// Build C1 \ C2 for two coaxial Z-aligned cylinders.
