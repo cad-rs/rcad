@@ -6545,9 +6545,10 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                     if i == j { continue; }
                     let Some((j_min, j_max)) = &shell_bboxes[j] else { continue };
                     // Check if shell i is fully inside shell j
-                    if i_min.x >= j_min.x - 1e-7 && i_max.x <= j_max.x + 1e-7
-                        && i_min.y >= j_min.y - 1e-7 && i_max.y <= j_max.y + 1e-7
-                        && i_min.z >= j_min.z - 1e-7 && i_max.z <= j_max.z + 1e-7
+                    let tol = tolerance::TOLERANCE_ABS;
+                    if i_min.x >= j_min.x - tol && i_max.x <= j_max.x + tol
+                        && i_min.y >= j_min.y - tol && i_max.y <= j_max.y + tol
+                        && i_min.z >= j_min.z - tol && i_max.z <= j_max.z + tol
                     {
                         to_remove.push(i);
                         break;
