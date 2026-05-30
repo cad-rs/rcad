@@ -12,7 +12,7 @@ use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
 use crate::BRep;
-use crate::geom::{ConicalSurface, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
+use crate::geom::{ConicalSurface, Curve3, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -841,6 +841,108 @@ fn spherical_holed_uv_mask_setup(
 /// UV bounding box, with inside/outside testing via 3D point-in-spherical-polygon.
 ///
 /// OCCT uses adaptive Gauss-Legendre integration in BRepGProp::SurfaceProperties
+
+/// Exact spherical-polygon area when all outer-wire edges are great circles
+/// (Circle3 curves centered at the sphere center).
+///
+/// Uses the formula A = R^2 * (sum(interior_angles) - (n-2)*pi) for a spherical
+/// polygon bounded by great-circle arcs.  Interior angles are computed from the
+/// tangent vectors at each vertex via projection onto the tangent plane, which
+/// is independent of the edge curve parameterization — the great-circle check
+/// only needs the Curve3 type + center, not the normal direction.
+///
+/// Returns None when any edge is not a great circle or when the face has
+/// inner wires (holes).
+fn try_spherical_polygon_great_circle_area(
+    s: &SphericalSurface,
+    brep: &BRep,
+    face: &Face,
+) -> Option<f64> {
+    if !face.inner_wires.is_empty() {
+        return None;
+    }
+    let n_edges = face.outer_wire.edges.len();
+    if n_edges < 3 {
+        return None;
+    }
+    let tol = 1e-10;
+
+    // Collect vertices in boundary order, verifying all edges are great circles.
+    let mut verts: Vec<DVec3> = Vec::with_capacity(n_edges + 1);
+    for we in &face.outer_wire.edges {
+        let ei = we.idx;
+        let edge = brep.edges.get(ei)?;
+        let curve_idx = brep.geom.edge_curve.get(ei).copied().flatten()?;
+        let curve = brep.geom.curves.get(curve_idx)?;
+        match curve {
+            Curve3::Circle(c) => {
+                if (c.center - s.center).length() > tol {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        // Start vertex: for WireEdge::rev, the boundary enters via the
+        // forward edge's end vertex.
+        let vi = if we.forward { edge.start } else { edge.end };
+        let pt = brep.vertices[vi].point;
+        if verts.is_empty() || (pt - *verts.last()?).length() > tol {
+            verts.push(pt);
+        }
+    }
+
+    // Ensure closed loop (last == first for the formula's sum).
+    if (verts.first()? - verts.last()?).length() > tol {
+        verts.push(*verts.first()?);
+    }
+
+    let n = verts.len() - 1; // number of unique vertices
+    if n < 3 {
+        return None;
+    }
+
+    // Compute interior angles at each unique vertex.
+    // verts = [v0, v1, ..., v_{n-1}, v0] (n+1 elements, last is closure).
+    // For vertex verts[i]: incoming edge verts[i-1]->verts[i], outgoing verts[i]->verts[i+1].
+    let mut sum_angles = 0.0;
+    for i in 0..n {
+        let v_prev = if i > 0 { verts[i - 1] } else { verts[n - 1] };
+        let v_curr = verts[i];
+        let v_next = verts[i + 1]; // verts[n] == verts[0] via closure
+        let v_hat = v_curr.normalize();
+
+        // Tangent of incoming edge (from v_prev → v_curr, pointing into v_curr)
+        // projected onto the tangent plane of the sphere at v_curr.
+        let t_in = (v_prev - v_hat * v_prev.dot(v_hat)).normalize();
+        // Tangent of outgoing edge (from v_curr → v_next)
+        let t_out = (v_next - v_hat * v_next.dot(v_hat)).normalize();
+
+        let cos_theta = t_in.dot(t_out).clamp(-1.0, 1.0);
+        let theta = cos_theta.acos();
+
+        // Signed turn direction.
+        // For a CCW outer wire (outward-facing sphere): right turn → convex, left → reflex.
+        // We take interior = π - θ for right turns, π + θ for left turns.
+        let cross_sign = t_in.cross(t_out).dot(v_hat);
+        let interior = if cross_sign < 0.0 {
+            std::f64::consts::PI - theta  // right turn, convex
+        } else {
+            std::f64::consts::PI + theta  // left turn, reflex
+        };
+        sum_angles += interior;
+    }
+
+    let r2 = s.radius * s.radius;
+    let area = r2 * (sum_angles - (n as f64 - 2.0) * std::f64::consts::PI);
+
+    if area > 0.0 && area <= 4.0 * std::f64::consts::PI * r2 + 1e-12 {
+        Some(area)
+    } else {
+        None
+    }
+}
+
+/// Compute sphere face area using 2x2 Gauss-Legendre quadrature over the
 /// for all surface types including spheres.  This replaces the old grid-raster
 /// approach that used a uniform grid with a 5-point OR test — approximating
 /// the boundary poorly and underestimating area for faces without pcurves
@@ -1166,6 +1268,101 @@ fn try_axis_aligned_world_rect_plane_area(
         }
     }
     Some((w * h).max(0.0))
+}
+
+/// Exact area for a planar face whose outer wire consists of line segments
+/// and great-circle arcs (Circle3 curves).  Line edges use the exact shoelace
+/// vertex contribution; circular arcs add the exact segment area between the
+/// chord and the arc: ±r²·(θ - sin(θ))/2.
+///
+/// Returns `None` if any edge has a curve type other than Line3 or Circle3,
+/// falling through to the sampled shoelace fallback.
+fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVec3) -> Option<f64> {
+    let (ux, uy) = local_basis_from_normal(face_normal);
+    let n_edges = face.outer_wire.edges.len();
+    if n_edges < 3 { return None; }
+
+    // Collect vertices in traversal order, and for each edge determine
+    // whether it's a line or a circle.
+    struct EdgeInfo {
+        is_arc: bool,          // Circle3 (true) vs Line3 (false)
+        radius: f64,           // for arcs: circle radius
+        theta: f64,            // for arcs: central angle (positive, < 2π)
+        center_2d: DVec2,      // for arcs: circle center projected to face plane
+        sign: f64,             // +1 if arc bulges outward, -1 if inward cutout
+        start_2d: DVec2,       // edge start in local 2D
+        end_2d: DVec2,         // edge end in local 2D
+    }
+    let mut edges: Vec<EdgeInfo> = Vec::with_capacity(n_edges);
+    // Use first vertex's 3D point as pivot for 2D projection.
+    let first_we = &face.outer_wire.edges[0];
+    let first_e = brep.edges.get(first_we.idx)?;
+    let first_vi = if first_we.forward { first_e.start } else { first_e.end };
+    let pivot = brep.vertices[first_vi].point;
+
+    for we in &face.outer_wire.edges {
+        let ei = we.idx;
+        let edge = brep.edges.get(ei)?;
+        let curve_idx = brep.geom.edge_curve.get(ei).copied().flatten()?;
+        let curve = brep.geom.curves.get(curve_idx)?;
+        let range = brep.geom.edge_curve_range.get(ei).and_then(|o| *o).unwrap_or([0.0, 1.0]);
+
+        let (v_start, v_end) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+        let p_start = brep.vertices[v_start].point;
+        let p_end = brep.vertices[v_end].point;
+        let start_2d = DVec2::new((p_start - pivot).dot(ux), (p_start - pivot).dot(uy));
+        let end_2d = DVec2::new((p_end - pivot).dot(ux), (p_end - pivot).dot(uy));
+
+        match curve {
+            Curve3::Line(_) => {
+                edges.push(EdgeInfo {
+                    is_arc: false, radius: 0.0, theta: 0.0,
+                    center_2d: DVec2::ZERO, sign: 0.0,
+                    start_2d, end_2d,
+                });
+            }
+            Curve3::Circle(c) => {
+                let theta = (range[1] - range[0]).abs();
+                if theta < 1e-15 || theta > 2.0 * std::f64::consts::PI + 1e-12 { return None; }
+                let center_2d = DVec2::new((c.center - pivot).dot(ux), (c.center - pivot).dot(uy));
+                // Determine arc bulge direction: sign = +1 when the arc
+                // bulges outward from the chord (center on left side of
+                // traversal).  Use 2D cross product of traversal × center-to-start.
+                let trav = end_2d - start_2d;
+                let to_center = center_2d - start_2d;
+                // 2D cross product = trav.x * to_center.y - trav.y * to_center.x
+                let cross = trav.x * to_center.y - trav.y * to_center.x;
+                let sign = if cross > 0.0 { 1.0 } else { -1.0 };
+                edges.push(EdgeInfo {
+                    is_arc: true, radius: c.radius, theta,
+                    center_2d, sign, start_2d, end_2d,
+                });
+            }
+            _ => return None,
+        }
+    }
+
+    // Compute total area: shoelace over vertices + segment corrections for arcs.
+    // Shoelace over unique vertices in boundary order.
+    let n = edges.len();
+    let mut shoelace = 0.0;
+    for i in 0..n {
+        let s = edges[i].start_2d;
+        let e = edges[i].end_2d;
+        shoelace += s.x * e.y - e.x * s.y;
+    }
+    let mut total = shoelace.abs() * 0.5;
+
+    // Add circular segment corrections for arc edges.
+    for edge in &edges {
+        if edge.is_arc {
+            let t = edge.theta;
+            let seg = edge.radius * edge.radius * (t - t.sin()) * 0.5;
+            total += edge.sign * seg;
+        }
+    }
+
+    if total > 0.0 && total.is_finite() { Some(total) } else { None }
 }
 
 /// Shoelace area of outer wire minus |hole areas| in the face plane (pivot = first outer point).
@@ -1866,7 +2063,15 @@ fn try_analytic_face_surface_area(
     let surf_idx = brep.geom.face_surface.get(face_flat_idx).copied().flatten()?;
     let surf = brep.geom.surfaces.get(surf_idx)?;
     match surf {
-        Surface3::Plane(_) => try_planar_face_area_shoelace(brep, face, face.normal),
+        Surface3::Plane(_) => {
+            // Exact arc-aware contour area (handles circular arc edges from
+            // sphere-plane intersection analytically).  Falls back to shoelace.
+            let mut a = try_planar_face_exact_contour_area(brep, face, face.normal);
+            if a.is_none() {
+                a = try_planar_face_area_shoelace(brep, face, face.normal);
+            }
+            a
+        }
         // Planar BSpline/Bezier (e.g. from nurbsconvert): use shoelace.
         Surface3::BSpline(bsp) if bsp.control_points.iter().all(|r| r.len() >= 2) && crate::geom::bspline_is_planar(bsp, 1e-12) => {
             let plane = crate::geom::bspline_to_plane(bsp);
@@ -1891,6 +2096,11 @@ fn try_analytic_face_surface_area(
             }
         }
         Surface3::Sphere(s) => {
+            // Fast-path: if all edges are great circles (Circle3 center ==
+            // sphere center), compute exact area via spherical-polygon formula.
+            if let Some(a) = try_spherical_polygon_great_circle_area(s, brep, face) {
+                return Some(a);
+            }
             let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
             let v = sphere_gauss_legendre_area_sum(s, &ctx);
             if v > 0.0 { return Some(v); }
