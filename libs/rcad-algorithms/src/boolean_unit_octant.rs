@@ -1107,13 +1107,13 @@ fn fold_max(v: &[f64]) -> f64 { v.iter().cloned().fold(f64::MIN, f64::max) }
 // 鈹€鈹€ General box-box boolean via half-space polyhedron 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Information about a box BRep (axis-aligned or rotated).
-struct BoxInfo {
+pub(crate) struct BoxInfo {
     /// Orthonormal axis directions (outward normals of the 3 face-normal pairs).
-    axes: [DVec3; 3],
+    pub(crate) axes: [DVec3; 3],
     /// Center in world coordinates.
-    center: DVec3,
+    pub(crate) center: DVec3,
     /// Positive half-extents along each axis.
-    extents: [f64; 3],
+    pub(crate) extents: [f64; 3],
 }
 
 impl BoxInfo {
@@ -1145,7 +1145,7 @@ impl BoxInfo {
 /// - The 3 unique normal directions are mutually perpendicular
 /// - All 8 vertices are at 卤extent corners of the implied box (verified via
 ///   projection onto the 3 axis directions)
-fn try_as_box(brep: &BRep) -> Option<BoxInfo> {
+pub(crate) fn try_as_box(brep: &BRep) -> Option<BoxInfo> {
     if brep.solids.len() != 1
         || brep.solids[0].shells.len() != 1
         || brep.solids[0].shells[0].faces.len() != 6
@@ -6838,7 +6838,7 @@ struct UVEdgePt {
 }
 
 /// Find which of the 3 box axes is closest to the world Z axis.
-fn find_z_axis_index(info: &BoxInfo) -> Option<usize> {
+pub(crate) fn find_z_axis_index(info: &BoxInfo) -> Option<usize> {
     for i in 0..3 {
         if info.axes[i].dot(DVec3::Z).abs() > 1.0 - TOLERANCE_AXIS_ALIGN {
             return Some(i);
@@ -6848,7 +6848,7 @@ fn find_z_axis_index(info: &BoxInfo) -> Option<usize> {
 }
 
 /// Extract cylinder parameters from a cylinder primitive.
-fn try_cylinder_center_axis_radius_height(brep: &BRep) -> Option<(DVec3, DVec3, f64, f64)> {
+pub(crate) fn try_cylinder_center_axis_radius_height(brep: &BRep) -> Option<(DVec3, DVec3, f64, f64)> {
     let Some(shell) = brep.solids.first()?.shells.first() else { return None };
     let mut center = DVec3::ZERO;
     let mut axis = DVec3::Z;
@@ -11150,7 +11150,7 @@ pub fn try_intersection_cylinder_box(a: &BRep, b: &BRep) -> Option<BRep> {
 /// Helper: find which theta values in [0, 2蟺) satisfy all clip-plane constraints.
 /// For clip plane (inward_normal n, cut_dist d): valid where cos(胃鈭捪? 鈮?鈭抎/r.
 /// Returns sorted disjoint intervals within [0, 2蟺).
-fn compute_valid_theta_ranges(r: f64, clip_planes: &[(DVec3, f64)]) -> Vec<(f64, f64)> {
+pub(crate) fn compute_valid_theta_ranges(r: f64, clip_planes: &[(DVec3, f64)]) -> Vec<(f64, f64)> {
     let pi = std::f64::consts::PI;
     let two_pi = 2.0 * pi;
 
@@ -11199,7 +11199,7 @@ fn compute_valid_theta_ranges(r: f64, clip_planes: &[(DVec3, f64)]) -> Vec<(f64,
 /// Compute the complement (inverse) of a set of 胃 intervals within [0, 2蟺).
 /// Each interval (lo, hi) is assumed sorted and non-overlapping.
 /// The result covers the parts of [0, 2蟺) not in any input interval.
-fn compute_complement_theta_ranges(intervals: &[(f64, f64)]) -> Vec<(f64, f64)> {
+pub(crate) fn compute_complement_theta_ranges(intervals: &[(f64, f64)]) -> Vec<(f64, f64)> {
     let two_pi = 2.0 * std::f64::consts::PI;
     if intervals.is_empty() {
         return vec![(0.0, two_pi)];
@@ -11697,7 +11697,7 @@ fn build_cylinder_box_difference_parallel_only_skip(
     merged
 }
 
-fn build_cylinder_box_clipped_brep(
+pub(crate) fn build_cylinder_box_clipped_brep(
     center: DVec3,
     r: f64,
     h: f64,

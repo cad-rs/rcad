@@ -17,6 +17,7 @@ pub use brep_graph::{
 pub mod bnd_lib;
 pub mod boolean;
 mod boolean_unit_octant;
+mod cylinder_box_analytic;
 mod sphere_box_analytic;
 pub mod bopds;
 pub mod brep_algo;
