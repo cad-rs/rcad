@@ -19,6 +19,7 @@ pub mod boolean;
 mod boolean_unit_octant;
 mod cylinder_box_analytic;
 mod sphere_box_analytic;
+mod cone_box_analytic;
 pub mod bopds;
 pub mod brep_algo;
 pub mod brep_algo_api;

@@ -740,7 +740,7 @@ pub fn try_intersection_eighth_unit_ball(a: &BRep, b: &BRep) -> Option<BRep> {
 /// vertex is at an AABB corner (each coordinate matches either the min or max
 /// for that axis). Returns `None` for rotated boxes, non-box shapes, or
 /// degenerate inputs.
-fn try_as_axis_aligned_box(brep: &BRep) -> Option<[DVec3; 2]> {
+pub(crate) fn try_as_axis_aligned_box(brep: &BRep) -> Option<[DVec3; 2]> {
     if brep.solids.len() != 1
         || brep.solids[0].shells.len() != 1
         || brep.solids[0].shells[0].faces.len() != 6
@@ -3636,7 +3636,7 @@ pub fn try_difference_coaxial_cone_minus_cylinder(cone: &BRep, cyl: &BRep) -> Op
 /// Append a conical frustum BRep (as returned by `make_conical_frustum_brep`) into `dst`,
 /// remapping all vertex, edge, and geometry store indices so the two solids can coexist
 /// in a single BRep (e.g. for returning both below-cylinder and above-cylinder portions).
-fn append_frustum_brep(dst: &mut BRep, src: BRep) {
+pub(crate) fn append_frustum_brep(dst: &mut BRep, src: BRep) {
     let vertex_offset = dst.vertices.len();
     let edge_offset = dst.edges.len();
     let curve_offset = dst.geom.curves.len();
@@ -4910,7 +4910,7 @@ fn detect_z_axis_cone_frustum(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)
 ///
 /// Returns `(center_xy, z_lo, z_hi, r_lo, r_hi)` 鈥?the XY center, Z range, and
 /// bottom/top radii. For a full cone one radius is near-zero (the apex).
-fn detect_z_axis_cone(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)> {
+pub(crate) fn detect_z_axis_cone(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)> {
     let sh = brep.solids.get(0)?.shells.get(0)?;
 
     let mut cone_surf: Option<&ConicalSurface> = None;
