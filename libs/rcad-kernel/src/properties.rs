@@ -1822,19 +1822,31 @@ fn try_cylinder_trimmed_face_area(
             let v0 = (circle_centers[0] - cyl.origin).dot(axis);
             let v1 = (circle_centers[1] - cyl.origin).dot(axis);
             let dv = (v1 - v0).abs();
-            // ΔU: if both Line edges share the same curve index they form the
-            // cylinder seam → full 2π wrap.  Otherwise compute the angular
-            // span between the two generator lines from their vertex positions.
-            let du = if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] {
-                std::f64::consts::PI * 2.0
-            } else {
-                // Project line vertices onto the cross-section plane to find ΔU.
+            // ΔU: prefer face_surface_range (most reliable, set by analytic
+            // builders like build_box_minus_cylinder_full_uv_z_fail).
+            // Fall back to seam-detection, then angular vertex computation.
+            let du = 'du: {
+                // Priority 1: face_surface_range — the builder knows the exact UV domain.
+                if let Some(Some(range)) = brep.geom.face_surface_range.get(face_flat_idx) {
+                    let du_r = (range[1] - range[0]).abs();
+                    let dv_r = (range[3] - range[2]).abs();
+                    if du_r > 1e-14 && dv_r > 1e-14 {
+                        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                            eprintln!("[CYL_RECT_DU] from face_surface_range du={}", du_r);
+                        }
+                        break 'du du_r;
+                    }
+                }
+                // Priority 2: both Line edges share the same curve index (cylinder seam → full 2π).
+                if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] {
+                    break 'du (std::f64::consts::PI * 2.0);
+                }
+                // Priority 3: compute angular span from generator line vertices.
                 let x_ax = crate::geom::any_perpendicular(axis);
                 let y_ax = axis.cross(x_ax).normalize();
                 let mut u_vals = Vec::new();
                 for ci in &edge_curve_indices {
                     if let Some(Curve3::Line(_line)) = brep.geom.curves.get(*ci) {
-                        // Find the corresponding WireEdge to get direction+vertices.
                         for we in &face.outer_wire.edges {
                             if brep.geom.edge_curve.get(we.idx).copied().flatten() == Some(*ci) {
                                 let ei = we.idx;
@@ -1853,19 +1865,11 @@ fn try_cylinder_trimmed_face_area(
                 }
                 if u_vals.len() == 2 {
                     let du_raw = u_vals[1] - u_vals[0];
-                    // Normalize to [0, 2π)
                     let du_norm = du_raw.rem_euclid(std::f64::consts::PI * 2.0);
-                    let result = if du_norm > 1e-14 { du_norm } else { std::f64::consts::PI * 2.0 };
-                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                        eprintln!("[CYL_RECT_DU] u_vals={:?} du_raw={} du_norm={} result={}", u_vals, du_raw, du_norm, result);
-                    }
-                    result
-                } else {
-                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                        eprintln!("[CYL_RECT_DU] u_vals.len={} fallback to 2π", u_vals.len());
-                    }
-                    std::f64::consts::PI * 2.0 // fallback
+                    if du_norm > 1e-14 { break 'du du_norm; }
                 }
+                // Final fallback: full wrap.
+                std::f64::consts::PI * 2.0
             };
             // Validate the circle centers lie on the cylinder axis.
             let r0 = (circle_centers[0] - cyl.origin).cross(axis).length();
