@@ -1589,6 +1589,85 @@ fn try_boundary_convex_hull_area(
 /// Uses a Green's theorem line integral ∮ v·du, integrating from the minimum-v boundary edge
 /// in the +u direction, to avoid the cancellation that occurs when the wire traces the same
 /// curve forward and backward (e.g., Steinmetz lens bounded by a single intersection curve).
+/// Compute the area of a cylinder UV polygon using 2×2 Gauss-Legendre
+/// quadrature over the UV bounding box.  Since |∂P/∂u × ∂P/∂v| = R is
+/// constant, the surface area = R × ∫∫ du dv, so we just integrate the
+/// area of the UV domain (no surface-integrand evaluation needed).
+///
+/// OCCT uses adaptive Gauss-Legendre integration in BRepGProp for trimmed
+/// surfaces including cylinders.  This replaces the shoelace-from-samples
+/// approach whose accuracy depends on the 3D→UV projection convergence.
+fn cylinder_gl_uv_area(uvs: &[DVec2]) -> Option<f64> {
+    const N: usize = 60;
+    if uvs.len() < 3 { return None; }
+    let n = uvs.len();
+    const TWO_PI: f64 = std::f64::consts::PI * 2.0;
+
+    // Unwrap U coordinates to handle 2π wrapping (same approach as
+    // try_cylinder_trimmed_face_area's shoelace path).
+    let unwrapped: Vec<f64> = {
+        let mut o = Vec::with_capacity(n);
+        o.push(uvs[0].x);
+        for i in 1..n {
+            o.push(o[i - 1] + short_delta_on_circle_01(uvs[i - 1].x, uvs[i].x));
+        }
+        o
+    };
+
+    let mut umin = f64::INFINITY; let mut umax = f64::NEG_INFINITY;
+    let mut vmin = f64::INFINITY; let mut vmax = f64::NEG_INFINITY;
+    for (i, uv) in uvs.iter().enumerate() {
+        umin = umin.min(unwrapped[i]); umax = umax.max(unwrapped[i]);
+        vmin = vmin.min(uv.y); vmax = vmax.max(uv.y);
+    }
+    if !umin.is_finite() || (umax - umin) < 1e-14 || (vmax - vmin) < 1e-14 {
+        return None;
+    }
+    let u_range = umax - umin;
+    let v_range = vmax - vmin;
+
+    // The UV polygon might wrap the cylinder in u.  If the unwrapped range
+    // is nearly 2π, the face covers the full circumference — integrate
+    // over the full [umin, umin+2π] domain.
+    let u_lo = umin;
+    let u_hi = if u_range > TWO_PI - 0.1 { umin + TWO_PI } else { umax };
+    let v_lo = vmin;
+    let v_hi = vmax;
+
+    let du = (u_hi - u_lo) / N as f64;
+    let dv = (v_hi - v_lo) / N as f64;
+    let cell_area = du * dv / 4.0;
+    const GL_NEG: f64 = -0.5773502691896257;
+    const GL_POS: f64 = 0.5773502691896257;
+    let gl_pts = [GL_NEG, GL_POS];
+
+    let mut total = 0.0;
+    for i in 0..N {
+        let u_mid = u_lo + (i as f64 + 0.5) * du;
+        for j in 0..N {
+            let v_mid = v_lo + (j as f64 + 0.5) * dv;
+            let mut n_hit = 0u32;
+            for &gu in &gl_pts {
+                let u = u_mid + gu * du * 0.5;
+                let u_mod = u.rem_euclid(TWO_PI);
+                for &gv in &gl_pts {
+                    let v = v_mid + gv * dv * 0.5;
+                    // Test against original UV polygon (with wrapped U).
+                    // The polygon's U values are in [0, 2π) while the
+                    // integration point u might exceed that range due to
+                    // unwrapping — remap to [0, 2π) for the point test.
+                    let inside = winding_number_2d(uvs, DVec2::new(u_mod, v)) != 0;
+                    if inside { n_hit += 1; }
+                }
+            }
+            if n_hit > 0 {
+                total += cell_area * n_hit as f64;
+            }
+        }
+    }
+    Some(total)
+}
+
 fn try_cylinder_trimmed_face_area(
     cyl: &CylindricalSurface,
     brep: &BRep,
@@ -1606,8 +1685,17 @@ fn try_cylinder_trimmed_face_area(
 
         let surf = Surface3::Cylinder(*cyl);
         let uvs: Vec<DVec2> = pts_3d.iter()
-            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 64); DVec2::new(proj.params.0, proj.params.1) })
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 256); DVec2::new(proj.params.0, proj.params.1) })
             .collect();
+
+        // GL quadrature over UV bounding box (OCCT-aligned).
+        if let Some(gl_area) = cylinder_gl_uv_area(&uvs) {
+            if gl_area > 0.0 { return Some(gl_area); }
+        }
+        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+            let gl_res = cylinder_gl_uv_area(&uvs);
+            eprintln!("[CYL_GL] n_uvs={} gl={:?} cyl_R={:.6}", uvs.len(), gl_res, cyl.radius);
+        }
 
         // Simple unwrapping for cylinder faces: accumulate via short deltas on S¹.
         let unwrapped: Vec<f64> = {
@@ -1632,8 +1720,8 @@ fn try_cylinder_trimmed_face_area(
         // Steinmetz lens lobes) where shoelace gives the signed area.
         let nf = n;
         if nf >= 3 {
-            // 512 bins: ~0.012 rad resolution (~0.2% error for full-wrap faces).
-            let n_bins = 512usize;
+            // 2048 bins: ~0.003 rad resolution for envelope integration.
+            let n_bins = 2048usize;
             let step = TWO_PI / n_bins as f64;
             let mut upper = vec![f64::NEG_INFINITY; n_bins];
             let mut lower = vec![f64::INFINITY; n_bins];
@@ -1805,7 +1893,7 @@ fn try_cone_trimmed_face_area(
         let n = pts_3d.len();
         let surf = Surface3::Cone(*cone);
         let uvs: Vec<DVec2> = pts_3d.iter()
-            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 64); DVec2::new(proj.params.0, proj.params.1) })
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 256); DVec2::new(proj.params.0, proj.params.1) })
             .collect();
 
         // Unwrap u for periodic S¹ parameter
@@ -2118,21 +2206,15 @@ fn try_analytic_face_surface_area(
             }
             match surf {
                 Surface3::Cylinder(c) => {
-                    let edge_n = face.outer_wire.edges.len();
-                    if edge_n > 6 || !face.inner_wires.is_empty() {
-                        // Trimmed face: UV bounding box overcounts.
-                        // For cylinders, |∂P/∂u×∂P/∂v| = R constant, so
-                        // surface area = R × shoelace area of the UV polygon.
-                        let result = try_cylinder_trimmed_face_area(c, brep, face);
-                        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                            eprintln!("[CYL_ANALYTIC] fi={} edges={} inner={} analytic={}",
-                                face_flat_idx, edge_n, face.inner_wires.len(),
-                                result.map(|v| format!("{:.6}", v)).unwrap_or_else(|| "None".into()));
-                        }
-                        result
-                    } else {
-                        Some(c.radius * (u1 - u0).abs() * (v1 - v0).abs())
+                    // Always use the trimmed-face path: it handles
+                    // full rectangles and trimmed patches correctly
+                    // via envelope integration / GL / shoelace.
+                    let result = try_cylinder_trimmed_face_area(c, brep, face);
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        eprintln!("[CYL_ANALYTIC] fi={} analytic={:?}",
+                            face_flat_idx, result);
                     }
+                    result
                 }
                 Surface3::Cone(c) => {
                     // For trimmed cone faces, param_rect_area_cross assumes the
