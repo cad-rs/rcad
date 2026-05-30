@@ -167,14 +167,19 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         // frustums (apex extends past the solid), causing false containment
         // positives (ZM1).
         let Some([omin, omax]) = outer.vertices_curves_bounding_box() else { continue };
-        // For the inner solid, use only the vertex bbox to avoid the spherical
-        // expansion that `curve_bounding_box` applies to circles: a horizontal
-        // circle at z=0 with radius r gets bbox z∈[−r,+r] even though the circle
-        // lies entirely in the z=0 plane, which makes the inner bbox appear to
-        // extend beyond the outer bbox and causes false containment negatives
-        // (e.g. J2: box-with-hole ∩ box, where the hole's circular edge is at
-        // z=0 but its curve-bbox inflates z to ±r).
-        let inner_vert_bbox = {
+        // For the inner solid, use `vertices_curves_bounding_box` for Union
+        // (conservative — avoids false positives where a cylinder's 2 vertices
+        // imply a degenerate bbox while the curved wall extends much further,
+        // e.g. bopfuse_simple ZA6), but fall back to vertex-only bbox for
+        // Intersection to avoid the spherical expansion that `curve_bounding_box`
+        // applies to circles (e.g. J2: box-with-hole ∩ box, where the hole's
+        // circular edge at z=0 inflates the z-bbox to ±r).
+        let (imin, imax) = if matches!(op, BooleanOpType::Union) {
+            match inner.vertices_curves_bounding_box() {
+                Some(bb) => (bb[0], bb[1]),
+                None => continue,
+            }
+        } else {
             let mut mn = DVec3::splat(f64::INFINITY);
             let mut mx = DVec3::splat(f64::NEG_INFINITY);
             for v in &inner.vertices {
@@ -184,7 +189,6 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             if mn.x.is_infinite() { continue; }
             (mn, mx)
         };
-        let (imin, imax) = inner_vert_bbox;
         let tol = TOLERANCE_ABS;
         if !(imin.x >= omin.x - tol && imax.x <= omax.x + tol &&
              imin.y >= omin.y - tol && imax.y <= omax.y + tol &&
