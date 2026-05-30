@@ -5560,10 +5560,11 @@ fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) ->
     }
 
     // Case 3: cone entirely inside the cylinder (cylinder wider than cone at every Z).
-    // TODO: analytical build_cylinder_cone_union_wider_cyl produces correct Union BRep
-    // but the Difference PaveFiller produces wrong SA (~316 vs ~727).  The faces,
-    // surfaces, and pcurves are structurally correct — the issue is in how the
-    // PaveFiller's classifier treats non-primitive faces.  Investigation needed.
+    // NOTE: build_cylinder_cone_union_wider_cyl produces a correct analytical Union BRep
+    // (SA=697 vs expected ~708) with proper surfaces, edges, pcurves, and face normals.
+    // However, the PaveFiller Difference over-counts SA (867 vs 727, +19% vs 15% tolerance)
+    // because the BooleanBuilder classifies the analytical faces differently than PaveFiller-
+    // produced faces.  Fix needs PaveFiller/Builder layer, not BRep construction.
     // let cone_inside = r_at_cyl_lo <= cyl_r + tol && r_at_cyl_hi <= cyl_r + tol
     //     && cz_lo >= cyl_z_lo - tol && cz_hi >= cyl_z_hi - tol;
     // if cone_inside && cyl_r > tol && r_at_cyl_hi > tol && cr_hi > tol {
@@ -5574,6 +5575,137 @@ fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) ->
     // }
 
     None
+}
+
+/// Build an analytical BRep for `cylinder ∪ cone` when the cylinder is wider
+/// than the cone at every Z level.  Uses the same edge/face/surface/pcurve
+/// pattern as `build_cylinder_box_difference_full_wall` (proven PaveFiller-compatible).
+fn build_cylinder_cone_union_wider_cyl(
+    center_xy: DVec2,
+    z_cyl_lo: f64, z_cyl_hi: f64, cyl_r: f64,
+    z_con_hi: f64, r_con_hi: f64,
+    r_top: f64,
+) -> Option<BRep> {
+    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::PCurve;
+    use std::f64::consts::TAU;
+    let h = z_cyl_hi - z_cyl_lo;
+    let h_con = (z_con_hi - z_cyl_hi).max(1e-10);
+    if cyl_r < 1e-10 || r_con_hi < 1e-10 { return None; }
+    let (cx, cy) = (center_xy.x, center_xy.y);
+    let two_pi = TAU;
+
+    let mut brep = BRep::new();
+    brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
+
+    macro_rules! push_edge {
+        ($c:expr, $t0:expr, $t1:expr, $start:expr, $end:expr) => {{
+            let idx = brep.edges.len();
+            brep.edges.push(Edge { start: $start, end: $end });
+            let ci = brep.geom.curves.len();
+            brep.geom.curves.push($c);
+            while brep.geom.edge_curve.len() <= idx {
+                brep.geom.edge_curve.push(None);
+                brep.geom.edge_curve_range.push(None);
+                brep.geom.edge_degenerated.push(false);
+            }
+            brep.geom.edge_curve[idx] = Some(ci);
+            brep.geom.edge_curve_range[idx] = Some([$t0, $t1]);
+            brep.geom.edge_pcurves.push(Vec::new());
+            idx
+        }};
+    }
+
+    // Vertices
+    let v0 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: DVec3::new(cx + cyl_r, cy, z_cyl_lo) });
+    let v1 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: DVec3::new(cx + cyl_r, cy, z_cyl_hi) });
+    let v2 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: DVec3::new(cx + r_top, cy, z_cyl_hi) });
+    let v3 = brep.vertices.len();
+    brep.vertices.push(Vertex { point: DVec3::new(cx + r_con_hi, cy, z_con_hi) });
+
+    // Edges
+    let e0 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_lo), normal: -DVec3::Z, radius: cyl_r }), 0.0, two_pi, v0, v0);
+    let e1 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_hi), normal: DVec3::Z, radius: cyl_r }), 0.0, two_pi, v1, v1);
+    let e2 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v0].point, direction: DVec3::Z }), 0.0, h, v0, v1);
+    let e3 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_hi), normal: DVec3::Z, radius: r_top }), 0.0, two_pi, v2, v2);
+    let coned = brep.vertices[v3].point - brep.vertices[v2].point;
+    let e4 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v2].point, direction: coned.normalize_or_zero() }), 0.0, coned.length(), v2, v3);
+    let e5 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_con_hi), normal: DVec3::Z, radius: r_con_hi }), 0.0, two_pi, v3, v3);
+
+    // Surfaces
+    let si_cyl = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Cylinder(CylindricalSurface { origin: DVec3::new(cx,cy,z_cyl_lo), axis: DVec3::Z, radius: cyl_r, ref_dir: DVec3::X }));
+    let si_cone = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Cone(ConicalSurface { apex: DVec3::new(cx,cy,z_cyl_hi), axis: DVec3::Z, radius: r_top, half_angle_rad: ((r_top - r_con_hi)/h_con).atan() }));
+    let si_bot = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Plane(Plane { origin: DVec3::new(cx,cy,z_cyl_lo), normal: -DVec3::Z }));
+    let si_step = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Plane(Plane { origin: DVec3::new(cx,cy,z_cyl_hi), normal: DVec3::Z }));
+    let si_top = brep.geom.surfaces.len();
+    brep.geom.surfaces.push(Surface3::Plane(Plane { origin: DVec3::new(cx,cy,z_con_hi), normal: DVec3::Z }));
+
+    // PCurves
+    {
+        let g = &mut brep.geom;
+        let mut c2 = |c: Curve2d| -> usize { let i = g.curve2ds.len(); g.curve2ds.push(c); i };
+        let p0w = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(two_pi,0.0) }));
+        let p0b = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: cyl_r }));
+        let p1w = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,h), direction: DVec2::new(two_pi,0.0) }));
+        let p1s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: cyl_r }));
+        let p2f = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(0.0,h) }));
+        let p2r = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,h), direction: DVec2::new(0.0,-h) }));
+        let p3n = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(two_pi,0.0) }));
+        let p3s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: r_top }));
+        let p4f = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(0.0,1.0) }));
+        let p4r = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,1.0), direction: DVec2::new(0.0,-1.0) }));
+        let p5n = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,1.0), direction: DVec2::new(two_pi,0.0) }));
+        let p5t = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: r_con_hi }));
+        g.edge_pcurves[e0].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p0w }, PCurve { surface_idx: si_bot, curve2d_idx: p0b }]);
+        g.edge_pcurves[e1].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p1w }, PCurve { surface_idx: si_step, curve2d_idx: p1s }]);
+        g.edge_pcurves[e2].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p2f }, PCurve { surface_idx: si_cyl, curve2d_idx: p2r }]);
+        g.edge_pcurves[e3].extend(vec![PCurve { surface_idx: si_cone, curve2d_idx: p3n }, PCurve { surface_idx: si_step, curve2d_idx: p3s }]);
+        g.edge_pcurves[e4].extend(vec![PCurve { surface_idx: si_cone, curve2d_idx: p4f }, PCurve { surface_idx: si_cone, curve2d_idx: p4r }]);
+        g.edge_pcurves[e5].extend(vec![PCurve { surface_idx: si_cone, curve2d_idx: p5n }, PCurve { surface_idx: si_top, curve2d_idx: p5t }]);
+    }
+
+    // Faces (with face_surface_range for bounded surfaces)
+    // Face helper: normal must be set for planar faces (DVec3::ZERO for curved)
+    let mut push_face = |b: &mut BRep, si: usize, outer: Vec<WireEdge>, inner: Option<Vec<WireEdge>>, norm: DVec3, uv_range: Option<[f64; 4]>| {
+        let fi = b.solids[0].shells[0].faces.len();
+        while b.geom.face_surface.len() <= fi { b.geom.face_surface.push(None); b.geom.face_surface_range.push(None); b.geom.face_tolerance.push(0.0); }
+        b.geom.face_surface[fi] = Some(si);
+        if let Some(range) = uv_range { b.geom.face_surface_range[fi] = Some(range); }
+        b.solids[0].shells[0].faces.push(Face {
+            outer_wire: Wire { edges: outer },
+            inner_wires: inner.map(|e| vec![Wire { edges: e }]).unwrap_or_default(),
+            normal: norm, triangles: vec![], sample_point: None, mesh_dirty: true,
+        });
+    };
+    push_face(&mut brep, si_cyl, vec![WireEdge::rev(e0), WireEdge::fwd(e2), WireEdge::fwd(e1), WireEdge::rev(e2)], None, DVec3::ZERO, Some([0.0, two_pi, 0.0, h]));
+    push_face(&mut brep, si_cone, vec![WireEdge::fwd(e3), WireEdge::fwd(e4), WireEdge::rev(e5), WireEdge::rev(e4)], None, DVec3::ZERO, Some([0.0, two_pi, 0.0, 1.0]));
+    push_face(&mut brep, si_bot, vec![WireEdge::rev(e0)], None, -DVec3::Z, None);
+    push_face(&mut brep, si_step, vec![WireEdge::fwd(e1)], Some(vec![WireEdge::rev(e3)]), DVec3::Z, None);
+    push_face(&mut brep, si_top, vec![WireEdge::rev(e5)], None, DVec3::Z, None);
+
+    // DEBUG: print BRep structure
+    if std::env::var("RCAD_DEBUG_BREP").is_ok() {
+        eprintln!("=== BUILD_CYLINDER_CONE_UNION ===");
+        eprintln!("vertices: {}", brep.vertices.len());
+        eprintln!("edges: {} curves: {}", brep.edges.len(), brep.geom.curves.len());
+        eprintln!("edge_pcurves: {:?}", brep.geom.edge_pcurves.iter().map(|v| v.len()).collect::<Vec<_>>());
+        eprintln!("surfaces: {}", brep.geom.surfaces.len());
+        eprintln!("faces: {}", brep.solids[0].shells[0].faces.len());
+        for (fi, f) in brep.solids[0].shells[0].faces.iter().enumerate() {
+            let si = brep.geom.face_surface.get(fi).and_then(|o| *o);
+            eprintln!("  face[{}]: surface_idx={:?} outer_edges={} inner_wires={}",
+                fi, si, f.outer_wire.edges.len(), f.inner_wires.len());
+        }
+    }
+
+    Some(brep)
 }
 
 /// Bidirectional wrapper for coaxial cone + cylinder Union.
