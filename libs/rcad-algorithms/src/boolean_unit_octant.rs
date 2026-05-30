@@ -9464,8 +9464,8 @@ fn build_cylinder_box_union_tessellated(
     if cyl_z_hi <= cyl_z_lo + tol { return None; }
     if r < tol { return None; }
 
-    let n_slices = 64usize;
-    let n_slices_circ = 16usize; // fewer for plain cylinder sections
+    let n_slices = 16usize;
+    let n_slices_circ = 8usize; // fewer for plain cylinder sections
     let empty_wire = || Wire { edges: vec![] };
 
     let mut verts: Vec<Vertex> = Vec::new();
@@ -9579,7 +9579,9 @@ fn build_cylinder_box_union_tessellated(
     })
 }
 
-/// Shared helper for union: `cyl_brep` is the cylinder, `box_brep` is the box.
+/// Mesh-based builder for cylinder ∪ box with Z overlap.
+/// Generates vertex grids on both the cylinder surface and box faces, keeps
+/// points that are outside the other shape, and triangulates into one BRep.
 fn try_union_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Option<BRep> {
     let ca = try_cylinder_center_axis_radius_height(cyl_brep)?;
     let (cyl_bottom, cyl_axis, cyl_r, cyl_height) = ca;
