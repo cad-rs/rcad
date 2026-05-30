@@ -6837,7 +6837,9 @@ fn try_intersection_sphere_box_pair(sphere: &BRep, box_: &BRep) -> Option<BRep> 
         return Some(BRep::default());
     }
 
-    // Reject boxes rotated by 90-degree increments.
+    // Reject boxes whose face planes don't match the AABB (e.g. 90° rotated
+    // boxes with +Z face at z=bmin.z instead of z=bmax.z).  These fall
+    // through to the PaveFiller, which approximates but doesn't diverge.
     if !box_faces_match_aabb(box_, bmin, bmax) {
         return None;
     }
@@ -6847,29 +6849,22 @@ fn try_intersection_sphere_box_pair(sphere: &BRep, box_: &BRep) -> Option<BRep> 
 
 }
 
-/// Verify that face plane origins match AABB faces (rejects 90-degree rotated boxes).
+/// Verify each face plane origin matches its AABB face (e.g. +Z at bmax.z).
 fn box_faces_match_aabb(brep: &BRep, bmin: DVec3, bmax: DVec3) -> bool {
     const TOL: f64 = 1e-6;
     for fi in 0..brep.solids[0].shells[0].faces.len() {
         let Some(Some(si)) = brep.geom.face_surface.get(fi) else { return false };
         let Some(surf) = brep.geom.surfaces.get(*si) else { return false };
-        let (normal, origin) = match surf {
-            Surface3::Plane(p) => (p.normal, p.origin),
-            _ => return false,
-        };
-        for (axis_val, (lo, hi)) in [(origin.x, (bmin.x, bmax.x)),
-                                      (origin.y, (bmin.y, bmax.y)),
-                                      (origin.z, (bmin.z, bmax.z))]
-        {
-            let n_comp = if normal.x.abs() > 0.5 { normal.x }
-                else if normal.y.abs() > 0.5 { normal.y }
-                else { normal.z };
-            if n_comp > 0.5 {
-                if (axis_val - hi).abs() > TOL { return false; }
-            } else {
-                if (axis_val - lo).abs() > TOL { return false; }
-            }
+        let (normal, origin) = match surf { Surface3::Plane(p) => (p.normal, p.origin), _ => return false };
+        let axes = [(normal.x, origin.x, bmin.x, bmax.x), (normal.y, origin.y, bmin.y, bmax.y), (normal.z, origin.z, bmin.z, bmax.z)];
+        let mut found = false;
+        for &(nc, val, lo, hi) in &axes {
+            if nc.abs() <= 0.5 { continue; }
+            found = true;
+            if nc > 0.0 { if (val - hi).abs() > TOL { return false; } }
+            else { if (val - lo).abs() > TOL { return false; } }
         }
+        if !found { return false; }
     }
     true
 }

@@ -281,8 +281,8 @@ fn build_plane_intersection_face(
                 let pos = a + t.clamp(0.0, len) * du;
                 let dx = (pos - circle_center).dot(x_axis);
                 let dy = (pos - circle_center).dot(y_axis);
-                let theta = dy.atan2(dx);
-                xs.push(Cross { theta: if theta < 0.0 { theta + two_pi } else { theta }, pos, edge: ei });
+                let theta = dy.atan2(dx).rem_euclid(two_pi);
+                xs.push(Cross { theta, pos, edge: ei });
             }
         }
     }

@@ -1597,7 +1597,7 @@ fn try_cylinder_trimmed_face_area(
     use crate::projection::closest_point_on_surface;
 
     let wire_uv_area = |wire: &Wire| -> Option<f64> {
-        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 256);
+        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 512);
         trim_almost_closed_polyline(&mut pts_3d, 1e-5);
         if pts_3d.len() < 3 { return None; }
 
@@ -1606,7 +1606,7 @@ fn try_cylinder_trimmed_face_area(
 
         let surf = Surface3::Cylinder(*cyl);
         let uvs: Vec<DVec2> = pts_3d.iter()
-            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 64); DVec2::new(proj.params.0, proj.params.1) })
             .collect();
 
         // Simple unwrapping for cylinder faces: accumulate via short deltas on S¹.
@@ -1798,14 +1798,14 @@ fn try_cone_trimmed_face_area(
 
     let wire_uv_data = |wire: &Wire| -> Option<(f64, f64)> {
         // Returns (area, first_moment_Mu) for the UV polygon
-        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 256);
+        let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 512);
         trim_almost_closed_polyline(&mut pts_3d, 1e-5);
         if pts_3d.len() < 3 { return None; }
 
         let n = pts_3d.len();
         let surf = Surface3::Cone(*cone);
         let uvs: Vec<DVec2> = pts_3d.iter()
-            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 16); DVec2::new(proj.params.0, proj.params.1) })
+            .map(|&p| { let proj = closest_point_on_surface(&surf, p, 64); DVec2::new(proj.params.0, proj.params.1) })
             .collect();
 
         // Unwrap u for periodic S¹ parameter
@@ -2066,11 +2066,8 @@ fn try_analytic_face_surface_area(
         Surface3::Plane(_) => {
             // Exact arc-aware contour area (handles circular arc edges from
             // sphere-plane intersection analytically).  Falls back to shoelace.
-            let mut a = try_planar_face_exact_contour_area(brep, face, face.normal);
-            if a.is_none() {
-                a = try_planar_face_area_shoelace(brep, face, face.normal);
-            }
-            a
+            try_planar_face_exact_contour_area(brep, face, face.normal)
+                .or_else(|| try_planar_face_area_shoelace(brep, face, face.normal))
         }
         // Planar BSpline/Bezier (e.g. from nurbsconvert): use shoelace.
         Surface3::BSpline(bsp) if bsp.control_points.iter().all(|r| r.len() >= 2) && crate::geom::bspline_is_planar(bsp, 1e-12) => {
