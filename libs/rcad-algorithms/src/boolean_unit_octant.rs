@@ -9400,6 +9400,11 @@ fn try_union_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Option<BR
             return Some(box_brep.clone());
         }
 
+        // Try analytic union builder first; fall through to mesh path if it returns None
+        if let Some(analytic_result) = crate::cylinder_box_analytic::build_cylinder_box_union_analytic(cyl_brep, box_brep) {
+            return Some(analytic_result);
+        }
+
         // Fallible check: if the 2D cross-section is disjoint, return None
         let test_poly = build_circle_union_rect_polygon(cu, cv, cyl_r, eu, ev);
         if test_poly.len() >= 3 {
