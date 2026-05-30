@@ -1280,6 +1280,29 @@ fn try_axis_aligned_world_rect_plane_area(
 fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVec3) -> Option<f64> {
     let (ux, uy) = local_basis_from_normal(face_normal);
     let n_edges = face.outer_wire.edges.len();
+
+    // Fast path: single full-circle edge (planar cap from cylinder/sphere clipping).
+    // The standard code below requires >= 3 edges for shoelace and handles arcs via
+    // chord-segment correction, but the cross-product sign heuristic fails when
+    // start == end (full circle — trav = 0).  Detect this case directly.
+    if n_edges == 1 {
+        if let Some(we) = face.outer_wire.edges.first() {
+            let ei = we.idx;
+            if let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() {
+                if let Some(Curve3::Circle(c)) = brep.geom.curves.get(curve_idx) {
+                    if let Some(range) = brep.geom.edge_curve_range.get(ei).and_then(|o| *o) {
+                        let theta = (range[1] - range[0]).abs();
+                        // Full 2π circle: exact analytic area.
+                        if (theta - 2.0 * std::f64::consts::PI).abs() < 1e-12 {
+                            return Some(std::f64::consts::PI * c.radius * c.radius);
+                        }
+                    }
+                }
+            }
+        }
+        return None; // single non-circle edge is degenerate for a planar face
+    }
+
     if n_edges < 3 { return None; }
 
     // Collect vertices in traversal order, and for each edge determine
@@ -1749,8 +1772,116 @@ fn try_cylinder_trimmed_face_area(
     cyl: &CylindricalSurface,
     brep: &BRep,
     face: &Face,
+    face_flat_idx: usize,
 ) -> Option<f64> {
     use crate::projection::closest_point_on_surface;
+
+    // Fast path: rectangular UV patch via 2 Lines + 2 Circles (no inner wires).
+    //
+    // Boolean splitting along iso-parametric lines produces sub-faces whose UV
+    // domain is a clean rectangle: two generator edges (u = constant, Line3 in
+    // 3D) and two circular edges (v = constant, Circle3 in 3D).  For these,
+    // the exact analytic area is simply R × ΔU × ΔV.
+    //
+    // We compute ΔU and ΔV directly from the edge curves rather than using
+    // curved_face_uv_domain (which relies on wire sampling → closest-point
+    // projection and inherits numerical error).
+    if face.inner_wires.is_empty() && face.outer_wire.edges.len() == 4 {
+        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+            eprintln!("[CYL_RECT_FAST] checking 4-edge face");
+        }
+        use crate::geom::Curve3;
+        let mut edge_curve_indices: Vec<usize> = Vec::new();  // for line seam detection
+        let mut n_lines = 0u32;
+        let mut n_circles = 0u32;
+        let mut circle_centers: Vec<DVec3> = Vec::new();
+        let mut valid = true;
+        for we in &face.outer_wire.edges {
+            if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
+                match brep.geom.curves.get(ci) {
+                    Some(Curve3::Line(_)) => {
+                        n_lines += 1;
+                        edge_curve_indices.push(ci);
+                    }
+                    Some(Curve3::Circle(c)) => {
+                        n_circles += 1;
+                        if circle_centers.len() < 2 {
+                            circle_centers.push(c.center);
+                        }
+                    }
+                    _ => { valid = false; break; }
+                }
+            } else { valid = false; break; }
+        }
+        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+            eprintln!("[CYL_RECT_FAST] valid={} lines={} circles={} centers={}", valid, n_lines, n_circles, circle_centers.len());
+        }
+        if valid && n_lines == 2 && n_circles == 2 && circle_centers.len() == 2 {
+            // ΔV: project circle centers onto cylinder axis.
+            let axis = cyl.axis;
+            let v0 = (circle_centers[0] - cyl.origin).dot(axis);
+            let v1 = (circle_centers[1] - cyl.origin).dot(axis);
+            let dv = (v1 - v0).abs();
+            // ΔU: if both Line edges share the same curve index they form the
+            // cylinder seam → full 2π wrap.  Otherwise compute the angular
+            // span between the two generator lines from their vertex positions.
+            let du = if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] {
+                std::f64::consts::PI * 2.0
+            } else {
+                // Project line vertices onto the cross-section plane to find ΔU.
+                let x_ax = crate::geom::any_perpendicular(axis);
+                let y_ax = axis.cross(x_ax).normalize();
+                let mut u_vals = Vec::new();
+                for ci in &edge_curve_indices {
+                    if let Some(Curve3::Line(_line)) = brep.geom.curves.get(*ci) {
+                        // Find the corresponding WireEdge to get direction+vertices.
+                        for we in &face.outer_wire.edges {
+                            if brep.geom.edge_curve.get(we.idx).copied().flatten() == Some(*ci) {
+                                let ei = we.idx;
+                                if let Some(edge) = brep.edges.get(ei) {
+                                    let vi = if we.forward { edge.start } else { edge.end };
+                                    if let Some(v) = brep.vertices.get(vi) {
+                                        let d = v.point - cyl.origin;
+                                        let u = d.dot(y_ax).atan2(d.dot(x_ax));
+                                        u_vals.push(u);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                if u_vals.len() == 2 {
+                    let du_raw = u_vals[1] - u_vals[0];
+                    // Normalize to [0, 2π)
+                    let du_norm = du_raw.rem_euclid(std::f64::consts::PI * 2.0);
+                    let result = if du_norm > 1e-14 { du_norm } else { std::f64::consts::PI * 2.0 };
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        eprintln!("[CYL_RECT_DU] u_vals={:?} du_raw={} du_norm={} result={}", u_vals, du_raw, du_norm, result);
+                    }
+                    result
+                } else {
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        eprintln!("[CYL_RECT_DU] u_vals.len={} fallback to 2π", u_vals.len());
+                    }
+                    std::f64::consts::PI * 2.0 // fallback
+                }
+            };
+            // Validate the circle centers lie on the cylinder axis.
+            let r0 = (circle_centers[0] - cyl.origin).cross(axis).length();
+            let r1 = (circle_centers[1] - cyl.origin).cross(axis).length();
+            if du > 1e-14 && dv > 1e-14 && du.is_finite() && dv.is_finite()
+                && r0 < 1e-8 && r1 < 1e-8
+            {
+                if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                    eprintln!("[CYL_RECT_FAST] R={} du={} dv={} area={}", cyl.radius, du, dv, cyl.radius * du * dv);
+                }
+                return Some(cyl.radius * du * dv);
+            } else if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                eprintln!("[CYL_RECT_FAST] rejected: du={} dv={} r0={} r1={}", du, dv, r0, r1);
+            }
+        }
+    }
 
     let wire_uv_area = |wire: &Wire| -> Option<f64> {
         let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, 512);
@@ -2291,7 +2422,7 @@ fn try_analytic_face_surface_area(
                     // Always use the trimmed-face path: it handles
                     // full rectangles and trimmed patches correctly
                     // via envelope integration / GL / shoelace.
-                    let result = try_cylinder_trimmed_face_area(c, brep, face);
+                    let result = try_cylinder_trimmed_face_area(c, brep, face, face_flat_idx);
                     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
                         eprintln!("[CYL_ANALYTIC] fi={} analytic={:?}",
                             face_flat_idx, result);
