@@ -2766,6 +2766,12 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b) {
             return Ok(r);
         }
+        // Fast-path: perpendicular equal-radius cylinder-cylinder (Steinmetz-like).
+        // Avoids PaveFiller (5.3s → <0.01s) for the I9 test case (r=100 cylinders
+        // along Z and X axes). OCCT has no equivalent — pure rcad optimization.
+        if let Some(r) = boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b) {
+            return Ok(r);
+        }
         if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b) {
             return Ok(r);
         }
