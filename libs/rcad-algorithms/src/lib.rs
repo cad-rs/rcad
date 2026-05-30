@@ -6458,7 +6458,10 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                         //   confirm same-domain.
                         let overlap_ratio = overlap as f64 / min_edges as f64;
                         let strong_same_domain = matches!(same_domain_from_geom, Some(true));
-                        if overlap == min_edges || (strong_same_domain && overlap_ratio >= 0.75) {
+                        let same_or_contained = overlap == min_edges
+                            || (strong_same_domain && overlap_ratio >= 0.60);
+                        let uv_domain_heuristic = false; // Placeholder for future UV-domain check
+                        if same_or_contained || uv_domain_heuristic {
                             // Validate this is a true internal duplicate, not pseudo-internal.
                             let is_true_duplicate = is_true_internal_duplicate(
                                 &out, si, shi, fi, fj, &edges_i, &edges_j,
@@ -6493,6 +6496,70 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
                 } else {
                     break;
                 }
+            }
+        }
+    }
+
+    // Void shell detection: remove shells fully enclosed within another shell
+    // (OCCT's BOPAlgo_BuilderSolid eliminates these during construction;
+    // rcad's BooleanBuilder may leave them behind for post-processing to clean up).
+    {
+        for si in 0..out.solids.len() {
+            if out.solids[si].shells.len() < 2 {
+                continue;
+            }
+            // Compute bounding box for each shell
+            let shell_bboxes: Vec<Option<(glam::DVec3, glam::DVec3)>> = out.solids[si]
+                .shells
+                .iter()
+                .map(|sh| {
+                    let mut min_pt = glam::DVec3::splat(f64::MAX);
+                    let mut max_pt = glam::DVec3::splat(f64::MIN);
+                    let mut has_verts = false;
+                    for f in &sh.faces {
+                        for we in &f.outer_wire.edges {
+                            if let Some(e) = out.edges.get(we.idx) {
+                                if let Some(v) = out.vertices.get(e.start) {
+                                    min_pt = min_pt.min(v.point);
+                                    max_pt = max_pt.max(v.point);
+                                    has_verts = true;
+                                }
+                                if let Some(v) = out.vertices.get(e.end) {
+                                    min_pt = min_pt.min(v.point);
+                                    max_pt = max_pt.max(v.point);
+                                    has_verts = true;
+                                }
+                            }
+                        }
+                    }
+                    if has_verts { Some((min_pt, max_pt)) } else { None }
+                })
+                .collect();
+
+            // Find shells to remove: shells whose bbox is fully inside another shell's bbox
+            let mut to_remove: Vec<usize> = vec![];
+            for i in 0..out.solids[si].shells.len() {
+                let Some((i_min, i_max)) = &shell_bboxes[i] else { continue };
+                if i == 0 { continue; } // keep first shell (typically outer)
+                for j in 0..out.solids[si].shells.len() {
+                    if i == j { continue; }
+                    let Some((j_min, j_max)) = &shell_bboxes[j] else { continue };
+                    // Check if shell i is fully inside shell j
+                    if i_min.x >= j_min.x - 1e-7 && i_max.x <= j_max.x + 1e-7
+                        && i_min.y >= j_min.y - 1e-7 && i_max.y <= j_max.y + 1e-7
+                        && i_min.z >= j_min.z - 1e-7 && i_max.z <= j_max.z + 1e-7
+                    {
+                        to_remove.push(i);
+                        break;
+                    }
+                }
+            }
+            // Remove in reverse order to preserve indices
+            to_remove.sort_unstable();
+            to_remove.dedup();
+            for idx in to_remove.into_iter().rev() {
+                out.solids[si].shells.remove(idx);
+                total_removed += 1; // approximate — shell removal may remove multiple faces
             }
         }
     }
