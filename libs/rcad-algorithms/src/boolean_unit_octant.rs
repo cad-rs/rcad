@@ -4388,13 +4388,117 @@ fn brep_difference_sphere_minus_box() -> BRep {
 }
 
 /// Fast path: union unit sphere + unit cube (corner configuration).
+/// Build a mesh-based BRep for sphere ∪ box (general case).
+/// Points on the sphere surface OUTSIDE the box become the spherical face.
+/// Points on each box face OUTSIDE the sphere become the planar faces.
+fn try_union_sphere_box_pair(sphere: &BRep, box_: &BRep) -> Option<BRep> {
+    let (sp_center, sp_radius) = sphere_center_r(sphere)?;
+    let bx = try_as_box(box_)?;
+    let planes = bx.planes();
+
+    // Quick empty check
+    let sp_min = sp_center - DVec3::splat(sp_radius);
+    let sp_max = sp_center + DVec3::splat(sp_radius);
+    let [bmin, bmax] = box_.bounding_box()?;
+    if sp_max.x < bmin.x - 1e-8 || sp_min.x > bmax.x + 1e-8
+        || sp_max.y < bmin.y - 1e-8 || sp_min.y > bmax.y + 1e-8
+        || sp_max.z < bmin.z - 1e-8 || sp_min.z > bmax.z + 1e-8
+    { return None; }
+
+    let inside_box = |p: DVec3| -> bool {
+        planes.iter().all(|(o, n)| (p - o).dot(*n) <= crate::tolerance::TOLERANCE_ABS)
+    };
+    let inside_sphere = |p: DVec3| -> bool {
+        (p - sp_center).length_squared() <= sp_radius * sp_radius + 1e-10
+    };
+
+    let empty_wire = || Wire { edges: vec![] };
+    let mut verts: Vec<Vertex> = vec![];
+    let mut add_v = |p: DVec3| -> usize {
+        for (i, v) in verts.iter().enumerate() { if (v.point - p).length() < 1e-12 { return i; } }
+        let idx = verts.len(); verts.push(Vertex { point: p }); idx
+    };
+    let mut tris: Vec<[usize; 3]> = Vec::new();
+
+    // ── Spherical face: UV grid, keep points OUTSIDE the box ──
+    use std::f64::consts::{PI, TAU};
+    const NS: usize = 48; const NP: usize = 24;
+    let mut sg = vec![vec![0usize; NS + 1]; NP + 1];
+    for pj in 0..=NP { for ti in 0..=NS {
+        let (sinp, cosp) = (pj as f64 * PI / NP as f64).sin_cos();
+        let (sint, cost) = (ti as f64 * TAU / NS as f64).sin_cos();
+        let p = sp_center + sp_radius * DVec3::new(sinp*cost, sinp*sint, cosp);
+        sg[pj][ti] = if !inside_box(p) { add_v(p) } else { 0 };
+    }}
+    for pj in 0..NP { for ti in 0..NS {
+        match (sg[pj][ti], sg[pj][ti+1], sg[pj+1][ti], sg[pj+1][ti+1]) {
+            (0,_,_,_)|(_,0,_,_)|(_,_,0,_)|(_,_,_,0) => {}
+            (a,b,c,d) => { tris.push([a,b,d]); tris.push([a,d,c]); }
+        }
+    }}
+
+    // ── Box face grids: each face plane, keep points OUTSIDE the sphere ──
+    let faces_data: [(DVec3, f64, DVec3); 6] = [
+        (bx.axes[0],  bx.extents[0],  bx.axes[0]),  // u+ face
+        (-bx.axes[0], bx.extents[0], -bx.axes[0]),  // u- face
+        (bx.axes[1],  bx.extents[1],  bx.axes[1]),  // v+ face
+        (-bx.axes[1], bx.extents[1], -bx.axes[1]),  // v- face
+        (bx.axes[2],  bx.extents[2],  bx.axes[2]),  // w+ face
+        (-bx.axes[2], bx.extents[2], -bx.axes[2]),  // w- face
+    ];
+    const NB: usize = 12;
+    for (axis, ext, _norm) in &faces_data {
+        let fcenter = bx.center + ext * axis;
+        // 2D basis on the face
+        let ax1 = if axis.dot(bx.axes[0]).abs() > 0.9 { bx.axes[1] } else { bx.axes[0] };
+        let ax2 = axis.cross(ax1).normalize();
+        let ax1 = axis.cross(ax2).normalize();
+        let mut fg = vec![vec![0usize; NB + 1]; NB + 1];
+        for i in 0..=NB { for j in 0..=NB {
+            let u = (i as f64/NB as f64 - 0.5) * 2.0 * ext;
+            let v = (j as f64/NB as f64 - 0.5) * 2.0 * ext;
+            let p = fcenter + u*ax1 + v*ax2;
+            // Check point is on this box face
+            let proj = |a: DVec3| (p - bx.center).dot(a).abs();
+            let on_face = proj(bx.axes[0]) <= bx.extents[0] + 1e-8
+                && proj(bx.axes[1]) <= bx.extents[1] + 1e-8
+                && proj(bx.axes[2]) <= bx.extents[2] + 1e-8;
+            fg[i][j] = if on_face && !inside_sphere(p) { add_v(p) } else { 0 };
+        }}
+        for i in 0..NB { for j in 0..NB {
+            match (fg[i][j], fg[i][j+1], fg[i+1][j], fg[i+1][j+1]) {
+                (0,_,_,_)|(_,0,_,_)|(_,_,0,_)|(_,_,_,0) => {}
+                (a,b,c,d) => { tris.push([a,b,d]); tris.push([a,d,c]); }
+            }
+        }}
+    }
+
+    if tris.is_empty() { return None; }
+    let faces = vec![Face {
+        outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO,
+        triangles: tris, sample_point: None, mesh_dirty: false,
+    }];
+    let geom = GeomStore {
+        curves: vec![], surfaces: vec![], curve2ds: vec![], edge_curve: vec![],
+        face_surface: vec![None], edge_pcurves: vec![], edge_curve_range: vec![],
+        edge_degenerated: vec![], vertex_tolerance: vec![], edge_tolerance: vec![],
+        face_tolerance: vec![], curve2d_range: vec![], face_surface_range: vec![None],
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
+    Some(BRep { vertices: verts, edges: vec![],
+        solids: vec![Solid { shells: vec![Shell { faces }] }], geom, compound: None, compsolid: None })
+}
+
 pub fn try_union_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    // Fast path: existing specific case (unit sphere + unit cube)
     if (is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b))
         || (is_unit_sphere_at_origin(b) && is_pos_unit_cube_0_1(a))
     {
         return Some(brep_union_unit_sphere_unit_cube());
     }
-    None
+    // General case: any sphere + any box (via detection + mesh-based BRep)
+    try_union_sphere_box_pair(a, b)
+        .or_else(|| try_union_sphere_box_pair(b, a))
 }
 
 /// Fast path: difference sphere − box (corner configuration: unit sphere at origin, box [0,1]³).
