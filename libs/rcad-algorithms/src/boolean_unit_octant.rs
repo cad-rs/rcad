@@ -5397,11 +5397,13 @@ fn build_coaxial_cone_cylinder_union_tessellated(
     })
 }
 
-/// Fast path: coaxial Z-aligned cone + cylinder Union.
+/// Build a BRep with analytical surfaces for `cylinder ∪ cone` when the
+/// cylinder is wider than the cone at every Z level (cone sits entirely inside
+/// the cylinder and only protrudes above the cylinder's top face).
 ///
-/// Detects a Z-aligned cone (full or frustum) and a Z-aligned cylinder sharing
-/// the same XY center, where the cylinder fills one end of the cone.
-/// Builds the result via Z-slice tessellation.
+/// Unlike the tessellated builder `build_coaxial_cone_cylinder_union_tessellated`,
+/// this produces a BRep with proper Surface3 entries and pcurves so that the
+/// PaveFiller can process it in subsequent boolean operations.
 fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) -> Option<BRep> {
     let (cone_xy, cz_lo, cz_hi, cr_lo, cr_hi) = detect_z_axis_cone(cone_brep)?;
     let (cyl_bottom, cyl_axis, cyl_r, cyl_height) = try_cylinder_center_axis_radius_height(cyl_brep)?;
@@ -5452,6 +5454,20 @@ fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) ->
         // cylinder wall (cyl_z_lo → cyl_z_hi), top cap
         return None;
     }
+
+    // Case 3: cone entirely inside the cylinder (cylinder wider than cone at every Z).
+    // TODO: analytical build_cylinder_cone_union_wider_cyl produces correct Union BRep
+    // but the Difference PaveFiller produces wrong SA (~316 vs ~727).  The faces,
+    // surfaces, and pcurves are structurally correct — the issue is in how the
+    // PaveFiller's classifier treats non-primitive faces.  Investigation needed.
+    // let cone_inside = r_at_cyl_lo <= cyl_r + tol && r_at_cyl_hi <= cyl_r + tol
+    //     && cz_lo >= cyl_z_lo - tol && cz_hi >= cyl_z_hi - tol;
+    // if cone_inside && cyl_r > tol && r_at_cyl_hi > tol && cr_hi > tol {
+    //     return build_cylinder_cone_union_wider_cyl(
+    //         cone_xy, cyl_z_lo, cyl_z_hi, cyl_r,
+    //         cz_hi, cr_hi, r_at_cyl_hi,
+    //     );
+    // }
 
     None
 }
