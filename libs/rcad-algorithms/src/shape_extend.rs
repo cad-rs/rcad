@@ -8,7 +8,6 @@
 //! - `ShapeExtend_MsgRegistrator`: Message registration with shape context
 //! - `ShapeExtend_Explorer`: Extended shape exploration utilities
 
-use crate::tolerance::*;
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Wire};
 use rcad_kernel::{BRep, vertex_indices};

@@ -438,7 +438,7 @@ impl ResultBuilder {
         } else {
             sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64
         };
-        let mut area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
+        let area = Self::polygon_signed_area_on_normal(&sub.boundary, normal);
 
         let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
         outer_sig.sort_unstable();
@@ -866,7 +866,7 @@ fn cmp_boolean_emit_order(
     a: &(SubFace, bool, FaceOrigin),
     b: &(SubFace, bool, FaceOrigin),
 ) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
+    
     let rank = |o: &FaceOrigin| -> (u8, usize) {
         match o {
             FaceOrigin::FromA(i) => (0, *i),
@@ -966,9 +966,9 @@ fn classify_subface_against_box(
     let require_all_inside = op == BooleanOpType::Intersection
         || (op == BooleanOpType::Difference && source == SourceSide::B);
 
-    let (bmin_x, bmax_x) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.x), mx.max(v.x)));
-    let (bmin_y, bmax_y) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.y), mx.max(v.y)));
-    let (bmin_z, bmax_z) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.z), mx.max(v.z)));
+    let (_bmin_x, _bmax_x) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.x), mx.max(v.x)));
+    let (_bmin_y, _bmax_y) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.y), mx.max(v.y)));
+    let (_bmin_z, _bmax_z) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.z), mx.max(v.z)));
 
     for &v in &sub.boundary {
         let inside = v.x >= min_x - tol && v.x <= max_x + tol
@@ -4012,7 +4012,7 @@ impl<'a> BooleanBuilder<'a> {
                 0.0 // Standard seam at u=0 for cylinder/cone
             };
 
-            let pre_seam_count = uv_polygons.len();
+            let _pre_seam_count = uv_polygons.len();
             uv_polygons = uv_polygons
                 .into_iter()
                 .flat_map(|poly| {
@@ -6426,10 +6426,10 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                 let t_b = if elen2 > 1e-30 { (pt_b - e_start).dot(evec) / elen2 } else { 0.0 };
                 // Add polygon vertices between pt_a and pt_b (sorted by t).
                 let (t_lo, t_hi, rev) = if t_a < t_b { (t_a, t_b, false) } else { (t_b, t_a, true) };
-                let mut mids: Vec<DVec2> = Vec::new();
+                let _mids: Vec<DVec2> = Vec::new();
                 // Check the polygon edge for interior vertices (not the crossing points).
-                let vi = e_i;
-                let vj = (e_i + 1) % n;
+                let _vi = e_i;
+                let _vj = (e_i + 1) % n;
                 // Walk the polygon from vi to vj, collecting vertex parameters.
                 let mut verts_on_edge: Vec<(f64, DVec2)> = Vec::new();
                 // The endpoints are crossings — don't add them here.

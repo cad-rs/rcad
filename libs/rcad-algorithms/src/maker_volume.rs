@@ -5,7 +5,6 @@
 //! a region mask, an explicit cell index list, or a [`CellExpr`] boolean
 //! expression.
 
-use crate::tolerance::*;
 use std::collections::HashSet;
 
 use rcad_kernel::BRep;

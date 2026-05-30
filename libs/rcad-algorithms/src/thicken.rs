@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::SurfaceEval;
-use rcad_kernel::geom::{any_perpendicular, Curve3, Line3, Surface3};
+use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::tolerance::*;

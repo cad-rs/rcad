@@ -21,13 +21,12 @@ use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::Surface3;
-use rcad_kernel::any_perpendicular;
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use crate::brep_check::{check_orientation_consistency, diagnose_same_parameter, diagnose_same_range};
 use crate::tolerance::{
     TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_FLOAT_DEDUP,
-    TOLERANCE_FLOAT_LOOSE, TOLERANCE_LEN_MIN, TOLERANCE_LINEAR_ULTRA_STRICT, TOLERANCE_MESH_LEGACY,
-    TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_MODEL_SCALE_MIN, TOLERANCE_RETRY_LADDER_COARSE,
+    TOLERANCE_FLOAT_LOOSE, TOLERANCE_LINEAR_ULTRA_STRICT, TOLERANCE_MESH_LEGACY,
+    TOLERANCE_METRIC_SQ_NEAR_ZERO, TOLERANCE_RETRY_LADDER_COARSE,
     TOLERANCE_RETRY_LADDER_MID,
 };
 

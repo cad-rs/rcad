@@ -1,5 +1,4 @@
 use glam::DVec3;
-use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;

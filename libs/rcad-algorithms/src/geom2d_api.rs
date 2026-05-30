@@ -368,7 +368,7 @@ pub fn circles_tangent_to_two_circles_and_line(
     let v1 = p0 - o1;
     let v2 = p0 - o2;
     let t_dot_v1 = t.dot(v1);
-    let t_dot_v2 = t.dot(v2);
+    let _t_dot_v2 = t.dot(v2);
     let n_dot_v1 = n.dot(v1);
     let n_dot_v2 = n.dot(v2);
     let len_v1_sq = v1.length_squared();

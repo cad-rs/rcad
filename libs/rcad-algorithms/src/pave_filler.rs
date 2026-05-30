@@ -2212,8 +2212,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder};
         use inttools::pcurve_derive::{
-            circle_pcurve_on_cylinder, ellipse_pcurve_on_cylinder, line_pcurve_on_cylinder,
-            line_theta_on_cylinder, polyline_pcurve_by_projection,
+            circle_pcurve_on_cylinder, ellipse_pcurve_on_cylinder, line_pcurve_on_cylinder, polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;
 
@@ -2569,7 +2568,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::pcurve_derive::{
             circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_cylinder,
-            ellipse_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_cylinder,
+            ellipse_pcurve_on_plane, line_pcurve_on_cylinder,
             line_pcurve_on_plane,
         };
         use inttools::plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder};
@@ -3082,7 +3081,7 @@ impl<'a> PaveFiller<'a> {
     ) {
         use inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};
         use inttools::pcurve_derive::{
-            circle_pcurve_on_cone, circle_pcurve_on_cylinder, fallback_pcurve_by_projection,
+            circle_pcurve_on_cone, circle_pcurve_on_cylinder,
             polyline_pcurve_by_projection,
         };
         use std::f64::consts::TAU;

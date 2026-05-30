@@ -12,7 +12,6 @@
 use glam::DVec3;
 use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Circle3, Plane, ToroidalSurface};
-use rcad_kernel::SurfaceEval;
 
 use crate::tolerance::*;
 
@@ -359,7 +358,7 @@ pub fn intersect_plane_torus_skew(
             let use_plus = (p_first - p_plus).length_squared()
                 < TOLERANCE_VEC_SQ_MIN;
 
-            let pts_for_eval = branch.clone();
+            let _pts_for_eval = branch.clone();
             let eval_fn = move |u_mid: f64| -> Option<DVec3> {
                 let (cu, su) = (u_mid.cos(), u_mid.sin());
                 let bu = cu * nx + su * ny;

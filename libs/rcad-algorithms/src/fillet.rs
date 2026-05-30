@@ -1648,7 +1648,7 @@ fn trim_face_at_vertex(
     let mut new_edges: Vec<WireEdge> = Vec::with_capacity(wire.edges.len());
 
     for we in &wire.edges {
-        let e = &brep.edges[we.idx];
+        let _e = &brep.edges[we.idx];
         // Check which end touches the old vertex, in wire direction.
         let (ws_v, we_v) = wire_edge_vertices(brep, we);
         if ws_v == old_vertex {

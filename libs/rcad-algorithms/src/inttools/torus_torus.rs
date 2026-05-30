@@ -441,7 +441,7 @@ fn intersect_skew_torus_torus(
         cur_pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         if branches.is_empty() {
-            for &(v, p) in &cur_pts {
+            for &(_v, p) in &cur_pts {
                 branches.push(vec![(u_cur, p)]);
             }
         } else {

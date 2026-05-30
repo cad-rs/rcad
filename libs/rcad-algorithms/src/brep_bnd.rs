@@ -29,7 +29,6 @@
 //! assert!((bbox.size().z - 3.0).abs() < TOLERANCE_MESH_LEGACY);
 //! ```
 
-use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};

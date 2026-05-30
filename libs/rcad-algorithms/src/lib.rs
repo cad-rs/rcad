@@ -1,6 +1,5 @@
 // OCCT-style port: many helpers and data paths are staged for parity; keep CI output clean.
 #![allow(dead_code, reason = "staged OCCT-parity helpers and tables")]
-#![allow(unused, reason = "large generated-style sources")]
 #![allow(
     private_interfaces,
     reason = "internal fillet/tcol types re-exported at crate root"

@@ -39,7 +39,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
     BRep,
-    geom::{any_perpendicular, Curve3, Surface3, Line3, Plane},
+    geom::{Curve3, Surface3, Line3, Plane},
     topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
 use std::collections::HashMap;

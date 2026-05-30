@@ -57,7 +57,7 @@ use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, GeomStore, PCurve};
 use crate::bvh::Aabb;
-use crate::tolerance::{TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_MID};
+use crate::tolerance::TOLERANCE_MESH_LEGACY;
 
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Error Types

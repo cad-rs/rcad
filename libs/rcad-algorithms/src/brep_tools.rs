@@ -23,11 +23,9 @@
 //! let restored = read_brep_from_string(&json).unwrap();
 //! ```
 
-use crate::tolerance::*;
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, PrimitiveSolid, Surface3};
-use std::collections::{HashMap, HashSet};
+use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -1644,7 +1642,7 @@ fn face_triangle_centroid(face: &Face) -> DVec3 {
     let mut sum = DVec3::ZERO;
     let mut count = 0usize;
     for tri in &face.triangles {
-        let local_vert_id = |vi: usize| {
+        let _local_vert_id = |vi: usize| {
             // tri[x] is a flat-face vertex index; decode it.
             vi
         };
@@ -1653,7 +1651,7 @@ fn face_triangle_centroid(face: &Face) -> DVec3 {
         if face.triangles.is_empty() {
             break;
         }
-        sum += tri.iter().map(|&vi| {
+        sum += tri.iter().map(|&_vi| {
             // The triangle indices reference positions from the boundary/wire.
             // This is a fallback 鈥?we just average them.
             DVec3::ZERO

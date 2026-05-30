@@ -2701,7 +2701,7 @@ fn offset_vertex_curved_plane(
     curved_face_idx: usize,
     plane_face_indices: &[usize],
     distance: f64,
-    shell: &Shell,
+    _shell: &Shell,
 ) -> Option<DVec3> {
     let surf_idx = brep.geom.face_surface.get(curved_face_idx).and_then(|s| *s)?;
     let curved_surf = brep.geom.surfaces.get(surf_idx)?;
@@ -3598,8 +3598,8 @@ pub fn create_sewing_face(
         if count > 0 { sum.normalize_or(DVec3::Z) * distance } else { DVec3::Z * distance }
     };
 
-    let off_p_start = p_start + start_offset_avg;
-    let off_p_end = p_end + end_offset_avg;
+    let _off_p_start = p_start + start_offset_avg;
+    let _off_p_end = p_end + end_offset_avg;
 
     // Compute the separation direction perpendicular to both faces.
     // For two adjacent planar faces, the sewing face spans the gap between
@@ -4849,9 +4849,9 @@ pub fn offset_shell_with_options(
                             let ref_dir = if normal.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
                             let u_axis = normal.cross(ref_dir).normalize();
                             let v_axis = normal.cross(u_axis).normalize();
-                            let proj_start = off_circle.center + off_circle.radius
+                            let _proj_start = off_circle.center + off_circle.radius
                                 * (u_axis * ta.cos() + v_axis * ta.sin());
-                            let proj_end = off_circle.center + off_circle.radius
+                            let _proj_end = off_circle.center + off_circle.radius
                                 * (u_axis * tb.cos() + v_axis * tb.sin());
                             // Full-circle edges (cap faces) keep the merged vertex
                             // so the edge is a self-loop detected and split below.
@@ -4981,7 +4981,7 @@ pub fn offset_shell_with_options(
         return Err(OffsetError::EmptyResult);
     }
 
-    let n_result = result.solids.first()
+    let _n_result = result.solids.first()
         .and_then(|s| s.shells.first())
         .map(|sh| sh.faces.len())
         .unwrap_or(0);

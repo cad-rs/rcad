@@ -75,10 +75,10 @@ pub fn intersect_sphere_torus(
 /// (0, z_s).  Intersection of these two circles gives one or two (ρ, z)
 /// solutions, each producing a 3D circle on the torus surface.
 fn intersect_sphere_torus_on_axis(
-    torus: &ToroidalSurface,
-    sphere: &SphericalSurface,
-    axis: DVec3,
-    z_s: f64,
+    _torus: &ToroidalSurface,
+    _sphere: &SphericalSurface,
+    _axis: DVec3,
+    _z_s: f64,
 ) -> SphereTorusResult {
     // On-axis case is handled by intss.rs torus_x_sphere_on_axis.
     // The skew solver in intersect_skew_sphere_torus also handles on-axis correctly
@@ -209,7 +209,7 @@ pub fn intersect_skew_sphere_torus(
         cur_pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         if branches.is_empty() {
-            for &(v, p) in &cur_pts {
+            for &(_v, p) in &cur_pts {
                 branches.push(vec![(u_cur, p)]);
             }
         } else {

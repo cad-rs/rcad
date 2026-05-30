@@ -32,7 +32,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
-use rcad_kernel::{any_perpendicular, BRep, Face};
+use rcad_kernel::{BRep, Face};
 use crate::bvh::{Aabb, Bvh};
 use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};

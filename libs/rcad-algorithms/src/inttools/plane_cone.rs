@@ -266,7 +266,7 @@ fn build_hyperbola(
     apex_to_plane: f64,
     axis_n: DVec3,
     cos_beta: f64,
-    sin_beta: f64,
+    _sin_beta: f64,
     sin_angle: f64,
 ) -> PlaneConicalResult {
     // Plane cuts both nappes → two-branch hyperbola.

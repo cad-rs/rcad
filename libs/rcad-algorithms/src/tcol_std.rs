@@ -4,7 +4,6 @@
 //! These are 1-based indexed arrays, sequences, maps, and lists for compatibility
 //! with OCCT algorithms.
 
-use crate::tolerance::*;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 

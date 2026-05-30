@@ -10,7 +10,6 @@
 //! Derivatives are computed via finite differences for generality.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::BRep;
 

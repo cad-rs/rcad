@@ -12,7 +12,6 @@
 //! - **Variable spacing pattern**: non-uniform spacing along a direction
 //! - **Path pattern**: pattern along a curve with optional alignment
 
-use crate::tolerance::*;
 use glam::{DMat4, DVec3};
 use rcad_kernel::{any_perpendicular, BRep};
 use rcad_kernel::geom::{

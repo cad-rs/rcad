@@ -360,7 +360,7 @@ fn intersect_skew_torus_cone(
 
         if branches.is_empty() {
             // Start a branch for each point at this u
-            for &(v, p) in &cur_pts {
+            for &(_v, p) in &cur_pts {
                 branches.push(vec![(u_cur, p)]);
             }
         } else {

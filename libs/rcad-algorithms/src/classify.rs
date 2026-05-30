@@ -507,7 +507,7 @@ fn classify_with_multi_ray_voting(
     let mut out_votes = 0u32;
     let mut valid_rays = 0u32;
 
-    for (ri, ray_dir) in ray_dirs.iter().enumerate() {
+    for (_ri, ray_dir) in ray_dirs.iter().enumerate() {
         let cr = ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol, workspace_fuzzy);
         match cr {
             Some(Classification::In) => {

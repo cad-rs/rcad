@@ -23,7 +23,7 @@
 //! surface area / volume do not yet match (`checkprops -s`); next step is sphere UV
 //! multi-trim / classification, not missing FF pairs.
 
-use glam::{DAffine3, DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
@@ -434,7 +434,7 @@ fn build_extruded_brep(outline_cw: &[(f64, f64)], z_min: f64, z_max: f64) -> Opt
     // Top edges (CCW — reversed from CW): tv[i+1] → tv[i]
     let mut te = Vec::with_capacity(n);
     for i in 0..n {
-        let j = (i + 1) % n;
+        let _j = (i + 1) % n;
         // Reverse: i→j in the outline corresponds to j→i for the top face
         // Actually, for the top face, the wire goes in the OPPOSITE direction
         // around the outline. So edge at top position i connects tv[next] → tv[i]
@@ -1633,7 +1633,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     }
 
     // ── SA-inflation guard: try sew, fall back to fuse if inflated ──
-    let slab_sa_sum: f64 = slabs.iter().map(|s| surface_area(s)).sum();
+    let _slab_sa_sum: f64 = slabs.iter().map(|s| surface_area(s)).sum();
     let slab_vol_sum: f64 = slabs.iter().map(|s| volume(s)).sum();
     let expected_union_sa = surface_area(a) + surface_area(b) - surface_area(&inter);
 
@@ -2499,7 +2499,7 @@ fn build_sphere_clipped_by_z_planes(
     };
 
     // ── Build geometry store ───────────────────────────────
-    let mut surf_idx_sphere = 0usize;
+    let surf_idx_sphere = 0usize;
     let mut surf_idx_top: Option<usize> = None;
     let mut surf_idx_bot: Option<usize> = None;
 
@@ -3013,9 +3013,9 @@ fn build_cylinder_torus_intersection_brep(
     R: f64,
     r_m: f64,
 ) -> Option<BRep> {
-    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::geom::{Curve2d, Line2d};
     use rcad_kernel::PCurve;
-    use std::f64::consts::{PI, TAU};
+    use std::f64::consts::TAU;
 
     let two_pi = TAU;
 
@@ -3027,8 +3027,8 @@ fn build_cylinder_torus_intersection_brep(
     }
     let d = d_sq.sqrt();
 
-    let mut z_low = (tor_z - d).max(z_lo);
-    let mut z_high = (tor_z + d).min(z_hi);
+    let z_low = (tor_z - d).max(z_lo);
+    let z_high = (tor_z + d).min(z_hi);
     if z_high - z_low < 1e-12 {
         return None;
     }
@@ -3042,7 +3042,7 @@ fn build_cylinder_torus_intersection_brep(
         // cos(phi_low) = beta (on the torus surface), so phi_low preserves cos = beta
         // sin(phi_low) = sin_low (negative for lower region)
         // phi_low = 2π - acos(beta) = 2π - phi_0 when centered, or need to compute
-        let phi_low = (if sin_low < 0.0 { two_pi } else { 0.0 }) + (-sin_low).asin();
+        let _phi_low = (if sin_low < 0.0 { two_pi } else { 0.0 }) + (-sin_low).asin();
         // No, this is getting complex. Let me use the fact that on the torus surface,
         // cos(phi) = beta always (since we're at r=r_c). So phi = ±phi_0 + 2π·k.
         // For the lower part, sin(phi) < 0, so phi = 2π - phi_0 (if phi_0 > 0).
@@ -3793,7 +3793,7 @@ fn brep_eighth_of_unit_ball() -> BRep {
     let o0 = add_vertex(&mut vertices, DVec3::ZERO);
     let _ = add_vertex(&mut vertices, DVec3::X);
     let _ = add_vertex(&mut vertices, DVec3::Y);
-    let mut z0_arc: Vec<usize> = (0..=NA)
+    let z0_arc: Vec<usize> = (0..=NA)
         .map(|k| {
             let t = (k as f64 / NA as f64) * FRAC_PI_2;
             add_vertex(&mut vertices, DVec3::new(t.cos(), t.sin(), 0.0))
@@ -4274,7 +4274,7 @@ fn build_cylinder_torus_difference_brep(
 ) -> Option<BRep> {
     use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
     use rcad_kernel::PCurve;
-    use std::f64::consts::{PI, TAU};
+    use std::f64::consts::TAU;
 
     let two_pi = TAU;
 
@@ -4507,7 +4507,7 @@ fn build_torus_minus_cylinder_brep(
     z_low: f64, z_high: f64,
     R: f64, rm: f64, tor_z: f64,
 ) -> Option<BRep> {
-    use rcad_kernel::geom::{Circle2d, Curve2d, Line2d};
+    use rcad_kernel::geom::{Curve2d, Line2d};
     use rcad_kernel::PCurve;
     use std::f64::consts::{PI, TAU};
 
@@ -5522,7 +5522,7 @@ fn build_same_center_tori_union_mesh(tori: &[ToroidalSurface]) -> Option<BRep> {
     let mut triangles: Vec<[usize; 3]> = Vec::new();
     let tol = TOLERANCE_ABS * tori[0].major_radius.max(tori[0].minor_radius).max(1.0);
 
-    let mut push_vertex = |p: DVec3, vertices: &mut Vec<Vertex>| -> usize {
+    let push_vertex = |p: DVec3, vertices: &mut Vec<Vertex>| -> usize {
         let idx = vertices.len();
         vertices.push(Vertex { point: p });
         idx
@@ -5812,7 +5812,7 @@ fn two_circle_union_ccw_pts(
 
     if d < tol || d + r1.min(r2) <= r1.max(r2) + tol {
         // Concentric or one contains the other — return the larger circle full.
-        let (c, r) = if r1 >= r2 { (c1, r1) } else { (c2, r2) };
+        let (_c, r) = if r1 >= r2 { (c1, r1) } else { (c2, r2) };
         let tau = std::f64::consts::TAU;
         let n = n1 + n2;
         return (0..=n).map(|i| {
@@ -5830,7 +5830,7 @@ fn two_circle_union_ccw_pts(
             let (s, c) = ang.sin_cos();
             c1 + DVec2::new(r1 * c, r1 * s)
         }).collect();
-        let last = *pts.last().unwrap_or(&c1);
+        let _last = *pts.last().unwrap_or(&c1);
         pts.extend((0..=n2).map(|i| {
             let ang = tau * i as f64 / n2 as f64;
             let (s, c) = ang.sin_cos();
@@ -5848,7 +5848,7 @@ fn two_circle_union_ccw_pts(
     let perp = DVec2::new(-dir.y, dir.x); // 90° CCW
 
     let ix = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
-    let iy = (r1 * r1 - ix * ix).max(0.0).sqrt();
+    let _iy = (r1 * r1 - ix * ix).max(0.0).sqrt();
 
     let cos_t1 = (ix / r1).clamp(-1.0, 1.0);
     let theta1 = cos_t1.acos();                  // C1 arc half-angle
@@ -5982,7 +5982,7 @@ fn build_cone_cone_union_tessellated(
         let z1 = c1_z_hi;
         // Build wall using the single-circle polygon.
         let r_lo = c1_r(z0);
-        let r_hi = c1_r(z1);
+        let _r_hi = c1_r(z1);
         if r_lo > tol {
             let bot_poly = two_circle_union_ccw_pts(c1_xy, r_lo, c2_xy, c2_r(z0), N_ARC, N_ARC);
             // Remap to same vertex count as interface uses.
@@ -6390,7 +6390,7 @@ fn build_sphere_clipped_by_plane(
     center: DVec3, radius: f64,
     plane_normal: DVec3, plane_d: f64, // plane equation: plane_normal · p = plane_d (normal is unit)
 ) -> Option<BRep> {
-    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    use std::f64::consts::{PI, TAU};
     const NS: usize = 32; // theta divisions
     const NP: usize = 16; // phi divisions
 
@@ -6944,7 +6944,7 @@ fn build_cylindrical_wall_from_segs(
     corner: &impl Fn(f64, f64, f64) -> DVec3,
     pieces: &mut Vec<BRep>,
 ) {
-    let tol = TOLERANCE_LEN_MIN;
+    let _tol = TOLERANCE_LEN_MIN;
     for seg in merged {
         if seg.outside { continue; }
         let (pu, pv) = box_perimeter_uv(seg.t0, eu, ev);
@@ -7352,7 +7352,7 @@ fn rect_minus_circle_boundary(
 
             // Midpoint of CW arc (negative sweep)
             let mid_cw = a1 + (da_ccw - tau) * 0.5;
-            let mid_cw_pt = DVec2::new(cx + r * mid_cw.cos(), cy + r * mid_cw.sin());
+            let _mid_cw_pt = DVec2::new(cx + r * mid_cw.cos(), cy + r * mid_cw.sin());
 
             // Pick the arc whose midpoint is inside the rect
             let sweep = if point_in_rect(mid_ccw_pt) {
@@ -7613,7 +7613,7 @@ fn build_box_minus_cone_tessellated(
 
         // Remap vertex indices
         let mut remapped_tris = Vec::with_capacity(tris.len());
-        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        let local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
         for t in &tris {
             remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
         }
@@ -7633,7 +7633,7 @@ fn build_box_minus_cone_tessellated(
         let tris = crate::triangulate::triangulate_polygon(&poly_3d, DVec3::Z);
 
         let mut remapped_tris = Vec::with_capacity(tris.len());
-        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        let local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
         for t in &tris {
             remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
         }
@@ -7687,7 +7687,7 @@ pub fn try_difference_box_cone(a: &BRep, b: &BRep) -> Option<BRep> {
 
     // Check if there's any XY overlap at all Z levels in the range
     // (quick check: if the cone is entirely outside the box XY at all Z)
-    let max_dist_xy = (bmax.x - cx).max(cx - bmin.x)
+    let _max_dist_xy = (bmax.x - cx).max(cx - bmin.x)
         .max((bmax.y - cy).max(cy - bmin.y));
     let min_r = if cr_lo < cr_hi { cr_lo } else { cr_hi };
     if min_r < TOLERANCE_LEN_MIN {
@@ -7963,7 +7963,7 @@ fn build_cone_minus_box_tessellated(
         let tris = crate::triangulate::triangulate_polygon(&poly_3d, -DVec3::Z);
 
         let mut remapped_tris = Vec::with_capacity(tris.len());
-        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        let local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
         for t in &tris {
             remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
         }
@@ -7982,7 +7982,7 @@ fn build_cone_minus_box_tessellated(
         let tris = crate::triangulate::triangulate_polygon(&poly_3d, DVec3::Z);
 
         let mut remapped_tris = Vec::with_capacity(tris.len());
-        let mut local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
+        let local_verts: Vec<usize> = poly_3d.iter().map(|p| add_v(*p)).collect();
         for t in &tris {
             remapped_tris.push([local_verts[t[0]], local_verts[t[1]], local_verts[t[2]]]);
         }
@@ -8270,7 +8270,7 @@ fn build_cylinder_box_diff_tessellated(
 
         // Find which edges to traverse in CW order from end to start.
         let end_pos = cw_edge_order.iter().position(|e| *e == end_edge).unwrap_or(0);
-        let start_pos = cw_edge_order.iter().position(|e| *e == start_edge).unwrap_or(0);
+        let _start_pos = cw_edge_order.iter().position(|e| *e == start_edge).unwrap_or(0);
 
         // Traverse edges from end_edge CW until we've processed start_edge.
         let mut cur_pos = end_pos;
@@ -10259,7 +10259,7 @@ fn build_box_minus_cylinder_tessellated(
     // Pre-compute and remap all slice polygons (rect − circle boundary)
     let mut slices: Vec<Vec<DVec2>> = Vec::with_capacity(n_slices + 1);
     for i in 0..=n_slices {
-        let z = z_lo + dz * i as f64;
+        let _z = z_lo + dz * i as f64;
         let poly = build_rect_minus_circle_polygon(cu, cv, r, eu, ev);
         if poly.len() >= 3 {
             slices.push(remap_polygon_arclength(&poly, n_boundary, ref_pt));
@@ -10430,7 +10430,7 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     u_ax: DVec3, v_ax: DVec3, z_ax: DVec3,
     bc: DVec3,
     cu: f64, cv: f64, cyl_r: f64,
-    eu: f64, ev: f64, ew: f64,
+    _eu: f64, _ev: f64, ew: f64,
     inter_lo: f64, inter_hi: f64, cyl_z_lo: f64, cyl_z_hi: f64,
 ) -> Option<BRep> {
     let pi = std::f64::consts::PI;
@@ -10439,7 +10439,7 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     // Circle parameterisation: θ = 0 direction for Circle3{normal: z_ax}
     // and CylindricalSurface{axis: z_ax} (both use any_perpendicular).
     let x_ax = any_perpendicular(z_ax);
-    let y_ax = z_ax.cross(x_ax);
+    let _y_ax = z_ax.cross(x_ax);
 
     let circle_center_at = |z: f64| -> DVec3 {
         bc + cu * u_ax + cv * v_ax + z * z_ax
@@ -10537,9 +10537,9 @@ fn build_box_minus_cylinder_full_uv_z_fail(
 
     // Generators: along z_ax at θ = π (v1) and θ = 0 (v0).
     let p_bot_v1 = brep.vertices[wall_bot.v1].point;
-    let p_top_v1 = brep.vertices[wall_top.v1].point;
+    let _p_top_v1 = brep.vertices[wall_top.v1].point;
     let p_bot_v0 = brep.vertices[wall_bot.v0].point;
-    let p_top_v0 = brep.vertices[wall_top.v0].point;
+    let _p_top_v0 = brep.vertices[wall_top.v0].point;
     let gen_pi = make_edge(&mut brep,
         Curve3::Line(Line3 { origin: p_bot_v1, direction: z_ax }),
         0.0, wall_h, wall_bot.v1, wall_top.v1,
@@ -10628,7 +10628,7 @@ pub fn try_difference_box_minus_brep_with_hole(a: &BRep, b: &BRep) -> Option<BRe
 fn build_box_minus_cylinder_one_v_face_exit(
     box_brep: &BRep,
     bx: &BoxInfo,
-    u_idx: usize, v_idx: usize, z_idx: usize,
+    _u_idx: usize, _v_idx: usize, z_idx: usize,
     _cu: f64, _cv: f64, _cz: f64,
     eu: f64, ev: f64, ew: f64,
     bc: DVec3, u_ax: DVec3, v_ax: DVec3,
@@ -10967,7 +10967,7 @@ fn build_plane_chain(
     });
 
     let pos_from = indices.iter().position(|&i| i == p_from).unwrap();
-    let pos_to = indices.iter().position(|&i| i == p_to).unwrap();
+    let _pos_to = indices.iter().position(|&i| i == p_to).unwrap();
 
     // Build forward chain (increasing angle, wraps around)
     let mut fwd: Vec<usize> = Vec::new();

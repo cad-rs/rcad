@@ -41,7 +41,7 @@ use crate::tolerance::{
     max_face_tolerance_or_abs_pair,
     tessellation_merge_linear_from_brep, tessellation_merge_linear_from_two_breps, TOLERANCE_ABS,
     TOLERANCE_AREA_REL, TOLERANCE_CLAMP_MIN, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
-    TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_MID,
+    TOLERANCE_MESH_LEGACY,
 };
 use crate::triangulate::{mesh_brep, triangulate_polygon, TessellationParams};
 

@@ -279,7 +279,7 @@ pub fn remove_spurious_intersection_face_preserving_volume(
                 }
                 let of = &brep.solids[si].shells[shi].faces[local_fi];
                 let on = snap_almost_axis(of.normal.normalize_or_zero());
-                let (_axes) = match axis_aligned_world_plane_uv_axes(on) {
+                let _axes = match axis_aligned_world_plane_uv_axes(on) {
                     Some(a) => a,
                     None => return false,
                 };
@@ -1658,7 +1658,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
                 let mut replaced = false;
 
                 // Read face data for the current result face
-                let (face, normal, axes, point, pk, poly_uv, sa_before) = {
+                let (face, normal, _axes, point, pk, poly_uv, sa_before) = {
                     let shell = &out.solids[si].shells[shi];
                     if fi >= shell.faces.len() {
                         break;
@@ -1734,7 +1734,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
 
                     // Clip the result face polygon against each input polygon
                     let mut clipped = poly_uv.clone();
-                    for (pi, input_poly) in input_polys.iter().enumerate() {
+                    for (_pi, input_poly) in input_polys.iter().enumerate() {
                         let sh = crate::inttools::coplanar::sutherland_hodgman_clip(&clipped, input_poly);
                         clipped = sh;
                         if clipped.len() < 3 {
@@ -1981,7 +1981,7 @@ fn clip_one_coplanar_pair(
     }
 
     // 鈹€鈹€ Write phase: create face from overlap polygon 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    let [i_ax, j_ax] = axes;
+    let [_i_ax, _j_ax] = axes;
 
     // Convert to (f64, f64) rings for add_vertices_for_rings_with_eval
     let overlap_uv: Vec<(f64, f64)> = overlap.iter().map(|&c| (c[0], c[1])).collect();

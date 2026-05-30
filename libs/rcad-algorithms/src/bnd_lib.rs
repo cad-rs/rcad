@@ -31,9 +31,8 @@
 //! assert!(spheres_intersect(&sphere, &sphere));
 //! ```
 
-use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{any_perpendicular, BRep, Curve3, Surface3};
+use rcad_kernel::{BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 use crate::brep_bnd::BoundingBox;

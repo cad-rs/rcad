@@ -12,7 +12,6 @@
 //! Uses adaptive subdivision and numerical integration for robust point placement.
 
 use glam::DVec3;
-use rcad_kernel::any_perpendicular;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 
 use crate::tolerance::*;

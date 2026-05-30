@@ -29,13 +29,13 @@
 use glam::DVec3;
 use rcad_kernel::geom::{
     Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
-    Parabola3, Plane, SphericalSurface, Surface3, SurfaceEval, any_perpendicular,
+    Parabola3, Plane, SphericalSurface, Surface3, SurfaceEval,
 };
 
 use crate::inttools::{
     cone_cone::{ConeConeResult, intersect_cone_cone, intersect_cone_cone_with_tolerance},
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
-    cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder, intersect_cylinder_cylinder_with_tolerance, sample_perpendicular_offset_curves},
+    cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance, sample_perpendicular_offset_curves},
     cylinder_torus::CylinderTorusResult as CylinderTorusResultAlias,
     marching::project_onto_intersection_tol,
     pcurve_derive::{

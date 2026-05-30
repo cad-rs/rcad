@@ -38,7 +38,6 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::any_perpendicular;
 use rcad_kernel::{Curve2d, Curve3, Curve2dEval, CurveEval, Surface3, SurfaceEval};
 use std::rc::Rc;
 use std::f64::consts::PI;

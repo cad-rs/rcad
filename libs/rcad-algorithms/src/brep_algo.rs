@@ -35,7 +35,6 @@
 //! assert!(normal.length() > 0.9);
 //! ```
 
-use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{BRep, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Shell, Wire};

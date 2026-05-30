@@ -2,8 +2,8 @@ use glam::DVec3;
 
 use rcad_kernel::{
     BRep, CurveEval, SurfaceEval,
-    geom::{Curve3, Surface3, Plane, Line3, Point3},
-    topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
+    geom::{Curve3, Surface3, Plane},
+    topology::{Edge, Face, Shell, Solid, Vertex, Wire},
 };
 use crate::tolerance::*;
 
@@ -275,7 +275,7 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
         }
         if !edge_splits[i].is_empty() {
             edge_splits[i].sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            for (t, pt) in &edge_splits[i] {
+            for (_t, pt) in &edge_splits[i] {
                 let last = *split_pts.last().unwrap();
                 if (*pt - last).length_squared() > 1e-20 {
                     split_pts.push(*pt);
