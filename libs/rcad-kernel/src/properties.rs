@@ -33,7 +33,7 @@ fn tet_signed_volume(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 
 /// Sample a closed wire to a 3D polyline (edge curve samples or vertex fallbacks).
 fn sample_wire_polyline_3d(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
-    sample_wire_polyline_3d_with_n(brep, wire, 64)
+    sample_wire_polyline_3d_with_n(brep, wire, 1024)
 }
 
 /// Like [`sample_wire_polyline_3d`] but with configurable samples per edge.
@@ -1585,6 +1585,83 @@ fn try_boundary_convex_hull_area(
 
 /// For trimmed cylinder faces, compute the exact surface area from the UV boundary.
 ///
+/// Compute UV area of a cylinder UV polygon via Gauss-Legendre integration
+/// of the V-extent at each U.  For each quadrature point u, the V-extent
+/// [v_min(u), v_max(u)] is found by intersecting the line U=u with all
+/// polygon edges (unwrapped UV coordinates).  This handles figure-8 UV
+/// polygons correctly without binning or envelope approximation.
+///
+/// OCCT uses adaptive Gauss-Legendre in BRepGProp for trimmed cylinders,
+/// subdividing in U until each sub-polygon is non-self-intersecting.
+fn cylinder_uv_area_gl(uvs: &[DVec2]) -> Option<f64> {
+    const NU: usize = 60;
+    let n = uvs.len();
+    if n < 3 { return None; }
+    let two_pi = std::f64::consts::PI * 2.0;
+
+    // Unwrap U to linear coordinates.
+    let mut poly: Vec<DVec2> = Vec::with_capacity(n);
+    poly.push(uvs[0]);
+    for i in 1..n {
+        let du = short_delta_on_circle_01(uvs[i-1].x, uvs[i].x);
+        poly.push(DVec2::new(poly[i-1].x + du, uvs[i].y));
+    }
+
+    // V-range at a given u by intersecting the vertical line with polygon edges.
+    let v_range_at = |u: f64| -> (f64, f64) {
+        let mut v_lo = f64::INFINITY;
+        let mut v_hi = f64::NEG_INFINITY;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (u1, v1) = (poly[i].x, poly[i].y);
+            let (u2, v2) = (poly[j].x, poly[j].y);
+            // Skip horizontal edges (u1 == u2): the point-in-polygon test
+            // handles horizontal crossings at the endpoint.
+            if u1 == u2 { continue; }
+            // Check if u is between u1 and u2 (inclusive at endpoints to
+            // handle vertices).
+            let (u_lo_e, u_hi_e, v_lo_e, v_hi_e) = if u1 < u2 {
+                (u1, u2, v1, v2)
+            } else {
+                (u2, u1, v2, v1)
+            };
+            if u < u_lo_e - 1e-12 || u > u_hi_e + 1e-12 { continue; }
+            // Interpolate V at this U.
+            let t = if u_hi_e > u_lo_e { (u - u_lo_e) / (u_hi_e - u_lo_e) } else { 0.0 };
+            let v = v_lo_e + t * (v_hi_e - v_lo_e);
+            v_lo = v_lo.min(v);
+            v_hi = v_hi.max(v);
+        }
+        (v_lo, v_hi)
+    };
+
+    // Gauss-Legendre over U.
+    let u_min = poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let u_max = poly.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let u_range = u_max - u_min;
+    if !u_min.is_finite() || u_range < 1e-14 { return None; }
+
+    let u_lo = u_min;
+    let u_hi = if u_range > two_pi - 0.1 { u_min + two_pi } else { u_max };
+    let du = (u_hi - u_lo) / NU as f64;
+    const GL_NEG: f64 = -0.5773502691896257;
+    const GL_POS: f64 = 0.5773502691896257;
+    let gl_pts = [GL_NEG, GL_POS];
+
+    let mut total = 0.0;
+    for i in 0..NU {
+        let u_mid = u_lo + (i as f64 + 0.5) * du;
+        for &gu in &gl_pts {
+            let u = u_mid + gu * du * 0.5;
+            let (v_lo, v_hi) = v_range_at(u);
+            if v_lo.is_finite() && v_hi > v_lo + 1e-14 {
+                total += (v_hi - v_lo) * du * 0.5; // weight = 1.0 for 2-pt GL
+            }
+        }
+    }
+    Some(total)
+}
+
 /// For cylinders, `|∂P/∂u × ∂P/∂v| = R` (constant), so surface area = R × area of the UV region.
 /// Uses a Green's theorem line integral ∮ v·du, integrating from the minimum-v boundary edge
 /// in the +u direction, to avoid the cancellation that occurs when the wire traces the same
@@ -1715,9 +1792,14 @@ fn try_cylinder_trimmed_face_area(
         }
         let uv_area = area2.abs() * 0.5;
 
+        // GL quadrature of V-extent at each U (OCCT-aligned).
+        let gl_area = cylinder_uv_area_gl(&uvs).unwrap_or(0.0);
+        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+            eprintln!("[CYL_GL] n_uvs={} gl={:.6} shoelace={:.6}", uvs.len(), gl_area, uv_area);
+        }
+
         // Envelope area: integrate v_max(u) - v_min(u) across u bins.
-        // Handles self-intersecting UV polygons (e.g., figure-8 from merged
-        // Steinmetz lens lobes) where shoelace gives the signed area.
+        let mut band_area = 0.0_f64;
         let nf = n;
         if nf >= 3 {
             // 2048 bins: ~0.003 rad resolution for envelope integration.
@@ -1734,7 +1816,6 @@ fn try_cylinder_trimmed_face_area(
             }
 
             // Collect populated bins into (u, range) pairs for trapezoidal integration
-            let mut band_area = 0.0_f64;
             let mut prev_u: Option<f64> = None;
             let mut prev_range: Option<f64> = None;
             let mut first_u: f64 = 0.0;
@@ -1771,14 +1852,15 @@ fn try_cylinder_trimmed_face_area(
                     let du = (TWO_PI + first_u) - lu;
                     band_area += (first_range + lr) * 0.5 * du;
                 }
-                return Some(uv_area.max(band_area));
-            } else {
-                // Partial wrap: shoelace is accurate, envelope wrap corrupts it.
-                return Some(uv_area);
             }
         }
 
-        Some(uv_area)
+        // Return max of shoelace, GL (V-extent), and envelope (band).
+        // The GL handles figure-8 polygons; the envelope handles
+        // full-wrap cases that GL might miss.  For simple polygons
+        // all three agree.
+        let result = uv_area.max(gl_area).max(band_area);
+        Some(result)
     };
 
     let outer_area = wire_uv_area(&face.outer_wire)?;
