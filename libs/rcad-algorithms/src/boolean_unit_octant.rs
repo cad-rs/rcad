@@ -10047,6 +10047,11 @@ fn try_union_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Option<BRep>
     );
     if test_poly.len() < 3 { return None; }
 
+    // Try analytic builder first
+    if let Some(result) = crate::cone_box_analytic::build_cone_box_union_analytic(cone_brep, box_brep) {
+        return Some(result);
+    }
+
     build_cone_box_union_tessellated(bmin, bmax, cx, cy, cz_lo, cz_hi, cr_lo, cr_hi)
 }
 
@@ -10126,6 +10131,11 @@ fn try_intersection_cone_box_one_dir(cone_brep: &BRep, box_brep: &BRep) -> Optio
         test_r, eu, ev,
     );
     if test_poly.len() < 3 { return None; }
+
+    // Try analytic builder first
+    if let Some(result) = crate::cone_box_analytic::build_cone_box_intersection_analytic(cone_brep, box_brep) {
+        return Some(result);
+    }
 
     build_cone_box_intersection_tessellated(bmin, bmax, cx, cy, cz_lo, cz_hi, cr_lo, cr_hi)
 }
