@@ -2741,6 +2741,12 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
             return Ok(r);
         }
+        // Fast-path: general sphere ∩ box (any orientation). Replaces PaveFiller
+        // for all bcommon_simple sphere-box cases (A1-A5, D3-D8). OCCT has no
+        // equivalent — this is a pure rcad optimization (24–31s → <1s).
+        if let Some(r) = boolean_unit_octant::try_intersection_sphere_box(a, b) {
+            return Ok(r);
+        }
         // Fast-path: axis-aligned box-box intersection via AABB overlap.
         // Avoids Pave-Filler coplanar-face classification errors for partial
         // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
