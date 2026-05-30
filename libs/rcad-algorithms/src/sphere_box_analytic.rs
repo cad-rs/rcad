@@ -248,7 +248,11 @@ fn build_plane_intersection_face(
         return Some(Vec::new());
     }
 
-    let x_axis = any_perpendicular(n);
+    // Use rectangle edges as UV axes so point_in_rect works correctly.
+    // any_perpendicular(n) is wrong here — it gives an arbitrary direction that
+    // may not align with the rectangle edges, inverting inside/outside tests.
+    let e0 = (corners[corner_indices[1]] - corners[corner_indices[0]]).normalize();
+    let x_axis = e0;
     let y_axis = n.cross(x_axis).normalize();
 
     let circle_curve = Curve3::Circle(Circle3 { center: circle_center, normal: n, radius: circle_r });
@@ -470,13 +474,45 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
 
     // ── 5. Spherical face ──
     if !all_arcs.is_empty() {
+        // Reorder arcs so consecutive reversed edges chain end-to-end by 3D position.
+        // Wire uses WireEdge::rev(ei) for each arc, so:
+        //   rev(ai).end = ai.start must match rev(aj).start = aj.end
+        // i.e. chain by matching current arc's START to next arc's END.
+        let n_arcs = all_arcs.len();
+        let mut ordered: Vec<usize> = Vec::with_capacity(n_arcs);
+        let mut used = vec![false; n_arcs];
+        ordered.push(all_arcs[0]);
+        used[0] = true;
+        while ordered.len() < n_arcs {
+            let last_ei = *ordered.last().unwrap();
+            let last_start_pos = brep.vertices[brep.edges[last_ei].start].point;
+            let mut found = None;
+            for (j, &ei) in all_arcs.iter().enumerate() {
+                if used[j] { continue; }
+                let end_pos = brep.vertices[brep.edges[ei].end].point;
+                if (end_pos - last_start_pos).length() < 1e-12 {
+                    found = Some((j, ei));
+                    break;
+                }
+            }
+            if let Some((j, ei)) = found {
+                ordered.push(ei);
+                used[j] = true;
+            } else {
+                // Degenerate: arcs don't chain. Use as-is (fallback).
+                for (j, &ei) in all_arcs.iter().enumerate() {
+                    if !used[j] { ordered.push(ei); }
+                }
+                break;
+            }
+        }
         let sphere_surf = Surface3::Sphere(SphericalSurface {
             center,
             axis: DVec3::Z,
             radius,
             ref_dir: DVec3::X,
         });
-        let wes: Vec<WireEdge> = all_arcs.iter().map(|&ei| WireEdge::rev(ei)).collect();
+        let wes: Vec<WireEdge> = ordered.iter().map(|&ei| WireEdge::rev(ei)).collect();
         make_face(&mut brep, sphere_surf, make_wire(wes), vec![]).ok()?;
     }
 
