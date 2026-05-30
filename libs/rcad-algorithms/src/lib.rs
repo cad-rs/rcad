@@ -2615,6 +2615,17 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 ///
 /// Both BReps must have populated GeomStore (call
 /// `geom_populate::populate_box_geom` first for box primitives).
+macro_rules! try_fast_path {
+    ($e:expr, $n:expr) => {{
+        if let Some(r) = $e {
+            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() {
+                eprintln!("FAST_PATH: {}", $n);
+            }
+            return Ok(r);
+        }
+    }};
+}
+
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     // Fast-path: identical operands (union/intersection → either operand, difference → empty).
     if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
@@ -2670,18 +2681,15 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
 
     if matches!(op, BooleanOpType::Union) {
         // Fast-path: bbox-disjoint → just combine without Pave-Filler.
-        if let Some(r) = boolean_unit_octant::try_union_disjoint(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_union_disjoint(a, b), "try_union_disjoint");
         // Axis-aligned box-box: touching/gap → compound, overlap → Pave-Filler.
-        if let Some(r) = boolean_unit_octant::try_union_axis_aligned_box_box(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_union_axis_aligned_box_box(a, b), "try_union_axis_aligned_box_box");
         // Rotated box-box via slab decomposition.  The result is validated against
         // a tight upper-bound SA(A)+SA(B)-SA(I)  where I = A∩B: if the slab
         // decomposition left internal faces, the SA exceeds this bound and we fall
         // through to the general fuse path (bopfuse_simple C3 is one such case).
         if let Some(r) = boolean_unit_octant::try_union_box_general(a, b) {
+            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("FAST_PATH: try_union_box_general"); }
             let sum_sa = total_surface_area(a) + total_surface_area(b);
             let r_sa = total_surface_area(&r);
             let mut ok = false;
@@ -2707,86 +2715,42 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // (e.g. sphere-box where bboxes touch but shapes don't overlap).
         // MUST come AFTER box-box paths so that face-touching box fusion
         // is handled first by try_union_axis_aligned_box_box.
-        if let Some(r) = boolean_unit_octant::try_union_disjoint_or_touching(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_sphere_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_cylinder_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_cone_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_cylinder_torus(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_coaxial_cones(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_offset_cones(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_union_fill_box_cavity(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_union_disjoint_or_touching(a, b), "try_union_disjoint_or_touching");
+        try_fast_path!(boolean_unit_octant::try_union_sphere_box(a, b), "try_union_sphere_box");
+        try_fast_path!(boolean_unit_octant::try_union_cylinder_box(a, b), "try_union_cylinder_box");
+        try_fast_path!(boolean_unit_octant::try_union_cone_box(a, b), "try_union_cone_box");
+        try_fast_path!(boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b), "try_union_coaxial_cone_cylinder");
+        try_fast_path!(boolean_unit_octant::try_union_cylinder_torus(a, b), "try_union_cylinder_torus");
+        try_fast_path!(boolean_unit_octant::try_union_coaxial_cones(a, b), "try_union_coaxial_cones");
+        try_fast_path!(boolean_unit_octant::try_union_offset_cones(a, b), "try_union_offset_cones");
+        try_fast_path!(boolean_unit_octant::try_union_fill_box_cavity(a, b), "try_union_fill_box_cavity");
         return bop_occt_union::fuse(a, b);
     }
 
     if matches!(op, BooleanOpType::Intersection) {
-        if let Some(r) = boolean_unit_octant::try_intersection_eighth_unit_ball(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_intersection_eighth_unit_ball(a, b), "try_intersection_eighth_unit_ball");
         // Fast-path: general sphere ∩ box (any orientation). Replaces PaveFiller
         // for all bcommon_simple sphere-box cases (A1-A5, D3-D8). OCCT has no
         // equivalent — this is a pure rcad optimization (24–31s → <1s).
-        if let Some(r) = boolean_unit_octant::try_intersection_sphere_box(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_intersection_sphere_box(a, b), "try_intersection_sphere_box");
         // Fast-path: axis-aligned box-box intersection via AABB overlap.
         // Avoids Pave-Filler coplanar-face classification errors for partial
         // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
-        if let Some(r) = boolean_unit_octant::try_intersection_box_box(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_intersection_box_box(a, b), "try_intersection_box_box");
         // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
-        if let Some(r) = boolean_unit_octant::try_intersection_box_general(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_concentric_spheres(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_intersection_box_general(a, b), "try_intersection_box_general");
+        try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
+        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b), "try_intersection_coaxial_cone_cylinder");
+        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b), "try_intersection_coaxial_cylinder_cylinder");
         // Fast-path: perpendicular equal-radius cylinder-cylinder (Steinmetz-like).
         // Avoids PaveFiller (5.3s → <0.01s) for the I9 test case (r=100 cylinders
         // along Z and X axes). OCCT has no equivalent — pure rcad optimization.
-        if let Some(r) = boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_box_sphere_single_face(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_cylinder_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_intersection_cone_box(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b), "try_intersection_cylinder_cylinder_perpendicular");
+        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b), "try_intersection_coaxial_cylinder_sphere");
+        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b), "try_intersection_coaxial_cylinder_torus");
+        try_fast_path!(boolean_unit_octant::try_intersection_box_sphere_single_face(a, b), "try_intersection_box_sphere_single_face");
+        try_fast_path!(boolean_unit_octant::try_intersection_cylinder_box(a, b), "try_intersection_cylinder_box");
+        try_fast_path!(boolean_unit_octant::try_intersection_cone_box(a, b), "try_intersection_cone_box");
     }
 
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
@@ -2794,54 +2758,24 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     }
 
     if matches!(op, BooleanOpType::Difference) {
-        if let Some(r) = boolean_unit_octant::try_difference_box_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_box_general(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_cylinder(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_cylinder_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_box_cylinder(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_concentric_spheres(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_sphere_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_box_cone(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_cone_box(a, b) {
-            return Ok(r);
-        }
-        if let Some(r) = boolean_unit_octant::try_difference_coaxial_cone_minus_cone(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_difference_box_box(a, b), "try_difference_box_box");
+        try_fast_path!(boolean_unit_octant::try_difference_box_general(a, b), "try_difference_box_general");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b), "try_difference_coaxial_cone_minus_cylinder");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b), "try_difference_coaxial_cylinder_minus_cone");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_cylinder(a, b), "try_difference_coaxial_cylinder_cylinder");
+        try_fast_path!(boolean_unit_octant::try_difference_cylinder_box(a, b), "try_difference_cylinder_box");
+        try_fast_path!(boolean_unit_octant::try_difference_box_cylinder(a, b), "try_difference_box_cylinder");
+        try_fast_path!(boolean_unit_octant::try_difference_concentric_spheres(a, b), "try_difference_concentric_spheres");
+        try_fast_path!(boolean_unit_octant::try_difference_sphere_box(a, b), "try_difference_sphere_box");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b), "try_difference_coaxial_cylinder_torus");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b), "try_difference_coaxial_cylinder_sphere");
+        try_fast_path!(boolean_unit_octant::try_difference_box_cone(a, b), "try_difference_box_cone");
+        try_fast_path!(boolean_unit_octant::try_difference_cone_box(a, b), "try_difference_cone_box");
+        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cone_minus_cone(a, b), "try_difference_coaxial_cone_minus_cone");
         // Fallback: when a is a box and b has cylindrical holes (inner wires),
         // redirect to box ∩ cylinder.  The Pave-Filler cannot correctly process
         // BReps with inner-wire topology (e.g. the M3 test pattern).
-        if let Some(r) = boolean_unit_octant::try_difference_box_minus_brep_with_hole(a, b) {
-            return Ok(r);
-        }
+        try_fast_path!(boolean_unit_octant::try_difference_box_minus_brep_with_hole(a, b), "try_difference_box_minus_brep_with_hole");
     }
 
     let r = match boolean_op_pave_fill_build(op, a, b) {
