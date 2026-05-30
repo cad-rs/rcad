@@ -1763,19 +1763,32 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
+        let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
-            // OCCT-style empty compound: disjoint or edge/vertex-only touch yields zero faces.
-            // Callers (e.g. OCCT `checkprops -s empty`) expect `Ok` + zero surface area, not an error.
             if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
                 return Ok((BRep::default(), BooleanHistory::default()));
             }
             return Err(BooleanError::DegenerateResult);
         }
 
-        // Annotate edge/vertex origins from the DS and aggregate shell/solid provenance.
+        // Annotate edge/vertex origins and aggregate shell/solid provenance.
         annotate_history_from_ds(&brep, &mut history, self.ds);
         annotate_shell_and_solid_history(&brep, &mut history);
+
+        // OCCT-aligned: merge same-origin faces sharing an edge via BRep edge topology.
+        if brep.solids[0].shells[0].faces.len() > 1 {
+            let origs = &history.face_origins;
+            let (merged, cnt) = crate::unify_same_domain_faces_with_origins(&brep, Some(origs));
+            if cnt > 0 {
+                if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                    eprintln!("unify_same_domain_faces_with_origins: {} -> {} ({} merges)",
+                        brep.solids[0].shells[0].faces.len(),
+                        merged.solids[0].shells[0].faces.len(), cnt);
+                }
+                brep = merged;
+                history.face_origins.truncate(brep.solids[0].shells[0].faces.len());
+            }
+        }
 
         // Debug-mode geometry integrity check.
         // Verifies that every face in the result has a non-zero normal vector.

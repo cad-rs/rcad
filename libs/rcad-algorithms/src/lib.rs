@@ -5154,11 +5154,21 @@ pub fn general_fuse_par_detailed(
 /// no more merges are possible. This is O(faces² × passes) but correct for all
 /// surface-topology inputs produced by the boolean kernel.
 pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
+    unify_same_domain_faces_with_origins(brep, None)
+}
+
+/// Like [`unify_same_domain_faces`] but only merges faces whose [`FaceOrigin`]s match.
+/// Use this with the face origins from [`BooleanHistory`] to avoid merging across
+/// operands (A-side with B-side).
+pub fn unify_same_domain_faces_with_origins(
+    brep: &BRep,
+    face_origins: Option<&[FaceOrigin]>,
+) -> (BRep, usize) {
     let mut out = brep.clone();
     let mut total_merges = 0usize;
 
     loop {
-        let merged = unify_one_merge_pass(&mut out);
+        let merged = unify_one_merge_pass_with_origins(&mut out, face_origins);
         if !merged {
             break;
         }
@@ -5395,6 +5405,10 @@ pub(crate) fn remove_flat_face_geom_slots(geom: &mut rcad_kernel::GeomStore, rem
 ///
 /// Handles planar, cylindrical, toroidal, and spherical surface pairs.
 fn unify_one_merge_pass(brep: &mut BRep) -> bool {
+    unify_one_merge_pass_with_origins(brep, None)
+}
+
+fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[FaceOrigin]>) -> bool {
     use std::collections::HashMap;
 
     fn closure_score(brep: &BRep) -> usize {
@@ -5647,6 +5661,17 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
                 };
 
                 let (same_domain, is_planar) = surfaces_are_same_domain(brep, si, shi, fi1, fi2);
+
+                // Origin guard: only merge faces from the SAME original shape.
+                // Without this we merge A-faces with B-faces on the same surface,
+                // breaking boolean topology (seen as regressions in boptuc/bopfuse).
+                if let Some(origins) = face_origins {
+                    let ff1 = flat_face_index_of(brep, si, shi, fi1);
+                    let ff2 = flat_face_index_of(brep, si, shi, fi2);
+                    if origins.get(ff1) != origins.get(ff2) {
+                        continue;
+                    }
+                }
 
                 let mut should_merge = match same_domain {
                     Some(false) => false,
