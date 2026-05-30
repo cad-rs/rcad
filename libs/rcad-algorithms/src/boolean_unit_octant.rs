@@ -162,11 +162,29 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
-        // Use vertices+curves bbox (excluding surface expansion) for the pre-check.
-        // Surface expansion inflates bboxes for shapes like cone frustums (apex extends
-        // past the solid), causing false containment positives (ZM1).
+        // Use vertices+curves bbox (excluding surface expansion) for the outer
+        // pre-check.  Surface expansion inflates bboxes for shapes like cone
+        // frustums (apex extends past the solid), causing false containment
+        // positives (ZM1).
         let Some([omin, omax]) = outer.vertices_curves_bounding_box() else { continue };
-        let Some([imin, imax]) = inner.vertices_curves_bounding_box() else { continue };
+        // For the inner solid, use only the vertex bbox to avoid the spherical
+        // expansion that `curve_bounding_box` applies to circles: a horizontal
+        // circle at z=0 with radius r gets bbox z∈[−r,+r] even though the circle
+        // lies entirely in the z=0 plane, which makes the inner bbox appear to
+        // extend beyond the outer bbox and causes false containment negatives
+        // (e.g. J2: box-with-hole ∩ box, where the hole's circular edge is at
+        // z=0 but its curve-bbox inflates z to ±r).
+        let inner_vert_bbox = {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for v in &inner.vertices {
+                mn = mn.min(v.point);
+                mx = mx.max(v.point);
+            }
+            if mn.x.is_infinite() { continue; }
+            (mn, mx)
+        };
+        let (imin, imax) = inner_vert_bbox;
         let tol = TOLERANCE_ABS;
         if !(imin.x >= omin.x - tol && imax.x <= omax.x + tol &&
              imin.y >= omin.y - tol && imax.y <= omax.y + tol &&
