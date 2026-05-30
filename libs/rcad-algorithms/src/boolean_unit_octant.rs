@@ -6837,15 +6837,12 @@ fn try_intersection_sphere_box_pair(sphere: &BRep, box_: &BRep) -> Option<BRep> 
         return Some(BRep::default());
     }
 
-    // Reject boxes whose face planes don't match the AABB (e.g. 90° rotated
-    // boxes with +Z face at z=bmin.z instead of z=bmax.z).  These fall
-    // through to the PaveFiller, which approximates but doesn't diverge.
-    if !box_faces_match_aabb(box_, bmin, bmax) {
-        return None;
-    }
-
-    // Delegate to analytic builder.
-    crate::sphere_box_analytic::build_sphere_box_intersection_analytic(sphere, box_)
+    // Always use a synthetic axis-aligned box from the AABB.  The original
+    // box may be rotated (90° increments, still fills the AABB) but the
+    // analytic builder assumes axis-aligned face corner ordering.
+    let (w, h, d) = (bmax.x - bmin.x, bmax.y - bmin.y, bmax.z - bmin.z);
+    let syn = make_box_brep(bmin, DVec3::X, DVec3::Y, w, h, d).ok()?;
+    crate::sphere_box_analytic::build_sphere_box_intersection_analytic(sphere, &syn)
 
 }
 

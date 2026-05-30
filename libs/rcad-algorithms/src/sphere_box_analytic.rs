@@ -289,13 +289,36 @@ fn build_plane_intersection_face(
 
     xs.sort_by(|a, b| a.theta.partial_cmp(&b.theta).unwrap_or(std::cmp::Ordering::Equal));
     let mut uxs: Vec<Cross> = Vec::new();
+    // Use a liberal tolerance (1e-6) for floating-point duplicates in theta:
+    // clamped edge endpoints at the same 3D position have theta differing by
+    // ~1.5e-8, and the minimum angular separation of distinct circle-edge
+    // intersections on a unit circle is ~0.93 rad → safe at 1e-6.
+    let dedup_tol = 1e-6;
     for x in xs {
-        if uxs.is_empty() || (x.theta - uxs.last().unwrap().theta).abs() > 1e-10 {
-            uxs.push(x);
-        }
+        let dup = uxs.last().map(|last| {
+            let d = (x.theta - last.theta).abs();
+            let d_circ = d.min(two_pi - d);
+            d_circ <= dedup_tol
+        }).unwrap_or(false);
+        if !dup { uxs.push(x); }
+    }
+    // Also dedup the last element against the first (θ≈0 vs θ≈2π).
+    if uxs.len() >= 2 {
+        let d = (uxs.last().unwrap().theta - uxs[0].theta).abs();
+        let d_circ = d.min(two_pi - d);
+        if d_circ <= dedup_tol { uxs.pop(); }
     }
     xs = uxs;
     let n_xs = xs.len();
+    if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() && n_xs > 2 {
+        let label = if normal.x.abs() > 0.5 { if normal.x > 0.0 { "+X" } else { "-X" } }
+            else if normal.y.abs() > 0.5 { if normal.y > 0.0 { "+Y" } else { "-Y" } }
+            else { if normal.z > 0.0 { "+Z" } else { "-Z" } };
+        eprintln!("[N_XS={}] {} n_xs={}", n_xs, label, n_xs);
+        for (xi, x) in xs.iter().enumerate() {
+            eprintln!("[N_XS={}]   xs[{}] theta={:.10e} pos=({:.2},{:.2},{:.2}) edge={}", n_xs, xi, x.theta, x.pos.x, x.pos.y, x.pos.z, x.edge);
+        }
+    }
 
     // ── 2. No intersections ──
     if n_xs == 0 {
@@ -376,10 +399,13 @@ fn build_plane_intersection_face(
         let mid_pt = circle_center + circle_r * (cm * x_axis + sm * y_axis);
 
         if point_in_rect(mid_pt) {
-            // Arc edge
+            // Arc edge.  For the wrapping interval (j <= i), t_j wraps
+            // through 2π and needs +2π so the stored range covers the
+            // short arc (e.g. [3π/2, 2π] not [3π/2, 0]).
             let v1 = pt_vis[i];
             let v2 = pt_vis[j];
-            let ae = make_edge(brep, circle_curve.clone(), t_i, t_j, v1, v2).ok()?;
+            let tj_adj = if j > i { t_j } else { t_j + two_pi };
+            let ae = make_edge(brep, circle_curve.clone(), t_i, tj_adj, v1, v2).ok()?;
             align_edge_geom(brep, ae);
             planar_wes.push(WireEdge::fwd(ae));
             arc_edges.push(ae);
@@ -465,11 +491,18 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
 
     // ── 4. Build planar faces; collect arc edges ──
     let mut all_arcs: Vec<usize> = Vec::new();
-    for &(ref ci, n, pp) in &faces {
+    let face_labels = ["-Z","+Z","-Y","+Y","-X","+X"];
+    for (fi, &(ref ci, n, pp)) in faces.iter().enumerate() {
         let arcs = build_plane_intersection_face(
             &mut brep, center, radius, &corners, &cvi, &edge_map, ci, n, pp,
         )?;
+        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+            eprintln!("[ANALYTIC] {} d={:.2} arcs={}", face_labels[fi], n.dot(center - pp), arcs.len());
+        }
         all_arcs.extend(arcs);
+    }
+    if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+        eprintln!("[ANALYTIC] total_arcs={}", all_arcs.len());
     }
 
     // ── 5. Spherical face ──
