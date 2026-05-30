@@ -8043,6 +8043,11 @@ pub fn try_difference_box_cone(a: &BRep, b: &BRep) -> Option<BRep> {
     let r_lo = r_at_zlo.max(TOLERANCE_COORD_SUB);
     let r_hi = r_at_zhi.max(TOLERANCE_COORD_SUB);
 
+    // Analytic fast path (extracted to cone_box_analytic module)
+    if let Some(result) = crate::cone_box_analytic::build_box_minus_cone_analytic(a, b) {
+        return Some(result);
+    }
+
     build_box_minus_cone_tessellated(bmin, bmax, cx, cy, z_lo, z_hi, r_lo, r_hi)
 }
 
@@ -10320,6 +10325,11 @@ pub fn try_difference_cone_box(a: &BRep, b: &BRep) -> Option<BRep> {
         }
         // Multiple portions (both below and above) 鈥?fall through to tessellated path
         // which handles the compound case.
+    }
+
+    // Phase 4: analytic fast path (extracted to cone_box_analytic module)
+    if let Some(result) = crate::cone_box_analytic::build_cone_minus_box_analytic(a, b) {
+        return Some(result);
     }
 
     build_cone_minus_box_tessellated(bmin, bmax, cx, cy, z_lo, z_hi, r_lo, r_hi)

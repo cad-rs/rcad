@@ -164,3 +164,83 @@ pub fn build_cone_box_union_analytic(cone: &BRep, box_: &BRep) -> Option<BRep> {
     // Partial cases fall through to PaveFiller.
     None
 }
+
+/// Build the analytic difference of a Z-aligned cone (or frustum) minus an
+/// axis-aligned box.
+///
+/// Returns `None` for all cases currently, falling through to the
+/// PaveFiller-based tessellation path. The containment-check scaffolding
+/// is in place for future extension:
+///
+/// - Box fully above or below cone Z range: no intersection (caller returns
+///   the full cone via containment check).
+/// - Box extends beyond cone XY reach at the overlap Z bounds: partial XY
+///   overlap (PaveFiller handles it).
+/// - Cone fully contains box XY at the overlap Z bounds: the analytic
+///   difference (cone with a conical cavity) is complex — currently
+///   falls through to PaveFiller.
+pub fn build_cone_minus_box_analytic(cone: &BRep, box_: &BRep) -> Option<BRep> {
+    let (c_xy, cz_lo, cz_hi, cr_lo, cr_hi) =
+        super::boolean_unit_octant::detect_z_axis_cone(cone)?;
+    let [bmin, bmax] = super::boolean_unit_octant::try_as_axis_aligned_box(box_)?;
+
+    let (bx_lo, bx_hi) = (bmin.x, bmax.x);
+    let (by_lo, by_hi) = (bmin.y, bmax.y);
+    let box_z_lo = bmin.z;
+    let box_z_hi = bmax.z;
+
+    // If box is fully above or below cone Z range -> no intersection
+    // (return None, let caller's containment check handle returning the full cone).
+    if box_z_hi <= cz_lo || box_z_lo >= cz_hi {
+        return None;
+    }
+
+    // Compute cone radius at box Z boundaries.
+    let r_at_z = |z: f64| -> f64 {
+        if (cz_hi - cz_lo).abs() < 1e-12 {
+            return cr_lo;
+        }
+        cr_lo + (cr_hi - cr_lo) * (z - cz_lo) / (cz_hi - cz_lo)
+    };
+    let r_at_bz_lo = r_at_z(box_z_lo.max(cz_lo));
+    let r_at_bz_hi = r_at_z(box_z_hi.min(cz_hi));
+
+    // Quick XY reach check: max distance from cone center to box XY boundary.
+    let reach = (c_xy.x - bx_lo)
+        .max(bx_hi - c_xy.x)
+        .max((c_xy.y - by_lo).max(by_hi - c_xy.y));
+    let r_min = r_at_bz_lo.min(r_at_bz_hi);
+
+    // If at both overlap Z bounds the box extends beyond the cone radius,
+    // the configuration is a partial XY overlap -> PaveFiller handles it.
+    if reach > r_min {
+        return None;
+    }
+
+    // Cone fully contains box XY at the overlap Z bounds.
+    // The analytic difference (cone with a conical cavity removed) is
+    // complex -> return None for now (let PaveFiller handle it).
+    None
+}
+
+/// Build the analytic difference of an axis-aligned box minus a Z-aligned
+/// cone (or frustum).
+///
+/// Returns `None` for all cases currently, falling through to the
+/// PaveFiller-based tessellation path.
+///
+/// Future cases to handle:
+/// - Box fully contains the cone: result is the box with a conical cavity
+///   (box minus cone), built as a compound of the box portions outside the cone.
+/// - Cone fully contains the box XY at the overlap Z: the box is entirely
+///   within the cone at the overlap region — the cone removes nothing visible
+///   from the box's own volume, so the result is the full box (PaveFiller
+///   handles this correctly already).
+pub fn build_box_minus_cone_analytic(box_: &BRep, cone: &BRep) -> Option<BRep> {
+    let (_c_xy, _cz_lo, _cz_hi, _cr_lo, _cr_hi) =
+        super::boolean_unit_octant::detect_z_axis_cone(cone)?;
+    let [_bmin, _bmax] = super::boolean_unit_octant::try_as_axis_aligned_box(box_)?;
+
+    // For now, all cases fall through to PaveFiller-based tessellation.
+    None
+}
