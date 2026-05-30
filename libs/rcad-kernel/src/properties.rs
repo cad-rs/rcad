@@ -835,96 +835,66 @@ fn spherical_holed_uv_mask_setup(
 }
 
 /// Sum `∫ R² sin v dudv` over the same masked grid (no triangulation), for GProp-style area.
-fn sphere_holed_mask_param_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
-    // Use a coarser grid when relying on expensive 3D angular-sum tests.
-    let (nu, nv) = if ctx.use_uv_winding {
-        (SPHERE_UV_MASK_N, SPHERE_UV_MASK_N)
-    } else {
-        (80, 80)
-    };
+/// projected loop in world UV, return that box's `width * height`.
+
+/// Compute sphere face area using 2x2 Gauss-Legendre quadrature over the
+/// UV bounding box, with inside/outside testing via 3D point-in-spherical-polygon.
+///
+/// OCCT uses adaptive Gauss-Legendre integration in BRepGProp::SurfaceProperties
+/// for all surface types including spheres.  This replaces the old grid-raster
+/// approach that used a uniform grid with a 5-point OR test — approximating
+/// the boundary poorly and underestimating area for faces without pcurves
+/// (e.g. analytic-constructed spherical caps).
+///
+/// With N=30 cells per side and 2x2 GL points per cell (3600 evaluations),
+/// this achieves O(h^4) accuracy vs O(h^2) for the midpoint rule.
+fn sphere_gauss_legendre_area_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
+    const N: usize = 30;
+    const GL_NEG: f64 = -0.5773502691896257;
+    const GL_POS: f64 = 0.5773502691896257;
+    let gl_pts = [GL_NEG, GL_POS];
     let umin = ctx.umin;
     let umax = ctx.umax;
     let vmin = ctx.vmin;
     let vmax = ctx.vmax;
-    let du = (umax - umin) / nu as f64;
-    let dv = (vmax - vmin) / nv as f64;
+    let du = (umax - umin) / N as f64;
+    let dv = (vmax - vmin) / N as f64;
     let r2 = s.radius * s.radius;
-    let inner = &ctx.inner_polys;
-    let inner_3d = &ctx.inner_3d;
     let outer_3d = &ctx.outer_3d;
-    let use_uv = ctx.use_uv_winding;
-    let emit = |outer_poly: &[DVec2], use_inner: bool| -> f64 {
-        let mut a = 0.0f64;
-        let mut n_inside = 0u64;
-        let mut n_total = 0u64;
-        for i in 0..nu {
-            for j in 0..nv {
-                n_total += 1;
-                let u0 = umin + i as f64 * du;
-                let u1 = u0 + du;
-                let v0 = vmin + j as f64 * dv;
-                let v1 = v0 + dv;
-                let corners_uv = [
-                    DVec2::new(u0, v0),
-                    DVec2::new(u1, v0),
-                    DVec2::new(u1, v1),
-                    DVec2::new(u0, v1),
-                ];
-                let center = DVec2::new((u0 + u1) * 0.5, (v0 + v1) * 0.5);
-                let quad_in = if use_uv {
-                    point_in_polygon_2d(outer_poly, center)
-                        || corners_uv.iter().any(|q| point_in_polygon_2d(outer_poly, *q))
-                } else {
-                    point_in_spherical_polygon_3d(outer_3d, s.point_at(center.x, center.y))
-                        || corners_uv.iter().any(|q| point_in_spherical_polygon_3d(outer_3d, s.point_at(q.x, q.y)))
-                };
-                if !quad_in {
-                    continue;
-                }
-                n_inside += 1;
-                if use_inner {
-                    let in_hole = if use_uv {
-                        inner.iter().any(|h| {
-                            corners_uv
-                                .iter()
-                                .any(|q| point_in_polygon_2d(h, *q))
-                        })
-                    } else {
-                        let corners_3d: [DVec3; 4] = corners_uv.map(|q| s.point_at(q.x, q.y));
-                        inner_3d.iter().any(|h3d| {
-                            corners_3d.iter().any(|q3d| point_in_spherical_polygon_3d(h3d, *q3d))
-                        })
+    let inner_3d = &ctx.inner_3d;
+    let cell_area = du * dv / 4.0;
+
+    let mut total = 0.0;
+    for i in 0..N {
+        let u_mid = umin + (i as f64 + 0.5) * du;
+        for j in 0..N {
+            let v_mid = vmin + (j as f64 + 0.5) * dv;
+            let mut sum_sin = 0.0;
+            for &gu in &gl_pts {
+                let u = u_mid + gu * du * 0.5;
+                for &gv in &gl_pts {
+                    let v = v_mid + gv * dv * 0.5;
+                    if v < 0.0 || v > std::f64::consts::PI { continue; }
+                    let ok = {
+                        let p3d = s.point_at(u, v);
+                        point_in_spherical_polygon_3d(outer_3d, p3d)
                     };
-                    if in_hole {
-                        continue;
+                    if ok && !inner_3d.iter().any(|h3d| {
+                        let p3d = s.point_at(u, v);
+                        point_in_spherical_polygon_3d(h3d, p3d)
+                    }) {
+                        sum_sin += v.sin();
                     }
                 }
-                a += r2 * du * (v0.cos() - v1.cos());
+            }
+            if sum_sin > 0.0 {
+                total += r2 * cell_area * sum_sin;
             }
         }
-        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
-            eprintln!("[SPHERE_GRID] nu={} nv={} n_inside={} n_total={} ratio={:.6}", nu, nv, n_inside, n_total, n_inside as f64 / n_total as f64);
-        }
-        a
-    };
-    let mut t = emit(&ctx.outer_uv, true);
-    if t <= 0.0 && !inner.is_empty() {
-        t = emit(&ctx.outer_uv, false);
     }
-    if t > 0.0 {
-        return t;
-    }
-    let mut rev = ctx.outer_uv.clone();
-    rev.reverse();
-    t = emit(&rev, true);
-    if t <= 0.0 && !inner.is_empty() {
-        t = emit(&rev, false);
-    }
-    t
+    total
 }
 
-/// When the face normal is world-axis-aligned and every outer sample lies on the **AABB** of the
-/// projected loop in world UV, return that box's `width * height`.
 ///
 /// This recovers full rectangle area when shoe-lace on coarse edge samples under-counts (merged
 /// `box` unions). It is **not** sufficient to prove the polygon fills that box: e.g. a parallelogram
@@ -1922,10 +1892,8 @@ fn try_analytic_face_surface_area(
         }
         Surface3::Sphere(s) => {
             let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
-            if ctx.use_uv_winding {
-                let v = sphere_holed_mask_param_area_sum(s, &ctx);
-                if v > 0.0 { return Some(v); }
-            }
+            let v = sphere_gauss_legendre_area_sum(s, &ctx);
+            if v > 0.0 { return Some(v); }
             // UV polygon wraps u multiple times — analytic area integral
             // over-counts because du spans >2π. Fall through to tessellation.
             None

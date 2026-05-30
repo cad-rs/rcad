@@ -512,8 +512,29 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
             radius,
             ref_dir: DVec3::X,
         });
-        let wes: Vec<WireEdge> = ordered.iter().map(|&ei| WireEdge::rev(ei)).collect();
-        make_face(&mut brep, sphere_surf, make_wire(wes), vec![]).ok()?;
+        // Create new edges for the spherical face with shared vertices at
+        // arc junctions, forming a contiguous closed loop.  This ensures the
+        // UV polyline maps to a clean simply-connected region on the sphere.
+        let mut sphere_wes: Vec<WireEdge> = Vec::with_capacity(n_arcs);
+        // Pre-create junction vertices: for each ordered arc, the junction
+        // before it is arc[i].end (P_i).  Edges connect P_i -> P_{i+1}.
+        let mut joint_vis: Vec<usize> = Vec::with_capacity(n_arcs);
+        for &ei in &ordered {
+            let pt = brep.vertices[brep.edges[ei].end].point;
+            joint_vis.push(make_vertex(&mut brep, pt));
+        }
+        for (k, &ei) in ordered.iter().enumerate() {
+            let cur_idx = brep.geom.edge_curve[ei]?;
+            let crv = brep.geom.curves[cur_idx].clone();
+            let range = brep.geom.edge_curve_range.get(ei).and_then(|o| *o).unwrap_or([0.0, 1.0]);
+            let sv = joint_vis[k];
+            let ev = joint_vis[(k + 1) % n_arcs];
+            let new_ei = make_edge(&mut brep, crv, range[0], range[1], sv, ev).ok()?;
+            align_edge_geom(&mut brep, new_ei);
+            // Reversed direction for the spherical face (WireEdge::rev).
+            sphere_wes.push(WireEdge::rev(new_ei));
+        }
+        make_face(&mut brep, sphere_surf, make_wire(sphere_wes), vec![]).ok()?;
     }
 
     Some(brep)
