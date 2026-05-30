@@ -3286,6 +3286,10 @@ pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, S
 }
 
 /// Boolean + simplification convenience pipeline.
+///
+/// Mirrors OCCT's `BRepAlgoAPI::SimplifyResult()` which runs
+/// `BRepLib_MakeConnected` before simplification to merge coincident
+/// vertices and edges, ensuring clean topological connectivity.
 pub fn boolean_op_simplified(
     op: BooleanOpType,
     a: &BRep,
@@ -3293,7 +3297,14 @@ pub fn boolean_op_simplified(
     options: SimplifyOptions,
 ) -> Result<(BRep, SimplifyReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
-    Ok(simplify_brep_post_ops(&raw, options))
+    // OCCT BRepAlgoAPI runs MakeConnected before any simplification.
+    // Merge coincident vertices/edges to ensure clean topology.
+    let (connected, _mc_report) = make_connected_enhanced(
+        &raw,
+        tolerance::TOLERANCE_ABS,
+        3, /* max_passes */
+    );
+    Ok(simplify_brep_post_ops(&connected, options))
 }
 
 /// Split `target` by one or more `tools` without boolean classification.
