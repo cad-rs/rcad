@@ -1303,6 +1303,40 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
         return None; // single non-circle edge is degenerate for a planar face
     }
 
+    // Fast path: two circular edges forming a full circle (split by cylinder seam).
+    // Common for planar cavity caps where the cylinder seam cuts the circle into
+    // two complementary arcs.  Combined they cover 2π → area = πr².
+    if n_edges == 2 {
+        let mut radii: [f64; 2] = [0.0; 2];
+        let mut centers: [DVec3; 2] = [DVec3::ZERO; 2];
+        let mut spans: [f64; 2] = [0.0; 2];
+        let mut n_circle_edges = 0u32;
+        for (i, we) in face.outer_wire.edges.iter().enumerate() {
+            if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
+                if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
+                    if i < 2 {
+                        radii[i] = c.radius;
+                        centers[i] = c.center;
+                    }
+                    if let Some(r) = brep.geom.edge_curve_range.get(we.idx).and_then(|o| *o) {
+                        if i < 2 { spans[i] = (r[1] - r[0]).abs(); }
+                    }
+                    n_circle_edges += 1;
+                }
+            }
+        }
+        if n_circle_edges == 2 {
+            let total_theta = spans[0] + spans[1];
+            let same_center = (centers[0] - centers[1]).length_squared() < 1e-12;
+            let same_radius = (radii[0] - radii[1]).abs() < 1e-12;
+            if (total_theta - 2.0 * std::f64::consts::PI).abs() < 1e-10
+                && same_center && same_radius
+            {
+                return Some(std::f64::consts::PI * radii[0] * radii[0]);
+            }
+        }
+    }
+
     if n_edges < 3 { return None; }
 
     // Collect vertices in traversal order, and for each edge determine
