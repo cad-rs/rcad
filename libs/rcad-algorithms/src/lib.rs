@@ -2805,18 +2805,181 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
 /// (inner wires) for faces with missing interior regions.
 fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     if brep.vertices.len() < 4 { return brep; }
+    use rcad_kernel::topology::{Face, Wire, WireEdge};
+    use rcad_kernel::{Edge, Vertex};
+    use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
+
     let tol = tolerance::TOLERANCE_ABS.max(1e-8);
-    // Pass 1: orthogonal grid-based fuse (handles hole regions)
+    // Pass 1: orthogonal grid-based fuse
     let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
-    // Pass 2: edge-based unify (merges adjacent coplanar faces)
+    // Pass 2: edge-based unify
     let (m2, _) = crate::unify_same_domain_faces(&m1);
-    // Pass 3: detect remaining holed-plane groups and merge sub-faces into
-    // a single face with outer wire + inner wire, reusing existing edges.
-    let brep = m2;
-    // (Pass 3 is deferred — the current implementation relies on
-    //  rebuild_with_shared_edges inside sew_slabs_into_solid, which runs
-    //  on the slab-decomposed result before the final compaction.  The
-    //  general Pass 3 will be added in a follow-up.)
+    let mut brep = m2;
+
+    // Pass 3: detect remaining coplanar groups with hole patterns and merge
+    // sub-faces into a single face with outer wire + inner wire, reusing
+    // existing edges so the resulting shell has shared edge topology.
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let nf = brep.solids[si].shells[shi].faces.len();
+            if nf < 2 { continue; }
+            // Group faces by plane
+            let mut pg: Vec<Vec<usize>> = Vec::new();
+            let mut pk: Vec<(f64,f64,f64,f64)> = Vec::new();
+            for fi in 0..nf {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let n = face.normal;
+                if !face.inner_wires.is_empty() { continue; }
+                let pd = face.outer_wire.edges.first().and_then(|we|
+                    brep.edges.get(we.idx).and_then(|e|
+                        brep.vertices.get(e.start).map(|v| n.dot(v.point))
+                    )
+                ).unwrap_or(0.0);
+                let key = (n.x, n.y, n.z, pd);
+                if let Some(pos) = pk.iter().position(|k| {
+                    (k.0-key.0).abs()<1e-8 && (k.1-key.1).abs()<1e-8
+                    && (k.2-key.2).abs()<1e-8 && (k.3-key.3).abs()<1e-8
+                }) { pg[pos].push(fi); }
+                else { pk.push(key); pg.push(vec![fi]); }
+            }
+            let mut to_remove: Vec<usize> = Vec::new();
+            let mut new_faces: Vec<Face> = Vec::new();
+            for group in &pg {
+                if group.len() < 2 { continue; }
+                let mut pts: Vec<glam::DVec3> = Vec::new();
+                for &fi in group { for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
+                    if let Some(e) = brep.edges.get(we.idx) {
+                        if let Some(v) = brep.vertices.get(e.start) { pts.push(v.point); }
+                        if let Some(v) = brep.vertices.get(e.end) { pts.push(v.point); }
+                    }
+                }}
+                let omin = pts.iter().copied().fold(glam::DVec3::splat(f64::MAX), glam::DVec3::min);
+                let omax = pts.iter().copied().fold(glam::DVec3::splat(f64::NEG_INFINITY), glam::DVec3::max);
+                let (u_idx, v_idx): (usize,usize) = if (omin.x-omax.x).abs()<1e-8 {(1,2)}
+                    else if (omin.y-omax.y).abs()<1e-8 {(0,2)} else {(0,1)};
+                let w_idx = 3 - u_idx - v_idx;
+                let u_min = pts.iter().map(|p|p[u_idx]).fold(f64::MAX,f64::min);
+                let u_max = pts.iter().map(|p|p[u_idx]).fold(f64::NEG_INFINITY,f64::max);
+                let v_min = pts.iter().map(|p|p[v_idx]).fold(f64::MAX,f64::min);
+                let v_max = pts.iter().map(|p|p[v_idx]).fold(f64::NEG_INFINITY,f64::max);
+                let mut h_umin = f64::MAX; let mut h_umax = f64::NEG_INFINITY;
+                let mut h_vmin = f64::MAX; let mut h_vmax = f64::NEG_INFINITY;
+                for &p in &pts {
+                    let on_outer = (p[u_idx]-u_min).abs()<1e-8||(p[u_idx]-u_max).abs()<1e-8
+                        ||(p[v_idx]-v_min).abs()<1e-8||(p[v_idx]-v_max).abs()<1e-8;
+                    if !on_outer { h_umin=h_umin.min(p[u_idx]); h_umax=h_umax.max(p[u_idx]);
+                        h_vmin=h_vmin.min(p[v_idx]); h_vmax=h_vmax.max(p[v_idx]); }
+                }
+                if h_umin.is_infinite() { continue; }
+                let n = brep.solids[si].shells[shi].faces[group[0]].normal;
+                let w_val = omin[w_idx];
+                let mk_pt = |u: f64, v: f64| -> glam::DVec3 {
+                    let mut a=[0.0;3]; a[w_idx]=w_val; a[u_idx]=u; a[v_idx]=v; glam::DVec3::from_array(a)
+                };
+                // Find outer perimeter edges from non-removed faces (adjacent
+                // faces that have clean corner-to-corner topology)
+                let o_pts = [mk_pt(u_min,v_min), mk_pt(u_max,v_min), mk_pt(u_max,v_max), mk_pt(u_min,v_max)];
+                let mut outer_we: Vec<WireEdge> = Vec::new();
+                for k in 0..4 {
+                    let a = o_pts[k]; let b = o_pts[(k+1)%4];
+                    let mut found = false;
+                    for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                        if to_remove.contains(&fi) { continue; }
+                        for we in &face.outer_wire.edges {
+                            if let Some(e) = brep.edges.get(we.idx) {
+                                let sa = brep.vertices.get(e.start).map(|v|v.point);
+                                let sb = brep.vertices.get(e.end).map(|v|v.point);
+                                if let (Some(sa), Some(sb)) = (sa, sb) {
+                                    if (sa-a).length()<1e-8 && (sb-b).length()<1e-8 {
+                                        outer_we.push(WireEdge{idx:we.idx, forward:true});
+                                        found = true; break;
+                                    }
+                                    if (sb-a).length()<1e-8 && (sa-b).length()<1e-8 {
+                                        outer_we.push(WireEdge{idx:we.idx, forward:false});
+                                        found = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        if found { break; }
+                    }
+                    if !found { break; }
+                }
+                if outer_we.len() != 4 { continue; }
+                // Find inner perimeter edges from non-removed faces (channel walls)
+                let i_pts = [mk_pt(h_umin,h_vmin), mk_pt(h_umax,h_vmin), mk_pt(h_umax,h_vmax), mk_pt(h_umin,h_vmax)];
+                let mut inner_we: Vec<WireEdge> = Vec::new();
+                for k in 0..4 {
+                    let a = i_pts[k]; let b = i_pts[(k+1)%4];
+                    let mut found = false;
+                    for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                        if to_remove.contains(&fi) { continue; }
+                        for we in &face.outer_wire.edges {
+                            if let Some(e) = brep.edges.get(we.idx) {
+                                let sa = brep.vertices.get(e.start).map(|v|v.point);
+                                let sb = brep.vertices.get(e.end).map(|v|v.point);
+                                if let (Some(sa), Some(sb)) = (sa, sb) {
+                                    if (sa-a).length()<1e-8 && (sb-b).length()<1e-8 {
+                                        inner_we.push(WireEdge{idx:we.idx, forward:false});
+                                        found = true; break;
+                                    }
+                                    if (sb-a).length()<1e-8 && (sa-b).length()<1e-8 {
+                                        inner_we.push(WireEdge{idx:we.idx, forward:true});
+                                        found = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        if found { break; }
+                    }
+                    if !found { break; }
+                }
+                if inner_we.len() != 4 { continue; }
+                // Create merged face with outer wire + inner wire
+                for &fi in group { to_remove.push(fi); }
+                let surf_idx = brep.geom.surfaces.len();
+                brep.geom.surfaces.push(Surface3::Plane(Plane{origin: o_pts[0], normal: n}));
+                new_faces.push(Face {
+                    outer_wire: Wire{edges: outer_we},
+                    inner_wires: vec![Wire{edges: inner_we}],
+                    normal: n, triangles: vec![], sample_point: None, mesh_dirty: true,
+                });
+            }
+            if new_faces.is_empty() { continue; }
+            let mut kept: Vec<Face> = Vec::new();
+            for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                if !to_remove.contains(&fi) { kept.push(face.clone()); }
+            }
+            kept.extend(new_faces);
+            // Rebuild face_surface
+            let mut nfs: Vec<Option<usize>> = Vec::with_capacity(kept.len());
+            let mut nfsr: Vec<Option<[f64;4]>> = Vec::with_capacity(kept.len());
+            for face in &kept {
+                let origin = face.outer_wire.edges.first().and_then(|we|
+                    brep.edges.get(we.idx).and_then(|e|
+                        brep.vertices.get(e.start).map(|v| v.point)
+                    )
+                ).unwrap_or(glam::DVec3::ZERO);
+                let norm = face.normal;
+                let si2 = brep.geom.surfaces.iter().position(|s| {
+                    if let Surface3::Plane(p) = s {
+                        (p.normal-norm).length()<1e-8 && (p.origin-origin).length()<1e-8
+                    } else { false }
+                });
+                match si2 {
+                    Some(idx) => { nfs.push(Some(idx)); nfsr.push(None); }
+                    None => {
+                        let idx = brep.geom.surfaces.len();
+                        brep.geom.surfaces.push(Surface3::Plane(Plane{origin, normal: norm}));
+                        nfs.push(Some(idx)); nfsr.push(None);
+                    }
+                }
+            }
+            brep.geom.face_surface = nfs;
+            brep.geom.face_surface_range = nfsr;
+            brep.solids[si].shells[shi].faces = kept;
+        }
+    }
     brep
 }
 
