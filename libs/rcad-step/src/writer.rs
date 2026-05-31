@@ -1144,11 +1144,32 @@ impl Part21Writer {
         }
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
-        let face_bound = self.face_bound("outer_bound", edge_loop, true);
+        let mut bounds = vec![self.face_bound("outer_bound", edge_loop, true)];
+        // Inner wires (holes): for each inner wire, create an edge loop and face_bound.
+        for (ii, inner_wire) in face.inner_wires.iter().enumerate() {
+            let inner_oriented: Vec<OrientedEdgeExport> = inner_wire.edges.iter().filter_map(|we| {
+                let edge = brep.edges.get(we.idx)?;
+                let (start, end) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+                Some(OrientedEdgeExport { edge_idx: we.idx, start, end, forward: we.forward })
+            }).collect();
+            if inner_oriented.is_empty() { continue; }
+            let mut inner_entries: Vec<(u64, bool)> = Vec::with_capacity(inner_oriented.len());
+            for edge in &inner_oriented {
+                let curve = self.write_edge_curve_by_index(brep, edge.edge_idx);
+                let orientation = edge.forward;
+                inner_entries.push((curve, orientation));
+            }
+            let mut inner_ids = Vec::with_capacity(inner_entries.len());
+            for (curve, orientation) in inner_entries {
+                inner_ids.push(self.oriented_edge("face_edge", curve, orientation));
+            }
+            let inner_loop = self.edge_loop(&format!("inner_loop_{ii}"), &inner_ids);
+            bounds.push(self.face_bound(&format!("inner_bound_{ii}"), inner_loop, true));
+        }
         FaceExportResult {
             face_ids: vec![self.advanced_face(
                 "face",
-                &[face_bound],
+                &bounds,
                 surface,
                 face_orientation,
             )],

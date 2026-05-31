@@ -24,7 +24,7 @@
 //! multi-trim / classification, not missing FF pairs.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface};
+use rcad_kernel::geom::{any_perpendicular, bspline_is_planar, bspline_to_plane, Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -862,6 +862,208 @@ fn decompose_slabs(
 ///
 /// Falls back to `BRep::compound_from_shapes` when no pairs were stitched or the
 /// sewn result has no solids/shells.
+/// Post-process slab-decomposed result: merge coplanar faces.
+/// Uses `fuse_orthogonal_coplanar_faces` for grid-based fusion,
+/// `unify_same_domain_faces` for edge-based merging, then a final
+/// pass to merge remaining holed-plane sub-faces.
+fn rebuild_with_shared_edges(brep: &mut BRep, _zero_tol: f64) {
+    if brep.vertices.len() < 4 { return; }
+    let tol = TOLERANCE_ABS.max(1e-8);
+    // Pass 1: orthogonal grid-based fuse
+    let (m1, _n1) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(brep, tol);
+    // Pass 2: edge-based unify
+    let (m2, _n2) = crate::unify_same_domain_faces(&m1);
+    *brep = m2;
+
+    // Pass 3: detect holed-plane groups and merge remaining sub-faces into
+    // a single face with outer wire + inner wire, reusing existing edges.
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let nf = brep.solids[si].shells[shi].faces.len();
+            if nf < 2 { continue; }
+            // Group faces by plane
+            let mut pg: Vec<Vec<usize>> = Vec::new();
+            let mut pk: Vec<(f64,f64,f64,f64)> = Vec::new();
+            for fi in 0..nf {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let n = face.normal;
+                if !face.inner_wires.is_empty() { continue; } // skip already-holed faces
+                let pd = face.outer_wire.edges.first().and_then(|we|
+                    brep.edges.get(we.idx).and_then(|e|
+                        brep.vertices.get(e.start).map(|v| n.dot(v.point))
+                    )
+                ).unwrap_or(0.0);
+                let key = (n.x, n.y, n.z, pd);
+                if let Some(pos) = pk.iter().position(|k| {
+                    (k.0-key.0).abs()<1e-8 && (k.1-key.1).abs()<1e-8
+                    && (k.2-key.2).abs()<1e-8 && (k.3-key.3).abs()<1e-8
+                }) { pg[pos].push(fi); }
+                else { pk.push(key); pg.push(vec![fi]); }
+            }
+            let mut to_remove: Vec<usize> = Vec::new();
+            let mut new_faces: Vec<Face> = Vec::new();
+            for group in &pg {
+                if group.len() < 2 { continue; }
+                // Collect all vertex positions
+                let mut pts: Vec<DVec3> = Vec::new();
+                for &fi in group { for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
+                    if let Some(e) = brep.edges.get(we.idx) {
+                        if let Some(v) = brep.vertices.get(e.start) { pts.push(v.point); }
+                        if let Some(v) = brep.vertices.get(e.end) { pts.push(v.point); }
+                    }
+                }}
+                let omin = pts.iter().copied().fold(DVec3::splat(f64::MAX), DVec3::min);
+                let omax = pts.iter().copied().fold(DVec3::splat(f64::MIN), DVec3::max);
+                let (u_idx, v_idx): (usize,usize) = if (omin.x-omax.x).abs()<1e-8 {(1,2)}
+                    else if (omin.y-omax.y).abs()<1e-8 {(0,2)} else {(0,1)};
+                let w_idx = 3 - u_idx - v_idx;
+                let u_min = pts.iter().map(|p|p[u_idx]).fold(f64::MAX,f64::min);
+                let u_max = pts.iter().map(|p|p[u_idx]).fold(f64::NEG_INFINITY,f64::max);
+                let v_min = pts.iter().map(|p|p[v_idx]).fold(f64::MAX,f64::min);
+                let v_max = pts.iter().map(|p|p[v_idx]).fold(f64::NEG_INFINITY,f64::max);
+                // Find hole extents
+                let mut h_umin = f64::MAX; let mut h_umax = f64::NEG_INFINITY;
+                let mut h_vmin = f64::MAX; let mut h_vmax = f64::NEG_INFINITY;
+                for &p in &pts {
+                    let on_outer = (p[u_idx]-u_min).abs()<1e-8||(p[u_idx]-u_max).abs()<1e-8
+                        ||(p[v_idx]-v_min).abs()<1e-8||(p[v_idx]-v_max).abs()<1e-8;
+                    if !on_outer { h_umin=h_umin.min(p[u_idx]); h_umax=h_umax.max(p[u_idx]);
+                        h_vmin=h_vmin.min(p[v_idx]); h_vmax=h_vmax.max(p[v_idx]); }
+                }
+                if h_umin.is_infinite() { continue; } // no hole — should already be merged
+                let n = brep.solids[si].shells[shi].faces[group[0]].normal;
+                let w_val = omin[w_idx]; // constant coordinate for this planar face
+                let mk_pt = |u: f64, v: f64| -> DVec3 {
+                    let mut a=[0.0;3]; a[w_idx]=w_val; a[u_idx]=u; a[v_idx]=v; DVec3::from_array(a)
+                };
+                // Find edge between two points (reuse existing shared edges)
+                let find_edge = |brep: &BRep, a: DVec3, b: DVec3| -> Option<(usize, bool)> {
+                    for (ei, e) in brep.edges.iter().enumerate() {
+                        let sa = brep.vertices.get(e.start).map(|v|v.point);
+                        let sb = brep.vertices.get(e.end).map(|v|v.point);
+                        if let (Some(sa), Some(sb)) = (sa, sb) {
+                            if (sa-a).length()<1e-8 && (sb-b).length()<1e-8 { return Some((ei, true)); }
+                            if (sb-a).length()<1e-8 && (sa-b).length()<1e-8 { return Some((ei, false)); }
+                        }
+                    }
+                    None
+                };
+                // outer perimeter: 4 edges around outer AABB.
+                // MUST use edges from adjacent ±Y/±Z faces (not the strip's own
+                // edges) so these perimeter edges are shared between faces.
+                let o_pts = [mk_pt(u_min,v_min), mk_pt(u_max,v_min), mk_pt(u_max,v_max), mk_pt(u_min,v_max)];
+                let mut outer_we: Vec<WireEdge> = Vec::new();
+                // First collect all NON-removed faces that are NOT in this group.
+                // Their perimeter edges at the intersection with the w-plane are
+                // the clean edges we should use.
+                for k in 0..4 {
+                    let a = o_pts[k];
+                    let b = o_pts[(k+1)%4];
+                    let mut found = false;
+                    for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                        if to_remove.contains(&fi) { continue; } // skip group faces
+                        for we in &face.outer_wire.edges {
+                            if let Some(e) = brep.edges.get(we.idx) {
+                                let sa = brep.vertices.get(e.start).map(|v|v.point);
+                                let sb = brep.vertices.get(e.end).map(|v|v.point);
+                                if let (Some(sa), Some(sb)) = (sa, sb) {
+                                    if (sa-a).length()<1e-8 && (sb-b).length()<1e-8 {
+                                        outer_we.push(WireEdge{idx:we.idx, forward:true});
+                                        found = true; break;
+                                    }
+                                    if (sb-a).length()<1e-8 && (sa-b).length()<1e-8 {
+                                        outer_we.push(WireEdge{idx:we.idx, forward:false});
+                                        found = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        if found { break; }
+                    }
+                    if !found { break; }
+                }
+                if outer_we.len() != 4 { continue; }
+                // inner perimeter: 4 edges around hole AABB.
+                // Search NON-removed faces only (channel walls, not strips).
+                let i_pts = [mk_pt(h_umin,h_vmin), mk_pt(h_umax,h_vmin), mk_pt(h_umax,h_vmax), mk_pt(h_umin,h_vmax)];
+                let mut inner_we: Vec<WireEdge> = Vec::new();
+                for k in 0..4 {
+                    let a = i_pts[k];
+                    let b = i_pts[(k+1)%4];
+                    let mut found = false;
+                    for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                        if to_remove.contains(&fi) { continue; }
+                        for we in &face.outer_wire.edges {
+                            if let Some(e) = brep.edges.get(we.idx) {
+                                let sa = brep.vertices.get(e.start).map(|v|v.point);
+                                let sb = brep.vertices.get(e.end).map(|v|v.point);
+                                if let (Some(sa), Some(sb)) = (sa, sb) {
+                                    if (sa-a).length()<1e-8 && (sb-b).length()<1e-8 {
+                                        inner_we.push(WireEdge{idx:we.idx, forward:false});
+                                        found = true; break;
+                                    }
+                                    if (sb-a).length()<1e-8 && (sa-b).length()<1e-8 {
+                                        inner_we.push(WireEdge{idx:we.idx, forward:true});
+                                        found = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        if found { break; }
+                    }
+                    if !found { break; }
+                }
+                if inner_we.len() != 4 { continue; }
+                // Create merged face with outer wire + inner wire
+                let origin = o_pts[0];
+                let surf_idx = brep.geom.surfaces.len();
+                brep.geom.surfaces.push(Surface3::Plane(Plane{origin, normal:n}));
+                new_faces.push(Face {
+                    outer_wire: rcad_kernel::topology::Wire{edges:outer_we},
+                    inner_wires: vec![rcad_kernel::topology::Wire{edges:inner_we}],
+                    normal: n, triangles: vec![], sample_point: None, mesh_dirty: true,
+                });
+                // Track faces to remove
+                for &fi in group { to_remove.push(fi); }
+            }
+            if new_faces.is_empty() { continue; }
+            // Replace shell faces: keep non-removed + add new merged faces
+            let mut kept: Vec<Face> = Vec::new();
+            for (fi, face) in brep.solids[si].shells[shi].faces.iter().enumerate() {
+                if !to_remove.contains(&fi) { kept.push(face.clone()); }
+            }
+            kept.extend(new_faces);
+            // Rebuild face_surface
+            let mut nfs: Vec<Option<usize>> = Vec::with_capacity(kept.len());
+            let mut nfsr: Vec<Option<[f64;4]>> = Vec::with_capacity(kept.len());
+            for face in &kept {
+                let origin = face.outer_wire.edges.first().and_then(|we|
+                    brep.edges.get(we.idx).and_then(|e|
+                        brep.vertices.get(e.start).map(|v| v.point)
+                    )
+                ).unwrap_or(DVec3::ZERO);
+                let norm = face.normal;
+                let si2 = brep.geom.surfaces.iter().position(|s| {
+                    if let Surface3::Plane(p) = s {
+                        (p.normal-norm).length()<1e-8 && (p.origin-origin).length()<1e-8
+                    } else { false }
+                });
+                match si2 {
+                    Some(idx) => { nfs.push(Some(idx)); nfsr.push(None); }
+                    None => {
+                        let idx = brep.geom.surfaces.len();
+                        brep.geom.surfaces.push(Surface3::Plane(Plane{origin, normal: norm}));
+                        nfs.push(Some(idx)); nfsr.push(None);
+                    }
+                }
+            }
+            brep.geom.face_surface = nfs;
+            brep.geom.face_surface_range = nfsr;
+            brep.solids[si].shells[shi].faces = kept;
+        }
+    }
+}
+
 fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
     if slabs.is_empty() {
         return BRep::default();
@@ -989,6 +1191,42 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
         s.shells.iter().any(|sh| !sh.faces.is_empty())
     });
 
+    // Merge vertices at the same position (from different slabs) so the
+    // remaining faces form a closed shell with shared edges/vertices.
+    let vtol = zero_tol.max(1e-10);
+    let mut v_remap: Vec<usize> = (0..brep.vertices.len()).collect();
+    for i in 0..brep.vertices.len() {
+        if v_remap[i] != i { continue; } // already mapped
+        for j in (i + 1)..brep.vertices.len() {
+            if v_remap[j] != j { continue; }
+            if (brep.vertices[i].point - brep.vertices[j].point).length() < vtol {
+                v_remap[j] = i;
+            }
+        }
+    }
+    // Apply vertex remap to edges, then compact vertices
+    for e in &mut brep.edges {
+        e.start = v_remap[e.start];
+        e.end = v_remap[e.end];
+    }
+    let mut new_verts: Vec<Vertex> = Vec::new();
+    let mut compact_remap: Vec<Option<usize>> = vec![None; brep.vertices.len()];
+    for (i, v) in brep.vertices.iter().enumerate() {
+        let target = v_remap[i];
+        if compact_remap[target].is_none() {
+            compact_remap[target] = Some(new_verts.len());
+            new_verts.push(brep.vertices[target]);
+        }
+    }
+    for e in &mut brep.edges {
+        e.start = compact_remap[e.start].unwrap_or(e.start);
+        e.end = compact_remap[e.end].unwrap_or(e.end);
+    }
+    brep.vertices = new_verts;
+
+    // Post-process: detect through-channel and rebuild faces with shared edges.
+    rebuild_with_shared_edges(&mut brep, zero_tol);
+
     // Collect vertices and edges still referenced by remaining faces.
     let mut used_verts = vec![false; brep.vertices.len()];
     let mut used_edges = vec![false; brep.edges.len()];
@@ -1073,9 +1311,45 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
 /// the overlap boundaries, then sews them and removes internal faces
 /// (those whose all edges are stitched).  This yields the correct
 /// external surface area 鈥?no internal-face inflation from compounds.
+/// Detect an axis-aligned box from its 8 vertices alone (no Plane surface required).
+/// Needed for NURBS-converted boxes (nurbsconvert) whose faces are BSpline surfaces
+/// even though they are geometrically planar.
+fn try_as_axis_aligned_box_from_vertices(brep: &BRep) -> Option<[DVec3; 2]> {
+    if brep.solids.len() != 1 || brep.solids[0].shells.len() != 1
+        || brep.solids[0].shells[0].faces.len() != 6 || brep.vertices.len() != 8
+    {
+        return None;
+    }
+    let mut bmin = DVec3::splat(f64::MAX);
+    let mut bmax = DVec3::splat(f64::NEG_INFINITY);
+    for v in &brep.vertices {
+        bmin = bmin.min(v.point);
+        bmax = bmax.max(v.point);
+    }
+    // Each vertex must be close to one of the 8 AABB corners.
+    let tol = 1e-6;
+    let corners: [DVec3; 8] = [
+        DVec3::new(bmin.x, bmin.y, bmin.z), DVec3::new(bmax.x, bmin.y, bmin.z),
+        DVec3::new(bmin.x, bmax.y, bmin.z), DVec3::new(bmax.x, bmax.y, bmin.z),
+        DVec3::new(bmin.x, bmin.y, bmax.z), DVec3::new(bmax.x, bmin.y, bmax.z),
+        DVec3::new(bmin.x, bmax.y, bmax.z), DVec3::new(bmax.x, bmax.y, bmax.z),
+    ];
+    'v: for v in &brep.vertices {
+        for &c in &corners {
+            if (v.point - c).length() < tol {
+                continue 'v;
+            }
+        }
+        return None; // vertex not at a corner
+    }
+    Some([bmin, bmax])
+}
+
 pub fn try_difference_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
-    let [amin, amax] = try_as_axis_aligned_box(a)?;
-    let [bmin, bmax] = try_as_axis_aligned_box(b)?;
+    let [amin, amax] = try_as_axis_aligned_box(a)
+        .or_else(|| try_as_axis_aligned_box_from_vertices(a))?;
+    let [bmin, bmax] = try_as_axis_aligned_box(b)
+        .or_else(|| try_as_axis_aligned_box_from_vertices(b))?;
 
     // Overlap region
     let rmin = DVec3::new(amin.x.max(bmin.x), amin.y.max(bmin.y), amin.z.max(bmin.z));
@@ -1154,13 +1428,17 @@ pub(crate) fn try_as_box(brep: &BRep) -> Option<BoxInfo> {
         return None;
     }
 
-    // All 6 faces must be planar.
+    // All 6 faces must be planar (Plane or planar BSpline).
     let mut normals: Vec<DVec3> = Vec::with_capacity(6);
     for fi in 0..6 {
         let si = brep.geom.face_surface.get(fi)?.as_ref()?;
         let surf = brep.geom.surfaces.get(*si)?;
         match surf {
             Surface3::Plane(p) => normals.push(p.normal),
+            Surface3::BSpline(bsp) if bspline_is_planar(bsp, 1e-12) => {
+                let p = bspline_to_plane(bsp);
+                normals.push(p.normal);
+            }
             _ => return None,
         }
     }
@@ -4175,6 +4453,146 @@ fn brep_difference_sphere_minus_box_analytic() -> BRep {
     brep
 }
 
+/// Analytic BRep for box [0,1]³ minus unit sphere at the origin (corner configuration).
+///
+/// Result surfaces: 3 full planar faces (+X, +Y, +Z), 3 planar faces with
+/// quarter-circle cutouts (-X, -Y, -Z), and a 1/8 spherical indentation at the
+/// origin corner.  SA = 6 − π/4 ≈ 5.2146 (exact).
+fn brep_box_minus_sphere_analytic() -> BRep {
+    use std::f64::consts::FRAC_PI_2;
+    let mut brep = BRep::new();
+
+    // ── Vertices ──
+    let v0 = make_vertex(&mut brep, DVec3::ZERO);
+    let vx = make_vertex(&mut brep, DVec3::X);
+    let vy = make_vertex(&mut brep, DVec3::Y);
+    let vz = make_vertex(&mut brep, DVec3::Z);
+    let vxy = make_vertex(&mut brep, DVec3::new(1.0, 1.0, 0.0));
+    let vxz = make_vertex(&mut brep, DVec3::new(1.0, 0.0, 1.0));
+    let vyz = make_vertex(&mut brep, DVec3::new(0.0, 1.0, 1.0));
+    let vxyz = make_vertex(&mut brep, DVec3::new(1.0, 1.0, 1.0));
+
+    // ── Great-circle edges (sphere-plane intersections) ──
+    let gc_x = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::X, radius: 1.0 }),
+        0.0, FRAC_PI_2, vy, vz).ok().expect("gc_x");
+    let gc_y = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Y, radius: 1.0 }),
+        0.0, FRAC_PI_2, vx, vz).ok().expect("gc_y");
+    let gc_z = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 }),
+        0.0, FRAC_PI_2, vx, vy).ok().expect("gc_z");
+
+    // ── Axis line edges (origin to box corner) ──
+    let lx = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+        0.0, 1.0, v0, vx).ok().expect("lx");
+    let ly = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y }),
+        0.0, 1.0, v0, vy).ok().expect("ly");
+    let lz = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Z }),
+        0.0, 1.0, v0, vz).ok().expect("lz");
+
+    // ── Box perimeter edges (9 edges at x=1, y=1, z=1) ──
+    // Y-direction
+    let e_y_at_x1z0 = make_edge(&mut brep,     // vx → vxy
+        Curve3::Line(Line3 { origin: DVec3::X, direction: DVec3::Y }), 0.0, 1.0, vx, vxy).ok().expect("e_y_at_x1z0");
+    let e_y_at_x1z1 = make_edge(&mut brep,     // vxz → vxyz
+        Curve3::Line(Line3 { origin: DVec3::new(1.0, 0.0, 1.0), direction: DVec3::Y }), 0.0, 1.0, vxz, vxyz).ok().expect("e_y_at_x1z1");
+    let e_y_at_x0z1 = make_edge(&mut brep,     // vz → vyz
+        Curve3::Line(Line3 { origin: DVec3::Z, direction: DVec3::Y }), 0.0, 1.0, vz, vyz).ok().expect("e_y_at_x0z1");
+
+    // Z-direction
+    let e_z_at_x1y0 = make_edge(&mut brep,     // vx → vxz
+        Curve3::Line(Line3 { origin: DVec3::X, direction: DVec3::Z }), 0.0, 1.0, vx, vxz).ok().expect("e_z_at_x1y0");
+    let e_z_at_x1y1 = make_edge(&mut brep,     // vxy → vxyz
+        Curve3::Line(Line3 { origin: DVec3::new(1.0, 1.0, 0.0), direction: DVec3::Z }), 0.0, 1.0, vxy, vxyz).ok().expect("e_z_at_x1y1");
+    let e_z_at_x0y1 = make_edge(&mut brep,     // vy → vyz
+        Curve3::Line(Line3 { origin: DVec3::Y, direction: DVec3::Z }), 0.0, 1.0, vy, vyz).ok().expect("e_z_at_x0y1");
+
+    // X-direction
+    let e_x_at_y1z0 = make_edge(&mut brep,     // vy → vxy
+        Curve3::Line(Line3 { origin: DVec3::Y, direction: DVec3::X }), 0.0, 1.0, vy, vxy).ok().expect("e_x_at_y1z0");
+    let e_x_at_y0z1 = make_edge(&mut brep,     // vz → vxz
+        Curve3::Line(Line3 { origin: DVec3::Z, direction: DVec3::X }), 0.0, 1.0, vz, vxz).ok().expect("e_x_at_y0z1");
+    let e_x_at_y1z1 = make_edge(&mut brep,     // vyz → vxyz
+        Curve3::Line(Line3 { origin: DVec3::new(0.0, 1.0, 1.0), direction: DVec3::X }), 0.0, 1.0, vyz, vxyz).ok().expect("e_x_at_y1z1");
+
+    // ── Full planar faces (+X, +Y, +Z) ──
+    // +X face (x=1): vx → vxy → vxyz → vxz → vx
+    let _px = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::X, normal: DVec3::X }),
+        make_wire(vec![
+            WireEdge::fwd(e_y_at_x1z0), WireEdge::fwd(e_z_at_x1y1),
+            WireEdge::rev(e_y_at_x1z1), WireEdge::rev(e_z_at_x1y0),
+        ]), vec![],).ok().expect("+X");
+
+    // +Y face (y=1): vy → vyz → vxyz → vxy → vy
+    let _py = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::Y, normal: DVec3::Y }),
+        make_wire(vec![
+            WireEdge::fwd(e_z_at_x0y1), WireEdge::fwd(e_x_at_y1z1),
+            WireEdge::rev(e_z_at_x1y1), WireEdge::rev(e_x_at_y1z0),
+        ]), vec![],).ok().expect("+Y");
+
+    // +Z face (z=1): vz → vxz → vxyz → vyz → vz
+    let _pz = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::Z, normal: DVec3::Z }),
+        make_wire(vec![
+            WireEdge::fwd(e_x_at_y0z1), WireEdge::fwd(e_y_at_x1z1),
+            WireEdge::rev(e_x_at_y1z1), WireEdge::rev(e_y_at_x0z1),
+        ]), vec![],).ok().expect("+Z");
+
+    // ── U-shaped planar faces with quarter-circle cutouts (-X, -Y, -Z) ──
+    // -X face (x=0): vy → gc_x(fwd) → vz → e_y(fwd) → vyz → e_z(rev) → vy
+    // Arc first (fwd) so the inward-bulge sign is computed correctly.
+    let _nx = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::NEG_X }),
+        make_wire(vec![
+            WireEdge::fwd(gc_x), WireEdge::fwd(e_y_at_x0z1),
+            WireEdge::rev(e_z_at_x0y1),
+        ]), vec![],).ok().expect("-X");
+
+    // -Y face (y=0): vx → vxz → vz → gc_y(rev) → vx
+    let _ny = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::NEG_Y }),
+        make_wire(vec![
+            WireEdge::fwd(e_z_at_x1y0), WireEdge::rev(e_x_at_y0z1),
+            WireEdge::rev(gc_y),
+        ]), vec![],).ok().expect("-Y");
+
+    // -Z face (z=0): vx → gc_z(fwd) → vy → e_x(fwd) → vxy → e_y(rev) → vx
+    // Arc first (fwd) so the inward-bulge sign is computed correctly.
+    let _nz = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::NEG_Z }),
+        make_wire(vec![
+            WireEdge::fwd(gc_z), WireEdge::fwd(e_x_at_y1z0),
+            WireEdge::rev(e_y_at_x1z0),
+        ]), vec![],).ok().expect("-Z");
+
+    // ── Spherical face (1/8): vx → gc_z(fwd) → vy → gc_x(fwd) → vz → gc_y(rev) → vx ──
+    let _sf = make_face(&mut brep,
+        Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X,
+        }),
+        make_wire(vec![
+            WireEdge::fwd(gc_z), WireEdge::fwd(gc_x), WireEdge::rev(gc_y),
+        ]), vec![],).ok().expect("sphere_1/8");
+
+    // ── Pad auxiliary GeomStore arrays ──
+    while brep.geom.edge_pcurves.len() < brep.edges.len() {
+        brep.geom.edge_pcurves.push(vec![]);
+    }
+    while brep.geom.edge_curve_range.len() < brep.edges.len() {
+        brep.geom.edge_curve_range.push(None);
+    }
+    while brep.geom.face_surface_range.len() < brep.solids[0].shells[0].faces.len() {
+        brep.geom.face_surface_range.push(None);
+    }
+    brep
+}
+
 fn brep_difference_sphere_minus_box() -> BRep {
     use std::f64::consts::FRAC_PI_2;
     return brep_difference_sphere_minus_box_analytic();
@@ -4275,19 +4693,293 @@ pub fn try_union_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
         .or_else(|| try_union_sphere_box_pair(b, a))
 }
 
-/// Fast path: difference sphere 鈭?box (corner configuration: unit sphere at origin, box [0,1]鲁).
-/// Also handles box 鈭?sphere (returns the sphere minus box or falls through).
-pub fn try_difference_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
-    // sphere 鈭?box: sphere at origin, box at [0,1]鲁
-    if is_unit_sphere_at_origin(a) && is_pos_unit_cube_0_1(b) {
-        return Some(brep_difference_sphere_minus_box());
+/// Detect a unit cube whose corner coincides with the sphere center.
+/// Returns 3 directions from sphere center to the adjacent box corners and
+/// 3 plane normals (the 3 box-face planes through the sphere center).
+fn unit_cube_at_sphere_corner(sphere_center: DVec3, box_: &BRep) -> Option<([DVec3; 3], [DVec3; 3])> {
+    let info = try_as_box(box_)?;
+    let tol = 1e-6;
+    // Must be a unit cube (extents = 0.5)
+    if (info.extents[0] - 0.5).abs() > tol
+        || (info.extents[1] - 0.5).abs() > tol
+        || (info.extents[2] - 0.5).abs() > tol
+    {
+        return None;
     }
-    // box 鈭?sphere: box at [0,1]鲁, sphere at origin
-    // This is the complement of the union inside the box 鈥?more complex, falls through.
-    if is_unit_sphere_at_origin(b) && is_pos_unit_cube_0_1(a) {
-        // For box 鈭?sphere, use the union result's box portion:
-        // The box with a spherical indentation at the corner.
-        // For now, fall through to Pave-Filler (correct but slow).
+    // Find which box corner is at sphere_center
+    let [ua, va, wa] = info.axes;
+    let [ue, ve, we] = info.extents;
+    let c = info.center;
+    for &sx in &[-1.0, 1.0] {
+        for &sy in &[-1.0, 1.0] {
+            for &sz in &[-1.0, 1.0] {
+                let crnr = c + sx*ue*ua + sy*ve*va + sz*we*wa;
+                if (crnr - sphere_center).length() < tol {
+                    // Three directions from sphere center to adjacent box corners
+                    let dirs = [-sx * ua, -sy * va, -sz * wa];
+                    // Three plane normals (box face planes through sphere center)
+                    let normals = [-sx * ua, -sy * va, -sz * wa];
+                    return Some((dirs, normals));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Analytic BRep for sphere 鈭?rotated unit cube (corner configuration, any orientation).
+fn brep_difference_sphere_minus_rotated_box_analytic(
+    sphere_center: DVec3, sphere_radius: f64,
+    dirs: [DVec3; 3], normals: [DVec3; 3],
+) -> Option<BRep> {
+    use std::f64::consts::FRAC_PI_2;
+    let mut brep = BRep::new();
+
+    // Vertices: sphere center + three adjacent box corners
+    let v0 = make_vertex(&mut brep, sphere_center);
+    let va = make_vertex(&mut brep, sphere_center + dirs[0]);
+    let vb = make_vertex(&mut brep, sphere_center + dirs[1]);
+    let vc = make_vertex(&mut brep, sphere_center + dirs[2]);
+
+    // Great-circle edges (quarter-circle arcs on the 3 face planes through sphere center)
+    let gc_a = make_edge(&mut brep,     // plane ┴ normals[0], from vb to vc
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[0], radius: sphere_radius }),
+        0.0, FRAC_PI_2, vb, vc).ok()?;
+    let gc_b = make_edge(&mut brep,     // plane ┴ normals[1], from va to vc
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[1], radius: sphere_radius }),
+        0.0, FRAC_PI_2, va, vc).ok()?;
+    let gc_c = make_edge(&mut brep,     // plane ┴ normals[2], from va to vb
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[2], radius: sphere_radius }),
+        0.0, FRAC_PI_2, va, vb).ok()?;
+
+    // Axis line edges (sphere center to adjacent box corners)
+    let la = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[0] }),
+        0.0, 1.0, v0, va).ok()?;
+    let lb = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[1] }),
+        0.0, 1.0, v0, vb).ok()?;
+    let lc = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[2] }),
+        0.0, 1.0, v0, vc).ok()?;
+
+    // Spherical face (7/8 of sphere).
+    // Wire traces vb → gc_a(fwd) → vc → gc_b(rev) → va → gc_c(fwd) → vb,
+    // producing all LEFT TURNS and giving the 7/8 great-circle area.
+    // (A1's wire vy→gc_z(rev)→vx→gc_y(fwd)→vz→gc_x(rev)→vy works because
+    //  vy and vx are in (+Y, +X) vs the rotated (+Y, −X) ordering here.)
+    let sphere_wire = make_wire(vec![
+        WireEdge::fwd(gc_a), WireEdge::rev(gc_b), WireEdge::fwd(gc_c),
+    ]);
+    let _sf = make_face(&mut brep,
+        Surface3::Sphere(SphericalSurface {
+            center: sphere_center, axis: dirs[2], radius: sphere_radius, ref_dir: dirs[0],
+        }),
+        sphere_wire, vec![],).ok()?;
+
+    // Three quarter-disk planar faces.
+    // For each face, the correct wire direction depends on whether the face
+    // normal matches A1's direction.  For the rotated case, normals[i] may
+    // differ from A1's (+X, +Y, +Z), so we reverse the wire to produce the
+    // correct outward arc-bulge sign from the planar-face area formula.
+    // _pa (normals[0]): reversed wire v0 → lc → vc → gc_a(rev) → vb → lb(rev) → v0
+    let _pa = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: normals[0] }),
+        make_wire(vec![WireEdge::fwd(lc), WireEdge::rev(gc_a), WireEdge::rev(lb)]),
+        vec![],).ok()?;
+    // _pb (normals[1]): fwd wire v0 → la → va → gc_b(fwd) → vc → lc(rev) → v0
+    let _pb = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: normals[1] }),
+        make_wire(vec![WireEdge::fwd(la), WireEdge::fwd(gc_b), WireEdge::rev(lc)]),
+        vec![],).ok()?;
+    // _pc (normals[2]): reversed wire v0 → lb → vb → gc_c(rev) → va → la(rev) → v0
+    let _pc = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: normals[2] }),
+        make_wire(vec![WireEdge::fwd(lb), WireEdge::rev(gc_c), WireEdge::rev(la)]),
+        vec![],).ok()?;
+
+    // Pad auxiliary GeomStore arrays
+    while brep.geom.edge_pcurves.len() < brep.edges.len() {
+        brep.geom.edge_pcurves.push(vec![]);
+    }
+    while brep.geom.edge_curve_range.len() < brep.edges.len() {
+        brep.geom.edge_curve_range.push(None);
+    }
+    while brep.geom.face_surface_range.len() < brep.solids[0].shells[0].faces.len() {
+        brep.geom.face_surface_range.push(None);
+    }
+    Some(brep)
+}
+
+/// Analytic BRep for rotated unit cube 鈭?sphere (corner configuration, any orientation).
+///
+/// Result: 3 full planar faces (opposite the sphere corner), 3 U-shaped faces
+/// (with quarter-circle cutouts) on the planes through sphere center, and a
+/// 1/8 spherical indentation.  SA = 6 鈭?蟺/4 鈮?5.2146 (same as A3).
+fn brep_box_minus_sphere_rotated_analytic(
+    sphere_center: DVec3, sphere_radius: f64,
+    dirs: [DVec3; 3], normals: [DVec3; 3],
+) -> Option<BRep> {
+    use std::f64::consts::FRAC_PI_2;
+    let mut brep = BRep::new();
+
+    // 8 box vertices: sphere corner + 3 adjacent + 3 face-diagonal + 1 body-diagonal
+    let p0 = make_vertex(&mut brep, sphere_center);
+    let pa = make_vertex(&mut brep, sphere_center + dirs[0]);          // adjacent along dirs[0]
+    let pb = make_vertex(&mut brep, sphere_center + dirs[1]);          // adjacent along dirs[1]
+    let pc = make_vertex(&mut brep, sphere_center + dirs[2]);          // adjacent along dirs[2]
+    let pab = make_vertex(&mut brep, sphere_center + dirs[0] + dirs[1]); // far in 0+1 plane
+    let pac = make_vertex(&mut brep, sphere_center + dirs[0] + dirs[2]); // far in 0+2 plane
+    let pbc = make_vertex(&mut brep, sphere_center + dirs[1] + dirs[2]); // far in 1+2 plane
+    let pabc = make_vertex(&mut brep, sphere_center + dirs[0] + dirs[1] + dirs[2]);
+
+    // Great-circle edges (same as rotated A1 builder)
+    let gc_a = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[0], radius: sphere_radius }),
+        0.0, FRAC_PI_2, pb, pc).ok()?;
+    let gc_b = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[1], radius: sphere_radius }),
+        0.0, FRAC_PI_2, pa, pc).ok()?;
+    let gc_c = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: sphere_center, normal: normals[2], radius: sphere_radius }),
+        0.0, FRAC_PI_2, pa, pb).ok()?;
+
+    // Axis line edges (sphere center to adjacent box corners)
+    let la = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[0] }), 0.0, 1.0, p0, pa).ok()?;
+    let lb = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[1] }), 0.0, 1.0, p0, pb).ok()?;
+    let lc = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: sphere_center, direction: dirs[2] }), 0.0, 1.0, p0, pc).ok()?;
+
+    // Box perimeter edges (9 edges at the far side of the box)
+    let e_d1_at_d0 = make_edge(&mut brep,     // pa 鈫?pab, along dirs[1]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[0], direction: dirs[1] }), 0.0, 1.0, pa, pab).ok()?;
+    let e_d1_at_d0d2 = make_edge(&mut brep,   // pac 鈫?pabc, along dirs[1]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[0] + dirs[2], direction: dirs[1] }), 0.0, 1.0, pac, pabc).ok()?;
+    let e_d1_at_d2 = make_edge(&mut brep,     // pc 鈫?pbc, along dirs[1]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[2], direction: dirs[1] }), 0.0, 1.0, pc, pbc).ok()?;
+
+    let e_d2_at_d0 = make_edge(&mut brep,     // pa 鈫?pac, along dirs[2]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[0], direction: dirs[2] }), 0.0, 1.0, pa, pac).ok()?;
+    let e_d2_at_d1 = make_edge(&mut brep,     // pb 鈫?pbc, along dirs[2]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[1], direction: dirs[2] }), 0.0, 1.0, pb, pbc).ok()?;
+    let e_d2_at_d0d1 = make_edge(&mut brep,   // pab 鈫?pabc, along dirs[2]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[0] + dirs[1], direction: dirs[2] }), 0.0, 1.0, pab, pabc).ok()?;
+
+    let e_d0_at_d1 = make_edge(&mut brep,     // pb 鈫?pab, along dirs[0]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[1], direction: dirs[0] }), 0.0, 1.0, pb, pab).ok()?;
+    let e_d0_at_d2 = make_edge(&mut brep,     // pc 鈫?pac, along dirs[0]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[2], direction: dirs[0] }), 0.0, 1.0, pc, pac).ok()?;
+    let e_d0_at_d1d2 = make_edge(&mut brep,   // pbc 鈫?pabc, along dirs[0]
+        Curve3::Line(Line3 { origin: sphere_center + dirs[1] + dirs[2], direction: dirs[0] }), 0.0, 1.0, pbc, pabc).ok()?;
+
+    // Three full planar faces (opposite the sphere corner)
+    // Opposite dirs[0] (normal = normals[0]): pa 鈫?pab 鈫?pabc 鈫?pac 鈫?pa
+    let _pa_full = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center + dirs[0], normal: normals[0] }),
+        make_wire(vec![
+            WireEdge::fwd(e_d1_at_d0), WireEdge::fwd(e_d2_at_d0d1),
+            WireEdge::rev(e_d1_at_d0d2), WireEdge::rev(e_d2_at_d0),
+        ]), vec![],).ok()?;
+
+    // Opposite dirs[1] (normal = normals[1]): pb 鈫?pbc 鈫?pabc 鈫?pab 鈫?pb
+    let _pb_full = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center + dirs[1], normal: normals[1] }),
+        make_wire(vec![
+            WireEdge::fwd(e_d2_at_d1), WireEdge::fwd(e_d0_at_d1d2),
+            WireEdge::rev(e_d2_at_d0d1), WireEdge::rev(e_d0_at_d1),
+        ]), vec![],).ok()?;
+
+    // Opposite dirs[2] (normal = normals[2]): pc 鈫?pbc 鈫?pabc 鈫?pac 鈫?pc
+    let _pc_full = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center + dirs[2], normal: normals[2] }),
+        make_wire(vec![
+            WireEdge::fwd(e_d1_at_d2), WireEdge::fwd(e_d0_at_d1d2),
+            WireEdge::rev(e_d1_at_d0d2), WireEdge::rev(e_d0_at_d2),
+        ]), vec![],).ok()?;
+
+    // Three U-shaped planar faces with quarter-circle cutouts (through sphere corner)
+    // U-shaped faces: each is a rectangle with a quarter-circle cutout at the
+    // sphere corner.  The arc direction and normal sign together determine the
+    // correct bulge sign (area = 1-upper_bound/4 vs upper_bound/4).
+    // face through -normals[0]: rev arc (inward bulge with normal(1,0,0))
+    let _pa_us = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: -normals[0] }),
+        make_wire(vec![
+            WireEdge::fwd(e_d2_at_d1), WireEdge::rev(e_d1_at_d2),
+            WireEdge::rev(gc_a),
+        ]), vec![],).ok()?;
+
+    // face through -normals[1]: fwd arc (already correct with normal(0,-1,0))
+    let _pb_us = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: -normals[1] }),
+        make_wire(vec![
+            WireEdge::fwd(gc_b), WireEdge::fwd(e_d0_at_d2),
+            WireEdge::rev(e_d2_at_d0),
+        ]), vec![],).ok()?;
+
+    // face through -normals[2]: rev arc (inward bulge with normal(0,0,-1))
+    let _pc_us = make_face(&mut brep,
+        Surface3::Plane(Plane { origin: sphere_center, normal: -normals[2] }),
+        make_wire(vec![
+            WireEdge::fwd(e_d1_at_d0), WireEdge::rev(e_d0_at_d1),
+            WireEdge::rev(gc_c),
+        ]), vec![],).ok()?;
+
+    // Spherical indentation face (1/8 sphere).
+    // Wire traces va → gc_b(fwd) → vc → gc_a(rev) → vb → gc_c(rev) → va,
+    // producing all RIGHT TURNS and giving the 1/8 great-circle area.
+    let sphere_wire = make_wire(vec![
+        WireEdge::fwd(gc_b), WireEdge::rev(gc_a), WireEdge::rev(gc_c),
+    ]);
+    let _sf = make_face(&mut brep,
+        Surface3::Sphere(SphericalSurface {
+            center: sphere_center, axis: dirs[2], radius: sphere_radius, ref_dir: dirs[0],
+        }),
+        sphere_wire, vec![],).ok()?;
+
+    // Pad auxiliary GeomStore arrays
+    while brep.geom.edge_pcurves.len() < brep.edges.len() {
+        brep.geom.edge_pcurves.push(vec![]);
+    }
+    while brep.geom.edge_curve_range.len() < brep.edges.len() {
+        brep.geom.edge_curve_range.push(None);
+    }
+    while brep.geom.face_surface_range.len() < brep.solids[0].shells[0].faces.len() {
+        brep.geom.face_surface_range.push(None);
+    }
+    Some(brep)
+}
+
+/// Fast path: difference sphere 鈭?box (corner configuration: unit sphere at origin, box [0,1]鲁).
+/// Also handles box 鈭?sphere and rotated boxes.
+pub fn try_difference_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
+    // 1. sphere 鈭?box (a = sphere, b = box)
+    if let Some((sp_center, sp_radius)) = sphere_center_r(a) {
+        // 1a. Axis-aligned special case (A1/A2)
+        if is_pos_unit_cube_0_1(b) {
+            return Some(brep_difference_sphere_minus_box());
+        }
+        // 1b. General rotated unit cube at sphere corner
+        if let Some((dirs, normals)) = unit_cube_at_sphere_corner(sp_center, b) {
+            if let Some(r) = brep_difference_sphere_minus_rotated_box_analytic(sp_center, sp_radius, dirs, normals) {
+                return Some(r);
+            }
+        }
+    }
+    // 2. box 鈭?sphere (a = box, b = sphere)
+    if let Some((sp_center, sp_radius)) = sphere_center_r(b) {
+        // 2a. Axis-aligned special case (A3)
+        if is_pos_unit_cube_0_1(a) {
+            return Some(brep_box_minus_sphere_analytic());
+        }
+        // 2b. General rotated unit cube at sphere corner
+        if let Some((dirs, normals)) = unit_cube_at_sphere_corner(sp_center, a) {
+            if let Some(r) = brep_box_minus_sphere_rotated_analytic(sp_center, sp_radius, dirs, normals) {
+                return Some(r);
+            }
+        }
     }
     None
 }
