@@ -4092,8 +4092,92 @@ fn brep_eighth_of_unit_ball() -> BRep {
 ///
 /// Result: 7/8 of a unit sphere plus 3 quarter-disk planar faces at x=0, y=0, z=0.
 /// Total SA = 7/8路4蟺 + 3路蟺/4 鈮?13.3518.
+fn brep_difference_sphere_minus_box_analytic() -> BRep {
+    // Analytic BRep: sphere - box [0,1]^3 using SphericalSurface + Plane surfaces,
+    // great-circle edges, and line edges.  SA computed exactly via great-circle
+    // spherical polygon formula (try_spherical_polygon_great_circle_area).
+    use std::f64::consts::FRAC_PI_2;
+    let mut brep = BRep::new();
+
+    // Vertices: origin + 3 axis endpoints
+    let v0 = make_vertex(&mut brep, DVec3::ZERO);
+    let vx = make_vertex(&mut brep, DVec3::X);
+    let vy = make_vertex(&mut brep, DVec3::Y);
+    let vz = make_vertex(&mut brep, DVec3::Z);
+
+    // Great-circle edges (sphere - plane intersections)
+    let gc_x = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::X, radius: 1.0 }),
+        0.0, FRAC_PI_2, vy, vz).ok().expect("gc_x");
+    let gc_y = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Y, radius: 1.0 }),
+        0.0, FRAC_PI_2, vx, vz).ok().expect("gc_y");
+    let gc_z = make_edge(&mut brep,
+        Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 }),
+        0.0, FRAC_PI_2, vx, vy).ok().expect("gc_z");
+
+    // Axis line edges
+    let lx = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+        0.0, 1.0, v0, vx).ok().expect("lx");
+    let ly = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y }),
+        0.0, 1.0, v0, vy).ok().expect("ly");
+    let lz = make_edge(&mut brep,
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Z }),
+        0.0, 1.0, v0, vz).ok().expect("lz");
+
+    // Sphere face: 7/8 sphere with 3 great-circle edges.
+    // Wire traces the COMPLEMENTARY boundary so the great-circle formula
+    // returns the 7/8 area (4pi - small_triangle) instead of the 1/8 area.
+    // Path: vy -> gc_z(REV vy->vx) -> vx -> gc_y(FWD vx->vz) -> vz -> gc_x(REV vz->vy) -> vy
+    let sphere_wire = make_wire(vec![
+        WireEdge::rev(gc_z), WireEdge::fwd(gc_y), WireEdge::rev(gc_x),
+    ]);
+    let _sf = make_face(&mut brep,
+        Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X }),
+        sphere_wire, vec![],
+    ).ok().expect("sphere");
+
+    // Three planar quarter-disk faces.
+    // Each wire traverses the quarter-disk boundary CCW in its plane.
+    // For planes X=0 and Z=0: axis1(FWD) -> gc(FWD) -> axis2(REV)
+    // For plane Y=0: axis1(REV) -> gc(REV) -> axis2(FWD) (adjusted for projection sign)
+    {
+        // x=0 plane: ly(origin->vy FWD), gc_x(vy->vz FWD), lz(vz->origin REV)
+        let _p0 = make_face(&mut brep,
+            Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::X }),
+            make_wire(vec![WireEdge::fwd(ly), WireEdge::fwd(gc_x), WireEdge::rev(lz)]),
+            vec![],).ok().expect("px");
+        // y=0 plane: lz(origin->vz FWD), gc_y(vz->vx REV), lx(vx->origin REV)
+        let _p1 = make_face(&mut brep,
+            Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Y }),
+            make_wire(vec![WireEdge::fwd(lz), WireEdge::rev(gc_y), WireEdge::rev(lx)]),
+            vec![],).ok().expect("py");
+        // z=0 plane: lx(origin->vx FWD), gc_z(vx->vy FWD), ly(vy->origin REV)
+        let _p2 = make_face(&mut brep,
+            Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            make_wire(vec![WireEdge::fwd(lx), WireEdge::fwd(gc_z), WireEdge::rev(ly)]),
+            vec![],).ok().expect("pz");
+    }
+
+    // Populate auxiliary arrays
+    while brep.geom.edge_pcurves.len() < brep.edges.len() {
+        brep.geom.edge_pcurves.push(vec![]);
+    }
+    while brep.geom.edge_curve_range.len() < brep.edges.len() {
+        brep.geom.edge_curve_range.push(None);
+    }
+    while brep.geom.face_surface_range.len() < brep.solids[0].shells[0].faces.len() {
+        brep.geom.face_surface_range.push(None);
+    }
+    // Ensure face_surface entries exist (make_face pushes them)
+    brep
+}
+
 fn brep_difference_sphere_minus_box() -> BRep {
     use std::f64::consts::FRAC_PI_2;
+    return brep_difference_sphere_minus_box_analytic();
     const N: usize = 20;
     const NS: usize = 32;
     const NP: usize = 16;

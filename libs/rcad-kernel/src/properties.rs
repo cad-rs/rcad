@@ -1384,12 +1384,13 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
                 let center_2d = DVec2::new((c.center - pivot).dot(ux), (c.center - pivot).dot(uy));
                 // Determine arc bulge direction: sign = +1 when the arc
                 // bulges outward from the chord (center on left side of
-                // traversal).  Use 2D cross product of traversal × center-to-start.
-                let trav = end_2d - start_2d;
-                let to_center = center_2d - start_2d;
-                // 2D cross product = trav.x * to_center.y - trav.y * to_center.x
-                let cross = trav.x * to_center.y - trav.y * to_center.x;
-                let sign = if cross > 0.0 { 1.0 } else { -1.0 };
+                // traversal).  Use 3D cross product in the face plane for
+                // projection-independent sign (the 2D cross product sign
+                // depends on the local_basis_from_normal orientation).
+                let trav_3d = p_end - p_start;
+                let left_dir = face_normal.cross(trav_3d);
+                let to_center_3d = c.center - p_start;
+                let sign = if to_center_3d.dot(left_dir) > 0.0 { 1.0 } else { -1.0 };
                 edges.push(EdgeInfo {
                     is_arc: true, radius: c.radius, theta,
                     center_2d, sign, start_2d, end_2d,
