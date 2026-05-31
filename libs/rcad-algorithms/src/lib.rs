@@ -2805,6 +2805,8 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
 /// (inner wires) for faces with missing interior regions.
 fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     if brep.vertices.len() < 4 { return brep; }
+    // Allow fast step-only mode: skip all topology passes.
+    if std::env::var("RCAD_SKIP_TOPOLOGY").is_ok() { return brep; }
     use rcad_kernel::topology::{Face, Wire, WireEdge};
     use rcad_kernel::{Edge, Vertex};
     use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};

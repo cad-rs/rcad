@@ -498,7 +498,7 @@ impl Part21Writer {
                     face_index += 1;
                 }
                 if export_all && !shell_faces.is_empty() {
-                    if shell_is_closed(&shell.faces) {
+                    if shell_is_closed(&shell.faces, brep) {
                         let shell_id = self.closed_shell(
                             &format!("closed_shell_{}_{}", solid_index, shell_index),
                             &shell_faces,
@@ -554,11 +554,12 @@ impl Part21Writer {
         // of topological EDGE_CURVE entities to align with OCCT-style
         // GEOMETRIC_CURVE_SET usage.
         let mut edge_items = Vec::new();
+        let collect_standalone = export_all && (self.export_standalone_wire_overlay || !selected_edge_set.is_empty());
         for (edge_index, _edge) in brep.edges.iter().enumerate() {
-            if export_all {
-                if face_edge_set.contains(&edge_index) {
-                    continue;
-                }
+            if collect_standalone && face_edge_set.contains(&edge_index) {
+                continue;
+            }
+            if collect_standalone {
                 let has_surface_parametrics = brep
                     .geom
                     .edge_pcurves
@@ -590,7 +591,7 @@ impl Part21Writer {
         }
 
         let mut standalone_point_items = Vec::new();
-        if export_all {
+        if export_all && self.export_standalone_wire_overlay {
             let mut used_vertices: BTreeSet<usize> = BTreeSet::new();
             for e in &brep.edges {
                 used_vertices.insert(e.start);
@@ -1849,7 +1850,49 @@ impl Part21Writer {
         let v1 = self.vertex_point_by_index(brep, edge.end);
         let basis_curve = self.write_edge_curve_geometry_by_index(brep, edge_idx);
 
-        let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, true);
+        // CIRCLE edges: determine whether the edge direction matches the
+        // curve's natural direction (.T.) or is opposite (.F.).  The STEP
+        // CIRCLE entity uses axis2_from_origin_axis which may pick a
+        // different ref_dir than Circle3::point_at, so the edge's stored
+        // parameter range doesn't match the STEP CIRCLE's parameterization.
+        // Compute the actual angle between start and end on the CIRCLE
+        // in the STEP CIRCLE's frame.  If the increasing-parameter arc is
+        // > π, use .F. so the reader takes the SHORT way (90°, not 270°).
+        let mut same_sense = true;
+        if let Some(Curve3::Circle(c)) = brep.geom.edge_curve.get(edge_idx)
+            .copied().flatten()
+            .and_then(|ci| brep.geom.curves.get(ci))
+        {
+            let canon_axis = canonicalize_axis_sign(c.normal);
+            let ref_dir = if canon_axis.z.abs() > 0.999999 {
+                glam::DVec3::X
+            } else {
+                let helper = if canon_axis.y.abs() < 0.9 {
+                    glam::DVec3::Y
+                } else {
+                    glam::DVec3::X
+                };
+                canon_axis.cross(helper).normalize()
+            };
+            let perp = canon_axis.cross(ref_dir);
+            let start_pt = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or_default();
+            let end_pt = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or_default();
+            let d_start = start_pt - c.center;
+            let d_end = end_pt - c.center;
+            let theta_start = f64::atan2(d_start.dot(perp), d_start.dot(ref_dir));
+            let theta_end = f64::atan2(d_end.dot(perp), d_end.dot(ref_dir));
+            let theta_start = theta_start.rem_euclid(std::f64::consts::TAU);
+            let theta_end = theta_end.rem_euclid(std::f64::consts::TAU);
+            let forward = if theta_end >= theta_start {
+                theta_end - theta_start
+            } else {
+                theta_end + std::f64::consts::TAU - theta_start
+            };
+            if forward > std::f64::consts::PI {
+                same_sense = false;
+            }
+        }
+        let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, same_sense);
         self.edge_curve_ids.insert(edge_idx, edge_curve);
         edge_curve
     }
@@ -3982,17 +4025,32 @@ fn detect_seam_edge_indices(face: &Face) -> BTreeSet<usize> {
         .collect()
 }
 
-/// A shell is considered closed when every participating edge is used exactly
-/// twice across all its face wires (outer and inner).
-fn shell_is_closed(faces: &[Face]) -> bool {
-    let mut counts: HashMap<usize, usize> = HashMap::new();
+/// A shell is considered closed when every edge appears exactly twice across
+/// all its face wires.  Since analytic BRep construction may create separate
+/// edge entities for adjacent faces (differing edge *indices* at the same 3D
+/// position), we match by vertex-pair geometry rather than by edge index.
+fn shell_is_closed(faces: &[Face], brep: &BRep) -> bool {
+    // Use a HashMap keyed by (min_vertex_position, max_vertex_position)
+    // to detect edges at the same geometric location.
+    fn edge_key(brep: &BRep, idx: usize) -> (u64, u64) {
+        let e = &brep.edges[idx];
+        let p1 = brep.vertices.get(e.start).map(|v| v.point).unwrap_or_default();
+        let p2 = brep.vertices.get(e.end).map(|v| v.point).unwrap_or_default();
+        let a = p1.to_array().map(|c| c.to_bits());
+        let b = p2.to_array().map(|c| c.to_bits());
+        let ha = a[0] ^ a[1].rotate_left(21) ^ a[2].rotate_left(42);
+        let hb = b[0] ^ b[1].rotate_left(21) ^ b[2].rotate_left(42);
+        if ha < hb { (ha, hb) } else { (hb, ha) }
+    }
+
+    let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
     for face in faces {
         for we in &face.outer_wire.edges {
-            *counts.entry(we.idx).or_insert(0) += 1;
+            *counts.entry(edge_key(brep, we.idx)).or_insert(0) += 1;
         }
         for wire in &face.inner_wires {
             for we in &wire.edges {
-                *counts.entry(we.idx).or_insert(0) += 1;
+                *counts.entry(edge_key(brep, we.idx)).or_insert(0) += 1;
             }
         }
     }

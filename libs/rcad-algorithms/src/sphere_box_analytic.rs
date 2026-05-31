@@ -9,10 +9,10 @@
 //!
 //! Box faces that do not intersect the sphere get a full planar face (no hole).
 
-use glam::DVec3;
-use rcad_kernel::geom::{any_perpendicular, Circle3, Curve3, Line3, Plane, SphericalSurface, Surface3};
+use glam::{DVec2, DVec3};
+use rcad_kernel::geom::{any_perpendicular, Circle2d, Circle3, Curve3, Line2d, Line3, Plane, SphericalSurface, Surface3, Curve2d};
 use rcad_kernel::topology::WireEdge;
-use rcad_kernel::BRep;
+use rcad_kernel::{BRep, PCurve};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -60,6 +60,22 @@ fn align_edge_geom(brep: &mut BRep, edge_idx: usize) {
     while brep.geom.edge_same_range.len() <= edge_idx {
         brep.geom.edge_same_range.push(false);
     }
+}
+
+/// Compute the UV coordinate of a point on a sphere surface, propagating the
+/// longitude (U) from `other_point` when `point` is at the pole (|V| ≈ π/2).
+/// This ensures iso-parametric curves (meridians) get a consistent U value
+/// even at the degenerate polar vertex.
+fn sphere_uv_propagate(sphere: &SphericalSurface, point: DVec3, other_point: DVec3, radius: f64) -> DVec2 {
+    let dp = point - sphere.center;
+    let dv = other_point - sphere.center;
+    let v = (dp.z / radius).asin().clamp(-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
+    let u = if v.abs() >= std::f64::consts::FRAC_PI_2 - 1e-12 {
+        dv.y.atan2(dv.x)
+    } else {
+        dp.y.atan2(dp.x)
+    };
+    DVec2::new(u, v)
 }
 
 // ── Public API ────────────────────────────────────────────────────────
@@ -227,8 +243,8 @@ fn build_plane_intersection_face(
     center: DVec3,
     radius: f64,
     corners: &[DVec3; 8],
-    _cvi: &[usize; 8],
-    _box_edge_map: &std::collections::HashMap<(usize, usize), usize>,
+    cvi: &[usize; 8],
+    box_edge_map: &std::collections::HashMap<(usize, usize), usize>,
     corner_indices: &[usize; 4],
     normal: DVec3,
     plane_origin: DVec3,
@@ -342,7 +358,18 @@ fn build_plane_intersection_face(
 
     // ── 3. Build planar face boundary ──
     let mut pt_vis: Vec<usize> = Vec::new();
-    for x in &xs { pt_vis.push(make_vertex(brep, x.pos)); }
+    for x in &xs {
+        // Reuse box-corner vertices when the intersection point coincides
+        // with a corner — avoids duplicate VERTEX_POINT in the STEP output.
+        let mut reused = None;
+        for (ci, &corner_vi) in cvi.iter().enumerate() {
+            if (x.pos - corners[ci]).length() < 1e-12 {
+                reused = Some(corner_vi);
+                break;
+            }
+        }
+        pt_vis.push(reused.unwrap_or_else(|| make_vertex(brep, x.pos)));
+    }
 
     let point_in_rect = |pt: DVec3| -> bool {
         let u = (pt - corners[c[0]]).dot(x_axis);
@@ -372,12 +399,35 @@ fn build_plane_intersection_face(
         let mut cur = from_pos;
         let mut e = from_edge;
         loop {
-            if e == to_edge {
-                if let Some(ei) = mk_line(brep, cur, to_pos) { wes.push(WireEdge::fwd(ei)); }
-                break;
+            let ci = c[e];
+            let cj = c[(e + 1) % 4];
+            let nc = corners[cj];
+            let at_start_corner = (cur - corners[ci]).length() < 1e-12;
+            // Check if this is a full box edge (both endpoints are corners)
+            // so we can reuse the pre-created shared edge.
+            let key = if ci < cj { (ci, cj) } else { (cj, ci) };
+            let use_shared = at_start_corner && box_edge_map.contains_key(&key);
+            if use_shared && e == to_edge {
+                // Also verify to_pos is at the end corner for this final segment.
+                let at_end_corner = (to_pos - corners[cj]).length() < 1e-12;
+                if !at_end_corner {
+                    // to_pos is mid-edge; must create partial line.
+                    if let Some(ei) = mk_line(brep, cur, to_pos) { wes.push(WireEdge::fwd(ei)); }
+                    break;
+                }
             }
-            let nc = corners[c[(e + 1) % 4]];
-            if let Some(ei) = mk_line(brep, cur, nc) { wes.push(WireEdge::fwd(ei)); }
+            let ei = if use_shared {
+                box_edge_map.get(&key).copied()
+            } else if e == to_edge {
+                mk_line(brep, cur, to_pos)
+            } else {
+                mk_line(brep, cur, nc)
+            };
+            if let Some(ei) = ei {
+                let forward = if use_shared { ci < cj } else { true };
+                wes.push(if forward { WireEdge::fwd(ei) } else { WireEdge::rev(ei) });
+            }
+            if e == to_edge { break; }
             cur = nc;
             e = (e + 1) % 4;
         }
@@ -424,6 +474,29 @@ fn build_plane_intersection_face(
     let outer_wire = make_wire(planar_wes);
     let plane_surf = Surface3::Plane(Plane { origin: pp, normal: n });
     make_face(brep, plane_surf, outer_wire, vec![]).ok()?;
+
+    // Add planar pcurves for each arc edge so the STEP writer's SURFACE_CURVE
+    // includes a PCURVE on the planar surface.  Without this, shared arcs
+    // (reused by the spherical face) would only carry the spherical pcurve,
+    // causing STEP readers to show 3/4-circle faces instead of 1/4-circle.
+    if !arc_edges.is_empty() {
+        let plane_surf_idx = brep.geom.surfaces.len() - 1;
+        let center_u = (circle_center - pp).dot(x_axis);
+        let center_v = (circle_center - pp).dot(y_axis);
+        for &ae in &arc_edges {
+            // Retrieve the 3D parameter range from the edge.
+            let range = brep.geom.edge_curve_range.get(ae).copied().flatten().unwrap_or([0.0, std::f64::consts::TAU]);
+            let curve2d_idx = brep.geom.curve2ds.len();
+            brep.geom.curve2ds.push(Curve2d::Circle(Circle2d {
+                center: DVec2::new(center_u, center_v),
+                radius: circle_r,
+            }));
+            brep.geom.edge_pcurves[ae].push(PCurve {
+                surface_idx: plane_surf_idx,
+                curve2d_idx,
+            });
+        }
+    }
 
     Some(arc_edges)
 }
@@ -545,29 +618,44 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
             radius,
             ref_dir: DVec3::X,
         });
-        // Create new edges for the spherical face with shared vertices at
-        // arc junctions, forming a contiguous closed loop.  This ensures the
-        // UV polyline maps to a clean simply-connected region on the sphere.
+        // Reuse existing arc edges for the spherical face (reversed direction)
+        // so that edges are shared between planar and spherical faces.
+        // This allows shell_is_closed to detect a watertight shell and emit
+        // CLOSED_SHELL + MANIFOLD_SOLID_BREP instead of OPEN_SHELL.
         let mut sphere_wes: Vec<WireEdge> = Vec::with_capacity(n_arcs);
-        // Pre-create junction vertices: for each ordered arc, the junction
-        // before it is arc[i].end (P_i).  Edges connect P_i -> P_{i+1}.
-        let mut joint_vis: Vec<usize> = Vec::with_capacity(n_arcs);
         for &ei in &ordered {
-            let pt = brep.vertices[brep.edges[ei].end].point;
-            joint_vis.push(make_vertex(&mut brep, pt));
+            sphere_wes.push(WireEdge::rev(ei));
         }
-        for (k, &ei) in ordered.iter().enumerate() {
-            let cur_idx = brep.geom.edge_curve[ei]?;
-            let crv = brep.geom.curves[cur_idx].clone();
-            let range = brep.geom.edge_curve_range.get(ei).and_then(|o| *o).unwrap_or([0.0, 1.0]);
-            let sv = joint_vis[k];
-            let ev = joint_vis[(k + 1) % n_arcs];
-            let new_ei = make_edge(&mut brep, crv, range[0], range[1], sv, ev).ok()?;
-            align_edge_geom(&mut brep, new_ei);
-            // Reversed direction for the spherical face (WireEdge::rev).
-            sphere_wes.push(WireEdge::rev(new_ei));
+        // Create the spherical face first so the surface is registered in GeomStore.
+        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok()?;
+        // Add spherical-surface pcurves to each arc edge so the STEP writer can
+        // emit a complete SURFACE_CURVE with PCURVE on the SPHERICAL_SURFACE.
+        let sphere_surface_idx = brep.geom.surfaces.len() - 1;
+        if let Surface3::Sphere(sphere) = &brep.geom.surfaces[sphere_surface_idx] {
+            for &ei in &ordered {
+                let start_pt = brep.vertices[brep.edges[ei].start].point;
+                let end_pt = brep.vertices[brep.edges[ei].end].point;
+                let uv_start = sphere_uv_propagate(sphere, start_pt, end_pt, radius);
+                let uv_end = sphere_uv_propagate(sphere, end_pt, start_pt, radius);
+                let uv_dir = uv_end - uv_start;
+                if uv_dir.length_squared() > 1e-24 {
+                    let curve2d_idx = brep.geom.curve2ds.len();
+                    brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: uv_dir,
+                    }));
+                    // Insert at position 0 so the spherical pcurve is FIRST
+                    // in the SURFACE_CURVE's pcurve list.  Viewers that use
+                    // .PCURVE_S1. (first pcurve) for surface matching will
+                    // then correctly use the spherical pcurve instead of the
+                    // planar one.
+                    brep.geom.edge_pcurves[ei].insert(0, PCurve {
+                        surface_idx: sphere_surface_idx,
+                        curve2d_idx,
+                    });
+                }
+            }
         }
-        make_face(&mut brep, sphere_surf, make_wire(sphere_wes), vec![]).ok()?;
     }
 
     Some(brep)
