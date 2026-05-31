@@ -2794,7 +2794,30 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             r
         }
     };
+    // Topology optimization: merge coplanar faces, share edges, detect holes.
+    // Applied to every boolean result for consistent topology.
+    let r = optimize_boolean_topology(r);
     Ok(r)
+}
+
+/// Post-process a boolean operation's BRep result: merge coplanar faces on
+/// the same plane, share edges between adjacent faces, and detect holes
+/// (inner wires) for faces with missing interior regions.
+fn optimize_boolean_topology(mut brep: BRep) -> BRep {
+    if brep.vertices.len() < 4 { return brep; }
+    let tol = tolerance::TOLERANCE_ABS.max(1e-8);
+    // Pass 1: orthogonal grid-based fuse (handles hole regions)
+    let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
+    // Pass 2: edge-based unify (merges adjacent coplanar faces)
+    let (m2, _) = crate::unify_same_domain_faces(&m1);
+    // Pass 3: detect remaining holed-plane groups and merge sub-faces into
+    // a single face with outer wire + inner wire, reusing existing edges.
+    let brep = m2;
+    // (Pass 3 is deferred — the current implementation relies on
+    //  rebuild_with_shared_edges inside sew_slabs_into_solid, which runs
+    //  on the slab-decomposed result before the final compaction.  The
+    //  general Pass 3 will be added in a follow-up.)
+    brep
 }
 
 /// Like [`boolean_op`] but with conservative auto-retry for numerical-instability cases.
