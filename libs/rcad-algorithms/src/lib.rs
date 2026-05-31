@@ -2988,13 +2988,13 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     let n_planar = brep.geom.surfaces.iter().filter(|s| matches!(s, Surface3::Plane(_))).count();
     let n_curved = brep.geom.surfaces.len().saturating_sub(n_planar);
     if n_planar > n_curved && brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
-        let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
-        brep = cleaned;
+        // Pass 4 disabled — cleanup_boolean_result can incorrectly remove
+        // faces from concave-extruded shapes (H1/H2), breaking the solid.
+        // let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
+        // brep = cleaned;
     }
 
-    // Pass 5: Advanced simplification (collinear edge merging, same-parameter/
-    // range fix, UV bounds fix, small edge removal).  Like Pass 4, skip for
-    // curved-surface-heavy results where the cost outweighs the benefit.
+    // Pass 5: Advanced simplification for planar-heavy results.
     if n_planar > n_curved {
         let s_opts = crate::SimplifyOptions {
             remove_small_edges: true,
