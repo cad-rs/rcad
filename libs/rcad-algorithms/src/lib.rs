@@ -2988,9 +2988,14 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
         brep = cleaned;
     }
 
-    // Pass 5 (placeholder): simplify_brep_post_ops for collinear edge merging,
-    // small edge removal, same-parameter/range fix, UV bounds fix.
-    // Activate with: let opts = SimplifyOptions { merge_vertices: true, .. };
+    // Pass 5: simplify_brep_post_ops for collinear edge merging, same-parameter/
+    // range fix, UV bounds fix, small edge removal, further face merging.
+    let s_opts = crate::SimplifyOptions {
+        remove_small_edges: true,
+        ..Default::default()
+    };
+    let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
+    brep = simplified;
 
     brep
 }
