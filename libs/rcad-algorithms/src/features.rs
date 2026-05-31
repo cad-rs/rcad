@@ -414,12 +414,12 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             let nv = ac.cross(ab);
             if nv.length_squared() > TOLERANCE_VEC_SQ_MIN { nv.normalize() } else { dir.cross(ab).normalize() }
         };
-        // wire (CCW from outside): top[i]->bot[i] (rev), bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev)
+        // wire: bot[i]->bot[j] (fwd), bot[j]->top[j] (fwd), top[j]->top[i] (rev), top[i]->bot[i] (rev)
         let wire_edges = vec![
-            WireEdge { idx: vert_edges[i], forward: false },
             WireEdge { idx: bot_edges[i],  forward: true },
             WireEdge { idx: vert_edges[j], forward: true },
             WireEdge { idx: top_edges[i],  forward: false },
+            WireEdge { idx: vert_edges[i], forward: false },
         ];
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
             normal: face_normal, triangles: vec![], sample_point: None, mesh_dirty: true });

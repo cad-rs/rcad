@@ -2981,21 +2981,28 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
         }
     }
 
-    // Pass 4: General boolean cleanup — internal faces, duplicates,
-    // degenerate faces, vertex merge, edge sewing, tolerance propagation.
-    if brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
+    // Pass 4: General cleanup for planar-heavy models (internal faces,
+    // duplicates, degenerate faces, vertex merge, edge sewing).
+    // Skip for curved-surface results (most faces are Cylinder/Cone/Sphere)
+    // where the O(n^2) detection is expensive and rarely beneficial.
+    let n_planar = brep.geom.surfaces.iter().filter(|s| matches!(s, Surface3::Plane(_))).count();
+    let n_curved = brep.geom.surfaces.len().saturating_sub(n_planar);
+    if n_planar > n_curved && brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
         let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
         brep = cleaned;
     }
 
-    // Pass 5: simplify_brep_post_ops for collinear edge merging, same-parameter/
-    // range fix, UV bounds fix, small edge removal, further face merging.
-    let s_opts = crate::SimplifyOptions {
-        remove_small_edges: true,
-        ..Default::default()
-    };
-    let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
-    brep = simplified;
+    // Pass 5: Advanced simplification (collinear edge merging, same-parameter/
+    // range fix, UV bounds fix, small edge removal).  Like Pass 4, skip for
+    // curved-surface-heavy results where the cost outweighs the benefit.
+    if n_planar > n_curved {
+        let s_opts = crate::SimplifyOptions {
+            remove_small_edges: true,
+            ..Default::default()
+        };
+        let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
+        brep = simplified;
+    }
 
     brep
 }
