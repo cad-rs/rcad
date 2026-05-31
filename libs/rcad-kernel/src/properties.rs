@@ -3031,6 +3031,13 @@ pub fn surface_area(brep: &BRep) -> f64 {
         };
         total += a;
 
+        // CI assertion: warn if any face has no surface reference (mesh-only fast-path).
+        // All boolean results should have proper analytic surfaces for exact SA.
+        if analytic.is_none() && !f.triangles.is_empty() && cfg!(debug_assertions) {
+            eprintln!("[SA_WARN] face[{}] has no analytic surface — SA from {} triangles (total {:.6})",
+                _fi, f.triangles.len(), a);
+        }
+
         // Track analytic cylinder faces for UV-overlap normalization.
         // Skip faces with inner wires (figure-8 case has its own handling).
         if analytic.is_some() {
