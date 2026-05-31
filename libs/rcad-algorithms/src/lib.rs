@@ -2980,6 +2980,18 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
             brep.solids[si].shells[shi].faces = kept;
         }
     }
+
+    // Pass 4: General boolean cleanup — internal faces, duplicates,
+    // degenerate faces, vertex merge, edge sewing, tolerance propagation.
+    if brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
+        let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
+        brep = cleaned;
+    }
+
+    // Pass 5 (placeholder): simplify_brep_post_ops for collinear edge merging,
+    // small edge removal, same-parameter/range fix, UV bounds fix.
+    // Activate with: let opts = SimplifyOptions { merge_vertices: true, .. };
+
     brep
 }
 
