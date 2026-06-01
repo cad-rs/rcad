@@ -287,11 +287,6 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
         } else {
             None
         };
-        // Save arc WireEdge directions before sphere_wes is consumed by make_wire.
-        let mut arc_dir: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
-        for we in &sphere_wes {
-            arc_dir.insert(we.idx, we.forward);
-        }
         let sphere_surf = Surface3::Sphere(SphericalSurface {
             center,
             axis: DVec3::Z,
@@ -299,29 +294,59 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
             ref_dir: DVec3::X,
         });
         make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok()?;
-        // Add spherical-surface pcurves to each arc edge, with direction
-        // matching the spherical face's wire (which uses the loop direction
-        // from the algorithm, matching OCCT's traversal order).
+        // Add spherical-surface pcurves to each arc edge.  The pcurve must
+        // follow the 3D curve direction in the STEP file.  For CIRCLE edges,
+        // the STEP writer determines same_sense based on the angle between
+        // start and end in the CIRCLE's canonical frame.  When same_sense=.F.
+        // (curve goes opposite to BRep edge direction), the pcurve direction
+        // must be inverted.
         let sphere_surface_idx = brep.geom.surfaces.len() - 1;
         if let Surface3::Sphere(sphere) = &brep.geom.surfaces[sphere_surface_idx] {
             for &ei in &all_arcs {
                 let start_pt = brep.vertices[brep.edges[ei].start].point;
                 let end_pt = brep.vertices[brep.edges[ei].end].point;
-                // If the spherical face uses WireEdge::rev for this arc, invert
-                // the pcurve direction so the traversal matches the loop direction.
-                let rev_in_sphere = arc_dir.get(&ei).copied() == Some(false);
-                let (uv_start, uv_end) = if rev_in_sphere {
-                    (sphere_uv_propagate(sphere, end_pt, start_pt, radius),
-                     sphere_uv_propagate(sphere, start_pt, end_pt, radius))
+                let uv_start = sphere_uv_propagate(sphere, start_pt, end_pt, radius);
+                let uv_end = sphere_uv_propagate(sphere, end_pt, start_pt, radius);
+                // Determine if the STEP writer will use same_sense=.F. for this
+                // CIRCLE edge by checking the angle in the circle's frame.
+                // This mirrors the writer's logic at writer.rs:1847-1888.
+                let mut same_sense = true;
+                if let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() {
+                    if let Some(Curve3::Circle(circ)) = brep.geom.curves.get(curve_idx) {
+                        let canon_axis = {
+                            let n = circ.normal.normalize_or_zero();
+                            let eps = 1e-12;
+                            if n.z.abs() > eps { if n.z >= 0.0 { n } else { -n } }
+                            else if n.y.abs() > eps { if n.y >= 0.0 { n } else { -n } }
+                            else { if n.x >= 0.0 { n } else { -n } }
+                        };
+                        let ref_dir = if canon_axis.z.abs() > 0.999999 {
+                            DVec3::X
+                        } else {
+                            let helper = if canon_axis.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+                            canon_axis.cross(helper).normalize()
+                        };
+                        let perp = canon_axis.cross(ref_dir);
+                        let d_start = start_pt - circ.center;
+                        let d_end = end_pt - circ.center;
+                        let theta_start = d_start.dot(perp).atan2(d_start.dot(ref_dir));
+                        let theta_end = d_end.dot(perp).atan2(d_end.dot(ref_dir));
+                        let ts = theta_start.rem_euclid(std::f64::consts::TAU);
+                        let te = theta_end.rem_euclid(std::f64::consts::TAU);
+                        let forward = if te >= ts { te - ts } else { te + std::f64::consts::TAU - ts };
+                        if forward > std::f64::consts::PI { same_sense = false; }
+                    }
+                }
+                let (u_start, u_end) = if same_sense {
+                    (uv_start, uv_end)
                 } else {
-                    (sphere_uv_propagate(sphere, start_pt, end_pt, radius),
-                     sphere_uv_propagate(sphere, end_pt, start_pt, radius))
+                    (uv_end, uv_start)
                 };
-                let uv_dir = uv_end - uv_start;
+                let uv_dir = u_end - u_start;
                 if uv_dir.length_squared() > 1e-24 {
                     let curve2d_idx = brep.geom.curve2ds.len();
                     brep.geom.curve2ds.push(Curve2d::Line(Line2d {
-                        origin: uv_start,
+                        origin: u_start,
                         direction: uv_dir,
                     }));
                     brep.geom.edge_pcurves[ei].insert(0, PCurve {
