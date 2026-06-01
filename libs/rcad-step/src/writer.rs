@@ -1060,19 +1060,13 @@ impl Part21Writer {
         let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
-                let has_surface_parametrics = brep
-                    .geom
-                    .edge_pcurves
-                    .get(edge.edge_idx)
-                    .is_some_and(|pcs| !pcs.is_empty());
-                if has_surface_parametrics {
-                    // OCCT-compatible behavior: keep seam edge definition from imported
-                    // SURFACE_CURVE/PCURVE whenever available.
-                    self.write_edge_curve_by_index(brep, edge.edge_idx)
-                } else {
-                    // Fallback only when seam parametrics are actually missing.
-                    self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
-                }
+                // Write a proper SEAM_CURVE (or SURFACE_CURVE with 2+ pcurves)
+                // for any edge that appears multiple times in the same face wire.
+                // The previous logic branched on has_surface_parametrics and
+                // wrote SURFACE_CURVE when pcurves existed — this prevented
+                // SEAM_CURVE output for synthetic seams (e.g. sphere-box union
+                // analytic builder) that explicitly provide sphere pcurves.
+                self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
             } else {
                 self.seed_edge_surface_curve_from_face_frame(
                     brep,

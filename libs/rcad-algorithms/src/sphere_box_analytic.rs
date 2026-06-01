@@ -10,7 +10,7 @@
 //! Box faces that do not intersect the sphere get a full planar face (no hole).
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{any_perpendicular, Circle2d, Circle3, Curve3, Line2d, Line3, Plane, SphericalSurface, Surface3, Curve2d};
+use rcad_kernel::geom::{Circle2d, Circle3, Curve3, Line2d, Line3, Plane, SphericalSurface, Surface3, Curve2d};
 use rcad_kernel::topology::WireEdge;
 use rcad_kernel::{BRep, PCurve};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
@@ -158,73 +158,214 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
     }
 
     // ── 4. Build faces ───────────────────────────────────────────────
+    // For each box face: if the sphere intersects the plane, build a trimmed
+    // planar face via build_plane_intersection_face (outside=true, returning
+    // arc edges).  Otherwise, emit a full rectangular planar face.
+    let mut all_arcs: Vec<usize> = Vec::new();
     for fi in &faces {
         let n = fi.normal;
         let pp = fi.plane_origin;
-
-        // Signed distance from sphere centre to plane (positive = outward side).
         let d = n.dot(center - pp);
 
-        // ── 3a. Outer wire: 4 shared line edges around the rectangle ──
-        let c = fi.corners;
-        let mut wire_edges = Vec::with_capacity(4);
-        for i in 0..4 {
-            let j = (i + 1) % 4;
-            let a = c[i];
-            let b = c[j];
-            let (ea, eb) = if a < b { (a, b) } else { (b, a) };
-            let ei = edge_map[&(ea, eb)];
-            wire_edges.push(if a < b {
-                WireEdge::fwd(ei)
-            } else {
-                WireEdge::rev(ei)
-            });
-        }
-        let outer_wire = make_wire(wire_edges);
-
         if d.abs() < radius {
-            // ── 3b. Sphere intersects this plane: hole + cap ──
-            let circle_center = center - n * d;
-            let circle_r = (radius * radius - d * d).sqrt();
-
-            // Build a local orthonormal frame inside the plane.
-            let x_axis = any_perpendicular(n);
-
-            // Single vertex on the circle at t = 0.
-            let circle_v0 = circle_center + circle_r * x_axis;
-            let cv = make_vertex(&mut brep, circle_v0);
-
-            // Circle curve and edge (closed: start == end).
-            let circle_curve = Curve3::Circle(Circle3 {
-                center: circle_center,
-                normal: n,
-                radius: circle_r,
-            });
-            let circle_e = make_edge(&mut brep, circle_curve, 0.0, two_pi, cv, cv).ok()?;
-            align_edge_geom(&mut brep, circle_e);
-
-            // Inner wire (hole direction is opposite to outer-wire direction).
-            let inner_wire = make_wire(vec![WireEdge::rev(circle_e)]);
-
-            // Planar face — box face with a circular hole.
-            let plane_surf = Surface3::Plane(Plane { origin: pp, normal: n });
-            make_face(&mut brep, plane_surf, outer_wire, vec![inner_wire]).ok()?;
-
-            // Spherical cap face — the portion of the sphere protruding
-            // outside the box through this face.
-            let sphere_surf = Surface3::Sphere(SphericalSurface {
-                center,
-                axis: n,
-                radius,
-                ref_dir: x_axis,
-            });
-            let cap_wire = make_wire(vec![WireEdge::fwd(circle_e)]);
-            make_face(&mut brep, sphere_surf, cap_wire, vec![]).ok()?;
+            let arcs = build_plane_intersection_face(
+                &mut brep, center, radius, &corners, &cvi, &edge_map,
+                &fi.corners, n, pp, true,
+            )?;
+            all_arcs.extend(arcs);
         } else {
-            // ── 3c. No intersection: full planar face (no hole) ──
+            // Full planar face (no sphere intersection on this plane).
+            let c = fi.corners;
+            let mut wire_edges = Vec::with_capacity(4);
+            for i in 0..4 {
+                let j = (i + 1) % 4;
+                let a = c[i];
+                let b = c[j];
+                let (ea, eb) = if a < b { (a, b) } else { (b, a) };
+                let ei = edge_map[&(ea, eb)];
+                wire_edges.push(if a < b {
+                    WireEdge::fwd(ei)
+                } else {
+                    WireEdge::rev(ei)
+                });
+            }
             let plane_surf = Surface3::Plane(Plane { origin: pp, normal: n });
-            make_face(&mut brep, plane_surf, outer_wire, vec![]).ok()?;
+            make_face(&mut brep, plane_surf, make_wire(wire_edges), vec![]).ok()?;
         }
+    }
+
+    // ── 5. Single merged spherical face with seam ───────────────────
+    // Build a single spherical face from all arc edges, adding a SEAM_CURVE
+    // from a seam-vertex (u≈0) to the south pole so the face covers the
+    // full 7/8 sphere region instead of just the 1/8 octant.
+    if !all_arcs.is_empty() {
+        let n_arcs = all_arcs.len();
+        // Find the 3 distinct vertices of the spherical triangle.
+        let mut tri_vis: Vec<usize> = Vec::with_capacity(3);
+        for &ei in &all_arcs {
+            for &vi in &[brep.edges[ei].start, brep.edges[ei].end] {
+                if !tri_vis.contains(&vi) { tri_vis.push(vi); }
+            }
+        }
+        // Pick the vertex whose sphere UV has u ≈ 0 (parameterization seam)
+        // as the attachment point for the SEAM_CURVE — matches OCCT.
+        let mut seam_vi = tri_vis[0];
+        for &vi in &tri_vis {
+            let pt = brep.vertices[vi].point - center;
+            let u = pt.y.atan2(pt.x);
+            if u.abs() < 1e-6 || (u - two_pi).abs() < 1e-6 {
+                seam_vi = vi;
+                break;
+            }
+        }
+        // Build the arc loop starting & ending at seam_vi so consecutive
+        // WireEdges share vertices (necessary for a valid EDGE_LOOP).
+        // The traversal direction matches OCCT's reference:
+        //   (u≈0, equator) → (0,0,z>0) → (0,y>0,0) → (u≈0, equator)
+        // Then the SEAM goes (u≈0, equator) → south pole → back.
+        let mut sphere_wes: Vec<WireEdge> = Vec::with_capacity(n_arcs + 2);
+        let mut cur_vi = seam_vi;
+        let mut remaining: Vec<usize> = all_arcs.clone();
+        while !remaining.is_empty() {
+            // From seam_vi (on the sphere's parameterization seam at u≈0,
+            // z≈0 = equator), prefer the edge going NORTH (z≠0) over the
+            // one staying on the equator.  This matches OCCT's loop order:
+            //   (u≈0, equator) → (0,0,z>0) → (0,y>0,0) → (u≈0, equator)
+            // Without this preference the loop goes equator-first, and the
+            // left-hand rule selects the 1/8 octant instead of the 7/8 sphere.
+            let pos = if cur_vi == seam_vi && remaining.len() > 1 {
+                // Try to find an edge whose other endpoint is off-equator.
+                let north_idx = remaining.iter().position(|&ei| {
+                    let e = &brep.edges[ei];
+                    let other_vi = if e.start == cur_vi { e.end }
+                        else if e.end == cur_vi { e.start } else { return false; };
+                    (brep.vertices[other_vi].point - center).z.abs() > 1e-6
+                });
+                // Fall back to the first matching edge if no north-going edge.
+                north_idx.or_else(|| {
+                    remaining.iter().position(|&ei| {
+                        brep.edges[ei].start == cur_vi || brep.edges[ei].end == cur_vi
+                    })
+                })
+            } else {
+                remaining.iter().position(|&ei| {
+                    brep.edges[ei].start == cur_vi || brep.edges[ei].end == cur_vi
+                })
+            };
+            match pos {
+                Some(idx) => {
+                    let ei = remaining.remove(idx);
+                    let e = &brep.edges[ei];
+                    if e.start == cur_vi {
+                        sphere_wes.push(WireEdge::fwd(ei));
+                        cur_vi = e.end;
+                    } else {
+                        sphere_wes.push(WireEdge::rev(ei));
+                        cur_vi = e.start;
+                    }
+                }
+                None => { break; }
+            }
+        }
+        let loop_closed = cur_vi == seam_vi;
+        // Create south-pole vertex and the SEAM meridian edge.
+        let seam_ei_opt: Option<usize> = if n_arcs == 3 && loop_closed {
+            let south_pole_pt = center - radius * DVec3::Z;
+            let south_pole_vi = make_vertex(&mut brep, south_pole_pt);
+            // Meridian in the y=0 plane: P(t)=radius*(cos(t), 0, -sin(t))
+            // t=0 → (radius,0,0) = seam_vi point; t=π/2 → (0,0,-radius)
+            let seam_circle = Curve3::Circle(Circle3 {
+                center, normal: DVec3::Y, radius,
+            });
+            let half_pi = std::f64::consts::FRAC_PI_2;
+            let seam_ei =
+                make_edge(&mut brep, seam_circle, 0.0, half_pi, seam_vi, south_pole_vi).ok()?;
+            align_edge_geom(&mut brep, seam_ei);
+            sphere_wes.push(WireEdge::fwd(seam_ei)); // seam_vi → south_pole
+            sphere_wes.push(WireEdge::rev(seam_ei)); // south_pole → seam_vi
+            Some(seam_ei)
+        } else {
+            None
+        };
+        // Save arc WireEdge directions before sphere_wes is consumed by make_wire.
+        let mut arc_dir: std::collections::HashMap<usize, bool> = std::collections::HashMap::new();
+        for we in &sphere_wes {
+            arc_dir.insert(we.idx, we.forward);
+        }
+        let sphere_surf = Surface3::Sphere(SphericalSurface {
+            center,
+            axis: DVec3::Z,
+            radius,
+            ref_dir: DVec3::X,
+        });
+        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok()?;
+        // Add spherical-surface pcurves to each arc edge, with direction
+        // matching the spherical face's wire (which uses the loop direction
+        // from the algorithm, matching OCCT's traversal order).
+        let sphere_surface_idx = brep.geom.surfaces.len() - 1;
+        if let Surface3::Sphere(sphere) = &brep.geom.surfaces[sphere_surface_idx] {
+            for &ei in &all_arcs {
+                let start_pt = brep.vertices[brep.edges[ei].start].point;
+                let end_pt = brep.vertices[brep.edges[ei].end].point;
+                // If the spherical face uses WireEdge::rev for this arc, invert
+                // the pcurve direction so the traversal matches the loop direction.
+                let rev_in_sphere = arc_dir.get(&ei).copied() == Some(false);
+                let (uv_start, uv_end) = if rev_in_sphere {
+                    (sphere_uv_propagate(sphere, end_pt, start_pt, radius),
+                     sphere_uv_propagate(sphere, start_pt, end_pt, radius))
+                } else {
+                    (sphere_uv_propagate(sphere, start_pt, end_pt, radius),
+                     sphere_uv_propagate(sphere, end_pt, start_pt, radius))
+                };
+                let uv_dir = uv_end - uv_start;
+                if uv_dir.length_squared() > 1e-24 {
+                    let curve2d_idx = brep.geom.curve2ds.len();
+                    brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: uv_dir,
+                    }));
+                    brep.geom.edge_pcurves[ei].insert(0, PCurve {
+                        surface_idx: sphere_surface_idx,
+                        curve2d_idx,
+                    });
+                }
+            }
+            // Add spherical-surface pcurves for the seam edge.
+            if let Some(seam_ei) = seam_ei_opt {
+                let seam_start_pt = brep.vertices[brep.edges[seam_ei].start].point;
+                // Pcurve at u=0 / u=2π: from equator (v=0) to south pole (v=-π/2).
+                let u_at_seam = (seam_start_pt - center).y.atan2((seam_start_pt - center).x);
+                let v_start = 0.0;             // equator
+                let v_end = -std::f64::consts::FRAC_PI_2; // south pole
+                for u in [u_at_seam, u_at_seam + two_pi] {
+                    let uv_start = DVec2::new(u, v_start);
+                    let uv_end = DVec2::new(u, v_end);
+                    let uv_dir = uv_end - uv_start;
+                    if uv_dir.length_squared() > 1e-24 {
+                        let curve2d_idx = brep.geom.curve2ds.len();
+                        brep.geom.curve2ds.push(Curve2d::Line(Line2d {
+                            origin: uv_start,
+                            direction: uv_dir,
+                        }));
+                        brep.geom.edge_pcurves[seam_ei].push(PCurve {
+                            surface_idx: sphere_surface_idx,
+                            curve2d_idx,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Pad auxiliary GeomStore arrays
+    while brep.geom.edge_pcurves.len() < brep.edges.len() {
+        brep.geom.edge_pcurves.push(vec![]);
+    }
+    while brep.geom.edge_curve_range.len() < brep.edges.len() {
+        brep.geom.edge_curve_range.push(None);
+    }
+    while brep.geom.face_surface_range.len() < brep.solids[0].shells[0].faces.len() {
+        brep.geom.face_surface_range.push(None);
     }
 
     Some(brep)
@@ -248,6 +389,7 @@ fn build_plane_intersection_face(
     corner_indices: &[usize; 4],
     normal: DVec3,
     plane_origin: DVec3,
+    outside: bool,
 ) -> Option<Vec<usize>> {
     let n = normal;
     let pp = plane_origin;
@@ -399,9 +541,19 @@ fn build_plane_intersection_face(
         let mut cur = from_pos;
         let mut e = from_edge;
         loop {
+            // If already at destination, stop.
+            if (cur - to_pos).length() < 1e-12 { break; }
             let ci = c[e];
             let cj = c[(e + 1) % 4];
             let nc = corners[cj];
+            // New: if cur is already at the next corner (start-at-end-of-edge),
+            // skip this edge and advance to the next one.
+            if (cur - nc).length() < 1e-12 {
+                if e == to_edge { break; }
+                cur = nc;
+                e = (e + 1) % 4;
+                continue;
+            }
             let at_start_corner = (cur - corners[ci]).length() < 1e-12;
             // Check if this is a full box edge (both endpoints are corners)
             // so we can reuse the pre-created shared edge.
@@ -457,10 +609,22 @@ fn build_plane_intersection_face(
             let tj_adj = if j > i { t_j } else { t_j + two_pi };
             let ae = make_edge(brep, circle_curve.clone(), t_i, tj_adj, v1, v2).ok()?;
             align_edge_geom(brep, ae);
-            planar_wes.push(WireEdge::fwd(ae));
             arc_edges.push(ae);
-        } else {
-            // Rectangle perimeter
+            if outside {
+                // Union: arc is the hole boundary — walk perimeter FORWARD
+                // (increasing edge index) from pi to pj so the planar face
+                // excludes the sphere-interior region.
+                planar_wes.push(WireEdge::fwd(ae));
+                if let Some(w) = walk_perim(brep, pi, xs[i].edge, pj, xs[j].edge) {
+                    planar_wes.extend(w);
+                }
+            } else {
+                // Intersection: arc is part of the face boundary.
+                planar_wes.push(WireEdge::fwd(ae));
+            }
+        } else if !outside {
+            // Rectangle perimeter (intersection only — union skips arcs
+            // whose midpoint is outside the rectangle).
             if let Some(w) = walk_perim(brep, pi, xs[i].edge, pj, xs[j].edge) {
                 planar_wes.extend(w);
             }
@@ -567,7 +731,7 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
     let face_labels = ["-Z","+Z","-Y","+Y","-X","+X"];
     for (fi, &(ref ci, n, pp)) in faces.iter().enumerate() {
         let arcs = build_plane_intersection_face(
-            &mut brep, center, radius, &corners, &cvi, &edge_map, ci, n, pp,
+            &mut brep, center, radius, &corners, &cvi, &edge_map, ci, n, pp, false,
         )?;
         if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
             eprintln!("[ANALYTIC] {} d={:.2} arcs={}", face_labels[fi], n.dot(center - pp), arcs.len());
