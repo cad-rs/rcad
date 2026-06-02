@@ -549,10 +549,19 @@ fn build_plane_intersection_face(
     let mut planar_wes: Vec<WireEdge> = Vec::new();
     let mut arc_edges: Vec<usize> = Vec::new();
 
+    // Find an existing vertex at `p` within tolerance, or create one.
+    let find_or_make_vertex = |brep: &mut BRep, p: DVec3| -> usize {
+        for (i, v) in brep.vertices.iter().enumerate() {
+            if (v.point - p).length_squared() < 1e-20 {
+                return i;
+            }
+        }
+        make_vertex(brep, p)
+    };
     let mk_line = |brep: &mut BRep, p1: DVec3, p2: DVec3| -> Option<usize> {
         if (p1 - p2).length() < 1e-15 { return None; }
-        let v1 = make_vertex(brep, p1);
-        let v2 = make_vertex(brep, p2);
+        let v1 = find_or_make_vertex(brep, p1);
+        let v2 = find_or_make_vertex(brep, p2);
         let dir = p2 - p1;
         let len = dir.length();
         let curve = Curve3::Line(Line3 { origin: p1, direction: dir / len });
