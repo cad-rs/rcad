@@ -2470,7 +2470,7 @@ fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
     const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
     const XY: f64 = 2.0 * TOLERANCE_ADAPTIVE_MAX;
     let sh = cone.solids.get(0)?.shells.get(0)?;
-    if sh.faces.len() != 2 {
+    if sh.faces.len() < 2 {
         return None;
     }
     let mut cf: Option<ConicalSurface> = None;
@@ -2481,7 +2481,7 @@ fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
             for _ in &sh.faces {
                 let si = *cone.geom.face_surface.get(fi)?.as_ref()?;
                 match cone.geom.surfaces.get(si)? {
-                    Surface3::Cone(c) if c.radius.abs() <= TOLERANCE_MESH_LEGACY => cf = Some(*c),
+                    Surface3::Cone(c) => cf = Some(*c),
                     Surface3::Plane(p) => po = Some(p.origin),
                     _ => return None,
                 }
