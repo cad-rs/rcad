@@ -2798,7 +2798,26 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     // Topology optimization: merge coplanar faces, share edges, detect holes.
     // Applied to every boolean result for consistent topology.
     let r = optimize_boolean_topology(r);
+    let r = promote_planar_surfaces(r);
     Ok(r)
+}
+
+/// Scan all surfaces and promote planar BSpline surfaces to Plane so the
+/// STEP output uses analytic plane entities matching OCCT reference topology.
+/// The PaveFiller already does this during intersection, but the BooleanBuilder
+/// may create new BSpline surfaces during result assembly.
+fn promote_planar_surfaces(mut brep: BRep) -> BRep {
+    use rcad_kernel::geom::bspline_is_planar;
+    for surf in &mut brep.geom.surfaces {
+        if let rcad_kernel::geom::Surface3::BSpline(bsp) = surf {
+            if bspline_is_planar(bsp, 1e-7) {
+                *surf = rcad_kernel::geom::Surface3::Plane(
+                    rcad_kernel::geom::bspline_to_plane(bsp)
+                );
+            }
+        }
+    }
+    brep
 }
 
 /// Merge duplicate edges: when two or more edges connect the same vertex pair
