@@ -2949,6 +2949,89 @@ fn deduplicate_edges(mut brep: BRep) -> BRep {
     brep
 }
 
+/// Merge identical surface geometries (same plane, same cylinder etc.) into
+/// a single surface entry.  The PaveFiller creates separate GeomStore entries
+/// for each sub-face even when they share the same geometric surface.
+fn deduplicate_surfaces(mut brep: BRep) -> BRep {
+    use rcad_kernel::geom::Surface3;
+    let n = brep.geom.surfaces.len();
+    if n < 2 { return brep; }
+    let ang_tol = 1e-6;  // TOLERANCE_ANG_HEURISTIC_RAD
+    let lin_tol = 1e-6;  // TOLERANCE_PARAM_LEGACY
+
+    // Compute a canonical index for each surface.
+    let mut canon: Vec<usize> = (0..n).collect();
+    for i in 0..n {
+        if canon[i] != i { continue; }  // already mapped
+        for j in (i + 1)..n {
+            let same = match (&brep.geom.surfaces[i], &brep.geom.surfaces[j]) {
+                (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                    let cross = p1.normal.cross(p2.normal).length();
+                    cross <= ang_tol
+                        && (p2.origin - p1.origin).dot(p1.normal).abs() <= lin_tol
+                }
+                (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                    (c1.radius - c2.radius).abs() <= lin_tol
+                        && c1.axis.cross(c2.axis).length() <= ang_tol
+                        && (c2.origin - c1.origin).cross(c1.axis).length() <= lin_tol
+                }
+                (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+                    (s1.radius - s2.radius).abs() <= lin_tol
+                        && (s1.center - s2.center).length() <= lin_tol
+                }
+                (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                    (c1.radius - c2.radius).abs() <= lin_tol
+                        && (c1.half_angle_rad - c2.half_angle_rad).abs() <= ang_tol
+                        && c1.axis.cross(c2.axis).length() <= ang_tol
+                        && (c1.apex - c2.apex).length() <= lin_tol
+                }
+                _ => false,  // different types or BSpline — keep separate
+            };
+            if same { canon[j] = i; }
+        }
+    }
+    // Count unique surfaces.
+    let mut unique: Vec<usize> = Vec::new();
+    let mut old_to_new: Vec<usize> = vec![0; n];
+    for i in 0..n {
+        if canon[i] == i {
+            old_to_new[i] = unique.len();
+            unique.push(i);
+        }
+    }
+    for i in 0..n {
+        old_to_new[i] = old_to_new[canon[i]];
+    }
+    // Remap face_surface references.
+    for s in &mut brep.solids {
+        for sh in &mut s.shells {
+            for _ in &sh.faces {
+                // face_surface is indexed by flat face index, which is complex
+                // to iterate here.  We use a different approach: rebuild surfaces.
+            }
+        }
+    }
+    // Actually, iterate via flat_face_index.
+    // We need to access face_surface by flat index across all solids/shells.
+    // Simpler approach: rebuild the surfaces array.
+    let new_surfaces: Vec<Surface3> = unique.iter().map(|&i| brep.geom.surfaces[i].clone()).collect();
+    // Now remap face_surface: for each face, find its surface in the new array.
+    let mut fi = 0usize;
+    for s in &mut brep.solids {
+        for sh in &mut s.shells {
+            for _ in &sh.faces {
+                if let Some(Some(old_si)) = brep.geom.face_surface.get(fi).copied() {
+                    let new_si = old_to_new[old_si];
+                    brep.geom.face_surface[fi] = Some(new_si);
+                }
+                fi += 1;
+            }
+        }
+    }
+    brep.geom.surfaces = new_surfaces;
+    brep
+}
+
 /// Post-process a boolean operation's BRep result: merge coplanar faces on
 /// the same plane, share edges between adjacent faces, and detect holes
 /// (inner wires) for faces with missing interior regions.
@@ -2963,7 +3046,11 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     let tol = tolerance::TOLERANCE_ABS.max(1e-8);
     // Pass 1: orthogonal grid-based fuse
     let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
-    // Pass 2: edge-based unify
+    // Surface deduplication: merge identical surface geometries (same plane,
+    // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
+    // separate entries for each sub-face even when they share the same geometry.
+    let m1 = deduplicate_surfaces(m1);
+    // Pass 2: edge-based unify (merges faces on the same surface domain)
     let (m2, _) = crate::unify_same_domain_faces(&m1);
     let mut brep = m2;
 
