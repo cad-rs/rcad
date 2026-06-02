@@ -2802,6 +2802,78 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     Ok(r)
 }
 
+/// Split disconnected face sets into separate shells (multi-body results).
+/// The BooleanBuilder puts all faces into a single shell, but when the result
+/// has multiple disconnected components (e.g. bcut producing two separate
+/// solids), they should be separate shells with their own MANIFOLD_SOLID_BREP.
+fn split_disconnected_shells(mut brep: BRep) -> BRep {
+    eprintln!("[SPLIT_SHELLS] called with {} solids", brep.solids.len());
+    use rcad_kernel::topology::{Shell, Solid};
+    use std::collections::{HashMap, HashSet};
+    let n_solids = brep.solids.len();
+    // Process each solid's first shell (boolean results have one shell).
+    for si in (0..n_solids).rev() {
+        if brep.solids[si].shells.len() != 1 { continue; }
+        let nf = brep.solids[si].shells[0].faces.len();
+        if nf < 2 { continue; }
+        // Build face adjacency via shared edges (same vertex index pairs).
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nf];
+        {
+            let faces = &brep.solids[si].shells[0].faces;
+            let mut e2f: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+            for (fi, face) in faces.iter().enumerate() {
+                let mut seen = HashSet::new();
+                for we in &face.outer_wire.edges {
+                    if let Some(edge) = brep.edges.get(we.idx) {
+                        let key = if edge.start < edge.end {
+                            (edge.start, edge.end)
+                        } else { (edge.end, edge.start) };
+                        if seen.insert(key) {
+                            e2f.entry(key).or_default().push(fi);
+                        }
+                    }
+                }
+            }
+            for (_, flist) in &e2f {
+                for i in 0..flist.len() {
+                    for j in (i + 1)..flist.len() {
+                        let a = flist[i]; let b = flist[j];
+                        adj[a].push(b); adj[b].push(a);
+                    }
+                }
+            }
+        }
+        // Flood fill
+        let mut visited = vec![false; nf];
+        let mut comp_indices: Vec<Vec<usize>> = Vec::new();
+        for fi in 0..nf {
+            if visited[fi] { continue; }
+            let mut comp = Vec::new();
+            let mut stack = vec![fi];
+            while let Some(cur) = stack.pop() {
+                if visited[cur] { continue; }
+                visited[cur] = true;
+                comp.push(cur);
+                for &nb in &adj[cur] {
+                    if !visited[nb] { stack.push(nb); }
+                }
+            }
+            comp_indices.push(comp);
+        }
+        if comp_indices.len() <= 1 { continue; }
+        // Extract faces per component
+        let old_solid = brep.solids.remove(si);
+        let all_faces = old_solid.shells.into_iter().next().unwrap().faces;
+        let new_solids: Vec<Solid> = comp_indices.iter().map(|indices| {
+            let shell_faces = indices.iter().map(|&fi| all_faces[fi].clone()).collect();
+            Solid { shells: vec![Shell { faces: shell_faces }] }
+        }).collect();
+        for s in new_solids { brep.solids.push(s); }
+        break; // Only process the first multi-face solid.
+    }
+    brep
+}
+
 /// Scan all surfaces and promote planar BSpline surfaces to Plane so the
 /// STEP output uses analytic plane entities matching OCCT reference topology.
 /// The PaveFiller already does this during intersection, but the BooleanBuilder
@@ -3104,7 +3176,9 @@ pub fn boolean_op_with_retry(
     // Edge deduplication: merge edges sharing the same geometric vertex pair.
     // Applied to ALL boolean results (fast-paths + PaveFiller) so the STEP
     // output has correct EDGE_CURVE counts matching OCCT references.
-    Ok(deduplicate_edges(brep))
+    let brep = deduplicate_edges(brep);
+    let brep = split_disconnected_shells(brep);
+    Ok(brep)
 }
 
 /// Perform a boolean operation with advanced execution options and report.
