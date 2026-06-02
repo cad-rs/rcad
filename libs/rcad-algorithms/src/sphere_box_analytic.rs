@@ -174,7 +174,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
             )?;
             all_arcs.extend(arcs);
         } else {
-            // Full planar face (no sphere intersection on this plane).
+            // Full planar face (sphere does not intersect this plane at all).
             let c = fi.corners;
             let mut wire_edges = Vec::with_capacity(4);
             for i in 0..4 {
@@ -753,14 +753,10 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
 
     // ── 4. Build planar faces; collect arc edges ──
     let mut all_arcs: Vec<usize> = Vec::new();
-    let face_labels = ["-Z","+Z","-Y","+Y","-X","+X"];
     for (fi, &(ref ci, n, pp)) in faces.iter().enumerate() {
         let arcs = build_plane_intersection_face(
             &mut brep, center, radius, &corners, &cvi, &edge_map, ci, n, pp, false,
         )?;
-        if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
-            eprintln!("[ANALYTIC] {} d={:.2} arcs={}", face_labels[fi], n.dot(center - pp), arcs.len());
-        }
         all_arcs.extend(arcs);
     }
     if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
