@@ -3267,14 +3267,12 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // Edge deduplication: merge edges sharing the same geometric vertex pair.
-    // Applied to ALL boolean results (fast-paths + PaveFiller) so the STEP
+    // Edge dedup + BSPLINE→PLANE for ALL results (safe, no topology changes).
     let brep = deduplicate_edges(brep);
-    // output has correct EDGE_CURVE counts matching OCCT references.
-    // Topology optimization: merge coplanar faces, share edges, detect holes.
-    let brep = optimize_boolean_topology(brep);
-    // Promote planar BSpline surfaces to Plane (for STEP writer alignment).
     let brep = promote_planar_surfaces(brep);
+    // NOTE: optimize_boolean_topology is NOT called here — it runs only inside
+    // boolean_op for PaveFiller results.  Calling it on fast-path results can
+    // over-merge faces that fast-path builders intentionally keep separate.
     let brep = split_disconnected_shells(brep);
     Ok(brep)
 }
