@@ -116,6 +116,7 @@ pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
 pub mod tolerance;
+pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;
 
 pub mod top_loc;

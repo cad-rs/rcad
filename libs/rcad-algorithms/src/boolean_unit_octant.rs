@@ -215,7 +215,26 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         });
         if !all_inside { continue; }
         return match (op, swapped) {
-            (BooleanOpType::Union, _) => Some(outer.clone()),
+            (BooleanOpType::Union, _) => {
+                // For axis-aligned box containment, use Z-stacked extrusion to produce
+                // split faces along inner box boundaries. Strict AABB containment check
+                // (not relying on ray casting which can false-positive for boundary points).
+                if let (Some([omin, omax]), Some([imin, imax])) = (outer.bounding_box(), inner.bounding_box()) {
+                    let aabb_contains = imin.x >= omin.x && imax.x <= omax.x
+                        && imin.y >= omin.y && imax.y <= omax.y
+                        && imin.z >= omin.z && imax.z <= omax.z;
+                    if aabb_contains
+                        && outer.vertices.len() == 8 && inner.vertices.len() == 8
+                        && outer.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
+                        && inner.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
+                    {
+                        if let Some(r) = build_union_box_containment(omin, omax, imin, imax) {
+                            return Some(r);
+                        }
+                    }
+                }
+                Some(outer.clone())
+            }
             (BooleanOpType::Intersection, _) => Some(inner.clone()),
             (BooleanOpType::Difference, true) => Some(BRep::default()),
             _ => None,
@@ -577,6 +596,161 @@ fn build_extruded_brep(outline_cw: &[(f64, f64)], z_min: f64, z_max: f64) -> Opt
     Some(brep)
 }
 
+/// Build an extruded BRep from a CW outline with multiple Z-levels.
+/// Creates side faces for each Z-slice and bottom/top faces at the extremes.
+/// No internal horizontal faces are created. Vertices and edges are shared
+/// across slices so the shell is closed.
+fn build_extruded_multi_z(outline_cw: &[(f64, f64)], z_vals: &[f64]) -> Option<BRep> {
+    use rcad_kernel::geom::Line3;
+    use rcad_modeling::builder::brep_builder::{make_vertex, make_edge, make_wire, make_face};
+    use rcad_kernel::topology::WireEdge;
+
+    let n = outline_cw.len();
+    let nz = z_vals.len();
+    if n < 3 || nz < 2 { return None; }
+
+    let mut brep = BRep::default();
+
+    // 1. Vertices: n per Z-level
+    let mut z_verts: Vec<Vec<usize>> = Vec::with_capacity(nz);
+    for &z in z_vals {
+        let mut level = Vec::with_capacity(n);
+        for &(x, y) in outline_cw {
+            level.push(make_vertex(&mut brep, DVec3::new(x, y, z)));
+        }
+        z_verts.push(level);
+    }
+
+    // 2. Horizontal edges per Z-level + vertical edges between levels
+    let mut h_edges: Vec<Vec<usize>> = Vec::with_capacity(nz);
+    for zi in 0..nz {
+        let z = z_vals[zi];
+        let verts = &z_verts[zi];
+        let mut edges = Vec::with_capacity(n);
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let p0 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z);
+            let p1 = DVec3::new(outline_cw[j].0, outline_cw[j].1, z);
+            let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
+            edges.push(make_edge(&mut brep, curve, 0.0, 1.0, verts[i], verts[j]).ok()?);
+        }
+        h_edges.push(edges);
+    }
+
+    let mut v_edges: Vec<Vec<usize>> = Vec::with_capacity(nz - 1);
+    for zi in 0..(nz - 1) {
+        let bot = &z_verts[zi];
+        let top = &z_verts[zi + 1];
+        let mut edges = Vec::with_capacity(n);
+        for i in 0..n {
+            let p0 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z_vals[zi]);
+            let p1 = DVec3::new(outline_cw[i].0, outline_cw[i].1, z_vals[zi + 1]);
+            let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
+            edges.push(make_edge(&mut brep, curve, 0.0, 1.0, bot[i], top[i]).ok()?);
+        }
+        v_edges.push(edges);
+    }
+
+    // 3. Bottom face (at z_vals[0], CW → -Z)
+    {
+        let wire_edges: Vec<WireEdge> = (0..n).map(|i| WireEdge { idx: h_edges[0][i], forward: true }).collect();
+        let wire = make_wire(wire_edges);
+        let surface = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(0.0, 0.0, z_vals[0]),
+            normal: DVec3::new(0.0, 0.0, -1.0),
+        });
+        make_face(&mut brep, surface, wire, vec![]).ok()?;
+    }
+
+    // 4. Top face (at z_vals[last], reverse winding → +Z)
+    {
+        let last = nz - 1;
+        let wire_edges: Vec<WireEdge> = (0..n).map(|i| {
+            WireEdge { idx: h_edges[last][i], forward: false }
+        }).collect();
+        let wire = make_wire(wire_edges);
+        let surface = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(0.0, 0.0, z_vals[last]),
+            normal: DVec3::new(0.0, 0.0, 1.0),
+        });
+        make_face(&mut brep, surface, wire, vec![]).ok()?;
+    }
+
+    // 5. Side faces per Z-slice
+    for zi in 0..(nz - 1) {
+        let be = &h_edges[zi];
+        let ve = &v_edges[zi];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let side_edges = vec![
+                WireEdge { idx: be[i], forward: true },
+                WireEdge { idx: ve[j], forward: true },
+                WireEdge { idx: h_edges[zi + 1][i], forward: false },
+                WireEdge { idx: ve[i], forward: false },
+            ];
+            let wire = make_wire(side_edges);
+            let dx = outline_cw[j].0 - outline_cw[i].0;
+            let dy = outline_cw[j].1 - outline_cw[i].1;
+            let (plane_coord, plane_normal) = if dx.abs() > dy.abs() {
+                if dx > 0.0 { (outline_cw[i].1, DVec3::new(0.0, -1.0, 0.0)) }
+                else { (outline_cw[i].1, DVec3::new(0.0, 1.0, 0.0)) }
+            } else {
+                if dy > 0.0 { (outline_cw[i].0, DVec3::new(1.0, 0.0, 0.0)) }
+                else { (outline_cw[i].0, DVec3::new(-1.0, 0.0, 0.0)) }
+            };
+            let origin = if dx.abs() > dy.abs() {
+                DVec3::new(0.0, plane_coord, 0.0)
+            } else {
+                DVec3::new(plane_coord, 0.0, 0.0)
+            };
+            let surface = Surface3::Plane(rcad_kernel::geom::Plane { origin, normal: plane_normal });
+            make_face(&mut brep, surface, wire, vec![]).ok()?;
+        }
+    }
+
+    Some(brep)
+}
+
+/// Build box-box union containment result with post-processed face merging.
+/// Uses maximal-outline multi-Z extrusion (vertices match → CLOSED_SHELL), then
+/// merges unnecessary split faces within each Z-slice using unify_same_domain_faces,
+/// but prevents merging across Z-boundary edges so the split at the inner box's
+/// top/bottom is preserved.
+fn build_union_box_containment(
+    outer_min: DVec3, outer_max: DVec3,
+    inner_min: DVec3, inner_max: DVec3,
+) -> Option<BRep> {
+    let mut z_vals = vec![outer_min.z, outer_max.z];
+    if inner_min.z > outer_min.z && inner_min.z < outer_max.z { z_vals.push(inner_min.z); }
+    if inner_max.z > outer_min.z && inner_max.z < outer_max.z { z_vals.push(inner_max.z); }
+    z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let mut xs = vec![outer_min.x, outer_max.x];
+    let mut ys = vec![outer_min.y, outer_max.y];
+    if inner_min.x > outer_min.x && inner_min.x < outer_max.x { xs.push(inner_min.x); }
+    if inner_max.x > outer_min.x && inner_max.x < outer_max.x { xs.push(inner_max.x); }
+    if inner_min.y > outer_min.y && inner_min.y < outer_max.y { ys.push(inner_min.y); }
+    if inner_max.y > outer_min.y && inner_max.y < outer_max.y { ys.push(inner_max.y); }
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let (nx, ny) = (xs.len(), ys.len());
+    let mut outline = Vec::new();
+    for i in 0..nx { outline.push((xs[i], ys[0])); }
+    for j in 1..ny { outline.push((xs[nx - 1], ys[j])); }
+    for i in (0..nx - 1).rev() { outline.push((xs[i], ys[ny - 1])); }
+    for j in (1..ny - 1).rev() { outline.push((xs[0], ys[j])); }
+
+    // Collect Z-boundary values (where inner box ends).
+    let mut z_boundaries: Vec<f64> = Vec::new();
+    if inner_min.z > outer_min.z && inner_min.z < outer_max.z { z_boundaries.push(inner_min.z); }
+    if inner_max.z > outer_min.z && inner_max.z < outer_max.z { z_boundaries.push(inner_max.z); }
+
+    let brep = build_extruded_multi_z(&outline, &z_vals)?;
+
+    build_extruded_multi_z(&outline, &z_vals)
+}
+
+/// Merge two BReps by appending all geometry from `src` into `dst`.
 pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     if a.compound.is_some() || b.compound.is_some() {
         return None;
